@@ -1,9 +1,10 @@
 (ns eacl.execution
-  "Normalized demand, deadline, and cache-attempt contracts.
+  "Normalized demand, deadline, cancellation, and cache-attempt contracts.
 
   Public orchestration creates exactly one contract before consistency or cache
-  work. Runtime layers may observe the contract and check its absolute monotonic
-  deadline, but never replace it with a fresh relative timeout."
+  work. Runtime layers may observe the contract and cooperatively check its
+  absolute monotonic deadline and caller-owned cancellation token, but never
+  replace either control with a fresh relative timeout or token."
   (:refer-clojure :exclude [next]))
 
 (def default-execution-timeout-ms 30000)
@@ -26,6 +27,53 @@
                    (.now js/Date)))))))
 
 (def ^:dynamic *contract* nil)
+
+(defprotocol CooperativeCancellation
+  "A non-blocking, caller-owned cancellation signal.
+
+  Implementations must make `-cancelled?` safe to call repeatedly from hot
+  traversal checkpoints. EACL's `cancellation-token` is the portable default."
+  (-cancelled? [token])
+  (-cancel! [token]))
+
+(deftype CancellationToken [state]
+  CooperativeCancellation
+  (-cancelled? [_] (true? @state))
+  (-cancel! [_]
+    (reset! state true)
+    true))
+
+(defn cancellation-token
+  "Creates one portable cooperative cancellation token.
+
+  Supply the token as request `:cancellation-token`, then call `cancel!` from
+  the request owner. A token belongs to one logical request and may be shared
+  safely with the thread or callback that observes client disconnect."
+  []
+  (->CancellationToken (atom false)))
+
+(defn cancellation-token?
+  [value]
+  (satisfies? CooperativeCancellation value))
+
+(defn cancel!
+  "Requests cooperative cancellation. Returns true and is idempotent."
+  [token]
+  (when-not (cancellation-token? token)
+    (throw
+     (ex-info
+      ":cancellation-token must implement CooperativeCancellation."
+      {:type :eacl/invalid-request
+       :eacl/error :eacl.execution/invalid-contract
+       :key :cancellation-token
+       :value-type (some-> token type str)})))
+  (-cancel! token)
+  true)
+
+(defn cancelled?
+  "True when cooperative cancellation has been requested for `token`."
+  [token]
+  (boolean (and token (-cancelled? token))))
 
 (defn now-nanos []
   (*monotonic-nanos*))
@@ -163,6 +211,13 @@
              "Cache-attempt and structural safety envelopes are client configuration, not per-request demand controls."
              {:forbidden-keys (vec forbidden)}))
         evaluation (normalize-evaluation (:evaluation request))
+        cancellation-token (:cancellation-token request)
+        _ (when (and cancellation-token
+                     (not (cancellation-token? cancellation-token)))
+            (invalid-request!
+             ":cancellation-token must be created by eacl.execution/cancellation-token or implement CooperativeCancellation."
+             {:key :cancellation-token
+              :value-type (some-> cancellation-token type str)}))
         timeout-ms
         (normalize-timeout-ms
          (or (:timeout-ms request)
@@ -177,6 +232,7 @@
      :configured-timeout-ms timeout-ms
      :started-nanos started-nanos
      :deadline-nanos deadline-nanos
+     :cancellation-token cancellation-token
      :limits (:recursive-traversal-limits client-options)
      :cache-attempt (or (:cache-attempt client-options)
                         default-cache-attempt)}))
@@ -215,6 +271,18 @@
       :timeout-ms (:configured-timeout-ms contract)}
       (seq consumed-work) (assoc :consumed-work consumed-work)))))
 
+(defn cancellation-observed!
+  [contract stage consumed-work]
+  (throw
+   (ex-info
+    "EACL authorization execution was cancelled."
+    (cond->
+     {:type :eacl.execution/cancelled
+      :eacl/error :eacl.execution/cancelled
+      :operation (:operation contract)
+      :stage stage}
+      (seq consumed-work) (assoc :consumed-work consumed-work)))))
+
 (defn check!
   ([stage]
    (check! *contract* stage nil))
@@ -223,6 +291,9 @@
   ([contract stage consumed-work]
    (when (and contract (expired? contract))
      (deadline-exceeded! contract stage consumed-work))
+   (when (and contract
+              (cancelled? (:cancellation-token contract)))
+     (cancellation-observed! contract stage consumed-work))
    contract))
 
 (defn cache-stage-available?
@@ -230,5 +301,6 @@
   (let [{:keys [evaluation-reserve-ms]}
         (:cache-attempt contract)
         remaining-ms (remaining-millis contract)]
-    (and (pos? remaining-ms)
+    (and (not (cancelled? (:cancellation-token contract)))
+         (pos? remaining-ms)
          (> remaining-ms evaluation-reserve-ms))))

@@ -1,0 +1,49 @@
+;; Frozen current-engine baseline. Regenerate via
+;; (eacl.baseline.capture/capture-all!) — see README.md.
+{:fixture :cyclic-data,
+ :page-size 7,
+ :forward
+ {:erin
+  {:principal "user:erin",
+   :denotation ["folder:c-1" "folder:c-2" "folder:c-3"],
+   :order ["folder:c-1" "folder:c-2" "folder:c-3"],
+   :pages [{:size 3, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 3, :limit -1},
+   :count-matches-denotation? true},
+  :stranger
+  {:principal "user:stranger",
+   :denotation [],
+   :order [],
+   :pages [{:size 0, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 0, :limit -1},
+   :count-matches-denotation? true}},
+ :reverse
+ {:c-2
+  {:resource "folder:c-2",
+   :outcome :ok,
+   :denotation ["user:erin"],
+   :order ["user:erin"],
+   :first-page-size 1}},
+ :points
+ {:erin {:authorized-sample {:resource "folder:c-1", :can? true}},
+  :stranger
+  {:unauthorized-sample {:resource "folder:c-1", :can? false}}},
+ :cursor-behavior
+ {:first-page-repeat-identical? true,
+  :after-cursor-repeat-identical? true,
+  :parent-cursor-reusable-after-child? true,
+  :cancelled-request
+  {:outcome :error,
+   :error-keys [:eacl.execution/cancelled :eacl.execution/cancelled]},
+  :zero-timeout-rejected
+  {:outcome :error,
+   :error-keys
+   [:eacl.execution/invalid-contract
+    :timeout-ms
+    :eacl/invalid-request]}},
+ :stale-basis
+ {:outcome :ok, :detail {:outcome :ok}, :resumed-page-size 1}}

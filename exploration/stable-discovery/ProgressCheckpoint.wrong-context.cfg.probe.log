@@ -1,0 +1,149 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Warning: Please run the Java VM which executes TLC with a throughput optimized garbage collector by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 3 and seed 6261109933473950484 with 1 worker on 14 cores with 9215MB heap and 64MB offheap memory [pid: 14062] (Mac OS X 26.4.1 aarch64, Eclipse Adoptium 26.0.2 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/ProgressCheckpoint.tla
+Parsing file /private/var/folders/xt/1g3gqlzn5931vyq31cf5yhrm0000gn/T/Naturals.tla
+Semantic processing of module Naturals
+Semantic processing of module ProgressCheckpoint
+Starting... (2026-08-14 01:54:41)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-08-14 01:54:41.
+Error: Invariant Safety is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ cacheEpoch = 0
+/\ candidateEpoch = 0
+/\ candidateComplete = FALSE
+/\ epoch = 0
+/\ semanticProgress = 0
+/\ control = 0
+/\ greatestPublished = 0
+/\ candidateContext = 0
+/\ answerPublished = FALSE
+/\ restored = FALSE
+/\ requestContext = 0
+/\ progressAtControl = 0
+/\ candidateProgress = 0
+/\ cacheContext = 0
+/\ restoredProgress = 0
+/\ cacheComplete = FALSE
+/\ candidatePresent = FALSE
+/\ restoredContext = 0
+/\ cachePresent = FALSE
+/\ cacheProgress = 0
+
+State 2: <Compute line 125, col 3 to line 133, col 71 of module ProgressCheckpoint>
+/\ cacheEpoch = 0
+/\ candidateEpoch = 0
+/\ candidateComplete = FALSE
+/\ epoch = 0
+/\ semanticProgress = 1
+/\ control = 0
+/\ greatestPublished = 0
+/\ candidateContext = 0
+/\ answerPublished = FALSE
+/\ restored = FALSE
+/\ requestContext = 0
+/\ progressAtControl = 0
+/\ candidateProgress = 0
+/\ cacheContext = 0
+/\ restoredProgress = 0
+/\ cacheComplete = FALSE
+/\ candidatePresent = FALSE
+/\ restoredContext = 0
+/\ cachePresent = FALSE
+/\ cacheProgress = 0
+
+State 3: <Capture line 136, col 3 to line 148, col 44 of module ProgressCheckpoint>
+/\ cacheEpoch = 0
+/\ candidateEpoch = 0
+/\ candidateComplete = TRUE
+/\ epoch = 0
+/\ semanticProgress = 1
+/\ control = 0
+/\ greatestPublished = 0
+/\ candidateContext = 0
+/\ answerPublished = FALSE
+/\ restored = FALSE
+/\ requestContext = 0
+/\ progressAtControl = 0
+/\ candidateProgress = 1
+/\ cacheContext = 0
+/\ restoredProgress = 0
+/\ cacheComplete = FALSE
+/\ candidatePresent = TRUE
+/\ restoredContext = 0
+/\ cachePresent = FALSE
+/\ cacheProgress = 0
+
+State 4: <Publish line 187, col 3 to line 205, col 61 of module ProgressCheckpoint>
+/\ cacheEpoch = 0
+/\ candidateEpoch = 0
+/\ candidateComplete = FALSE
+/\ epoch = 0
+/\ semanticProgress = 1
+/\ control = 0
+/\ greatestPublished = 1
+/\ candidateContext = 0
+/\ answerPublished = FALSE
+/\ restored = FALSE
+/\ requestContext = 0
+/\ progressAtControl = 0
+/\ candidateProgress = 1
+/\ cacheContext = 0
+/\ restoredProgress = 0
+/\ cacheComplete = TRUE
+/\ candidatePresent = FALSE
+/\ restoredContext = 0
+/\ cachePresent = TRUE
+/\ cacheProgress = 1
+
+State 5: <SwitchRequestContext line 208, col 3 to line 216, col 71 of module ProgressCheckpoint>
+/\ cacheEpoch = 0
+/\ candidateEpoch = 0
+/\ candidateComplete = FALSE
+/\ epoch = 0
+/\ semanticProgress = 1
+/\ control = 0
+/\ greatestPublished = 1
+/\ candidateContext = 0
+/\ answerPublished = FALSE
+/\ restored = FALSE
+/\ requestContext = 1
+/\ progressAtControl = 0
+/\ candidateProgress = 1
+/\ cacheContext = 0
+/\ restoredProgress = 0
+/\ cacheComplete = TRUE
+/\ candidatePresent = FALSE
+/\ restoredContext = 0
+/\ cachePresent = TRUE
+/\ cacheProgress = 1
+
+State 6: <Restore line 219, col 3 to line 232, col 26 of module ProgressCheckpoint>
+/\ cacheEpoch = 0
+/\ candidateEpoch = 0
+/\ candidateComplete = FALSE
+/\ epoch = 0
+/\ semanticProgress = 1
+/\ control = 0
+/\ greatestPublished = 1
+/\ candidateContext = 0
+/\ answerPublished = FALSE
+/\ restored = TRUE
+/\ requestContext = 1
+/\ progressAtControl = 0
+/\ candidateProgress = 1
+/\ cacheContext = 0
+/\ restoredProgress = 1
+/\ cacheComplete = TRUE
+/\ candidatePresent = FALSE
+/\ restoredContext = 0
+/\ cachePresent = TRUE
+/\ cacheProgress = 1
+
+327 states generated, 171 distinct states found, 96 states left on queue.
+The depth of the complete state graph search is 6.
+The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 7 and the 95th percentile is 5).
+Finished in 00s at (2026-08-14 01:54:41)

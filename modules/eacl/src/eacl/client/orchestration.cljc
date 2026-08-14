@@ -387,7 +387,7 @@
    dissoc
    query
    [:first :last :after :before
-    :consistency :cache? :timeout-ms]))
+    :consistency :cache? :timeout-ms :cancellation-token]))
 
 (defn- stale-cursor-anchor!
   [operation]
@@ -425,7 +425,8 @@
   ;; The unified filter contract validates the complete public query before
   ;; any snapshot selection or cursor work (backend-unification 9.1).
   (relationship-filters/validate! filters)
-  (let [{selection :selection}
+  (let [opts (ensure-execution-contract opts :read-relationships filters)
+        {selection :selection}
         (selected-context api db opts (:consistency filters))
         {adapter :adapter page-db :db cursor-opts :opts
          page-query :query}
@@ -434,8 +435,10 @@
         _ (schema-errors/validate-relationship-read!
            ((get-in api [:schema :read-schema]) page-db)
            filters)
-        base-filters (apply dissoc filters
-                            [:first :last :after :before :consistency :cache?])
+        base-filters
+        (apply dissoc filters
+               [:first :last :after :before :consistency :cache?
+                :timeout-ms :cancellation-token])
         subject-id (:subject/id base-filters)
         resource-id (:resource/id base-filters)
         subject-eid (when subject-id
@@ -444,7 +447,7 @@
                        (object-id->entid page-db resource-id))
         internal-query
         (-> page-query
-            (dissoc :consistency)
+            (dissoc :consistency :timeout-ms :cancellation-token)
             (cond->
               subject-id (assoc :subject/id subject-eid)
               resource-id (assoc :resource/id resource-eid)))]
@@ -566,7 +569,8 @@
                 :resource resource
                 :consistency consistency}
                (:execution-request opts))
-        opts (ensure-execution-contract opts :can? request)
+        opts (ensure-execution-contract
+              opts (or (:request-operation opts) :can?) request)
         {selected-db :db adapter :adapter
          completed-cache? :completed-cache?}
         (selected-context api db opts consistency)
@@ -634,7 +638,8 @@
         adapter cursor-opts :lookup-resources query)
        (let [internal-query
              (-> page-query
-                 (dissoc :consistency :evaluation :timeout-ms)
+                 (dissoc :consistency :evaluation :timeout-ms
+                         :cancellation-token)
                  (assoc :subject internal-subject))
              answer
              (cached-engine-result
@@ -687,11 +692,13 @@
       (let [internal-query
             (-> query
                 (assoc :subject internal-subject)
-                (dissoc :consistency :cache? :evaluation :timeout-ms))
+                (dissoc :consistency :cache? :evaluation :timeout-ms
+                        :cancellation-token))
             answer
             (cached-engine-result
              adapter opts :count-resources
-             {:public (dissoc query :consistency :cache?)
+             {:public (dissoc query :consistency :cache?
+                              :cancellation-token)
               :internal internal-query}
              (:resource/type internal-query)
              (:permission internal-query)
@@ -732,7 +739,8 @@
         adapter cursor-opts :lookup-subjects query)
        (let [internal-query
              (-> page-query
-                 (dissoc :consistency :evaluation :timeout-ms)
+                 (dissoc :consistency :evaluation :timeout-ms
+                         :cancellation-token)
                  (assoc :resource internal-resource))
              answer
              (cached-engine-result
@@ -786,11 +794,13 @@
       (let [internal-query
             (-> query
                 (assoc :resource internal-resource)
-                (dissoc :consistency :cache? :evaluation :timeout-ms))
+                (dissoc :consistency :cache? :evaluation :timeout-ms
+                        :cancellation-token))
             answer
             (cached-engine-result
              adapter opts :count-subjects
-             {:public (dissoc query :consistency :cache?)
+             {:public (dissoc query :consistency :cache?
+                              :cancellation-token)
               :internal internal-query}
              (:type (:resource internal-query))
              (:permission internal-query)

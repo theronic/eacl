@@ -94,11 +94,12 @@
                           :source-scope source-scope))]
      (backend/make-adapter
       {:id :datomic
+       :traversal-execution backend/strict-sequential-traversal-execution
        :fingerprint (:adapter-fingerprint opts)
        :deterministic? (:adapter-deterministic? opts)
        :identity-contract
        (:identity-contract opts
-                           :selected-internal/current-external-v1)
+                           :selected-internal/current-external-injective-v2)
        :capabilities
        (cond-> capabilities
          (nil? conn)
@@ -222,14 +223,28 @@
                 current (if conn (d/db conn) db)]
             (when (and (integer? locator)
                        (<= locator (d/basis-t current)))
+              ;; Genuine unavailability (a future locator) is handled by the
+              ;; guard above; nothing in this body legitimately throws for
+              ;; trimmed history, so every Throwable here is a classified
+              ;; failure — never a silent nil that would misreport a
+              ;; transient fault as an expired snapshot.
               (try
                 (snapshot-adapter
                  (d/as-of current locator)
                  (assoc opts'
                         :selected-order-hint locator
                         :selected-exact-locator locator))
-                (catch Throwable _
-                  nil)))))
+                (catch InterruptedException interrupt
+                  (throw (ex-info "Exact-basis selection was interrupted."
+                                  {:eacl/error :eacl.basis/selection-failure
+                                   :classification :cancelled}
+                                  interrupt)))
+                (catch Throwable failure
+                  (throw (ex-info "Exact-basis selection failed."
+                                  {:eacl/error :eacl.basis/selection-failure
+                                   :classification :retryable
+                                   :cause-class (.getName (class failure))}
+                                  failure)))))))
 
         :object-id->internal
         (fn [object-id]

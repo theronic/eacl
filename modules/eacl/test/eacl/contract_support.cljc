@@ -514,6 +514,25 @@
                        :subject (->user "user-2")
                        :after cursor)))))))
 
+  (testing "cancellation tokens are execution controls, not cursor identity"
+    (let [first-token (eacl/cancellation-token)
+          next-token (eacl/cancellation-token)
+          query {:subject (->user "user-1")
+                 :permission :view
+                 :resource/type :server
+                 :first 1}
+          page-1
+          (eacl/lookup-resources
+           client (assoc query :cancellation-token first-token))
+          page-2
+          (eacl/lookup-resources
+           client
+           (assoc query
+                  :cancellation-token next-token
+                  :after (get-in page-1 [:page-info :end-cursor])))]
+      (is (= [(->server "server-1")] (:data page-1)))
+      (is (= [(->server "server-2")] (:data page-2)))))
+
   (testing "unknown anchors and bounded counts use canonical v8 shapes"
     (let [forward
           (eacl/lookup-resources
@@ -602,7 +621,75 @@
                                             :subject/type      :user
                                             :subject/id        "user-2"
                                             :first             10})))
-    (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1"))))))
+    (is (false? (eacl/can? client (->user "user-2") :reboot (->server "server-1")))))
+
+  (testing "pre-cancelled tokens stop every bounded public read"
+    (let [token (eacl/cancellation-token)
+          _ (eacl/cancel! token)
+          subject (->user "user-1")
+          resource (->server "server-1")
+          calls
+          [[:can?
+            #(eacl/can?
+              client
+              {:subject subject
+               :permission :view
+               :resource resource
+               :cancellation-token token})]
+           [:check-permission
+            #(eacl/check-permission
+              client
+              {:subject subject
+               :permission :view
+               :resource resource
+               :cancellation-token token})]
+           [:lookup-resources
+            #(eacl/lookup-resources
+              client
+              {:subject subject
+               :permission :view
+               :resource/type :server
+               :first 1
+               :cancellation-token token})]
+           [:count-resources
+            #(eacl/count-resources
+              client
+              {:subject subject
+               :permission :view
+               :resource/type :server
+               :count-limit 1
+               :cancellation-token token})]
+           [:lookup-subjects
+            #(eacl/lookup-subjects
+              client
+              {:resource resource
+               :permission :view
+               :subject/type :user
+               :first 1
+               :cancellation-token token})]
+           [:count-subjects
+            #(eacl/count-subjects
+              client
+              {:resource resource
+               :permission :view
+               :subject/type :user
+               :count-limit 1
+               :cancellation-token token})]
+           [:read-relationships
+            #(eacl/read-relationships
+              client
+              {:resource/type :server
+               :first 1
+               :cancellation-token token})]
+           [:expand-permission-tree
+            #(eacl/expand-permission-tree
+              client
+              {:resource resource
+               :permission :view
+               :cancellation-token token})]]]
+      (doseq [[label call] calls]
+        (is (= :eacl.execution/cancelled (error-category call))
+            (name label))))))
 
 (defn assert-v8-permission-tree-contract!
   "Cross-backend shallow expansion contract over `smoke-schema`."

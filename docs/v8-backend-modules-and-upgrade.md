@@ -106,7 +106,7 @@ representative heap and load testing.
 
 All bundled adapters implement `expand-permission-tree` through one portable
 CLJ/CLJS kernel. The strict request is `{:resource object :permission keyword}`
-plus optional `:consistency` and `:timeout-ms`; the response is
+plus optional `:consistency`, `:timeout-ms`, and `:cancellation-token`; the response is
 `{:expanded-at token :tree-root node}`. The token and every definition,
 relationship, and rendered ID in the tree come from one selected immutable
 adapter. Datomic can replay the exact token while history is retained;
@@ -134,6 +134,14 @@ These are construction-time ceilings; requests cannot override them. Limit,
 deadline, cycle, codec, adapter-contract, unknown-root, and consistency
 failures are typed and return no partial tree. This feature adds no schema,
 stored attribute, dependency, or database migration.
+
+Every bounded read accepts the same per-request cooperative cancellation
+token. Create it with `eacl.core/cancellation-token` and signal it with
+`eacl.core/cancel!`. Adapters do not need a new SPI operation: the shared
+orchestrator and generated traversal check the token before and after adapter
+commands. A synchronous command already in progress must return before the
+check can observe cancellation; adapter implementations with their own long
+loops should call `eacl.execution/check!` at bounded internal checkpoints.
 
 ## Backend extension boundary
 

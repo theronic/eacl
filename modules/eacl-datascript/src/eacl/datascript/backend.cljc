@@ -129,11 +129,12 @@
                          :source-scope source-scope))]
     (backend/make-adapter
      {:id :datascript
+      :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
       :deterministic? (:adapter-deterministic? opts)
       :identity-contract
       (:identity-contract opts
-                          :selected-internal/current-external-v1)
+                          :selected-internal/current-external-injective-v2)
       :capabilities
       (cond-> capabilities
         (nil? conn)

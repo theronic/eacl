@@ -48,6 +48,7 @@
            [{:timeout-ms 0} :timeout-ms]
            [{:timeout-ms -1} :timeout-ms]
            [{:timeout-ms 1.5} :timeout-ms]
+           [{:cancellation-token (atom false)} :cancellation-token]
            [{:count-limit -1} :count-limit]]]
     (testing (pr-str request)
       (let [data
@@ -79,6 +80,52 @@
         (is (= :can? (:operation data)))
         (is (= :before-command (:stage data)))
         (is (= {:backend-commands 2} (:consumed-work data)))))))
+
+(deftest cooperative-cancellation-token-test
+  (let [clock (atom 0)
+        token (execution/cancellation-token)
+        contract
+        (binding [execution/*monotonic-nanos* #(deref clock)]
+          (execution/normalize
+           {:execution-timeout-ms 100}
+           :lookup-resources
+           {:first 10 :cancellation-token token}))]
+    (is (execution/cancellation-token? token))
+    (is (false? (execution/cancelled? token)))
+    (is (identical? token (:cancellation-token contract)))
+    (binding [execution/*monotonic-nanos* #(deref clock)]
+      (is (= contract (execution/check! contract :generated-quantum)))
+      (is (true? (execution/cancel! token)))
+      (is (true? (execution/cancel! token)) "cancellation is idempotent")
+      (is (execution/cancelled? token))
+      (let [data
+            (caught-data
+             #(execution/check!
+               contract :adapter-response {:backend-commands 3}))]
+        (is (= :eacl.execution/cancelled (:type data)))
+        (is (= :eacl.execution/cancelled (:eacl/error data)))
+        (is (= :lookup-resources (:operation data)))
+        (is (= :adapter-response (:stage data)))
+        (is (= {:backend-commands 3} (:consumed-work data)))
+        (is (not (contains? data :cancellation-token))))
+      (is (false? (execution/cache-stage-available? contract))))))
+
+(deftest deadline-remains-authoritative-when-both-controls-fire-test
+  (let [clock (atom 0)
+        token (execution/cancellation-token)
+        contract
+        (binding [execution/*monotonic-nanos* #(deref clock)]
+          (execution/normalize
+           {:execution-timeout-ms 1}
+           :can?
+           {:cancellation-token token}))]
+    (execution/cancel! token)
+    (reset! clock 1000000)
+    (is (= :eacl.execution/deadline-exceeded
+           (:type
+            (binding [execution/*monotonic-nanos* #(deref clock)]
+              (caught-data
+               #(execution/check! contract :generated-quantum))))))))
 
 (deftest cache-stage-preserves-evaluation-reserve-test
   (let [clock (atom 0)

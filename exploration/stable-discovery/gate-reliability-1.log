@@ -1,0 +1,23 @@
+checked model: AtomicAttempt.cfg
+checked model: ServiceLifecycle.cfg
+checked model: DescriptorCoalescing.cfg
+checked model: ProgressCheckpoint.cfg
+checked model: ReducerReadAhead.cfg
+killed mutation: DescriptorCoalescing.duplicate-flight.cfg
+killed mutation: ServiceLifecycle.free-early.cfg
+killed mutation: AtomicAttempt.integrate-partial.cfg
+killed mutation: ProgressCheckpoint.partial.cfg
+killed mutation: ReducerReadAhead.integrate-any.cfg
+killed mutation: ServiceLifecycle.publish-late.cfg
+{:seed 24301, :graph-cases 5000, :join-cases 5000, :rank-cases 5000, :checks 15000, :elapsed-ms 1739.742625, :mutation-controls :killed}
+killed mutation: AtomicAttempt.duplicate.cfg
+killed mutation: ProgressCheckpoint.after-control.cfg
+killed mutation: ReducerReadAhead.lend-reserve.cfg
+killed mutation: AtomicAttempt.publish-partial.cfg
+killed mutation: ProgressCheckpoint.old-epoch.cfg
+killed mutation: ReducerReadAhead.after-cancel.cfg
+killed mutation: ProgressCheckpoint.older.cfg
+killed mutation: ProgressCheckpoint.wrong-context.cfg
+killed mutation: ProgressCheckpoint.as-answer.cfg
+
+Dafny program verifier finished with 162 verified, 0 errors

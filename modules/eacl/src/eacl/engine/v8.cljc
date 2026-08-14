@@ -1,6 +1,9 @@
 (ns eacl.engine.v8
   (:require [eacl.backend.v8 :as backend]
             [eacl.core :refer [spice-object]]
+            [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.engine.stable-page :as stable-page]
+            [eacl.engine.stable-route :as stable-route]
             [eacl.execution :as execution]
             [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.proof-frame :as proof-frame]
@@ -2905,32 +2908,33 @@
 
                :need-scans
                (let [commands (:commands outcome)
-                     _ (execution/check!
-                        execution/*contract*
-                        :adapter-command
-                        (select-keys
-                         (:counters (:state outcome))
-                         dimensional-counter-keys))
-                     _ (doseq [command commands]
-                         (record-execution-trace!
-                          :generated-command
-                          {:direction direction :command command}))
+                     consumed-work
+                     (select-keys
+                      (:counters (:state outcome))
+                      dimensional-counter-keys)
                      responses
                      (mapv
-                      #(execute-generated-command db plan %)
+                      (fn [command]
+                        (execution/check!
+                         execution/*contract*
+                         :adapter-command
+                         consumed-work)
+                        (record-execution-trace!
+                         :generated-command
+                         {:direction direction :command command})
+                        (let [response
+                              (execute-generated-command db plan command)]
+                          (execution/check!
+                           execution/*contract*
+                           :adapter-response
+                           consumed-work)
+                          (record-execution-trace!
+                           :adapter-response
+                           {:direction direction
+                            :response response
+                            :fetched-values (:fetched-values response)})
+                          response))
                       commands)
-                     _ (execution/check!
-                        execution/*contract*
-                        :adapter-response
-                        (select-keys
-                         (:counters (:state outcome))
-                         dimensional-counter-keys))
-                     _ (doseq [response responses]
-                         (record-execution-trace!
-                          :adapter-response
-                          {:direction direction
-                           :response response
-                           :fetched-values (:fetched-values response)}))
                      resumed
                      (verified/resume-indexed
                       selection direction (:state outcome) responses limits)]
@@ -3906,50 +3910,209 @@
               resource-type
               {:kind :boolean :target-eid resource-eid})))))))))
 
+
+;; --- Stable-discovery routing (adopt-stable-discovery-enumeration, 9.1) ----
+;;
+;; Every public entry point routes through the sealed-plan stable-discovery
+;; engine. Public order is the versioned stable first-discovery order; the
+;; previous global entity-ID merge and generated fixed-point routes are no
+;; longer public authorities. The public :evaluation modes remain accepted
+;; and are equivalent by construction: the stable engine computes exact
+;; results on every path, and exhaustion IS the complete denotation.
+
+(def stable-order-abi 1)
+(def stable-cursor-version 1)
+
+(defonce ^:private stable-plan-cache
+  (atom {:entries {} :order []}))
+
+(defn- stable-plan
+  "Seals (or reuses) the direction-specific plan for one root at the exact
+  basis. Keyed by the concrete snapshot identity (never a caller-supplied
+  lifecycle string alone — distinct stores may share lifecycles and
+  revisions) plus basis and root; bounded FIFO."
+  [db root-node]
+  (let [key [#?(:clj (System/identityHashCode db)
+                :cljs (hash db))
+             (backend/invoke db :source-lifecycle)
+             (backend/invoke db :native-revision)
+             root-node]]
+    (or (get-in @stable-plan-cache [:entries key])
+        (let [plan (sealed-plan/seal-plan db root-node)]
+          (swap! stable-plan-cache
+                 (fn [{:keys [entries order] :as cache}]
+                   (if (contains? entries key)
+                     cache
+                     (let [order (conj order key)
+                           entries (assoc entries key plan)]
+                       (if (> (count order) 128)
+                         {:entries (dissoc entries (first order))
+                          :order (subvec order 1)}
+                         {:entries entries :order order})))))
+          plan))))
+
+(defn- stable-edge
+  [plan traversal ordinal eid]
+  {:kind :stable-edge
+   :version stable-cursor-version
+   :order-abi stable-order-abi
+   :fingerprint (:fingerprint plan)
+   :traversal traversal
+   :ordinal ordinal
+   :result-eid eid})
+
+(defn- validate-stable-bound!
+  [plan traversal bound]
+  (when bound
+    (when-not (= :stable-edge (:kind bound))
+      (page-error!
+       "Lookup page cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:kind bound)}))
+    (when (not= (:fingerprint plan) (:fingerprint bound))
+      (page-error!
+       "Cursor is bound to an incompatible sealed plan."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :plan-fingerprint-mismatch}))
+    (when (not= traversal (:traversal bound))
+      (page-error!
+       "Cursor traversal direction does not match the request."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:traversal bound)}))
+    (when-not (and (integer? (:ordinal bound))
+                   (pos? (:ordinal bound))
+                   (some? (:result-eid bound)))
+      (page-error!
+       "Cursor boundary is malformed."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :malformed-boundary}))))
+
+(defn- stable-limits
+  "Maps the public recursive-traversal limits onto the stable reducer's
+  budgets: derived grants bound logical admissions, advanced datoms bound
+  physical commands."
+  []
+  (let [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}
+        *recursive-traversal-limits*]
+    (cond-> {}
+      max-derived-grants (assoc :max-admissions max-derived-grants)
+      max-advanced-datoms (assoc :max-commands max-advanced-datoms)
+      max-queued-work (assoc :max-transitions max-queued-work))))
+
+(def ^:private stable-limit-kinds
+  {:max-admissions :derived-grants
+   :max-commands :advanced-datoms
+   :max-transitions :queued-work})
+
+(defn- with-public-limit-errors
+  "The stable reducer's typed limit failure surfaces under the public
+  recursive-traversal error key."
+  [thunk]
+  (try
+    (thunk)
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) error
+      (if (contains? #{:eacl.reducer/limit-exceeded
+                       :eacl.page/resource-exhausted}
+                     (:eacl/error (ex-data error)))
+        (let [data (ex-data error)]
+          (page-error!
+           "Recursive traversal exceeded its configured limits."
+           (assoc (dissoc data :eacl/error)
+                  :eacl/error :eacl.recursive-traversal/limit-exceeded
+                  :limit-kind (get stable-limit-kinds (:limit data)
+                                   :derived-grants))))
+        (throw error)))))
+
+(defn- stable-checkpoints
+  "Accepts only a stable-page checkpoint store; other continuation caches
+  (the retired recursive store) degrade to deterministic replay."
+  [cache]
+  (when (and cache
+             #?(:clj (instance? clojure.lang.IAtom cache)
+                :cljs (instance? Atom cache))
+             (map? @cache)
+             (contains? @cache :entries))
+    cache))
+
+(defn- stable-items
+  [plan traversal result-type start-ordinal eids]
+  (mapv
+   (fn [offset eid]
+     {:node (spice-object result-type eid)
+      :cursor (stable-edge plan traversal
+                           (+ start-ordinal offset 1) eid)})
+   (range)
+   eids))
+
+(defn- stable-lookup-page
+  [db traversal query cache]
+  (let [{:keys [direction size bound]} (normalize-page-request query)
+        forward? (= :forward traversal)
+        result-type (if forward?
+                      (:resource/type query)
+                      (:subject/type query))
+        root-type (if forward?
+                    (:resource/type query)
+                    (:type (:resource query)))
+        anchor (if forward? (:subject query) (:resource query))
+        subject-type (if forward?
+                       (:type (:subject query))
+                       (:subject/type query))]
+    (if-not (permission-root-defined? db root-type (:permission query))
+      (page-response {:items [] :has-next? false
+                      :has-previous? (boolean bound)})
+      (let [root-node (permission-query-node root-type (:permission query))
+            plan (stable-plan db root-node)
+            _ (validate-stable-bound! plan traversal bound)
+            anchor-eid (object-eid db (:id anchor))
+            edge (when bound {:ordinal (:ordinal bound)
+                              :eid (:result-eid bound)})
+            result (with-public-limit-errors
+                     #(stable-page/edge-page
+                       (merge
+                        (stable-limits)
+                        {:adapter db
+                         :plan plan
+                         :direction traversal
+                         :anchor-eid anchor-eid
+                         :subject-type subject-type
+                         :page-size size
+                         :after (when (= :asc direction) edge)
+                         :before (when (and (= :desc direction) edge) edge)
+                         :last-window? (and (= :desc direction) (nil? edge))
+                         :checkpoints (stable-checkpoints cache)
+                         :checkpoint-key [(:fingerprint plan)
+                                          (backend/invoke db :native-revision)
+                                          traversal subject-type anchor-eid
+                                          size]})))]
+        (page-response
+         {:items (stable-items plan traversal result-type
+                               (:start-ordinal result) (:eids result))
+          :has-next? (:has-next? result)
+          :has-previous? (:has-previous? result)})))))
+
 (defn can?
   [db subject permission resource]
-  (let [subject-type  (:type subject)
-        subject-eid   (object-eid db (:id subject))
+  (let [subject-type (:type subject)
+        subject-eid (object-eid db (:id subject))
         resource-type (:type resource)
-        resource-eid  (object-eid db (:id resource))
+        resource-eid (object-eid db (:id resource))
         defined-root?
         (and subject-eid
              resource-eid
              (permission-root-defined?
               db resource-type permission))]
     (if defined-root?
-      (let [certified-route
-            (if (= :complete-denotation *evaluation-mode*)
-              (enumeration-route db resource-type permission)
-              ;; A bound schema cache carries the generated acyclicity
-              ;; certificate. Without that binding, use the generated
-              ;; fixed-point authority for the demand point check.
-              (if (and (derived-cache-active?)
-                       (not (traversal-permission?
-                             db resource-type permission)))
-                :acyclic
-                :recursive))
-            route (evaluation-route certified-route)]
-        (case route
-          :acyclic
-          (binding [*acyclic-route?* true
-                    *inactive-recursive-cycle-guards* #{}]
-            (add-acyclic-work! :routed-acyclic 1)
-            (boolean
-             (acyclic-bound-authorized?
-              db
-              forward-acyclic-direction
-              {:subject subject
-               :permission permission
-               :resource/type resource-type}
-              resource-eid)))
-
-          :recursive
-          (recursive-can?
-           db subject-type subject-eid
-           (permission-query-node resource-type permission)
-           resource-type resource-eid
-           (completed-denotation-public-order certified-route))))
+      (let [root-node (permission-query-node resource-type permission)
+            plan (stable-plan db root-node)]
+        (with-public-limit-errors
+          #(stable-route/check-eids
+            (merge (stable-limits)
+                   {:adapter db
+                    :plan plan
+                    :subject-type subject-type
+                    :subject-eid subject-eid
+                    :resource-eid resource-eid}))))
       false)))
 
 ;; --- Certified acyclic enumeration -----------------------------------------
@@ -4605,7 +4768,7 @@
          [:count :truncated?])))))
 
 (defn lookup-resources
-  "Runs generated forward pagination.
+  "Stable-discovery forward pagination.
 
   Raw-impl callers must hold one DB value for a whole exact-snapshot walk; the
   public client authenticates and scopes cursor state before it reaches here."
@@ -4613,58 +4776,12 @@
    (lookup-resources db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn]}]
    (let [cache (or continuation-cache
-                   (when continuation-cache-fn (continuation-cache-fn)))
-         certified-route
-         (enumeration-route
-          db (:resource/type query) (:permission query))
-         route (evaluation-route certified-route)]
-     (case route
-       :recursive
-       (if (= :acyclic certified-route)
-         (let [{:keys [direction size bound]}
-               (normalize-page-request query)
-               {:keys [subject permission]} query
-               subject-type (:type subject)
-               subject-eid (object-eid db (:id subject))
-               result-type (:resource/type query)
-               root-node (permission-query-node result-type permission)
-               values
-               (if subject-eid
-                 (resolve-forward-denotation
-                  db subject-type subject-eid root-node result-type
-                  (completed-denotation-public-order certified-route))
-                 [])]
-           (complete-acyclic-page
-            values result-type direction size bound))
-         (recursive-forward-page db query cache))
-
-       :acyclic
-       (binding [*acyclic-route?* true
-                 *inactive-recursive-cycle-guards*
-                 (inactive-recursive-cycle-guard-keys
-                  db
-                  (:resource/type query)
-                  (:permission query)
-                  certified-route)]
-         (add-acyclic-work! :routed-acyclic 1)
-         (acyclic-lookup
-          db forward-acyclic-direction query cache))
-
-       (let [{:keys [bound]} (normalize-page-request query)]
-         (when bound
-           (case (:kind bound)
-             :lookup-eid (validate-lookup-eid-bound! bound)
-             (page-error!
-              "Lookup page cursor has the wrong kind."
-              {:eacl/error :eacl.pagination/wrong-cursor-kind
-               :actual (:kind bound)})))
-         (page-response
-          {:items []
-           :has-next? false
-           :has-previous? (boolean bound)}))))))
+                   (when continuation-cache-fn (continuation-cache-fn)))]
+     (stable-lookup-page db :forward query cache))))
 
 (defn lookup-subjects
-  "See lookup-resources: cursors are only valid against the minting db basis."
+  "Stable-discovery reverse pagination; cursors are only valid against the
+  minting db basis."
   ([db query]
    (lookup-subjects db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn]}]
@@ -4676,59 +4793,8 @@
                   {:eacl/error :eacl.pagination/unsupported-filter
                    :filter :subject/relation}))
    (let [cache (or continuation-cache
-                   (when continuation-cache-fn (continuation-cache-fn)))
-         certified-route
-         (enumeration-route
-          db (:type (:resource query)) (:permission query))
-         route (evaluation-route certified-route)]
-     (case route
-       :recursive
-       (if (= :acyclic certified-route)
-         (let [{:keys [direction size bound]}
-               (normalize-page-request query)
-               {:keys [resource permission]} query
-               resource-type (:type resource)
-               resource-eid (object-eid db (:id resource))
-               subject-type (:subject/type query)
-               root-node
-               (permission-query-node resource-type permission)
-               values
-               (if resource-eid
-                 (resolve-reverse-denotation
-                  db resource-type resource-eid root-node subject-type
-                  (completed-denotation-public-order certified-route))
-                 [])]
-           (complete-acyclic-page
-            values subject-type direction size bound))
-         (recursive-reverse-page db query cache))
-
-       :acyclic
-       (binding [*acyclic-route?* true
-                 *inactive-recursive-cycle-guards*
-                 (inactive-recursive-cycle-guard-keys
-                  db
-                  (:type (:resource query))
-                  (:permission query)
-                  certified-route)]
-         (add-acyclic-work! :routed-acyclic 1)
-         (acyclic-lookup
-          db reverse-acyclic-direction query cache))
-
-       (let [{:keys [bound]} (normalize-page-request query)]
-         (when bound
-           (case (:kind bound)
-             :lookup-eid (validate-lookup-eid-bound! bound)
-             (page-error!
-              "Lookup page cursor has the wrong kind."
-              {:eacl/error :eacl.pagination/wrong-cursor-kind
-               :actual (:kind bound)})))
-         (page-response
-          {:items []
-           :has-next? false
-           :has-previous? (boolean bound)}))))))
-
-(def ^:private count-pagination-keys
-  [:cursor :limit :first :last :before :after])
+                   (when continuation-cache-fn (continuation-cache-fn)))]
+     (stable-lookup-page db :reverse query cache))))
 
 (defn- reject-count-pagination-keys!
   [op query]
@@ -4763,51 +4829,23 @@
   [db {:as query}]
   (reject-count-pagination-keys! "count-resources" query)
   (let [limit (query-count-limit query)
-        certified-route
-        (enumeration-route
-         db (:resource/type query) (:permission query))
-        route (evaluation-route certified-route)]
+        {:keys [subject permission]} query
+        result-type (:resource/type query)]
     (count-response
-     (case route
-       :undefined
+     (if-not (permission-root-defined? db result-type permission)
        {:count 0 :truncated? false}
-
-       :acyclic
-       (binding [*acyclic-route?* true
-                 *inactive-recursive-cycle-guards*
-                 (inactive-recursive-cycle-guard-keys
-                  db (:resource/type query) (:permission query) route)]
-         (add-acyclic-work! :routed-acyclic 1)
-         (count-acyclic-pages
-          db forward-acyclic-direction query limit))
-
-       :recursive
-       (let [{:keys [subject permission]} query
-             subject-eid (object-eid db (:id subject))
-             result-type (:resource/type query)
-             root-node (permission-query-node result-type permission)]
-         (if-not subject-eid
-           {:count 0 :truncated? false}
-           (if (= :complete-denotation *evaluation-mode*)
-             (count-denotation
-              (resolve-forward-denotation
-               db (:type subject) subject-eid root-node result-type
-               (completed-denotation-public-order certified-route))
-              limit)
-             ;; Cache-free counts keep the bounded generated renders so
-             ;; :count-limit truncation still stops the machine early.
-             (select-keys
-              (generated-forward-result
-               db
-               (recursive-plan db root-node)
-               (:type subject)
-               subject-eid
-               root-node
-               result-type
-               (if (some? limit)
-                 {:kind :count :limit limit}
-                 {:kind :all-count}))
-              [:count :truncated?])))))
+       (let [plan (stable-plan
+                   db (permission-query-node result-type permission))]
+         (select-keys
+          (with-public-limit-errors
+            #(stable-route/count-resources
+              (merge (stable-limits)
+                     {:adapter db
+                      :plan plan
+                      :subject-type (:type subject)
+                      :subject-id (:id subject)
+                      :count-limit limit})))
+          [:count :truncated?])))
      limit)))
 
 (defn count-subjects
@@ -4818,50 +4856,20 @@
                  {:eacl/error :eacl.pagination/unsupported-filter
                   :filter :subject/relation}))
   (let [limit (query-count-limit query)
-        certified-route
-        (enumeration-route
-         db (:type (:resource query)) (:permission query))
-        route (evaluation-route certified-route)]
+        {:keys [resource permission]} query]
     (count-response
-     (case route
-       :undefined
+     (if-not (permission-root-defined? db (:type resource) permission)
        {:count 0 :truncated? false}
-
-       :acyclic
-       (binding [*acyclic-route?* true
-                 *inactive-recursive-cycle-guards*
-                 (inactive-recursive-cycle-guard-keys
-                  db
-                  (:type (:resource query))
-                  (:permission query)
-                  route)]
-         (add-acyclic-work! :routed-acyclic 1)
-         (count-acyclic-pages
-          db reverse-acyclic-direction query limit))
-
-       :recursive
-       (let [{:keys [resource permission]} query
-             resource-eid (object-eid db (:id resource))
-             subject-type (:subject/type query)
-             root-node (permission-query-node (:type resource) permission)]
-         (if-not resource-eid
-           {:count 0 :truncated? false}
-           (if (= :complete-denotation *evaluation-mode*)
-             (count-denotation
-              (resolve-reverse-denotation
-               db (:type resource) resource-eid root-node subject-type
-               (completed-denotation-public-order certified-route))
-              limit)
-             (select-keys
-              (generated-reverse-result
-               db
-               (recursive-plan db root-node)
-               subject-type
-               root-node
-               resource-eid
-               subject-type
-               (if (some? limit)
-                 {:kind :count :limit limit}
-                 {:kind :all-count}))
-              [:count :truncated?])))))
+       (let [plan (stable-plan
+                   db (permission-query-node (:type resource) permission))]
+         (select-keys
+          (with-public-limit-errors
+            #(stable-route/count-subjects
+              (merge (stable-limits)
+                     {:adapter db
+                      :plan plan
+                      :subject-type (:subject/type query)
+                      :resource-id (:id resource)
+                      :count-limit limit})))
+          [:count :truncated?])))
      limit)))

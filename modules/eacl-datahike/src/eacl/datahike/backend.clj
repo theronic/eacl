@@ -132,11 +132,12 @@
                          :source-scope source-scope))]
     (backend/make-adapter
      {:id :datahike
+      :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
       :deterministic? (:adapter-deterministic? opts)
       :identity-contract
       (:identity-contract opts
-                          :selected-internal/current-external-v1)
+                          :selected-internal/current-external-injective-v2)
       :capabilities
       (cond-> capabilities
         (or (nil? conn)
@@ -231,8 +232,32 @@
                          :selected-order-hint (:revision token-data)
                          :selected-exact-locator
                          (:exact-locator token-data)))))
-             (catch Throwable _
-               nil))))
+             ;; Datahike surfaces genuine absence AS exceptions: a foreign
+             ;; locator format fails UUID parsing, and a GC'd commit fails
+             ;; commit-as-db. Those map to the contractual unavailable nil.
+             ;; Every other Throwable is a classified failure, never nil.
+             (catch IllegalArgumentException _
+               nil)
+             (catch clojure.lang.ExceptionInfo info
+               (if (some #{:not-found :missing-node :read-failed}
+                         [(:type (ex-data info)) (:error (ex-data info))])
+                 nil
+                 (throw (ex-info "Exact-basis selection failed."
+                                 {:eacl/error :eacl.basis/selection-failure
+                                  :classification :retryable
+                                  :cause (ex-data info)}
+                                 info))))
+             (catch InterruptedException interrupt
+               (throw (ex-info "Exact-basis selection was interrupted."
+                               {:eacl/error :eacl.basis/selection-failure
+                                :classification :cancelled}
+                               interrupt)))
+             (catch Throwable failure
+               (throw (ex-info "Exact-basis selection failed."
+                               {:eacl/error :eacl.basis/selection-failure
+                                :classification :retryable
+                                :cause-class (.getName (class failure))}
+                               failure))))))
 
        :object-id->internal
        (fn [object-id]

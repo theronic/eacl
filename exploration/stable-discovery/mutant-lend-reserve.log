@@ -1,0 +1,77 @@
+TLC2 Version 2.19 of 08 August 2024 (rev: 5a47802)
+Warning: Please run the Java VM which executes TLC with a throughput optimized garbage collector by passing the "-XX:+UseParallelGC" property.
+(Use the -nowarning option to disable this warning.)
+Running breadth-first search Model-Checking with fp 130 and seed -5642630172156201672 with 1 worker on 14 cores with 9215MB heap and 64MB offheap memory [pid: 99930] (Mac OS X 26.4.1 aarch64, Eclipse Adoptium 26.0.2 x86_64, MSBDiskFPSet, DiskStateQueue).
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/ReducerReadAhead.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-runs/99769/tmp-mutant-lend-reserve/Integers.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-runs/99769/tmp-mutant-lend-reserve/Naturals.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-runs/99769/tmp-mutant-lend-reserve/FiniteSets.tla
+Parsing file /Users/petrus/code/eacl/core/target/exploration/stable-discovery/tlc-runs/99769/tmp-mutant-lend-reserve/Sequences.tla
+Semantic processing of module Naturals
+Semantic processing of module Integers
+Semantic processing of module Sequences
+Semantic processing of module FiniteSets
+Semantic processing of module ReducerReadAhead
+Starting... (2026-08-14 07:32:13)
+Computing initial states...
+Finished computing initial states: 1 distinct state generated at 2026-08-14 07:32:13.
+Error: Invariant Safety is violated.
+Error: The behavior up to this point is:
+State 1: <Initial predicate>
+/\ integratedAtCancel = <<>>
+/\ canceled = FALSE
+/\ projection = {}
+/\ integrated = <<>>
+/\ frontier = <<0>>
+/\ ready = {}
+/\ physical = {}
+
+State 2: <Issue line 120, col 3 to line 130, col 31 of module ReducerReadAhead>
+/\ integratedAtCancel = <<>>
+/\ canceled = FALSE
+/\ projection = {}
+/\ integrated = <<>>
+/\ frontier = <<0>>
+/\ ready = {}
+/\ physical = {0}
+
+State 3: <CompleteSuccess line 133, col 3 to line 140, col 63 of module ReducerReadAhead>
+/\ integratedAtCancel = <<>>
+/\ canceled = FALSE
+/\ projection = {0}
+/\ integrated = <<>>
+/\ frontier = <<0>>
+/\ ready = {0}
+/\ physical = {}
+
+State 4: <IntegrateCanonical line 159, col 3 to line 170, col 74 of module ReducerReadAhead>
+/\ integratedAtCancel = <<>>
+/\ canceled = FALSE
+/\ projection = {0}
+/\ integrated = <<0>>
+/\ frontier = <<1, 2, 4>>
+/\ ready = {}
+/\ physical = {}
+
+State 5: <Issue line 120, col 3 to line 130, col 31 of module ReducerReadAhead>
+/\ integratedAtCancel = <<>>
+/\ canceled = FALSE
+/\ projection = {0}
+/\ integrated = <<0>>
+/\ frontier = <<1, 2, 4>>
+/\ ready = {}
+/\ physical = {2}
+
+State 6: <Issue line 120, col 3 to line 130, col 31 of module ReducerReadAhead>
+/\ integratedAtCancel = <<>>
+/\ canceled = FALSE
+/\ projection = {0}
+/\ integrated = <<0>>
+/\ frontier = <<1, 2, 4>>
+/\ ready = {}
+/\ physical = {2, 4}
+
+33 states generated, 18 distinct states found, 8 states left on queue.
+The depth of the complete state graph search is 6.
+The average outdegree of the complete state graph is 2 (minimum is 0, the maximum 5 and the 95th percentile is 5).
+Finished in 00s at (2026-08-14 07:32:13)

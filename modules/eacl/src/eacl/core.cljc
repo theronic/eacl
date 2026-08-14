@@ -1,5 +1,26 @@
 (ns eacl.core
-  "Defines the IAuthorization protocol, records & helpers.")
+  "Defines the IAuthorization protocol, records & helpers."
+  (:require [eacl.execution :as execution]))
+
+(defn cancellation-token
+  "Creates a caller-owned cooperative cancellation token for one request."
+  []
+  (execution/cancellation-token))
+
+(defn cancellation-token?
+  "True when `value` implements EACL cooperative cancellation."
+  [value]
+  (execution/cancellation-token? value))
+
+(defn cancel!
+  "Requests cooperative cancellation for `token`; idempotently returns true."
+  [token]
+  (execution/cancel! token))
+
+(defn cancelled?
+  "True when cancellation has been requested for `token`."
+  [token]
+  (execution/cancelled? token))
 
 (defprotocol IAuthorization
   ;; For order-dependent calls, we try to maintain the order of [subject permission resource].
@@ -90,6 +111,7 @@
   ; - :subject has {:keys [type id]}. Required.
   ; - :first with optional :after for forward pagination.
   ; - :last with optional :before for backward pagination.
+  ; - :cancellation-token optionally requests cooperative cancellation.
   ; Returns {:data [...] :page-info {:start-cursor ... :end-cursor ...
   ;                                  :has-next-page? ... :has-previous-page? ...}}.
 
@@ -111,7 +133,7 @@
 
   (expand-permission-tree [this {:as query :keys [resource permission consistency]}])
   ; expand-permission-tree accepts exactly :resource, :permission, optional
-  ; :consistency and :timeout-ms. It returns
+  ; :consistency, :timeout-ms and :cancellation-token. It returns
   ; {:expanded-at causal-token :tree-root PermissionRelationshipTree-map}.
   ; Every tree node has :expanded-object, :expanded-relation and exactly one
   ; of {:intermediate {:operation :union :children [...]}} or
