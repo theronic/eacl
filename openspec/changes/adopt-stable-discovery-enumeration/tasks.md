@@ -137,6 +137,29 @@
 - `^:benchmark` suites still assert old-engine counters; rebase or retire
   them with 9.2 (they are CI-excluded).
 
+### Dead-path excision (2026-08-14, task 9.2 executed)
+
+- `v8.cljc` 4,956 -> 1,354 lines across two waves (kondo unused-private
+  fixpoint + zero-reference public sweep + the mutually recursive acyclic
+  cluster + the analysis router). Retained: the permission-path
+  derivation (feeds the relationship dependency sets that drive
+  answer-cache invalidation) and the live schema-cache generations.
+- `:relation-populated?` left the adapter contract (all three backends,
+  certification, dispatch evidence at 57 sites / 19 ops).
+- `eacl.lazy-merge-sort` moved to test scope; dead-counter benchmark
+  deftests retired from `pagination_test`/`subproblem_cache_test`; the
+  verified-authority cutover suite now pins the four LIVE generated
+  decisions (:consistency-plan :current-cache-decision
+  :cursor-continuation :relationship-page), and the Datomic client's
+  cursor-continuation decision routes through the client kernel (the
+  request-time global was the one bypass seam).
+- REMAINING (next commit after the release lands): the retired Dafny
+  leaves (`AcyclicEngine`, `Indexed*` x10, `OrderedMerge`, `CursorCost`)
+  plus their generated indexed runtime, `IndexedTraversalKernel`
+  protocol + implementations (`production_kernel` indexed half,
+  `portable_indexed.cljc`), indexed bridge-test sections, and
+  `manifest.edn` theorem-count re-pins.
+
 ### Local MinIO S3-read qualification (2026-08-14, 100k servers)
 
 Measured on the datahike demo against loopback MinIO (fresh store,
