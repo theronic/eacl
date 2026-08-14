@@ -207,15 +207,31 @@ jobs:
             sleep 1
           done
           kill -KILL "$old_pid" 2>/dev/null || true
+          # The retiring listener must release the port before the new JVM
+          # starts, or the readiness probe below can accept against the dying
+          # process and hand the next gate a connection-refused nREPL.
+          for attempt in {1..30}; do
+            if ! (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
           JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
             clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
             >> target/formal/ci-nrepl.log 2>&1 &
           echo "$!" > target/formal/ci-nrepl.pid
           for attempt in {1..180}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
-              exit 0
+              break
             fi
             sleep 1
+          done
+          # Readiness is an evaluation round-trip, not a TCP accept.
+          for attempt in {1..12}; do
+            if sh bin/ci-nrepl-eval 7788 ':eacl.formal/nrepl-ready'; then
+              exit 0
+            fi
+            sleep 5
           done
           cat target/formal/ci-nrepl.log
           exit 1
@@ -259,15 +275,31 @@ jobs:
             sleep 1
           done
           kill -KILL "$old_pid" 2>/dev/null || true
+          # The retiring listener must release the port before the new JVM
+          # starts, or the readiness probe below can accept against the dying
+          # process and hand the next gate a connection-refused nREPL.
+          for attempt in {1..30}; do
+            if ! (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
           JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
             clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
             >> target/formal/ci-nrepl.log 2>&1 &
           echo "$!" > target/formal/ci-nrepl.pid
           for attempt in {1..180}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
-              exit 0
+              break
             fi
             sleep 1
+          done
+          # Readiness is an evaluation round-trip, not a TCP accept.
+          for attempt in {1..12}; do
+            if sh bin/ci-nrepl-eval 7788 ':eacl.formal/nrepl-ready'; then
+              exit 0
+            fi
+            sleep 5
           done
           cat target/formal/ci-nrepl.log
           exit 1
@@ -334,15 +366,31 @@ jobs:
             sleep 1
           done
           kill -KILL "$old_pid" 2>/dev/null || true
+          # The retiring listener must release the port before the new JVM
+          # starts, or the readiness probe below can accept against the dying
+          # process and hand the next gate a connection-refused nREPL.
+          for attempt in {1..30}; do
+            if ! (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
           JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
             clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
             >> target/formal/ci-nrepl.log 2>&1 &
           echo "$!" > target/formal/ci-nrepl.pid
           for attempt in {1..180}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
-              exit 0
+              break
             fi
             sleep 1
+          done
+          # Readiness is an evaluation round-trip, not a TCP accept.
+          for attempt in {1..12}; do
+            if sh bin/ci-nrepl-eval 7788 ':eacl.formal/nrepl-ready'; then
+              exit 0
+            fi
+            sleep 5
           done
           cat target/formal/ci-nrepl.log
           exit 1
