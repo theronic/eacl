@@ -14,7 +14,7 @@
  "Dafny now verifies a page-continuation transition that authenticates the public ordinal/EID boundary and carries the already-consumed lookahead into a new render without copying or exposing the opaque frontier. The CLJ/CLJS kernel boundary validates typed continuation outcomes. Generated authority now participates in denotation/page caches, stores opaque client-private continuations with validated counter envelopes and O(1) logical-unit admission estimates, falls back to deterministic replay on any continuation miss, malformed or incompatible state, or rejection, and projects counter deltas into compatibility telemetry."
  :closing-evidence
  ["eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead"
-  "eacl.backend.v8-test/unusable-generated-continuation-is-a-recoverable-cache-miss-test"
+  "eacl.engine.continuation-reuse-test/repeated-pagination-reuses-checkpoints-test"
   "eacl.engine.physical-route-test/anchored-point-check-test"
   "eacl.datascript.contract-test/cold-recursive-point-check-publishes-complete-fixed-point-test"
   "formal mutation :generated-authority-bypasses-cache-cutover"

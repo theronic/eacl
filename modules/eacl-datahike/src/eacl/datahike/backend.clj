@@ -300,16 +300,6 @@
           db subject-type subject-id relation-id
           resource-type resource-id))
 
-       :relation-populated?
-       (fn [subject-type relation-id resource-type]
-         (boolean
-          (first
-           (ddb/avet-tuple-prefix
-            db
-            relationship-storage/forward-attribute
-            4
-            [subject-type relation-id resource-type]))))
-
        :all-permission-nodes
        (fn []
          (->> (ddb/avet-datoms db schema/permission-key-attr)

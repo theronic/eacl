@@ -977,26 +977,10 @@
             "current-only continuation rejects a disappeared authenticated boundary")
         (is (= {:eacl/error :eacl.pagination/stale-cursor}
                (ex-data resumed-error))
-            "internal ordinal and EID diagnostics do not leak through the public stale-cursor shape")))
-    (let [render-rejected
-          (try
-            (#'engine/generated-traversal-error!
-             :forward
-             {}
-             {:status :render-rejected
-              :state :opaque
-              :error {:reason :cursor-result-mismatch
-                      :ordinal 1
-                      :expected-eid 15
-                      :actual-eid 16}})
-            nil
-            (catch Exception exception
-              exception))]
-      (is (= :eacl.pagination/stale-cursor
-             (:eacl/error (ex-data render-rejected))))
-      (is (= {:eacl/error :eacl.pagination/stale-cursor}
-             (ex-data render-rejected))
-          "generated render rejection keeps the minimal public stale-cursor shape"))))
+            "internal ordinal and EID diagnostics do not leak through the public stale-cursor shape")))))
+;; The retired generated render-rejection probe is gone with
+;; generated-traversal-error!; the public stale-cursor shape is pinned
+;; above through the live continuation path.
 
 (deftest generated-queue-limit-is-query-local
   (let [conn (datascript/create-conn)

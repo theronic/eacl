@@ -137,6 +137,30 @@
 - `^:benchmark` suites still assert old-engine counters; rebase or retire
   them with 9.2 (they are CI-excluded).
 
+### Local MinIO S3-read qualification (2026-08-14, 100k servers)
+
+Measured on the datahike demo against loopback MinIO (fresh store,
+100,048 servers, node cache 8,192, GETs counted at MinIO's own metrics
+endpoint; the endpoint caches ~15 s, so scrape with settle delays):
+
+- Process boot: 8 GETs. Cold first page over the full 100k denotation:
+  **5 GETs / 126 ms** (recorded old engine: 3,935 GETs / 148.4 s at 1M —
+  the old first page realized every stream head).
+- Cursor pages 2–50: ~0 incremental GETs, ~60 ms each.
+- Exhaustive count of 100,048: **3,062 GETs / 8.6 s** cold (~33 tuples
+  per node read — the full-index walk only an exhaustive count pays);
+  repeat 0 GETs / 16 ms (answer-cache hit).
+- Evicted-checkpoint replay (cold process, continuation at ordinal 200
+  with a stable `SECURITY_KEY`): **13 GETs / 178 ms**.
+- The demo's boot-time cache prewarm was REMOVED (it existed to mask the
+  old engine's cold page and would distort remote measurements); demo
+  client opts into raised traversal limits for platform-wide counts.
+- Rig gotchas are recorded in the demo's `docs/local-minio-runbook.md`
+  (MinIO metrics staleness; `-Dhttp.keepAlive=false` for sustained
+  seeding until Datahike's writer stops dying on one transient reset —
+  the writer-shutdown-on-first-IOException fragility is the write-path
+  sibling of the read-side failure-cause collapse in task 10.3).
+
 ## 10. Follow-on remote performance qualification
 
 - [ ] 10.1 Qualify Datahike direct S3 and tiered LMDB/S3 (restart warmth, disk lifecycle, exact-basis behavior at scale) with reproducible fixtures; publish performance envelopes including evicted-checkpoint replay p95/p99.
