@@ -76,8 +76,28 @@
 
 - [x] 9.1 Route lookup-resources, lookup-subjects, can?, count-resources, and count-subjects through the new engine on all backends at width one; rerun the full local gate. All five entry points on stable discovery via `:stable-edge` cursors through the authenticated relay envelope; public limits and error keys preserved; ~6,000 assertions green across Datomic/DataScript/Datahike/relay/baseline/stable suites plus the formal gate. The cross-engine differential caught and fixed a plan-cache key collision during the flip.
 - [ ] 9.2 Delete the acyclic merge route and `lazy_merge_sort`, the symmetric/byte-stable candidate (dual-mode branches, prefix commitments, byte-order contract, join buckets, dual limit ABIs, separate emitted sets), the physical scheduler entirely (including cross-request shared-read machinery), the service governor (its replay ledger rehomed per 6.4/7.5), the projection and denotation cache tiers, obsolete cursor branches and re-minting, and obsolete formal models — gated on the frozen baselines (2.x) and the evidence archive (2.1). The rejected candidate (uncommitted experiment: scheduler, governor, dual-mode branches, prefix commitments, its formal models) and the old routing test suites are deleted; the now-unreachable acyclic-merge and generated-kernel internals inside engine/v8.cljc plus `lazy_merge_sort` remain as dead code pending mechanical excision.
-- [ ] 9.3 Remove the generated-kernel runtime authority and host-side recomputation for deleted operations; surviving finite decision tables get exhaustive whole-domain test bridges.
+- [ ] 9.3 Remove the generated-kernel runtime authority and host-side recomputation for deleted operations; surviving finite decision tables get exhaustive whole-domain test bridges. Partially done by replacement: the stable routes bypass the kernel's page/count/route decisions; `normalize-page-request` still uses the kernel `:relationship-page` decision and the dead machinery still loads (see 9.2).
 - [x] 9.4 Publish the order ABI, cursor trust boundary, failure semantics, and cache metrics documentation. `docs/stable-discovery-engine.md` (consumer/operator summary over the normative specs).
+
+### Release engineering status (2026-08-14)
+
+- `v8.0.0-SNAPSHOT` pushed at the routed engine (`0effa0c`); the Clojars
+  release workflow gates on exact-SHA Tests + Formal verification (first
+  attempt failed on the isolated-module test layout and stale
+  counterexample evidence, both fixed; second run in flight). On green,
+  Clojars publishes `dev.eacl/* 8.0.0-SNAPSHOT` automatically.
+- [PR #116](https://github.com/theronic/eacl/pull/116) open against
+  `release/v8.0` (PR #115 is the pre-existing cooperative-cancellation PR
+  on the same base).
+- `eacl-datomic-solidjs` upgraded (pre-release `:coherence-authority`
+  option dropped, commit `bcf67b2` there) and verified running against the
+  local stable engine (`:local-eacl` alias, server on 8088, client on
+  5273) for operator testing.
+- `eacl-datahike-demo` already pins `8.0.0-SNAPSHOT`; deploy is blocked on
+  (a) the Clojars publish landing and (b) the operator-local
+  `infra/deployment.env` (instance host + SSH key are not in the repo).
+  Then: clear `~/.m2/repository/dev/eacl`, build the server uberjar, run
+  `infra/scripts/deploy-artifact.sh` — no S3 reseed (engine-only change).
 
 ## 10. Follow-on remote performance qualification
 
