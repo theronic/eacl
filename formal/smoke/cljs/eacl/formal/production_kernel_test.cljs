@@ -2126,23 +2126,7 @@
                 {:eacl/error :eacl.pagination/stale-cursor}}
                {:current-ids current-ids
                 :error-data (ex-data resume-error)})
-            "a changed recursive boundary is stale rather than rebased on DataScript's current DB"))
-      (let [render-rejected
-            (try
-              (engine/generated-traversal-error!
-               :forward
-               {}
-               {:status :render-rejected
-                :state :opaque
-                :error {:reason :cursor-result-mismatch
-                        :ordinal 1
-                        :expected-eid 15
-                        :actual-eid 16}})
-              nil
-              (catch :default error
-                error))]
-        (is (= :eacl.pagination/stale-cursor
-               (:eacl/error (ex-data render-rejected))))
-        (is (= {:eacl/error :eacl.pagination/stale-cursor}
-               (ex-data render-rejected))
-            "generated render rejection keeps the minimal public stale-cursor shape")))))
+            "a changed recursive boundary is stale rather than rebased on DataScript's current DB")))))
+;; The retired generated render-rejection probe is gone with
+;; generated-traversal-error!; the stale-cursor shape is pinned above
+;; through the live continuation path.

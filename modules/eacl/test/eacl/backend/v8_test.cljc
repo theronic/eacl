@@ -115,33 +115,6 @@
              [[left-nil one]
               [right-nil two]]))))))
 
-(deftest unusable-generated-continuation-is-a-recoverable-cache-miss-test
-  (let [calls (atom [])
-        kernel
-        (->RecordingKernel
-         calls
-         (fn [_ _]
-           (throw (ex-info "not used" {}))))
-        selection
-        {:kernel kernel}
-        restore
-        #?(:clj
-           (ns-resolve 'eacl.engine.v8 'restore-generated-continuation)
-           :cljs
-           engine/restore-generated-continuation)]
-    (is (= {:status :rejected
-            :reason :unusable-cached-state}
-           (restore
-            selection
-            :forward
-            {:state :opaque-state-from-an-incompatible-generated-runtime}
-            {:size 20
-             :bound
-             {:kind :lookup-eid
-              :result-eid 100}})))
-    (is (empty? @calls)
-        "the indexed continuation method, not DecisionKernel, owns restore")))
-
 (deftest validated-v8-adapter-test
   (let [adapter (test-adapter)]
     (is (backend/adapter? adapter))
@@ -658,9 +631,6 @@
       (engine/recursive-component-plan adapter :folder :read)
       (is (= 4 (count @calls))
           "the schema-proof/root plan cache also caches certification"))))
-
-
-
 
 (defn- bounded-values
   [values {:keys [direction bound-eid inclusive-bound?]}]
