@@ -36,10 +36,10 @@
 
 ## 5. Implement the generic reducer
 
-- [ ] 5.1 Port the accepted prototype (`forward_runtime_prototype.clj`) to one production CLJC reducer over the sealed-plan transition interface, with logical release hard-fixed at one value. The in-tree `portable_indexed.cljc` `:stable-discovery` mode is the rejected candidate and is not a porting source. Machine ported (`eacl.engine.stable-reducer`, one unified step over all work kinds, logical release fixed at one, bounded evictable buffers, physical-width/retention invariance verified); specialized JVM key classes still pending (currently vector keys).
-- [ ] 5.2 Implement specialized per-kind admission keys, right-edge stack, request-owned transients with freeze/fork discipline, compact scan frames, scalar counts, and checked limits.
-- [ ] 5.3 Implement pure stepping with exact read-demand suspension and atomic staged integration; no physical state in reducer values.
-- [ ] 5.4 Keep the cheap structural invariants always-on and fail-closed at the engine boundary; expensive per-value adapter guards stay opt-in.
+- [x] 5.1 Port the accepted prototype (`forward_runtime_prototype.clj`) to one production CLJC reducer over the sealed-plan transition interface, with logical release hard-fixed at one value. The in-tree `portable_indexed.cljc` `:stable-discovery` mode is the rejected candidate and is not a porting source. `eacl.engine.stable-reducer`: one unified step over all work kinds, logical release fixed at one, bounded evictable buffers, physical-width/retention invariance verified.
+- [x] 5.2 Implement specialized per-kind admission keys, right-edge stack, request-owned transients with freeze/fork discipline, compact scan frames, scalar counts, and checked limits. `AdmissionKey` deftype with cached hash (CLJS: vectors); transient admitted/results owned linearly by the loop, frozen in `finish`; typed `:eacl.reducer/limit-exceeded` for admissions/commands/transitions checked before their transition commits.
+- [x] 5.3 Implement pure stepping with exact read-demand suspension and atomic staged integration; no physical state in reducer values. Scans are equality-complete read-demand descriptors realized through one injectable `fetch-fn` seam (`adapter-fetch-fn` is the direct width-one path); semantic state is untouched until the complete chunk realizes; staged admission commits whole transitions or nothing.
+- [x] 5.4 Keep the cheap structural invariants always-on and fail-closed at the engine boundary; expensive per-value adapter guards stay opt-in. `finish` enforces discovered-count/duplicate-free invariants unconditionally; per-value scan-contract guards remain the adapter's opt-in `:runtime-guards?`.
 - [ ] 5.5 Prove/test soundness, completeness on exhaustion, termination, exact uniqueness, stable sequence, chunk invariance, and stack bounds via the CLJ/CLJS bridges and mutation controls.
 
 ## 6. Implement pagination and continuation

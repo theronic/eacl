@@ -29,56 +29,113 @@
 
 (def default-physical-chunk-size 64)
 (def default-sidecar-cap 16)
+(def default-max-admissions 1000000)
+(def default-max-commands 1000000)
+(def default-max-transitions 4000000)
 
 ;; ---------------------------------------------------------------------------
-;; Admission identity
+;; Admission identity: specialized immutable per-kind keys (task 5.2)
 ;; ---------------------------------------------------------------------------
+
+#?(:clj
+   (deftype AdmissionKey [kind a b
+                          ^:unsynchronized-mutable ^int cached-hash]
+     Object
+     (hashCode [this] (.hasheq this))
+     (equals [_ other]
+       (and (instance? AdmissionKey other)
+            (identical? kind (.-kind ^AdmissionKey other))
+            (= a (.-a ^AdmissionKey other))
+            (= b (.-b ^AdmissionKey other))))
+     clojure.lang.IHashEq
+     (hasheq [_]
+       (let [h cached-hash]
+         (if (zero? h)
+           (let [h (-> (hash kind)
+                       (hash-combine (hash a))
+                       (hash-combine (hash b)))
+                 h (if (zero? h) 42 h)]
+             (set! cached-hash (int h))
+             h)
+           h)))))
+
+(defn- admission-key [kind a b]
+  #?(:clj (AdmissionKey. kind a b 0)
+     :cljs [kind a b]))
 
 (defn work-id
   "Exact admission key per work kind. Scan occurrences exclude :bound-eid;
-  merge points are keyed by node + entity."
+  merge points are keyed by node + entity. Seed keys fold the subject
+  binding into one field because the ordinal already fixes the rule (and
+  with it the subject type)."
   [{:keys [kind rule] :as item}]
   (case kind
-    :seed-relation [:seed-relation (:ordinal rule)
-                    (:subject-type item) (:subject-eid item)]
-    :seed-arrow-relation [:seed-arrow-relation (:ordinal rule)
-                          (:subject-type item) (:subject-eid item)]
-    :via-scan [:via-scan (:ordinal rule) (:intermediate-eid item)]
-    :grant [:grant (:node rule) (:resource-eid item)]
-    :consumer [:consumer (:ordinal rule) (:resource-eid item)]
-    :reverse-goal [:reverse-goal (:node rule) (:resource-eid item)]
-    :reverse-direct [:reverse-direct (:ordinal rule) (:resource-eid item)]
-    :reverse-via-permission [:reverse-via-permission (:ordinal rule)
-                             (:resource-eid item)]
-    :reverse-via-relation [:reverse-via-relation (:ordinal rule)
-                           (:resource-eid item)]
-    :reverse-base-subjects [:reverse-base-subjects (:ordinal rule)
-                            (:intermediate-eid item)]
-    :reverse-subject [:reverse-subject (:subject-type item)
-                      (:subject-eid item)]))
+    :seed-relation (admission-key :seed-relation (:ordinal rule)
+                                  (:subject-eid item))
+    :seed-arrow-relation (admission-key :seed-arrow-relation (:ordinal rule)
+                                        (:subject-eid item))
+    :via-scan (admission-key :via-scan (:ordinal rule)
+                             (:intermediate-eid item))
+    :grant (admission-key :grant (:node rule) (:resource-eid item))
+    :consumer (admission-key :consumer (:ordinal rule) (:resource-eid item))
+    :reverse-goal (admission-key :reverse-goal (:node rule)
+                                 (:resource-eid item))
+    :reverse-direct (admission-key :reverse-direct (:ordinal rule)
+                                   (:resource-eid item))
+    :reverse-via-permission (admission-key :reverse-via-permission
+                                           (:ordinal rule)
+                                           (:resource-eid item))
+    :reverse-via-relation (admission-key :reverse-via-relation
+                                         (:ordinal rule)
+                                         (:resource-eid item))
+    :reverse-base-subjects (admission-key :reverse-base-subjects
+                                          (:ordinal rule)
+                                          (:intermediate-eid item))
+    :reverse-subject (admission-key :reverse-subject (:subject-type item)
+                                    (:subject-eid item))))
 
 ;; ---------------------------------------------------------------------------
 ;; Scheduling: right-edge stack, canonical order, exact admission
 ;; ---------------------------------------------------------------------------
 
+(defn- limit-failure!
+  [limit-key state detail]
+  (throw (ex-info "Stable-discovery semantic limit exceeded."
+                  (merge {:eacl/error :eacl.reducer/limit-exceeded
+                          :limit limit-key
+                          :admissions (:admissions state)
+                          :transitions (:transitions state)
+                          :commands (:commands state)
+                          :discovered (:discovered state)}
+                         detail))))
+
 (defn- schedule
   "Admits fresh work exactly once and pushes it after the residual: the
   residual is pushed first, then new work reversed onto the right edge, so
   successors run depth-first in canonical order before the residual resumes.
-  Push order is load-bearing for the public order ABI."
+  Push order is load-bearing for the public order ABI.
+
+  Admission limits are checked before any state mutates, so a rejected
+  transition commits nothing (staged atomic admission)."
   [{:keys [admitted] :as state} residual new-work]
   (let [fresh (into []
                     (comp (remove nil?)
-                          (filter #(not (contains? admitted (work-id %)))))
-                    new-work)
-        stack (cond-> (:stack state)
-                residual (conj residual))
-        stack (into stack (rseq fresh))]
-    (-> state
-        (assoc :stack stack)
-        (update :admitted into (map work-id) fresh)
-        (update :admissions + (count fresh))
-        (update :maximum-stack max (count stack)))))
+                          (map (fn [item] [item (work-id item)]))
+                          (filter (fn [[_ id]] (not (contains? admitted id)))))
+                    new-work)]
+    (when (> (+ (:admissions state) (count fresh)) (:max-admissions state))
+      (limit-failure! :max-admissions state
+                      {:max-admissions (:max-admissions state)
+                       :staged (count fresh)}))
+    (let [stack (cond-> (:stack state)
+                  residual (conj residual))
+          stack (into stack (map first) (rseq fresh))
+          admitted (reduce (fn [admitted [_ id]] (conj! admitted id))
+                           admitted fresh)]
+      (-> state
+          (assoc :stack stack :admitted admitted)
+          (update :admissions + (count fresh))
+          (update :maximum-stack max (count stack))))))
 
 ;; ---------------------------------------------------------------------------
 ;; One-value scan release with bounded disposable buffers
@@ -118,10 +175,20 @@
       state)))
 
 (defn- fetch-values
-  "The single effectful call: fetches one physical chunk strictly after the
-  exclusive bound. This is the width-one NeedRead seam."
-  [state scan-fn bound-eid]
-  (let [values (into [] (take (:physical-chunk-size state)) (scan-fn bound-eid))]
+  "The single effectful call: realizes one physical chunk strictly after the
+  exclusive bound for an explicit read-demand descriptor. This is the
+  width-one NeedRead seam (task 5.3): the reducer's semantic state is
+  untouched until the complete chunk is realized, so a thrown adapter
+  failure leaves state unchanged, and a future concurrency change replaces
+  only `fetch-fn`."
+  [{:keys [fetch-fn] :as state} descriptor bound-eid]
+  (when (>= (:commands state) (:max-commands state))
+    (limit-failure! :max-commands state
+                    {:max-commands (:max-commands state)}))
+  (let [values (into [] (take (:physical-chunk-size state))
+                     (fetch-fn (assoc descriptor
+                                      :bound-eid bound-eid
+                                      :limit (:physical-chunk-size state))))]
     [(-> state
          (update :commands inc)
          (update :fetched-values + (count values)))
@@ -133,7 +200,7 @@
   retained buffer and refetching from the authoritative bound otherwise.
   Returns [state value residual-item] where value is nil on exhaustion and
   residual-item is nil when the scan is complete."
-  [state item scan-fn]
+  [state item descriptor]
   (let [identity (work-id item)
         entry (get-in state [:sidecar identity])]
     (if (seq (:values entry))
@@ -143,7 +210,8 @@
             state (retain-buffer state identity remaining more?)]
         [state value (when (or (seq remaining) more?)
                        (assoc item :bound-eid value))])
-      (let [[state values more?] (fetch-values state scan-fn (:bound-eid item))]
+      (let [[state values more?] (fetch-values state descriptor
+                                               (:bound-eid item))]
         (if (empty? values)
           [(retain-buffer state identity [] false) nil nil]
           (let [value (first values)
@@ -157,27 +225,43 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- subject->resources-scan
-  [adapter subject-type subject-eid relation-eid resource-type]
-  (fn [bound-eid]
-    (backend/invoke adapter :subject->resources
-                    subject-type subject-eid relation-eid resource-type
-                    (cond-> {:direction :asc}
-                      bound-eid (assoc :bound-eid bound-eid
-                                       :inclusive-bound? false)))))
+  "Equality-complete read-demand descriptor for a forward scan."
+  [subject-type subject-eid relation-eid resource-type]
+  {:operation :subject->resources
+   :subject-type subject-type :subject-eid subject-eid
+   :relation-eid relation-eid :resource-type resource-type})
 
 (defn- resource->subjects-scan
-  [adapter resource-type resource-eid relation-eid subject-type]
-  (fn [bound-eid]
-    (backend/invoke adapter :resource->subjects
-                    resource-type resource-eid relation-eid subject-type
-                    (cond-> {:direction :asc}
-                      bound-eid (assoc :bound-eid bound-eid
-                                       :inclusive-bound? false)))))
+  "Equality-complete read-demand descriptor for a reverse scan."
+  [resource-type resource-eid relation-eid subject-type]
+  {:operation :resource->subjects
+   :resource-type resource-type :resource-eid resource-eid
+   :relation-eid relation-eid :subject-type subject-type})
+
+(defn adapter-fetch-fn
+  "The direct width-one path: realizes one read-demand descriptor against
+  the adapter with strictly-ascending exclusive-bound scan options."
+  [adapter]
+  (fn [{:keys [operation bound-eid] :as descriptor}]
+    (let [options (cond-> {:direction :asc}
+                    bound-eid (assoc :bound-eid bound-eid
+                                     :inclusive-bound? false))]
+      (case operation
+        :subject->resources
+        (backend/invoke adapter :subject->resources
+                        (:subject-type descriptor) (:subject-eid descriptor)
+                        (:relation-eid descriptor) (:resource-type descriptor)
+                        options)
+        :resource->subjects
+        (backend/invoke adapter :resource->subjects
+                        (:resource-type descriptor) (:resource-eid descriptor)
+                        (:relation-eid descriptor) (:subject-type descriptor)
+                        options)))))
 
 (defn- scan-transition
   "Releases one value and schedules its successors before the residual."
-  [state item scan-fn value->successors]
-  (let [[state value residual] (release-one state item scan-fn)]
+  [state item descriptor value->successors]
+  (let [[state value residual] (release-one state item descriptor)]
     (if (nil? value)
       (schedule state residual [])
       (schedule state residual (value->successors value)))))
@@ -186,7 +270,7 @@
   [state eid]
   (-> state
       (update :discovered inc)
-      (update :results conj eid)))
+      (update :results conj! eid)))
 
 (defn- grant-successors
   "Consumers of a grant at `node` for entity `eid`: self-permission
@@ -228,14 +312,14 @@
   "One bounded pure transition of the unified machine. The work kinds are
   disjoint across directions; the plan and seeding determine which kinds
   ever appear."
-  [{:keys [plan adapter subject-type root] :as context} state item]
+  [{:keys [plan subject-type root] :as context} state item]
   (let [rule (:rule item)]
     (case (:kind item)
       ;; ---- forward ----
       :seed-relation
       (scan-transition
        state item
-       (subject->resources-scan adapter (:subject-type item)
+       (subject->resources-scan (:subject-type item)
                                 (:subject-eid item) (:relation-eid rule)
                                 (:resource-type rule))
        (fn [eid] [{:kind :grant :rule rule :resource-eid eid}]))
@@ -243,7 +327,7 @@
       :seed-arrow-relation
       (scan-transition
        state item
-       (subject->resources-scan adapter (:subject-type item)
+       (subject->resources-scan (:subject-type item)
                                 (:subject-eid item)
                                 (:target-relation-eid rule)
                                 (:intermediate-type rule))
@@ -253,7 +337,7 @@
       :via-scan
       (scan-transition
        state item
-       (subject->resources-scan adapter (:intermediate-type rule)
+       (subject->resources-scan (:intermediate-type rule)
                                 (:intermediate-eid item)
                                 (:via-relation-eid rule)
                                 (:resource-type rule))
@@ -269,7 +353,7 @@
       :consumer
       (scan-transition
        state item
-       (subject->resources-scan adapter (:intermediate-type rule)
+       (subject->resources-scan (:intermediate-type rule)
                                 (:resource-eid item)
                                 (:via-relation-eid rule)
                                 (:resource-type rule))
@@ -284,7 +368,7 @@
       :reverse-direct
       (scan-transition
        state item
-       (resource->subjects-scan adapter (:resource-type rule)
+       (resource->subjects-scan (:resource-type rule)
                                 (:resource-eid item) (:relation-eid rule)
                                 (:subject-type rule))
        (fn [eid] [{:kind :reverse-subject :subject-type subject-type
@@ -293,7 +377,7 @@
       :reverse-via-permission
       (scan-transition
        state item
-       (resource->subjects-scan adapter (:resource-type rule)
+       (resource->subjects-scan (:resource-type rule)
                                 (:resource-eid item)
                                 (:via-relation-eid rule)
                                 (:intermediate-type rule))
@@ -303,7 +387,7 @@
       :reverse-via-relation
       (scan-transition
        state item
-       (resource->subjects-scan adapter (:resource-type rule)
+       (resource->subjects-scan (:resource-type rule)
                                 (:resource-eid item)
                                 (:via-relation-eid rule)
                                 (:intermediate-type rule))
@@ -313,7 +397,7 @@
       :reverse-base-subjects
       (scan-transition
        state item
-       (resource->subjects-scan adapter (:intermediate-type rule)
+       (resource->subjects-scan (:intermediate-type rule)
                                 (:intermediate-eid item)
                                 (:target-relation-eid rule)
                                 (:target-subject-type rule))
@@ -328,25 +412,37 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- initial-state
-  [{:keys [physical-chunk-size sidecar-cap]
+  "Request-owned state. The admitted set and result vector are transients
+  owned linearly by the run loop (task 5.2); `finish` freezes them before
+  the state escapes. Limits are checked before their transition commits."
+  [{:keys [adapter fetch-fn physical-chunk-size sidecar-cap
+           max-admissions max-commands max-transitions]
     :or {physical-chunk-size default-physical-chunk-size
-         sidecar-cap default-sidecar-cap}}]
-  {:pre [(pos? physical-chunk-size) (int? sidecar-cap) (<= 0 sidecar-cap)]}
+         sidecar-cap default-sidecar-cap
+         max-admissions default-max-admissions
+         max-commands default-max-commands
+         max-transitions default-max-transitions}}]
+  {:pre [(pos? physical-chunk-size) (int? sidecar-cap) (<= 0 sidecar-cap)
+         (pos? max-admissions) (pos? max-commands) (pos? max-transitions)]}
   {:stack []
-   :admitted #{}
+   :admitted (transient #{})
    :admissions 0
    :transitions 0
    :commands 0
    :fetched-values 0
+   :fetch-fn (or fetch-fn (adapter-fetch-fn adapter))
    :sidecar {}
    :sidecar-order []
    :sidecar-cap sidecar-cap
    :physical-chunk-size physical-chunk-size
+   :max-admissions max-admissions
+   :max-commands max-commands
+   :max-transitions max-transitions
    :maximum-sidecar-buffers 0
    :maximum-sidecar-values 0
    :maximum-stack 0
    :discovered 0
-   :results []})
+   :results (transient [])})
 
 (defn- run-loop
   [context state target cut-point!]
@@ -359,26 +455,45 @@
       state
 
       :else
-      (let [_ (when cut-point! (cut-point! state))
-            item (peek (:stack state))
-            state (-> state
-                      (update :stack pop)
-                      (update :transitions inc))]
-        (recur (step context state item))))))
+      (do
+        (when (>= (:transitions state) (:max-transitions state))
+          (limit-failure! :max-transitions state
+                          {:max-transitions (:max-transitions state)}))
+        (when cut-point! (cut-point! state))
+        (let [item (peek (:stack state))
+              state (-> state
+                        (update :stack pop)
+                        (update :transitions inc))]
+          (recur (step context state item)))))))
 
-(defn- finish [state]
-  (assoc state :completed (- (count (:admitted state))
-                             (count (:stack state)))))
+(defn- finish
+  "Freezes request-owned transients and enforces the always-on structural
+  invariants (task 5.4): the result count equals the discovered count and
+  results are duplicate-free by construction."
+  [state]
+  (let [results (persistent! (:results state))
+        admitted (persistent! (:admitted state))]
+    (when-not (and (= (:discovered state) (count results))
+                   (= (count results) (count (distinct results))))
+      (throw (ex-info "Stable-discovery structural invariant violated."
+                      {:eacl/error :eacl.reducer/invariant-violation
+                       :discovered (:discovered state)
+                       :result-count (count results)})))
+    (-> state
+        (assoc :results results
+               :admitted admitted
+               :completed (- (count admitted) (count (:stack state))))
+        (dissoc :fetch-fn))))
 
 (defn run-forward
   "Enumerates root resources the subject reaches, in stable first-discovery
   order, until `target` results or exhaustion. Returns the final state;
   :results is the canonical sequence of internal resource ids."
-  [{:keys [adapter plan subject-type subject-eid target cut-point!]
+  [{:keys [adapter fetch-fn plan subject-type subject-eid target cut-point!]
     :as options}]
-  {:pre [(some? adapter) (some? plan) (keyword? subject-type)
-         (some? subject-eid) (pos? target)]}
-  (let [context {:plan plan :adapter adapter :root (:root plan)
+  {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
+         (keyword? subject-type) (some? subject-eid) (pos? target)]}
+  (let [context {:plan plan :root (:root plan)
                  :subject-type subject-type}
         seeds (mapv (fn [rule]
                       (case (:rule rule)
@@ -398,11 +513,11 @@
   `resource-eid`, in stable first-discovery order, until `target` results
   or exhaustion. Returns the final state; :results is the canonical
   sequence of internal subject ids."
-  [{:keys [adapter plan subject-type resource-eid target cut-point!]
+  [{:keys [adapter fetch-fn plan subject-type resource-eid target cut-point!]
     :as options}]
-  {:pre [(some? adapter) (some? plan) (keyword? subject-type)
-         (some? resource-eid) (pos? target)]}
-  (let [context {:plan plan :adapter adapter :root (:root plan)
+  {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
+         (keyword? subject-type) (some? resource-eid) (pos? target)]}
+  (let [context {:plan plan :root (:root plan)
                  :subject-type subject-type}
         goal {:kind :reverse-goal :rule {:node (:root plan)}
               :resource-eid resource-eid}
