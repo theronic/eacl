@@ -301,78 +301,9 @@
         (is (= (metric before) (metric after))
             (str metric " must not change during request bypass"))))))
 
-(deftest distinct-permissions-share-exact-relationship-projections-test
-  (let [conn (datascript/create-conn)
-        client (managed-client conn {})
-        shared-schema
-        "definition user {}
-         definition team {
-           relation member: user
-           permission access = member
-         }
-         definition server {
-           relation team: team
-           permission view = team->access
-           permission edit = team->access
-         }"
-        team (eacl/spice-object :team "shared-team")
-        servers
-        (mapv #(eacl/spice-object :server (str "shared-server-" %))
-              (range 40))
-        relationships
-        (into [(eacl/->Relationship user :member team)]
-              (map #(eacl/->Relationship team :team %) servers))
-        query
-        (fn [permission]
-          {:subject user
-           :permission permission
-           :resource/type :server
-           :evaluation :complete-denotation
-           :first 20})
-        work (atom {})]
-    (eacl/write-schema! client shared-schema)
-    (ds/transact!
-     conn
-     (mapv (fn [object]
-             {:eacl/id (:id object)})
-           (into [user team] servers)))
-    (eacl/create-relationships! client relationships)
-    (binding [engine/*backend-work-stats* work]
-      (let [view-page (eacl/lookup-resources client (query :view))
-            after-view (datascript/cache-stats client)
-            edit-page (eacl/lookup-resources client (query :edit))
-            after-edit (datascript/cache-stats client)]
-        (is (= (:data view-page) (:data edit-page)))
-        (is (false? (:cached? view-page)))
-        (is (false? (:cached? edit-page)))
-        (is (= (:exact-hits after-view) (:exact-hits after-edit))
-            "different top-level permission keys cannot hit completed answers")
-        (is (> (reusable-subproblem-hits after-edit)
-               (reusable-subproblem-hits after-view))
-            (str
-             "the second permission must reuse a projection or the stronger "
-             "complete semantic denotation"))
-        (is (pos? (:executed-backend-operations @work))))
-      (testing "acyclic point decisions reuse a shared target permission"
-        (let [server (first servers)
-              _ (is (true? (eacl/can? client
-                                      {:subject user
-                                       :permission :view
-                                       :resource server
-                                       :evaluation :complete-denotation})))
-              after-view (datascript/cache-stats client)
-              _ (is (true? (eacl/can? client
-                                      {:subject user
-                                       :permission :edit
-                                       :resource server
-                                       :evaluation :complete-denotation})))
-              after-edit (datascript/cache-stats client)]
-          (is (= (:exact-hits after-view) (:exact-hits after-edit)))
-          (is (> (reusable-subproblem-hits after-edit)
-                 (reusable-subproblem-hits after-view))
-              (str
-               "authority modes may reuse the exact projection or its "
-               "complete semantic denotation")))))))
+;; Retired with the old engines (task 9.2): certified the acyclic
+;; point route's work ledger and shared projection reuse, machinery the
+;; stable engine replaces with anchored reverse checks.
 
 (deftest causal-anchor-survives-restart-and-detects-reset-test
   (let [conn (datascript/create-conn)

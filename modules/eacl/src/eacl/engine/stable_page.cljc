@@ -245,19 +245,92 @@
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:
   by checkpoint when the exact edge matches, else by governed deterministic
-  replay that validates the boundary identity before continuing."
-  [options binding store key anchor-eid ordinal boundary]
-  (if-let [hit (checkpoint-hit store key ordinal boundary)]
+  replay that validates the boundary identity (an internal eid at the exact
+  basis) before continuing."
+  [options store key anchor-eid ordinal boundary-eid]
+  (if-let [hit (checkpoint-hit store key ordinal boundary-eid)]
     {:state (:state hit) :pending (:pending hit)}
     (let [replayed (guard-exhaustion
                     #(run-fresh options anchor-eid ordinal))
           results (:results replayed)]
       (when (or (< (count results) ordinal)
-                (not= boundary (external-id options (peek results))))
+                (not= boundary-eid (peek results)))
         (page-error! :eacl.page/invalid-cursor
                      "Replay could not validate the cursor boundary."
-                     {:ordinal ordinal :boundary boundary}))
+                     {:ordinal ordinal}))
       {:state (reducer/history-free replayed) :pending []})))
+
+(defn edge-page
+  "Engine-facing pagination over internal-eid boundaries: `after`/`before`
+  are {:ordinal n :eid e} edges (already authenticated by the caller's
+  cursor layer against the same composite fingerprint and exact basis).
+  Returns {:eids [..] :start-ordinal k :has-next? :has-previous?} in
+  canonical forward order. A `:last-window?` request returns the final
+  window of the exhausted sequence."
+  [{:keys [plan direction anchor-eid subject-type page-size
+           after before last-window? checkpoints checkpoint-key]
+    :as options}]
+  {:pre [(some? plan) (contains? #{:forward :reverse} direction)
+         (keyword? subject-type) (pos-int? page-size)
+         (not (and after before))]}
+  (cond
+    (nil? anchor-eid)
+    {:eids [] :start-ordinal 0 :has-next? false :has-previous? false}
+
+    before
+    (let [{:keys [ordinal eid]} before
+          start (max 0 (- ordinal 1 page-size))
+          replayed (guard-exhaustion
+                    #(run-fresh options anchor-eid ordinal))
+          results (:results replayed)]
+      (when (or (< (count results) ordinal)
+                (not= eid (peek results)))
+        (page-error! :eacl.page/invalid-cursor
+                     "Backward run could not validate the supplied edge."
+                     {:ordinal ordinal}))
+      {:eids (subvec results start (dec ordinal))
+       :start-ordinal start
+       :has-next? true
+       :has-previous? (pos? start)})
+
+    last-window?
+    (let [run (guard-exhaustion
+               #(run-fresh options anchor-eid
+                           reducer/default-max-admissions))
+          results (:results run)
+          start (max 0 (- (count results) page-size))]
+      {:eids (subvec results start)
+       :start-ordinal start
+       :has-next? false
+       :has-previous? (pos? start)})
+
+    :else
+    (let [ordinal (:ordinal after 0)
+          {:keys [state pending]}
+          (if (pos? ordinal)
+            (state-at-boundary options checkpoints checkpoint-key
+                               anchor-eid ordinal (:eid after))
+            {:state nil :pending []})
+          {:keys [page-ids lookahead end-state]}
+          (if state
+            (deliver-page options state pending ordinal page-size)
+            (let [run (guard-exhaustion
+                       #(run-fresh options anchor-eid (inc page-size)))]
+              {:page-ids (vec (take page-size (:results run)))
+               :lookahead (vec (drop page-size (:results run)))
+               :end-state (reducer/history-free run)}))
+          delivered (+ ordinal (count page-ids))]
+      (when (and (seq page-ids) checkpoints checkpoint-key)
+        (checkpoint-put!
+         checkpoints checkpoint-key
+         {:ordinal delivered
+          :boundary (peek page-ids)
+          :pending (vec lookahead)
+          :state end-state}))
+      {:eids page-ids
+       :start-ordinal ordinal
+       :has-next? (boolean (seq lookahead))
+       :has-previous? (pos? ordinal)})))
 
 (defn- deliver-page
   "Runs from `state`+`pending` at absolute delivered ordinal `from` until
@@ -278,13 +351,9 @@
      :end-state (if continued (reducer/history-free continued) state)}))
 
 (defn page
-  "Executes one stable-discovery page.
-
-  Required options: :adapter :plan :direction (:forward|:reverse) :anchor
-  ([type external-id] — the subject for :forward, the resource for
-  :reverse) :subject-type :page-size. Optional: :after or :before (edge
-  token), :checkpoints (store from make-checkpoint-store), :security-key,
-  :token-ttl-seconds, :consistency, reducer budgets, :cut-point!.
+  "Executes one stable-discovery page with self-contained authenticated
+  tokens (the standalone API; the public EACL client authenticates edges
+  through its own cursor envelope and calls `edge-page` directly).
 
   Returns {:data [external-ids] :page-info {...}} in canonical forward
   order for both navigation modes."
@@ -297,73 +366,34 @@
   (let [binding (execution-binding options)
         key (checkpoint-key binding)
         anchor-eid (resolve-anchor-eid options)
-        empty-page {:data []
-                    :page-info {:has-next-page? false
-                                :has-previous-page? false
-                                :start-cursor nil :end-cursor nil}}]
-    (cond
-      (nil? anchor-eid)
-      empty-page
-
-      before
-      (let [payload (decode-token options binding before)
-            ordinal (:ordinal payload)
-            start (max 0 (- ordinal 1 page-size))
-            replayed (guard-exhaustion
-                      #(run-fresh options anchor-eid ordinal))
-            results (:results replayed)
-            _ (when (or (< (count results) ordinal)
-                        (not= (:boundary payload)
-                              (external-id options (peek results))))
-                (page-error! :eacl.page/invalid-cursor
-                             "Backward run could not validate the supplied edge."
-                             {:ordinal ordinal}))
-            window (subvec results start (dec ordinal))
-            externals (mapv #(external-id options %) window)]
-        {:data externals
-         :page-info
-         {:has-next-page? true
-          :has-previous-page? (pos? start)
-          :start-cursor (when (seq externals)
-                          (edge-token options binding (inc start)
-                                      (first externals)))
-          :end-cursor (when (seq externals)
-                        (edge-token options binding (dec ordinal)
-                                    (peek externals)))}})
-
-      :else
-      (let [payload (when after (decode-token options binding after))
-            ordinal (if payload (:ordinal payload) 0)
-            boundary (:boundary payload)
-            {:keys [state pending]}
-            (if (pos? ordinal)
-              (state-at-boundary options binding checkpoints key
-                                 anchor-eid ordinal boundary)
-              {:state nil :pending []})
-            {:keys [page-ids lookahead end-state]}
-            (if state
-              (deliver-page options state pending ordinal page-size)
-              (let [run (guard-exhaustion
-                         #(run-fresh options anchor-eid (+ page-size 1)))]
-                {:page-ids (vec (take page-size (:results run)))
-                 :lookahead (vec (drop page-size (:results run)))
-                 :end-state (reducer/history-free run)}))
-            externals (mapv #(external-id options %) page-ids)
-            delivered (+ ordinal (count externals))]
-        (when (and (seq externals) checkpoints)
-          (checkpoint-put!
-           checkpoints key
-           {:ordinal delivered
-            :boundary (peek externals)
-            :pending (vec lookahead)
-            :state end-state}))
-        {:data externals
-         :page-info
-         {:has-next-page? (boolean (seq lookahead))
-          :has-previous-page? (pos? ordinal)
-          :start-cursor (when (seq externals)
-                          (edge-token options binding (inc ordinal)
-                                      (first externals)))
-          :end-cursor (when (seq externals)
-                        (edge-token options binding delivered
-                                    (peek externals)))}}))))
+        payload (when-let [token (or after before)]
+                  (decode-token options binding token))
+        boundary-eid (when payload
+                       (backend/invoke (:adapter options)
+                                       :object-id->internal
+                                       (:boundary payload)))
+        _ (when (and payload (nil? boundary-eid))
+            (page-error! :eacl.page/invalid-cursor
+                         "Cursor boundary identity is unknown at this basis."
+                         {:ordinal (:ordinal payload)}))
+        edge (when payload {:ordinal (:ordinal payload) :eid boundary-eid})
+        result (edge-page (assoc options
+                                 :anchor-eid anchor-eid
+                                 :after (when after edge)
+                                 :before (when before edge)
+                                 :checkpoints checkpoints
+                                 :checkpoint-key key))
+        externals (mapv #(external-id options %) (:eids result))
+        start-ordinal (:start-ordinal result)]
+    {:data externals
+     :page-info
+     {:has-next-page? (boolean (and (seq externals) (:has-next? result)))
+      :has-previous-page? (boolean (and (seq externals)
+                                        (:has-previous? result)))
+      :start-cursor (when (seq externals)
+                      (edge-token options binding (inc start-ordinal)
+                                  (first externals)))
+      :end-cursor (when (seq externals)
+                    (edge-token options binding
+                                (+ start-ordinal (count externals))
+                                (peek externals)))}}))

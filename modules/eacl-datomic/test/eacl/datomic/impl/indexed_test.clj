@@ -532,8 +532,8 @@
 
       (testing "Now only user-1 can :view all 3 servers, including those in account2."
         (let [db' (d/db *conn*)]
-          (is (= [(spice-object :user "user-1")
-                  (spice-object :user "super-user")]
+          (is (= [(spice-object :user "super-user")
+                  (spice-object :user "user-1")]
                  (->> (lookup-subjects db' {:resource (->server (d/entid db' [:eacl/id "account2-server1"]))
                                             :permission :view
                                             :subject/type :user})
@@ -1125,9 +1125,9 @@
                  (paginated->spice db page)))
           (is (not= (sort eids) eids)
               "logical traversal order is intentionally independent of EID order")
-          (is (= :recursive-logical
+          (is (= :stable-edge
                  (get-in page [:page-info :start-cursor :kind])))
-          (is (zero? (get-in page [:page-info :start-cursor :ordinal])))
+          (is (= 1 (get-in page [:page-info :start-cursor :ordinal])))
           (is (= (first eids)
                  (get-in page [:page-info :start-cursor :result-eid])))))
 

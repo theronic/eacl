@@ -18,40 +18,49 @@
 (defn- found! []
   (throw (ex-info "found" {::found true})))
 
+(defn check-eids
+  "Anchored point check over pre-resolved internal ids: does the subject
+  hold the plan's root permission on the resource? Terminates on the
+  subject's first admission."
+  [{:keys [adapter plan subject-type subject-eid resource-eid] :as options}]
+  (if (or (nil? subject-eid) (nil? resource-eid))
+    false
+    (let [seen (volatile! 0)
+          watch (fn [state]
+                  (let [results (:results state)
+                        n (count results)]
+                    (when (> n @seen)
+                      (vreset! seen n)
+                      (when (= subject-eid (nth results (dec n)))
+                        (found!)))))]
+      (try
+        (let [finished (reducer/run-reverse
+                        (merge (select-keys options
+                                            [:adapter :fetch-fn :plan
+                                             :subject-type
+                                             :physical-chunk-size
+                                             :sidecar-cap :max-admissions
+                                             :max-commands
+                                             :max-transitions])
+                               {:resource-eid resource-eid
+                                :target exhaustion-target
+                                :cut-point! watch}))]
+          (boolean (some #{subject-eid} (:results finished))))
+        (catch #?(:clj clojure.lang.ExceptionInfo
+                  :cljs cljs.core/ExceptionInfo) error
+          (if (::found (ex-data error))
+            true
+            (throw error)))))))
+
 (defn check
-  "Anchored point check: does `subject` hold the plan's root permission on
-  `resource`? Terminates on the subject's first admission."
-  [{:keys [adapter plan subject-type subject-id resource-id] :as options}]
-  (let [subject-eid (backend/invoke adapter :object-id->internal subject-id)
-        resource-eid (backend/invoke adapter :object-id->internal resource-id)]
-    (if (or (nil? subject-eid) (nil? resource-eid))
-      false
-      (let [seen (volatile! 0)
-            watch (fn [state]
-                    (let [results (:results state)
-                          n (count results)]
-                      (when (> n @seen)
-                        (vreset! seen n)
-                        (when (= subject-eid (nth results (dec n)))
-                          (found!)))))]
-        (try
-          (let [finished (reducer/run-reverse
-                          (merge (select-keys options
-                                              [:adapter :fetch-fn :plan
-                                               :subject-type
-                                               :physical-chunk-size
-                                               :sidecar-cap :max-admissions
-                                               :max-commands
-                                               :max-transitions])
-                                 {:resource-eid resource-eid
-                                  :target exhaustion-target
-                                  :cut-point! watch}))]
-            (boolean (some #{subject-eid} (:results finished))))
-          (catch #?(:clj clojure.lang.ExceptionInfo
-                    :cljs cljs.core/ExceptionInfo) error
-            (if (::found (ex-data error))
-              true
-              (throw error))))))))
+  "Anchored point check over external ids; see check-eids."
+  [{:keys [adapter subject-id resource-id] :as options}]
+  (check-eids
+   (assoc options
+          :subject-eid (backend/invoke adapter :object-id->internal
+                                       subject-id)
+          :resource-eid (backend/invoke adapter :object-id->internal
+                                        resource-id))))
 
 (defn count-resources
   "Exact count by exhausting the reducer; :count-limit truncates with an

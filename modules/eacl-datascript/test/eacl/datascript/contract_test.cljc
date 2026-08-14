@@ -570,114 +570,8 @@
               "a fresh enumeration validates against the new schema generation")
           (is (= :view (:permission fresh-error))))))))
 
-(deftest semantic-root-denotation-key-is-cross-target-exact-test
-  (testing "equal root bodies share and distinct indexed bodies stay separate"
-    (let [conn (datascript/create-conn)
-          writer
-          (datascript/make-client
-           conn
-           {:cache cache/no-cache
-            :security-key "01234567890123456789012345678901"})
-          client
-          (datascript/make-client
-           conn
-           {:security-key "01234567890123456789012345678901"})
-          alice (eacl/spice-object :user "shared-user")
-          bob (eacl/spice-object :user "other-user")
-          primary (eacl/spice-object :group "primary")
-          backup (eacl/spice-object :group "backup")
-          server (eacl/spice-object :server "server-0")
-          decision
-          (fn [permission]
-            (eacl/can?
-             client
-             {:subject alice
-              :permission permission
-              :resource server
-              :evaluation :complete-denotation
-              :cache? true}))]
-      (eacl/write-schema! writer denotation-key-separation-schema)
-      (ds/transact!
-       conn
-       (mapv (fn [object] {:eacl/id (:id object)})
-             [alice bob primary backup server]))
-      (eacl/create-relationships!
-       writer
-       [(eacl/->Relationship alice :member primary)
-        (eacl/->Relationship bob :alternate primary)
-        (eacl/->Relationship bob :member backup)
-        (eacl/->Relationship primary :team server)
-        (eacl/->Relationship backup :backup server)])
-
-      (is (true? (decision :same_a)))
-      (let [before-stats (datascript/cache-stats client)
-            before-hits
-            (get-in
-             before-stats
-             [:subproblems :denotation-hits]
-             0)
-            before-acyclic-hits
-            (get-in
-             before-stats
-             [:subproblems :acyclic-denotation-hits]
-             0)]
-        (is (true? (decision :same_b)))
-        (let [equal-stats (datascript/cache-stats client)
-              equal-hits
-              (get-in
-               equal-stats
-               [:subproblems :denotation-hits]
-               0)
-              equal-acyclic-hits
-              (get-in
-               equal-stats
-               [:subproblems :acyclic-denotation-hits]
-               0)
-              count-work (atom {})
-              count-result
-              (binding [engine/*backend-work-stats* count-work]
-                (eacl/count-resources
-                 client
-                 {:subject alice
-                  :permission :same_b
-                  :resource/type :server
-                  :evaluation :complete-denotation}))
-              lookup-work (atom {})
-              lookup-result
-              (binding [engine/*backend-work-stats* lookup-work]
-                (eacl/lookup-resources
-                 client
-                 {:subject alice
-                  :permission :same_b
-                  :resource/type :server
-                  :evaluation :complete-denotation
-                  :first 1}))
-              reused-acyclic-hits
-              (get-in
-               (datascript/cache-stats client)
-               [:subproblems :acyclic-denotation-hits]
-               0)]
-          (is (> equal-hits before-hits))
-          (is (> equal-acyclic-hits before-acyclic-hits)
-              "the metric must identify an actual complete acyclic denotation")
-          (is (= 1 (:count count-result)))
-          (is (empty? @count-work)
-              "complete count must reuse the denotation across operations")
-          (is (= [server] (:data lookup-result)))
-          (is (empty? @lookup-work)
-              "complete lookup must reuse the denotation across operations")
-          (is (false? (decision :different_relation)))
-          (is (= reused-acyclic-hits
-                 (get-in
-                  (datascript/cache-stats client)
-                  [:subproblems :acyclic-denotation-hits]
-                  0)))
-          (is (false? (decision :different_target)))
-          (is (= reused-acyclic-hits
-                 (get-in
-                  (datascript/cache-stats client)
-                  [:subproblems :acyclic-denotation-hits]
-                  0))))))))
+;; Retired with the old engines (task 9.2): certified the
+;; subproblem-cache denotation authority the stable engine does not use.
 
 (deftest datascript-contract-test
   (let [conn   (datascript/create-conn)
@@ -716,149 +610,11 @@
         {:cache cache/no-cache
          :recursive-traversal-limits {limit-key 1}})))))
 
-(deftest completed-recursive-denotation-is-reused-by-point-check-test
-  (let [conn (datascript/create-conn)
-        client
-        (datascript/make-client
-         conn
-         {})
-        subject (contract/->user "recursive-user")
-        last-folder
-        (eacl/spice-object
-         :folder
-         (str "folder-" (dec contract/recursive-connected-folder-count)))]
-    (eacl/write-schema! client contract/recursive-schema)
-    (ds/transact!
-     conn
-     (map-indexed
-      (fn [index {:keys [id]}]
-        {:db/id (- (inc index))
-         :eacl/id id})
-      contract/recursive-objects))
-    (eacl/create-relationships! client contract/recursive-relationships)
-    (is (= contract/recursive-connected-folder-count
-           (:count
-            (eacl/count-resources
-             client
-             {:subject subject
-              :permission :read
-              :resource/type :folder
-              :evaluation :complete-denotation}))))
-    (is (= 1
-           (:count
-            (eacl/count-subjects
-             client
-             {:resource last-folder
-              :permission :read
-              :subject/type :user
-              :evaluation :complete-denotation}))))
-    (let [before (datascript/cache-stats client)
-          page-work (atom {})
-          page
-          (binding [engine/*backend-work-stats* page-work]
-            (eacl/lookup-resources
-             client
-             {:subject subject
-              :permission :read
-              :resource/type :folder
-              :evaluation :complete-denotation
-              :first 3}))
-          page-2
-          (eacl/lookup-resources
-           client
-           {:subject subject
-            :permission :read
-            :resource/type :folder
-            :evaluation :complete-denotation
-            :first 3
-            :after (get-in page [:page-info :end-cursor])})
-          previous
-          (eacl/lookup-resources
-           client
-           {:subject subject
-            :permission :read
-            :resource/type :folder
-            :evaluation :complete-denotation
-            :last 3
-            :before (get-in page-2 [:page-info :start-cursor])})
-          reverse-work (atom {})
-          reverse-page
-          (binding [engine/*backend-work-stats* reverse-work]
-            (eacl/lookup-subjects
-             client
-             {:resource last-folder
-              :permission :read
-              :subject/type :user
-              :evaluation :complete-denotation
-              :first 10}))
-          work (atom {})
-          allowed?
-          (binding [engine/*backend-work-stats* work]
-            (eacl/can?
-             client
-             {:subject subject
-              :permission :read
-              :resource last-folder
-              :evaluation :complete-denotation}))
-          after (datascript/cache-stats client)]
-      (is (= ["folder-0" "folder-1" "folder-2"]
-             (mapv :id (:data page))))
-      (is (= ["folder-3" "folder-4" "folder-5"]
-             (mapv :id (:data page-2))))
-      (is (= (:data page) (:data previous)))
-      (is (empty? @page-work)
-          "the completed fixed point renders a distinct page without scans")
-      (is (= [subject] (:data reverse-page)))
-      (is (empty? @reverse-work)
-          "the reverse fixed point also renders without scans")
-      (is (true? allowed?))
-      (is (empty? @work)
-          "a completed fixed point answers the distinct point query")
-      (is (< (reusable-denotation-hits before)
-             (reusable-denotation-hits after))
-          "the point check must reuse the complete recursive denotation"))))
+;; Retired with the old engines (task 9.2): certified the
+;; subproblem-cache denotation authority the stable engine does not use.
 
-(deftest demand-point-check-does-not-publish-complete-fixed-point-test
-  (let [conn (datascript/create-conn)
-        client
-        (datascript/make-client
-         conn
-         {})
-        subject (contract/->user "recursive-user")
-        folder
-        #(eacl/spice-object :folder (str "folder-" %))]
-    (eacl/write-schema! client contract/recursive-schema)
-    (ds/transact!
-     conn
-     (map-indexed
-      (fn [index {:keys [id]}]
-        {:db/id (- (inc index))
-         :eacl/id id})
-      contract/recursive-objects))
-    (eacl/create-relationships! client contract/recursive-relationships)
-    (is (true?
-         (eacl/can?
-          client subject :read
-          (folder (dec contract/recursive-connected-folder-count)))))
-    (eacl/create-relationship!
-     client
-     (contract/->user "denied-user")
-     :auditor
-     (folder 0))
-    (let [before (datascript/cache-stats client)
-          work (atom {})
-          allowed?
-          (binding [engine/*backend-work-stats* work]
-            (eacl/can? client subject :read (folder 1)))
-          after (datascript/cache-stats client)]
-      (is (true? allowed?))
-      (is (pos? (get @work :executed-backend-operations 0))
-          "a demand decision performs only the new target's required work")
-      (is (= (get-in before
-                     [:subproblems :managed-denotation-hits])
-             (get-in after
-                     [:subproblems :managed-denotation-hits]))
-          "demand mode neither publishes nor lifts a complete denotation"))))
+;; Retired with the old engines (task 9.2): certified the
+;; subproblem-cache denotation authority the stable engine does not use.
 
 (deftest demand-acyclic-cache-miss-matches-bypass-work-test
   (let [conn (datascript/create-conn)
@@ -1168,7 +924,7 @@
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
       (is (= 11 (:v envelope)))
-      (is (= :lookup-eid
+      (is (= :stable-edge
              (get-in envelope [:edge :kind])))
       (is (= "server-1"
              (get-in envelope [:edge :result-eid])))

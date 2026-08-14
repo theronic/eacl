@@ -12,10 +12,34 @@
             [eacl.baseline.capture :as capture]))
 
 (defn- comparable
-  "Strips fields that legitimately vary across processes (nothing today, but
-  isolate the seam here)."
+  "The cross-engine comparable core. The snapshots froze the PREVIOUS
+  engines; after the stable-discovery routing flip (task 9.1) the public
+  API is the new engine, so this suite compares exactly what must be
+  engine-independent — denotations, counts, points, and the structural
+  pagination invariants — and retires the legacy-order and
+  engine-mechanics fields (:order, :pages, :cursor-behavior,
+  :stale-basis) whose replacements are certified by the stable-engine
+  gates."
   [snapshot]
-  snapshot)
+  (-> snapshot
+      (update :forward
+              (fn [forward]
+                (into (sorted-map)
+                      (map (fn [[k v]]
+                             [k (select-keys
+                                 v [:principal :denotation :count
+                                    :duplicate-free?
+                                    :page-composition-equals-one-shot?
+                                    :count-matches-denotation?])]))
+                      forward)))
+      (update :reverse
+              (fn [reverse]
+                (into (sorted-map)
+                      (map (fn [[k v]]
+                             [k (select-keys v [:resource :outcome
+                                                :denotation])]))
+                      reverse)))
+      (dissoc :cursor-behavior :stale-basis)))
 
 (deftest frozen-baselines-reproduce-test
   (doseq [fixture-key (keys capture/fixtures)]

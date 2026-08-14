@@ -404,7 +404,7 @@
   ;; deleted by trusted-surface-hygiene 11.1).
   [f edge]
   (case (:kind edge)
-    (:lookup-eid :recursive-logical)
+    (:lookup-eid :recursive-logical :stable-edge)
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 
