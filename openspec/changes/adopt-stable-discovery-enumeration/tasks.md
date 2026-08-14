@@ -13,10 +13,10 @@
 ## 2. Preserve evidence and freeze baselines
 
 - [x] 2.1 Archive the complete `target/exploration/stable-discovery/` tree (accepted prototype, Dafny/TLA models, benchmark protocol, audits) into tracked storage. Archived at `exploration/stable-discovery/`; regenerable run state and dependency caches are excluded and documented in its `ARCHIVE.md`.
-- [ ] 2.2 Capture reproducible public-API denotation fixtures for direct, union-overlap, deep arrow, cyclic, recursive chain/star/mixed, broad union, and reverse lookup schemas against the current engines.
-- [ ] 2.3 Capture cancellation, timeout, exact-basis, cursor fork/idempotence, point-check, and exact-count baselines without treating legacy page order as authoritative.
-- [ ] 2.4 Capture DataScript CLJ/CLJS latency and allocation baselines with completed-answer caching disabled, and controlled MinIO/JDBC/DynamoDB-local operation baselines.
-- [ ] 2.5 Make every benchmark command, fixture seed, JVM/JS setting, and warm/cold condition reproducible from the repository.
+- [x] 2.2 Capture reproducible public-API denotation fixtures for direct, union-overlap, deep arrow, cyclic, recursive chain/star/mixed, broad union, and reverse lookup schemas against the current engines. Seven fixtures under `exploration/baselines/`, captured by `eacl.baseline.capture` and verified by `eacl.baseline.baseline-test`.
+- [x] 2.3 Capture cancellation, timeout, exact-basis, cursor fork/idempotence, point-check, and exact-count baselines without treating legacy page order as authoritative. Captured per fixture (`:cursor-behavior`, `:stale-basis`, `:points`, counts); deadline expiry itself is timing-dependent and deliberately excluded from frozen snapshots (typed contract validation and cancellation are frozen).
+- [ ] 2.4 Capture DataScript CLJ/CLJS latency and allocation baselines with completed-answer caching disabled, and controlled MinIO/JDBC/DynamoDB-local operation baselines. CLJ captured (`eacl.baseline.perf`, warm-repeat medians + authoritative first-run scan counts); CLJS and containerized remote-op baselines remain (see `exploration/baselines/README.md` open items).
+- [x] 2.5 Make every benchmark command, fixture seed, JVM/JS setting, and warm/cold condition reproducible from the repository. `exploration/baselines/README.md` documents commands, determinism, environment stamping, and warm/cold definitions.
 
 ## 3. Promote retained assurance
 
