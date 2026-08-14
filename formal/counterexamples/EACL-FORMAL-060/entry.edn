@@ -15,5 +15,5 @@
  :closing-evidence
  ["RoutingCertificate.SelectEnumerationRoute"
   "AcyclicEngine.DecideAcyclicPage"
-  "eacl.datascript.enumeration-routing-test/certified-acyclic-enumeration-is-exact-and-recursive-limit-isolated-test"
+  "eacl.engine.physical-route-test/exhaustion-count-test"
   "eacl.bench.explorer-enumeration-test/explorer-50000-super-user-exact-acyclic-acceptance"]}

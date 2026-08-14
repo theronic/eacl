@@ -15,7 +15,7 @@
  :closing-evidence
  ["eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead"
   "eacl.backend.v8-test/unusable-generated-continuation-is-a-recoverable-cache-miss-test"
-  "eacl.datascript.contract-test/completed-recursive-denotation-is-reused-by-point-check-test"
+  "eacl.engine.physical-route-test/anchored-point-check-test"
   "eacl.datascript.contract-test/cold-recursive-point-check-publishes-complete-fixed-point-test"
   "formal mutation :generated-authority-bypasses-cache-cutover"
   "formal/smoke/clj/run-verified-authority nonbenchmark"]}

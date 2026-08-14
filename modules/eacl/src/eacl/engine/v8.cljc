@@ -4796,6 +4796,10 @@
                    (when continuation-cache-fn (continuation-cache-fn)))]
      (stable-lookup-page db :reverse query cache))))
 
+(def ^:private count-pagination-keys
+  [:cursor :limit :first :last :before :after])
+
+
 (defn- reject-count-pagination-keys!
   [op query]
   (when (some #(contains? query %) count-pagination-keys)

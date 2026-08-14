@@ -14,5 +14,5 @@
  "Define one adapter-neutral bounded continuation contract, key entries by client/source/schema/query/snapshot lineage, supply it from every list and reverse-list adapter, and use generated continuation decisions to distinguish private resume from authenticated deterministic replay."
  :closing-evidence
  ["AcyclicEngine.DecideAcyclicContinuation"
-  "eacl.datascript.enumeration-routing-test/adapter-neutral-continuation-hit-miss-and-isolation-test"
-  "eacl.datahike.enumeration-routing-test/datahike-reverse-continuations-resume-and-isolate-private-state-test"]}
+  "eacl.engine.stable-page-test/lookahead-survives-checkpointing-test"
+  "eacl.engine.stable-page-test/cursor-fork-and-idempotence-test"]}

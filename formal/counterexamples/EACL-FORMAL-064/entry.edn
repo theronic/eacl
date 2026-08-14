@@ -15,6 +15,6 @@
  :closing-evidence
  ["ScalarFrontierCoherence.UnrelatedMutationPreservesFrontier"
   "ScalarFrontierCoherence.RelevantMutationAdvancesFrontier"
-  "eacl.datascript.enumeration-routing-test/ordered-generation-cursors-avoid-relationship-content-scans-test"
-  "eacl.datascript.enumeration-routing-test/acyclic-relevant-write-rejects-current-only-cursor-test"
+  "eacl.engine.stable-page-test/page-composition-test"
+  "eacl.engine.stable-page-test/token-rejection-test"
   "eacl.bench.explorer-enumeration-test/explorer-10000-user-page-does-not-scale-with-denotation"]}

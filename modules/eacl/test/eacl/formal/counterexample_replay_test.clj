@@ -96,7 +96,7 @@
     :EACL-FORMAL-045
     eacl.formal.java-round-trip-test/generated-java-persistent-collection-boundary
     :EACL-FORMAL-046
-    eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies
+    eacl.engine.stable-discovery-gate-test/fingerprint-is-invariant-under-schema-clause-order-test
     :EACL-FORMAL-047
     eacl.datascript.keyset-recursion-test/order-perturbing-write-rejects-current-only-cursor-test
     :EACL-FORMAL-048
@@ -124,19 +124,19 @@
     :EACL-FORMAL-059
     eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
     :EACL-FORMAL-060
-    eacl.datascript.enumeration-routing-test/certified-acyclic-enumeration-is-exact-and-recursive-limit-isolated-test
+    eacl.engine.physical-route-test/exhaustion-count-test
     :EACL-FORMAL-061
-    eacl.datascript.enumeration-routing-test/adapter-neutral-continuation-hit-miss-and-isolation-test
+    eacl.engine.stable-page-test/lookahead-survives-checkpointing-test
     :EACL-FORMAL-062
-    eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test
+    eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test
     :EACL-FORMAL-063
-    eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test
+    eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test
     :EACL-FORMAL-064
-    eacl.datascript.enumeration-routing-test/ordered-generation-cursors-avoid-relationship-content-scans-test
+    eacl.engine.stable-page-test/page-composition-test
     :EACL-FORMAL-065
-    eacl.datascript.enumeration-routing-test/pure-permission-aliases-share-one-acyclic-frontier-test
+    eacl.engine.stable-reducer-test/interior-admission-keys-are-node-qualified-test
     :EACL-FORMAL-066
-    eacl.datascript.enumeration-routing-test/recursive-fanout-publishes-fuel-cut-scan-waves-test
+    eacl.engine.stable-reducer-test/frozen-baseline-denotation-differential-test
     :EACL-FORMAL-067
     eacl.datomic.recursive-cache-test/recursive-page-order-is-stable-across-scan-wave-boundaries-test})
 
