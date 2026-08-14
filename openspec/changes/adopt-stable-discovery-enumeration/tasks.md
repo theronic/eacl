@@ -77,7 +77,7 @@
 - [ ] 9.1 Route lookup-resources, lookup-subjects, can?, count-resources, and count-subjects through the new engine on all backends at width one; rerun the full local gate.
 - [ ] 9.2 Delete the acyclic merge route and `lazy_merge_sort`, the symmetric/byte-stable candidate (dual-mode branches, prefix commitments, byte-order contract, join buckets, dual limit ABIs, separate emitted sets), the physical scheduler entirely (including cross-request shared-read machinery), the service governor (its replay ledger rehomed per 6.4/7.5), the projection and denotation cache tiers, obsolete cursor branches and re-minting, and obsolete formal models — gated on the frozen baselines (2.x) and the evidence archive (2.1).
 - [ ] 9.3 Remove the generated-kernel runtime authority and host-side recomputation for deleted operations; surviving finite decision tables get exhaustive whole-domain test bridges.
-- [ ] 9.4 Publish the order ABI, cursor trust boundary, failure semantics, and cache metrics documentation.
+- [x] 9.4 Publish the order ABI, cursor trust boundary, failure semantics, and cache metrics documentation. `docs/stable-discovery-engine.md` (consumer/operator summary over the normative specs).
 
 ## 10. Follow-on remote performance qualification
 
