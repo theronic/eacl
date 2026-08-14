@@ -20,11 +20,11 @@
 
 ## 3. Promote retained assurance
 
-- [ ] 3.1 Move only retained-scope models into the tracked release-assurance tree: grounding/denotation, sealed plan and rank certificate, generic reducer (soundness, completeness, termination, exact uniqueness), one-value normalization, pagination/edge/checkpoint composition (including the lookahead segment), atomic admission and attempt outcomes, cancellation, and the representation leaves (`RuntimeStackRefinement`, `ConcreteHistoryFreeRuntime`, `OwnedTransientSnapshot`).
-- [ ] 3.2 Park the concurrency models (read-ahead, coalescing, response leases, service lifecycle) with the future concurrency change; delete or quarantine symmetric-join, emitted-set, rolling-commitment, byte-order, cross-request-flight, and async-publication models.
+- [x] 3.1 Move only retained-scope models into the tracked release-assurance tree: grounding/denotation, sealed plan and rank certificate, generic reducer (soundness, completeness, termination, exact uniqueness), one-value normalization, pagination/edge/checkpoint composition (including the lookahead segment), atomic admission and attempt outcomes, cancellation, and the representation leaves (`RuntimeStackRefinement`, `ConcreteHistoryFreeRuntime`, `OwnedTransientSnapshot`). Promoted to `formal/stable-discovery/` (41 leaves, 506 obligations, 2 TLC families, 5 bridges + randomized campaign); gate green at ~7 s.
+- [x] 3.2 Park the concurrency models (read-ahead, coalescing, response leases, service lifecycle) with the future concurrency change; delete or quarantine symmetric-join, emitted-set, rolling-commitment, byte-order, cross-request-flight, and async-publication models. Parked set stays archive-only; the rejected candidate's untracked `formal/dafny/StableDiscovery.dfy` and `formal/tla/Eacl*` models are quarantined (excluded from release assurance, recorded in `formal/stable-discovery/README.md`) pending physical deletion at 9.2.
 - [ ] 3.3 Bind formal codecs, ordinals, rank certificates, logical identities, root projection, and scan contracts to normalized production fixtures in CLJ and CLJS.
 - [ ] 3.4 Add mutation controls: logical-release-width not one, dynamic ordering input, eager chunk admission, integrate-on-completion, incomplete failure integration, stale-basis continuation, checkpoint regression, missing lookahead segment, entity-only interior admission key, producing-edge root key.
-- [ ] 3.5 Keep the fast proof gate under the agreed local budget; bounded exhaustive expansions run in a separate release/nightly gate.
+- [x] 3.5 Keep the fast proof gate under the agreed local budget; bounded exhaustive expansions run in a separate release/nightly gate. `verify-fast.sh` runs at ~7 s against the 10 s ceiling; exhaustive campaigns stay in the archive tier and the nightly gate extends with production gates at 5.5/6.7.
 
 ## 4. Implement sealed planning
 
