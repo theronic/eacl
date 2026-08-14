@@ -468,22 +468,59 @@
 
 (defn- finish
   "Freezes request-owned transients and enforces the always-on structural
-  invariants (task 5.4): the result count equals the discovered count and
-  results are duplicate-free by construction."
+  invariants (task 5.4): this run's result count equals its discovered
+  delta and results are duplicate-free by construction."
   [state]
   (let [results (persistent! (:results state))
         admitted (persistent! (:admitted state))]
-    (when-not (and (= (:discovered state) (count results))
+    (when-not (and (= (- (:discovered state) (:base-discovered state 0))
+                      (count results))
                    (= (count results) (count (distinct results))))
       (throw (ex-info "Stable-discovery structural invariant violated."
                       {:eacl/error :eacl.reducer/invariant-violation
                        :discovered (:discovered state)
+                       :base-discovered (:base-discovered state 0)
                        :result-count (count results)})))
     (-> state
         (assoc :results results
                :admitted admitted
                :completed (- (count admitted) (count (:stack state))))
         (dissoc :fetch-fn))))
+
+;; ---------------------------------------------------------------------------
+;; History-free checkpointing and resumption (section 6 support)
+;; ---------------------------------------------------------------------------
+
+(def ^:private semantic-state-keys
+  "The complete history-free semantic state: everything a checkpoint needs
+  to reproduce the residual canonical suffix. Excludes delivered results,
+  physical buffers, and runtime configuration."
+  [:stack :admitted :admissions :transitions :commands :fetched-values
+   :discovered :maximum-stack])
+
+(defn history-free
+  "Extracts checkpointable state from a finished run: exact admitted
+  identities, stack, deterministic counters, and the scalar discovered
+  count — no delivered results, no buffers, no configuration."
+  [finished-state]
+  (select-keys finished-state semantic-state-keys))
+
+(defn resume
+  "Continues a history-free state to `target` absolute discovered results
+  under fresh runtime options. Emissions from before the checkpoint are
+  never re-delivered; :results holds only this run's suffix."
+  [{:keys [adapter fetch-fn plan subject-type target cut-point!]
+    :as options}
+   checkpoint-state]
+  {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
+         (keyword? subject-type) (pos? target)]}
+  (let [context {:plan plan :root (:root plan) :subject-type subject-type}
+        state (-> (initial-state options)
+                  (merge (select-keys checkpoint-state semantic-state-keys))
+                  (assoc :admitted (transient (:admitted checkpoint-state))
+                         :results (transient [])
+                         :base-discovered (:discovered checkpoint-state)))]
+    (finish (run-loop context state target cut-point!))))
 
 (defn run-forward
   "Enumerates root resources the subject reaches, in stable first-discovery
