@@ -341,42 +341,6 @@
         (is (= 2 @reverse-calls)
             "a relevant relation epoch invalidates both count directions")))))
 
-(deftest completed-recursive-page-hit-skips-engine-classification-test
-  (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache (live-cache-context)})
-          alice (spice-object :user "alice")
-          root (spice-object :folder "root")
-          child (spice-object :folder "child")
-          query {:subject alice
-                 :permission :read
-                 :resource/type :folder
-                 :first 10}
-          classifications (atom 0)
-          classify engine/traversal-permission?]
-      (eacl/write-schema! client recursive-schema)
-      @(d/transact conn [{:eacl/id "alice"}
-                         {:eacl/id "root"}
-                         {:eacl/id "child"}])
-      (eacl/create-relationships!
-       client
-       [(->Relationship alice :reader root)
-        (->Relationship root :parent child)])
-      (with-redefs [engine/traversal-permission?
-                    (fn [snapshot resource-type permission]
-                      (swap! classifications inc)
-                      (classify snapshot resource-type permission))]
-        (is (= #{"root" "child"}
-               (set (map :id
-                         (:data
-                          (eacl/lookup-resources client query))))))
-        (let [cold-classifications @classifications]
-          (is (= #{"root" "child"}
-                 (set (map :id
-                           (:data
-                            (eacl/lookup-resources client query))))))
-          (is (= cold-classifications @classifications)
-              "the uniform completed-page hit precedes any additional traversal selection"))))))
-
 (deftest recursive-cursors-replay-across-independent-client-proofs-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "shared-store-opaque-continuation"

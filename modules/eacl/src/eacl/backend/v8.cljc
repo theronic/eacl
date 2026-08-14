@@ -49,7 +49,6 @@
     :subject->resources
     :resource->subjects
     :direct-match?
-    :relation-populated?
     :all-permission-nodes})
 
 (def adapter-obligations
@@ -97,8 +96,6 @@
    :direct-match?
    #{:iff-forward-scan-membership :iff-reverse-scan-membership
      :snapshot-bound}
-   :relation-populated?
-   #{:iff-forward-prefix-nonempty :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
    :proof-frame
@@ -583,7 +580,7 @@
            backend-id operation-key :finite-node-set value))
         value)
 
-      (:direct-match? :relation-populated?)
+      :direct-match?
       (do
         (when-not (boolean? value)
           (contract-violation!

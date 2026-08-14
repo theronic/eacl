@@ -664,27 +664,6 @@
            [])
           opts))}))))
 
-(deftest generated-java-certifies-production-recursive-plan
-  (let [adapter (recursive-plan-test-adapter)
-        schema-cache (engine/make-schema-cache adapter 1)
-        stats (atom {})]
-    (binding [engine/*schema-cache* schema-cache
-              engine/*recursive-traversal-stats* stats
-              subproblem/*decision-kernel* selection]
-      (is (seq
-           (:components
-            (engine/recursive-component-plan
-             adapter :folder :read))))
-      (is (= 1 (:plan-certification-runs @stats)))
-      (is (= 4 (:plan-certification-rules @stats)))
-      (is (= 4 (:plan-certification-definitions @stats)))
-      (is (= 4 (:plan-certification-bindings @stats)))
-      (is (= 2 (:plan-certification-seed-buckets @stats)))
-      (is (= 3 (:plan-certification-kernel-calls @stats)))
-      (engine/recursive-component-plan adapter :folder :read)
-      (is (= 1 (:plan-certification-runs @stats))
-          "the certified plan is reused for the schema proof/root"))))
-
 (deftest generated-java-drives-production-recursive-pages
   (let [adapter (recursive-traversal-test-adapter)
         query

@@ -143,17 +143,6 @@
     (engine/permission-schema-nodes
      (snapshot-adapter db) resource-type permission-name)))
 
-(defn traversal-permission?
-  [db resource-type permission-name]
-  (with-engine-bindings
-    (engine/traversal-permission?
-     (snapshot-adapter db) resource-type permission-name)))
-
-(defn traversal-nodes
-  [db]
-  (with-engine-bindings
-    (engine/traversal-nodes (snapshot-adapter db))))
-
 (defn can?
   ([db subject permission resource]
    (with-engine-bindings
@@ -188,4 +177,3 @@
   (with-engine-bindings
     (engine/count-subjects (snapshot-adapter db) query)))
 
-(def continuation-weight engine/continuation-weight)

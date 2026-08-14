@@ -1292,9 +1292,12 @@
       :else 2)))
 
 (defn- cursor-decision
-  [current cursor-envelope exact]
+  ;; Routed through the client's configured kernel like every other
+  ;; generated decision; the request-time global was the one seam that
+  ;; bypassed per-client kernel selection.
+  [kernel current cursor-envelope exact]
   (verified/decide
-   production-kernel/default-selection
+   (or kernel production-kernel/default-selection)
    :cursor-continuation
    {:authenticated?
     (boolean (:cursor/authenticated? cursor-envelope))
@@ -1469,7 +1472,8 @@
           (let [current-cursor-context
                 (:cursor-context selected-context)
                 initial
-                (cursor-decision current-cursor-context decoded nil)]
+                (cursor-decision (:decision-kernel opts)
+                                 current-cursor-context decoded nil)]
             (case initial
               :current
               selected-context
@@ -1514,6 +1518,7 @@
                     (snapshot-result-context opts exact prepare decoded)
                     exact-decision
                     (cursor-decision
+                     (:decision-kernel opts)
                      current-cursor-context decoded
                      (:cursor-context exact-context))]
                 (if (= :exact exact-decision)

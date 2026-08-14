@@ -308,7 +308,6 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [{:keys [db u]} (seed-recursive! conn 60)
           query {:subject (spice-object :user u) :permission :read :resource/type :folder}]
-      (is (true? (idx/traversal-permission? db :folder :read)))
       (is (= 61 (:count (idx/count-resources db query))) "root + 60 children")
 
       (testing "counting exhausts one traversal instead of paging with replay"

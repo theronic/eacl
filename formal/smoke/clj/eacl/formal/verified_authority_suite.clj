@@ -79,16 +79,15 @@
   [:datomic :datahike :datascript])
 
 (def required-generated-authority-operations
-  #{:recursive-routing-certificate
-    :enumeration-route
-    :acyclic-page
-    :acyclic-continuation
-    :acyclic-count
-    :acyclic-work
-    :indexed-traversal-compile
-    :indexed-traversal-initialize
-    :indexed-traversal-drive
-    :indexed-traversal-read})
+  "The generated decision authority the stable-discovery design still
+  routes through on every backend: consistency selection, answer-cache
+  admission and coherence, cursor continuation, and relationship paging.
+  The retired traversal authorities (:enumeration-route, :acyclic-*,
+  :indexed-traversal-*) left with the engines they governed."
+  #{:consistency-plan
+    :current-cache-decision
+    :cursor-continuation
+    :relationship-page})
 
 (defn- count-call!
   [calls backend operation]
