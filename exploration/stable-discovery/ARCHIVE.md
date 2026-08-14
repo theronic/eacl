@@ -10,7 +10,7 @@ models and mutation configs, the executable bridges, the contracts and audits
 `BENCHMARK_PROTOCOL.md`, `IDENTITY_BENCHMARK.md`, `PHYSICAL_BACKEND_AUDIT.md`,
 `DATA_STRUCTURE_CONTRACT.md`, `CURSOR_TRUST_BOUNDARY.md`,
 `SOURCE_REFINEMENT.md`, `FORMAL_CLAIM_GRAPH.md`, `FORMAL_ITERATION_POLICY.md`,
-`CLEANUP_SCOPE.md`), the probe logs cited by those documents, and the
+`CLEANUP_SCOPE.md`), and the
 `backend-probes/` physical probe project.
 
 Rules:
@@ -35,6 +35,8 @@ caches, ~79 MB at archive time; none of it is cited evidence):
   working directories (state/fingerprint checkpoints); regenerated from the
   `.tla`/`.cfg` sources archived here.
 - `jvm-tmp/`, `vendor/` — JVM scratch and vendored third-party git checkouts.
+- Probe and gate `.log` files — regenerable run output; every figure they
+  produced is quoted in the audit documents above.
 
 Provenance: copied unmodified from `target/exploration/stable-discovery/` at
 the revision recorded in this commit; measurements were produced on

@@ -15,7 +15,7 @@
  :closing-evidence
  ["formal/dafny/RootDenotation.dfy/EquivalentRuleBodiesHaveEqualSemanticDenotations"
   "formal/dafny/IndexedRootDenotation.dfy/CertifiedEqualIndexedRootBodiesHaveEqualDenotations"
-  "eacl.bench.subproblem-cache-test/semantic-root-denotation-key-shares-only-equal-rule-bodies"
-  "eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test"
+  "eacl.engine.stable-discovery-gate-test/fingerprint-is-invariant-under-schema-clause-order-test"
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
   "eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark"
   "formal/verification/performance-gates.edn"]}

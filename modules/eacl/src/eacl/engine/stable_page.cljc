@@ -260,6 +260,8 @@
                      {:ordinal ordinal}))
       {:state (reducer/history-free replayed) :pending []})))
 
+(declare deliver-page)
+
 (defn edge-page
   "Engine-facing pagination over internal-eid boundaries: `after`/`before`
   are {:ordinal n :eid e} edges (already authenticated by the caller's

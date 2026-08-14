@@ -18,12 +18,10 @@
     eacl.datahike.backend-test
     eacl.datahike.consistency-v3-test
     eacl.datahike.contract-test
-    eacl.datahike.enumeration-routing-test
     eacl.datahike.storage-test
     eacl.datascript.adapter-certification-test
     eacl.datascript.consistency-v3-test
     eacl.datascript.contract-test
-    eacl.datascript.enumeration-routing-test
     eacl.datascript.impl-test
     eacl.datascript.storage-test
     eacl.datomic.adapter-certification-test

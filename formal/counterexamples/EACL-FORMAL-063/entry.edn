@@ -16,7 +16,7 @@
  ["ExecutionContract.CompleteEvaluationUsesFixedPointForEveryDefinedRoot"
   "ExecutionContract.DemandPreservesCertifiedEvaluatorRoute"
   "ExecutionContract.AcyclicCompletionPreservesCertifiedPublicOrder"
-  "eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test"
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
   "formal/mutations/registry.edn :completed-acyclic-artifact-keeps-fixed-point-order"
-  "eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test"
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
   "eacl.bench.subproblem-cache-test/distinct-query-shared-subgraph-cache-benchmark"]}
