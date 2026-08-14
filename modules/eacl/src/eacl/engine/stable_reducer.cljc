@@ -505,6 +505,30 @@
   [finished-state]
   (select-keys finished-state semantic-state-keys))
 
+(def ^:dynamic *observer-stats*
+  "When bound to an atom, each completed run bulk-reports its work deltas
+  under the public counter names (:derived-grants for logical admissions,
+  :advanced-datoms for physical commands, :queued-work for transitions).
+  The default nil costs nothing on the hot path — one check per run."
+  nil)
+
+(defn- report-run!
+  [before final-state]
+  (when-let [stats *observer-stats*]
+    (swap! stats
+           (fn [counters]
+             (-> (or counters {})
+                 (update :derived-grants (fnil + 0)
+                         (- (:admissions final-state)
+                            (:admissions before 0)))
+                 (update :advanced-datoms (fnil + 0)
+                         (- (:commands final-state)
+                            (:commands before 0)))
+                 (update :queued-work (fnil + 0)
+                         (- (:transitions final-state)
+                            (:transitions before 0)))))))
+  final-state)
+
 (defn resume
   "Continues a history-free state to `target` absolute discovered results
   under fresh runtime options. Emissions from before the checkpoint are
@@ -519,8 +543,9 @@
                   (merge (select-keys checkpoint-state semantic-state-keys))
                   (assoc :admitted (transient (:admitted checkpoint-state))
                          :results (transient [])
-                         :base-discovered (:discovered checkpoint-state)))]
-    (finish (run-loop context state target cut-point!))))
+                         :base-discovered (:discovered checkpoint-state)))
+        before (select-keys state [:admissions :commands :transitions])]
+    (report-run! before (finish (run-loop context state target cut-point!)))))
 
 (defn run-forward
   "Enumerates root resources the subject reaches, in stable first-discovery
@@ -543,7 +568,8 @@
                                          :bound-eid nil}))
                     (get-in plan [:indexes :forward-seeds subject-type]))
         state (schedule (initial-state options) nil seeds)]
-    (finish (run-loop context state target (:cut-point! options)))))
+    (report-run! nil (finish (run-loop context state target
+                                       (:cut-point! options))))))
 
 (defn run-reverse
   "Enumerates subjects of `subject-type` that reach the root permission on
@@ -559,4 +585,5 @@
         goal {:kind :reverse-goal :rule {:node (:root plan)}
               :resource-eid resource-eid}
         state (schedule (initial-state options) nil [goal])]
-    (finish (run-loop context state target (:cut-point! options)))))
+    (report-run! nil (finish (run-loop context state target
+                                       (:cut-point! options))))))

@@ -26,7 +26,9 @@
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
     (let [seen (volatile! 0)
+          caller-cut-point! (:cut-point! options)
           watch (fn [state]
+                  (when caller-cut-point! (caller-cut-point! state))
                   (let [results (:results state)
                         n (count results)]
                     (when (> n @seen)
@@ -73,7 +75,7 @@
       (let [finished (reducer/run-forward
                       (merge (select-keys options
                                           [:adapter :fetch-fn :plan
-                                           :subject-type
+                                           :subject-type :cut-point!
                                            :physical-chunk-size :sidecar-cap
                                            :max-admissions :max-commands
                                            :max-transitions])
@@ -96,7 +98,7 @@
       (let [finished (reducer/run-reverse
                       (merge (select-keys options
                                           [:adapter :fetch-fn :plan
-                                           :subject-type
+                                           :subject-type :cut-point!
                                            :physical-chunk-size :sidecar-cap
                                            :max-admissions :max-commands
                                            :max-transitions])

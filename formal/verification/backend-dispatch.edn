@@ -8,7 +8,7 @@
   "modules/eacl-datascript/src"]
  :runtime-passes
  {:clj
-  {:invoke-call-count 43
+  {:invoke-call-count 60
    :operations
    #{:snapshot-id
      :source-scope
@@ -31,7 +31,7 @@
      :all-permission-nodes
      :proof-frame}}
   :cljs
-  {:invoke-call-count 43
+  {:invoke-call-count 60
    :operations
    #{:snapshot-id
      :source-scope
