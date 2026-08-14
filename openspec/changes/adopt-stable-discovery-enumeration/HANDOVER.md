@@ -2,7 +2,7 @@
 
 ## Status at handover
 
-The planning artifacts are complete and have been **revised** (task 1.9): this change now specifies a strictly smaller engine than the earlier draft — one generic reducer, width-one-only physical execution, two cache artifacts, three-outcome adapter results — with a re-sequenced delivery plan that routes the public API after local gates and defers remote performance qualification to follow-on work. Implementation has not started: 9 of 61 tasks are complete, all in exploration and decision recording.
+The planning artifacts are complete and have been **revised** (task 1.9): this change now specifies a strictly smaller engine than the earlier draft — one generic reducer, width-one-only physical execution, two cache artifacts, three-outcome adapter results — with a re-sequenced delivery plan that routes the public API after local gates and defers remote performance qualification to follow-on work. Implementation is live: 44 of 61 tasks are complete and the stable engine is the routed public engine (see Exact next steps for the current release state).
 
 Read these three warnings before touching source:
 
@@ -71,17 +71,43 @@ The pure-step/`NeedRead` boundary is the preserved seam for a future concurrency
 
 ## Exact next steps
 
-Follow [tasks.md](tasks.md) in order. The critical sequence:
+State at 2026-08-14: **44 of 61 tasks complete; the stable engine is the
+public engine.** Sections 2-8 are done (evidence archive, frozen baselines,
+promoted assurance, sealed planner, generic reducer, pagination/continuation,
+physical layer, routes); 9.1 routed all five public entry points (~6,000
+assertions green across every module plus the 506-obligation gate, with the
+frozen baselines now serving as the cross-engine differential); 9.4 published
+`docs/stable-discovery-engine.md`. The dirty experimental tree was discarded
+(SPI groundwork kept), and the rejected candidate's code, models, and
+routing/denotation-cache test suites were deleted with their closing
+evidence retargeted at the stable gates (all 67 minimized counterexamples
+replay green).
 
-1. **Archive the evidence (2.1) before anything else.**
-2. Freeze reproducible baselines against the current engines (2.2–2.5); they are the differential oracles and, after deletion, the only ones.
-3. Promote retained assurance; park the concurrency models; land the new mutant controls (3.x).
-4. Build sealed planning and the generic reducer as a port of the prototype with logical width one (4.x–5.x). Stop if CLJ/CLJS bridges cannot establish plan order, rank, denotation, termination, uniqueness, and the concrete trace.
-5. Build pagination, checkpoints (with the lookahead segment), consistency-aware continuation, and the typed exhaustion failure (6.x).
-6. Build the width-one physical layer: result classification with cause codes, the `select-exact` repair, chunk retention, service-edge admission with slot-hold (7.x).
-7. Build the point-check and count routes and settle `:complete-denotation` **before** any deletion; pass the binding local gates on CLJ and CLJS with fault injection (8.x).
-8. Route all five entry points, then delete the old engines and the rejected candidate in one gated step (9.x).
-9. Remote performance qualification (10.x) follows routing and publishes deployment guidance; it opens the separate concurrency change only if measurements justify it.
+Next, in order:
+
+1. **Watch CI on `v8.0.0-SNAPSHOT` (`0effa0c`)**: Tests + Formal
+   verification gate the Clojars release job. On green, Clojars publishes
+   `8.0.0-SNAPSHOT`; on failure, `gh run view <id> --log-failed` — the two
+   known-fixed classes were isolated-module classpath layout and stale
+   counterexample evidence.
+2. **Deploy `eacl-datahike-demo`** (after the publish): operator supplies
+   `infra/deployment.env`; clear `~/.m2/repository/dev/eacl`; build the
+   server uberjar; `infra/scripts/deploy-artifact.sh`; smoke via
+   `/api/health` and a super-user page. Do **not** reseed S3.
+3. **Operator-test `eacl-datomic-solidjs`** — already running locally on
+   the stable engine (server 8088, client 5273, `:local-eacl` alias).
+4. **9.2 dead-code excision**: the unreachable acyclic-merge and
+   generated-kernel machinery inside `engine/v8.cljc` (~3,000 lines),
+   `lazy_merge_sort.cljc`, `portable_indexed.cljc`'s engines, and the
+   kernel decisions they alone used; then 9.3's remaining kernel
+   de-authority (`normalize-page-request`'s `:relationship-page` decision)
+   with exhaustive-domain bridges for surviving tables.
+5. **CLJS parity halves** (2.4/3.3/4.5/5.5/8.5) via the formal-cljs-smoke
+   pipeline; **8.6 containerized fault injection** (MinIO/JDBC/
+   DynamoDB-local).
+6. **Section 10 remote qualification** on the deployed demo: evicted-
+   checkpoint replay p95/p99, cold/warm first pages, per-topology
+   envelopes; Konserve DynamoDB repair before that topology enables.
 
 ## Do not silently reintroduce
 
