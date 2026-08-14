@@ -28,15 +28,15 @@
 
 ## 4. Implement sealed planning
 
-- [ ] 4.1 Define the versioned sealed-plan record, transition-descriptor interface, per-kind admission-key codecs, and the single composite fingerprint (plan + order contract + transition interface + admission-key granularity + adapter scan-order contract).
-- [ ] 4.2 Compile forward consumers indexed by granted node and reverse rules indexed by head node; validate unique dense ordinals.
-- [ ] 4.3 Compute and check the static 0/1 shortest-remaining-storage-read rank certificate; sort every alternative vector by `(rank, ordinal)` with no host-map or printed-form order.
-- [ ] 4.4 Emit the single root emission point keyed by emitted-entity identity in both directions.
-- [ ] 4.5 Differentially verify sealed-plan denotations against the retained engines across normalized schemas, CLJ and CLJS.
+- [x] 4.1 Define the versioned sealed-plan record, transition-descriptor interface, per-kind admission-key codecs, and the single composite fingerprint (plan + order contract + transition interface + admission-key granularity + adapter scan-order contract). `eacl.engine.sealed-plan`: versioned plan record, sealed work-kind vocabulary with per-kind admission keys, order contract (including logical-release-width 1) folded into the `canonical-records-digest` fingerprint. Adapter scan-contract digest joins at cursor-binding time (task 6.1).
+- [x] 4.2 Compile forward consumers indexed by granted node and reverse rules indexed by head node; validate unique dense ordinals. Rules compile fail-closed directly from adapter definition ops (independent of the legacy compiler); indexes `:forward-seeds`/`:forward-consumers`/`:reverse-rules`.
+- [x] 4.3 Compute and check the static 0/1 shortest-remaining-storage-read rank certificate; sort every alternative vector by `(rank, ordinal)` with no host-map or printed-form order. Untrusted fixpoint generator + linear trusted checker (`valid-certificate?`, fail-closed).
+- [x] 4.4 Emit the single root emission point keyed by emitted-entity identity in both directions. Forward: first admission of `[:grant root-node eid]`; reverse: first admission of `[:reverse-subject type eid]`; alias-cycle counterexample test guards node-qualified interior keys.
+- [ ] 4.5 Differentially verify sealed-plan denotations against the retained engines across normalized schemas, CLJ and CLJS. CLJ done: `eacl.engine.stable-reducer-test` matches the frozen current-engine baselines on all seven fixtures, both directions (99 assertions). CLJS parity pending.
 
 ## 5. Implement the generic reducer
 
-- [ ] 5.1 Port the accepted prototype (`forward_runtime_prototype.clj`) to one production CLJC reducer over the sealed-plan transition interface, with logical release hard-fixed at one value. The in-tree `portable_indexed.cljc` `:stable-discovery` mode is the rejected candidate and is not a porting source.
+- [ ] 5.1 Port the accepted prototype (`forward_runtime_prototype.clj`) to one production CLJC reducer over the sealed-plan transition interface, with logical release hard-fixed at one value. The in-tree `portable_indexed.cljc` `:stable-discovery` mode is the rejected candidate and is not a porting source. Machine ported (`eacl.engine.stable-reducer`, one unified step over all work kinds, logical release fixed at one, bounded evictable buffers, physical-width/retention invariance verified); specialized JVM key classes still pending (currently vector keys).
 - [ ] 5.2 Implement specialized per-kind admission keys, right-edge stack, request-owned transients with freeze/fork discipline, compact scan frames, scalar counts, and checked limits.
 - [ ] 5.3 Implement pure stepping with exact read-demand suspension and atomic staged integration; no physical state in reducer values.
 - [ ] 5.4 Keep the cheap structural invariants always-on and fail-closed at the engine boundary; expensive per-value adapter guards stay opt-in.
