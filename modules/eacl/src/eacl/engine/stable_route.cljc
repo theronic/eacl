@@ -7,13 +7,18 @@
     admission — the root universe is never enumerated to answer one
     known-resource question.
   - Exact count exhausts the history-free reducer; its scalar discovered
-    count equals the denotation cardinality. An order-insensitive
-    specialization remains permitted only behind an independent
-    denotation-equivalence proof (none exists yet)."
+    count equals the denotation cardinality. Exhaustion is unbounded by
+    construction (`exhaustion-target` is infinite): a run ends at an empty
+    stack or a typed `:max-admissions`/`:max-values` failure, never at a
+    silent cap. An order-insensitive specialization remains permitted only
+    behind an independent denotation-equivalence proof (none exists yet)."
   (:require [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]))
 
-(def exhaustion-target 1000000)
+(def exhaustion-target
+  "Alias of `eacl.engine.stable-reducer/exhaustion-target`: exhaustive routes
+  run until the stack empties or a typed limit fails, never to a finite cap."
+  reducer/exhaustion-target)
 
 (defn- found! []
   (throw (ex-info "found" {::found true})))

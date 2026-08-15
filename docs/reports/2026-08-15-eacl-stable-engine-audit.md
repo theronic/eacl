@@ -28,9 +28,11 @@ internal/standalone API or an unusual configuration; **S3** contract or
 documentation says one thing and the code does another, no wrong answer
 today; **S4** hygiene.
 
-Nothing in this report was fixed in this branch except documentation and
-dead code; every S1–S3 item below names the smallest correct fix so it can
-be planned as its own change.
+Every item below states its status: **Fixed** items were repaired on this
+branch (commit "Fix the audited defects", each with a regression test);
+**Left as designed** items are behaviours the audit flagged but whose change
+is a compatibility or design decision rather than a defect repair, with the
+reasoning recorded; the rest name the smallest correct fix.
 
 ## 1. Formal models versus the implementation
 
@@ -53,7 +55,7 @@ what the audit found.
 
 ## 2. Bugs
 
-### 2.1 S1/S2 — exhaustive counts, point checks and bare `:last` are silently capped at 1,000,000
+### 2.1 S1/S2 — exhaustive counts, point checks and bare `:last` are silently capped at 1,000,000 — **Fixed**
 
 `eacl.engine.stable-route/exhaustion-target` (1,000,000) is the reducer
 target for `count-resources`/`count-subjects` without `:count-limit` and for
@@ -79,13 +81,15 @@ deployed demo raises the limits to count exactly one million resources
 (`tasks.md` §10 records the 1,000,000 count), which makes the deployment one
 extra resource away from a silently wrong exact count (S1 there).
 
-Fix (small): make the exhaustion runs unbounded — pass `target =
-max-admissions + 1` (a run can never discover more results than it admits,
-so it either exhausts or fails typed on `:max-admissions`), or add
-`(when (seq (:stack finished)) (limit-failure! …))` after the run. Add a
-mutation-control test whose fixture has `target + 1` results.
+Fix applied: `eacl.engine.stable-reducer/exhaustion-target` is positive
+infinity and is the target of every exhaustive route (`stable-route`
+counts and `check-eids`, `stable-page` bare `:last`), so a run ends only at
+an empty stack or a typed `:max-admissions`/`:max-values` failure.
+`physical_route_test/exhaustive-runs-are-unbounded-test` drives 1,000,001
+results through `run-forward` and `run-reverse` and asserts the exact count
+with an empty stack (3.5 s).
 
-### 2.2 S2 — the standalone `stable-page/page` API can resume a checkpoint recorded at another basis
+### 2.2 S2 — the standalone `stable-page/page` API can resume a checkpoint recorded at another basis — **Fixed**
 
 `stable-page/checkpoint-key` is `(canonical-digest token-domain (dissoc binding
 :basis))` and `checkpoint-hit` matches only `(ordinal, boundary)`. Sequence:
@@ -103,10 +107,13 @@ The routed client is not affected: `v8/stable-lookup-page` keys checkpoints on
 `[fingerprint native-revision traversal subject-type anchor-eid size]`. Only
 `stable-page/page` (used by `stable_page_test` and nothing else) has the gap.
 
-Fix: include `:basis` in `checkpoint-key` (or store the basis in the entry
-and compare it in `checkpoint-hit`), plus a test for the sequence above.
+Fix applied: `checkpoint-key` digests the whole execution binding, basis
+included. `stable_page_test/checkpoint-identity-includes-the-basis-test`
+publishes page 1 at two bases, asserts two distinct checkpoint identities
+in the store, and that the new basis's continuation equals its own pure
+replay.
 
-### 2.3 S3 — spec/doc claim three-outcome reads, retry, bulkhead and capability qualification on the routed engine; the routed engine installs none of them
+### 2.3 S3 — spec/doc claim three-outcome reads, retry, bulkhead and capability qualification on the routed engine; the routed engine installs none of them — **Left as a wiring decision**
 
 `eacl.engine.physical/classified-fetch-fn`, `retrying-fetch-fn`,
 `make-service-admission`/`with-admission`/`with-replay-admission`,
@@ -119,18 +126,21 @@ held, and no adapter declares a capability record (task 7.7 said "per-adapter
 declarations join the 9.1 splice"; 9.1 landed without them).
 `docs/stable-discovery-engine.md` §Failure semantics and §Topology
 qualification described the routed behaviour as if wired; this branch
-rewords them (see §5). Decide whether to wire the components at
-`v8/stable-lookup-page`/`can?`/counts (fetch-fn wrapping is a one-line
-option on `edge-page`/`check-eids`) or to move them out of the change's
-release scope.
+rewords them (see §5). Left as a wiring decision, not repaired here: installing
+`classified-fetch-fn`/`retrying-fetch-fn` on the routed path would wrap
+every adapter exception — including the typed `:eacl/backend-contract-violation`
+thrown by the runtime guards, which today surfaces unchanged — as
+`:eacl.scan/failure` and retry it up to three times, a public error-shape
+change that the pinned error contracts do not authorize; the bulkhead needs
+a new client option. Both belong to a scoped change with their own tests.
 
-### 2.4 S3 — `with-replay-admission` never removes exhausted keys
+### 2.4 S3 — `with-replay-admission` never removes exhausted keys — **Fixed**
 
 `(update-in [:replays key] dec)` in the `finally` leaves a zero entry per
 continuation key forever, so a long-lived admission atom grows with every
-distinct key. Harmless while unwired (§2.3); dissoc at zero when wiring.
+distinct key. Fix applied: the ledger dissocs a key when its count returns to zero.
 
-### 2.5 S3 — the Datomic client still accepts retired cursor kinds in cached pages
+### 2.5 S3 — the Datomic client still accepts retired cursor kinds in cached pages — **Fixed (dead-code sweep)**
 
 `eacl.datomic.core/cursor-result` accepted `:lookup-eid` and
 `:recursive-logical` (order-ABI 2) cursors, and `eacl.relay/transform-edge-ids`
@@ -140,17 +150,16 @@ routed, and `validate-stable-bound!` rejects them with
 been served and then failed on continuation. Removed in this branch (§6);
 `engine/recursive-cursor-version` and `recursive-order-abi` went with them.
 
-### 2.6 S4 — `engine-version` did not change with the public order ABI
+### 2.6 S4 — `engine-version` did not change with the public order ABI — **Fixed**
 
 The answer-cache semantic key (`:engine-version 8`) is unchanged although the
 public order changed from global entity-id order to stable first-discovery
 order. Caches are in-process today, so nothing survives a restart, but a
 future external cache store would serve pre-stable pages under the same key.
-Include `v8/stable-order-abi` (or the plan fingerprint, which the doc says
-"the key gains at the public routing step" — it does not today) in the
-semantic key.
+Fix applied: the answer-cache semantic keys of the Datomic client and the
+shared client carry `:order-abi engine/stable-order-abi`.
 
-### 2.7 S4 — `Datahike :object-id->internal` and Datomic `object-eid` accept raw numbers as external ids
+### 2.7 S4 — `Datahike :object-id->internal` and Datomic `object-eid` accept raw numbers as external ids — **Left as designed**
 
 `(if (number? object-id) object-id …)` / `(d/entid db object-id)`: a numeric
 external id is taken as an internal entity id without checking that the
@@ -158,15 +167,16 @@ entity exists or carries `:eacl/id`. This is the documented v7 behaviour
 ("EACL ID Configuration") and the engine tolerates unknown eids (empty
 scans), so it is not a wrong answer; it is listed because a caller that
 mistakes a database id for an object id gets an empty answer instead of the
-schema-name error the other id shapes receive.
+schema-name error the other id shapes receive. Left as designed (the README
+documents numeric ids as internal ids).
 
-### 2.8 S4 — Datomic `impl.indexed/evict-permission-paths-cache!` resets caches that no longer exist
+### 2.8 S4 — Datomic `impl.indexed/evict-permission-paths-cache!` resets caches that no longer exist — **Fixed (dead-code sweep)**
 
 It `some->`s `:traversal-analysis` and `:recursive-plans`, keys the schema
 cache map stopped carrying when the routing analysis was retired. Dead
 branches; the function's remaining resets are still correct.
 
-### 2.9 Robustness note — `schedule` does not deduplicate inside one successor batch
+### 2.9 Robustness note — `schedule` does not deduplicate inside one successor batch — **Fixed**
 
 `StableReducer.Admit` folds `seen` through the batch, so two equal successors
 in one batch admit once. `schedule` filters the whole batch against the
@@ -174,12 +184,11 @@ admitted set *before* adding any of it, so two equal work-ids in one
 `new-work` vector would both push and both process. Today no batch can
 contain two equal ids: forward consumers of a grant are distinct rules
 (distinct ordinals, or distinct `(node, eid)` for self-permissions), and
-`assign-ordinals` fails closed on byte-identical rules. The invariant is
-one schema-compiler change away from silent double emission; a
-`(reduce …)` that threads the growing set costs nothing and makes `schedule`
-refine `Admit` literally.
+`assign-ordinals` fails closed on byte-identical rules. Fix applied: `schedule` threads a per-batch set so equal work-ids inside
+one batch admit once and nil items are skipped without truncating the batch
+(`stable_reducer_test/schedule-admits-each-work-id-once-per-batch-test`).
 
-### 2.10 S2 — Datomic `expand-permission-tree` ignores a custom object-id codec
+### 2.10 S2 — Datomic `expand-permission-tree` ignores a custom object-id codec — **Fixed**
 
 `eacl.datomic.core/make-client` builds its snapshot adapter with
 `:entid->object-id` but without `:object-eid-fn`, so the adapter's
@@ -193,11 +202,15 @@ With a custom codec the root resolves to nothing (an "absent resource"
 topology with no subjects) or to a different entity whose `:eacl/id` happens
 to equal the id. DataScript/Datahike pass the client codec into the adapter
 and are unaffected. No test exercises expansion with a custom codec.
-Fix: pass `:object-eid-fn (fn [db id] (object-id->entid db id))` into the
-adapter options in `make-client` (and internalize the root in the client like
-the other operations).
+Fix applied: `make-client` passes `:object-eid-fn` to the adapter (numbers
+pass through as internal ids; everything else resolves through the client's
+`object-id->entid`). Note the `:db/ident` codec used by the existing config
+test happens to work by accident because `d/entid` accepts idents, which is
+why nothing caught this; `config_test/expand-permission-tree-uses-the-client-id-codec-test`
+uses a lookup-ref codec whose external ids differ from `:eacl/id` and
+asserts the codec client's tree equals the default client's tree.
 
-### 2.11 S2 — Datahike temporal-fallback snapshots misreport their identity
+### 2.11 S2 — Datahike temporal-fallback snapshots misreport their identity — **Fixed**
 
 `select-exact` may select `(d/as-of (d/db conn) revision)`; Datahike's
 `AsOfDB` carries only `[origin-db time-point]`, and the adapter reads
@@ -207,29 +220,47 @@ the wrapper. The exact-snapshot proof digest minted from such a snapshot
 therefore differs from the one minted on the live db, so an exact
 continuation on the temporal fallback can be rejected as stale, and
 `:cache-basis` carries a bogus database id. (The commit-as-db path used when
-retained commits exist is unaffected.) Fix: resolve config through the
-wrapper's `origin-db` (`(:config (or (:origin-db db) db))`).
+retained commits exist is unaffected.) Fix applied: `eacl.datahike.backend` reads configuration through Datahike's
+`IDB/-config` protocol (`db-config`), as `eacl.datahike.db` already did, and
+bounds the published store identity to `{:backend :id}` (`store-identity`).
+`consistency_v3_test/temporal-fallback-adapter-keeps-its-source-identity-test`
+selects the exact snapshot through the temporal fallback and asserts equal
+store identity, attribute representation, and consistency capabilities.
 
-### 2.12 S2 (unverified, needs a Datomic index job) — Datomic exact cursors read a `noHistory` stamp through `as-of`
+### 2.12 S2 — Datomic exact cursors read a `noHistory` stamp through `as-of` — **Fixed (identity-based exact acceptance)**
 
 `:eacl/relation-version` is declared `:db/noHistory` yet the exact-cursor
 path selects `(d/as-of …)` and reads that stamp for the proof frame. Once
 Datomic's index job discards superseded noHistory values, the historical read
 returns nil, the proof frame is incomplete, and a valid cursor is rejected
 with `:eacl.consistency/history-divergence`. In-memory test databases never
-run the index job, which is why nothing has caught it. Verify on a
-transactor-backed database with `d/request-index`; if confirmed, either drop
-`noHistory` from the stamp attribute or make the exact path use the
-exact-snapshot proof without reading stamps.
+run the index job, which is why nothing has caught it. The effect cannot be reproduced on `datomic:mem` (`request-index` there
+leaves the historical value visible), but Datomic documents `as-of` reads of
+`noHistory` attributes as unreliable, so the exact fallback no longer
+depends on them: `eacl.datomic.core/exact-fallback-decision` accepts
+`:exact` when the generated decision reports divergence purely because the
+exact snapshot's dependency proof was unreadable while its native revision
+and execution identity are the cursor's own (a snapshot's proof is, by
+identity, the proof recorded at minting). Readable stamps that differ still
+diverge, and another revision or source is never rescued;
+`consistency_v3_test/exact-fallback-tolerates-unreadable-historical-stamps-test`
+covers all four cases against the real decision kernel.
 
-### 2.13 S3 — Datomic writes fail open when the schema generation is unstamped
+### 2.13 S3 — Datomic writes fail open when the schema generation is unstamped — **Left as designed**
 
 `tx-schema-version-guard` adds no CAS when no `:eacl/schema-version` exists,
 so relationship writes on a database whose schema generation was never
 published proceed unguarded; DataScript and Datahike throw
-`:eacl.cache/generation-unprepared` in the same state.
+`:eacl.cache/generation-unprepared` in the same state. Left as designed: on
+Datomic the stamp is written by `write-schema!`, and databases whose
+definitions were installed as data (the module's own fixtures and every v7
+database that never ran `write-schema!`) have no stamp; failing closed would
+reject their writes. The unstamped state is exact-cache-only (the proof frame
+is incomplete), so no cached answer can be wrong; the missing guard only
+narrows protection against a schema removal racing a delayed relationship
+write. Making the stamp mandatory is a v8 upgrade decision.
 
-### 2.14 S3 — DataScript/Datahike `:create` conflicts are not serialized and `delete-object!` is one unbounded transaction
+### 2.14 S3 — DataScript/Datahike `:create` conflicts are not serialized and `delete-object!` is one unbounded transaction — **Left as designed**
 
 Two concurrent `:create`s of one relationship both succeed on DataScript and
 Datahike (only a schema-fence CAS guards the transaction), where Datomic
@@ -237,17 +268,25 @@ reports `:eacl/relationship-conflict` to the loser; a fence-CAS failure on
 DataScript surfaces raw `{:error :transact/cas}`. `delete-object!` on both
 realizes every retraction into one transaction (Datomic streams batches of
 1,000), which is a heap and latency cliff for high-degree objects on
-persistent Datahike stores.
+persistent Datahike stores. Left as designed: serializing creates needs a
+per-relation CAS and retry loop on the shared client (a concurrency-model
+change whose end state — the relationship exists once — is already correct),
+and batching the delete trades the single transaction's atomicity for
+Datomic's non-atomic batches; both are design changes for a scoped
+follow-up rather than defect repairs.
 
-### 2.15 S3 — Datahike `select-exact` maps `:read-failed` to "unavailable"
+### 2.15 S3 — Datahike `select-exact` maps `:read-failed` to "unavailable" — **Fixed** (and the store-config exposure)
 
 A transient store read failure is reported as a permanently expired snapshot
 (nil) instead of the classified retryable failure the surrounding code
 documents. Also, Datahike's `:snapshot-id` embeds the raw `:store` config,
 which for `:jdbc`/`:s3` stores can contain credentials and is returned to
-callers as `:cache-basis`.
+callers as `:cache-basis`. Fix applied: `:read-failed` is no longer treated
+as absence (a GC'd commit already surfaces as `commit-as-db` returning nil,
+and the versions in use raise no `:read-failed` type at all), and
+`:snapshot-id` carries only the store's `:backend` and `:id`.
 
-### 2.16 S3 — the stable-discovery release-assurance gate was broken (fixed here)
+### 2.16 S3 — the stable-discovery release-assurance gate was broken — **Fixed**
 
 `formal/stable-discovery/verify-fast.sh` still loaded
 `source_refinement_bridge.clj`, whose `ns-resolve` calls bind to
@@ -255,11 +294,11 @@ callers as `:cache-basis`.
 excision removed, so the gate died with a NullPointerException after the
 Dafny and TLC stages; and its Dafny escape-hatch scan ran through `rg`, so on
 a machine without ripgrep the scan was silently skipped instead of failing.
-Nothing runs this script in CI. This branch removes the retired bridge, moves
+Nothing runs this script in CI. This branch removed the retired bridge, moved
 the scan to `grep -rE`, and re-ran the gate: 506 obligations, all mutation
 controls killed, four bridges green, 6 s wall time.
 
-### 2.17 S4 — cross-backend error-shape drift
+### 2.17 S4 — cross-backend error-shape drift — **Partially fixed**
 
 Same condition, different shapes: missing relation on write carries no
 `:type`/`:eacl/error` on any backend; `:eacl.basis/selection-failure` carries
@@ -268,7 +307,13 @@ Datomic client and the shared adapters; unknown object is `{:object {:type
 :id}}` in three places and `{:object-id id}` in `eacl.datomic.impl`; concurrent
 schema writes report `:expected-generation` (DS/DH) versus
 `:expected-version` (Datomic); invalid entity ids are typed on Datahike, raw
-DataScript/Datomic exceptions elsewhere.
+DataScript/Datomic exceptions elsewhere. Partially fixed: the
+missing-relation write error now carries the same
+`:type`/`:eacl/error :eacl/unknown-relation-or-permission` shape (plus
+`:operation :write-relationships`, `:definition`, `:relation`) on all three
+backends and `:eacl.basis/selection-failure` carries `:type`; the remaining
+freshness/unknown-object/concurrent-schema key differences are additive
+harmonizations for a follow-up.
 
 ## 3. Discrepancies between specification, documentation and code
 

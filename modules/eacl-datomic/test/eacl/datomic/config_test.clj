@@ -1,6 +1,7 @@
 (ns eacl.datomic.config-test
   "As of 2025-06-28, EACL supports configurable ID attributes."
   (:require [clojure.test :as t :refer [deftest testing is]]
+            [clojure.walk]
             [eacl.core :as eacl]
             [datomic.api :as d]
             [eacl.datomic.core :as core]
@@ -155,3 +156,47 @@
             :cache-attempt {:evaluation-reserve-ms 7}})]
       (is (= 1234 (get-in client [:opts :execution-timeout-ms])))
       (is (= 7 (get-in client [:opts :cache-attempt :evaluation-reserve-ms]))))))
+
+(deftest expand-permission-tree-uses-the-client-id-codec-test
+  ;; The adapter's :object-id->internal must resolve external ids through the
+  ;; client's :object-id->lookup-ref, not a hardwired [:eacl/id id]. Expansion
+  ;; is the one public operation that hands the adapter an external id, so a
+  ;; codec whose external ids differ from :eacl/id used to yield an absent
+  ;; root (no subjects anywhere) instead of the tree.
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
+    (let [external->eacl-id {"S1" "account1-server1" "A1" "account-1" "U1" "user-1"
+                             "G1" "group-1" "SU" "super-user" "P" "platform"
+                             "N1" "nic-1" "L1" "lease-1" "NET1" "network-1" "V1" "vpc-1"}
+          eacl-id->external (into {} (map (juxt val key)) external->eacl-id)
+          codec-client (core/make-client
+                        conn
+                        {:object-id->lookup-ref (fn [id] [:eacl/id (get external->eacl-id id id)])
+                         :entid->object-id (fn [db eid]
+                                             (let [eacl-id (:eacl/id (d/entity db eid))]
+                                               (get eacl-id->external eacl-id eacl-id)))})
+          default-client (core/make-client conn {})
+          rename-ids (fn rename [tree]
+                       (clojure.walk/postwalk
+                        (fn [node]
+                          (if (and (map? node) (contains? node :type) (contains? node :id))
+                            (update node :id #(get eacl-id->external % %))
+                            node))
+                        tree))
+          codec-tree (:tree-root (eacl/expand-permission-tree
+                                  codec-client {:resource (->server "S1") :permission :view}))
+          default-tree (:tree-root (eacl/expand-permission-tree
+                                    default-client {:resource (->server "account1-server1") :permission :view}))
+          leaf-subjects (fn [tree]
+                          (->> (tree-seq map? #(get-in % [:intermediate :children]) tree)
+                               (mapcat #(get-in % [:leaf :subjects]))
+                               (map :id)
+                               set))]
+      (testing "the codec client sees the same topology and subjects as the default client"
+        (is (seq (leaf-subjects default-tree)))
+        (is (= (leaf-subjects (rename-ids default-tree)) (leaf-subjects codec-tree)))
+        (is (= (rename-ids default-tree) codec-tree)))
+      (testing "the other operations agree with expansion under the same codec"
+        (is (true? (eacl/can? codec-client (->user "U1") :view (->server "S1"))))
+        (is (contains? (leaf-subjects codec-tree) "U1"))))))

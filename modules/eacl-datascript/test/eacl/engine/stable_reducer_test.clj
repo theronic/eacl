@@ -155,3 +155,23 @@
         "the aliased account is emitted exactly once at the root")
     (is (= ["owner-1"] (reverse-ids seeded plan "alias-account" {}))
         "reverse traversal terminates the alias cycle and finds the owner")))
+
+(deftest schedule-admits-each-work-id-once-per-batch-test
+  ;; StableReducer.Admit folds `seen` through one successor batch, so two
+  ;; equal successors admit once; `schedule` must refine that literally
+  ;; (a batch-internal duplicate is one admission and one stack entry) and
+  ;; must skip nil items without truncating the batch.
+  (let [schedule #'reducer/schedule
+        state {:stack [] :admitted (transient #{}) :admissions 0
+               :max-admissions 100 :max-stack 100 :maximum-stack 0}
+        item {:kind :grant :rule {:node [:a :b]} :resource-eid 7}
+        other {:kind :grant :rule {:node [:a :b]} :resource-eid 8}
+        scheduled (schedule state nil [nil item item other nil])]
+    (is (= 2 (:admissions scheduled)))
+    (is (= [8 7] (mapv :resource-eid (:stack scheduled)))
+        "canonical order: the first fresh item is on top")
+    (is (= 7 (:resource-eid (peek (:stack scheduled)))))
+    (let [again (schedule (assoc scheduled
+                                 :admitted (transient (persistent! (:admitted scheduled))))
+                          nil [item other])]
+      (is (= 2 (:admissions again)) "already-admitted work is not re-admitted"))))

@@ -338,6 +338,9 @@
              :evaluation (:evaluation contract)
              :demand (:demand contract)
              :engine-version engine/engine-version
+             ;; The public order ABI is part of an answer's identity: a page
+             ;; cached under one order must never be served under another.
+             :order-abi engine/stable-order-abi
              :source-lifecycle
              (proof-frame/source-lifecycle request-proof-frame)
              :adapter-fingerprint (:adapter-fingerprint opts)

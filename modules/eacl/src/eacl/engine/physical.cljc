@@ -153,9 +153,14 @@
         (finally
           (swap! admission
                  (fn [state]
-                   (-> state
-                       (update :total-replays dec)
-                       (update-in [:replays key] dec)))))))))
+                   (let [remaining (dec (get-in state [:replays key] 1))
+                         state (update state :total-replays dec)]
+                     ;; A key at zero leaves the ledger, so a long-lived
+                     ;; admission atom does not grow with every distinct
+                     ;; continuation key it has ever seen.
+                     (if (pos? remaining)
+                       (assoc-in state [:replays key] remaining)
+                       (update state :replays dissoc key))))))))))
 
 (defn execution-cut-point
   "Builds a reducer cut-point hook from a normalized execution context:

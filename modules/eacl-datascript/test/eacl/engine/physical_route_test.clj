@@ -384,3 +384,39 @@
       ;; far below the 36-server denotation x 4 permission paths
       (let [finished (run)]
         (is (< (:commands finished) 40))))))
+
+(deftest exhaustive-runs-are-unbounded-test
+  ;; Mutation control for the retired finite exhaustion target: an exact
+  ;; count, an anchored point check and a bare :last window run to the empty
+  ;; stack (or a typed limit), never to a silent 1,000,000-result cap. The
+  ;; synthetic fetch yields 1,000,001 root results through the routed
+  ;; reducer entry points with the public limits raised above that.
+  (let [rule {:rule :relation :node [:server :view] :resource-type :server
+              :permission :view :relation-eid 100 :subject-type :user
+              :ordinal 0 :rank 1}
+        plan {:root [:server :view] :recursive? false
+              :indexes {:forward-seeds {:user [rule]}
+                        :forward-consumers {}
+                        :reverse-rules {[:server :view] [rule]}}}
+        n 1000001
+        fetch-fn (fn [{:keys [bound-eid limit]}]
+                   (let [start (inc (or bound-eid 0))]
+                     (range start (min (inc n) (+ start limit)))))
+        limits {:max-admissions 3000000 :max-values 3000000
+                :max-transitions 9000000 :max-commands 3000000}
+        run (reducer/run-forward
+             (merge limits {:fetch-fn fetch-fn :plan plan
+                            :subject-type :user :subject-eid 1
+                            :target route/exhaustion-target}))]
+    (testing "the exhaustion target never stops a run"
+      (is (= n (:discovered run)))
+      (is (empty? (:stack run)))
+      (is (= route/exhaustion-target reducer/exhaustion-target))
+      (is (not (< route/exhaustion-target (* 10 n)))))
+    (testing "the reverse direction and last-window use the same unbounded target"
+      (let [reverse-run (reducer/run-reverse
+                         (merge limits {:fetch-fn fetch-fn :plan plan
+                                        :subject-type :user :resource-eid 1
+                                        :target route/exhaustion-target}))]
+        (is (= n (:discovered reverse-run)))
+        (is (empty? (:stack reverse-run)))))))

@@ -59,8 +59,15 @@
    :subject-type subject-type
    :page-size page-size})
 
-(defn- checkpoint-key [binding]
-  (secure-format/canonical-digest token-domain (dissoc binding :basis)))
+(defn- checkpoint-key
+  "The exact execution identity a checkpoint belongs to. The basis is part
+  of it: a checkpoint recorded at one basis carries that basis's admitted
+  set and stack, and resuming it at another basis with a coincidentally
+  equal boundary would silently drop results (a merge point admitted
+  through a branch that no longer exists suppresses the entity when the
+  new basis reaches it another way)."
+  [binding]
+  (secure-format/canonical-digest token-domain binding))
 
 (defn edge-token
   "Mints the authenticated edge token for the boundary result at one-based
@@ -332,7 +339,7 @@
     last-window?
     (let [run (guard-exhaustion
                #(run-fresh options anchor-eid
-                           reducer/default-max-admissions))
+                           reducer/exhaustion-target))
           results (:results run)
           start (max 0 (- (count results) page-size))]
       {:eids (subvec results start)

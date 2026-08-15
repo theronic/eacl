@@ -220,7 +220,14 @@
         (str "Missing Relation: " relation
              " on resource type " resource-type
              " for subject type " subject-type ".")
-        {:resource/type resource-type
+        {:type :eacl/unknown-relation-or-permission
+         :eacl/error :eacl/unknown-relation-or-permission
+         :operation :write-relationships
+         :definition resource-type
+         :relation relation
+         :relation-or-permission relation
+         :schema-kind :relation
+         :resource/type resource-type
          :relation/name relation
          :subject/type subject-type})))
     {:subject subject

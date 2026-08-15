@@ -942,6 +942,9 @@
               :evaluation (:evaluation contract)
               :demand (:demand contract)
               :engine-version engine/engine-version
+              ;; The public order ABI is part of an answer's identity: a page
+              ;; cached under one order must never be served under another.
+              :order-abi engine/stable-order-abi
               :source-lifecycle
               (proof-frame/source-lifecycle request-proof-frame)
               :adapter-fingerprint (backend/fingerprint adapter)
@@ -1307,6 +1310,33 @@
        :source (cursor-execution-identity exact)
        :proof (cursor-continuation-proof exact)})}))
 
+(defn- exact-fallback-decision
+  "Decides an exact-fallback continuation.
+
+  The generated `:cursor-continuation` decision accepts `:exact` only when
+  the exact snapshot's dependency proof equals the cursor's. On Datomic the
+  exact snapshot is `d/as-of` at the cursor's own basis, and its
+  relationship data is exact there — but `:eacl/relation-version` is a
+  `:db/noHistory` attribute whose superseded values an index job may drop,
+  so the historical stamp read can come back empty and the proof frame
+  incomplete. That is not a divergence: the exact snapshot's proof is, by
+  identity, the proof recorded at minting. When the kernel reports
+  divergence purely because the exact snapshot's proof was unreadable
+  (`proof-complete?` false) while its native revision and execution
+  identity are the cursor's own, the continuation is `:exact`. Readable
+  stamps that differ (a rewritten history) still diverge."
+  [kernel current-cursor-context decoded exact-cursor-context proof-complete?]
+  (let [decision (cursor-decision kernel current-cursor-context decoded
+                                  exact-cursor-context)]
+    (if (and (= :history-divergence decision)
+             (not proof-complete?)
+             (= (:native-revision exact-cursor-context)
+                (:native-revision decoded))
+             (= (cursor-execution-identity exact-cursor-context)
+                (cursor-execution-identity decoded)))
+      :exact
+      decision)))
+
 (defn- dependency-cursor-context
   "Cursor continuation context for one selected snapshot.
 
@@ -1505,11 +1535,22 @@
                         (cursor-snapshot-expired! operation decoded))
                     exact-context
                     (snapshot-result-context opts exact prepare decoded)
+                    exact-relation-ids
+                    (some-> (:permission-dependencies exact-context)
+                            deref
+                            :relationship-dependencies)
+                    exact-proof-complete?
+                    (or (nil? exact-relation-ids)
+                        (proof-frame/complete?
+                         (proof-frame/resolve!
+                          (:request-proof-frame exact-context)
+                          exact-relation-ids)))
                     exact-decision
-                    (cursor-decision
+                    (exact-fallback-decision
                      (:decision-kernel opts)
                      current-cursor-context decoded
-                     (:cursor-context exact-context))]
+                     (:cursor-context exact-context)
+                     exact-proof-complete?)]
                 (if (= :exact exact-decision)
                   (assoc exact-context :mode :at-exact-snapshot)
                   (throw
@@ -1637,6 +1678,9 @@
               :evaluation (:evaluation contract)
               :demand (:demand contract)
               :engine-version engine/engine-version
+              ;; The public order ABI is part of an answer's identity: a page
+              ;; cached under one order must never be served under another.
+              :order-abi engine/stable-order-abi
               :source-lifecycle
               (proof-frame/source-lifecycle request-proof-frame)
               :adapter-fingerprint (backend/fingerprint adapter)
@@ -2861,6 +2905,20 @@
                              (datomic-backend/snapshot-adapter
                                db
                                {:entid->object-id entid->object-id
+                                ;; The adapter's :object-id->internal must
+                                ;; use the client's id codec: the engine
+                                ;; hands it internal eids (numbers, passed
+                                ;; through) but expand-permission-tree hands
+                                ;; it the external root id, which a custom
+                                ;; :object-id->lookup-ref/:object-id->ident
+                                ;; must resolve exactly like every other
+                                ;; operation does.
+                                :object-eid-fn
+                                (fn [db object-id]
+                                  (cond
+                                    (nil? object-id) nil
+                                    (number? object-id) object-id
+                                    :else (object-id->entid db object-id)))
                                 :conn conn
                                 :database-id database-id
                                 :source-lifecycle source-lifecycle

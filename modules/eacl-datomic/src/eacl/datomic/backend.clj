@@ -235,12 +235,14 @@
                         :selected-exact-locator locator))
                 (catch InterruptedException interrupt
                   (throw (ex-info "Exact-basis selection was interrupted."
-                                  {:eacl/error :eacl.basis/selection-failure
+                                  {:type :eacl.basis/selection-failure
+                                   :eacl/error :eacl.basis/selection-failure
                                    :classification :cancelled}
                                   interrupt)))
                 (catch Throwable failure
                   (throw (ex-info "Exact-basis selection failed."
-                                  {:eacl/error :eacl.basis/selection-failure
+                                  {:type :eacl.basis/selection-failure
+                                   :eacl/error :eacl.basis/selection-failure
                                    :classification :retryable
                                    :cause-class (.getName (class failure))}
                                   failure)))))))
