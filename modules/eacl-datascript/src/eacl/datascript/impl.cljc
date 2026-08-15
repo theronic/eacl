@@ -339,6 +339,27 @@
        :operation operation})))
   true)
 
+(defn- relationship-conflict!
+  [relationship]
+  (throw
+   (ex-info
+    ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+    {:type :eacl/relationship-conflict
+     :eacl/error :eacl/relationship-conflict
+     :relationship relationship})))
+
+(defn create-relationship-at-commit
+  "Transaction function behind `:create`. It re-checks the relationship
+  against the transaction-time database, so two writers that both planned
+  a `:create` of the same relationship against the same pre-write value are
+  serialized by the connection: the first commits, the second observes the
+  winner and fails with `:eacl/relationship-conflict`. Returns the
+  relationship adds when the relationship is still absent."
+  [db resolved relationship]
+  (if (relationship-exists? db resolved)
+    (relationship-conflict! relationship)
+    (add-relationship-txes resolved)))
+
 (defn tx-update-relationship
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)
@@ -352,13 +373,8 @@
 
           :create
           (if exists?
-            (throw
-             (ex-info
-              ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-              {:type :eacl/relationship-conflict
-               :eacl/error :eacl/relationship-conflict
-               :relationship relationship}))
-            (add-relationship-txes resolved))
+            (relationship-conflict! relationship)
+            [[:db.fn/call create-relationship-at-commit resolved relationship]])
 
           :delete
           ;; Retraction of an absent DataScript datom is harmless. Always

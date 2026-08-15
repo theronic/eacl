@@ -266,7 +266,7 @@ an unstamped database and assert the unlatched, exact-cache-only regime, so
 the code was restored and the regime is now documented on
 `tx-schema-version-guard` itself.
 
-### 2.14 S3 — DataScript/Datahike `:create` conflicts are not serialized and `delete-object!` is one unbounded transaction — **Delete semantics documented; create serialization see §2.19**
+### 2.14 S3 — DataScript/Datahike `:create` conflicts are not serialized and `delete-object!` is one unbounded transaction — **Delete semantics documented; create serialization fixed in §2.19**
 
 Two concurrent `:create`s of one relationship both succeed on DataScript and
 Datahike (only a schema-fence CAS guards the transaction), where Datomic
@@ -274,14 +274,13 @@ reports `:eacl/relationship-conflict` to the loser; a fence-CAS failure on
 DataScript surfaces raw `{:error :transact/cas}`. `delete-object!` on both
 realizes every retraction into one transaction (Datomic streams batches of
 1,000), which is a heap and latency cliff for high-degree objects on
-persistent Datahike stores. Left as designed: serializing creates needs a
-per-relation CAS and retry loop on the shared client (a concurrency-model
-change whose end state — the relationship exists once — is already correct),
-and batching the delete trades the single transaction's atomicity for
-Datomic's non-atomic batches; the delete's per-backend semantics (Datomic: batches of 1,000, a reader can
-observe a partially deleted object between batches; DataScript/Datahike: one
-atomic transaction) are now stated in the README's relationship-maintenance
-section, and create serialization is tracked as its own change (§2.19).
+persistent Datahike stores. The delete is left as designed: batching it
+would trade the single transaction's atomicity for Datomic's non-atomic
+batches, so its per-backend semantics (Datomic: batches of 1,000, a reader
+can observe a partially deleted object between batches; DataScript/Datahike:
+one atomic transaction) are now stated in the README's
+relationship-maintenance section. Create serialization is fixed as its own
+change (§2.19); the fence-CAS failure shape is unchanged.
 
 ### 2.15 S3 — Datahike `select-exact` maps `:read-failed` to "unavailable" — **Fixed** (and the store-config exposure)
 
@@ -357,19 +356,33 @@ private copy of `validate-schema-references` (§3.4) is replaced by the shared
 one. Tests: `schema_error_contract_test/relationship-writes-share-the-schema-taxonomy-test`
 and `schema-and-page-request-errors-are-typed-test`.
 
-### 2.19 S3 — DataScript/Datahike concurrent `:create` of one relationship both succeed — **Tracked**
+### 2.19 S3 — DataScript/Datahike concurrent `:create` of one relationship both succeed — **Fixed** (own change, `agent/serialize-create-conflicts`)
 
 SpiceDB and the Datomic client report `:eacl/relationship-conflict` to the
-loser; on DataScript and Datahike the plan is computed outside the
-transaction, so two concurrent creates of the same relationship both commit
-(the second add is a redundant datom) and both callers see success. The end
-state is correct (one relationship, both halves, one stamp); only the
-duplicate-create semantics under a race differ. The repair — moving the
-existence check into the transaction (`:db.fn/call`) or a per-relation
-stamp CAS with the retry loop the Datomic client already runs — is a write
-path change on the shared client with its own interleaving tests, opened as
-its own change rather than folded into this branch (see the pull request
-description for its status).
+loser; on DataScript and Datahike the plan was computed outside the
+transaction, so two concurrent creates of the same relationship both
+committed (the second add is a redundant datom) and both callers saw
+success. The end state was correct (one relationship, both halves, one
+stamp); only the duplicate-create semantics under a race differed. Fixed by
+moving the existence check into the transaction: `tx-update-relationship`
+keeps the plan-time conflict for an already-present relationship and
+otherwise emits `[:db.fn/call create-relationship-at-commit resolved
+relationship]`, a transaction function that re-checks both halves against
+the transaction-time database and returns the adds (both halves, identity
+guards, relation stamp) or throws the typed conflict. DataScript (CLJ and
+CLJS) and Datahike's default in-process writer (`{:writer {:backend
+:self}}`, `eacl.datahike.db/direct-writer?`) run it; a Datahike remote
+writer cannot transport a function value and keeps the plan-time check
+only. Datahike reports a failing transaction function wrapped (ex-info →
+`ExecutionException` → the original throw), so the client's transaction
+wrapper (`eacl.datahike.core/typed-transaction-error`) recovers the typed
+error from the cause chain. Duplicate `:create`s inside one batch still
+collapse through the write path's `distinct` and stay idempotent; the
+stale-plan identity-guard CAS still rejects a plan whose endpoint was
+retracted. Deterministic interleaving tests plan two creates against the
+same pre-write value and commit both
+(`concurrent-creates-are-serialized-at-commit-test` in the DataScript and
+Datahike storage suites, both attribute representations on Datahike).
 
 ### 2.20 S4 — the published `eacl-datomic` POM pinned `com.datomic/peer 1.0.7622` — **Fixed**
 
@@ -830,6 +843,11 @@ capability to 43.
   `nonblocking-cache-coordination` "Projection cache stores exact command
   responses", and `formally-verified-authorization-engine` "Differential
   cutover evidence without a production rollback engine".
+- Added and archived on the same day by the §2.19 fix:
+  `serialize-create-conflicts` (MODIFIED
+  `converged-relationship-storage` "Atomic pair mutation and repair", which
+  gains the commit-time decision and the "Racing creates of one
+  relationship" scenario).
 - Residual open tasks recorded at the top of the archived `tasks.md`:
   formally-verify-eacl-engine 13.10 and add-verified-subproblem-cache 8.13
   (the independent security/formal-methods review — an external gate already

@@ -70,6 +70,13 @@ entity. `delete-object!` removes both halves but retains the endpoint entity;
 `eacl.datascript.integrity/dangling-relationship-report` detects peer halves
 left by direct `:db/retractEntity`.
 
+Relationship `:create` is decided inside the transaction: the client plans it
+as a `:db.fn/call` of `eacl.datascript.impl/create-relationship-at-commit`,
+which re-checks the relationship against the transaction-time database, so a
+racing duplicate `:create` fails with `:eacl/relationship-conflict` instead
+of committing a redundant datom (CLJ and CLJS alike). `:touch` stays
+idempotent.
+
 ### Optional atomic entity retraction
 
 An embedded DataScript connection may explicitly install the safe transaction

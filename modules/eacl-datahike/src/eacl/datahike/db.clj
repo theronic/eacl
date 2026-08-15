@@ -8,6 +8,22 @@
   (:require [datahike.api :as d]
             [datahike.db.interface :as dbi]))
 
+(defn db-config
+  "The configuration of `db` through Datahike's database protocol, so
+   temporal and filter wrappers (`AsOfDB` carries only its origin and time
+   point as fields) report their origin's store, writer, history and
+   attribute representation instead of nil."
+  [db]
+  (dbi/-config db))
+
+(defn direct-writer?
+  "True when transactions against `db`'s connection run in this process
+   (Datahike's default `{:writer {:backend :self}}`). Only a direct writer
+   can execute transaction functions: a remote writer receives serialized
+   tx-data, which cannot carry a function value."
+  [db]
+  (= :self (get-in (db-config db) [:writer :backend])))
+
 (defn entid
   "`entid` as DataScript and Datomic define it: a number passes through
    unchanged (an unallocated id is deliberately NOT rejected), an ident or
