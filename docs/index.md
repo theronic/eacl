@@ -1,3 +1,12 @@
+<style>
+body { color: #24292f !important; }
+a, a:visited {
+  color: #075ca8 !important;
+  text-decoration: underline !important;
+  text-underline-offset: 0.15em;
+}
+</style>
+
 # 🦅 **EACL**: Enterprise Access ControL
 
 [EACL](https://github.com/theronic/eacl) is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library based on [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic.
