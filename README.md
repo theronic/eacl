@@ -40,19 +40,21 @@ Situated AuthZ offers some advantages for typical use-cases:
 
 ## Performance
 
-- EACL traverses acyclic ReBAC paths via low-level Datomic `d/index-range`, `d/seek-datoms` & `d/rseek-datoms` calls. Recursive permission closures use deterministic traversal order with request-local dedupe, avoiding both Datomic recursive Datalog materialization and persisted grant caches. Acyclic lookup results are returned in Datomic eid order; recursive lookup results are returned in traversal order.
+- EACL enumerates permissions with one stable-discovery engine: the permission schema reachable from the queried root is compiled into a sealed plan (dense canonical rule ordinals plus a certified static read-cost rank), and a single width-one depth-first reducer walks that plan over ordered backend index scans (`seek-datoms` on the relationship endpoint tuples), admitting each (node, entity) exactly once. It avoids both recursive Datalog materialization and persisted grant caches. Lookup results are returned in the plan's **stable first-discovery order** — deterministic for one immutable snapshot, schema and query, but not a global entity-ID sort. See [docs/stable-discovery-engine.md](docs/stable-discovery-engine.md).
   - I have investigated implementing custom Sort Keys, but they are not currently feasible without adding a lot of storage & write costs.
 - EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- EACL uses a bounded, client-private, multi-tier cache. Repeated operations
-  can reuse complete answers, while different operations can share compiled
-  schema plans and unchanged relationship projections where their graph paths
-  overlap. The cache never changes authorization semantics and can be disabled
-  globally or per request. See [Caching](#caching).
-- Acyclic lookup cursors retain a per-permission-path intermediate frontier. Later pages resume each arrow path at the earliest intermediate that can still contribute, and permanently skip paths exhausted in that scan direction. This prevents deep pages from repeatedly scanning intermediates already known to be irrelevant.
-- Acyclic lookup performance should scale roughly with permission graph complexity * `O(logN)` for `N` resources in terminal resource Relationship indices. Recursive lookup pages are deterministic traversal-order pages with request-local dedupe. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts consume bounded frontier pages (at most 16,384 EIDs at once) or one explicit recursive state machine; they never retain an entire broad lazy result head. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- EACL uses a bounded, client-private cache. Repeated operations reuse
+  complete answers at the same immutable snapshot (and, when the proof-backed
+  dependency check passes, across unrelated transactions); continued pages
+  reuse the latest engine checkpoint for their exact snapshot; sealed plans
+  are cached per source and basis. The cache never changes authorization
+  semantics and can be disabled globally or per request. See
+  [Caching](#caching).
+- Lookup cursors are result edges (the boundary result's one-based ordinal and identity, bound to the sealed plan's fingerprint) carried inside an authenticated envelope. A continued page resumes from the client-private latest checkpoint for that exact snapshot when one is retained, and otherwise replays the authenticated prefix deterministically against the same snapshot before publishing anything.
+- A first page costs the reader roughly the index scans on the cheapest certified path to the first results (the reducer follows the lowest static read-cost alternatives first), not the realization of every union branch. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts exhaust the same reducer and read its scalar discovered count; pass `:count-limit` to bound that work. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
 Public cursors are opaque, authenticated, and tied to the query and database
 snapshot that created them. A cursor walk stays on that snapshot even when the
@@ -205,11 +207,11 @@ Pass `:count-limit n` to either count operation to bound work. The result then i
 ### Relationship Maintenance
 
 - `(eacl/read-relationships acl filters) => {:data [relationships...] :page-info {...}}`
-- `(eacl/write-relationships! acl updates) => {:zed/token "eacl_z3_..."}`,
+- `(eacl/write-relationships! acl updates) => {:zed/token "eacl_z4_..."}`,
   - where `updates` is a collection of `[operation relationship]`, and `operation` is one of `:create`, `:touch` or `:delete`.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
-- `(eacl/delete-object! acl object) => {:zed/token "eacl_z3_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 
 All list APIs use the v8 Relay pagination contract:
 
@@ -217,7 +219,7 @@ All list APIs use the v8 Relay pagination contract:
 - Backward: pass `:last` and optionally `:before`.
 - Responses include `:page-info` with `:start-cursor`, `:end-cursor`, `:has-next-page?`, and `:has-previous-page?`.
 - `:cursor` and `:limit` are no longer supported for list pagination.
-- Acyclic lookup cursors paginate in Datomic eid order. Recursive lookup cursors paginate in deterministic traversal order.
+- Lookup cursors paginate in the sealed plan's stable first-discovery order; a page size change is rejected as an incompatible cursor rather than silently re-windowed.
 
 ### Deadlines and cooperative cancellation
 
@@ -240,8 +242,8 @@ API:
 ```
 
 Cancellation is cooperative and best-effort. EACL checks it at the same
-orchestration, cursor, cache, traversal-quantum, and adapter-command boundaries
-as the absolute deadline and, when observed before completion, throws
+orchestration, cursor, cache, and reducer-transition boundaries (one check per
+engine step, which covers each adapter command) as the absolute deadline and, when observed before completion, throws
 `:eacl.execution/cancelled` without returning a partial answer. A synchronous
 adapter call already in progress must return before the next check, and a
 completed result may win a race with a late cancellation. Applications must
@@ -272,7 +274,7 @@ Expansion accepts exactly `:resource`, `:permission`, and the optional
   :consistency consistency/fully-consistent
   :timeout-ms 5000})
 ;; =>
-;; {:expanded-at "eacl_z3_..."
+;; {:expanded-at "eacl_z4_..."
 ;;  :tree-root
 ;;  {:expanded-object {:type :document :id "readme"}
 ;;   :expanded-relation :view
@@ -380,11 +382,11 @@ To go back from page2, pass its `:start-cursor` as `:before` with `:last`:
 ```
 
 Forward and backward pages return results in the same order for one fixed query
-and cursor-pinned snapshot. Acyclic lookup uses backend internal-ID order,
-recursive lookup uses deterministic traversal order that is stable across page
-sizes, and relationship reads use backend tuple-index order. These are
-pagination orders, not a global, cross-backend, or domain sort order. Backward
-pagination returns the previous window; it does not reverse the result order.
+and cursor-pinned snapshot. Permission lookups use the sealed plan's stable
+first-discovery order, and relationship reads use backend tuple-index order.
+These are pagination orders, not a global, cross-backend, or domain sort order.
+Backward pagination returns the previous window; it does not reverse the result
+order.
 
 ## Datomic Pro Quickstart
 
@@ -754,7 +756,8 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 ```
 
 `make-client` rejects unknown options with `{:type :eacl/invalid-config}`.
-Page tokens expire after 5 minutes by default; tune with
+Datomic page tokens expire after 5 minutes by default (the shared Datahike and
+DataScript client issues non-expiring cursors unless a TTL is configured); tune with
 `:cursor-ttl-seconds`.
 
 ### Caching
@@ -1113,12 +1116,12 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   cached continuation is unavailable, EACL may replay earlier traversal work
   to continue a cursor.
 - *Return order:* EACL makes no global, lexical, or cross-backend ordering
-  promise. For a fixed query and cursor-pinned snapshot, acyclic lookups use
-  backend internal-ID order, relationship reads use backend tuple-index order,
-  and recursive lookups use deterministic traversal order. This stability is
-  sufficient for a cursor walk with no movement or duplicates; sort by a
-  domain key after reading if presentation order matters. SpiceDB likewise
-  returns results in discovery or schema order.
+  promise. For a fixed query and cursor-pinned snapshot, permission lookups
+  use the sealed plan's stable first-discovery order and relationship reads
+  use backend tuple-index order. This stability is sufficient for a cursor
+  walk with no movement or duplicates; sort by a domain key after reading if
+  presentation order matters. SpiceDB likewise returns results in discovery
+  or schema order.
 
 ## Differences from SpiceDB
 

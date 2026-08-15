@@ -8,8 +8,16 @@ the generated release manifest.
 
 ## Layout
 
-- `dafny/` contains the executable mathematical semantics, verified kernels,
-  and proof lemmas.
+- `stable-discovery/` contains the release-assurance tree of the shipped
+  enumeration engine: 41 Dafny leaves, two TLC families, five executable
+  refinement bridges and the randomized refinement campaign
+  (`verify-fast.sh`, 506 obligations; see its README).
+- `dafny/` contains the executable mathematical semantics, the generated
+  decision kernels, and proof lemmas. The `AcyclicEngine`, `RecursiveEngine`,
+  `OrderedMerge`, `RoutingCertificate`, `CursorCost` and `Indexed*` leaves
+  model the engines the stable-discovery engine replaced; they remain
+  verified regression models until the formal cut recorded as task 9.2 of
+  `openspec/changes/adopt-stable-discovery-enumeration/tasks.md`.
 - `tla/` contains bounded temporal models used to discover hostile cache,
   cursor, snapshot, continuation, subproblem-publication, proof-frame, and
   source-switch histories.
@@ -99,13 +107,16 @@ full-kernel growth bound. A source or class byte count is not a proxy for
 allocation, retained heap, solver effort, or latency.
 
 `bin/formal source-closure` checks the locked CLJ/CLJS static call-closure
-ledger for 63 named shared, generated-provider, and backend roots. The ledger
-is deliberately marked verification-incomplete: enumerating 1,404 reachable
-definitions in 58 source files (including source-span attribution for inline
-`defrecord` methods) prevents silent omissions but does not establish source
-refinement or adapter semantics. `backend-dispatch.edn` separately checks that
-every CLJ and CLJS dispatch site uses one of exactly the 21 required literal
-operation keys.
+ledger for the named shared, generated-provider, and backend roots declared in `bin/public-source-closure.mjs`. The ledger
+is deliberately marked verification-incomplete: enumerating every reachable
+definition (the committed `verification/public-source-closure.json` carries
+the exact definition and file counts; regenerate it with
+`node bin/public-source-closure.mjs write` after any public-source edit,
+including source-span attribution for inline `defrecord` methods) prevents
+silent omissions but does not establish source refinement or adapter
+semantics. `backend-dispatch.edn` separately checks that every CLJ and CLJS
+dispatch site uses one of exactly the required literal operation keys it pins
+(the required snapshot operations plus `:proof-frame`).
 
 ## Assurance status
 

@@ -2,9 +2,10 @@
 
 Datahike adapter for EACL.
 
-EACL routes permission compilation, direct/arrow traversal, recursive
-fixed-point evaluation, Relay pagination, counts, cache validation, and common
-errors through the same backend-neutral engine used by Datomic and DataScript.
+EACL routes sealed-plan compilation, the stable-discovery reducer (point
+checks, forward/reverse enumeration, counts), Relay pagination, cache
+validation, and common errors through the same backend-neutral engine used by
+Datomic and DataScript.
 
 Responsibilities:
 

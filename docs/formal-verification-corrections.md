@@ -1,5 +1,7 @@
 # Formal-verification behavior corrections
 
+> Note (2026-08-15): entries EACL-FORMAL-055, -066 and -067 describe the retired generated indexed traversal (reverse indexed state machine, 64-command speculative scan waves, `IndexedBatching.RenderScanBatchSize`). The stable-discovery engine replaced those mechanisms on 2026-08-14 — one released value per reducer transition, no scan waves — and retains the three counterexamples only as replayed regressions against the new engine (`formal/counterexamples/`, `counterexample_replay_test`).
+
 These changes were found while building the formal semantics, temporal models,
 generated differential boundaries, and hostile runtime tests. “Current
 worktree at discovery” is the affected development version for all entries;

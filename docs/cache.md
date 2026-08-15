@@ -40,10 +40,11 @@ Caching does not alter results:
 | --- | --- | --- |
 | Exact completed answer | Same semantic operation and immutable database value | Skips the complete operation with no proof read |
 | Proof-backed completed answer | Same semantic operation, lifecycle, schema generation, and dependency frontier | Survives unrelated forward transactions |
-| Relationship projection | Same exact snapshot, or same proved relation and schema frontier | Shares bounded adjacency chunks and membership probes |
-| Completed denotation | Compatible completed graph result under the same exact or proved generation | Shares acyclic results and recursive least fixed points |
-| Schema plan | Same schema generation | Shares compiled paths, dependency closures, and recursive routing |
-| Navigation/continuation | One authenticated query and snapshot context | Resumes pages without publishing incomplete traversal as an answer |
+| Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
+| Sealed plan | Same source scope, lifecycle, basis, and permission root | Reuses the compiled stable-discovery plan across requests |
+| Schema paths | Same schema generation | Shares permission-path and dependency-closure derivations used for cache dependencies and cursor proofs |
+| Latest checkpoint | One authenticated query, exact snapshot, page size, and boundary | Resumes a continued page from the retained engine state plus its lookahead segment without publishing incomplete traversal as an answer |
+| Visited page | One authenticated query and immutable snapshot | Reuses an already-externalized page (and learns the adjacent opposite-direction page) |
 
 Completed-answer keys include the normalized operation, principal, permission,
 query, bounds, evaluation mode, and result shape. Public IDs and metadata are
@@ -154,9 +155,11 @@ match.
 
 ## Capacity, concurrency, and configuration
 
-Completed answers, projections, and denotations have separate weighted
-least-recently-used budgets. A value heavier than its tier's admission ceiling
-is rejected rather than displacing the tier. `:max-entries` bounds the
+Completed answers and identity projections have separate weighted
+least-recently-used budgets (the `:denotation` tier budget is still accepted
+by the store configuration but no engine path publishes into it). A value
+heavier than its tier's admission ceiling is rejected rather than displacing
+the tier. `:max-entries` bounds the
 second-sighting window and client-private continuation/navigation stores; the
 answer weight budget bounds completed answers.
 

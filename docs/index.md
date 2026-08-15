@@ -43,12 +43,14 @@ retraction, or explicitly install/use the backend's optional
 
 ## Guides
 
+- [The stable-discovery engine](stable-discovery-engine.md) — enumeration order, cursors, continuation, limits
 - [Cache behavior and recovery](cache.md)
 - [Consistency and cache operations](v8-consistency-cache-operations.md)
 - [Backend modules and capabilities](v8-backend-modules-and-upgrade.md)
 - [Backend adapter contract](v8-backend-adapter-boundary.md)
-- [Layered subproblem cache](v8-subproblem-cache.md)
+- [Answer cache and subproblem store](v8-subproblem-cache.md)
 - [Formal assurance boundary](formal-verification.md)
+- [Audit reports](reports/) — dated records; the 2026-08-15 stable-engine audit lists open bugs and optimizations
 
 ## Licence
 

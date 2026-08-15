@@ -3,10 +3,9 @@
 DataScript adapter for EACL.
 
 This module implements the EACL public contract in Clojure and
-ClojureScript. Permission compilation, recursive fixed-point traversal,
-direction-scoped frontiers, Relay windowing, counts, cache proof validation, and
-common errors live in `eacl`; this adapter contains DataScript access and
-transaction mechanics.
+ClojureScript. Sealed-plan compilation, the stable-discovery reducer, Relay
+windowing, counts, cache proof validation, and common errors live in `eacl`;
+this adapter contains DataScript access and transaction mechanics.
 
 Responsibilities:
 

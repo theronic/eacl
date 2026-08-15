@@ -85,8 +85,9 @@ damage whose former eid is unknown.
 
 ## Recursive permissions and safety controls
 
-All adapters use the same strongly connected-component analysis and
-deterministic fixed-point engine. Each client accepts positive
+All adapters use the same stable-discovery engine: one sealed plan per
+permission root and one width-one deterministic reducer that admits each
+(node, entity) exactly once. Each client accepts positive
 `:recursive-traversal-limits` overrides:
 
 ```clojure
@@ -138,8 +139,8 @@ stored attribute, dependency, or database migration.
 Every bounded read accepts the same per-request cooperative cancellation
 token. Create it with `eacl.core/cancellation-token` and signal it with
 `eacl.core/cancel!`. Adapters do not need a new SPI operation: the shared
-orchestrator and generated traversal check the token before and after adapter
-commands. A synchronous command already in progress must return before the
+orchestrator checks the token at its stages and the engine checks it at every
+reducer transition (which brackets each adapter command). A synchronous command already in progress must return before the
 check can observe cancellation; adapter implementations with their own long
 loops should call `eacl.execution/check!` at bounded internal checkpoints.
 

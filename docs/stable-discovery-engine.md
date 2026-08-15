@@ -33,14 +33,32 @@ node + entity, never by producing rule.
 
 ## Cursor trust boundary
 
-A cursor is one bounded HMAC edge token (`eacl_sd1.` prefix, domain
-`eacl/stable-page/v1`, domain-separated key derivation, constant-time tag
-comparison) binding: format version, order ABI, composite plan
+The engine's boundary is one `:stable-edge` — the boundary result's
+one-based ordinal plus its identity, bound to the composite plan
+fingerprint, the order ABI and the traversal direction
+(`eacl.engine.v8/stable-edge`, validated by `validate-stable-bound!`). It
+contains no reducer state, no cache pointer, no seen set, and no rolling
+commitment. Navigation mode (`after`/`before`) is request input, not
+cursor identity.
+
+The public clients wrap that edge in their own authenticated envelopes and
+pin the exact basis, query scope and schema generation there: the Datomic
+client's `eacl4_` AEAD page token and the shared Datahike/DataScript
+client's `eacl_c4_` Relay envelope (`eacl.relay`, `eacl.cursor`). Their
+rejections surface under the public `:eacl.pagination/*` keys
+(`invalid-cursor`, `stale-cursor`, `wrong-cursor-kind`,
+`complete-evaluation-required`) and their limits under
+`:eacl.recursive-traversal/limit-exceeded` with `:limit-kind` and
+`:limit`. The self-contained HMAC edge token described next
+(`eacl_sd1.` prefix, `eacl.engine.stable-page/page`) is the engine's
+standalone API; the public clients call `edge-page` directly and never
+mint it.
+
+The standalone token binds: format version, order ABI, composite plan
 fingerprint, source lifecycle, exact basis, anchor, direction, subject
 type, fixed page size, the boundary result's one-based ordinal and
-external identity, and optional expiry. It contains no reducer state, no
-cache pointer, no seen set, and no rolling commitment. Navigation mode
-(`after`/`before`) is request input, not cursor identity.
+external identity, and optional expiry (domain `eacl/stable-page/v1`,
+domain-separated key derivation, constant-time tag comparison).
 
 Continuation resolves through a **latest-only in-process checkpoint**
 (complete history-free reducer state plus the undelivered lookahead
@@ -49,50 +67,67 @@ greater scalar transition ordinal, bounded by entry count and per-entry
 weight with overweight drop) or **governed deterministic replay** that
 validates the boundary ordinal and identity before any page publishes.
 
-Rejection classes (all typed, never silent):
+Rejection classes (all typed, never silent). Public clients surface them
+under the `:eacl.pagination/*` and `:eacl.recursive-traversal/*` keys;
+the standalone token uses the `:eacl.page/*` keys in parentheses:
 
-- `:eacl.page/invalid-cursor` — tamper, malformed, wrong key, or any bound
-  field (fingerprint, lifecycle, direction, anchor, page size) differing
-  from the executing context, or a replay boundary mismatch;
-- `:eacl.page/expired-cursor` — past `:expires-at`;
-- `:eacl.page/stale-cursor` — the exact basis is no longer selectable
-  (current-only topologies reject continuation across any write until the
-  certified full-read-scope dependency proof ships);
-- `:eacl.page/cursor-consistency-conflict` — the request's consistency
-  mode (`:fully-consistent`/`:at-least-as-fresh`) demands fresher than the
-  pinned basis;
-- `:eacl.page/resource-exhausted` — replay/continuation budgets make the
-  page unreachable; **distinct from stale** by design.
+- `:eacl.pagination/invalid-cursor` (`:eacl.page/invalid-cursor`) —
+  tamper, malformed, wrong key, or any bound field (fingerprint,
+  lifecycle, direction, anchor, page size) differing from the executing
+  context; `:eacl.pagination/wrong-cursor-kind` when the boundary is not a
+  `:stable-edge` or names the other traversal direction;
+- `:eacl.pagination/expired-cursor` (`:eacl.page/expired-cursor`) — past
+  the token's expiry;
+- `:eacl.pagination/stale-cursor` (`:eacl.page/stale-cursor`) — the
+  authenticated boundary is no longer reproducible at the selected basis
+  (a replay boundary mismatch), or, for the standalone token, the exact
+  basis is no longer selectable. The public clients continue on an equal
+  dependency proof or reconstruct the exact snapshot where the backend
+  retains it before they reject;
+- `:eacl.consistency/cursor-consistency-conflict`
+  (`:eacl.page/cursor-consistency-conflict`) — the request's consistency
+  mode (`:fully-consistent`/`:at-least-as-fresh`) demands fresher than
+  the pinned basis;
+- `:eacl.recursive-traversal/limit-exceeded` with `:limit-kind` and
+  `:limit` (`:eacl.page/resource-exhausted` for continuation budgets) —
+  replay/continuation budgets or the public traversal limits make the
+  page unreachable; **distinct from stale** by design;
+- `:eacl.pagination/complete-evaluation-required` — a bare `:last` window
+  on a recursive schema under the default `:demand` evaluation mode.
 
-Keys: supply `:security-key` (≥ 32 bytes); the process-local random
-default is warned about and does not survive restarts or load balancing.
+Keys for the standalone token: supply `:security-key` (≥ 32 bytes); the
+process-local random default is warned about and does not survive restarts
+or load balancing. The public clients take their key material from their
+own client options (`:security-key` / page-token keyrings).
 
 ## Failure semantics
 
-Every adapter read has exactly three outcomes
-(`eacl.engine.physical/classified-fetch-fn`):
+The reducer's only effectful call is the adapter scan at the canonical
+head (`eacl.engine.stable-reducer/adapter-fetch-fn`); its semantic state is
+untouched until a complete chunk is realized, so a thrown adapter failure
+leaves the state exactly where it was. Semantic limits fail typed and
+uncommitted (`:eacl.reducer/limit-exceeded`, surfaced publicly as
+`:eacl.recursive-traversal/limit-exceeded`); cancellation and the absolute
+deadline are checked cooperatively at every reducer transition
+(`eacl.engine.physical/execution-cut-point`) and never publish a partial
+page, child cursor, or checkpoint — the parent cursor stays reusable.
+Exact-basis selection classifies its failures in the Datomic and Datahike
+backends (`:eacl.basis/selection-failure` with `:retryable`/`:cancelled`;
+genuine absence maps to the contractual unavailable signal).
 
-- **complete** — validated values, possibly legitimately empty;
-- **failure** — classified `:retryable` or `:terminal` with a cause code;
-  the chunk realizes inside the classification boundary, so partial output
-  is discarded atomically and reducer state is untouched;
-- **cancelled**.
-
-`nil` is never an outcome. Missing storage is never an empty scan.
-Retries (`retrying-fetch-fn`) reuse the exact descriptor under the
-original absolute deadline and are counted separately from logical
-commands. Exact-basis selection follows the same discipline in the
-Datomic and Datahike backends (`:eacl.basis/selection-failure` with
-classification; genuine absence maps to the contractual unavailable
-signal). Semantic limits fail typed and uncommitted
-(`:eacl.reducer/limit-exceeded`); cancellation is cooperative at every
-reducer transition and never publishes a partial page, child cursor, or
-checkpoint — the parent cursor stays reusable.
-
-Service protection is a bulkhead, not a scheduler: bounded concurrent
-enumerations with slots held for the full synchronous call chain
-(`:eacl.service/admission-rejected`) and a replay ledger with total and
-per-key quotas (`:eacl.service/replay-rejected`).
+`eacl.engine.physical` additionally provides, as library components with
+their own tests, the three-outcome read classification
+(`classified-fetch-fn`: complete | classified failure with a cause code and
+atomic partial discard | cancelled — `nil` is never an outcome), retry of
+the exact descriptor under the original absolute deadline
+(`retrying-fetch-fn`), and a service-edge bulkhead with a replay ledger
+(`make-service-admission`, `with-admission`, `with-replay-admission`,
+`:eacl.service/admission-rejected`, `:eacl.service/replay-rejected`). The
+routed public path (`eacl.engine.v8`) currently installs only the
+execution cut-point: adapter exceptions propagate unclassified and no read
+is retried. Installing the wrappers is a `fetch-fn` option on
+`edge-page`/`check-eids`; see the 2026-08-15 audit report for the open
+decision.
 
 ## Cache artifacts and metrics
 
@@ -113,11 +148,15 @@ drops are silent by contract (the request itself is unaffected).
 
 ## Topology qualification
 
-A topology runs stable discovery only when its closed capability record
-(`eacl.engine.physical/topology-capabilities`) certifies: immutable basis,
-strict scan order and uniqueness, replayability, strict progress, atomic
+`eacl.engine.physical/topology-capabilities` defines the closed capability
+record a topology must certify before it is considered qualified for
+stable discovery (`stable-discovery-qualified?`): immutable basis, strict
+scan order and uniqueness, replayability, strict progress, atomic
 responses, and failure-classification fidelity. Deployment width is one
 for every topology in this change; semantic concurrent-read safety is
 recorded separately as the SPI seam for the future concurrency change.
-Datahike/DynamoDB remains unqualified until the upstream Konserve
-failure-cause collapse is repaired or wrapped.
+No backend module declares a capability record yet and the routed path
+does not consult one; the adapters' scan obligations are instead stated
+by `eacl.backend.v8/adapter-obligations` and exercised by the
+certification suites. Datahike/DynamoDB remains unqualified until the
+upstream Konserve failure-cause collapse is repaired or wrapped.
