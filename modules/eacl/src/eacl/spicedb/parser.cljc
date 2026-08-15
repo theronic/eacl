@@ -145,6 +145,7 @@
                                        " Declare multiple subject types once with `|`,"
                                        " e.g. `relation " rel-name ": a | b`.")
                            {:type :eacl.schema/duplicate-relation
+                            :eacl/error :eacl.schema/duplicate-relation
                             :relation rel-name}))
                   (assoc acc rel-name type-refs)))
               {}))
@@ -169,6 +170,7 @@
                                        " Combine the branches into one union,"
                                        " e.g. `permission " perm-name " = a + b`.")
                            {:type :eacl.schema/duplicate-permission
+                            :eacl/error :eacl.schema/duplicate-permission
                             :permission perm-name}))
                   (conj acc permission)))
               []))
@@ -192,6 +194,7 @@
                (throw (ex-info (str "Permission and relation share a name on definition '" type-path
                                     "': " (pr-str (vec collisions)))
                         {:type :eacl.schema/name-collision
+                         :eacl/error :eacl.schema/name-collision
                          :definition type-path
                          :names (vec collisions)})))
              [type-path
@@ -202,6 +205,7 @@
                 (throw (ex-info (str "Duplicate definition: '" type-path "'."
                                      " Each type may be defined once; merge the blocks.")
                          {:type :eacl.schema/duplicate-definition
+                          :eacl/error :eacl.schema/duplicate-definition
                           :definition type-path}))
                 (assoc acc type-path spec)))
             {})))
@@ -214,6 +218,7 @@
     {:definitions (extract-definitions (rest parse-tree))}
     (throw (ex-info "Unexpected schema parse tree; refusing to interpret as an empty schema."
              {:type :eacl.schema/parse-error
+              :eacl/error :eacl.schema/parse-error
               :parse-tree parse-tree}))))
 
 ;; Helper to parse expressions
@@ -378,7 +383,9 @@
                         first-msg
                         (str first-msg " (and " (dec total) " more issue(s))"))]
         (throw (ex-info summary
-                 {:issues      all-issues
+                 {:type        :eacl.schema/unsupported-feature
+                  :eacl/error  :eacl.schema/unsupported-feature
+                  :issues      all-issues
                   :issue-count total}))))
     nil))
 
@@ -438,6 +445,7 @@
           (when (some nil? ids)
             (throw (ex-info "Parenthesized expressions are not supported as arrow bases or targets."
                      {:type :eacl.schema/paren-arrow
+                      :eacl/error :eacl.schema/paren-arrow
                       :node node})))
           [{:type :arrow :base {:type :identifier :name (first ids)} :path (vec (rest ids))}])))
 
@@ -516,7 +524,9 @@
           subject-types (get-in info [:relation-subject-types base-name])]
       (if (empty? subject-types)
         (throw (ex-info (str "Unknown relation for arrow base: " base-name " on " resource-type)
-                 {:component component :resource-type resource-type}))
+                 {:type :eacl.schema/invalid-reference
+                  :eacl/error :eacl.schema/invalid-reference
+                  :component component :resource-type resource-type}))
         ;; The target kind must be resolved against ALL subject types of the base
         ;; relation, never just the first/last declared one — otherwise resolution
         ;; and validation become declaration-order-dependent.
@@ -568,6 +578,7 @@
     (let [failure (insta/get-failure parse-tree)]
       (throw (ex-info (str "Schema parse error: " (pr-str failure))
                {:type :eacl.schema/parse-error
+                :eacl/error :eacl.schema/parse-error
                 :failure failure}))))
   (let [transformed (transform-schema parse-tree)]
     ;; Validate EACL restrictions (parsing allows full SpiceDB, validation enforces limits)

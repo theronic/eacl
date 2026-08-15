@@ -105,6 +105,15 @@
   [message data]
   (throw (ex-info message data)))
 
+(defn- page-request-error!
+  "A malformed page request: typed `:eacl.pagination/invalid-page-request`
+  unless the caller supplies a more specific `:eacl/error` (a nil boundary
+  keeps `:eacl.pagination/invalid-cursor`, an out-of-range size
+  `:eacl.pagination/invalid-page-size`)."
+  [message data]
+  (let [category (or (:eacl/error data) :eacl.pagination/invalid-page-request)]
+    (throw (ex-info message (assoc data :eacl/error category :type category)))))
+
 (defn- host-normalize-page-request
   [query]
   (let [has-first? (contains? query :first)
@@ -113,38 +122,38 @@
         has-before? (contains? query :before)]
     (cond
       (contains? query :cursor)
-      (page-error! ":cursor is not supported; use :first/:after or :last/:before."
+      (page-request-error! ":cursor is not supported; use :first/:after or :last/:before."
                    {:key :cursor})
 
       (contains? query :limit)
-      (page-error! ":limit is not supported for list pagination; use :first or :last."
+      (page-request-error! ":limit is not supported for list pagination; use :first or :last."
                    {:key :limit})
 
       (and has-first? has-last?)
-      (page-error! "Use exactly one of :first or :last." {:first (:first query)
+      (page-request-error! "Use exactly one of :first or :last." {:first (:first query)
                                                           :last (:last query)})
 
       (and has-before? has-after?)
-      (page-error! "Use only one cursor boundary, :after or :before." {:after (:after query)
+      (page-request-error! "Use only one cursor boundary, :after or :before." {:after (:after query)
                                                                        :before (:before query)})
 
       (and has-after? (not has-first?))
-      (page-error! ":after is valid only with :first." {:after (:after query)})
+      (page-request-error! ":after is valid only with :first." {:after (:after query)})
 
       (and has-before? (not has-last?))
-      (page-error! ":before is valid only with :last." {:before (:before query)})
+      (page-request-error! ":before is valid only with :last." {:before (:before query)})
 
       ;; A present-but-nil boundary used to mean "start over", so a client
       ;; looping on a page-info that carried a nil cursor silently restarted at
       ;; page 1 forever. Absent means first page; nil means the caller lost
       ;; their cursor and must be told.
       (and has-after? (nil? (:after query)))
-      (page-error! ":after was passed as nil. Omit it for the first page."
+      (page-request-error! ":after was passed as nil. Omit it for the first page."
                    {:eacl/error :eacl.pagination/invalid-cursor
                     :key :after})
 
       (and has-before? (nil? (:before query)))
-      (page-error! ":before was passed as nil. Omit it for the last page."
+      (page-request-error! ":before was passed as nil. Omit it for the last page."
                    {:eacl/error :eacl.pagination/invalid-cursor
                     :key :before}))
 
@@ -156,10 +165,13 @@
                   :asc (:after query)
                   :desc (:before query))]
       (when-not (and (integer? size) (pos? size))
-        (page-error! "Page size must be a positive integer." {:size size}))
+        (page-request-error! "Page size must be a positive integer."
+                             {:eacl/error :eacl.pagination/invalid-page-size :size size}))
       (when (> size max-page-size)
-        (page-error! "Page size exceeds configured maximum." {:size size
-                                                              :max max-page-size}))
+        (page-request-error! "Page size exceeds configured maximum."
+                             {:eacl/error :eacl.pagination/invalid-page-size
+                              :size size
+                              :max max-page-size}))
       {:direction direction
        :size size
        :bound bound})))
@@ -207,39 +219,41 @@
                  default-page-size)]
     (case reason
       :both-directions
-      (page-error!
+      (page-request-error!
        "Use exactly one of :first or :last."
        {:first (:first query) :last (:last query)})
 
       :both-bounds
-      (page-error!
+      (page-request-error!
        "Use only one cursor boundary, :after or :before."
        {:after (:after query) :before (:before query)})
 
       :after-without-first
-      (page-error! ":after is valid only with :first."
+      (page-request-error! ":after is valid only with :first."
                    {:after (:after query)})
 
       :before-without-last
-      (page-error! ":before is valid only with :last."
+      (page-request-error! ":before is valid only with :last."
                    {:before (:before query)})
 
       :nil-after
-      (page-error! ":after was passed as nil. Omit it for the first page."
+      (page-request-error! ":after was passed as nil. Omit it for the first page."
                    {:eacl/error :eacl.pagination/invalid-cursor
                     :key :after})
 
       :nil-before
-      (page-error! ":before was passed as nil. Omit it for the last page."
+      (page-request-error! ":before was passed as nil. Omit it for the last page."
                    {:eacl/error :eacl.pagination/invalid-cursor
                     :key :before})
 
       :non-positive-size
-      (page-error! "Page size must be a positive integer." {:size size})
+      (page-request-error! "Page size must be a positive integer."
+                           {:eacl/error :eacl.pagination/invalid-page-size :size size})
 
       :oversized-page
-      (page-error! "Page size exceeds configured maximum."
-                   {:size size :max max-page-size})
+      (page-request-error! "Page size exceeds configured maximum."
+                           {:eacl/error :eacl.pagination/invalid-page-size
+                            :size size :max max-page-size})
 
       (page-error!
        "Generated page normalization returned an unknown error."
@@ -251,7 +265,7 @@
   [query]
   (when-let [unsupported
              (some #(when (contains? query %) %) [:cursor :limit])]
-    (page-error!
+    (page-request-error!
      "EACL v8 pagination accepts only :first/:after or :last/:before."
      {:key unsupported}))
   (if-not (generated-page-request-encodable? query)
@@ -1145,8 +1159,8 @@
 (defn- reject-count-pagination-keys!
   [op query]
   (when (some #(contains? query %) count-pagination-keys)
-    (page-error! (str op " does not use list pagination keys.")
-                 (select-keys query count-pagination-keys))))
+    (page-request-error! (str op " does not use list pagination keys.")
+                         (select-keys query count-pagination-keys))))
 
 (defn- query-count-limit
   [query]

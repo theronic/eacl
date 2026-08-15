@@ -515,6 +515,13 @@
         _ (doseq [{:keys [operation]} updates]
             (validate-operation! operation))
         db      ((:db api) conn)
+        schema  ((get-in api [:schema :read-schema]) db)
+        _ (doseq [{:keys [relationship]} updates]
+            (schema-errors/validate-relationship-write!
+             schema :write-relationships
+             {:resource-type (:type (:resource relationship))
+              :subject-type (:type (:subject relationship))
+              :relation (:relation relationship)}))
         internal-updates
         (S/transform [S/ALL :relationship]
                      #(spice-relationship->internal db opts %)

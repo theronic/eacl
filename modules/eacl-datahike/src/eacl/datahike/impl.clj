@@ -145,6 +145,7 @@
       eid
       (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
                       {:type :eacl/unknown-object
+                       :eacl/error :eacl/unknown-object
                        :object {:type type :id id}})))))
 
 (defn- relation-id
@@ -352,6 +353,7 @@
              (ex-info
               ":create conflicts with an existing relationship. Use :touch for idempotent writes."
               {:type :eacl/relationship-conflict
+               :eacl/error :eacl/relationship-conflict
                :relationship relationship}))
             (add-relationship-txes resolved))
 

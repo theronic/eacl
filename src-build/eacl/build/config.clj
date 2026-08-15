@@ -29,7 +29,7 @@
     {'org.clojure/clojure {:mvn/version "1.11.4"}
      'dev.eacl/eacl ::eacl-version
      'com.rpl/specter {:mvn/version "1.1.4"}
-     'com.datomic/peer {:mvn/version "1.0.7622"}}}
+     'com.datomic/peer {:mvn/version "1.0.7705"}}}
 
    :eacl-datahike
    {:lib 'dev.eacl/eacl-datahike

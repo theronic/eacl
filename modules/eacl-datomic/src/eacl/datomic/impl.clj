@@ -77,7 +77,13 @@
   schema generation it was resolved against.
 
   This prevents a delayed relationship transaction from resurrecting a
-  relation entity after a concurrent write-schema! removed it."
+  relation entity after a concurrent write-schema! removed it. A database
+  whose schema generation has never been published (definitions installed as
+  data, or a pre-v8 database that has not run `write-schema!` yet) is the
+  supported unstamped v7-compatibility regime: reads recompute their paths
+  instead of latching, the cache is exact-snapshot only, and writes commit
+  without this guard — run `write-schema!` once (a zero delta still stamps)
+  to publish the generation and arm the guard."
   [db]
   (when-let [version (impl.indexed/schema-version db)]
     [:db.fn/cas [:eacl/id "schema-string"]
@@ -126,6 +132,7 @@
   (throw (ex-info (str "Unknown object: " (pr-str object-id) " does not resolve to an existing entity."
                        " Pass {:allow-tempids? true} to tx-relationship for same-transaction tempids.")
            {:type :eacl/unknown-object
+            :eacl/error :eacl/unknown-object
             :object-id object-id})))
 
 (defn- object-id->eid-or-tempid
@@ -854,6 +861,7 @@
           (if exists?
             (throw (ex-info ":create conflicts with an existing relationship. Use :touch for idempotent writes."
                             {:type :eacl/relationship-conflict
+                             :eacl/error :eacl/relationship-conflict
                              :relationship relationship}))
             (add-relationship-txes resolved))
 

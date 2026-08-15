@@ -62,12 +62,17 @@
 
     :else
     (throw (ex-info "Invalid Permission spec. Expected one of {:relation name}, {:permission name}, {:arrow source :permission target} or {:arrow source :relation target}"
-                    {:spec spec}))))
+                    {:type :eacl.schema/invalid-permission-spec
+                     :eacl/error :eacl.schema/invalid-permission-spec
+                     :spec spec}))))
 
 (defn validate-schema-references
-  "Validates that all permission references are valid.
-   Returns nil if valid, throws ex-info with :errors vector if invalid."
-  [{:keys [relations permissions]}]
+  "Validates that all permission references are valid and, when the schema
+   carries its `:definitions` (as `eacl.spicedb.parser/->eacl-schema` output
+   does), that every relation subject type names a defined definition.
+   Returns nil if valid, throws a typed ex-info
+   (`:eacl.schema/invalid-reference`) with :errors vector if invalid."
+  [{:keys [relations permissions definitions]}]
   (let [relations-by-type        (group-by :eacl.relation/resource-type relations)
         permissions-by-type      (group-by :eacl.permission/resource-type permissions)
         relation-names-by-type   (into {}
@@ -142,6 +147,24 @@
                               :message     (str "Permission " (name res-type) "/" (name perm-name)
                                                 " arrow via " (name source-rel) "->" (name target-name)
                                                 " - permission '" (name target-name) "' does not exist on " (name target-res-type))}))))))))))
+    ;; Relation subject types must be defined definitions (SpiceDB rejects
+    ;; `relation reader: nobody`). Only enforceable when the schema carries
+    ;; its definition list; data-installed schemas that pass relations and
+    ;; permissions alone are validated for references only.
+    (when (seq definitions)
+      (let [defined (into #{} (map keyword) definitions)]
+        (doseq [rel relations
+                :let [subject-type (:eacl.relation/subject-type rel)]
+                :when (not (contains? defined subject-type))]
+          (swap! errors conj
+                 {:type          :undefined-subject-type
+                  :resource-type (:eacl.relation/resource-type rel)
+                  :relation      (:eacl.relation/relation-name rel)
+                  :subject-type  subject-type
+                  :message       (str "Relation " (name (:eacl.relation/resource-type rel)) "/"
+                                      (name (:eacl.relation/relation-name rel))
+                                      " - subject type '" (name subject-type)
+                                      "' is not a defined definition")}))))
     (when (seq @errors)
       (let [messages (->> @errors
                           (map :message)
@@ -150,7 +173,9 @@
             summary  (str "Invalid schema: reference validation failed. "
                           (str/join "; " messages))]
         (throw (ex-info summary
-                        {:errors      @errors
+                        {:type        :eacl.schema/invalid-reference
+                         :eacl/error  :eacl.schema/invalid-reference
+                         :errors      @errors
                          :messages    messages
                          :error-count (count @errors)}))))
     nil))

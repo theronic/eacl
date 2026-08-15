@@ -3,6 +3,7 @@
             [datomic.api :as d]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
@@ -106,6 +107,7 @@
          (ex-info
           "Cannot delete an EACL relation that is used by relationships."
           {:type :eacl.schema/relation-in-use
+           :eacl/error :eacl.schema/relation-in-use
            :relation-eid relation-eid
            :resource-type resource-type
            :subject-type subject-type}))
@@ -350,117 +352,14 @@
        :missing-after missing-after
        :db-after db-after})))
 
-(defn validate-schema-references
-  "Validates that all permission references are valid.
-   Returns nil if valid, throws ex-info with :errors vector if invalid.
-
-   Validates:
-   - Direct permissions reference existing relations on same resource type
-   - Arrow permissions reference valid source relations on same resource type
-   - Arrow targets (permission or relation) exist on target resource type
-   - Self-referencing permissions reference existing permissions on same type
-
-   ADR 012 requires: 'Invalid schema should be rejected and no changes made.'"
-  [{:keys [relations permissions]}]
-  (let [;; Build lookups
-        relations-by-type   (group-by :eacl.relation/resource-type relations)
-        permissions-by-type (group-by :eacl.permission/resource-type permissions)
-
-        relation-names-by-type
-        (into {} (for [[rt rels] relations-by-type]
-                   [rt (set (map :eacl.relation/relation-name rels))]))
-
-        permission-names-by-type
-        (into {} (for [[rt perms] permissions-by-type]
-                   [rt (set (map :eacl.permission/permission-name perms))]))
-
-        ;; Subject types for each relation as full SETS (for arrow target validation).
-        ;; Multi-type relations (relation owner: user | group) expand to one entry per
-        ;; type; keeping a set makes validation independent of declaration order.
-        relation-subject-types
-        (reduce (fn [acc rel]
-                  (update acc
-                          [(:eacl.relation/resource-type rel)
-                           (:eacl.relation/relation-name rel)]
-                          (fnil conj #{})
-                          (:eacl.relation/subject-type rel)))
-                {}
-                relations)
-
-        errors              (atom [])]
-
-    (doseq [perm permissions]
-      (let [res-type    (:eacl.permission/resource-type perm)
-            perm-name   (:eacl.permission/permission-name perm)
-            source-rel  (:eacl.permission/source-relation-name perm)
-            target-type (:eacl.permission/target-type perm)
-            target-name (:eacl.permission/target-name perm)]
-
-        ;; For self permissions (source-rel = :self), validate target exists on same resource
-        (if (= source-rel :self)
-          (if (= target-type :relation)
-            ;; Self -> relation: validate relation exists on this resource type
-            (when-not (contains? (get relation-names-by-type res-type) target-name)
-              (swap! errors conj
-                     {:type       :invalid-self-relation
-                      :permission (str (name res-type) "/" (name perm-name))
-                      :target     target-name
-                      :message    (str "Permission " (name res-type) "/" (name perm-name)
-                                       " references non-existent relation: " (name target-name))}))
-            ;; Self -> permission: validate permission exists on this resource type
-            (when-not (contains? (get permission-names-by-type res-type) target-name)
-              (swap! errors conj
-                     {:type       :invalid-self-permission
-                      :permission (str (name res-type) "/" (name perm-name))
-                      :target     target-name
-                      :message    (str "Permission " (name res-type) "/" (name perm-name)
-                                       " references non-existent permission: " (name target-name))})))
-
-          ;; For arrow permissions (source-rel != :self)
-          (do
-            ;; Validate source relation exists on this resource type
-            (when-not (contains? (get relation-names-by-type res-type) source-rel)
-              (swap! errors conj
-                     {:type       :missing-source-relation
-                      :permission (str (name res-type) "/" (name perm-name))
-                      :relation   source-rel
-                      :message    (str "Permission " (name res-type) "/" (name perm-name)
-                                       " references non-existent relation: " (name source-rel))}))
-
-            ;; If source relation exists, validate the target exists on EVERY subject
-            ;; type of the source relation. Anything else is declaration-order-dependent,
-            ;; and SpiceDB requires arrow targets on all possible subject types.
-            (when (contains? (get relation-names-by-type res-type) source-rel)
-              (doseq [target-res-type (get relation-subject-types [res-type source-rel])]
-                (if (= target-type :relation)
-                  ;; Arrow to relation: validate relation exists on target type
-                  (when-not (contains? (get relation-names-by-type target-res-type) target-name)
-                    (swap! errors conj
-                           {:type        :invalid-arrow-target-relation
-                            :permission  (str (name res-type) "/" (name perm-name))
-                            :arrow-via   source-rel
-                            :target-type target-res-type
-                            :target      target-name
-                            :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                              " arrow via " (name source-rel) "->" (name target-name)
-                                              " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
-                  ;; Arrow to permission: validate permission exists on target type
-                  (when-not (contains? (get permission-names-by-type target-res-type) target-name)
-                    (swap! errors conj
-                           {:type        :invalid-arrow-target-permission
-                            :permission  (str (name res-type) "/" (name perm-name))
-                            :arrow-via   source-rel
-                            :target-type target-res-type
-                            :target      target-name
-                            :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                              " arrow via " (name source-rel) "->" (name target-name)
-                                              " - permission '" (name target-name) "' does not exist on " (name target-res-type))})))))))))
-
-    (when (seq @errors)
-      (throw (ex-info "Invalid schema: reference validation failed"
-                      {:errors      @errors
-                       :error-count (count @errors)})))
-    nil))
+(def validate-schema-references
+  "The shared reference validator (`eacl.schema.model/validate-schema-references`):
+  direct permissions reference existing relations, arrows reference valid
+  source relations and targets that exist on every subject type, self
+  permissions reference existing permissions, and relation subject types are
+  defined definitions. ADR 012 requires that an invalid schema is rejected
+  with no changes made."
+  model/validate-schema-references)
 
 ; now we have to do a diff of relations and permissions
 ; we can safely delete permissions because will simply resolve
@@ -528,8 +427,13 @@
             (ex-info
              "The EACL schema changed concurrently; retry against a new client or database value."
              {:type :eacl.schema/concurrent-write
+              :eacl/error :eacl.schema/concurrent-write
               :expected-version expected-version
               :actual-version (impl.indexed/schema-version (d/db conn))
+              ;; The shared key names used by the other backends.
+              :expected-generation expected-version
+              :actual-generation (impl.indexed/schema-version (d/db conn))
+              :backend-error cause-data
               :datomic-error cause-data}
              throwable))
            (throw throwable))))))
@@ -596,6 +500,7 @@
              (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
                                   " because it is used by " cnt " relationships.")
                              {:type :eacl.schema/relation-in-use
+                              :eacl/error :eacl.schema/relation-in-use
                               :relation rel
                               :count cnt})))))
 

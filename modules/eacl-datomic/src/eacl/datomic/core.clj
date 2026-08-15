@@ -481,17 +481,22 @@
             (when (identical? sync-timeout-marker synced-db)
               (freshness-unavailable!
                "Timed out waiting for the requested EACL revision."
-               {:reason :timeout
+               {:reason :freshness-timeout
                 :requested-t requested-t
                 :observed-t (observed-connection-revision conn)
+                ;; The shared adapters' key names for the same facts.
+                :requested-order-hint requested-t
+                :observed-order-hint (observed-connection-revision conn)
                 :timeout-ms timeout-ms}))
             (let [observed-t (d/basis-t synced-db)]
               (when (< observed-t requested-t)
                 (freshness-unavailable!
                  "The local Peer did not reach the requested EACL revision."
-                 {:reason :revision-not-observed
+                 {:reason :head-behind
                   :requested-t requested-t
                   :observed-t observed-t
+                  :requested-order-hint requested-t
+                  :observed-order-hint observed-t
                   :timeout-ms timeout-ms}))
               synced-db))
           (catch clojure.lang.ExceptionInfo e
@@ -503,6 +508,8 @@
                {:reason :sync-failed
                 :requested-t requested-t
                 :observed-t (observed-connection-revision conn)
+                :requested-order-hint requested-t
+                :observed-order-hint (observed-connection-revision conn)
                 :timeout-ms timeout-ms})))
           (catch Exception _
             (freshness-unavailable!
@@ -510,6 +517,8 @@
              {:reason :sync-failed
               :requested-t requested-t
               :observed-t (observed-connection-revision conn)
+              :requested-order-hint requested-t
+              :observed-order-hint (observed-connection-revision conn)
               :timeout-ms timeout-ms})))))))
 
 (defn- historical-db
@@ -1085,6 +1094,7 @@
       (assoc obj :id eid)
       (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
                {:type :eacl/unknown-object
+                :eacl/error :eacl/unknown-object
                 :object {:type type :id id}})))))
 
 (defn spice-relationship->internal
@@ -1154,6 +1164,13 @@
   (let [updates (vec updates)]
     (doseq [{:keys [operation]} updates]
       (impl/validate-relationship-operation! operation))
+    (let [schema (schema/read-schema (d/db conn))]
+      (doseq [{:keys [relationship]} updates]
+        (schema-errors/validate-relationship-write!
+         schema :write-relationships
+         {:resource-type (:type (:resource relationship))
+          :subject-type (:type (:subject relationship))
+          :relation (:relation relationship)})))
     (loop [attempt 1]
       (let [db (d/db conn)
             internal-updates

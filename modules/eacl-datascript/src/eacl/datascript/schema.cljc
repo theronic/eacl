@@ -231,8 +231,10 @@
          (ex-info
           "The EACL schema changed concurrently; retry from the new database value."
           {:type :eacl.schema/concurrent-write
+           :eacl/error :eacl.schema/concurrent-write
            :expected-generation expected-generation
            :actual-generation (current-schema-generation (ds/db conn))
+           :backend-error cause-data
            :datascript-error cause-data}
           throwable))
         (throw throwable)))))
@@ -281,6 +283,7 @@
            (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
                                 " because it is used by " cnt " relationships.")
                            {:type :eacl.schema/relation-in-use
+                            :eacl/error :eacl.schema/relation-in-use
                             :relation rel
                             :count cnt})))))
      (let [relation-additions

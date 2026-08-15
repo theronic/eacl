@@ -208,10 +208,11 @@ Pass `:count-limit n` to either count operation to bound work. The result then i
 
 - `(eacl/read-relationships acl filters) => {:data [relationships...] :page-info {...}}`
 - `(eacl/write-relationships! acl updates) => {:zed/token "eacl_z4_..."}`,
-  - where `updates` is a collection of `[operation relationship]`, and `operation` is one of `:create`, `:touch` or `:delete`.
+  - where `updates` is a collection of `RelationshipUpdate` records (`(eacl/->RelationshipUpdate operation relationship)`) or maps `{:operation op :relationship rel}`, and `operation` is one of `:create`, `:touch` or `:delete`. A bare `[operation relationship]` vector is rejected as an unsupported update.
+  - schema names are validated before any endpoint is resolved: an unknown definition, relation, or a subject type the relation does not declare fails with the same typed `:eacl/unknown-definition` / `:eacl/unknown-relation-or-permission` errors the read operations use.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
-- `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 
 All list APIs use the v8 Relay pagination contract:
 
@@ -1146,6 +1147,21 @@ but it is not a byte-for-byte or operational clone:
 - EACL currently supports a smaller schema subset: unions and its documented
   arrow forms, but not caveats, wildcard subjects, expiration, intersections,
   exclusions, or subject relations.
+- EACL evaluates relationship cycles as a fixed point and has no dispatch
+  depth limit for checks, lookups, and counts: a chain of any length and a
+  cyclic `parent` graph are answered exactly. SpiceDB (default
+  `--dispatch-max-depth 50`) fails from about 48 arrow hops and on any cycle
+  it cannot short-circuit, so EACL is strictly more permissive on such data.
+  Only `expand-permission-tree` refuses cycles (`:eacl.permission-tree/cycle-detected`)
+  and depth beyond `:permission-tree-limits` (`:max-depth 50` by default).
+- Object identifiers are arbitrary non-empty strings and schema names follow
+  the parser's grammar rather than SpiceDB's exact identifier and name
+  grammars; a schema or dataset that must also load into SpiceDB should keep
+  to SpiceDB's rules (`^[a-zA-Z0-9/_|\-=+]{1,1024}$` for object ids,
+  `^[a-z][a-z0-9_]{1,62}[a-z0-9]$` for relation and permission names).
+- A relation name is accepted only in the `:permission` slot of
+  `expand-permission-tree`; `can?`, `check-permission`, the lookups and the
+  counts require a permission (SpiceDB accepts either).
 - A relationship filter containing `:subject/id` must also contain
   `:subject/type`. This fails closed instead of interpreting one external ID
   across every subject definition.

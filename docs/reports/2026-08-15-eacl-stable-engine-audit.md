@@ -113,7 +113,7 @@ publishes page 1 at two bases, asserts two distinct checkpoint identities
 in the store, and that the new basis's continuation equals its own pure
 replay.
 
-### 2.3 S3 — spec/doc claim three-outcome reads, retry, bulkhead and capability qualification on the routed engine; the routed engine installs none of them — **Left as a wiring decision**
+### 2.3 S3 — spec/doc claim three-outcome reads, retry, bulkhead and capability qualification on the routed engine; the routed engine installs none of them — **Wired in the follow-up pull request `agent/wire-physical-execution`**
 
 `eacl.engine.physical/classified-fetch-fn`, `retrying-fetch-fn`,
 `make-service-admission`/`with-admission`/`with-replay-admission`,
@@ -246,7 +246,7 @@ diverge, and another revision or source is never rescued;
 `consistency_v3_test/exact-fallback-tolerates-unreadable-historical-stamps-test`
 covers all four cases against the real decision kernel.
 
-### 2.13 S3 — Datomic writes fail open when the schema generation is unstamped — **Left as designed**
+### 2.13 S3 — Datomic writes fail open when the schema generation is unstamped — **Left as designed (confirmed by the repository's own tests)**
 
 `tx-schema-version-guard` adds no CAS when no `:eacl/schema-version` exists,
 so relationship writes on a database whose schema generation was never
@@ -258,9 +258,15 @@ database that never ran `write-schema!`) have no stamp; failing closed would
 reject their writes. The unstamped state is exact-cache-only (the proof frame
 is incomplete), so no cached answer can be wrong; the missing guard only
 narrows protection against a schema removal racing a delayed relationship
-write. Making the stamp mandatory is a v8 upgrade decision.
+write. Making the stamp mandatory is a v8 upgrade decision. A fail-closed variant
+was tried during the fix round: `schema_basis_test`'s
+`unstamped-client-does-not-latch-schema-test` and
+`unstamped-client-does-not-cache-lookup-results-test` deliberately write on
+an unstamped database and assert the unlatched, exact-cache-only regime, so
+the code was restored and the regime is now documented on
+`tx-schema-version-guard` itself.
 
-### 2.14 S3 — DataScript/Datahike `:create` conflicts are not serialized and `delete-object!` is one unbounded transaction — **Left as designed**
+### 2.14 S3 — DataScript/Datahike `:create` conflicts are not serialized and `delete-object!` is one unbounded transaction — **Delete semantics documented; create serialization see §2.19**
 
 Two concurrent `:create`s of one relationship both succeed on DataScript and
 Datahike (only a schema-fence CAS guards the transaction), where Datomic
@@ -272,8 +278,10 @@ persistent Datahike stores. Left as designed: serializing creates needs a
 per-relation CAS and retry loop on the shared client (a concurrency-model
 change whose end state — the relationship exists once — is already correct),
 and batching the delete trades the single transaction's atomicity for
-Datomic's non-atomic batches; both are design changes for a scoped
-follow-up rather than defect repairs.
+Datomic's non-atomic batches; the delete's per-backend semantics (Datomic: batches of 1,000, a reader can
+observe a partially deleted object between batches; DataScript/Datahike: one
+atomic transaction) are now stated in the README's relationship-maintenance
+section, and create serialization is tracked as its own change (§2.19).
 
 ### 2.15 S3 — Datahike `select-exact` maps `:read-failed` to "unavailable" — **Fixed** (and the store-config exposure)
 
@@ -298,7 +306,7 @@ Nothing runs this script in CI. This branch removed the retired bridge, moved
 the scan to `grep -rE`, and re-ran the gate: 506 obligations, all mutation
 controls killed, four bridges green, 6 s wall time.
 
-### 2.17 S4 — cross-backend error-shape drift — **Partially fixed**
+### 2.17 S4 — cross-backend error-shape drift — **Fixed**
 
 Same condition, different shapes: missing relation on write carries no
 `:type`/`:eacl/error` on any backend; `:eacl.basis/selection-failure` carries
@@ -311,9 +319,73 @@ DataScript/Datomic exceptions elsewhere. Partially fixed: the
 missing-relation write error now carries the same
 `:type`/`:eacl/error :eacl/unknown-relation-or-permission` shape (plus
 `:operation :write-relationships`, `:definition`, `:relation`) on all three
-backends and `:eacl.basis/selection-failure` carries `:type`; the remaining
-freshness/unknown-object/concurrent-schema key differences are additive
-harmonizations for a follow-up.
+backends and `:eacl.basis/selection-failure` carries `:type`; the second fix round
+completed the harmonization additively: the Datomic client's freshness
+errors carry `:reason :freshness-timeout`/`:head-behind`/`:sync-failed` plus
+`:requested-order-hint`/`:observed-order-hint` beside their `:requested-t`/
+`:observed-t`; every `:eacl/unknown-object`, `:eacl/relationship-conflict`,
+`:eacl.schema/concurrent-write` (now also `:expected-generation`/
+`:actual-generation`/`:backend-error` on Datomic) and
+`:eacl.schema/relation-in-use` error carries `:eacl/error` equal to its
+`:type`.
+
+### 2.18 S3 — untyped validation errors on writes, schema writes and page requests — **Fixed**
+
+Adopted from the 2026-08-15 SpiceDB differential report (its T4, T8, T9, S6,
+S7, R-3, R-4, R-5). Relationship writes now validate their schema names
+before any endpoint resolves, with the read side's typed taxonomy
+(`eacl.schema.errors/validate-relationship-write!`, called by both clients):
+an unknown definition is `:eacl/unknown-definition`, an unknown relation or a
+subject type the relation does not declare is
+`:eacl/unknown-relation-or-permission` (the latter with `:reason
+:subject-type-not-declared`); the backends' own "Missing Relation" throws
+carry the same category as a fallback. Schema writes: reference-validation
+failures are `:eacl.schema/invalid-reference` (with the `:errors` vector),
+unsupported features are `:eacl.schema/unsupported-feature`, and every
+already-typed parser error (`duplicate-relation`, `duplicate-permission`,
+`duplicate-definition`, `name-collision`, `parse-error`, `paren-arrow`)
+carries `:eacl/error` too. `validate-schema-references` also rejects a
+relation whose subject type is not a defined definition (SpiceDB rejects
+`relation reader: nobody`) whenever the schema carries its definition list,
+i.e. on every `write-schema!`; data-installed schemas that pass relations and
+permissions alone are unaffected. Page-request errors are
+`:eacl.pagination/invalid-page-size` (out-of-range `:first`/`:last`, with
+`:size`/`:max`) or `:eacl.pagination/invalid-page-request` (both directions,
+both bounds, a bound without its direction, `:cursor`/`:limit`, list keys on
+a count); a nil bound keeps `:eacl.pagination/invalid-cursor`. Datomic's
+private copy of `validate-schema-references` (§3.4) is replaced by the shared
+one. Tests: `schema_error_contract_test/relationship-writes-share-the-schema-taxonomy-test`
+and `schema-and-page-request-errors-are-typed-test`.
+
+### 2.19 S3 — DataScript/Datahike concurrent `:create` of one relationship both succeed — **Tracked**
+
+SpiceDB and the Datomic client report `:eacl/relationship-conflict` to the
+loser; on DataScript and Datahike the plan is computed outside the
+transaction, so two concurrent creates of the same relationship both commit
+(the second add is a redundant datom) and both callers see success. The end
+state is correct (one relationship, both halves, one stamp); only the
+duplicate-create semantics under a race differ. The repair — moving the
+existence check into the transaction (`:db.fn/call`) or a per-relation
+stamp CAS with the retry loop the Datomic client already runs — is a write
+path change on the shared client with its own interleaving tests, opened as
+its own change rather than folded into this branch (see the pull request
+description for its status).
+
+### 2.20 S4 — the published `eacl-datomic` POM pinned `com.datomic/peer 1.0.7622` — **Fixed**
+
+`src-build/eacl/build/config.clj` declared `1.0.7622` while the module
+requires `1.0.7705` (the deployed transactor is 7705 and the older peer
+cannot read its databases); aligned. From the differential report's R-7.
+
+### 2.21 S4 — README claims corrected from the differential report — **Fixed**
+
+The `write-relationships!` "collection of `[operation relationship]`"
+sentence (both EACL and SpiceDB reject that shape; records or
+`{:operation … :relationship …}` maps work), the SpiceDB-differences section
+(EACL evaluates cycles as a fixed point and has no dispatch depth limit for
+checks and lookups; identifier and name grammars are broader than SpiceDB's;
+a relation name is accepted in the permission slot only by
+`expand-permission-tree`), and the per-backend `delete-object!` semantics.
 
 ## 3. Discrepancies between specification, documentation and code
 
