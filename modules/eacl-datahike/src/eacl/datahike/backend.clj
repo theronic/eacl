@@ -4,8 +4,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datahike.schema :as schema])
   (:import [java.util UUID]))
 
 (def capabilities

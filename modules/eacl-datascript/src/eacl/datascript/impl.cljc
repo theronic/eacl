@@ -15,10 +15,6 @@
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
 
-(def max-entid
-  #?(:clj Long/MAX_VALUE
-     :cljs js/Number.MAX_SAFE_INTEGER))
-
 (def permission-def-pull
   '[:db/id
     :eacl.permission/resource-type
@@ -48,16 +44,6 @@
                               (and (= resource-type (nth v 0))
                                    (= relation-name (nth v 1))))))))
     []))
-
-(defn find-relation-def
-  [db resource-type relation-name]
-  (when-let [datom (first (relation-datoms db resource-type relation-name))]
-    (ds/pull db
-             '[:db/id
-               :eacl.relation/subject-type
-               :eacl.relation/resource-type
-               :eacl.relation/relation-name]
-             (:e datom))))
 
 (defn find-permission-defs
   [db resource-type permission-name]
@@ -134,29 +120,6 @@
           bound-eid direction)
          (map (comp #(nth % 3) :v))
          (filter within-bound?))))
-
-(defn build-schema-catalog
-  [db]
-  {:relation-defs
-   (reduce (fn [idx {:keys [e v]}]
-             (let [[resource-type relation-name subject-type] v
-                   relation-def {:relation-id e
-                                 :resource-type resource-type
-                                 :relation-name relation-name
-                                 :subject-type subject-type}]
-               (update idx [resource-type relation-name] (fnil conj []) relation-def)))
-           {}
-           (ds/datoms db :avet :eacl.relation/resource-type+relation-name+subject-type))
-   :permission-defs
-   (reduce (fn [idx {:keys [e]}]
-             (let [perm (ds/pull db permission-def-pull e)]
-               (update idx
-                       [(:eacl.permission/resource-type perm)
-                        (:eacl.permission/permission-name perm)]
-                       (fnil conj [])
-                       perm)))
-           {}
-           (ds/datoms db :avet :eacl.permission/resource-type+permission-name))})
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]

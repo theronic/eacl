@@ -711,8 +711,6 @@
          "^Direction"
          "^ConsistencyError error"
          "^MergeChunk chunk"
-         "^Tuple3 result"
-         "^Tuple5 result"
          "^ScanError error"
          "^PlanCertificationError error"
          "^IndexedLimitKind kind"

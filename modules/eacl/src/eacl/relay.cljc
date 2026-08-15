@@ -74,10 +74,11 @@
 (def cursor-emission-order-version
   "Version of the traversal emission order committed by Relay cursor digests.
 
-  Version 2 activates bounded, ordered scan waves. The batched protocol is
-  extensionally equivalent to the sequential protocol, but pinning the
-  protocol order here prevents a cursor minted by a different emission
-  schedule from being accepted accidentally."
+  Pinning the version in the scope digest prevents a cursor minted under a
+  different emission order from being accepted accidentally. The public
+  order itself is the stable first-discovery order sealed into each plan's
+  composite fingerprint (`eacl.engine.sealed-plan/order-contract`), which
+  the `:stable-edge` boundary carries and `eacl.engine.v8` validates."
   2)
 
 (defn- normalized-cursor-query
@@ -398,13 +399,12 @@
     (dependency-context adapter)))
 
 (defn- transform-edge-ids
-  ;; v11 :lookup-eid edges carry only the boundary :result-eid; path
-  ;; frontiers live exclusively in the private continuation store and never
-  ;; cross the cursor envelope (the dead frontier-coercion branch was
-  ;; deleted by trusted-surface-hygiene 11.1).
+  ;; :stable-edge edges carry only the boundary :result-eid; engine
+  ;; checkpoints live exclusively in the private continuation store and never
+  ;; cross the cursor envelope.
   [f edge]
   (case (:kind edge)
-    (:lookup-eid :recursive-logical :stable-edge)
+    :stable-edge
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 

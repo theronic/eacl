@@ -35,8 +35,7 @@
                engine/*recursive-traversal-limits*
                impl.indexed/*recursive-traversal-limits*
                engine/*recursive-traversal-stats*
-               impl.indexed/*recursive-traversal-stats*
-               engine/*count-stats* impl.indexed/*count-stats*]
+               impl.indexed/*recursive-traversal-stats*]
        ~@body)))
 
 (defn can?
@@ -290,10 +289,6 @@
                        (throw e))))]
     (when (and resolved (relationship-exists? db resolved))
       resolved)))
-
-(defn relationship-relation-id
-  [db relationship]
-  (:relation-eid (resolve-relationship db relationship {})))
 
 (defn- find-relations
   [db filters]
@@ -611,19 +606,6 @@
     (if (seq missing)
       (into ops (map tx-relation-version-stamp) missing)
       ops)))
-
-(defn affected-relation-ids
-  "Returns every relation whose relationship tuples are changed by `ops`."
-  [ops]
-  (into #{}
-        (keep
-         (fn [op]
-           (or (relation-eid-of-retraction op)
-               (when (and (vector? op)
-                          (= :db/add (first op))
-                          (= relation-version-attr (nth op 2 nil)))
-                 (nth op 1 nil)))))
-        ops))
 
 (defn- schema-version-guard?
   [op]

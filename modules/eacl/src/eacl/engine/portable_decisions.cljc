@@ -4,8 +4,7 @@
   Inputs and outputs still cross `eacl.verified-kernel`, which owns strict
   shape/range validation.  This namespace contains only deterministic value
   semantics and never performs backend I/O."
-  (:require [clojure.set :as set]
-            [eacl.verified-kernel :as verified]))
+  (:require [eacl.verified-kernel :as verified]))
 
 (defn- page-decision
   [{:keys [length request default-size maximum-size]}]

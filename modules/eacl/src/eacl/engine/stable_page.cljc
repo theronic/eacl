@@ -227,7 +227,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- resolve-anchor-eid
-  [{:keys [adapter direction anchor]}]
+  [{:keys [adapter anchor]}]
   (backend/invoke adapter :object-id->internal (second anchor)))
 
 (defn- external-id
@@ -235,7 +235,7 @@
   (backend/invoke adapter :internal-id->object internal-id))
 
 (defn- run-fresh
-  [{:keys [adapter plan direction subject-type] :as options} anchor-eid target]
+  [{:keys [direction] :as options} anchor-eid target]
   (let [run-options (merge (select-keys options
                                         [:adapter :fetch-fn :plan
                                          :subject-type :cut-point!
@@ -349,7 +349,7 @@
             {:state nil :pending []})
           {:keys [page-ids lookahead end-state]}
           (if state
-            (deliver-page options state pending ordinal page-size)
+            (deliver-page options state pending page-size)
             (let [run (guard-exhaustion
                        #(run-fresh options anchor-eid (inc page-size)))]
               {:page-ids (vec (take page-size (:results run)))
@@ -369,10 +369,10 @@
        :has-previous? (pos? ordinal)})))
 
 (defn- deliver-page
-  "Runs from `state`+`pending` at absolute delivered ordinal `from` until
-  `page-size` results plus one lookahead are available or the graph
-  exhausts. Returns page internals."
-  [options state pending from page-size]
+  "Runs from `state`+`pending` (whose scalar `:discovered` count is the
+  absolute delivered ordinal) until `page-size` results plus one lookahead
+  are available or the graph exhausts. Returns page internals."
+  [options state pending page-size]
   (let [needed-fresh (- (inc page-size) (count pending))
         continued (when (pos? needed-fresh)
                     (guard-exhaustion

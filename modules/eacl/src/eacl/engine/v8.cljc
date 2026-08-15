@@ -23,8 +23,6 @@
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
-(def recursive-cursor-version 1)
-(def recursive-order-abi 2)
 (def ^:private projection-key-version 2)
 (def ^:dynamic *backend-work-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
@@ -34,21 +32,13 @@
   distinct prevents a cache hit from being mistaken for database work."
   nil)
 
-(def ^:dynamic *acyclic-work-stats*
-  "Optional atom populated by deterministic acyclic list/count gates.
-
-  These counters are deliberately separate from recursive traversal limits
-  and counters. A certified acyclic request must never look recursive merely
-  because it scans a large, valid authorization set."
-  nil)
-
 (def ^:dynamic *recursive-traversal-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
-  Counts recursive-traversal work only. Request-shape observers live in
-  *request-shape-stats* so the enumeration-routing invariant — an
-  acyclic route performs ZERO recursive work — stays assertable as
-  (empty? @stats). Observation-only."
+  Receives the stable reducer's per-run work deltas under the public
+  counter names (:derived-grants, :advanced-datoms, :queued-work) and
+  :continuation-hits on checkpoint hits. Request-shape observers live in
+  *request-shape-stats*. Observation-only."
   nil)
 (def ^:dynamic *request-shape-stats*
   "Optional atom counting request-shape work that is not traversal work:
@@ -63,28 +53,8 @@
   (when *request-shape-stats*
     (swap! *request-shape-stats* update k (fnil inc 0))))
 
-(def ^:dynamic *acyclic-route?* false)
-
-(def ^:dynamic *inactive-recursive-cycle-guards*
-  "In-SCC arrow prefixes proven empty in the selected snapshot.
-
-  The generated routing decision permits the acyclic evaluator only when
-  every such guard is empty. Binding the exact guard keys here erases their
-  recursive contributions from the executable path, matching
-  GuardedRecursiveDenotation in AcyclicEngine.dfy."
-  #{})
-
-(defn- add-acyclic-work!
-  [counter amount]
-  (when *acyclic-work-stats*
-    (swap! *acyclic-work-stats* update counter (fnil + 0) amount))
-  nil)
-
 (defn- record-backend-work!
   [operation]
-  (when *acyclic-route?*
-    (add-acyclic-work! :backend-scans 1)
-    (add-acyclic-work! operation 1))
   (when *backend-work-stats*
     (swap! *backend-work-stats*
            (fn [stats]
@@ -373,18 +343,6 @@
         (backend/invoke
          snapshot :relation-defs resource-type relation-name)))
 
-(defn find-relation-def
-  "Compatibility helper retained for tests.
-  Returns the first matching relation definition, if any."
-  [snapshot resource-type relation-name]
-  (when-let [{:keys [e v]}
-             (first
-              (relation-datoms snapshot resource-type relation-name))]
-    {:db/id e
-     :eacl.relation/resource-type (nth v 0)
-     :eacl.relation/relation-name (nth v 1)
-     :eacl.relation/subject-type (nth v 2)}))
-
 (defn find-permission-defs
   [snapshot resource-type permission-name]
   (mapv
@@ -452,11 +410,6 @@
         proof (proof-frame/resolve! frame [])]
     (when (proof-frame/complete? proof)
       (:schema-stamp proof))))
-
-(defn schema-version-stamp
-  "String form of the schema proof visible in a snapshot."
-  [snapshot]
-  (some-> (schema-version snapshot) str))
 
 (defn make-schema-cache
   "Creates a derived-schema generation for one selected schema proof.
@@ -805,99 +758,6 @@
     db
     (permission-query-node resource-type permission-name))))
 
-(defn- permission-graph
-  [db nodes]
-  (let [node-set (set nodes)]
-    (into {}
-          (map (fn [node]
-                 [node
-                  (vec
-                   (filter node-set
-                           (permission-query-dependencies db node)))])
-               nodes))))
-
-(defn- transpose-graph
-  [nodes graph]
-  (reduce-kv
-   (fn [result node dependencies]
-     (reduce (fn [result dependency]
-               (update result dependency conj node))
-             result
-             dependencies))
-   (zipmap nodes (repeat []))
-   graph))
-
-(defn- postorder-from
-  [graph root initial-seen initial-order]
-  (loop [stack [[root false]]
-         seen initial-seen
-         order initial-order]
-    (if-let [[node expanded?] (peek stack)]
-      (cond
-        expanded?
-        (recur (pop stack) seen (conj order node))
-
-        (contains? seen node)
-        (recur (pop stack) seen order)
-
-        :else
-        (let [dependencies (get graph node)]
-          (recur (into (conj (pop stack) [node true])
-                       (map #(vector % false)
-                            (reverse dependencies)))
-                 (conj seen node)
-                 order)))
-      [seen order])))
-
-(defn- graph-postorder
-  [nodes graph]
-  (second
-   (reduce (fn [[seen order] node]
-             (if (contains? seen node)
-               [seen order]
-               (postorder-from graph node seen order)))
-           [#{} []]
-           nodes)))
-
-(defn- collect-component
-  [graph root initial-seen]
-  (loop [stack [root]
-         seen initial-seen
-         component []]
-    (if-let [node (peek stack)]
-      (if (contains? seen node)
-        (recur (pop stack) seen component)
-        (recur (into (pop stack)
-                     (reverse (get graph node)))
-               (conj seen node)
-               (conj component node)))
-      [seen component])))
-
-(defn- graph-components
-  "Returns deterministic strongly connected components in O(V+E) time and
-  memory using iterative Kosaraju passes."
-  [nodes graph]
-  (let [transposed (transpose-graph nodes graph)
-        roots (reverse (graph-postorder nodes graph))]
-    (second
-     (reduce (fn [[seen components] root]
-               (if (contains? seen root)
-                 [seen components]
-                 (let [[seen component]
-                       (collect-component transposed root seen)]
-                   [seen (conj components component)])))
-             [#{} []]
-             roots))))
-(defn permission-schema-components
-  "Returns deterministic strongly connected permission components reachable
-  from one permission root. The implementation is deliberately iterative:
-  deeply nested schemas do not consume the host stack."
-  [db resource-type permission-name]
-  (let [root (permission-query-node resource-type permission-name)
-        nodes (sort (reachable-permission-query-nodes db root))
-        graph (permission-graph db nodes)]
-    (mapv (comp vec sort)
-          (graph-components nodes graph))))
 (defn direct-match-datoms-in-relationship-index
   [snapshot subject-type subject-eid relation-eid resource-type resource-eid]
   (let [resolved
@@ -926,8 +786,12 @@
       [])))
 
 (defn all-permission-nodes
+  "The engine's only consumer of the required `:all-permission-nodes` adapter
+  operation; kept so the backend-dispatch closure ledger covers every
+  required operation. No routed path calls it (see the 2026-08-15 audit)."
   [snapshot]
   (set (backend/invoke snapshot :all-permission-nodes)))
+
 (def default-recursive-traversal-limits
   "Safety ceilings for one recursive traversal.
 
@@ -971,9 +835,6 @@
 (def ^:dynamic *recursive-traversal-limits*
   default-recursive-traversal-limits)
 
-(def ^:dynamic *count-stats*
-  "Optional atom recording bounded count-page work for tests/benchmarks."
-  nil)
 (defn- complete-evaluation-required!
   [query]
   (page-error!

@@ -203,18 +203,6 @@
              true (sort-by (juxt :v :e))
              (= :desc direction) reverse)))))))
 
-(defn avet-range
-  "Datoms of `attr` whose value falls in [`start`, `end`]. Datahike's
-   `index-range` takes a map where DataScript takes positional arguments; tuple
-   values are valid bounds here, unlike a partial tuple in a seek.
-
-   `:attrid` is the one place datahike does NOT accept the attribute keyword in
-   both modes: under `:attribute-refs?` it demands the numeric ref and raises
-   otherwise. It raises rather than denying, which is why this surfaced as an
-   error instead of a wrong answer."
-  [db attr start end]
-  (d/index-range db {:attrid (attr-repr db attr) :start start :end end}))
-
 (defn entity-exists?
   "Whether `eid` has any datom. `entid` passes unallocated numeric ids through
    unchanged, so presence has to be checked separately."

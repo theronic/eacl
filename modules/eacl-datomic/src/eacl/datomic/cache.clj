@@ -3,8 +3,7 @@
 
   Cache availability never changes a recomputable authorization answer. Store
   failures, eviction, and disabled caches fall back to indexed/traversal work
-  against the selected live or historical Datomic value."
-  (:require [eacl.cache :as shared]))
+  against the selected live or historical Datomic value.")
 
 (def cache-entry-version 2)
 (def portable-value-version 1)

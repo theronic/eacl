@@ -3,8 +3,7 @@
   adapter. Authorization graph algorithms remain outside this namespace."
   (:require [datomic.api :as d]
             [eacl.backend.v8 :as backend]
-            [eacl.datomic.db :as ddb]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datomic.db :as ddb])
   (:import [java.util UUID]))
 
 (def capabilities

@@ -795,22 +795,11 @@
   (and (integer? eid) (pos? eid)))
 
 (defn- cursor-result
+  "Validates the internal cursor of a cached lookup page. Only the stable
+  engine's `:stable-edge` kind is minted; anything else invalidates the
+  cached page so it is recomputed."
   [cursor]
   (case (:kind cursor)
-    :lookup-eid
-    (when (positive-eid? (:result-eid cursor))
-      {:eid (:result-eid cursor)})
-
-    :recursive-logical
-    (when (and (= engine/recursive-cursor-version (:version cursor))
-               (= engine/recursive-order-abi (:order-abi cursor))
-               (contains? #{:forward :reverse} (:traversal cursor))
-               (integer? (:ordinal cursor))
-               (not (neg? (:ordinal cursor)))
-               (positive-eid? (:result-eid cursor)))
-      {:eid (:result-eid cursor)
-       :ordinal (:ordinal cursor)})
-
     :stable-edge
     (when (and (= engine/stable-cursor-version (:version cursor))
                (= engine/stable-order-abi (:order-abi cursor))

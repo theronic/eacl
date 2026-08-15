@@ -22,7 +22,7 @@
   "Anchored point check over pre-resolved internal ids: does the subject
   hold the plan's root permission on the resource? Terminates on the
   subject's first admission."
-  [{:keys [adapter plan subject-type subject-eid resource-eid] :as options}]
+  [{:keys [subject-eid resource-eid] :as options}]
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
     (let [seen (volatile! 0)
@@ -67,7 +67,7 @@
 (defn count-resources
   "Exact count by exhausting the reducer; :count-limit truncates with an
   explicit marker exactly like the current public contract."
-  [{:keys [adapter plan subject-type subject-id count-limit] :as options}]
+  [{:keys [adapter subject-id count-limit] :as options}]
   (let [subject-eid (backend/invoke adapter :object-id->internal subject-id)
         target (if count-limit (inc count-limit) exhaustion-target)]
     (if (nil? subject-eid)
@@ -90,7 +90,7 @@
 
 (defn count-subjects
   "Exact reverse count by exhaustion, mirroring count-resources."
-  [{:keys [adapter plan subject-type resource-id count-limit] :as options}]
+  [{:keys [adapter resource-id count-limit] :as options}]
   (let [resource-eid (backend/invoke adapter :object-id->internal resource-id)
         target (if count-limit (inc count-limit) exhaustion-target)]
     (if (nil? resource-eid)

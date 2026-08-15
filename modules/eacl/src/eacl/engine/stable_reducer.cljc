@@ -333,7 +333,7 @@
   "One bounded pure transition of the unified machine. The work kinds are
   disjoint across directions; the plan and seeding determine which kinds
   ever appear."
-  [{:keys [plan subject-type root] :as context} state item]
+  [{:keys [plan subject-type root]} state item]
   (let [rule (:rule item)]
     (case (:kind item)
       ;; ---- forward ----
@@ -578,7 +578,7 @@
   "Enumerates root resources the subject reaches, in stable first-discovery
   order, until `target` results or exhaustion. Returns the final state;
   :results is the canonical sequence of internal resource ids."
-  [{:keys [adapter fetch-fn plan subject-type subject-eid target cut-point!]
+  [{:keys [adapter fetch-fn plan subject-type subject-eid target]
     :as options}]
   {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
          (keyword? subject-type) (some? subject-eid) (pos? target)]}
@@ -603,7 +603,7 @@
   `resource-eid`, in stable first-discovery order, until `target` results
   or exhaustion. Returns the final state; :results is the canonical
   sequence of internal subject ids."
-  [{:keys [adapter fetch-fn plan subject-type resource-eid target cut-point!]
+  [{:keys [adapter fetch-fn plan subject-type resource-eid target]
     :as options}]
   {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
          (keyword? subject-type) (some? resource-eid) (pos? target)]}

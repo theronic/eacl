@@ -5,22 +5,6 @@
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
-(def schema-change-attrs
-  #{:eacl.relation/resource-type
-    :eacl.relation/relation-name
-    :eacl.relation/subject-type
-    :eacl.relation/resource-type+relation-name+subject-type
-    :eacl.permission/resource-type
-    :eacl.permission/permission-name
-    :eacl.permission/source-relation-name
-    :eacl.permission/target-type
-    :eacl.permission/target-name
-    :eacl.permission/resource-type+permission-name
-    :eacl.permission/full-key
-    :eacl/schema-string
-    :eacl/schema-generation
-    :eacl/schema-write-fence})
-
 (def datascript-schema
   {:eacl/id {:db/unique :db.unique/identity}
    :eacl/schema-generation {:db/valueType :db.type/ref}
@@ -167,7 +151,6 @@
      :db-after db-after}))
 
 (def validate-schema-references model/validate-schema-references)
-(def calc-set-deltas model/calc-set-deltas)
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation

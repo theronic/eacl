@@ -16,8 +16,6 @@
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
 
-(def max-entid schema/max-entid)
-
 (def permission-def-pull
   '[:db/id
     :eacl.permission/resource-type
@@ -37,16 +35,6 @@
   (if (and resource-type relation-name)
     (ddb/seek-tuple-prefix db schema/relation-key-attr 3 [resource-type relation-name])
     []))
-
-(defn find-relation-def
-  [db resource-type relation-name]
-  (when-let [datom (first (relation-datoms db resource-type relation-name))]
-    (d/pull db
-            '[:db/id
-              :eacl.relation/subject-type
-              :eacl.relation/resource-type
-              :eacl.relation/relation-name]
-            (:e datom))))
 
 (defn find-permission-defs
   [db resource-type permission-name]
@@ -130,29 +118,6 @@
           bound-eid direction)
          (map (comp #(nth % 3) :v))
          (filter within-bound?))))
-
-(defn build-schema-catalog
-  [db]
-  {:relation-defs
-   (reduce (fn [idx {:keys [e v]}]
-             (let [[resource-type relation-name subject-type] v
-                   relation-def {:relation-id e
-                                 :resource-type resource-type
-                                 :relation-name relation-name
-                                 :subject-type subject-type}]
-               (update idx [resource-type relation-name] (fnil conj []) relation-def)))
-           {}
-           (ddb/avet-datoms db schema/relation-key-attr))
-   :permission-defs
-   (reduce (fn [idx {:keys [e]}]
-             (let [perm (d/pull db permission-def-pull e)]
-               (update idx
-                       [(:eacl.permission/resource-type perm)
-                        (:eacl.permission/permission-name perm)]
-                       (fnil conj [])
-                       perm)))
-           {}
-           (ddb/avet-datoms db schema/permission-key-attr))})
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]
