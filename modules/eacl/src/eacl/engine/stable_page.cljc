@@ -22,6 +22,7 @@
     stale-cursor — when they make a page unreachable."
   (:require [clojure.string :as string]
             [eacl.backend.v8 :as backend]
+            [eacl.engine.physical :as physical]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.secure-format :as secure-format]))
 
@@ -280,6 +281,17 @@
                      (dissoc (ex-data error) :eacl/error))
         (throw error)))))
 
+(defn- governed-replay
+  "A replay (a checkpoint miss, a backward run, or a last-window run) runs
+  under the service-edge replay ledger when the caller configured one
+  (`:service-admission`), keyed by the continuation identity, and always
+  under the exhaustion guard."
+  [{:keys [service-admission checkpoint-key]} thunk]
+  (physical/with-replay-admission
+   service-admission
+   (or checkpoint-key ::anonymous-replay)
+   #(guard-exhaustion thunk)))
+
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:
   by checkpoint when the exact edge matches, else by governed deterministic
@@ -291,7 +303,8 @@
       (when-let [stats reducer/*observer-stats*]
         (swap! stats update :continuation-hits (fnil inc 0)))
       {:state (:state hit) :pending (:pending hit)})
-    (let [replayed (guard-exhaustion
+    (let [replayed (governed-replay
+                    options
                     #(run-fresh options anchor-eid ordinal))
           results (:results replayed)]
       (when (or (< (count results) ordinal)
@@ -309,7 +322,9 @@
   cursor layer against the same composite fingerprint and exact basis).
   Returns {:eids [..] :start-ordinal k :has-next? :has-previous?} in
   canonical forward order. A `:last-window?` request returns the final
-  window of the exhausted sequence."
+  window of the exhausted sequence. When `:service-admission` names a
+  service-edge admission, replays (checkpoint misses, backward runs and last
+  windows) run under its replay ledger keyed by `:checkpoint-key`."
   [{:keys [plan direction anchor-eid subject-type page-size
            after before last-window? checkpoints checkpoint-key]
     :as options}]
@@ -323,7 +338,8 @@
     before
     (let [{:keys [ordinal eid]} before
           start (max 0 (- ordinal 1 page-size))
-          replayed (guard-exhaustion
+          replayed (governed-replay
+                    options
                     #(run-fresh options anchor-eid ordinal))
           results (:results replayed)]
       (when (or (< (count results) ordinal)
@@ -337,7 +353,8 @@
        :has-previous? (pos? start)})
 
     last-window?
-    (let [run (guard-exhaustion
+    (let [run (governed-replay
+               options
                #(run-fresh options anchor-eid
                            reducer/exhaustion-target))
           results (:results run)

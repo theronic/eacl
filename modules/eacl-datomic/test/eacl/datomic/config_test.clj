@@ -200,3 +200,27 @@
       (testing "the other operations agree with expansion under the same codec"
         (is (true? (eacl/can? codec-client (->user "U1") :view (->server "S1"))))
         (is (contains? (leaf-subjects codec-tree) "U1"))))))
+
+(deftest service-admission-option-test
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
+    (testing "the option is validated at construction"
+      (doseq [bad [{:max-concurrent 0} {:bogus 1} :on]]
+        (is (= :eacl/invalid-config
+               (try (core/make-client conn {:service-admission bad}) nil
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+            (pr-str bad))))
+    (testing "a configured bulkhead is installed and enumerations run through it"
+      (let [client (core/make-client conn {:service-admission {:max-concurrent 8
+                                                               :max-replays 4}})
+            admission (:service-admission (:opts client))]
+        (is (= 8 (:max-concurrent @admission)))
+        (is (= 4 (:max-replays @admission)))
+        (is (= 2 (count (:data (eacl/lookup-resources client {:subject (->user "user-1")
+                                                              :permission :view
+                                                              :resource/type :server})))))
+        (is (true? (eacl/can? client (->user "user-1") :view (->server "account1-server1"))))
+        (is (zero? (:active @admission)) "slots are released when the work returns")))
+    (testing "the default client installs no bulkhead"
+      (is (nil? (:service-admission (:opts (core/make-client conn {}))))))))
