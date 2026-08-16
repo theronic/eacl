@@ -336,6 +336,32 @@
        :operation operation})))
   true)
 
+(defn- relationship-conflict!
+  [relationship]
+  (throw
+   (ex-info
+    ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+    {:type :eacl/relationship-conflict
+     :eacl/error :eacl/relationship-conflict
+     :relationship relationship})))
+
+(defn create-relationship-at-commit
+  "Commit-time precondition behind `:create`. It re-checks the relationship
+  against the transaction-time database, so two writers that both planned a
+  `:create` against the same pre-write value are serialized by the writer: the
+  first commits and the second observes the winner and fails with
+  `:eacl/relationship-conflict` (Datahike wraps the throw;
+  `eacl.datahike.core` unwraps it).
+
+  The planned adds remain adjacent to their update in the outer transaction;
+  the shared writer runs every create precondition before those mutations so
+  all updates in one batch retain the calculation-snapshot semantics shared
+  with Datomic."
+  [db resolved relationship]
+  (if (relationship-exists? db resolved)
+    (relationship-conflict! relationship)
+    []))
+
 (defn tx-update-relationship
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)
@@ -348,13 +374,19 @@
             (add-relationship-txes resolved))
 
           :create
-          (if exists?
-            (throw
-             (ex-info
-              ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-              {:type :eacl/relationship-conflict
-               :eacl/error :eacl/relationship-conflict
-               :relationship relationship}))
+          (cond
+            exists?
+            (relationship-conflict! relationship)
+
+            ;; A remote writer receives serialized tx-data and cannot run a
+            ;; transaction function, so it keeps the plan-time check only.
+            (ddb/direct-writer? db)
+            (into
+             [[:db.fn/call create-relationship-at-commit
+               resolved relationship]]
+             (add-relationship-txes resolved))
+
+            :else
             (add-relationship-txes resolved))
 
           :delete

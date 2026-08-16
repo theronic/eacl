@@ -339,6 +339,31 @@
        :operation operation})))
   true)
 
+(defn- relationship-conflict!
+  [relationship]
+  (throw
+   (ex-info
+    ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+    {:type :eacl/relationship-conflict
+     :eacl/error :eacl/relationship-conflict
+     :relationship relationship})))
+
+(defn create-relationship-at-commit
+  "Commit-time precondition behind `:create`. It re-checks the relationship
+  against the transaction-time database, so two writers that both planned a
+  `:create` against the same pre-write value are serialized by the connection:
+  the first commits and the second observes the winner and fails with
+  `:eacl/relationship-conflict`.
+
+  The planned adds remain adjacent to their update in the outer transaction;
+  the shared writer runs every create precondition before those mutations so
+  all updates in one batch retain the calculation-snapshot semantics shared
+  with Datomic."
+  [db resolved relationship]
+  (if (relationship-exists? db resolved)
+    (relationship-conflict! relationship)
+    []))
+
 (defn tx-update-relationship
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)
@@ -352,13 +377,11 @@
 
           :create
           (if exists?
-            (throw
-             (ex-info
-              ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-              {:type :eacl/relationship-conflict
-               :eacl/error :eacl/relationship-conflict
-               :relationship relationship}))
-            (add-relationship-txes resolved))
+            (relationship-conflict! relationship)
+            (into
+             [[:db.fn/call create-relationship-at-commit
+               resolved relationship]]
+             (add-relationship-txes resolved)))
 
           :delete
           ;; Retraction of an absent DataScript datom is harmless. Always

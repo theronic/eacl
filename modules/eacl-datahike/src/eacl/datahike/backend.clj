@@ -1,7 +1,6 @@
 (ns eacl.datahike.backend
   "Datahike storage operations for the shared v8 authorization engine."
   (:require [datahike.api :as d]
-            [datahike.db.interface :as dbi]
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
@@ -20,17 +19,8 @@
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
-(defn- db-config
-  "The configuration of `db` through Datahike's database protocol, so
-  temporal and filter wrappers (`AsOfDB` carries only its origin and time
-  point as fields) report their origin's store, writer, history and
-  attribute representation instead of nil."
-  [db]
-  (dbi/-config db))
-
-(defn- direct-writer?
-  [db]
-  (= :self (get-in (db-config db) [:writer :backend])))
+(def ^:private db-config ddb/db-config)
+(def ^:private direct-writer? ddb/direct-writer?)
 
 (defn- exact-commits?
   [db]

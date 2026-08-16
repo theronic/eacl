@@ -5,6 +5,7 @@
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.db :as ddb]
+            [eacl.datascript.impl :as impl]
             [eacl.datascript.integrity :as integrity]
             [eacl.datascript.schema :as schema]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
@@ -241,6 +242,119 @@
     (let [{:keys [forward reverse]} (relationship-state (ds/db conn))]
       (is (empty? forward))
       (is (empty? reverse)))))
+
+(defn- lookup-ref-relationship
+  "The internal relationship shape the shared client hands to the impl:
+  endpoint ids as lookup refs, which also serve as commit-time identity
+  guards."
+  [relationship]
+  (let [lookup-object #(assoc % :id [:eacl/id (:id %)])]
+    (-> relationship
+        (update :subject lookup-object)
+        (update :resource lookup-object))))
+
+(defn- error-type
+  [thunk]
+  (try
+    (thunk)
+    :ok
+    (catch #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo) error
+      (:type (ex-data error)))))
+
+(deftest concurrent-creates-are-serialized-at-commit-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        user (eacl/spice-object :user "user")
+        account (eacl/spice-object :account "account")
+        relationship (eacl/->Relationship user :owner account)]
+    (eacl/write-schema! client relationship-schema)
+    (ds/transact! conn [{:eacl/id "user"} {:eacl/id "account"}])
+    (testing "two :create plans made against the same pre-write value"
+      (let [db (ds/db conn)
+            internal (lookup-ref-relationship relationship)
+            plan (fn []
+                   (impl/tx-update-relationship
+                    db {:operation :create :relationship internal}))
+            first-plan (plan)
+            second-plan (plan)]
+        (is (some #(= :db.fn/call (first %)) first-plan)
+            "the create is decided by a transaction function at commit time")
+        (is (= :ok (error-type #(ds/transact! conn first-plan))))
+        (is (= :eacl/relationship-conflict
+               (error-type #(ds/transact! conn second-plan)))
+            "the loser observes the winner inside the transaction")
+        (let [{:keys [forward reverse]} (relationship-state (ds/db conn))]
+          (is (= 1 (count forward)))
+          (is (= 1 (count reverse))))
+        (is (true? (eacl/can? client user :admin account)))))
+    (testing "the public write path keeps its contract"
+      (is (= :eacl/relationship-conflict
+             (error-type #(eacl/create-relationship! client relationship))))
+      (is (= :ok
+             (error-type
+              #(eacl/write-relationships!
+                client [{:operation :touch :relationship relationship}])))
+          ":touch stays idempotent")
+      (is (= 1 (count (:data (eacl/read-relationships
+                              client {:resource/type :account}))))))))
+
+(deftest repeated-and-conflicting-relationship-batch-test
+  (doseq [operations
+          (for [left [:create :touch :delete]
+                right [:create :touch :delete]
+                :when (not= left right)]
+            [left right])]
+    (testing (pr-str operations)
+      (let [conn (datascript/create-conn)
+            client (datascript/make-client conn {})
+            user (eacl/spice-object :user "user")
+            account (eacl/spice-object :account "account")
+            relationship (eacl/->Relationship user :owner account)]
+        (eacl/write-schema! client relationship-schema)
+        (ds/transact! conn [{:eacl/id "user"} {:eacl/id "account"}])
+        (is (= :eacl/invalid-relationship-update-batch
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  (mapv (fn [operation]
+                          (eacl/->RelationshipUpdate
+                           operation relationship))
+                        operations)))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (empty? forward))
+          (is (empty? reverse)))
+        (is (= :ok
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  [(eacl/->RelationshipUpdate :create relationship)
+                   (eacl/->RelationshipUpdate :create relationship)]))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (= 1 (count forward)))
+          (is (= 1 (count reverse))))
+        (is (= :ok
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  [(eacl/->RelationshipUpdate :touch relationship)
+                   (eacl/->RelationshipUpdate :touch relationship)]))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (= 1 (count forward)))
+          (is (= 1 (count reverse))))
+        (is (= :ok
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  [(eacl/->RelationshipUpdate :delete relationship)
+                   (eacl/->RelationshipUpdate :delete relationship)]))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (empty? forward))
+          (is (empty? reverse)))))))
 
 (deftest delete-object-and-ghost-cleanup-test
   (let [{:keys [conn client account]} (seeded)
