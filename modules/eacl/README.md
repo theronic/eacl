@@ -54,11 +54,12 @@ are test code, not selectable production engines.
 
 `eacl.permission-tree` is the portable CLJ/CLJS implementation behind
 `IAuthorization/expand-permission-tree`. A request contains `:resource` and
-`:permission`, with optional `:consistency` and `:timeout-ms`; a successful
-response is `{:expanded-at token :tree-root node}`. Nodes contain exactly one
-of `:leaf` or `:intermediate`. Expansion preserves permission/arrow boundaries,
-empty branches, duplicate paths, and typed object identity. Vector order is
-not a semantic contract.
+`:permission`, with optional `:consistency`, `:timeout-ms`, and
+`:cancellation-token`; a successful response is
+`{:expanded-at token :tree-root node}`. Nodes contain exactly one of `:leaf` or
+`:intermediate`. Expansion preserves permission/arrow boundaries, empty
+branches, duplicate paths, and typed object identity. Vector order is not a
+semantic contract.
 
 The kernel consumes definitions, relation values, and ID conversions from one
 already-selected immutable adapter, then issues the causal token from that
@@ -73,6 +74,14 @@ The Dafny file `formal/dafny/PermissionTree.dfy` is a proof-only mathematical
 model. The handwritten portable source is covered by reference-evaluator,
 CLJ/CLJS property, pinned-SpiceDB-fixture, and cross-backend tests; mechanical
 source refinement is not claimed.
+
+All bounded public reads accept an `eacl.core/cancellation-token` through the
+request `:cancellation-token` key. Calling `eacl.core/cancel!` causes the next
+deadline/traversal/adapter-boundary check to throw
+`:eacl.execution/cancelled` without returning a partial answer. Cancellation
+is best-effort: it cannot preempt a synchronous adapter call already in
+progress, and a completed result may win a race with a late signal. The token
+is excluded from semantic cache, continuation, and cursor identity.
 
 Application-facing module selection lives in the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).

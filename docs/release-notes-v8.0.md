@@ -223,6 +223,16 @@ encoded-byte, decoded-weight, and candidate-count controls are rejected. Native
 per-tier/per-entry weights remain construction-time cache limits, while the
 single request `:timeout-ms` remains the end-to-end deadline.
 
+Bounded reads also accept a per-request `:cancellation-token` created by
+`eacl.core/cancellation-token`. `eacl.core/cancel!` is idempotent; the next
+cooperative orchestration, cache, cursor, traversal-quantum, or adapter-boundary
+check throws `:eacl.execution/cancelled` and returns no partial answer.
+Tokens never participate in semantic cache, continuation, or authenticated
+cursor identity. An adapter call already executing remains synchronous and
+must return before cancellation can be observed; a completed result may also
+win a race with a late cancellation. Deadlines and bounded admission remain
+required.
+
 ## Cursor redesign
 
 Portable cursor payloads are v10 inside the compact `eacl_c4_` authenticated

@@ -616,3 +616,32 @@
       (is (= :eacl.execution/deadline-exceeded
              (:eacl/error render-error)))
       (is (= :rendered-identity (:stage render-error))))))
+
+(deftest cancellation-is-checked-after-a-running-adapter-command-test
+  (let [{:keys [db user-1-eid]} (seed-star!)
+        adapter (dsb/snapshot-adapter db {})
+        token (eacl/cancellation-token)
+        contract
+        (execution/normalize
+         {:execution-timeout-ms 1000}
+         :lookup-resources
+         {:first 5 :cancellation-token token})
+        query {:subject {:type :user :id user-1-eid}
+               :permission :view
+               :resource/type :account
+               :first 5}
+        data
+        (binding [execution/*contract* contract
+                  backend/*invoke-observer*
+                  (fn [{:keys [phase operation]}]
+                    (when (and (= :after phase)
+                               (= :subject->resources operation))
+                      (eacl/cancel! token)))]
+          (try
+            (engine/lookup-resources adapter query)
+            nil
+            (catch clojure.lang.ExceptionInfo error
+              (ex-data error))))]
+    (is (= :eacl.execution/cancelled (:eacl/error data)))
+    (is (= :adapter-response (:stage data)))
+    (is (not (contains? data :cancellation-token)))))

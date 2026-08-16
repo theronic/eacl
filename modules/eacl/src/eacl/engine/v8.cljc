@@ -2905,32 +2905,33 @@
 
                :need-scans
                (let [commands (:commands outcome)
-                     _ (execution/check!
-                        execution/*contract*
-                        :adapter-command
-                        (select-keys
-                         (:counters (:state outcome))
-                         dimensional-counter-keys))
-                     _ (doseq [command commands]
-                         (record-execution-trace!
-                          :generated-command
-                          {:direction direction :command command}))
+                     consumed-work
+                     (select-keys
+                      (:counters (:state outcome))
+                      dimensional-counter-keys)
                      responses
                      (mapv
-                      #(execute-generated-command db plan %)
+                      (fn [command]
+                        (execution/check!
+                         execution/*contract*
+                         :adapter-command
+                         consumed-work)
+                        (record-execution-trace!
+                         :generated-command
+                         {:direction direction :command command})
+                        (let [response
+                              (execute-generated-command db plan command)]
+                          (execution/check!
+                           execution/*contract*
+                           :adapter-response
+                           consumed-work)
+                          (record-execution-trace!
+                           :adapter-response
+                           {:direction direction
+                            :response response
+                            :fetched-values (:fetched-values response)})
+                          response))
                       commands)
-                     _ (execution/check!
-                        execution/*contract*
-                        :adapter-response
-                        (select-keys
-                         (:counters (:state outcome))
-                         dimensional-counter-keys))
-                     _ (doseq [response responses]
-                         (record-execution-trace!
-                          :adapter-response
-                          {:direction direction
-                           :response response
-                           :fetched-values (:fetched-values response)}))
                      resumed
                      (verified/resume-indexed
                       selection direction (:state outcome) responses limits)]

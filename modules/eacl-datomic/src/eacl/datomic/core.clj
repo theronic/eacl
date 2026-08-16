@@ -555,7 +555,8 @@
     :query
     (-> query
         (dissoc :first :last :after :before
-                :cursor :limit :page/basis :cache?)
+                :cursor :limit :page/basis :cache?
+                :timeout-ms :cancellation-token)
         (assoc :consistency
                (select-keys
                 (consistency/descriptor (:consistency query))
@@ -668,7 +669,8 @@
 (defn- internal-page-query
   [query page-req decoded]
   (let [edge (:edge decoded)]
-    (cond-> (dissoc query :after :before :page/basis :consistency :cache?)
+    (cond-> (dissoc query :after :before :page/basis :consistency :cache?
+                    :timeout-ms :cancellation-token)
       (and edge (= :asc (:direction page-req))) (assoc :after edge)
       (and edge (= :desc (:direction page-req))) (assoc :before edge))))
 
@@ -2130,8 +2132,11 @@
               opts))))
 
   (read-relationships [_ filters]
-    (spiceomic-read-relationships
-     conn (request-cache-opts opts (:cache? filters)) filters))
+    (execute-request
+     opts :read-relationships filters
+     #(spiceomic-read-relationships
+       conn (request-cache-opts % (:cache? filters))
+       (dissoc filters :timeout-ms :cancellation-token))))
 
   (write-relationships! [_ updates]
     (spiceomic-write-relationships! conn opts updates))
@@ -2183,28 +2188,28 @@
      opts :lookup-resources query
      #(spiceomic-lookup-resources
        conn (request-cache-opts % (:cache? query))
-       (dissoc query :evaluation :timeout-ms))))
+       (dissoc query :evaluation :timeout-ms :cancellation-token))))
 
   (count-resources [_ query]
     (execute-request
      opts :count-resources query
      #(spiceomic-count-resources
        conn (request-cache-opts % (:cache? query))
-       (dissoc query :evaluation :timeout-ms))))
+       (dissoc query :evaluation :timeout-ms :cancellation-token))))
 
   (lookup-subjects [_ query]
     (execute-request
      opts :lookup-subjects query
      #(spiceomic-lookup-subjects
        conn (request-cache-opts % (:cache? query))
-       (dissoc query :evaluation :timeout-ms))))
+       (dissoc query :evaluation :timeout-ms :cancellation-token))))
 
   (count-subjects [_ query]
     (execute-request
      opts :count-subjects query
      #(spiceomic-count-subjects
        conn (request-cache-opts % (:cache? query))
-       (dissoc query :evaluation :timeout-ms))))
+       (dissoc query :evaluation :timeout-ms :cancellation-token))))
 
   (expand-permission-tree [_ query]
     (permission-tree/validate-request! query)

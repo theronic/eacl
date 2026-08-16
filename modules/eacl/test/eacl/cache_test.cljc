@@ -1,7 +1,8 @@
 (ns eacl.cache-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
-             :refer [deftest is testing]]
+            :refer [deftest is testing]]
             [eacl.cache :as cache]
+            [eacl.core :as eacl]
             [eacl.subproblem-cache :as subproblem]))
 
 (defn- snapshot-object
@@ -550,14 +551,21 @@
         boundary {:kind :lookup-eid :resource 42}
         original
         (cache/lookup-page-query-identity
-         (assoc base-public :after "signed-snapshot-a")
-         (assoc base-internal :after boundary))
+         (assoc base-public
+                :after "signed-snapshot-a"
+                :cancellation-token (eacl/cancellation-token))
+         (assoc base-internal
+                :after boundary
+                :cancellation-token (eacl/cancellation-token)))
         recovered
         (cache/lookup-page-query-identity
          (assoc base-public
                 :after "signed-snapshot-b"
-                :cache? true)
-         (assoc base-internal :after boundary))]
+                :cache? true
+                :cancellation-token (eacl/cancellation-token))
+         (assoc base-internal
+                :after boundary
+                :cancellation-token (eacl/cancellation-token)))]
     (is (= original recovered)
         "signed transport bytes are not page semantics")
     (is (not=

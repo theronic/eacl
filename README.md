@@ -219,6 +219,37 @@ All list APIs use the v8 Relay pagination contract:
 - `:cursor` and `:limit` are no longer supported for list pagination.
 - Acyclic lookup cursors paginate in Datomic eid order. Recursive lookup cursors paginate in deterministic traversal order.
 
+### Deadlines and cooperative cancellation
+
+Every bounded read accepts an optional per-request `:cancellation-token` in
+addition to `:timeout-ms`. Create and cancel the token through the public EACL
+API:
+
+```clojure
+(let [token (eacl/cancellation-token)]
+  ;; Give `token` to the HTTP/request owner before starting the read.
+  (future
+    (eacl/lookup-resources
+     acl
+     {:subject (eacl/spice-object :user "alice")
+      :permission :view
+      :resource/type :document
+      :first 100
+      :cancellation-token token}))
+  (eacl/cancel! token))
+```
+
+Cancellation is cooperative and best-effort. EACL checks it at the same
+orchestration, cursor, cache, traversal-quantum, and adapter-command boundaries
+as the absolute deadline and, when observed before completion, throws
+`:eacl.execution/cancelled` without returning a partial answer. A synchronous
+adapter call already in progress must return before the next check, and a
+completed result may win a race with a late cancellation. Applications must
+therefore keep the server deadline and bounded admission control; interrupting
+a worker thread is not a substitute. The token is execution-only and is
+excluded from cache, continuation, and authenticated cursor identity. One
+token belongs to one logical request.
+
 ### Schema Maintenance
 
 - `(eacl/write-schema! acl schema-string)` parses a SpiceDB schema DSL string, validates it, computes deltas against existing schema, checks for orphaned relationships, and transacts changes atomically.
@@ -231,7 +262,7 @@ the authorization schema directly, follow the recovery procedure in
 ### Permission-tree expansion
 
 Expansion accepts exactly `:resource`, `:permission`, and the optional
-`:consistency` and `:timeout-ms` keys:
+`:consistency`, `:timeout-ms`, and `:cancellation-token` keys:
 
 ```clojure
 (eacl/expand-permission-tree

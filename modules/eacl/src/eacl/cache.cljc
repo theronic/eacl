@@ -63,9 +63,9 @@
   [public-query internal-query]
   {:public
    (dissoc public-query
-           :consistency :cache? :after :before)
+           :consistency :cache? :after :before :cancellation-token)
    :internal
-   (dissoc internal-query :consistency :cache?)})
+   (dissoc internal-query :consistency :cache? :cancellation-token)})
 
 (defrecord ExactGeneration [snapshot order subproblems])
 (defrecord ManagedGeneration
