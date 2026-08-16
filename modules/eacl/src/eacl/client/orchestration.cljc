@@ -47,6 +47,7 @@
                [eacl.formal.production-kernel-cljs :as production-kernel])
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
@@ -505,6 +506,27 @@
     {:zed/token token}
     {}))
 
+(defn- relationship-commit-preconditions-first
+  "Moves relationship transaction functions ahead of the mutations they
+  validate while retaining the leading schema-fence CAS and the relative
+  order of every mutation.
+
+  DataScript and direct-writer Datahike use transaction functions to assert
+  that every planned `:create` was absent at the transaction's linearization
+  point. Running all of those assertions before any add/retract makes one
+  batch observe the same calculation snapshot as the Datomic writer. Without
+  this staging, `[:touch relationship]` followed by `[:create relationship]`
+  made the create observe the touch inside the same transaction and fail only
+  on the portable backends."
+  [tx-data]
+  (if-let [[schema-fence & operations] (seq tx-data)]
+    (let [transaction-function? #(and (vector? %)
+                                      (= :db.fn/call (first %)))]
+      (into [schema-fence]
+            (concat (filter transaction-function? operations)
+                    (remove transaction-function? operations))))
+    []))
+
 (defn write-relationships!
   [api conn opts updates]
   (let [validate-operation!
@@ -526,11 +548,13 @@
         (S/transform [S/ALL :relationship]
                      #(spice-relationship->internal db opts %)
                      updates)
+        _ (relationship-mutations/validate-batch! internal-updates)
         tx-data (->> internal-updates
                      (mapcat #(tx-update-relationship db %))
                      (remove nil?)
                      distinct
-                     vec)]
+                     vec
+                     relationship-commit-preconditions-first)]
     (if (seq tx-data)
       (let [report
             ((:transact! api)

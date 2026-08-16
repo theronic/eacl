@@ -13,17 +13,23 @@ race were not shared with Datomic and SpiceDB (audit report 2026-08-15,
 ## What Changes
 
 - DataScript and Datahike `tx-update-relationship` keep the plan-time conflict
-  for an already-present relationship and otherwise emit a transaction function
-  (`[:db.fn/call create-relationship-at-commit resolved relationship]`) that
-  re-checks both halves against the transaction-time database and returns the
-  relationship adds or throws the typed conflict.
+  for an already-present relationship and otherwise emit a transaction
+  function (`[:db.fn/call create-relationship-at-commit resolved
+  relationship]`) plus the planned relationship adds. The shared writer runs
+  every create precondition before batch mutations, so the function re-checks
+  both halves at the transaction linearization point and either permits the
+  planned adds or throws the typed conflict.
 - Datahike runs the function only under its default in-process writer
   (`{:writer {:backend :self}}`); a remote writer cannot transport a function
   value and keeps the plan-time check only. Datahike reports a failing
   transaction function wrapped, so the client's transaction wrapper recovers
   the typed error from the cause chain.
-- Duplicate `:create`s inside one batch still collapse through the write
-  path's `distinct` and stay idempotent; `:touch` and `:delete` are unchanged.
+- Repeated same-operation updates inside one batch still collapse through the
+  write path's `distinct` and have the same outcome as one occurrence.
+  Different operations for one resolved relationship are rejected before
+  transaction submission instead of inheriting backend-specific
+  statement-order or conflicting-datom behavior; `:touch` and `:delete` are
+  otherwise unchanged.
 
 ## Capabilities
 

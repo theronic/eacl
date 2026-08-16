@@ -416,6 +416,68 @@
           (finally
             (d/release conn)))))))
 
+(deftest repeated-and-conflicting-relationship-batch-test
+  (doseq [[label attribute-refs?] modes
+          operations
+          (for [left [:create :touch :delete]
+                right [:create :touch :delete]
+                :when (not= left right)]
+            [left right])]
+    (testing (str label " " (pr-str operations))
+      (let [conn (datahike/create-conn nil
+                                       {:attribute-refs? attribute-refs?})
+            client (datahike/make-client conn {})
+            user (eacl/spice-object :user "user")
+            account (eacl/spice-object :account "account")
+            relationship (eacl/->Relationship user :owner account)]
+        (try
+          (eacl/write-schema! client relationship-schema)
+          (d/transact conn [{:eacl/id "user"} {:eacl/id "account"}])
+          (is (= :eacl/invalid-relationship-update-batch
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    (mapv (fn [operation]
+                            (eacl/->RelationshipUpdate
+                             operation relationship))
+                          operations)))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (empty? forward))
+            (is (empty? reverse)))
+          (is (= :ok
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    [(eacl/->RelationshipUpdate :create relationship)
+                     (eacl/->RelationshipUpdate :create relationship)]))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (= 1 (count forward)))
+            (is (= 1 (count reverse))))
+          (is (= :ok
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    [(eacl/->RelationshipUpdate :touch relationship)
+                     (eacl/->RelationshipUpdate :touch relationship)]))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (= 1 (count forward)))
+            (is (= 1 (count reverse))))
+          (is (= :ok
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    [(eacl/->RelationshipUpdate :delete relationship)
+                     (eacl/->RelationshipUpdate :delete relationship)]))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (empty? forward))
+            (is (empty? reverse)))
+          (finally
+            (d/release conn)))))))
+
 (deftest delete-object-removes-both-halves-before-entity-retraction-test
   (doseq [[label attribute-refs?] modes]
     (testing label

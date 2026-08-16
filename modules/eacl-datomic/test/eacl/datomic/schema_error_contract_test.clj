@@ -225,6 +225,53 @@
           (is (= :eacl/relationship-conflict (:type data)))
           (is (= :eacl/relationship-conflict (:eacl/error data))))))))
 
+(deftest repeated-and-conflicting-relationship-batch-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (client! conn)
+          user (eacl/spice-object :user "u1")
+          document (eacl/spice-object :document "d1")
+          relationship (eacl/->Relationship user :reader document)
+          update #(eacl/->RelationshipUpdate % relationship)]
+      (doseq [operations
+              (for [left [:create :touch :delete]
+                    right [:create :touch :delete]
+                    :when (not= left right)]
+                [left right])]
+        (let [data
+              (error-data
+               #(eacl/write-relationships!
+                 client (mapv update operations)))]
+          (is (= :eacl/invalid-relationship-update-batch (:type data)))
+          (is (= :eacl/invalid-relationship-update-batch
+                 (:eacl/error data)))
+          (is (= :conflicting-operations (:reason data)))
+          (is (= operations (:operations data)))))
+      (is (empty? (:data
+                   (eacl/read-relationships
+                    client {:resource/type :document}))))
+      (is (map?
+           (eacl/write-relationships!
+            client [(update :create) (update :create)])))
+      (is (= 1
+             (count
+              (:data
+               (eacl/read-relationships
+                client {:resource/type :document})))))
+      (is (map?
+           (eacl/write-relationships!
+            client [(update :touch) (update :touch)])))
+      (is (= 1
+             (count
+              (:data
+               (eacl/read-relationships
+                client {:resource/type :document})))))
+      (is (map?
+           (eacl/write-relationships!
+            client [(update :delete) (update :delete)])))
+      (is (empty? (:data
+                   (eacl/read-relationships
+                    client {:resource/type :document})))))))
+
 (deftest schema-and-page-request-errors-are-typed-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (client! conn)

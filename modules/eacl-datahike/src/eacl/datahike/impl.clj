@@ -346,17 +346,21 @@
      :relationship relationship})))
 
 (defn create-relationship-at-commit
-  "Transaction function behind `:create`. It re-checks the relationship
-  against the transaction-time database, so two writers that both planned
-  a `:create` of the same relationship against the same pre-write value are
-  serialized by the writer: the first commits, the second observes the
-  winner and fails with `:eacl/relationship-conflict` (Datahike wraps the
-  throw; `eacl.datahike.core` unwraps it). Returns the relationship adds
-  when the relationship is still absent."
+  "Commit-time precondition behind `:create`. It re-checks the relationship
+  against the transaction-time database, so two writers that both planned a
+  `:create` against the same pre-write value are serialized by the writer: the
+  first commits and the second observes the winner and fails with
+  `:eacl/relationship-conflict` (Datahike wraps the throw;
+  `eacl.datahike.core` unwraps it).
+
+  The planned adds remain adjacent to their update in the outer transaction;
+  the shared writer runs every create precondition before those mutations so
+  all updates in one batch retain the calculation-snapshot semantics shared
+  with Datomic."
   [db resolved relationship]
   (if (relationship-exists? db resolved)
     (relationship-conflict! relationship)
-    (add-relationship-txes resolved)))
+    []))
 
 (defn tx-update-relationship
   [db {:keys [operation relationship]}]
@@ -377,7 +381,10 @@
             ;; A remote writer receives serialized tx-data and cannot run a
             ;; transaction function, so it keeps the plan-time check only.
             (ddb/direct-writer? db)
-            [[:db.fn/call create-relationship-at-commit resolved relationship]]
+            (into
+             [[:db.fn/call create-relationship-at-commit
+               resolved relationship]]
+             (add-relationship-txes resolved))
 
             :else
             (add-relationship-txes resolved))

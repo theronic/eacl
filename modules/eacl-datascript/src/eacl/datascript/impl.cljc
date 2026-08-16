@@ -349,16 +349,20 @@
      :relationship relationship})))
 
 (defn create-relationship-at-commit
-  "Transaction function behind `:create`. It re-checks the relationship
-  against the transaction-time database, so two writers that both planned
-  a `:create` of the same relationship against the same pre-write value are
-  serialized by the connection: the first commits, the second observes the
-  winner and fails with `:eacl/relationship-conflict`. Returns the
-  relationship adds when the relationship is still absent."
+  "Commit-time precondition behind `:create`. It re-checks the relationship
+  against the transaction-time database, so two writers that both planned a
+  `:create` against the same pre-write value are serialized by the connection:
+  the first commits and the second observes the winner and fails with
+  `:eacl/relationship-conflict`.
+
+  The planned adds remain adjacent to their update in the outer transaction;
+  the shared writer runs every create precondition before those mutations so
+  all updates in one batch retain the calculation-snapshot semantics shared
+  with Datomic."
   [db resolved relationship]
   (if (relationship-exists? db resolved)
     (relationship-conflict! relationship)
-    (add-relationship-txes resolved)))
+    []))
 
 (defn tx-update-relationship
   [db {:keys [operation relationship]}]
@@ -374,7 +378,10 @@
           :create
           (if exists?
             (relationship-conflict! relationship)
-            [[:db.fn/call create-relationship-at-commit resolved relationship]])
+            (into
+             [[:db.fn/call create-relationship-at-commit
+               resolved relationship]]
+             (add-relationship-txes resolved)))
 
           :delete
           ;; Retraction of an absent DataScript datom is harmless. Always

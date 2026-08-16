@@ -368,18 +368,23 @@ moving the existence check into the transaction: `tx-update-relationship`
 keeps the plan-time conflict for an already-present relationship and
 otherwise emits `[:db.fn/call create-relationship-at-commit resolved
 relationship]`, a transaction function that re-checks both halves against
-the transaction-time database and returns the adds (both halves, identity
-guards, relation stamp) or throws the typed conflict. DataScript (CLJ and
+the transaction-time database before batch mutations and permits the adjacent
+planned adds (both halves, identity guards, relation stamp) or throws the typed
+conflict. DataScript (CLJ and
 CLJS) and Datahike's default in-process writer (`{:writer {:backend
 :self}}`, `eacl.datahike.db/direct-writer?`) run it; a Datahike remote
 writer cannot transport a function value and keeps the plan-time check
 only. Datahike reports a failing transaction function wrapped (ex-info →
 `ExecutionException` → the original throw), so the client's transaction
 wrapper (`eacl.datahike.core/typed-transaction-error`) recovers the typed
-error from the cause chain. Duplicate `:create`s inside one batch still
-collapse through the write path's `distinct` and stay idempotent; the
-stale-plan identity-guard CAS still rejects a plan whose endpoint was
-retracted. Deterministic interleaving tests plan two creates against the
+error from the cause chain. Repeated same-operation updates inside one batch
+still collapse through the write path's `distinct` and have the same outcome
+as one occurrence;
+different operations for one resolved relationship fail with
+`:eacl/invalid-relationship-update-batch` instead of exposing backend-specific
+statement-order or conflicting-datom behavior. The stale-plan identity-guard
+CAS still rejects a plan whose endpoint was retracted. Deterministic
+interleaving tests plan two creates against the
 same pre-write value and commit both
 (`concurrent-creates-are-serialized-at-commit-test` in the DataScript and
 Datahike storage suites, both attribute representations on Datahike).

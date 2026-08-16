@@ -299,6 +299,63 @@
       (is (= 1 (count (:data (eacl/read-relationships
                               client {:resource/type :account}))))))))
 
+(deftest repeated-and-conflicting-relationship-batch-test
+  (doseq [operations
+          (for [left [:create :touch :delete]
+                right [:create :touch :delete]
+                :when (not= left right)]
+            [left right])]
+    (testing (pr-str operations)
+      (let [conn (datascript/create-conn)
+            client (datascript/make-client conn {})
+            user (eacl/spice-object :user "user")
+            account (eacl/spice-object :account "account")
+            relationship (eacl/->Relationship user :owner account)]
+        (eacl/write-schema! client relationship-schema)
+        (ds/transact! conn [{:eacl/id "user"} {:eacl/id "account"}])
+        (is (= :eacl/invalid-relationship-update-batch
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  (mapv (fn [operation]
+                          (eacl/->RelationshipUpdate
+                           operation relationship))
+                        operations)))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (empty? forward))
+          (is (empty? reverse)))
+        (is (= :ok
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  [(eacl/->RelationshipUpdate :create relationship)
+                   (eacl/->RelationshipUpdate :create relationship)]))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (= 1 (count forward)))
+          (is (= 1 (count reverse))))
+        (is (= :ok
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  [(eacl/->RelationshipUpdate :touch relationship)
+                   (eacl/->RelationshipUpdate :touch relationship)]))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (= 1 (count forward)))
+          (is (= 1 (count reverse))))
+        (is (= :ok
+               (error-type
+                #(eacl/write-relationships!
+                  client
+                  [(eacl/->RelationshipUpdate :delete relationship)
+                   (eacl/->RelationshipUpdate :delete relationship)]))))
+        (let [{:keys [forward reverse]}
+              (relationship-state (ds/db conn))]
+          (is (empty? forward))
+          (is (empty? reverse)))))))
+
 (deftest delete-object-and-ghost-cleanup-test
   (let [{:keys [conn client account]} (seeded)
         {:keys [account-eid]} (relationship-state (ds/db conn))]

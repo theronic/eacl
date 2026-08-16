@@ -28,6 +28,7 @@
             [eacl.permission-tree :as permission-tree]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
@@ -1177,6 +1178,7 @@
             (S/transform [S/ALL :relationship]
                          #(spice-relationship->internal db opts %)
                          updates)
+            _ (relationship-mutations/validate-batch! internal-updates)
             relationship-tx-data
             (->> internal-updates
                  (mapcat #(impl/tx-update-relationship db %))
