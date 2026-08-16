@@ -23,7 +23,6 @@
             [eacl.datascript.cache-model-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
-            [eacl.datascript.enumeration-routing-test]
             [eacl.datascript.impl-test]
             [eacl.datascript.safe-retraction-test]
             [eacl.datascript.storage-test]))
@@ -62,7 +61,6 @@
                'eacl.datascript.cache-model-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test
-               'eacl.datascript.enumeration-routing-test
                'eacl.datascript.impl-test
                'eacl.datascript.safe-retraction-test
                'eacl.datascript.storage-test))

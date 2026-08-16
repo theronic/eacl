@@ -338,6 +338,146 @@
           (finally
             (d/release conn)))))))
 
+(defn- lookup-ref-relationship
+  "The internal relationship shape the shared client hands to the impl:
+  endpoint ids as lookup refs, which also serve as commit-time identity
+  guards."
+  [relationship]
+  (let [lookup-object #(assoc % :id [:eacl/id (:id %)])]
+    (-> relationship
+        (update :subject lookup-object)
+        (update :resource lookup-object))))
+
+(defn- error-type
+  [thunk]
+  (try
+    (thunk)
+    :ok
+    (catch clojure.lang.ExceptionInfo error
+      (:type (ex-data error)))))
+
+(deftest concurrent-creates-are-serialized-at-commit-test
+  (doseq [[label attribute-refs?] modes]
+    (testing label
+      (let [conn (datahike/create-conn nil {:attribute-refs? attribute-refs?})
+            client (datahike/make-client conn {})
+            user (eacl/spice-object :user "user")
+            account (eacl/spice-object :account "account")
+            relationship (eacl/->Relationship user :owner account)]
+        (try
+          (eacl/write-schema! client relationship-schema)
+          (d/transact conn [{:eacl/id "user"} {:eacl/id "account"}])
+          (testing "two :create plans made against the same pre-write value"
+            (let [db (d/db conn)
+                  internal (lookup-ref-relationship relationship)
+                  plan (fn []
+                         (impl/tx-update-relationship
+                          db {:operation :create :relationship internal}))
+                  first-plan (plan)
+                  second-plan (plan)
+                  transact! #'datahike/transact-native!]
+              (is (true? (ddb/direct-writer? db)))
+              (is (some #(= :db.fn/call (first %)) first-plan)
+                  "a direct writer decides the create at commit time")
+              (is (= :ok (error-type
+                          #(transact! conn {:tx-data first-plan}))))
+              (let [raw (try
+                          (d/transact conn second-plan)
+                          nil
+                          (catch Exception error error))]
+                (is (some? raw)
+                    "the loser observes the winner inside the transaction")
+                (is (nil? (:type (ex-data raw)))
+                    "Datahike reports the failing transaction function wrapped")
+                (is (= :eacl/relationship-conflict
+                       (:eacl/error
+                        (ex-data (datahike/typed-transaction-error raw))))
+                    "the typed conflict is recoverable from the cause chain"))
+              (is (= :eacl/relationship-conflict
+                     (error-type
+                      #(transact! conn {:tx-data second-plan})))
+                  "the client's transaction wrapper surfaces the typed conflict")
+              (let [{:keys [forward reverse]} (relationship-state (d/db conn))]
+                (is (= 1 (count forward)))
+                (is (= 1 (count reverse))))
+              (is (true? (eacl/can? client user :admin account)))))
+          (testing "the public write path keeps its contract"
+            (is (= :eacl/relationship-conflict
+                   (error-type
+                    #(eacl/create-relationship! client relationship))))
+            (is (= :ok
+                   (error-type
+                    #(eacl/write-relationships!
+                      client [{:operation :touch
+                               :relationship relationship}])))
+                ":touch stays idempotent")
+            (is (= 1 (count (:data (eacl/read-relationships
+                                    client {:resource/type :account}))))))
+          (finally
+            (d/release conn)))))))
+
+(deftest repeated-and-conflicting-relationship-batch-test
+  (doseq [[label attribute-refs?] modes
+          operations
+          (for [left [:create :touch :delete]
+                right [:create :touch :delete]
+                :when (not= left right)]
+            [left right])]
+    (testing (str label " " (pr-str operations))
+      (let [conn (datahike/create-conn nil
+                                       {:attribute-refs? attribute-refs?})
+            client (datahike/make-client conn {})
+            user (eacl/spice-object :user "user")
+            account (eacl/spice-object :account "account")
+            relationship (eacl/->Relationship user :owner account)]
+        (try
+          (eacl/write-schema! client relationship-schema)
+          (d/transact conn [{:eacl/id "user"} {:eacl/id "account"}])
+          (is (= :eacl/invalid-relationship-update-batch
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    (mapv (fn [operation]
+                            (eacl/->RelationshipUpdate
+                             operation relationship))
+                          operations)))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (empty? forward))
+            (is (empty? reverse)))
+          (is (= :ok
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    [(eacl/->RelationshipUpdate :create relationship)
+                     (eacl/->RelationshipUpdate :create relationship)]))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (= 1 (count forward)))
+            (is (= 1 (count reverse))))
+          (is (= :ok
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    [(eacl/->RelationshipUpdate :touch relationship)
+                     (eacl/->RelationshipUpdate :touch relationship)]))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (= 1 (count forward)))
+            (is (= 1 (count reverse))))
+          (is (= :ok
+                 (error-type
+                  #(eacl/write-relationships!
+                    client
+                    [(eacl/->RelationshipUpdate :delete relationship)
+                     (eacl/->RelationshipUpdate :delete relationship)]))))
+          (let [{:keys [forward reverse]}
+                (relationship-state (d/db conn))]
+            (is (empty? forward))
+            (is (empty? reverse)))
+          (finally
+            (d/release conn)))))))
+
 (deftest delete-object-removes-both-halves-before-entity-retraction-test
   (doseq [[label attribute-refs?] modes]
     (testing label

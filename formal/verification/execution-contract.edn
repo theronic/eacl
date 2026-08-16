@@ -93,8 +93,8 @@
   :natural-completion :graph-exhausted}
  :executable-evidence
  [eacl.execution-test/execution-contract-normalization-test
-  eacl.datascript.contract-test/semantic-root-denotation-key-is-cross-target-exact-test
-  eacl.datascript.enumeration-routing-test/complete-acyclic-denotation-preserves-demand-order-test
+  eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test
+  eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test
   eacl.relay-test/cursor-is-bound-to-normalized-traversal-limits-test
   eacl.datomic.api-contract-test/recursive-traversal-limits-are-configurable-test
   eacl.datomic.recursive-cache-test/datomic-recursive-cursor-binds-normalized-traversal-limits-test

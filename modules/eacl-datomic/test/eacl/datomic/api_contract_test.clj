@@ -11,6 +11,7 @@
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.v8 :as engine]
             [eacl.verified-kernel :as verified]))
 
@@ -307,15 +308,18 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [{:keys [db u]} (seed-recursive! conn 60)
           query {:subject (spice-object :user u) :permission :read :resource/type :folder}]
-      (is (true? (idx/traversal-permission? db :folder :read)))
       (is (= 61 (:count (idx/count-resources db query))) "root + 60 children")
 
-      (testing "counting derives each grant once"
-        (let [stats (atom {})]
-          (binding [idx/*recursive-traversal-stats* stats]
-            (idx/count-resources db query))
-          (is (<= (:derived-grants @stats) 70)
-              (str "one pass over 61 results, got " (:derived-grants @stats)))))
+      (testing "counting exhausts one traversal instead of paging with replay"
+        (let [runs (atom 0)
+              run reducer/run-forward]
+          (with-redefs [reducer/run-forward
+                        (fn [options]
+                          (swap! runs inc)
+                          (run options))]
+            (is (= 61 (:count (idx/count-resources db query)))))
+          (is (= 1 @runs)
+              "count must be one exhaustive pass, not one replay per page")))
 
       (testing "a limit far below N^2 but above N no longer breaks counting"
         (binding [idx/*recursive-traversal-limits* {:max-derived-grants 200
@@ -377,7 +381,7 @@
           (is (= (take-last 2 full) (:data last-page)))
           (is (true? (get-in last-page [:page-info :has-previous-page?])))
           (is (false? (get-in last-page [:page-info :has-next-page?])))
-          (is (= :recursive-logical
+          (is (= :stable-edge
                  (get-in last-page [:page-info :start-cursor :kind])))))
 
       (testing "count-subjects agrees with lookup-subjects on a recursive permission"

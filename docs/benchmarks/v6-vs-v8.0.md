@@ -1,3 +1,5 @@
+> Historical record (2026-08-02 – 2026-08-11): these measurements were taken on the interim v8 acyclic/merge engines. The stable-discovery engine routed on 2026-08-14 changes both the enumeration order and the cost profile; see the change's `tasks.md` §10 and `formal/verification/explorer-v7-performance.edn` for current numbers.
+
 # v6 vs v8.0 reference benchmark
 
 Both versions run the **same permission schema** (`multipath-schema-dsl`, four union paths
@@ -23,7 +25,7 @@ clojure -J-Xmx8g -M:dev:nrepl
 ```
 ```clojure
 (require 'eacl.bench.version-comparison)
-(eacl.bench.version-comparison/run-reference! :off)   ; :off | :default | :live-results
+(eacl.bench.version-comparison/run-reference! :off)   ; :off | :default | :remember-answers
 ```
 
 The v6 side lives on the `bench/v6` branch as the same namespace, run the same way.

@@ -1,0 +1,65 @@
+;; Frozen current-engine baseline. Regenerate via
+;; (eacl.baseline.capture/capture-all!) — see README.md.
+{:fixture :mutual-mixed,
+ :page-size 7,
+ :forward
+ {:carol
+  {:principal "user:carol",
+   :denotation ["a_node:a-1" "a_node:a-2" "a_node:a-3"],
+   :order ["a_node:a-1" "a_node:a-2" "a_node:a-3"],
+   :pages [{:size 3, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 3, :limit -1},
+   :count-matches-denotation? true},
+  :dave
+  {:principal "user:dave",
+   :denotation ["a_node:a-1" "a_node:a-2" "a_node:a-3"],
+   :order ["a_node:a-3" "a_node:a-1" "a_node:a-2"],
+   :pages [{:size 3, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 3, :limit -1},
+   :count-matches-denotation? true},
+  :stranger
+  {:principal "user:stranger",
+   :denotation [],
+   :order [],
+   :pages [{:size 0, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 0, :limit -1},
+   :count-matches-denotation? true}},
+ :reverse
+ {:a-1
+  {:resource "a_node:a-1",
+   :outcome :ok,
+   :denotation ["user:carol" "user:dave"],
+   :order ["user:carol" "user:dave"],
+   :first-page-size 2},
+  :a-3
+  {:resource "a_node:a-3",
+   :outcome :ok,
+   :denotation ["user:carol" "user:dave"],
+   :order ["user:dave" "user:carol"],
+   :first-page-size 2}},
+ :points
+ {:carol {:authorized-sample {:resource "a_node:a-1", :can? true}},
+  :dave {:authorized-sample {:resource "a_node:a-1", :can? true}},
+  :stranger
+  {:unauthorized-sample {:resource "a_node:a-1", :can? false}}},
+ :cursor-behavior
+ {:first-page-repeat-identical? true,
+  :after-cursor-repeat-identical? true,
+  :parent-cursor-reusable-after-child? true,
+  :cancelled-request
+  {:outcome :error,
+   :error-keys [:eacl.execution/cancelled :eacl.execution/cancelled]},
+  :zero-timeout-rejected
+  {:outcome :error,
+   :error-keys
+   [:eacl.execution/invalid-contract
+    :timeout-ms
+    :eacl/invalid-request]}},
+ :stale-basis
+ {:outcome :ok, :detail {:outcome :ok}, :resumed-page-size 1}}

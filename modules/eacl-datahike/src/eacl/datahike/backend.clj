@@ -4,8 +4,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datahike.schema :as schema])
   (:import [java.util UUID]))
 
 (def capabilities
@@ -20,17 +19,25 @@
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
-(defn- direct-writer?
-  [db]
-  (= :self (get-in db [:config :writer :backend])))
+(def ^:private db-config ddb/db-config)
+(def ^:private direct-writer? ddb/direct-writer?)
 
 (defn- exact-commits?
   [db]
-  (not (false? (get-in db [:config :commit-graph?] true))))
+  (not (false? (get (db-config db) :commit-graph? true))))
 
 (defn- temporal-history?
   [db]
-  (true? (get-in db [:config :keep-history?])))
+  (true? (:keep-history? (db-config db))))
+
+(defn- store-identity
+  "The bounded public identity of the store: backend and id only. The rest
+  of the store map is connection configuration (paths, endpoints,
+  credentials for jdbc/s3 stores) and must not leak into snapshot ids,
+  cache bases, or cursor digests."
+  [db]
+  (let [{:keys [backend id]} (:store (db-config db))]
+    {:backend backend :id (str id)}))
 
 (defn- exact-reconstruction?
   [db]
@@ -121,22 +128,23 @@
             (str (UUID/randomUUID)))
         source-scope
         (or (:source-scope opts)
-            (let [{:keys [backend id]} (get-in db [:config :store])]
+            (let [{:keys [backend id]} (store-identity db)]
               {:source-id
                {:store-backend backend
-                :store-id (str id)}
-               :branch (get-in db [:config :branch])}))
+                :store-id id}
+               :branch (:branch (db-config db))}))
         opts' (-> opts
                   (dissoc :source-lifecycle-state)
                   (assoc :source-lifecycle source-lifecycle
                          :source-scope source-scope))]
     (backend/make-adapter
      {:id :datahike
+      :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
       :deterministic? (:adapter-deterministic? opts)
       :identity-contract
       (:identity-contract opts
-                          :selected-internal/current-external-v1)
+                          :selected-internal/current-external-injective-v2)
       :capabilities
       (cond-> capabilities
         (or (nil? conn)
@@ -155,11 +163,9 @@
       :operations
       {:snapshot-id
        (fn []
-         {:database-id
-          {:store
-           (update (:store (:config db)) :id str)}
+         {:database-id {:store (store-identity db)}
           :attribute-refs? (boolean
-                            (:attribute-refs? (:config db)))
+                            (:attribute-refs? (db-config db)))
           :basis-t (or (db-revision db) selected-order-hint)})
 
        :source-scope
@@ -231,8 +237,39 @@
                          :selected-order-hint (:revision token-data)
                          :selected-exact-locator
                          (:exact-locator token-data)))))
-             (catch Throwable _
-               nil))))
+             ;; Genuine absence maps to the contractual unavailable nil: a
+             ;; foreign locator format fails UUID parsing, and a GC'd
+             ;; commit makes commit-as-db return nil (handled above by the
+             ;; when-let). A store that reports absence through a typed
+             ;; not-found / missing-node error is treated the same. A
+             ;; failed READ is not absence: it stays a classified retryable
+             ;; failure so a transient store outage never expires a valid
+             ;; cursor. Every other Throwable is a classified failure.
+             (catch IllegalArgumentException _
+               nil)
+             (catch clojure.lang.ExceptionInfo info
+               (if (some #{:not-found :missing-node}
+                         [(:type (ex-data info)) (:error (ex-data info))])
+                 nil
+                 (throw (ex-info "Exact-basis selection failed."
+                                 {:type :eacl.basis/selection-failure
+                                  :eacl/error :eacl.basis/selection-failure
+                                  :classification :retryable
+                                  :cause (ex-data info)}
+                                 info))))
+             (catch InterruptedException interrupt
+               (throw (ex-info "Exact-basis selection was interrupted."
+                               {:type :eacl.basis/selection-failure
+                                :eacl/error :eacl.basis/selection-failure
+                                :classification :cancelled}
+                               interrupt)))
+             (catch Throwable failure
+               (throw (ex-info "Exact-basis selection failed."
+                               {:type :eacl.basis/selection-failure
+                                :eacl/error :eacl.basis/selection-failure
+                                :classification :retryable
+                                :cause-class (.getName (class failure))}
+                               failure))))))
 
        :object-id->internal
        (fn [object-id]
@@ -274,16 +311,6 @@
          (impl/direct-match?
           db subject-type subject-id relation-id
           resource-type resource-id))
-
-       :relation-populated?
-       (fn [subject-type relation-id resource-type]
-         (boolean
-          (first
-           (ddb/avet-tuple-prefix
-            db
-            relationship-storage/forward-attribute
-            4
-            [subject-type relation-id resource-type]))))
 
        :all-permission-nodes
        (fn []

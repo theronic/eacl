@@ -14,8 +14,8 @@ datom, attribute-id, or tuple implementation types.
 | Current, authoritative, causal-floor, and exact snapshot selection | Adapter |
 | Object ID internalization/externalization | Adapter, under a declared round-trip contract |
 | Relation and permission definition reads | Adapter returns normalized definitions |
-| Forward/reverse adjacency, direct match, populated relation checks | Adapter |
-| Dependency extraction, schema plans, strongly connected components | Shared engine |
+| Forward/reverse ordered adjacency scans, direct match | Adapter |
+| Dependency extraction, sealed plan compilation and rank certification | Shared engine |
 | Schema generation and complete relation-generation proof frame | Adapter evidence validated by shared proof code |
 | Exact/proof-backed completed answers and subproblem caching | Shared client-private cache |
 | Schema and relationship transaction planning/execution | Adapter |
@@ -31,8 +31,8 @@ An adapter is bound to one immutable backend value and provides:
   unsupported modes rejected through capabilities;
 - external/internal object conversion;
 - normalized relation and permission definitions;
-- ordered forward/reverse adjacency, direct match, relation-populated, and
-  permission-node operations; and
+- ordered forward/reverse adjacency, direct match, and permission-node
+  operations; and
 - when advertised, one `:proof-frame` operation returning schema generation
   plus a complete canonical vector of requested relation generations.
 

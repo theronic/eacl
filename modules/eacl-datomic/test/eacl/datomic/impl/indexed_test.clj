@@ -532,8 +532,8 @@
 
       (testing "Now only user-1 can :view all 3 servers, including those in account2."
         (let [db' (d/db *conn*)]
-          (is (= [(spice-object :user "user-1")
-                  (spice-object :user "super-user")]
+          (is (= [(spice-object :user "super-user")
+                  (spice-object :user "user-1")]
                  (->> (lookup-subjects db' {:resource (->server (d/entid db' [:eacl/id "account2-server1"]))
                                             :permission :view
                                             :subject/type :user})
@@ -1031,7 +1031,6 @@
                                                           :first        100})))))
 
       (testing "recursive lookup-resources should page in deterministic traversal order"
-        (is (impl.indexed/traversal-permission? db :account :read))
         (let [page1 (lookup-resources db {:subject       user
                                           :permission    :read
                                           :resource/type :account
@@ -1096,8 +1095,6 @@
     (let [db   (load-recursive-document-db! conn)
           user (spice-object :user [:eacl/id "user-1"])]
       (testing "acyclic roots that depend on recursive permissions should use traversal"
-        (is (impl.indexed/traversal-permission? db :folder :read))
-        (is (impl.indexed/traversal-permission? db :document :view))
         (is (can? db user :view (spice-object :document [:eacl/id "doc-1"])))
         (is (= [(spice-object :document "doc-1")]
                (paginated->spice db
@@ -1125,9 +1122,9 @@
                  (paginated->spice db page)))
           (is (not= (sort eids) eids)
               "logical traversal order is intentionally independent of EID order")
-          (is (= :recursive-logical
+          (is (= :stable-edge
                  (get-in page [:page-info :start-cursor :kind])))
-          (is (zero? (get-in page [:page-info :start-cursor :ordinal])))
+          (is (= 1 (get-in page [:page-info :start-cursor :ordinal])))
           (is (= (first eids)
                  (get-in page [:page-info :start-cursor :result-eid])))))
 
@@ -1264,15 +1261,19 @@
                   (is (pos? @calc-calls) "Should call calc-permission-paths after eviction"))))))))))
 
 (deftest schema-cache-carries-shared-engine-analysis-test
+  ;; The retired routing analysis (:traversal-analysis, :recursive-plans)
+  ;; is gone; the generation cache now carries only the live derivations —
+  ;; permission paths and the relationship dependency sets that drive
+  ;; answer-cache invalidation — and eviction clears them.
   (with-mem-conn [conn schema/v7-schema]
     (let [cache (impl.indexed/make-schema-cache (d/db conn))]
-      (is (some? (:traversal-analysis cache)))
-      (is (some? (:recursive-plans cache)))
-      (reset! (:traversal-analysis cache) (delay {:account/view true}))
-      (reset! (:recursive-plans cache) {:account/view :compiled})
+      (is (some? (:permission-paths cache)))
+      (is (some? (:relationship-dependencies cache)))
+      (reset! (:permission-paths cache) {:probe :cached})
+      (reset! (:relationship-dependencies cache) {:probe :cached})
       (impl.indexed/evict-permission-paths-cache! cache)
-      (is (nil? @(:traversal-analysis cache)))
-      (is (= {} @(:recursive-plans cache))))))
+      (is (= {} @(:permission-paths cache)))
+      (is (= {} @(:relationship-dependencies cache))))))
 
 (deftest permission-paths-cache-is-scoped-per-database-test
   (with-mem-conn [conn1 schema/v7-schema]

@@ -1,7 +1,7 @@
 # EACL v8.0 exploration review — correctness, simplification, performance
 
 Date: 2026-08-07
-Audited tree: `codex/restore-v8-enumeration-performance` @ `8b17ee0` (8 commits ahead of `release/v8.0`; the freshest v8 state). Companion prompt: [docs/adr/2026-08-07-eacl-v8-correctness-optimization-exploration.md](../adr/2026-08-07-eacl-v8-correctness-optimization-exploration.md).
+Audited tree: `codex/restore-v8-enumeration-performance` @ `8b17ee0` (8 commits ahead of `release/v8.0`; the freshest v8 state). Companion prompt: [docs/plans/2026-08-07-eacl-v8-correctness-optimization-exploration.md](../plans/2026-08-07-eacl-v8-correctness-optimization-exploration.md).
 
 Method: six parallel deep-dive audits (cache, cursors, build/codegen, model↔implementation correspondence, backend sharing/Clojure quality, performance/sizing), with the highest-impact claims re-verified by hand against source. Confidence levels marked throughout. File:line references are into the audited v8 tree.
 

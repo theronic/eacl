@@ -1,4 +1,4 @@
-# 007. Record architecture decisions
+# 009. Self-permission support
 
 Date: 2025-07-27
 

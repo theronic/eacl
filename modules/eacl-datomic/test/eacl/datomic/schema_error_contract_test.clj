@@ -180,3 +180,147 @@
          client (assoc demand :consistency consistency/fully-consistent))
         (is (= 1 @calls)
             "fully consistent remains available when explicitly requested")))))
+
+(deftest relationship-writes-share-the-schema-taxonomy-test
+  ;; Writes validate schema names before any endpoint resolves, with the same
+  ;; typed errors the reads use (an unknown relation, definition, or a
+  ;; subject type the relation does not declare); a well-typed write may
+  ;; still fail on an unknown object.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (client! conn)
+          user (eacl/spice-object :user "u1")
+          document (eacl/spice-object :document "d1")]
+      (let [data (assert-error!
+                  :eacl/unknown-relation-or-permission :write-relationships
+                  #(eacl/create-relationship! client user :nope document))]
+        (is (= :nope (:relation data)))
+        (is (= :document (:definition data))))
+      (let [data (assert-error!
+                  :eacl/unknown-definition :write-relationships
+                  #(eacl/create-relationship!
+                    client user :reader (eacl/spice-object :ghost "g")))]
+        (is (= :ghost (:definition data))))
+      (let [data (assert-error!
+                  :eacl/unknown-relation-or-permission :write-relationships
+                  #(eacl/create-relationship!
+                    client (eacl/spice-object :document "d1") :reader document))]
+        (is (= :subject-type-not-declared (:reason data)))
+        (is (= :document (:subject-type data))))
+      (assert-error!
+       :eacl/unknown-relation-or-permission :write-relationships
+       #(eacl/create-relationship! client user :view document))
+      (testing "the typed schema errors also apply to :touch and :delete"
+        (assert-error!
+         :eacl/unknown-relation-or-permission :write-relationships
+         #(eacl/delete-relationship! client user :nope document)))
+      (testing "a well-typed write with an unknown object keeps its data error"
+        (let [data (error-data
+                    #(eacl/create-relationship!
+                      client (eacl/spice-object :user "absent") :reader document))]
+          (is (= :eacl/unknown-object (:type data)))
+          (is (= :eacl/unknown-object (:eacl/error data)))))
+      (testing "duplicate :create carries the portable category"
+        (eacl/create-relationship! client user :reader document)
+        (let [data (error-data #(eacl/create-relationship! client user :reader document))]
+          (is (= :eacl/relationship-conflict (:type data)))
+          (is (= :eacl/relationship-conflict (:eacl/error data))))))))
+
+(deftest repeated-and-conflicting-relationship-batch-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (client! conn)
+          user (eacl/spice-object :user "u1")
+          document (eacl/spice-object :document "d1")
+          relationship (eacl/->Relationship user :reader document)
+          update #(eacl/->RelationshipUpdate % relationship)]
+      (doseq [operations
+              (for [left [:create :touch :delete]
+                    right [:create :touch :delete]
+                    :when (not= left right)]
+                [left right])]
+        (let [data
+              (error-data
+               #(eacl/write-relationships!
+                 client (mapv update operations)))]
+          (is (= :eacl/invalid-relationship-update-batch (:type data)))
+          (is (= :eacl/invalid-relationship-update-batch
+                 (:eacl/error data)))
+          (is (= :conflicting-operations (:reason data)))
+          (is (= operations (:operations data)))))
+      (is (empty? (:data
+                   (eacl/read-relationships
+                    client {:resource/type :document}))))
+      (is (map?
+           (eacl/write-relationships!
+            client [(update :create) (update :create)])))
+      (is (= 1
+             (count
+              (:data
+               (eacl/read-relationships
+                client {:resource/type :document})))))
+      (is (map?
+           (eacl/write-relationships!
+            client [(update :touch) (update :touch)])))
+      (is (= 1
+             (count
+              (:data
+               (eacl/read-relationships
+                client {:resource/type :document})))))
+      (is (map?
+           (eacl/write-relationships!
+            client [(update :delete) (update :delete)])))
+      (is (empty? (:data
+                   (eacl/read-relationships
+                    client {:resource/type :document})))))))
+
+(deftest schema-and-page-request-errors-are-typed-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (client! conn)
+          user (eacl/spice-object :user "u1")]
+      (testing "reference validation failures carry a category"
+        (let [data (error-data
+                    #(eacl/write-schema! client "definition user {}
+                                                 definition document {
+                                                   relation reader: user
+                                                   permission view = missing
+                                                 }"))]
+          (is (= :eacl.schema/invalid-reference (:type data)))
+          (is (= :eacl.schema/invalid-reference (:eacl/error data)))
+          (is (seq (:errors data)))))
+      (testing "an undefined relation subject type is rejected like SpiceDB does"
+        (let [data (error-data
+                    #(eacl/write-schema! client "definition user {}
+                                                 definition document {
+                                                   relation reader: nobody
+                                                   permission view = reader
+                                                 }"))]
+          (is (= :eacl.schema/invalid-reference (:type data)))
+          (is (some #(= :undefined-subject-type (:type %)) (:errors data)))))
+      (testing "unsupported schema features carry a category"
+        (let [data (error-data
+                    #(eacl/write-schema! client "definition user {}
+                                                 definition document {
+                                                   relation reader: user:*
+                                                   permission view = reader
+                                                 }"))]
+          (is (= :eacl.schema/unsupported-feature (:type data)))
+          (is (= :eacl.schema/unsupported-feature (:eacl/error data)))))
+      (testing "page-size and page-shape errors carry a category"
+        (let [data (error-data
+                    #(eacl/lookup-resources client {:subject user :permission :view
+                                                    :resource/type :document :first 10001}))]
+          (is (= :eacl.pagination/invalid-page-size (:type data)))
+          (is (= :eacl.pagination/invalid-page-size (:eacl/error data)))
+          (is (= 10001 (:size data))))
+        (let [data (error-data
+                    #(eacl/lookup-resources client {:subject user :permission :view
+                                                    :resource/type :document :first 0}))]
+          (is (= :eacl.pagination/invalid-page-size (:eacl/error data))))
+        (let [data (error-data
+                    #(eacl/lookup-resources client {:subject user :permission :view
+                                                    :resource/type :document :first 1 :last 1}))]
+          (is (= :eacl.pagination/invalid-page-request (:eacl/error data)))
+          (is (= :eacl.pagination/invalid-page-request (:type data))))
+        (let [data (error-data
+                    #(eacl/count-resources client {:subject user :permission :view
+                                                   :resource/type :document :first 1}))]
+          (is (= :eacl.pagination/invalid-page-request (:eacl/error data))))))))

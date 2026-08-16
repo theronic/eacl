@@ -61,7 +61,10 @@ pagination is specified separately in `formal/dafny/PageWindow.dfy`: an
 authenticated logical boundary is the pair of its ordinal and external result
 identity in the generated logical order. The completed-denotation path emits
 the exact exclusive slice only when both values match; a mismatch is stale.
-Production implements that branch in `eacl.engine.v8/complete-logical-page`.
+Production now implements that rule in the stable engine: `eacl.engine.stable-page/edge-page`
+validates the `:stable-edge` ordinal and identity by checkpoint hit or governed
+replay before slicing (the former `eacl.engine.v8/complete-logical-page` branch
+was retired with the merge engine).
 The Dafny function matches the host branch, but the correspondence remains a
 cross-checked host-control refinement rather than a mechanized Clojure source
 refinement. Demand continuations validate the same ordinal and identity in the

@@ -80,13 +80,6 @@
     :denotation :exact-denotation
     :answer :exact-answer))
 
-(defn- managed-cache-tier
-  [tier]
-  (case tier
-    :projection :managed-projection
-    :denotation :managed-denotation
-    :answer :managed-answer))
-
 (declare positive-weight!)
 
 (defrecord SubproblemStore
@@ -254,24 +247,6 @@
    (when store
      (swap! (:metrics store)
             update :avoided-backend-operations (fnil inc 0)))
-   nil))
-
-(defn add-fetched-projection-values!
-  ([n]
-   (add-fetched-projection-values! *store* n))
-  ([store n]
-   (when store
-     (swap! (:metrics store)
-            update :fetched-projection-values (fnil + 0) n))
-   nil))
-
-(defn record-acyclic-denotation-hit!
-  ([]
-   (record-acyclic-denotation-hit! *store*))
-  ([store]
-   (when store
-     (swap! (:metrics store)
-            update :acyclic-denotation-hits (fnil inc 0)))
    nil))
 
 (defn- remove-entry-if-token!
@@ -624,39 +599,6 @@
          (:value managed))
        (compute)))))
 
-(defn lookup-layered-bound!
-  "Looks up an exact or bounded managed value without starting value work.
-
-  Proof resolution may run once for the selected exact generation. A missing
-  managed value remains a miss; callers that want to compute may subsequently
-  use `resolve-layered-bound!` with the same inputs."
-  [tier key options dependency]
-  (when *store*
-    (or
-     (lookup! *store* tier key options)
-     (when-let [{:keys [schema-stamp dependency-stamp]}
-                (managed-descriptor dependency)]
-       (when-let [resolved
-                  (lookup!
-                   *managed-store*
-                   tier
-                   [:managed-subproblem
-                    2
-                    *managed-scope*
-                    schema-stamp
-                    dependency
-                    dependency-stamp
-                    tier
-                    key]
-                   options)]
-         (swap! (:metrics *store*)
-                update (managed-tier-hit-metric tier) inc)
-         (record-avoided-backend-operation! *store*)
-         (assoc
-          resolved
-          :cache-tier
-          (managed-cache-tier tier)))))))
-
 (defn lookup!
   "Returns a complete existing value without starting a computation.
 
@@ -686,17 +628,3 @@
          :cached? true
          :cache-tier (exact-cache-tier tier)}))))
 
-(defn lookup-bound!
-  "Looks up a complete value in the dynamically bound store, or returns nil."
-  [tier key options]
-  (when *store*
-    (lookup! *store* tier key options)))
-
-(defn record-recursive-component-hit!
-  ([]
-   (record-recursive-component-hit! *store*))
-  ([store]
-   (when store
-     (swap! (:metrics store)
-            update :recursive-component-hits (fnil inc 0)))
-   nil))

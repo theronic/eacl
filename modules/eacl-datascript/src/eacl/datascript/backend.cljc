@@ -2,9 +2,7 @@
   "DataScript storage operations for the shared v8 authorization engine."
   (:require [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
-            [eacl.datascript.db :as ddb]
-            [eacl.datascript.impl :as impl]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datascript.impl :as impl])
   #?(:clj (:import [java.util WeakHashMap])))
 
 (defonce ^:private connection-source-ids
@@ -129,11 +127,12 @@
                          :source-scope source-scope))]
     (backend/make-adapter
      {:id :datascript
+      :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
       :deterministic? (:adapter-deterministic? opts)
       :identity-contract
       (:identity-contract opts
-                          :selected-internal/current-external-v1)
+                          :selected-internal/current-external-injective-v2)
       :capabilities
       (cond-> capabilities
         (nil? conn)
@@ -218,15 +217,6 @@
        (fn [subject-type subject-id relation-id resource-type resource-id]
          (impl/direct-match?
           db subject-type subject-id relation-id resource-type resource-id))
-
-       :relation-populated?
-       (fn [subject-type relation-id resource-type]
-         (boolean
-          (first
-           (ddb/avet-endpoint-prefix
-            db
-            relationship-storage/forward-attribute
-            [subject-type relation-id resource-type]))))
 
        :all-permission-nodes
        (fn []

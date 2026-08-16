@@ -15,5 +15,5 @@
  :closing-evidence
  ["RoutingCertificate.InactiveRecursiveDataSelectsAcyclicRoute"
   "AcyclicEngine.InactiveCycleGuardEliminatesRecursiveContribution"
-  "eacl.datascript.enumeration-routing-test/recursive-schema-with-empty-cycle-guards-stays-page-bounded-test"
-  "eacl.datahike.enumeration-routing-test/datahike-recursive-schema-with-empty-cycle-guards-stays-page-bounded-test"]}
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"]}

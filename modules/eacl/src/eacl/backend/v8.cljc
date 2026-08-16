@@ -5,7 +5,7 @@
   pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 6)
+(def adapter-version 7)
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
 
@@ -49,7 +49,6 @@
     :subject->resources
     :resource->subjects
     :direct-match?
-    :relation-populated?
     :all-permission-nodes})
 
 (def adapter-obligations
@@ -97,8 +96,6 @@
    :direct-match?
    #{:iff-forward-scan-membership :iff-reverse-scan-membership
      :snapshot-bound}
-   :relation-populated?
-   #{:iff-forward-prefix-nonempty :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
    :proof-frame
@@ -121,6 +118,37 @@
    :transactions #{}
    :cache-proofs #{}
    :runtime #{}})
+
+(def ^:private scan-contract-keys
+  #{:strict-order? :unique? :replayable? :strict-progress? :atomic-chunk?})
+
+(def ^:private concurrent-read-keys
+  #{:max-width :physically-cancellable?
+    :physical-termination-on-return?
+    :maximum-physical-lifetime-ms :maximum-nested-attempts})
+
+(def default-traversal-execution
+  "Conservative traversal execution profile. Absence of a certified
+  topology-specific concurrency declaration means effective width one."
+  {:immutable-basis-reads? false
+   :scan-contract
+   {:strict-order? false
+    :unique? false
+    :replayable? false
+    :strict-progress? false
+    :atomic-chunk? false}
+   :concurrent-snapshot-reads nil})
+
+(def strict-sequential-traversal-execution
+  "Certified semantic scan contract with concurrency deliberately disabled."
+  {:immutable-basis-reads? true
+   :scan-contract
+   {:strict-order? true
+    :unique? true
+    :replayable? true
+    :strict-progress? true
+    :atomic-chunk? true}
+   :concurrent-snapshot-reads nil})
 
 (defn- invalid-adapter!
   [message data]
@@ -200,14 +228,75 @@
                          :known-consistency-modes known-consistency-modes}))
     normalized))
 
+(defn normalize-traversal-execution
+  [backend-id profile]
+  (let [profile (or profile default-traversal-execution)
+        expected #{:immutable-basis-reads? :scan-contract
+                   :concurrent-snapshot-reads}]
+    (when-not (and (map? profile) (= expected (set (keys profile))))
+      (invalid-adapter!
+       "Backend traversal execution profile has unknown or missing fields."
+       {:backend backend-id
+        :expected-keys expected
+        :actual-keys (when (map? profile) (set (keys profile)))}))
+    (when-not (boolean? (:immutable-basis-reads? profile))
+      (invalid-adapter!
+       "Backend immutable-basis execution capability must be boolean."
+       {:backend backend-id
+        :value (:immutable-basis-reads? profile)}))
+    (let [scan-contract (:scan-contract profile)]
+      (when-not (and (map? scan-contract)
+                     (= scan-contract-keys (set (keys scan-contract)))
+                     (every? boolean? (vals scan-contract)))
+        (invalid-adapter!
+         "Backend scan execution contract must be a closed boolean map."
+         {:backend backend-id
+          :expected-keys scan-contract-keys
+          :value scan-contract})))
+    (when-some [concurrent (:concurrent-snapshot-reads profile)]
+      (when-not (and (map? concurrent)
+                     (= concurrent-read-keys (set (keys concurrent))))
+        (invalid-adapter!
+         "Concurrent snapshot-read capability has unknown or missing fields."
+         {:backend backend-id
+          :expected-keys concurrent-read-keys
+          :value concurrent}))
+      (doseq [field [:max-width :maximum-physical-lifetime-ms
+                     :maximum-nested-attempts]]
+        (when-not (pos-int? (get concurrent field))
+          (invalid-adapter!
+           "Concurrent snapshot-read numeric limits must be positive integers."
+           {:backend backend-id :field field :value (get concurrent field)})))
+      (when-not (boolean? (:physically-cancellable? concurrent))
+        (invalid-adapter!
+         "Concurrent physical-cancellation capability must be boolean."
+         {:backend backend-id
+          :value (:physically-cancellable? concurrent)}))
+      (when-not (boolean? (:physical-termination-on-return? concurrent))
+        (invalid-adapter!
+         "Concurrent physical termination-on-return capability must be boolean."
+         {:backend backend-id
+          :value (:physical-termination-on-return? concurrent)}))
+      (when-not (and (:immutable-basis-reads? profile)
+                     (every? true? (vals (:scan-contract profile))))
+        (invalid-adapter!
+         "Concurrent reads require every immutable and scan-contract prerequisite."
+         {:backend backend-id
+          :profile profile})))
+    profile))
+
 (defn make-adapter
   [{:keys [id capabilities operations state fingerprint deterministic?
-           identity-contract runtime-guards?]
+           identity-contract runtime-guards? traversal-execution]
     :or {deterministic? true
-         identity-contract :selected-internal/current-external-v1}}]
+         identity-contract :selected-internal/current-external-injective-v2}}]
   (when-not (keyword? id)
     (invalid-adapter! "Backend :id must be a keyword."
                       {:backend id}))
+  (when-not (keyword? identity-contract)
+    (invalid-adapter!
+     "Backend :identity-contract must name a versioned injective contract."
+     {:backend id :identity-contract identity-contract}))
   (when-not (map? operations)
     (invalid-adapter! "Backend :operations must be a map."
                       {:backend id
@@ -219,7 +308,9 @@
                         {:backend id
                          :missing-operations (vec missing)
                          :required-operations required-snapshot-operations})))
-  (let [normalized (normalize-capabilities id capabilities)]
+  (let [normalized (normalize-capabilities id capabilities)
+        traversal-execution
+        (normalize-traversal-execution id traversal-execution)]
     (when (and (contains? (:cache-proofs normalized) :ordered-generations)
                (not (fn? (:proof-frame operations))))
       (invalid-adapter!
@@ -229,6 +320,7 @@
    ::version adapter-version
    ::id id
    ::capabilities normalized
+   ::traversal-execution traversal-execution
    ::operations operations
    ::fingerprint
    (or fingerprint
@@ -245,6 +337,7 @@
        (= adapter-version (::version candidate))
        (keyword? (::id candidate))
        (map? (::capabilities candidate))
+       (map? (::traversal-execution candidate))
        (map? (::operations candidate))))
 
 (defn backend-id
@@ -260,6 +353,21 @@
     (::capabilities adapter)
     (invalid-adapter! "Value is not a v8 backend adapter."
                       {:value adapter})))
+
+(defn traversal-execution
+  "Returns the closed immutable execution profile certified for this exact
+  adapter topology. A nil concurrency declaration means width one."
+  [adapter]
+  (if (adapter? adapter)
+    (::traversal-execution adapter)
+    (invalid-adapter! "Value is not a v8 backend adapter."
+                      {:value adapter})))
+
+(defn maximum-concurrent-snapshot-read-width
+  [adapter]
+  (or (get-in (traversal-execution adapter)
+              [:concurrent-snapshot-reads :max-width])
+      1))
 
 (defn state
   "Returns the immutable backend state captured by this adapter.
@@ -472,7 +580,7 @@
            backend-id operation-key :finite-node-set value))
         value)
 
-      (:direct-match? :relation-populated?)
+      :direct-match?
       (do
         (when-not (boolean? value)
           (contract-violation!

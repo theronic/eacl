@@ -1,0 +1,69 @@
+;; Frozen current-engine baseline. Regenerate via
+;; (eacl.baseline.capture/capture-all!) — see README.md.
+{:fixture :broad-union,
+ :page-size 7,
+ :forward
+ {:early
+  {:principal "user:early-user",
+   :denotation ["wide:w-01" "wide:w-05" "wide:w-11"],
+   :order ["wide:w-01" "wide:w-05" "wide:w-11"],
+   :pages [{:size 3, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 3, :limit -1},
+   :count-matches-denotation? true},
+  :late
+  {:principal "user:late-user",
+   :denotation ["wide:w-09"],
+   :order ["wide:w-09"],
+   :pages [{:size 1, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 1, :limit -1},
+   :count-matches-denotation? true},
+  :stranger
+  {:principal "user:stranger",
+   :denotation [],
+   :order [],
+   :pages [{:size 0, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 0, :limit -1},
+   :count-matches-denotation? true}},
+ :reverse
+ {:w-01
+  {:resource "wide:w-01",
+   :outcome :ok,
+   :denotation ["user:early-user" "user:filler-01"],
+   :order ["user:early-user" "user:filler-01"],
+   :first-page-size 2},
+  :w-09
+  {:resource "wide:w-09",
+   :outcome :ok,
+   :denotation ["user:filler-09" "user:late-user"],
+   :order ["user:late-user" "user:filler-09"],
+   :first-page-size 2}},
+ :points
+ {:early
+  {:authorized-sample {:resource "wide:w-01", :can? true},
+   :unauthorized-sample {:resource "wide:w-09", :can? false}},
+  :late
+  {:authorized-sample {:resource "wide:w-09", :can? true},
+   :unauthorized-sample {:resource "wide:w-01", :can? false}},
+  :stranger
+  {:unauthorized-sample {:resource "wide:w-01", :can? false}}},
+ :cursor-behavior
+ {:first-page-repeat-identical? true,
+  :after-cursor-repeat-identical? true,
+  :parent-cursor-reusable-after-child? true,
+  :cancelled-request
+  {:outcome :error,
+   :error-keys [:eacl.execution/cancelled :eacl.execution/cancelled]},
+  :zero-timeout-rejected
+  {:outcome :error,
+   :error-keys
+   [:eacl.execution/invalid-contract
+    :timeout-ms
+    :eacl/invalid-request]}},
+ :stale-basis
+ {:outcome :ok, :detail {:outcome :ok}, :resumed-page-size 1}}

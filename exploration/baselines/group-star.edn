@@ -1,0 +1,134 @@
+;; Frozen current-engine baseline. Regenerate via
+;; (eacl.baseline.capture/capture-all!) — see README.md.
+{:fixture :group-star,
+ :page-size 7,
+ :forward
+ {:leaf-user
+  {:principal "user:leaf-user-01",
+   :denotation ["group:g-01"],
+   :order ["group:g-01"],
+   :pages [{:size 1, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 1, :limit -1},
+   :count-matches-denotation? true},
+  :root-user
+  {:principal "user:root-user",
+   :denotation
+   ["group:g-01"
+    "group:g-02"
+    "group:g-03"
+    "group:g-04"
+    "group:g-05"
+    "group:g-06"
+    "group:g-07"
+    "group:g-08"
+    "group:g-09"
+    "group:g-10"
+    "group:g-11"
+    "group:g-12"
+    "group:g-13"
+    "group:g-14"
+    "group:g-15"
+    "group:g-16"
+    "group:g-17"
+    "group:g-18"
+    "group:g-19"
+    "group:g-20"
+    "group:g-21"
+    "group:g-22"
+    "group:g-23"
+    "group:g-24"
+    "group:g-25"
+    "group:g-26"
+    "group:g-27"
+    "group:g-28"
+    "group:g-29"
+    "group:g-30"
+    "group:g-root"],
+   :order
+   ["group:g-root"
+    "group:g-01"
+    "group:g-02"
+    "group:g-03"
+    "group:g-04"
+    "group:g-05"
+    "group:g-06"
+    "group:g-07"
+    "group:g-08"
+    "group:g-09"
+    "group:g-10"
+    "group:g-11"
+    "group:g-12"
+    "group:g-13"
+    "group:g-14"
+    "group:g-15"
+    "group:g-16"
+    "group:g-17"
+    "group:g-18"
+    "group:g-19"
+    "group:g-20"
+    "group:g-21"
+    "group:g-22"
+    "group:g-23"
+    "group:g-24"
+    "group:g-25"
+    "group:g-26"
+    "group:g-27"
+    "group:g-28"
+    "group:g-29"
+    "group:g-30"],
+   :pages
+   [{:size 7, :has-next? true, :has-previous? false}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 3, :has-next? false, :has-previous? true}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 31, :limit -1},
+   :count-matches-denotation? true},
+  :stranger
+  {:principal "user:stranger",
+   :denotation [],
+   :order [],
+   :pages [{:size 0, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 0, :limit -1},
+   :count-matches-denotation? true}},
+ :reverse
+ {:leaf
+  {:resource "group:g-30",
+   :outcome :ok,
+   :denotation ["user:leaf-user-30" "user:root-user"],
+   :order ["user:leaf-user-30" "user:root-user"],
+   :first-page-size 2},
+  :root
+  {:resource "group:g-root",
+   :outcome :ok,
+   :denotation ["user:root-user"],
+   :order ["user:root-user"],
+   :first-page-size 1}},
+ :points
+ {:leaf-user
+  {:authorized-sample {:resource "group:g-01", :can? true},
+   :unauthorized-sample {:resource "group:g-02", :can? false}},
+  :root-user {:authorized-sample {:resource "group:g-01", :can? true}},
+  :stranger
+  {:unauthorized-sample {:resource "group:g-01", :can? false}}},
+ :cursor-behavior
+ {:first-page-repeat-identical? true,
+  :after-cursor-repeat-identical? true,
+  :parent-cursor-reusable-after-child? true,
+  :cancelled-request
+  {:outcome :error,
+   :error-keys [:eacl.execution/cancelled :eacl.execution/cancelled]},
+  :zero-timeout-rejected
+  {:outcome :error,
+   :error-keys
+   [:eacl.execution/invalid-contract
+    :timeout-ms
+    :eacl/invalid-request]}},
+ :stale-basis
+ {:outcome :ok, :detail {:outcome :ok}, :resumed-page-size 2}}

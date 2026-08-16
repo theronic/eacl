@@ -35,8 +35,7 @@
                engine/*recursive-traversal-limits*
                impl.indexed/*recursive-traversal-limits*
                engine/*recursive-traversal-stats*
-               impl.indexed/*recursive-traversal-stats*
-               engine/*count-stats* impl.indexed/*count-stats*]
+               impl.indexed/*recursive-traversal-stats*]
        ~@body)))
 
 (defn can?
@@ -78,7 +77,13 @@
   schema generation it was resolved against.
 
   This prevents a delayed relationship transaction from resurrecting a
-  relation entity after a concurrent write-schema! removed it."
+  relation entity after a concurrent write-schema! removed it. A database
+  whose schema generation has never been published (definitions installed as
+  data, or a pre-v8 database that has not run `write-schema!` yet) is the
+  supported unstamped v7-compatibility regime: reads recompute their paths
+  instead of latching, the cache is exact-snapshot only, and writes commit
+  without this guard — run `write-schema!` once (a zero delta still stamps)
+  to publish the generation and arm the guard."
   [db]
   (when-let [version (impl.indexed/schema-version db)]
     [:db.fn/cas [:eacl/id "schema-string"]
@@ -127,6 +132,7 @@
   (throw (ex-info (str "Unknown object: " (pr-str object-id) " does not resolve to an existing entity."
                        " Pass {:allow-tempids? true} to tx-relationship for same-transaction tempids.")
            {:type :eacl/unknown-object
+            :eacl/error :eacl/unknown-object
             :object-id object-id})))
 
 (defn- object-id->eid-or-tempid
@@ -206,7 +212,14 @@
         (str "Missing Relation: " relation
              " on resource type " resource-type
              " for subject type " subject-type ".")
-        {:resource/type resource-type
+        {:type :eacl/unknown-relation-or-permission
+         :eacl/error :eacl/unknown-relation-or-permission
+         :operation :write-relationships
+         :definition resource-type
+         :relation relation
+         :relation-or-permission relation
+         :schema-kind :relation
+         :resource/type resource-type
          :relation/name relation
          :subject/type subject-type})))
     {:subject subject
@@ -290,10 +303,6 @@
                        (throw e))))]
     (when (and resolved (relationship-exists? db resolved))
       resolved)))
-
-(defn relationship-relation-id
-  [db relationship]
-  (:relation-eid (resolve-relationship db relationship {})))
 
 (defn- find-relations
   [db filters]
@@ -612,19 +621,6 @@
       (into ops (map tx-relation-version-stamp) missing)
       ops)))
 
-(defn affected-relation-ids
-  "Returns every relation whose relationship tuples are changed by `ops`."
-  [ops]
-  (into #{}
-        (keep
-         (fn [op]
-           (or (relation-eid-of-retraction op)
-               (when (and (vector? op)
-                          (= :db/add (first op))
-                          (= relation-version-attr (nth op 2 nil)))
-                 (nth op 1 nil)))))
-        ops))
-
 (defn- schema-version-guard?
   [op]
   (and (vector? op)
@@ -865,6 +861,7 @@
           (if exists?
             (throw (ex-info ":create conflicts with an existing relationship. Use :touch for idempotent writes."
                             {:type :eacl/relationship-conflict
+                             :eacl/error :eacl/relationship-conflict
                              :relationship relationship}))
             (add-relationship-txes resolved))
 

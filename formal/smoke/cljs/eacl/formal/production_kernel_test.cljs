@@ -234,7 +234,6 @@
    [[]]
    values))
 
-
 (def routing-certificate-input
   {:node-count 2
    :path-descriptors
@@ -425,7 +424,6 @@
     (is (= node-count (:edge-checks decision)))
     (is (= node-count (count (:traversal decision))))
     (is (every? true? (:traversal decision)))))
-
 
 (def authorization-input
   {:objects [{:type "user" :id "u1"}
@@ -735,27 +733,6 @@
            [])
           opts))}))))
 
-(deftest generated-javascript-certifies-production-recursive-plan
-  (let [adapter (recursive-plan-test-adapter)
-        schema-cache (engine/make-schema-cache adapter 1)
-        stats (atom {})]
-    (binding [engine/*schema-cache* schema-cache
-              engine/*recursive-traversal-stats* stats
-              subproblem/*decision-kernel* selection]
-      (is (seq
-           (:components
-            (engine/recursive-component-plan
-             adapter :folder :read))))
-      (is (= 1 (:plan-certification-runs @stats)))
-      (is (= 4 (:plan-certification-rules @stats)))
-      (is (= 4 (:plan-certification-definitions @stats)))
-      (is (= 4 (:plan-certification-bindings @stats)))
-      (is (= 2 (:plan-certification-seed-buckets @stats)))
-      (is (= 3 (:plan-certification-kernel-calls @stats)))
-      (engine/recursive-component-plan adapter :folder :read)
-      (is (= 1 (:plan-certification-runs @stats))
-          "the certified plan is reused for the schema proof/root"))))
-
 (deftest generated-javascript-drives-production-recursive-pages
   (let [adapter (recursive-traversal-test-adapter)
         query
@@ -1025,7 +1002,6 @@
              "left=" left
              " right=" right
              " direction=" direction))))))
-
 
 (deftest generated-javascript-indexed-plan-certification-boundary
   (let [decide
@@ -2096,7 +2072,10 @@
           (is (= limit-kind (:limit-kind (ex-data limit-error))))
           (is (= 1 (:limit (ex-data limit-error))))))
       (is (nil? (get limit-errors :queued-work)))
-      (is (= {:size 0} (ex-data invalid-page-error)))
+      (is (= {:eacl/error :eacl.pagination/invalid-page-size
+              :size 0
+              :type :eacl.pagination/invalid-page-size}
+             (ex-data invalid-page-error)))
       (is (false? (:cached? cached-forward)))
       (is (true? (:cached? cached-hit)))
       (is (false? (:cached? uncached-forward)))
@@ -2126,23 +2105,7 @@
                 {:eacl/error :eacl.pagination/stale-cursor}}
                {:current-ids current-ids
                 :error-data (ex-data resume-error)})
-            "a changed recursive boundary is stale rather than rebased on DataScript's current DB"))
-      (let [render-rejected
-            (try
-              (engine/generated-traversal-error!
-               :forward
-               {}
-               {:status :render-rejected
-                :state :opaque
-                :error {:reason :cursor-result-mismatch
-                        :ordinal 1
-                        :expected-eid 15
-                        :actual-eid 16}})
-              nil
-              (catch :default error
-                error))]
-        (is (= :eacl.pagination/stale-cursor
-               (:eacl/error (ex-data render-rejected))))
-        (is (= {:eacl/error :eacl.pagination/stale-cursor}
-               (ex-data render-rejected))
-            "generated render rejection keeps the minimal public stale-cursor shape")))))
+            "a changed recursive boundary is stale rather than rebased on DataScript's current DB")))))
+;; The retired generated render-rejection probe is gone with
+;; generated-traversal-error!; the stale-cursor shape is pinned above
+;; through the live continuation path.

@@ -6,13 +6,21 @@ ClojureScript, storage engines, compilers, cryptographic primitives, or a
 customer's policy intent. The current release manifest reports
 `:conditionally-verified`: production routing, cross-adapter campaigns, and
 performance gates pass, while independent security/formal-methods review
-remains an explicit unmet release obligation. The generated engine is the only
-production decision engine on the JVM. ClojureScript uses one portable CLJC
-decision and indexed-traversal kernel, differentially certified against the
-generated JavaScript oracle and the independent fixed-point oracle. The
-generated JavaScript adapter is formal-smoke-only and no runtime option can
-select an alternate engine. Browser answers are advisory and deployments must
-re-check authorization on the server.
+remains an explicit unmet release obligation. Two verified bodies now coexist.
+Enumeration, point checks, and counts run on the hand-written CLJC
+stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
+`stable-page`, `stable-route`) on both targets; its evidence is the
+release-assurance tree under `formal/stable-discovery/` (41 Dafny leaves, two
+TLC families, executable refinement bridges, mutation controls; see
+[docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
+Dafny kernel remains the production authority for the pure decisions that
+surround the engine — consistency planning, current-cache decisions, cursor
+continuation, and page-request normalization — through `eacl.verified-kernel`
+on the JVM and its portable CLJC decision twin on ClojureScript, differentially
+certified against the generated JavaScript oracle. The generated JavaScript
+adapter is formal-smoke-only and no runtime option can select an alternate
+engine. Browser answers are advisory and deployments must re-check
+authorization on the server.
 
 The measured performance consequences and recommended cache-free reference,
 consistency, cache, cursor, and backend architecture are recorded in the
@@ -69,14 +77,17 @@ for another.
 
 `source-closure` checks the committed
 `formal/verification/public-source-closure.json` ledger with the exact
-clj-kondo version in the toolchain lock. The ledger closes 63 named shared,
-proof-provider, and backend roots over 1,404 definitions in 58 source
-files, including unattributed usages assigned to their exact containing
+clj-kondo version in the toolchain lock. The ledger closes the named shared,
+proof-provider, and backend roots declared in `bin/public-source-closure.mjs` over the reachable definitions it lists
+(the committed ledger is the authority for the exact counts; regenerate it
+with `node bin/public-source-closure.mjs write` after any public-source
+edit), including unattributed usages assigned to their exact containing
 `defrecord` spans. It is static completeness evidence only: it does not prove
 Clojure source or adapter semantics. `backend-dispatch.edn` additionally
 closes every CLJ/CLJS
-`backend/invoke` site to the exact 21 required literal operation keys; the
-meaning of each adapter implementation remains a named obligation.
+`backend/invoke` site to the exact literal operation keys the ledger pins
+(the required snapshot operations plus `:proof-frame`); the meaning of each
+adapter implementation remains a named obligation.
 
 Generated Java classes must be tested in a fresh JVM after every regeneration:
 
@@ -92,14 +103,15 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 
 | Source | Main responsibility |
 | --- | --- |
+| `formal/stable-discovery/*.dfy` (41 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 506 obligations) |
 | `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
 | `SnapshotOracle.dfy` | abstract immutable adapter contract |
-| `AcyclicEngine.dfy` | path compilation, direct checks, acyclic projections and counts |
-| `RecursiveEngine.dfy` | typed SCC routing, recursive reachability, forward/reverse worklists, limits, continuation replay |
-| `OrderedMerge.dfy` | ordered union and uniqueness |
-| `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions |
-| `IndexedBatching.dfy` | bounded ordered scan waves, ordered response folding, fuel-cut progress publication, crossing law |
-| `IndexedBatchCompleteness.dfy` | proof-only pending-scan ghost views and generalized batch coverage invariants |
+| `AcyclicEngine.dfy` | **retired engine model** (path compilation, direct checks, acyclic projections and counts); kept as a regression model until task 9.2's formal cut |
+| `RecursiveEngine.dfy` | **retired engine model** (typed SCC routing, recursive worklists, continuation replay); same disposition |
+| `OrderedMerge.dfy` | **retired** ordered union and uniqueness of the entity-ID merge; same disposition |
+| `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions (live decisions) |
+| `IndexedBatching.dfy` | **retired** bounded ordered scan waves and crossing law of the generated indexed traversal; same disposition |
+| `IndexedBatchCompleteness.dfy` | **retired** proof-only pending-scan ghost views; same disposition |
 | `CacheKernel.dfy` | dependency-scope completeness, forward cache acceptance, recomputation equivalence, and telemetry noninterference |
 | `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
@@ -242,19 +254,14 @@ now returns false before direct-grant/intersection setup. These submodels do not
 prove path materialization, nested callback meaning, storage-engine seek cost,
 Clojure language semantics, allocation, retained heap, or wall time.
 
-Generated `can?` uses the reverse indexed state machine because a point request
-is anchored by one concrete resource. A positive check stops when that machine
-emits the requested subject; a negative check is returned only after the
-reverse search is exhausted. Reverse transition soundness and least-fixed-point
-completeness are proved independently. EACL-FORMAL-055 retains the prior
-subject-forward scaling regression, while the runtime gate checks identical
-backend and logical work with 16 and 1,040 unrelated resources reachable from
-the subject. If malformed denormalized storage contains only the subject-owned
-half of a direct tuple, an exact direct-match probe gates a generated forward
-recovery; the complete JVM suite retains the documented raw-EID ghost
-behavior. Shadow mode compares the public Boolean result across directions and
-does not treat different forward/reverse work counters as a semantic
-divergence.
+`can?` is anchored to the known resource: `eacl.engine.stable-route/check-eids`
+runs the stable reducer in the reverse direction from the resource and stops
+at the subject's first emission; a negative check is returned only after the
+reverse search is exhausted. Reverse transition soundness and completeness
+are proved by `EaclReverseProducer.dfy` and `ReducerCompleteness.dfy` in the
+stable-discovery tree. EACL-FORMAL-055 retains the historical subject-forward
+scaling regression of the retired generated state machine as a replayed
+counterexample against the stable engine.
 
 Permission-path materialization now has its own source-shaped boundary rather
 than being assumed by the arrow theorem. Dafny models expansion of typed
@@ -277,44 +284,37 @@ CLJ/CLJS value, realized-path count, per-kind callback counts, and ordered
 vectors and the meaning of nested callback results remain separate refinement
 obligations.
 
-Recursive engine selection has a narrower generated oracle. Production first
-materializes complete permission dependencies as
-`[resource-type permission] -> [resource-type permission]` edges, then uses
-iterative Kosaraju SCC detection and reverse reachability to route SCC members
-and all transitive acyclic ancestors. The generated
-`DecideTypedTraversalPermission` method proves the equivalent typed
-least-closure predicate and is differentially checked in Java and JavaScript.
-The older `AcyclicEngine.PathDependencies` name-only arrow abstraction remains
-a conservative cache-scope model; it is not used as the exact routing claim.
-EACL-FORMAL-030 retains the same-permission-name counterexample.
-
-That semantic comparison is not a resource refinement. Production's stated
-O(V+E) routing cost begins after permission paths are materialized, while the
-generated oracle uses repeated finite closure scans. Lore commit
-`dabb5634b0d44e196e2b6ec63003917b3d445bec` historically prompted part of the
-structural-risk inventory, but its outdated analyser is untrusted and the
-immutable result does not cover current source. It proves no production time,
-allocation, heap, or backend-work bound.
+There is no longer a routing decision between an acyclic and a recursive
+engine: every permission root compiles to one sealed plan whose
+`:recursive?` flag (Kahn's peel over the permission-dependency edges) only
+governs the bare-`:last` complete-evaluation guard. `AcyclicEngine.dfy`,
+`RecursiveEngine.dfy`, `OrderedMerge.dfy`, `RoutingCertificate.dfy` and the
+`Indexed*` leaves under `formal/dafny/` model the retired engines; they still
+verify on CI as historical regression models until the remaining formal cut
+recorded in `openspec/changes/adopt-stable-discovery-enumeration/tasks.md`
+(task 9.2) removes them and re-pins the manifest. EACL-FORMAL-030 retains the
+same-permission-name counterexample.
 
 Materializing an entire database remains unacceptable on large EACL graphs.
-Production therefore uses an indexed state machine over certified ordered
-adapter scans rather than a whole-graph runtime evaluator. On the JVM that
-machine and its decision kernel are generated from Dafny. On ClojureScript the
-portable CLJC implementation is the sole shipped authority and is gated by
-generated-JavaScript, independent-oracle, randomized, counterexample, mutation,
-and full DataScript differentials. The generated browser runtime stays outside
-the production classpath. There is no runtime engine-selection branch.
-Independent review remains a separate release-assurance obligation, so the
-manifest reports `:conditionally-verified`, not an unqualified whole-deployment
-claim.
+Production therefore drives certified ordered adapter scans one value at a
+time from the sealed plan rather than running a whole-graph evaluator, on the
+JVM and on ClojureScript from the same CLJC source, gated by the independent
+naive-fixpoint oracle, frozen cross-engine baselines, randomized refinement,
+counterexample replay, mutation controls, and full DataScript differentials.
+The generated browser runtime stays outside the production classpath. There
+is no runtime engine-selection branch. Independent review remains a separate
+release-assurance obligation, so the manifest reports
+`:conditionally-verified`, not an unqualified whole-deployment claim.
 
 ## Interpreting the assurance claim
 
-“Verified” means a mapped generated JVM operation refines the formal
-least-fixed-point semantics when its listed adapter and trusted-boundary
-assumptions hold. The portable CLJS engine carries a narrower, differentially
-certified claim against that authority; it is not mechanically extracted from
-Dafny. The evidence includes exact successful lookup/count/page behavior and
+“Verified” means a mapped generated JVM decision refines its formal
+specification when its listed adapter and trusted-boundary assumptions hold,
+and, for enumeration, that the CLJC stable engine's executable refinement
+bridges, oracle differentials and mutation controls pass against the
+stable-discovery proof leaves. Neither engine body is mechanically extracted
+into production; the generated kernel is executed for its four decisions, the
+stable engine is hand-written CLJC checked against its models. The evidence includes exact successful lookup/count/page behavior and
 fail-closed limit, cache, and cursor decisions. It does not mean the entire
 EACL deployment or backend is proved correct. Missing coverage, a failed
 adapter obligation, a surviving mutant, a timeout, an undocumented axiom, or

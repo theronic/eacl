@@ -34,16 +34,12 @@ Use this exact sequence:
 clj-nrepl-eval --discover-ports
 ```
 
-If no nREPL is running, start one with the `dev` alias loaded:
+If no nREPL is running, start one with the `dev` alias loaded (add `:test`
+when you need the CI test runner on the classpath, exactly as CI does):
 
 ```
 clojure -M:dev:nrepl
-```
-
-Restart on `8088` through nREPL:
-
-```
-clj-nrepl-eval -p <port> "(do (require '[dev :as dev] :reload) (dev/restart-backend! {:port 8088}))"
+clojure -M:dev:test:cljs-test:nrepl --port 7788
 ```
 
 Run a single test namespace:
@@ -51,18 +47,22 @@ Run a single test namespace:
 clj-nrepl-eval -p <port> "(require 'some.test-ns :reload) (clojure.test/run-tests 'some.test-ns)"
 ```
 
-Run all EACL tests:
+Run the CI-equivalent battery (all four module test roots, benchmark and
+formal-artifact suites excluded) on an nREPL started with the `:test` alias:
 ```
-clj-nrepl-eval -p <port> "(do (require 'eacl.datomic.impl.indexed-test :reload) (require 'eacl.spice-test :reload) (require 'eacl.datomic.schema-test :reload) (require 'eacl.datomic.config-test :reload) (require 'eacl.datomic.parser-test :reload) (clojure.test/run-tests 'eacl.datomic.impl.indexed-test 'eacl.spice-test 'eacl.datomic.schema-test 'eacl.datomic.config-test 'eacl.datomic.parser-test))"
+clj-nrepl-eval -p <port> "(do (require '[cognitect.test-runner.api :as runner] :reload) (runner/test {:dirs [\"modules/eacl/test\" \"modules/eacl-datomic/test\" \"modules/eacl-datascript/test\" \"modules/eacl-datahike/test\" \"src-build\"] :excludes [:benchmark :formal-artifact]}))"
 ```
 
-Run heavy benchmark/load tests (not part of regular suite):
+Heavy benchmark/load suites are tagged `^:benchmark` and live under each
+module's `test/eacl/bench/` (for example `modules/eacl-datomic/test/eacl/bench/`);
+run them only when explicitly validating performance/load behavior:
 ```
 clj-nrepl-eval -p <port> "(do (require 'eacl.bench.pagination-test :reload) (clojure.test/run-tests 'eacl.bench.pagination-test))"
 ```
 
-Benchmark tests live under `test/eacl/bench/` and should be run only when explicitly validating performance/load behavior.
-
 If you hit `Alias ... already exists` in an nREPL session, run `ns-unalias` on that alias before re-requiring the namespace.
 
-Start nREPL with test paths: `clojure -Sdeps '{:deps {nrepl/nrepl {:mvn/version \"1.3.0\"}}}' -A:test -M -m nrepl.cmdline --port 0`
+Run the DataScript ClojureScript build (`cljs.main/-main ... -c eacl.datascript.cljs-test-runner`, then `node target/datascript-cljs-test.js`) last, exactly as CI does: `cljs.main/-main` calls `shutdown-agents` when it finishes, after which every `future`-based test in that JVM fails with `RejectedExecutionException` until the nREPL is restarted.
+
+After any edit under a public source root, regenerate the source-closure
+ledger before pushing: `node bin/public-source-closure.mjs write`.

@@ -63,7 +63,7 @@ REPL is not evidence for generated-class reproducibility.
 Generated Java/JavaScript remains reproducible build output under `target/`;
 it is not checked-in source and must never be hand edited. Release packaging
 publishes the compiled Java classes/runtime plus the portable CLJC/CLJS
-authority inside `cloudafrica/eacl`; the generated browser/Node IIFE and its
+authority inside `dev.eacl/eacl`; the generated browser/Node IIFE and its
 loader metadata are formal-oracle artifacts and are not packaged. The JAR
 build fails if a required target-authority entry is absent. CI regenerates the
 formal artifacts from locked tools, compares their digests, and fails on

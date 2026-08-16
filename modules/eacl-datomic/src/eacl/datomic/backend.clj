@@ -3,8 +3,7 @@
   adapter. Authorization graph algorithms remain outside this namespace."
   (:require [datomic.api :as d]
             [eacl.backend.v8 :as backend]
-            [eacl.datomic.db :as ddb]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datomic.db :as ddb])
   (:import [java.util UUID]))
 
 (def capabilities
@@ -94,11 +93,12 @@
                           :source-scope source-scope))]
      (backend/make-adapter
       {:id :datomic
+       :traversal-execution backend/strict-sequential-traversal-execution
        :fingerprint (:adapter-fingerprint opts)
        :deterministic? (:adapter-deterministic? opts)
        :identity-contract
        (:identity-contract opts
-                           :selected-internal/current-external-v1)
+                           :selected-internal/current-external-injective-v2)
        :capabilities
        (cond-> capabilities
          (nil? conn)
@@ -222,14 +222,30 @@
                 current (if conn (d/db conn) db)]
             (when (and (integer? locator)
                        (<= locator (d/basis-t current)))
+              ;; Genuine unavailability (a future locator) is handled by the
+              ;; guard above; nothing in this body legitimately throws for
+              ;; trimmed history, so every Throwable here is a classified
+              ;; failure — never a silent nil that would misreport a
+              ;; transient fault as an expired snapshot.
               (try
                 (snapshot-adapter
                  (d/as-of current locator)
                  (assoc opts'
                         :selected-order-hint locator
                         :selected-exact-locator locator))
-                (catch Throwable _
-                  nil)))))
+                (catch InterruptedException interrupt
+                  (throw (ex-info "Exact-basis selection was interrupted."
+                                  {:type :eacl.basis/selection-failure
+                                   :eacl/error :eacl.basis/selection-failure
+                                   :classification :cancelled}
+                                  interrupt)))
+                (catch Throwable failure
+                  (throw (ex-info "Exact-basis selection failed."
+                                  {:type :eacl.basis/selection-failure
+                                   :eacl/error :eacl.basis/selection-failure
+                                   :classification :retryable
+                                   :cause-class (.getName (class failure))}
+                                  failure)))))))
 
         :object-id->internal
         (fn [object-id]
@@ -261,11 +277,6 @@
         (fn [subject-type subject-id relation-id resource-type resource-id]
           (ddb/direct-match?
            db subject-type subject-id relation-id resource-type resource-id))
-
-        :relation-populated?
-        (fn [subject-type relation-id resource-type]
-          (ddb/relation-populated?
-           db subject-type relation-id resource-type))
 
         :all-permission-nodes
         (fn []

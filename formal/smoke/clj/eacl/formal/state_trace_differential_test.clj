@@ -605,8 +605,11 @@
           (get @calls [:indexed-traversal-initialize :forward] 0)
           reverse-initializations-before-can
           (get @calls [:indexed-traversal-initialize :reverse] 0)
+          one-shot
+          (eacl/lookup-resources
+           client (assoc query :first 100))
           can-result
-          (binding [engine/*acyclic-work-stats* point-work]
+          (binding [engine/*recursive-traversal-stats* point-work]
             (eacl/can?
              client user :view (peek documents)))
           after-can (indexed-call-count calls)
@@ -614,10 +617,18 @@
           (get @calls [:indexed-traversal-initialize :forward] 0)
           reverse-initializations-after-can
           (get @calls [:indexed-traversal-initialize :reverse] 0)]
-      (is (= (subvec expected-ids 0 20)
-             (ids first-page)))
-      (is (= (subvec expected-ids 20 40)
-             (ids second-page)))
+      ;; The public order is the stable first-discovery order (the plan
+      ;; visits the owner rule before the viewer rule), not entity-ID
+      ;; order; pages must compose exactly over that canonical sequence
+      ;; and cover the complete denotation.
+      (is (= (ids one-shot)
+             (into (ids first-page) (ids second-page)))
+          "pages concatenate to the one-shot canonical sequence")
+      (is (= (set expected-ids)
+             (set (into (ids first-page) (ids second-page))))
+          "page composition covers the exact denotation")
+      (is (= 20 (count (ids first-page))))
+      (is (= 20 (count (ids second-page))))
       (is (= {:count 40 :limit -1
               :cached? false :cache-basis nil}
              count-result))
@@ -636,18 +647,16 @@
           "certified acyclic counts must stay outside recursive traversal")
       (is (= after-count after-can)
           "the source-specialized bound probe stays outside recursive traversal")
-      (is (= 1 (:routed-acyclic @point-work))
-          "point authorization is classified once as an acyclic source specialization")
-      (is (pos? (:backend-scans @point-work 0))
+      ;; The retired per-request acyclic authorities (:enumeration-route,
+      ;; :acyclic-page, :acyclic-count, :acyclic-work) are gone with the
+      ;; engine they governed; the stable engine's authority is the sealed
+      ;; plan's checked certificate plus the stable-discovery formal
+      ;; corpus, and its point checks report through the public work
+      ;; counters instead.
+      (is (pos? (:derived-grants @point-work 0))
+          "the anchored point check derives through the stable reducer")
+      (is (pos? (:advanced-datoms @point-work 0))
           "the point check executes a concrete bound probe")
-      (is (pos? (get @calls :enumeration-route 0))
-          "every enumeration must execute generated route authority")
-      (is (<= 2 (get @calls :acyclic-page 0))
-          "both pages must execute generated acyclic page authority")
-      (is (pos? (get @calls :acyclic-count 0))
-          "count must execute generated exact-count authority")
-      (is (pos? (get @calls :acyclic-work 0))
-          "acyclic list/count work must execute its generated budget authority")
       (is (zero? (get @calls :indexed-traversal-compile 0)))
       (is (zero? (get @calls :indexed-traversal-initialize 0)))
       (is (zero? (get @calls :indexed-traversal-drive 0)))
@@ -823,7 +832,10 @@
              (:limit-kind (ex-data limit-error))))
       (is (= 1
              (:limit (ex-data limit-error)))))
-    (is (= {:size 0} (ex-data page-error)))))
+    (is (= {:eacl/error :eacl.pagination/invalid-page-size
+            :size 0
+            :type :eacl.pagination/invalid-page-size}
+           (ex-data page-error)))))
 
 (deftest recursive-generated-authority-covers-complete-public-results
   (testing "DataScript"
@@ -968,26 +980,10 @@
             "current-only continuation rejects a disappeared authenticated boundary")
         (is (= {:eacl/error :eacl.pagination/stale-cursor}
                (ex-data resumed-error))
-            "internal ordinal and EID diagnostics do not leak through the public stale-cursor shape")))
-    (let [render-rejected
-          (try
-            (#'engine/generated-traversal-error!
-             :forward
-             {}
-             {:status :render-rejected
-              :state :opaque
-              :error {:reason :cursor-result-mismatch
-                      :ordinal 1
-                      :expected-eid 15
-                      :actual-eid 16}})
-            nil
-            (catch Exception exception
-              exception))]
-      (is (= :eacl.pagination/stale-cursor
-             (:eacl/error (ex-data render-rejected))))
-      (is (= {:eacl/error :eacl.pagination/stale-cursor}
-             (ex-data render-rejected))
-          "generated render rejection keeps the minimal public stale-cursor shape"))))
+            "internal ordinal and EID diagnostics do not leak through the public stale-cursor shape")))))
+;; The retired generated render-rejection probe is gone with
+;; generated-traversal-error!; the public stale-cursor shape is pinned
+;; above through the live continuation path.
 
 (deftest generated-queue-limit-is-query-local
   (let [conn (datascript/create-conn)

@@ -85,8 +85,9 @@ damage whose former eid is unknown.
 
 ## Recursive permissions and safety controls
 
-All adapters use the same strongly connected-component analysis and
-deterministic fixed-point engine. Each client accepts positive
+All adapters use the same stable-discovery engine: one sealed plan per
+permission root and one width-one deterministic reducer that admits each
+(node, entity) exactly once. Each client accepts positive
 `:recursive-traversal-limits` overrides:
 
 ```clojure
@@ -101,6 +102,35 @@ deterministic fixed-point engine. Each client accepts positive
 Exceeding a ceiling throws `:eacl.recursive-traversal/limit-exceeded`. Use
 `:count-limit` for bounded counts and raise traversal limits only after
 representative heap and load testing.
+
+Every routed adapter read runs inside the engine's three-outcome
+classification boundary: a foreign adapter failure (a storage or driver
+exception) is classified `:retryable` and retried up to three times for the
+same read-demand descriptor under the request's original absolute deadline,
+then surfaces as `:eacl.scan/failure` with `:classification` and
+`:cause-class`; typed EACL errors (contract violations, limits, deadlines,
+cancellation) pass through unwrapped and unretried. Attempts are reported as
+`:adapter-attempts` in the traversal work stats.
+
+Each client also accepts a `:service-admission` bulkhead for the routed
+enumerations (point checks, lookups, counts) and a replay ledger for cursor
+replays; slots are held for the full synchronous call chain of the work:
+
+```clojure
+(datascript/make-client
+ conn
+ {:service-admission
+  {:max-concurrent 64        ; enumerations holding a slot at once
+   :max-replays 16           ; concurrent cursor replays in total
+   :max-replays-per-key 2}}) ; concurrent replays of one continuation
+```
+
+Rejections are `:eacl.service/admission-rejected` and
+`:eacl.service/replay-rejected`; an omitted option installs no bulkhead.
+Client construction fails closed with `:eacl.topology/unqualified` when the
+backend adapter's declared execution profile does not certify the strict,
+unique, replayable, strict-progress, atomic scan contract over an immutable
+basis that stable discovery requires (the three bundled adapters do).
 
 ## Permission-tree expansion
 
@@ -138,8 +168,8 @@ stored attribute, dependency, or database migration.
 Every bounded read accepts the same per-request cooperative cancellation
 token. Create it with `eacl.core/cancellation-token` and signal it with
 `eacl.core/cancel!`. Adapters do not need a new SPI operation: the shared
-orchestrator and generated traversal check the token before and after adapter
-commands. A synchronous command already in progress must return before the
+orchestrator checks the token at its stages and the engine checks it at every
+reducer transition (which brackets each adapter command). A synchronous command already in progress must return before the
 check can observe cancellation; adapter implementations with their own long
 loops should call `eacl.execution/check!` at bounded internal checkpoints.
 

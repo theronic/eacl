@@ -11,7 +11,6 @@
    [eacl.datascript.adapter-certification-test]
    [eacl.datascript.consistency-v3-test]
    [eacl.datascript.contract-test]
-   [eacl.datascript.enumeration-routing-test]
    [eacl.datascript.core :as datascript]
    [eacl.datascript.impl-test]
    [eacl.datascript.storage-test]
@@ -34,16 +33,16 @@
 (def injected-clients (atom 0))
 
 (def required-portable-authority-operations
-  #{:recursive-routing-certificate
-    :enumeration-route
-    :acyclic-page
-    :acyclic-continuation
-    :acyclic-count
-    :acyclic-work
-    :indexed-traversal-compile
-    :indexed-traversal-initialize
-    :indexed-traversal-drive
-    :indexed-traversal-read})
+  "The portable decision authority the stable-discovery design still
+  routes through: consistency selection, answer-cache admission and
+  coherence, cursor continuation, and relationship paging. The retired
+  traversal authorities (:enumeration-route, :acyclic-*,
+  :indexed-traversal-*, :recursive-routing-certificate) left with the
+  engines they governed. Mirrors the JVM cutover suite's roster."
+  #{:consistency-plan
+    :current-cache-decision
+    :cursor-continuation
+    :relationship-page})
 
 (defn- count-call!
   [operation]
@@ -138,7 +137,6 @@
      'eacl.datascript.adapter-certification-test
      'eacl.datascript.consistency-v3-test
      'eacl.datascript.contract-test
-     'eacl.datascript.enumeration-routing-test
      'eacl.datascript.impl-test
      'eacl.datascript.storage-test)))
 

@@ -13,19 +13,19 @@
   "sources": [
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/backend.clj",
-      "sha256": "3ff3c308f228b3938f53134d0ce16431f0d500490de562dcf7231c90b824a2c4"
+      "sha256": "e9174670726b426bbcb89b6b7b4431090aee18b656cf868d38cc6ca95956066f"
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/core.clj",
-      "sha256": "10a8a722011c29e4c2b44c57e1608bb44734bcff95c2ac2b2459e9ab571a82db"
+      "sha256": "11b608e656a397ca206314bffee83a5bffa259c91d9184534bb5e17f498f6fc7"
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/db.clj",
-      "sha256": "d6c68effd2a6c6b367cd9c6ecf876ce38e65052aded59e68dc7a13a675962e73"
+      "sha256": "a66c1670d85d9077c21ae49bd36dd87c8137677fd2b9a3398a4d0878cbb46a1e"
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/impl.clj",
-      "sha256": "f7f9238bb2e53589a7374796201cca612c8b850ab1e2a351122c7f5720d6d162"
+      "sha256": "11c685a37893795d3e8c5fc6b99d9705a27e89efd7825e418a3815579440c145"
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/integrity.clj",
@@ -37,11 +37,11 @@
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/schema.clj",
-      "sha256": "01c6792ee1400801ab5bdb73cf8b10a517dbaa54ed5eda3e310c32cd18457960"
+      "sha256": "0fc7d3087ed65027a4748402dcb3e55d341ca92480132ebd94e39abdc61afdbd"
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/backend.cljc",
-      "sha256": "6feca0f8217673669920717d2b0980bdac08119eb1193a301cdc8fa40b3ee090"
+      "sha256": "d82a64b3badfddde88b5175f6933af4b157160ce77f7f3296d8cf71b0bb70310"
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/core.cljc",
@@ -53,7 +53,7 @@
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/impl.cljc",
-      "sha256": "62976a83319769ce1ad478d72634a06505c9ce76f5160c6136b8eb0c0d6025f2"
+      "sha256": "ad4ee723d1e286a34128d96f100c1e560bc5e22dd7fe0b6558c0d3115ea569e1"
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/integrity.cljc",
@@ -65,15 +65,15 @@
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/schema.cljc",
-      "sha256": "493973d42554a9cd490c8b707cb13b707b58d3d68cd23d56590ed2609da1c24e"
+      "sha256": "2b3572fc23d9050d9ae339583a52e395b7c89f67c6f607bb7f9c5030b67406c9"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/backend.clj",
-      "sha256": "ddb688c13fe074e0bfd3e243d4d615a626c78cb691dc8f5881df5691471a11d4"
+      "sha256": "7bc21e64d2062c5876a5f53503ca0c1fcd539ca412c704d4c9029142c50bbf69"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/cache.clj",
-      "sha256": "dc0aeb70ce06a5c3f28c51ea978f409c08c2202befe01100540dc19db70f9251"
+      "sha256": "5344987d6c4144873b31273e2f8fc2ef2b7ae6f7b7db01e7fe3ea8bca790381d"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/cache_store_contract.clj",
@@ -89,15 +89,15 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/core.clj",
-      "sha256": "bc3ed56cd15798d964450f08ba0348aab17f87164c4ace599f8dac1ef09b9eeb"
+      "sha256": "30a4adc3377f60a2a259e2d1afcb9a9acbd4522e06a6589aa9421318c779fc57"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/db.clj",
-      "sha256": "15fe6f0d506cefc1a91e8c7946d3236fee0336ba7f95b28fd301f91e3e1687e8"
+      "sha256": "e00afe2ad1294cff07c2cfc6c4ebfa2f733198bce2eded6f1a6d81d3668be89c"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/impl.clj",
-      "sha256": "79e64336c02405abf4d583b43e37e2cc7adeadf2a31a25c06fbeff721b140394"
+      "sha256": "f1b399dcf70f66ccb65eca9687bcc3aeb9baa726eea00e52986f92ca3d2fc5b3"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/impl/base.clj",
@@ -105,7 +105,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/impl/indexed.clj",
-      "sha256": "b4b29c45993979c44edc8a344d810201e652e71373f99626cdee1e881acb5711"
+      "sha256": "bee2650ef5f77062336cb3d2a9876ec0777797ff2b18ee2895e8321381cac228"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/integrity.clj",
@@ -117,7 +117,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/schema.clj",
-      "sha256": "226583391635f547b5544335c73de66a85fb2d56de6af25296e299eee4d0cda9"
+      "sha256": "aecca1decd6e44e93c146ec8b063d33665e828f4bebb801551d846af0cd6d8bc"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/migrations/v6_to_v7.clj",
@@ -125,7 +125,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/backend/v8.cljc",
-      "sha256": "7e210ccd420aa54a93a99373bc38035156f7a2419e96118d7bea71d0c37ceb47"
+      "sha256": "1084053e5761ff07ffbb0c8519aba0ba3465634a437b6a19e49301d9ac69f005"
     },
     {
       "path": "modules/eacl/src/eacl/cache.cljc",
@@ -137,7 +137,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/client/orchestration.cljc",
-      "sha256": "c0e3a0966d112288e9b146f80b50d1729e5542fbd047236db14a9ecb5065e8fc"
+      "sha256": "7e52713e791da01bb29c09acee36bac60cc8cfebe02623420f10a3ee0c6af733"
     },
     {
       "path": "modules/eacl/src/eacl/consistency.cljc",
@@ -149,15 +149,19 @@
     },
     {
       "path": "modules/eacl/src/eacl/core.cljc",
-      "sha256": "80c91c888819fc329b541627a844f7ad1ca73b6031e3176c6b678dc528d8339e"
+      "sha256": "5d21745959018f0b6a59bb2b508d51c21418a04c54ca6518e1417fe51450fa42"
     },
     {
       "path": "modules/eacl/src/eacl/cursor.cljc",
       "sha256": "4e95a282f48808a2892123ad31132bf5dafaec5071f9f93aeb8ed2a72de387d2"
     },
     {
+      "path": "modules/eacl/src/eacl/engine/physical.cljc",
+      "sha256": "ab00c3f5c25ed6187713bba8854bc4da563c9c6a117cbf312a98a4a7218ae3df"
+    },
+    {
       "path": "modules/eacl/src/eacl/engine/portable_decisions.cljc",
-      "sha256": "819f43ea2b61bcac400018419881262b84d8b1f0247a64fdbdbb05b949dd1f92"
+      "sha256": "1094fb1b4a585e5f5e8cf63bce2c5745ad918f98ab54f70f50518864301d7164"
     },
     {
       "path": "modules/eacl/src/eacl/engine/portable_indexed.cljc",
@@ -165,11 +169,27 @@
     },
     {
       "path": "modules/eacl/src/eacl/engine/relationships.cljc",
-      "sha256": "c96c08aea819d9c61ccb5d0b049d9174dd274250aebe5f518806af1f80b1fd4f"
+      "sha256": "9c7f5b7d5b7a2d57b22551ae3d9c727ac6f30423d6806c525dfb7408f3e6f6c2"
+    },
+    {
+      "path": "modules/eacl/src/eacl/engine/sealed_plan.cljc",
+      "sha256": "6b1726370fec483a9c08c7a2e2b2abeaa1b63004054c62ce055c878314d78b13"
+    },
+    {
+      "path": "modules/eacl/src/eacl/engine/stable_page.cljc",
+      "sha256": "d8845631171d0d1e8997a654196e025a4c0280f99b7d4f6592f2b953eaa2526b"
+    },
+    {
+      "path": "modules/eacl/src/eacl/engine/stable_reducer.cljc",
+      "sha256": "a224d0fb3d8b55e1efa2ca515ea39a87adad9641021096ed94dcfc6a7b66ae89"
+    },
+    {
+      "path": "modules/eacl/src/eacl/engine/stable_route.cljc",
+      "sha256": "c0c8213405382f8197f856f6304742efdca8e89f703808beea608d4bb6c36d9a"
     },
     {
       "path": "modules/eacl/src/eacl/engine/v8.cljc",
-      "sha256": "eb4cb1a1af7f6e01e9f0ceb0998b2ea849726e3bd3fdff430434dc2adb9cc90c"
+      "sha256": "3738463ec1e15fb4ba0d4d171e769898a4f212064c1030b56ab6e15bbaa80c4f"
     },
     {
       "path": "modules/eacl/src/eacl/execution.cljc",
@@ -181,15 +201,11 @@
     },
     {
       "path": "modules/eacl/src/eacl/formal/production_kernel.clj",
-      "sha256": "823b7e0392a218515adf738cc0f6d814ce93061a4571e78dc9f0c972edcf2d36"
+      "sha256": "06a10b02cd6420fa516a101cbfbe7c2a4a1eb6d57fbc6a27ea302e5e40d6209d"
     },
     {
       "path": "modules/eacl/src/eacl/formal/production_kernel_cljs.cljs",
       "sha256": "410f605fc912c384bfc1f8ffeec3757f9ffe42554654afa3e3b6bc60df062495"
-    },
-    {
-      "path": "modules/eacl/src/eacl/lazy_merge_sort.cljc",
-      "sha256": "704ee2dd60a2b01f91283abc1c496e7c4dffd5d4309fd2967e5e485b4ca43e5a"
     },
     {
       "path": "modules/eacl/src/eacl/permission_tree.cljc",
@@ -208,6 +224,10 @@
       "sha256": "015b909c400f3174b1bf0adca5ad6ee5f4d51bf355d714ae4ff0c365cf43acab"
     },
     {
+      "path": "modules/eacl/src/eacl/relationships/mutations.cljc",
+      "sha256": "426874a37d301205f06bb39b1de665bfcf45dfa0d9d1cb4be559f553e85f3da4"
+    },
+    {
       "path": "modules/eacl/src/eacl/relationships/safe_retraction.cljc",
       "sha256": "ac4cb2f5b4923cc625768ffb4f3e671be5195acd3c8dcdccbd218dcc5964601d"
     },
@@ -217,15 +237,15 @@
     },
     {
       "path": "modules/eacl/src/eacl/relay.cljc",
-      "sha256": "81c013bc2a44ed7cad6e98c81d6ccbb4e29dddc4586b0b78727affd7a3ee989e"
+      "sha256": "d57ac37d9b71939be82ea71fc92375ac7c91d980a3c9493bb2cab33619a17e33"
     },
     {
       "path": "modules/eacl/src/eacl/schema/errors.cljc",
-      "sha256": "077129ede2efa8a5f9b61d660e56a71d31d4b979fb5e4b01ebfbe4a45856d50d"
+      "sha256": "36ee0ebf3d27e5e827cadb8734fc71332a93cf622976d4318110b4166fcdb74e"
     },
     {
       "path": "modules/eacl/src/eacl/schema/model.cljc",
-      "sha256": "53ff1f4d0d8d2b33ebcab841e70081b67f730f737c6d34f046da7e35282e10c4"
+      "sha256": "c054a7b28adc66bd17f979232cd0a8b57018ce54010b6dedab7fe32c92f7196a"
     },
     {
       "path": "modules/eacl/src/eacl/secure_format.cljc",
@@ -237,11 +257,11 @@
     },
     {
       "path": "modules/eacl/src/eacl/spicedb/parser.cljc",
-      "sha256": "7761b3eac6806b069b4cd057bc34cf3e9318c84103a9b54356830feffa546c1b"
+      "sha256": "40c12310a93a6908f71292527247b2a9855bd09d0de0dc6facf5b0f4bec74956"
     },
     {
       "path": "modules/eacl/src/eacl/subproblem_cache.cljc",
-      "sha256": "aa7279c16654e10dcaa0277e729d46eaa1e9581be047f5a2f721c0869bd57954"
+      "sha256": "b1b5a3ef5a9fd735f9919df6b69aec03824f29de6bd0dcb703fc8c9a2f5947bc"
     },
     {
       "path": "modules/eacl/src/eacl/verified_kernel.cljc",
@@ -270,9 +290,7 @@
       "eacl.subproblem-cache/resolve!",
       "eacl.subproblem-cache/resolve-bound!",
       "eacl.subproblem-cache/resolve-layered-bound!",
-      "eacl.subproblem-cache/lookup-layered-bound!",
       "eacl.subproblem-cache/lookup!",
-      "eacl.subproblem-cache/lookup-bound!",
       "eacl.consistency/select",
       "eacl.consistency/cursor-conflict!",
       "eacl.causal-token/issue",
@@ -314,26 +332,26 @@
       "eacl.datascript.core/datascript-count-subjects",
       "eacl.datascript.core/make-client"
     ],
-    "rootCount": 63,
-    "unionInternalDefinitionCount": 1418,
-    "unionInternalDefinitionIdsSha256": "1079b97cbd3c2b53e2929fa7e36318de4b12c813bd77656a9069ad6356c2aafa",
-    "unionDefinitionLocationsSha256": "ec59b839086c56648cb3c8346d7069348d68515146f9850f4df6b721b57a8cde",
+    "rootCount": 61,
+    "unionInternalDefinitionCount": 1331,
+    "unionInternalDefinitionIdsSha256": "a6333f28b0b8201ea165d6781c1066590279d477fffbbcc79dd4f243705453f5",
+    "unionDefinitionLocationsSha256": "6d79d742afec036e9caa6bf8a5c7bae0e49564aeac128e88dcf9510dad5af712",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
-        "count": 13,
-        "idsSha256": "5cd8268f6a899fcb45a73a3040ec9da8bd7376057950f51e73fbc2c82a36fdd7"
+        "count": 15,
+        "idsSha256": "7c5dff39653fdbc9e956bc1759cae145538b675a7ac65e3a6b4bc6fd43e2a450"
       },
       "modules/eacl-datahike/src/eacl/datahike/core.clj": {
-        "count": 12,
-        "idsSha256": "2f8d0a7f1bc7fea892e794568eb8ccaf9db7c96edc3c56589807d68abbe85eb8"
+        "count": 13,
+        "idsSha256": "f7a44815a8f95d1a212be673f9be8600acc0a2a5abcd792ec844c0863a560db2"
       },
       "modules/eacl-datahike/src/eacl/datahike/db.clj": {
-        "count": 10,
-        "idsSha256": "885a164ce0efb060b6ad9a6362b92689e7c41d90f2deaad915a6250b4b2a9899"
+        "count": 12,
+        "idsSha256": "989bd856e4d2f5e5fed047daeeb2d1673564199eeda6bbd3964fa2e08234c61c"
       },
       "modules/eacl-datahike/src/eacl/datahike/impl.clj": {
-        "count": 32,
-        "idsSha256": "a6fe7c5743201c298d03f4c43d6b41bd80d148017d9eb6874e8333d92b46dd3d"
+        "count": 34,
+        "idsSha256": "b964410a33961cbadd7a4e31c50b658e6a270685b2ed28e88509f99fb6c78fae"
       },
       "modules/eacl-datahike/src/eacl/datahike/schema.clj": {
         "count": 16,
@@ -352,8 +370,8 @@
         "idsSha256": "53c7507585fb177ed2dd7b4f0a92745d74dfbf315ade4f0911c253d763f3f0a4"
       },
       "modules/eacl-datascript/src/eacl/datascript/impl.cljc": {
-        "count": 31,
-        "idsSha256": "2ff7400108cf6dd46c50deb6e06942f326ff2d8caef3fd526f1838bfe312ad0b"
+        "count": 33,
+        "idsSha256": "2d4b1a636e8368cf31a5cc5b159ffde7c851a9afd9656ce80596a07ec63b5c8c"
       },
       "modules/eacl-datascript/src/eacl/datascript/schema.cljc": {
         "count": 12,
@@ -376,12 +394,12 @@
         "idsSha256": "41564ae9195b19dd851d20e77ec6d32379244f26211d5a815622b45fb2df2592"
       },
       "modules/eacl-datomic/src/eacl/datomic/core.clj": {
-        "count": 123,
-        "idsSha256": "6809b6351b5d46863f50c15eb2c6effed9f2dadf7e2c591d6d5c22308689ef0c"
+        "count": 124,
+        "idsSha256": "2f25c9b03b2a5a66cf4cc4305530d12385ea6332923c97d95010a2163e114884"
       },
       "modules/eacl-datomic/src/eacl/datomic/db.clj": {
-        "count": 10,
-        "idsSha256": "0a49061e224d8bee29df08f88728e174d2be7cce60d6b9303bd11fdc5e05e89f"
+        "count": 9,
+        "idsSha256": "42b27bd399d2f9b4a6146d33a02954586928ab005f199e0ddd5e82f29f6509f2"
       },
       "modules/eacl-datomic/src/eacl/datomic/impl.clj": {
         "count": 42,
@@ -392,8 +410,8 @@
         "idsSha256": "ebcf0382a8bec81743a9242dd62244080be3971fe70ffb8a471485bb9eb10610"
       },
       "modules/eacl-datomic/src/eacl/datomic/impl/indexed.clj": {
-        "count": 16,
-        "idsSha256": "be767b913cecd12db657c0e5cd2f8f6b4f7f3465e261259fb38484a3f3b80d9a"
+        "count": 15,
+        "idsSha256": "0fc5fd12d923fc5ff27bd9e6118e4f834ff06532fee5da49418a2e69eab8ffe8"
       },
       "modules/eacl-datomic/src/eacl/datomic/schema.clj": {
         "count": 15,
@@ -404,8 +422,8 @@
         "idsSha256": "6354f20b566cbf72654812e5404ad861a32ed262bf7c3ebf678b2e9f199a323b"
       },
       "modules/eacl/src/eacl/backend/v8.cljc": {
-        "count": 34,
-        "idsSha256": "4a4656bc1df148330d429e07f20d59da99e2ae95b2e406c4022341271821262c"
+        "count": 40,
+        "idsSha256": "dca5f2e1ae7cefb3fab151b9a5d09abb2f3bac168676c13f7e96c51dbd9ea84b"
       },
       "modules/eacl/src/eacl/cache.cljc": {
         "count": 31,
@@ -416,8 +434,8 @@
         "idsSha256": "75c0ad0273fa5828aca5833652de740c7b968ed2565099995d8ca177fdc1d1b4"
       },
       "modules/eacl/src/eacl/client/orchestration.cljc": {
-        "count": 34,
-        "idsSha256": "cf16bc5c4f17780610f9f5801cc898d568a14b577339d7134232de1ca0a6fab7"
+        "count": 35,
+        "idsSha256": "a0c946441b76c367c4a8c4a259d64423150d17d3547be862ac92068a10e011ea"
       },
       "modules/eacl/src/eacl/consistency.cljc": {
         "count": 16,
@@ -435,6 +453,10 @@
         "count": 24,
         "idsSha256": "b35bffa00c76bd22c09fac6aceb428ac2dfd09691913494f8d9c6cad66f2a8a3"
       },
+      "modules/eacl/src/eacl/engine/physical.cljc": {
+        "count": 18,
+        "idsSha256": "5fcc8cd40647145d897f5273958e6c11fe12048504bdb20ebda634b3943a7983"
+      },
       "modules/eacl/src/eacl/engine/portable_decisions.cljc": {
         "count": 30,
         "idsSha256": "3b57b5ac046321cf325a2e81ccb3433021abb7f96b035a9f068fd66e09f04ab2"
@@ -447,9 +469,25 @@
         "count": 20,
         "idsSha256": "01e8ae30a26c905caa8a67c7abb5f9d161454d1a2ebe981bda3905026054b8f5"
       },
+      "modules/eacl/src/eacl/engine/sealed_plan.cljc": {
+        "count": 21,
+        "idsSha256": "7ab041bdfe0d3065f838696bd3798659cd1442c47d2b9bca9edb43b4328d882d"
+      },
+      "modules/eacl/src/eacl/engine/stable_page.cljc": {
+        "count": 12,
+        "idsSha256": "56b697f095938dc0bae040e9a1fade63b799dbcfe83af82624fe0900b1c2284c"
+      },
+      "modules/eacl/src/eacl/engine/stable_reducer.cljc": {
+        "count": 35,
+        "idsSha256": "644155693f1acb0313241f6be91da9e0e5c196216deddfb1e01aaeff4bf9c19d"
+      },
+      "modules/eacl/src/eacl/engine/stable_route.cljc": {
+        "count": 5,
+        "idsSha256": "2baa47acc019ed669bc2d286552110b2581701131dfbbe2d9496523c256e79da"
+      },
       "modules/eacl/src/eacl/engine/v8.cljc": {
-        "count": 231,
-        "idsSha256": "b2d44526d5a05adcbf8c3fc6e23be3ee20b0ca9dc119a173bf3f6f8d30597f4d"
+        "count": 78,
+        "idsSha256": "76e77e7e4b70fedb38ec985f56914117d74d3bdda53b756c2cbd0331c180cd78"
       },
       "modules/eacl/src/eacl/execution.cljc": {
         "count": 26,
@@ -462,10 +500,6 @@
       "modules/eacl/src/eacl/formal/production_kernel.clj": {
         "count": 86,
         "idsSha256": "e3dab20dbcdbe98a3c7279004b02be042768f8c4ba589f3b5f84f1f68fa22c6f"
-      },
-      "modules/eacl/src/eacl/lazy_merge_sort.cljc": {
-        "count": 6,
-        "idsSha256": "40bad40413a2ab865a5acb9c04acded0483549b26e01ff5658a81d329b307c8a"
       },
       "modules/eacl/src/eacl/permission_tree.cljc": {
         "count": 19,
@@ -483,6 +517,10 @@
         "count": 3,
         "idsSha256": "3a9bbda9bcf07bb5bbff6e7df36d4f1f13cddf9912dc162c54e7912fada61294"
       },
+      "modules/eacl/src/eacl/relationships/mutations.cljc": {
+        "count": 2,
+        "idsSha256": "bea571d365d6705e6f6c373fd36fe11b0fd0be6c8b0c410fe713c62747a4d9c4"
+      },
       "modules/eacl/src/eacl/relationships/storage.cljc": {
         "count": 3,
         "idsSha256": "fb4e5788ec3bdcef44e445bbeaf59b2a34727116072b77ddfd4f0f6747e11894"
@@ -492,16 +530,16 @@
         "idsSha256": "cb9c3b05aee2c4e7c05f72ae8a56cccf95768e6c51a8e8a7345393e941ed8efb"
       },
       "modules/eacl/src/eacl/schema/errors.cljc": {
-        "count": 8,
-        "idsSha256": "59f06e508af90c724f457479753085a9ef2c92371c26a6d7687cdd3351d2a911"
+        "count": 10,
+        "idsSha256": "ed328c0038694c1e250dc56b880ae6146a66fba0647da62ab3dd7a603278447c"
       },
       "modules/eacl/src/eacl/schema/model.cljc": {
         "count": 7,
         "idsSha256": "b522d556d11715c8bc9a7cc9f054a452e02c231d11204280e909036497e286c5"
       },
       "modules/eacl/src/eacl/secure_format.cljc": {
-        "count": 41,
-        "idsSha256": "e8e3ced66f4592a463b79df6feff43ffc432a394b163f32da2af0de6d1cf81d2"
+        "count": 42,
+        "idsSha256": "6c72c1d53046ee8263f0d7848780daff875a0e29292493fd8f617d845d863ee6"
       },
       "modules/eacl/src/eacl/spicedb/consistency.cljc": {
         "count": 3,
@@ -512,12 +550,12 @@
         "idsSha256": "7ac0d561d46b25289b0553250cea43721bb0eae5b72f7a390fb46ef59a69002d"
       },
       "modules/eacl/src/eacl/subproblem_cache.cljc": {
-        "count": 48,
-        "idsSha256": "b482e770afd38f555f4e431454bc4c923d1bde03dd088223dc7e43c4ce41b3fe"
+        "count": 42,
+        "idsSha256": "5ee72c82b62cbccc6b562c2ccd55940874fbb54599e21863fa6504a645f360ae"
       },
       "modules/eacl/src/eacl/verified_kernel.cljc": {
-        "count": 138,
-        "idsSha256": "b5de3275ee32b979d1c380f83cacd4bc3db124e960664c4a8f7ec7612994167d"
+        "count": 105,
+        "idsSha256": "c6cd34c9f628dcc67e238492015bb227771bef7e95f5036838cc8f16005ade28"
       }
     },
     "exclusions": {
@@ -531,48 +569,83 @@
   },
   "roots": {
     "eacl.engine.v8/can?": {
-      "internalDefinitionCount": 388,
-      "internalDefinitionIdsSha256": "ad064833a4329e34380868a02ab96e743028d0b9080f439af546d487d0c860a0",
-      "externalCallCount": 2,
+      "internalDefinitionCount": 139,
+      "internalDefinitionIdsSha256": "34eece9a92eafe0cb5492304c3ba89e05d7a8b37ae654550185ca0d96aa2ceab",
+      "externalCallCount": 9,
       "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
         "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger"
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode"
       ]
     },
     "eacl.engine.v8/lookup-resources": {
-      "internalDefinitionCount": 435,
-      "internalDefinitionIdsSha256": "7241d9656cc9fcd09c3eead2b8909f143ec0e3b7339099c3bdcc9ba285ff7d4e",
-      "externalCallCount": 2,
+      "internalDefinitionCount": 291,
+      "internalDefinitionIdsSha256": "85e94b74c060a03503de5f9db1e4cc3703f1bce2d2372cb436b1cf5f31a4ccbe",
+      "externalCallCount": 9,
       "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
         "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger"
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode"
       ]
     },
     "eacl.engine.v8/lookup-subjects": {
-      "internalDefinitionCount": 435,
-      "internalDefinitionIdsSha256": "a4b799b325d1b4a5841d401fb184caa30992a5aa03dadc96214e92d6c5e7d389",
-      "externalCallCount": 2,
+      "internalDefinitionCount": 291,
+      "internalDefinitionIdsSha256": "26c80113b1c37e1bc784e94960cad9fe6771bd45cf527ec5ca213a9a3a8c8ea0",
+      "externalCallCount": 9,
       "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
         "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger"
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode"
       ]
     },
     "eacl.engine.v8/count-resources": {
-      "internalDefinitionCount": 392,
-      "internalDefinitionIdsSha256": "885b676fd6ba3f6ef172b0ff529845d869ff61ba1afc128f9cd1aa618bd995e2",
-      "externalCallCount": 2,
+      "internalDefinitionCount": 142,
+      "internalDefinitionIdsSha256": "543bf5a94a8d15c7f19836ba6932580b94a97bba86459fd536ddf2dfc18110d2",
+      "externalCallCount": 9,
       "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
         "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger"
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode"
       ]
     },
     "eacl.engine.v8/count-subjects": {
-      "internalDefinitionCount": 392,
-      "internalDefinitionIdsSha256": "3535c97c0b9b165324bd60ca715bf37a9c6dfa9cd1375507797bfa95f62d9750",
-      "externalCallCount": 2,
+      "internalDefinitionCount": 142,
+      "internalDefinitionIdsSha256": "0dc5c831f626dbf50aa0d02d234e34473fc21c4f7855d3de718caf513e08f419",
+      "externalCallCount": 9,
       "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "clojure.string/replace",
+        "clojure.string/starts-with?",
+        "goog.crypt/stringToUtf8ByteArray",
         "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger"
+        "unresolved/js/Number.isSafeInteger",
+        "unresolved/js/String.fromCharCode"
       ]
     },
     "eacl.engine.relationships/execute-page": {
@@ -776,24 +849,9 @@
         "unresolved/js/Number.isSafeInteger"
       ]
     },
-    "eacl.subproblem-cache/lookup-layered-bound!": {
-      "internalDefinitionCount": 37,
-      "internalDefinitionIdsSha256": "bd9f1312a87388639634338749f9fb0c0c6e9be1269f73e2b259738c36c46eb1",
-      "externalCallCount": 2,
-      "externalCalls": [
-        "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger"
-      ]
-    },
     "eacl.subproblem-cache/lookup!": {
       "internalDefinitionCount": 12,
       "internalDefinitionIdsSha256": "07810c0ef61aaca81bd5153933a72e90a9c4e1f304eaec72aede7e1e255fa42e",
-      "externalCallCount": 0,
-      "externalCalls": []
-    },
-    "eacl.subproblem-cache/lookup-bound!": {
-      "internalDefinitionCount": 14,
-      "internalDefinitionIdsSha256": "1c79dbafe8a58b64727308d36235a5cb7f94613bce5b1bf04b598b5869211e00",
       "externalCallCount": 0,
       "externalCalls": []
     },
@@ -877,8 +935,8 @@
       "externalCalls": []
     },
     "eacl.datomic.core/Spiceomic": {
-      "internalDefinitionCount": 912,
-      "internalDefinitionIdsSha256": "4d07d5ab1b8201b7d373f9deb07b497cd35bc94a112ee5aadc9da69282cca4c7",
+      "internalDefinitionCount": 799,
+      "internalDefinitionIdsSha256": "db6ac709f988a2ce425762afd6e1bf3510ecf6032678e9142241c9e12f6ce8e9",
       "externalCallCount": 36,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -920,8 +978,8 @@
       ]
     },
     "eacl.datomic.core/spiceomic-read-relationships": {
-      "internalDefinitionCount": 442,
-      "internalDefinitionIdsSha256": "eab2afc5be5c94ba0336f050fd97925a194d06b5e32eb2f71f93a4800f4ea884",
+      "internalDefinitionCount": 446,
+      "internalDefinitionIdsSha256": "860dca4a9c2d2efc169cde11bdf03452f62ecb08895a6437404ac51791d7b8ee",
       "externalCallCount": 23,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -950,8 +1008,8 @@
       ]
     },
     "eacl.datomic.core/spiceomic-write-relationships!": {
-      "internalDefinitionCount": 103,
-      "internalDefinitionIdsSha256": "2c045cb6e558aeaf5b43c74ad5c4c0c465ceeb41007fab45157dbb642d7d1913",
+      "internalDefinitionCount": 113,
+      "internalDefinitionIdsSha256": "b39a34f369e03cf3e7eaf826ed8a87bf7f0336a77c6befe828b009c429d4b2ee",
       "externalCallCount": 17,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -995,8 +1053,8 @@
       ]
     },
     "eacl.datomic.core/spiceomic-can?": {
-      "internalDefinitionCount": 557,
-      "internalDefinitionIdsSha256": "aca8ce04430a5d1e14db74a0142a4785af017926ef8d1da59108f8304fee5b44",
+      "internalDefinitionCount": 459,
+      "internalDefinitionIdsSha256": "6a3473283a437a91051bab6f31d7127e9e3035c4039ddfecaf167c390ef5951e",
       "externalCallCount": 23,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1025,8 +1083,8 @@
       ]
     },
     "eacl.datomic.core/spiceomic-lookup-resources": {
-      "internalDefinitionCount": 706,
-      "internalDefinitionIdsSha256": "311c724e737d6a189009512982856dd8ffd3de1688aa9d7318ad6122448bfbd6",
+      "internalDefinitionCount": 599,
+      "internalDefinitionIdsSha256": "179471fb28d670960e9f23862646112b1a11d5a1a97836a387e294658ae01396",
       "externalCallCount": 23,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1055,8 +1113,8 @@
       ]
     },
     "eacl.datomic.core/spiceomic-count-resources": {
-      "internalDefinitionCount": 559,
-      "internalDefinitionIdsSha256": "f8223dcf00d614d0dfd2dc6ebfbd77e1724ec777a8820c2d4a0dc1c442809f23",
+      "internalDefinitionCount": 461,
+      "internalDefinitionIdsSha256": "df864ce965e035e300f8d7bad9456210287b15751afe61230a6e2950c1a132e1",
       "externalCallCount": 23,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1085,8 +1143,8 @@
       ]
     },
     "eacl.datomic.core/spiceomic-lookup-subjects": {
-      "internalDefinitionCount": 706,
-      "internalDefinitionIdsSha256": "bccf88299e701b3d8751821bf588941943e576eee160435a32e489608d0ec5b2",
+      "internalDefinitionCount": 599,
+      "internalDefinitionIdsSha256": "8bd962f1702607495db0eb9fcbe5f7a24524150c17d88b945b42ba17c8967355",
       "externalCallCount": 23,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1115,8 +1173,8 @@
       ]
     },
     "eacl.datomic.core/spiceomic-count-subjects": {
-      "internalDefinitionCount": 559,
-      "internalDefinitionIdsSha256": "86f7e3210dd087b1390ca35d061e5997e0edef54cc8045196a6a64027d8d275b",
+      "internalDefinitionCount": 461,
+      "internalDefinitionIdsSha256": "562b706f1c75b6cf17ed280bc1886da05f614a2529eb8776b8744430c1389e04",
       "externalCallCount": 23,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1145,8 +1203,8 @@
       ]
     },
     "eacl.datomic.core/make-client": {
-      "internalDefinitionCount": 197,
-      "internalDefinitionIdsSha256": "a4cd197921a766e2aebb01d2994af669fb9e8288983e23d3e93121da186d317d",
+      "internalDefinitionCount": 216,
+      "internalDefinitionIdsSha256": "1048e5ed17d41f749516c51a985069cadd24b3c47dd2d7b3c5d55cfbcc556bf6",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1180,8 +1238,8 @@
       ]
     },
     "eacl.datomic.core/current-zed-token": {
-      "internalDefinitionCount": 913,
-      "internalDefinitionIdsSha256": "36d563b19f43ffce0cfc03b738b9d9be357b7ab9549b9e6e8335eb428114652d",
+      "internalDefinitionCount": 800,
+      "internalDefinitionIdsSha256": "1c8ee0d9d2f29a7ad20a0265acf80b31e3c57ffb77b5a4f6099199271b1f3e8d",
       "externalCallCount": 36,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1223,8 +1281,8 @@
       ]
     },
     "eacl.datomic.core/zed-token-at-least-seconds-ago": {
-      "internalDefinitionCount": 915,
-      "internalDefinitionIdsSha256": "787c94eeba78a783554242f9e0e240b2531c83ad65f7d404ccf43df0a8717189",
+      "internalDefinitionCount": 802,
+      "internalDefinitionIdsSha256": "fa16d7af6ad98b57dbafd7906e34ec4e104626c5484c520db4fbcd42dd3606c2",
       "externalCallCount": 36,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1266,8 +1324,8 @@
       ]
     },
     "eacl.client.orchestration/ClientAuthorization": {
-      "internalDefinitionCount": 742,
-      "internalDefinitionIdsSha256": "ca05197c1132f6114ef8eb6b13f3748a0ddd4e742dbda11817f64c4dbf7ea4c6",
+      "internalDefinitionCount": 627,
+      "internalDefinitionIdsSha256": "27339ce19840fd2b0fcc512e8c915d716aea6ad5f395ba109cf039573d372073",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1288,8 +1346,8 @@
       ]
     },
     "eacl.client.orchestration/make-client": {
-      "internalDefinitionCount": 92,
-      "internalDefinitionIdsSha256": "57f3f3542ce6a1813f6d91c66d2eeee42a11e704dd0a435b388f7885f4176834",
+      "internalDefinitionCount": 107,
+      "internalDefinitionIdsSha256": "ff1640b288c5972f5dfb0f482640ffe30222b687110275b64c09391e78bfad62",
       "externalCallCount": 8,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1303,8 +1361,8 @@
       ]
     },
     "eacl.datahike.core/datahike-read-relationships": {
-      "internalDefinitionCount": 528,
-      "internalDefinitionIdsSha256": "089fb1fe5293a5dde41812074a96fa9a8a62b61ce68ad5519d20f60ff893ff3a",
+      "internalDefinitionCount": 540,
+      "internalDefinitionIdsSha256": "f5ae37fb5b2a41e59fc63f56eb650ef2e25aa7d21a6003c8a8f6d24f9d1820bc",
       "externalCallCount": 29,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1339,8 +1397,8 @@
       ]
     },
     "eacl.datahike.core/datahike-write-relationships!": {
-      "internalDefinitionCount": 327,
-      "internalDefinitionIdsSha256": "1528583083efd0b96b5503b34c34a8a92d6c152c193fb8957b287fbadbffb480",
+      "internalDefinitionCount": 347,
+      "internalDefinitionIdsSha256": "db260629963df96f57ec452b8f394ef8c697ddb253e4a9cb115b26882e2de3f3",
       "externalCallCount": 27,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1373,8 +1431,8 @@
       ]
     },
     "eacl.datahike.core/datahike-delete-object!": {
-      "internalDefinitionCount": 326,
-      "internalDefinitionIdsSha256": "ffcb9ca20e8f80b43f3714bb200adef3524c0c9a6f87a040564e0759c9a5c214",
+      "internalDefinitionCount": 338,
+      "internalDefinitionIdsSha256": "c04e3978d3d64cf94d1749df2f1755fc2d59c49328421041fbab4b9e44e42c7f",
       "externalCallCount": 25,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1405,8 +1463,8 @@
       ]
     },
     "eacl.datahike.core/datahike-can?": {
-      "internalDefinitionCount": 665,
-      "internalDefinitionIdsSha256": "173dfcd5416f331d225d9e6042d160a80260847947941fcf2d617e0098ce84bd",
+      "internalDefinitionCount": 578,
+      "internalDefinitionIdsSha256": "9b761142481047397840a242961ed9966f321e31a234c94c5f6d7d286e6add14",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1440,8 +1498,8 @@
       ]
     },
     "eacl.datahike.core/datahike-lookup-resources": {
-      "internalDefinitionCount": 803,
-      "internalDefinitionIdsSha256": "f2bef68fed56148b2d9f5bab1b8c6d43a325607cd25aab7dc073671efe961f1a",
+      "internalDefinitionCount": 707,
+      "internalDefinitionIdsSha256": "5df61001e0df8b74e8c0ee71e3ee6372f5a6f93ac2fbcd76fc8546bf1366f016",
       "externalCallCount": 29,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1476,8 +1534,8 @@
       ]
     },
     "eacl.datahike.core/datahike-count-resources": {
-      "internalDefinitionCount": 669,
-      "internalDefinitionIdsSha256": "9d4a63a9302fffc7b5ef822308c3282568c8cfbbaa156efd25fe62c4fa7c50fa",
+      "internalDefinitionCount": 581,
+      "internalDefinitionIdsSha256": "f7afa0bcec24e6eaf9005c2755b9c33ad5825945ee15d126e4fc94a18700fb7d",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1511,8 +1569,8 @@
       ]
     },
     "eacl.datahike.core/datahike-lookup-subjects": {
-      "internalDefinitionCount": 803,
-      "internalDefinitionIdsSha256": "24a6ad7d1c272ddad840557a2d37462084246b9478543b870b2dc11b14485bb5",
+      "internalDefinitionCount": 707,
+      "internalDefinitionIdsSha256": "250243ceb1cb781e742ef914f24ffbe27a8123cc7bb4e376cffdb8cc9df5d0b9",
       "externalCallCount": 29,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1547,8 +1605,8 @@
       ]
     },
     "eacl.datahike.core/datahike-count-subjects": {
-      "internalDefinitionCount": 669,
-      "internalDefinitionIdsSha256": "604d097cb988462f1ed311d156f373d7d6c5925da35d8f3ae2d0788ad7c7fa39",
+      "internalDefinitionCount": 581,
+      "internalDefinitionIdsSha256": "a01c0276fc0bfec675f5b78c3063ace769ba9cd038f1091e28bfe44fadb29803",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1582,8 +1640,8 @@
       ]
     },
     "eacl.datahike.core/make-client": {
-      "internalDefinitionCount": 340,
-      "internalDefinitionIdsSha256": "114b131cac055cc1d1eb11a7ad398aaddd62dc562116a75cf232ba9dd379f316",
+      "internalDefinitionCount": 366,
+      "internalDefinitionIdsSha256": "63e153b6fffc7f15a6ff623a99f62d1d0ecfab2fbeedc701fce2c38483b74f15",
       "externalCallCount": 24,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1613,8 +1671,8 @@
       ]
     },
     "eacl.datascript.core/datascript-read-relationships": {
-      "internalDefinitionCount": 521,
-      "internalDefinitionIdsSha256": "163f1352a460337bdbabdbadaa1ccbb287efdc9bb86bf3f6fc3522dac5118570",
+      "internalDefinitionCount": 528,
+      "internalDefinitionIdsSha256": "7e59e2edc186c56471d8fb768460309ec3ffa9d897540d0fe7bfe3d3b99596a5",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1648,8 +1706,8 @@
       ]
     },
     "eacl.datascript.core/datascript-write-relationships!": {
-      "internalDefinitionCount": 320,
-      "internalDefinitionIdsSha256": "debfcb9f929fa6936d4b3ee5eea972779de34d90d181f2d092120d27e134288c",
+      "internalDefinitionCount": 335,
+      "internalDefinitionIdsSha256": "c73609e187bdc4e8cdb966820600f29026ea30efe85ec3b6c0f6b9ac1ea6cfca",
       "externalCallCount": 26,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1681,8 +1739,8 @@
       ]
     },
     "eacl.datascript.core/datascript-delete-object!": {
-      "internalDefinitionCount": 319,
-      "internalDefinitionIdsSha256": "cce52455c985b5db2b0c3204013a6899f367256053b3330ad675e1abaa4f13da",
+      "internalDefinitionCount": 326,
+      "internalDefinitionIdsSha256": "e148f86fa966c8f2d4e6cff4e5d1efa0afead1fa95f8b63d51db42036543bd94",
       "externalCallCount": 24,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1712,8 +1770,8 @@
       ]
     },
     "eacl.datascript.core/datascript-can?": {
-      "internalDefinitionCount": 658,
-      "internalDefinitionIdsSha256": "574eac0300594457df75bf86275012a0c3df63d089924c32e6fe2745a38b35f1",
+      "internalDefinitionCount": 566,
+      "internalDefinitionIdsSha256": "a07b2a790bb4f38e2f1ce164bec20f5de983b8266f2bd6d04ef99b68532d8ec6",
       "externalCallCount": 27,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1746,8 +1804,8 @@
       ]
     },
     "eacl.datascript.core/datascript-lookup-resources": {
-      "internalDefinitionCount": 796,
-      "internalDefinitionIdsSha256": "be61f5b9935fa4a228f71b49b61343ad6ab0b92a3b867f41b2fec97bcce98a83",
+      "internalDefinitionCount": 695,
+      "internalDefinitionIdsSha256": "21b883e3fe38adc9b61f38766321812027f930a48f579b78e2b6d9cd183cfac6",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1781,8 +1839,8 @@
       ]
     },
     "eacl.datascript.core/datascript-count-resources": {
-      "internalDefinitionCount": 662,
-      "internalDefinitionIdsSha256": "07e1282d016fc7f507d07b85a6251cae709e28c5b6d7ca33ffb7d4079b82491d",
+      "internalDefinitionCount": 569,
+      "internalDefinitionIdsSha256": "5bd9a9203c8744f078cd16228f2dafe2f833fb178fbfb696473b73e9f3116cec",
       "externalCallCount": 27,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1815,8 +1873,8 @@
       ]
     },
     "eacl.datascript.core/datascript-lookup-subjects": {
-      "internalDefinitionCount": 796,
-      "internalDefinitionIdsSha256": "2fd64748f3cbb3e42690739a34422a56e847dcb686f58931426126112724806d",
+      "internalDefinitionCount": 695,
+      "internalDefinitionIdsSha256": "5c6e0a18988114faca1a11f29180af4653f1f8ed4aabb8c8f65c3bb13ce5447f",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1850,8 +1908,8 @@
       ]
     },
     "eacl.datascript.core/datascript-count-subjects": {
-      "internalDefinitionCount": 662,
-      "internalDefinitionIdsSha256": "67a516217612fbbc573d224c935477b2c1c38327e451b0771ae2fdb89e1bbd2d",
+      "internalDefinitionCount": 569,
+      "internalDefinitionIdsSha256": "8408eed3c552a3cf2a1dc3c139b9925cd951ef5b70fc75f2ff0ff1a798466eeb",
       "externalCallCount": 27,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1884,8 +1942,8 @@
       ]
     },
     "eacl.datascript.core/make-client": {
-      "internalDefinitionCount": 333,
-      "internalDefinitionIdsSha256": "028d25c9e08f4687279fcf82b8aac0c5f809daad78f744c0f4372526dde44dbd",
+      "internalDefinitionCount": 354,
+      "internalDefinitionIdsSha256": "42b7504a8773f8722c13133079ab802544c11ca1bc92da77f0829a9605685fa7",
       "externalCallCount": 23,
       "externalCalls": [
         "cljs.reader/read-string",

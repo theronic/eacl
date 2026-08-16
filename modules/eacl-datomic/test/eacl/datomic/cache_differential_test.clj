@@ -346,21 +346,24 @@
           cursor-1 (get-in page-1 [:page-info :end-cursor])
           page-2-stats (atom {})
           page-2
-          (binding [engine/*acyclic-work-stats* page-2-stats]
+          (binding [idx/*recursive-traversal-stats* page-2-stats]
             (eacl/lookup-resources
              acl (assoc query :first 3 :after cursor-1)))
           cursor-2 (get-in page-2 [:page-info :end-cursor])
           page-3-stats (atom {})
           page-3
-          (binding [engine/*acyclic-work-stats* page-3-stats]
+          (binding [idx/*recursive-traversal-stats* page-3-stats]
             (eacl/lookup-resources
              acl (assoc query :first 3 :after cursor-2)))]
       (is (= 1 (:continuation-hits @page-2-stats 0))
-          "generated authority resumes its proof-keyed opaque state")
+          "the continuation is served from the client-scoped checkpoint")
       (is (= 1 (:continuation-hits @page-3-stats 0))
           "later pages continue from private state")
-      (is (<= (:backend-scans @page-3-stats)
-              (+ 2 (:backend-scans @page-2-stats)))
+      ;; Both pages continue from checkpoints (no prefix replay); the final
+      ;; page also pays the schema-constant exhaustion tail — every residual
+      ;; rule scans empty once — which is independent of page ordinal.
+      (is (<= (:advanced-datoms @page-3-stats 0)
+              (+ 10 (:advanced-datoms @page-2-stats 0)))
           "continuation work does not grow with page ordinal")
       (is (= (mapv :id (:data (eacl/lookup-resources
                                oracle

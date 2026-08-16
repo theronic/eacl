@@ -18,12 +18,10 @@
     eacl.datahike.backend-test
     eacl.datahike.consistency-v3-test
     eacl.datahike.contract-test
-    eacl.datahike.enumeration-routing-test
     eacl.datahike.storage-test
     eacl.datascript.adapter-certification-test
     eacl.datascript.consistency-v3-test
     eacl.datascript.contract-test
-    eacl.datascript.enumeration-routing-test
     eacl.datascript.impl-test
     eacl.datascript.storage-test
     eacl.datomic.adapter-certification-test
@@ -81,16 +79,15 @@
   [:datomic :datahike :datascript])
 
 (def required-generated-authority-operations
-  #{:recursive-routing-certificate
-    :enumeration-route
-    :acyclic-page
-    :acyclic-continuation
-    :acyclic-count
-    :acyclic-work
-    :indexed-traversal-compile
-    :indexed-traversal-initialize
-    :indexed-traversal-drive
-    :indexed-traversal-read})
+  "The generated decision authority the stable-discovery design still
+  routes through on every backend: consistency selection, answer-cache
+  admission and coherence, cursor continuation, and relationship paging.
+  The retired traversal authorities (:enumeration-route, :acyclic-*,
+  :indexed-traversal-*) left with the engines they governed."
+  #{:consistency-plan
+    :current-cache-decision
+    :cursor-continuation
+    :relationship-page})
 
 (defn- count-call!
   [calls backend operation]

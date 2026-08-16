@@ -579,3 +579,37 @@
                        delete-token)))))))))
       (finally
         (d/release conn)))))
+
+(deftest temporal-fallback-adapter-keeps-its-source-identity-test
+  ;; Regression: `AsOfDB` carries only its origin and time point as record
+  ;; fields, so every config read must go through Datahike's database
+  ;; protocol. Before the fix the exact adapter selected through the
+  ;; temporal fallback reported {:store {:id ""}} as its database id, lost
+  ;; :fully-consistent from its capabilities (its writer looked foreign),
+  ;; and therefore minted an exact-snapshot proof digest that could not
+  ;; equal the live one.
+  (let [conn (datahike/create-conn nil {:commit-graph? false :keep-history? true})
+        authorization (client conn)
+        _ (seed! conn authorization)
+        _ (eacl/create-relationship! authorization relationship)
+        exact-revision (:max-tx (d/db conn))
+        _ (eacl/delete-relationship! authorization relationship)
+        live (datahike-backend/snapshot-adapter (d/db conn) {:conn conn})
+        exact (backend/invoke live :select-exact
+                              {:revision exact-revision :exact-locator nil}
+                              1000)]
+    (is (some? exact) "history reconstructs the exact snapshot")
+    (is (not= (:basis-t (backend/invoke live :snapshot-id))
+              (:basis-t (backend/invoke exact :snapshot-id))))
+    (is (= (dissoc (backend/invoke live :snapshot-id) :basis-t)
+           (dissoc (backend/invoke exact :snapshot-id) :basis-t))
+        "the wrapper reports its origin's store identity and attribute representation")
+    (is (= (:consistency (backend/capabilities live))
+           (:consistency (backend/capabilities exact)))
+        "the wrapper advertises the same consistency capabilities")
+    (is (= (:source-scope (backend/invoke live :snapshot-id) :absent)
+           (:source-scope (backend/invoke exact :snapshot-id) :absent)))
+    (is (= [:backend :id] (sort (keys (get-in (backend/invoke exact :snapshot-id)
+                                              [:database-id :store]))))
+        "the store identity carries only backend and id, never connection configuration")
+    (d/release conn)))

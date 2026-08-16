@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
+            [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.v8 :as engine]
             [eacl.lazy-merge-sort :as lazy-sort]
             [eacl.spicedb.consistency :as consistency]
@@ -113,33 +114,6 @@
              :key
              [[left-nil one]
               [right-nil two]]))))))
-
-(deftest unusable-generated-continuation-is-a-recoverable-cache-miss-test
-  (let [calls (atom [])
-        kernel
-        (->RecordingKernel
-         calls
-         (fn [_ _]
-           (throw (ex-info "not used" {}))))
-        selection
-        {:kernel kernel}
-        restore
-        #?(:clj
-           (ns-resolve 'eacl.engine.v8 'restore-generated-continuation)
-           :cljs
-           engine/restore-generated-continuation)]
-    (is (= {:status :rejected
-            :reason :unusable-cached-state}
-           (restore
-            selection
-            :forward
-            {:state :opaque-state-from-an-incompatible-generated-runtime}
-            {:size 20
-             :bound
-             {:kind :lookup-eid
-              :result-eid 100}})))
-    (is (empty? @calls)
-        "the indexed continuation method, not DecisionKernel, owns restore")))
 
 (deftest validated-v8-adapter-test
   (let [adapter (test-adapter)]
@@ -380,6 +354,11 @@
         (merge
          (operation-map)
          {:snapshot-id (fn [] {:database-id :test :basis-t 1})
+          ;; A real store mints one lifecycle per source; a constant here
+          ;; would alias every test adapter into one plan-cache identity.
+          :source-lifecycle
+          (let [lifecycle (str (gensym "compiled-once-store-"))]
+            (fn [] lifecycle))
           :source-scope (fn [] {:source-id :test :branch nil})
           :proof-frame
           (fn [relation-ids]
@@ -427,212 +406,58 @@
           :operations operations})
         schema-cache (engine/make-schema-cache adapter 1)]
     (binding [engine/*schema-cache* schema-cache]
-      (is (true? (engine/traversal-permission? adapter :node :read)))
-      (let [analysis-delay @(:traversal-analysis schema-cache)
-            compiled @analysis-delay]
-        (is (= {[:node :read] true
-                [:node :view] true
-                [:node :edit] false
-                [:node :cycle-a] true
-                [:node :cycle-b] true
-                [:node :cycle-view] true}
-               compiled))
-        (is (false? (engine/traversal-permission?
-                     adapter :node :edit)))
-        (is (identical? analysis-delay
-                        @(:traversal-analysis schema-cache))
-            "another permission root reuses the generation-wide analysis"))
-      (let [stats (atom {})
+      ;; The retired routing analysis (traversal-permission?, SCC
+      ;; component plans) is gone; recursion classification now lives on
+      ;; the sealed plan as :recursive?, asserted below.
+      (let [seals (atom 0)
+            seal sealed-plan/seal-plan
+            counting-seal (fn [snapshot root]
+                            (swap! seals inc)
+                            (seal snapshot root))
             query (fn [subject-eid]
                     {:subject {:type :user :id subject-eid}
                      :permission :read
                      :resource/type :node
                      :first 1})]
-        (binding [engine/*recursive-traversal-stats* stats]
+        (with-redefs [sealed-plan/seal-plan counting-seal]
           (is (= [] (:data (engine/lookup-resources
                             adapter (query 1001)))))
           (is (= [] (:data (engine/lookup-resources
-                            adapter (query 1002))))))
-        (is (= 1 (:compiled-recursive-plans @stats))
-            "different principals share one immutable recursive plan")
-        (is (= 1 (count @(:recursive-plans schema-cache))))
-        (let [{:keys [root-component-id components]}
-              (engine/recursive-component-plan
-               adapter :node :cycle-view)
-              [cycle-component view-component] components]
-          (is (= [0 1] (mapv :order components)))
-          (is (true? (:recursive? cycle-component)))
-          (is (= [[:node :cycle-a] [:node :cycle-b]]
-                 (:nodes cycle-component)))
-          (is (false? (:recursive? view-component)))
-          (is (= [[:node :cycle-view]]
-                 (:nodes view-component)))
-          (is (= [(:id cycle-component)]
-                 (:dependencies view-component)))
-          (is (= (:id view-component) root-component-id)))
-        (engine/evict-permission-paths-cache! schema-cache)
-        (binding [engine/*recursive-traversal-stats* stats]
+                            adapter (query 1002)))))
+          (is (= 1 @seals)
+              "different principals share one immutable sealed plan")
           (is (= [] (:data (engine/lookup-resources
-                            adapter (query 1003))))))
-        (is (= 2 (:compiled-recursive-plans @stats))
-            "schema-cache eviction forces plan recompilation")))))
-
-(deftest recursive-plan-crosses-the-strict-certification-boundary-test
-  (let [relations
-        {[:folder :reader]
-         [{:relation-id 1
-           :resource-type :folder
-           :relation-name :reader
-           :subject-type :user}]
-         [:folder :parent]
-         [{:relation-id 2
-           :resource-type :folder
-           :relation-name :parent
-           :subject-type :folder}]
-         [:folder :team]
-         [{:relation-id 3
-           :resource-type :folder
-           :relation-name :team
-           :subject-type :team}]
-         [:team :member]
-         [{:relation-id 4
-           :resource-type :team
-           :relation-name :member
-           :subject-type :user}]}
-        permissions
-        {[:folder :read]
-         [{:permission-id 11
-           :resource-type :folder
-           :permission-name :read
-           :source-relation-name :self
-           :target-type :relation
-           :target-name :reader}
-          {:permission-id 12
-           :resource-type :folder
-           :permission-name :read
-           :source-relation-name :self
-           :target-type :permission
-           :target-name :base-read}
-          {:permission-id 13
-           :resource-type :folder
-           :permission-name :read
-           :source-relation-name :parent
-           :target-type :permission
-           :target-name :read}
-          {:permission-id 14
-           :resource-type :folder
-           :permission-name :read
-           :source-relation-name :team
-           :target-type :relation
-           :target-name :member}]
-         [:folder :base-read]
-         [{:permission-id 15
-           :resource-type :folder
-           :permission-name :base-read
-           :source-relation-name :self
-           :target-type :relation
-           :target-name :reader}]}
-        adapter
-        (backend/make-adapter
-         {:id :plan-certification-test
-          :capabilities
-          {:consistency #{:fully-consistent}
-           :snapshots #{:current}
-           :cursor #{:forward :reverse}
-           :transactions #{}
-           :cache-proofs #{:ordered-generations :snapshot-bound}
-           :runtime #{#?(:clj :clj :cljs :cljs)}}
-          :operations
-          (merge
-           (operation-map)
-           {:snapshot-id
-            (constantly {:database-id :test :basis-t 1})
-            :source-scope
-            (constantly {:source-id :test :branch nil})
-            :proof-frame
-            (fn [relation-ids]
-              {:schema-stamp 1
-               :relation-stamps
-               (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
-            :permission-defs
-            (fn [resource-type permission-name]
-              (get permissions
-                   [resource-type permission-name]
-                   []))
-            :relation-defs
-            (fn [resource-type relation-name]
-              (get relations [resource-type relation-name] []))
-            :all-permission-nodes
-            (fn [] (set (keys permissions)))})})
-        schema-cache (engine/make-schema-cache adapter 1)
-        calls (atom [])
-        kernel
-        (->RecordingKernel
-         calls
-         (fn [operation _]
-           (case operation
-             (:indexed-plan-certification
-              :indexed-seed-certification)
-             {:status :certified})))
-        selection
-        {:kernel kernel}
-        stats (atom {})]
-    (binding [engine/*schema-cache* schema-cache
-              engine/*recursive-traversal-stats* stats
-              subproblem/*decision-kernel* selection]
-      (is (seq (:components
-                (engine/recursive-component-plan
-                 adapter :folder :read))))
-      (is (= 4 (count @calls))
-          "one source plan plus the user and empty root-type seed buckets are
-           certified before one generated plan compilation")
-      (let [plan-calls
-            (filter
-             #(= :indexed-plan-certification (first %))
-             @calls)
-            seed-calls
-            (filter
-             #(= :indexed-seed-certification (first %))
-             @calls)
-            compile-calls
-            (filter
-             #(= :indexed-traversal-compile (first %))
-             @calls)
-            input (second (first plan-calls))]
-        (is (= 1 (count plan-calls)))
-        (is (= 2 (count seed-calls)))
-        (is (= 1 (count compile-calls)))
-        (is (= #{:relations :permissions :definitions
-                 :relation-bindings :indexed-rules}
-               (set (keys input))))
-        (is (= #{:relation :self-permission
-                 :arrow-relation :arrow-permission}
-               (set (map :kind (:indexed-rules input)))))
-        (is (= 4 (count (:relations input))))
-        (is (= 4 (count (:relation-bindings input))))
-        (is (= 5 (count (:definitions input))))
-        (is (= #{":folder" ":user"}
-               (set
-                (map
-                 (comp :subject-type second)
-                 seed-calls))))
-        (doseq [[_ seed-input] seed-calls]
-          (is (= #{:indexed-rules :seed-rules :subject-type}
-                 (set (keys seed-input)))))
-        (is (= #{:indexed-rules :seed-rules-by-subject-type}
-               (set (keys (second (first compile-calls)))))))
-      (is (= 1 (:plan-certification-runs @stats)))
-      (is (= 5 (:plan-certification-rules @stats)))
-      (is (= 5 (:plan-certification-definitions @stats)))
-      (is (= 4 (:plan-certification-bindings @stats)))
-      (is (= 2 (:plan-certification-seed-buckets @stats)))
-      (is (= 3 (:plan-certification-kernel-calls @stats)))
-      (engine/recursive-component-plan adapter :folder :read)
-      (is (= 4 (count @calls))
-          "the schema-proof/root plan cache also caches certification"))))
-
-
-
+                            adapter (query 1001)))))
+          (is (= 1 @seals)
+              "repeated queries reuse the generation's sealed plan"))
+        ;; The sealed plan carries recursion classification directly.
+        (is (true? (:recursive?
+                    (sealed-plan/seal-plan adapter [:node :cycle-view])))
+            "a cyclic dependency graph seals as recursive")
+        (is (false? (:recursive?
+                     (sealed-plan/seal-plan adapter [:node :edit])))
+            "an acyclic root seals as non-recursive")
+        (with-redefs [sealed-plan/seal-plan counting-seal]
+          (let [other (backend/make-adapter
+                       {:id :test
+                        :capabilities
+                        {:consistency #{:fully-consistent}
+                         :snapshots #{:current}
+                         :cursor #{:forward :reverse}
+                         :transactions #{}
+                         :cache-proofs #{:ordered-generations
+                                         :snapshot-bound}
+                         :runtime #{#?(:clj :clj :cljs :cljs)}}
+                        :operations
+                        (assoc operations
+                               :source-lifecycle
+                               (let [lifecycle
+                                     (str (gensym "compiled-once-other-"))]
+                                 (fn [] lifecycle)))})]
+            (is (= [] (:data (engine/lookup-resources
+                              other (query 1003)))))
+            (is (= 2 @seals)
+                "a distinct source never shares another store's plan")))))))
 
 (defn- bounded-values
   [values {:keys [direction bound-eid inclusive-bound?]}]
