@@ -462,10 +462,22 @@
      :timeout-ms timeout-ms}
     cause)))
 
+(defn- cursor-selection-timeout-ms
+  "The catch-up bound for cursor reconstruction.
+
+  Every other selection path bounds its wait by the request's remaining
+  execution time as well as the configured sync timeout; a cursor replay that
+  ignored the deadline could outlive the request that asked for it."
+  [opts]
+  (if-let [contract (:execution-contract opts)]
+    (min (:consistency-sync-timeout-ms opts)
+         (execution/remaining-millis contract))
+    (:consistency-sync-timeout-ms opts)))
+
 (defn- await-revision-db
   "Returns a local DB that has observed `requested-t`, waiting only when needed."
   [conn opts requested-t]
-  (let [timeout-ms (:consistency-sync-timeout-ms opts)
+  (let [timeout-ms (cursor-selection-timeout-ms opts)
         local-db
         (try
           (d/db conn)
@@ -490,7 +502,7 @@
         (historical-selection-failure!
          "Failed reconstructing the Datomic cursor snapshot."
          :cursor-exact-as-of requested-t
-         (:consistency-sync-timeout-ms opts) e)))
+         (cursor-selection-timeout-ms opts) e)))
     (catch InterruptedException interrupt
       (.interrupt (Thread/currentThread))
       (throw
@@ -508,7 +520,7 @@
       (historical-selection-failure!
        "Failed reconstructing the Datomic cursor snapshot."
        :cursor-exact-as-of requested-t
-       (:consistency-sync-timeout-ms opts) failure))))
+       (cursor-selection-timeout-ms opts) failure))))
 
 (defn- list-query-identity
   [op query]
@@ -873,7 +885,7 @@
   [opts consistency-context op query-identity kind valid-result? weight-fn compute]
   (let [contract (:execution-contract opts)
         {:keys [adapter db relationship-dependencies
-                permission-dependencies basis-t completed-cache?
+                permission-dependencies basis-t snapshot-exact?
                 request-proof-frame]}
         consistency-context
         evaluate
@@ -885,10 +897,8 @@
                    (portable-result kind (compute)))]
              (execution/check! contract :semantic-evaluation)
              value))
-        snapshot-exact? (:snapshot-exact? consistency-context)
         cacheable?
         (and (:current-cache-store opts)
-             completed-cache?
              (or (not snapshot-exact?)
                  (backend/deterministic? adapter))
              (or (nil? contract)
@@ -1605,17 +1615,16 @@
                  (or (:mode selected-context) mode))
               (not= selected-current-basis (:basis-t selected-context)))]
       (merge
-     selected-context
-     {:mode (or (:mode selected-context) mode)
-      :snapshot-exact? snapshot-exact?
-      ;; A cursor is authenticated before snapshot selection. Historical
-      ;; reconstruction may use only the separately keyed snapshot-exact tier;
-      ;; current requests retain exact-current plus managed-proof behavior.
-      :completed-cache?
-      true
-      :requested-t requested-t
-      :selection selection
-      :response-token nil}))))
+       selected-context
+       {:mode (or (:mode selected-context) mode)
+        ;; A cursor is authenticated before snapshot selection. Historical
+        ;; reconstruction may use only the separately keyed snapshot-exact
+        ;; tier; current requests retain exact-current plus managed-proof
+        ;; behavior.
+        :snapshot-exact? snapshot-exact?
+        :requested-t requested-t
+        :selection selection
+        :response-token nil}))))
 
 (defn- capture-basic-result-context
   "Selects one immutable snapshot without constructing schema or relation
@@ -1646,7 +1655,8 @@
   [opts context op query-identity kind valid-result?
    resource-type permission compute]
   (let [contract (:execution-contract opts)
-        {:keys [adapter db basis-t mode request-proof-frame]} context
+        {:keys [adapter db basis-t snapshot-exact? request-proof-frame]}
+        context
         schema-cache
         (delay
           (selected-schema-cache!
@@ -1661,7 +1671,6 @@
                    (portable-result kind (compute)))]
              (execution/check! contract :semantic-evaluation)
              value))
-        snapshot-exact? (= :at-exact-snapshot mode)
         cacheable?
         (and (:current-cache-store opts)
              (:cache-remember-answers? opts)

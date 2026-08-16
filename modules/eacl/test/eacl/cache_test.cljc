@@ -224,6 +224,117 @@
       (is (false? (:value (exact key-1 false))))
       (is (= 3 @computations)))))
 
+(defn- ordinary-exact-key
+  [revision]
+  {:key-version 1
+   :backend :test
+   :source-scope {:source-id :source
+                  :branch nil
+                  :source-lifecycle :lifecycle-a
+                  :backend :test}
+   :native-revision {:revision revision :exact-locator revision}
+   :exact-locator revision
+   :view-kind :ordinary-exact
+   :snapshot-id {:basis-t revision}
+   :adapter-fingerprint :adapter-v1
+   :identity-contract :identity-v1})
+
+(deftest snapshot-exact-retention-does-not-republish-on-every-hit-test
+  (let [store (cache/current-cache)
+        snapshot (snapshot-object)
+        semantic-key {:operation :can? :query [:alice :read :document]}
+        current
+        (fn []
+          (cache/resolve-current!
+           store
+           {:snapshot snapshot
+            :snapshot-order 1
+            :same-snapshot? identical?
+            :snapshot-exact-key (ordinary-exact-key 1)
+            :cache-basis {:basis-t 1}}
+           semantic-key :decision boolean? (constantly true)))]
+    (dotimes [_ 8] (current))
+    (let [stats (get-in (cache/current-cache-stats store)
+                        [:snapshot-exact :tiers :answer])
+          races (:publication-races
+                 (get (cache/current-cache-stats store) :snapshot-exact))]
+      (is (= 1 (:entries stats))
+          "the first computation still seeds the snapshot-exact tier")
+      (is (zero? (or races 0))
+          "a cache hit must not republish an answer the tier already holds"))))
+
+(deftest snapshot-exact-bypasses-an-unkeyable-adapter-test
+  (let [store (cache/current-cache)
+        computations (atom 0)
+        resolve-with
+        (fn [snapshot-key]
+          (cache/resolve-exact!
+           store
+           {:snapshot-exact-key snapshot-key :cache-basis {:basis-t 1}}
+           {:operation :can?} :decision boolean?
+           (fn [] (swap! computations inc) true)))]
+    (testing "a view that cannot mint a canonical identity computes uncached"
+      (doseq [unkeyable [nil
+                         (dissoc (ordinary-exact-key 1) :adapter-fingerprint)
+                         (assoc (ordinary-exact-key 1)
+                                :view-kind :filtered-view)]]
+        (let [answer (resolve-with unkeyable)]
+          (is (true? (:value answer)))
+          (is (false? (:cached? answer)))
+          (is (nil? (:cache-tier answer))
+              "an unkeyable snapshot bypasses the tier instead of failing"))))
+    (is (= 3 @computations))
+    (is (= 3 (:bypasses (cache/current-cache-stats store))))))
+
+(deftest snapshot-exact-hit-reports-the-selected-basis-test
+  (let [store (cache/current-cache)
+        snapshot (snapshot-object)
+        semantic-key {:operation :can? :query [:alice :read :document]}
+        key-1 (ordinary-exact-key 1)]
+    ;; Seed the tier from a current answer whose recorded basis is deliberately
+    ;; older than the basis a later exact request selects, as a proof-lifted
+    ;; managed answer would be.
+    (cache/resolve-current!
+     store
+     {:snapshot snapshot
+      :snapshot-order 1
+      :same-snapshot? identical?
+      :snapshot-exact-key key-1
+      :cache-basis {:basis-t :stale-origin}}
+     semantic-key :decision boolean? (constantly true))
+    (let [answer
+          (cache/resolve-exact!
+           store
+           {:snapshot-exact-key key-1 :cache-basis {:basis-t 1}}
+           semantic-key :decision boolean? (constantly false))]
+      (is (true? (:cached? answer)))
+      (is (= {:basis-t 1} (:cache-basis answer))
+          "cache basis is rebuilt from the selected snapshot, not copied"))))
+
+(deftest nested-answers-weigh-more-than-scalar-answers-test
+  (let [snapshot (snapshot-object)
+        tree {:expanded-object {:type :document :id "doc"}
+              :leaf {:subjects (mapv (fn [i]
+                                       {:type :user :id (str "u" i)})
+                                     (range 200))}}
+        weight-of
+        (fn [value]
+          (let [store (cache/current-cache)]
+            (cache/resolve-current!
+             store
+             {:snapshot snapshot
+              :snapshot-order 1
+              :same-snapshot? identical?
+              :cache-basis {:basis-t 1}}
+             {:operation :expand-permission-tree} :permission-tree
+             map? (constantly value))
+            (get-in (cache/current-cache-stats store)
+                    [:subproblems :tiers :answer :weight])))]
+    (is (> (weight-of tree) (weight-of {:leaf {:subjects []}}))
+        "a large nested answer must not weigh the same as an empty one")
+    (is (> (weight-of tree) (* 100 128))
+        "weight scales with the retained subjects, not a flat floor")))
+
 (deftest current-generation-expiry-test
   (let [store (cache/current-cache)
         snapshot (snapshot-object)

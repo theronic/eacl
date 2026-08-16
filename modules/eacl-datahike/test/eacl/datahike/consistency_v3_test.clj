@@ -1,5 +1,6 @@
 (ns eacl.datahike.consistency-v3-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.walk]
             [datahike.api :as d]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
@@ -649,3 +650,76 @@
                                               [:database-id :store]))))
         "the store identity carries only backend and id, never connection configuration")
     (d/release conn)))
+
+;; --- 2026-08-16 exact-cache review ------------------------------------------
+
+(deftest relation-root-tree-expansion-observes-relationship-writes-test
+  ;; A relation root reads that relation's relationships, but no permission
+  ;; path names it. When the dependency closure missed it, the managed
+  ;; cross-snapshot tier proved a stale tree equal at every later snapshot.
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        second-reader (eacl/spice-object :user "second-reader")
+        leaf-subject-ids
+        (fn [tree]
+          (let [ids (atom #{})]
+            (clojure.walk/postwalk
+             (fn [node]
+               (when (and (map? node) (contains? node :subjects))
+                 (swap! ids into (map :id (:subjects node))))
+               node)
+             tree)
+            @ids))]
+    (try
+      (seed! conn authorization)
+      (d/transact conn [{:eacl/id "second-reader"}])
+      (eacl/create-relationship! authorization relationship)
+      (doseq [root [:reader :view]]
+        (testing (str "root " root)
+          (is (= #{"user"}
+                 (leaf-subject-ids
+                  (:tree-root
+                   (eacl/expand-permission-tree
+                    authorization
+                    {:resource document :permission root})))))
+          (eacl/create-relationship!
+           authorization
+           (eacl/->Relationship second-reader :reader document))
+          (is (= #{"user" "second-reader"}
+                 (leaf-subject-ids
+                  (:tree-root
+                   (eacl/expand-permission-tree
+                    authorization
+                    {:resource document :permission root}))))
+              "a cached tree must not survive a write it reports")
+          (eacl/delete-relationship!
+           authorization
+           (eacl/->Relationship second-reader :reader document))))
+      (finally (d/release conn)))))
+
+(deftest lagging-datahike-reader-awaits-the-exact-revision-test
+  ;; Datahike used to report a locally future revision as missing history while
+  ;; :select-at-least waited for the same revision on the same adapter. Exact
+  ;; selection now awaits it under the caller's bound, so replica lag is
+  ;; reported as bounded lag rather than as durable history that is gone.
+  (let [conn (datahike/create-conn nil {:keep-history? true})
+        authorization (client conn)]
+    (try
+      (seed! conn authorization)
+      (eacl/create-relationship! authorization relationship)
+      (let [db (d/db conn)
+            adapter (datahike-backend/snapshot-adapter db {:conn conn})
+            future-revision (+ 1000 (:max-tx db))
+            data (try
+                   (backend/invoke
+                    adapter :select-exact
+                    {:revision future-revision :exact-locator nil}
+                    25)
+                   nil
+                   (catch clojure.lang.ExceptionInfo error
+                     (ex-data error)))]
+        (is (= :eacl.consistency/freshness-unavailable (:type data))
+            "an unobserved revision is bounded lag, not missing history")
+        (is (= :freshness-timeout (:reason data)))
+        (is (= future-revision (:requested-order-hint data))))
+      (finally (d/release conn)))))
