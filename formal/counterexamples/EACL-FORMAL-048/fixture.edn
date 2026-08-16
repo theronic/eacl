@@ -1,0 +1,26 @@
+{:workflow ".github/workflows/formal.yml"
+ :run 31003207937
+ :job 92296807814
+ :gate :routing-certificate-boundary
+ :before
+ {:resource-jvm
+  {:maximum-heap-bytes 1073741824
+   :earlier-work
+   [:consistency-jvm-gate
+    :consistency-cljs-build
+    :cursor-jvm-gate
+    :cursor-cljs-build]}
+  :warmup-per-size 5
+  :samples-per-size 7
+  :failed-result-printed false
+  :status :failed}
+ :local-minimized-reproduction
+ {:fresh-jvm-first-run
+  {:normalized-latency-ratio 4.178822405421847
+   :status :passed-but-close-to-5x-ceiling}
+  :same-jvm-subsequent-runs
+  {:normalized-latency-ratio-range [1.0190738439146914
+                                    1.152338668529681]
+   :status :passed}
+  :interpretation
+  :measurement-was-sensitive-to-jit-and-prior-jvm-state}}

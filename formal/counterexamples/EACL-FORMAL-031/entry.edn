@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-031
+ :status :fixed
+ :discovered-by :property
+ :seed-or-trace
+ "github-actions/formal/dafny-and-generated-boundaries/artifact-size"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 commit cc9cd49328dc960e59eb8660172d125c269f3f6f"]
+ :affected-backends [:shared]
+ :root-cause
+ "The generated-artifact size gate was implemented as a Babashka executable, but the formal GitHub Actions job installed Clojure, clj-kondo, and Node without installing Babashka. Every proof and generated build passed before the gate failed with /usr/bin/env: bb: No such file or directory."
+ :fix
+ "The formal workflow now installs the exact Babashka 1.12.213 version used locally before invoking the post-build artifact gate, and the quantitative gate regression asserts both the runtime declaration and build-before-measurement order."
+ :closing-evidence
+ ["GitHub Actions run 30911913172 job 92000487051"
+  "eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"
+  "formal mutation :generated-artifact-gate-runtime-not-installed"]}

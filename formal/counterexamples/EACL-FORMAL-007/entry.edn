@@ -1,0 +1,15 @@
+{:id :EACL-FORMAL-007
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace "secure-format/cljs-hostile-edn"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions ["current worktree at discovery"]
+ :affected-backends [:shared :datascript]
+ :root-cause
+ "The portable decoder rethrew every CLJS ExceptionInfo on the assumption that it came from EACL validation. cljs.reader uses ExceptionInfo for duplicate-key and unknown-tag parse failures, so those failures escaped without the required typed EACL malformed-format error. JVM reader exceptions took the generic catch path and were normalized correctly."
+ :fix
+ "The decoder now rethrows only ExceptionInfo values already carrying the EACL format-error type and normalizes every host-reader ExceptionInfo to the typed malformed error."
+ :closing-evidence
+ ["eacl.secure-format-test/canonical-portable-format-test (CLJ and CLJS)"
+  "full DataScript CLJS suite: 47 tests, 283 assertions"]}

@@ -1,0 +1,98 @@
+;; Frozen current-engine baseline. Regenerate via
+;; (eacl.baseline.capture/capture-all!) — see README.md.
+{:fixture :folder-chain,
+ :page-size 7,
+ :forward
+ {:alice
+  {:principal "user:alice",
+   :denotation
+   ["folder:f-01"
+    "folder:f-02"
+    "folder:f-03"
+    "folder:f-04"
+    "folder:f-05"
+    "folder:f-06"
+    "folder:f-07"
+    "folder:f-08"
+    "folder:f-09"
+    "folder:f-10"
+    "folder:f-11"
+    "folder:f-12"
+    "folder:f-13"
+    "folder:f-14"
+    "folder:f-15"
+    "folder:f-16"
+    "folder:f-17"
+    "folder:f-18"
+    "folder:f-19"
+    "folder:f-20"],
+   :order
+   ["folder:f-01"
+    "folder:f-02"
+    "folder:f-03"
+    "folder:f-04"
+    "folder:f-05"
+    "folder:f-06"
+    "folder:f-07"
+    "folder:f-08"
+    "folder:f-09"
+    "folder:f-10"
+    "folder:f-11"
+    "folder:f-12"
+    "folder:f-13"
+    "folder:f-14"
+    "folder:f-15"
+    "folder:f-16"
+    "folder:f-17"
+    "folder:f-18"
+    "folder:f-19"
+    "folder:f-20"],
+   :pages
+   [{:size 7, :has-next? true, :has-previous? false}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 6, :has-next? false, :has-previous? true}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 20, :limit -1},
+   :count-matches-denotation? true},
+  :stranger
+  {:principal "user:stranger",
+   :denotation [],
+   :order [],
+   :pages [{:size 0, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 0, :limit -1},
+   :count-matches-denotation? true}},
+ :reverse
+ {:leaf
+  {:resource "folder:f-20",
+   :outcome :ok,
+   :denotation ["user:alice"],
+   :order ["user:alice"],
+   :first-page-size 1},
+  :root
+  {:resource "folder:f-01",
+   :outcome :ok,
+   :denotation ["user:alice"],
+   :order ["user:alice"],
+   :first-page-size 1}},
+ :points
+ {:alice {:authorized-sample {:resource "folder:f-01", :can? true}},
+  :stranger
+  {:unauthorized-sample {:resource "folder:f-01", :can? false}}},
+ :cursor-behavior
+ {:first-page-repeat-identical? true,
+  :after-cursor-repeat-identical? true,
+  :parent-cursor-reusable-after-child? true,
+  :cancelled-request
+  {:outcome :error,
+   :error-keys [:eacl.execution/cancelled :eacl.execution/cancelled]},
+  :zero-timeout-rejected
+  {:outcome :error,
+   :error-keys
+   [:eacl.execution/invalid-contract
+    :timeout-ms
+    :eacl/invalid-request]}},
+ :stale-basis
+ {:outcome :ok, :detail {:outcome :ok}, :resumed-page-size 2}}

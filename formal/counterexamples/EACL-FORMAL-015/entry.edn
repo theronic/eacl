@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-015
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "subproblem-cache/resolve-captures-lifecycle/clear/selects-new-flight/recursive-self-join"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 worktree before linearized lifecycle selection"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "The resolver constructed its recursive-self address from the current lifecycle before entering the store's selection critical section. A concurrent clear could then advance the lifecycle before entry/flight selection, so the callback bound an old-lifecycle recursion marker while owning a new-lifecycle flight. Same-key recursion failed to recognize itself and joined its own unresolved delay."
+ :fix
+ "The final v8 cache deletes flight selection and store locks. Independent work captures one opaque lifecycle; clear replaces it, and bounded compare-and-set publication rejects a detached lifecycle without waiting or mutating the new generation."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test"
+  "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

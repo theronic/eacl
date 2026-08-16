@@ -1,0 +1,16 @@
+{:id :EACL-FORMAL-013
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace "subproblem-cache/resolve-own-key/lookup-own-flight"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions ["PR 101 worktree before lifecycle-qualified lookup self-detection"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "`resolve!` recorded active recursive ownership as `[lifecycle tier key]`, but `lookup!` tested `[tier key]`. A callback probing its own in-flight entry could therefore dereference its own unresolved delay instead of taking the documented recursive-self miss."
+ :fix
+ "The final v8 cache has no registered flights. Read-only lookup never starts work; identical misses compute independently and can only race bounded nonblocking publication, so self-wait is structurally impossible."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/independent-identical-misses-never-wait-test"
+  "eacl.subproblem-cache-test/lookup-never-starts-work-test"
+  "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

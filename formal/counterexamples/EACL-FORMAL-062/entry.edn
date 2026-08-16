@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-062
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "eacl-explorer/recursive-schema/empty-parent-relations"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0 commit 34ca6b15039daf8f651dd9ef2ccfb95d483ab112"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "Enumeration routing treated schema reachability into a recursive strongly connected component as sufficient to enter the fixed-point engine. It did not test whether any relationship prefix capable of traversing that cycle was populated in the selected immutable snapshot, so merely writing recursive syntax consumed recursive work and limits."
+ :fix
+ "Derive the exact in-SCC arrow-permission relationship guards from the accepted schema plan, certify a snapshot-bound relation-prefix population operation on every backend, and select the recursive route only when both the schema certificate reaches recursion and at least one cycle guard is populated."
+ :closing-evidence
+ ["RoutingCertificate.InactiveRecursiveDataSelectsAcyclicRoute"
+  "AcyclicEngine.InactiveCycleGuardEliminatesRecursiveContribution"
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"
+  "eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test"]}

@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-014
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "subproblem-cache/parent-future/child-future/inherited-same-key"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 worktree before context-aware recursive-self execution"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "A recursive same-key `resolve!` bypassed its shared flight by invoking `compute` directly. Clojure futures inherit dynamic bindings, so a child thread could inherit the parent's resolving-key set, take the self-bypass, and run a callback that was absent from the coordinator's active-callback count."
+ :fix
+ "The final v8 cache deletes computation slots, permits, shared flights, and recursive self-bypass. Every miss performs its own request-bounded computation and publication is a bounded nonblocking optimization."
+ :closing-evidence
+ ["eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"
+  "eacl.subproblem-cache-test/independent-identical-misses-never-wait-test"]}

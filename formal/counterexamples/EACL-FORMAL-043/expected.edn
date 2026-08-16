@@ -1,0 +1,14 @@
+{:public-results
+ {:lookup-resources [[:document 11] [:document 12]]
+  :lookup-subjects [[:user 10]]
+  :count-resources 2
+  :count-subjects 1
+  :can? true}
+ :routing
+ {:legacy-generated-indexed-calls 0
+  :shadow-generated-indexed-calls :positive
+  :verified-authoritative-generated-indexed-calls :positive}
+ :shadow
+ {:public-value-divergences 0
+  :algorithm-private-cursor-shapes-may-differ true
+  :cross-algorithm-resource-counter-equality-required false}}

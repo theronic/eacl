@@ -1,0 +1,321 @@
+# EACL formal verification guide
+
+EACL's formal work proves a backend-neutral authorization kernel under named
+adapter, runtime, and cryptographic assumptions. It does not verify Clojure,
+ClojureScript, storage engines, compilers, cryptographic primitives, or a
+customer's policy intent. The current release manifest reports
+`:conditionally-verified`: production routing, cross-adapter campaigns, and
+performance gates pass, while independent security/formal-methods review
+remains an explicit unmet release obligation. Two verified bodies now coexist.
+Enumeration, point checks, and counts run on the hand-written CLJC
+stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
+`stable-page`, `stable-route`) on both targets; its evidence is the
+release-assurance tree under `formal/stable-discovery/` (41 Dafny leaves, two
+TLC families, executable refinement bridges, mutation controls; see
+[docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
+Dafny kernel remains the production authority for the pure decisions that
+surround the engine — consistency planning, current-cache decisions, cursor
+continuation, and page-request normalization — through `eacl.verified-kernel`
+on the JVM and its portable CLJC decision twin on ClojureScript, differentially
+certified against the generated JavaScript oracle. The generated JavaScript
+adapter is formal-smoke-only and no runtime option can select an alternate
+engine. Browser answers are advisory and deployments must re-check
+authorization on the server.
+
+The measured performance consequences and recommended cache-free reference,
+consistency, cache, cursor, and backend architecture are recorded in the
+[v8 sound cache and cursor redesign](reports/2026-08-02-eacl-v8-sound-cache-redesign.md)
+and the normative
+[adversarial strategy review](reports/2026-08-02-eacl-v8-strategy-adversarial-review.md).
+Their completed-cache scope is superseded by the authoritative
+[single-database current-snapshot cache design](reports/2026-08-02-eacl-v8-single-db-current-cache-design.md).
+
+## Local setup
+
+Install the checksum-locked Dafny/Boogie/Z3, Apalache, and TLA+ tools:
+
+```sh
+bin/formal bootstrap
+```
+
+The generated-artifact gate additionally requires Babashka 1.12.213. Formal
+CI installs that exact gate runtime before rebuilding and measuring artifacts;
+the committed gate configuration and regression test reject version or
+workflow drift.
+
+The bootstrap installs only under `target/formal-tools/`. Tool versions,
+platform artifacts, licenses, upstream URLs, and SHA-256 values are committed
+in `formal/toolchain.lock.json`. That lock also carries the Dafny
+per-assertion-batch time ceiling and deterministic Z3 resource limit. `verify`
+writes one CSV per Dafny module plus
+`target/formal/dafny-verification.json`; any failed effort, timeout, or effort
+over the locked resource limit fails the command. The solver resource count is
+a proof-pipeline measure, not evidence about EACL request latency, heap, or
+backend work.
+
+Run proof and model targets independently:
+
+```sh
+bin/formal source-closure
+bin/formal format
+bin/formal verify
+bin/formal build-java
+bin/formal build-js
+bin/formal browser-bundle
+bin/formal artifact-size
+bin/formal tla-typecheck
+bin/formal apalache-check
+bin/formal apalache-invariant
+```
+
+`artifact-size` must run after all generated forms are rebuilt. It measures
+uncompressed Java source bytes, Java class bytes, JavaScript-with-runtime
+bytes, and browser-bundle bytes separately against the reviewed full-kernel
+ledger in `formal/verification/generated-artifact-size.edn`; it does not
+substitute one representation, solver effort, allocation, heap, or latency
+for another.
+
+`source-closure` checks the committed
+`formal/verification/public-source-closure.json` ledger with the exact
+clj-kondo version in the toolchain lock. The ledger closes the named shared,
+proof-provider, and backend roots declared in `bin/public-source-closure.mjs` over the reachable definitions it lists
+(the committed ledger is the authority for the exact counts; regenerate it
+with `node bin/public-source-closure.mjs write` after any public-source
+edit), including unattributed usages assigned to their exact containing
+`defrecord` spans. It is static completeness evidence only: it does not prove
+Clojure source or adapter semantics. `backend-dispatch.edn` additionally
+closes every CLJ/CLJS
+`backend/invoke` site to the exact literal operation keys the ledger pins
+(the required snapshot operations plus `:proof-frame`); the meaning of each
+adapter implementation remains a named obligation.
+
+Generated Java classes must be tested in a fresh JVM after every regeneration:
+
+```sh
+clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 0
+```
+
+Use the reported port with `clj-nrepl-eval`. All Clojure correctness tests,
+including CI, execute through nREPL. `bin/ci-nrepl-eval` is the CI client; it
+starts no test JVM and only evaluates a supplied form in an existing server.
+
+## Proof navigation
+
+| Source | Main responsibility |
+| --- | --- |
+| `formal/stable-discovery/*.dfy` (41 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 506 obligations) |
+| `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
+| `SnapshotOracle.dfy` | abstract immutable adapter contract |
+| `AcyclicEngine.dfy` | **retired engine model** (path compilation, direct checks, acyclic projections and counts); kept as a regression model until task 9.2's formal cut |
+| `RecursiveEngine.dfy` | **retired engine model** (typed SCC routing, recursive worklists, continuation replay); same disposition |
+| `OrderedMerge.dfy` | **retired** ordered union and uniqueness of the entity-ID merge; same disposition |
+| `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions (live decisions) |
+| `IndexedBatching.dfy` | **retired** bounded ordered scan waves and crossing law of the generated indexed traversal; same disposition |
+| `IndexedBatchCompleteness.dfy` | **retired** proof-only pending-scan ghost views; same disposition |
+| `CacheKernel.dfy` | dependency-scope completeness, forward cache acceptance, recomputation equivalence, and telemetry noninterference |
+| `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
+| `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
+| `ScalarFrontierCoherence.dfy` | globally ordered native generations, scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication |
+| `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
+| `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
+| `WireFormat.dfy` | strict abstract boundary variants and bounds |
+| `PermissionTree.dfy` | typed shallow expansion topology, denotation, active-path cycles, structural budgets, and all-or-error outcomes |
+
+`formal/verification/assurance-matrix.edn` maps public operations to theorems,
+adapter assumptions, runtime targets, and CI evidence. A passing proof file is
+not by itself a public assurance claim. `formal/verification/manifest.edn` is
+the release gate and must continue to refuse verified status while any required
+obligation is incomplete.
+
+### Permission-tree assurance boundary
+
+`PermissionTree.dfy` contributes 62 locked obligations. The theorem map covers
+node oneof and annotation well-formedness, direct-leaf exactness, union
+denotation and child-permutation invariance, absent-resource topology,
+active-path cycle rejection, additive-budget monotonicity, successful limit
+preservation, failure non-publication, typed identity, sum-typed relation
+declarations, and emitted-child depth accounting. Executable witnesses
+also reject unsound flattening, global-visited cycle detection, type-erasing
+identity, partial success, and over-limit success.
+
+The formal model is proof-only. Production
+`modules/eacl/src/eacl/permission_tree.cljc` is handwritten and has no claimed
+mechanical Dafny-to-Clojure refinement. Correspondence evidence lives in
+`modules/eacl/test/eacl/permission_tree_test.cljc` (independent evaluator,
+bounded generators, permutation and hostile-realization checks),
+`modules/eacl/test/eacl/contract_support.cljc` plus each backend contract, and
+`formal/fixtures/permission-tree/` (version-pinned black-box Docker topology).
+CLJ and CLJS run the same portable kernel. Adapter schema/scan completeness,
+codec round trips, immutable selection, causal-token authentication,
+monotonic-clock behavior, host exact-integer/runtime semantics, and arbitrary
+source states remain trusted or empirically certified rather than proved.
+
+## Temporal models
+
+`formal/tla/EaclTemporal.tla` is the compact safety model.
+`EaclTemporalDetailed.tla` covers hostile cache, cursor, exact-selection,
+retention, branch/reset/restore, provider-failure, tampering, and continuation
+races. Bounded checks are bug-finding evidence. Separate initiation,
+consecution, and safety-implication runs establish the configured inductive
+invariants; the final unbounded state predicates are carried in Dafny.
+
+## Adapter certification
+
+The proof assumes adapters provide immutable coherent snapshots, injective
+identity conversion, complete schema/scans/generation proofs, stable source
+lifecycle scope, monotone native revision selection, and correct exact
+selection. Managed cache correctness does not assume graph ancestry. Run the shared certification namespaces through a dev
+nREPL:
+
+- `eacl.datomic.adapter-certification-test`
+- `eacl.datascript.adapter-certification-test` in CLJ and CLJS
+- `eacl.datahike.adapter-certification-test`
+
+The machine-readable result is
+`formal/verification/adapter-certification.edn`. Optional runtime guards check
+locally representable shape, order, uniqueness, bounds, booleans, adapters,
+and nonnegative exact-integer internal EIDs. Global completeness, ancestry,
+and generation-proof truthfulness remain certification obligations.
+
+## Counterexamples and mutation controls
+
+Every discovered production defect has a directory under
+`formal/counterexamples/EACL-FORMAL-NNN/` containing the ledger entry,
+minimized fixture, expected result, and reproduction instructions.
+
+Run the complete retained corpus:
+
+```sh
+EACL_NREPL_PORT=<dev-port> bin/formal counterexample-replay
+```
+
+Run all registered deliberately wrong implementations:
+
+```sh
+EACL_NREPL_PORT=<dev-port> bin/formal mutation-control
+```
+
+The registry is `formal/mutations/registry.edn`; a survivor is a release
+blocker. Scheduled CI also runs coherent generated-schema campaigns and uploads
+the exact seed, coverage, run metadata, and coherence-preserving minimized
+fixture on failure.
+
+## Cryptographic boundary
+
+`formal/verification/cryptographic-assumptions.md` maps authentication,
+canonicalization, proof equality, collision resistance, entropy/key management,
+and clock axioms to production functions and tests. These remain assumptions,
+not proved cryptographic claims.
+
+## Generated authority and retained differential evidence
+
+Generated Java and JavaScript providers implement the portable
+`eacl.verified-kernel/DecisionKernel` boundary. Production clients always
+install that generated provider; `:engine-selection` is rejected as an unknown
+client option. Cursor continuation,
+relationship request normalization, relationship keyset page flags/window
+size, and decoded cache-entry decisions are routed through that boundary. The
+indexed relationship engine retains only an authenticated
+physical edge and consumes at most one page plus lookahead; executable
+forward/backward walk tests establish stable, complete, duplicate-free
+composition over certified adapter scans. This is deliberately not a theorem
+of a global or cross-backend result order.
+
+The pre-cutover shadow campaign and its minimized counterexamples remain
+evidence, not executable production behavior. Test-only injection seams run
+the generated provider, retained materialized oracle, and independent
+reference implementations against the same fixtures without adding a
+production rollback branch.
+
+The same boundary now converts complete materialized schema IR, objects,
+relationships, traversal limits, all five authorization request variants, and
+typed results to generated Java and JavaScript. This is the executable
+cache-free semantic reference used by differential tests. Its completed
+authorization values are compared with completed indexed results. Its work
+counters and typed limit outcomes are not production resource refinements:
+the reference closes the whole finite fixture, while production is
+query-local. Production limits and dimensionally matching counters are
+compared against the generated indexed state machine. Cached and uncached
+public-client state traces cover Datomic, Datahike, and DataScript, including
+unrelated transactions and revocation.
+
+The public `can?` dispatch and acyclic hot path also have source-shaped
+submodels. The public model proves that reusing the already-computed
+permission-root classification preserves the Boolean result under the
+established undefined-root-denies contract and reduces a
+generated-authoritative call to one root lookup. A public JVM fixture observes
+that exact lookup count; the shared CLJC result path remains covered on CLJ and
+CLJS. The acyclic models cover ordered EID merge, leapfrog intersection, and
+arrow empty/singleton/wide selection. Dafny
+proves their Boolean/set behavior and named logical bounds; generated
+Java/JavaScript compare the exact source-control results and traces with
+CLJ/CLJS. EACL-FORMAL-042 records the resulting production fix: an empty arrow
+now returns false before direct-grant/intersection setup. These submodels do not
+prove path materialization, nested callback meaning, storage-engine seek cost,
+Clojure language semantics, allocation, retained heap, or wall time.
+
+`can?` is anchored to the known resource: `eacl.engine.stable-route/check-eids`
+runs the stable reducer in the reverse direction from the resource and stops
+at the subject's first emission; a negative check is returned only after the
+reverse search is exhausted. Reverse transition soundness and completeness
+are proved by `EaclReverseProducer.dfy` and `ReducerCompleteness.dfy` in the
+stable-discovery tree. EACL-FORMAL-055 retains the historical subject-forward
+scaling regression of the retired generated state machine as a replayed
+counterexample against the stable engine.
+
+Permission-path materialization now has its own source-shaped boundary rather
+than being assumed by the arrow theorem. Dafny models expansion of typed
+relation definitions into direct, alias, arrow-relation, and arrow-permission
+paths, missing-definition behavior, static cost ranking, subject-type filtering
+for direct grants, and the exact meaning of `:exhaustive?`. Generated Java and
+JavaScript match `calc-permission-paths` and `calc-direct-grant-relations` on 99
+CLJ/CLJS fixtures each. Adapter certification v2 composes the same calculation
+with actual Datomic, Datahike, and DataScript definition IDs. That is finite
+executable refinement evidence; host-language semantics and arbitrary storage
+engine states remain trusted.
+
+The outer acyclic union fold is source-shaped as well. Dafny proves the
+recursion guard performs zero path/callback work, direct paths with a
+nonmatching declared subject type do not invoke the backend probe, evaluation
+stops at the first effective positive, and path/callback checks are linear in
+the materialized path count. Generated Java and JavaScript match the actual
+CLJ/CLJS value, realized-path count, per-kind callback counts, and ordered
+`[path-kind, path-index]` trace on 407 fixtures each. Complete callback argument
+vectors and the meaning of nested callback results remain separate refinement
+obligations.
+
+There is no longer a routing decision between an acyclic and a recursive
+engine: every permission root compiles to one sealed plan whose
+`:recursive?` flag (Kahn's peel over the permission-dependency edges) only
+governs the bare-`:last` complete-evaluation guard. `AcyclicEngine.dfy`,
+`RecursiveEngine.dfy`, `OrderedMerge.dfy`, `RoutingCertificate.dfy` and the
+`Indexed*` leaves under `formal/dafny/` model the retired engines; they still
+verify on CI as historical regression models until the remaining formal cut
+recorded in `openspec/changes/adopt-stable-discovery-enumeration/tasks.md`
+(task 9.2) removes them and re-pins the manifest. EACL-FORMAL-030 retains the
+same-permission-name counterexample.
+
+Materializing an entire database remains unacceptable on large EACL graphs.
+Production therefore drives certified ordered adapter scans one value at a
+time from the sealed plan rather than running a whole-graph evaluator, on the
+JVM and on ClojureScript from the same CLJC source, gated by the independent
+naive-fixpoint oracle, frozen cross-engine baselines, randomized refinement,
+counterexample replay, mutation controls, and full DataScript differentials.
+The generated browser runtime stays outside the production classpath. There
+is no runtime engine-selection branch. Independent review remains a separate
+release-assurance obligation, so the manifest reports
+`:conditionally-verified`, not an unqualified whole-deployment claim.
+
+## Interpreting the assurance claim
+
+“Verified” means a mapped generated JVM decision refines its formal
+specification when its listed adapter and trusted-boundary assumptions hold,
+and, for enumeration, that the CLJC stable engine's executable refinement
+bridges, oracle differentials and mutation controls pass against the
+stable-discovery proof leaves. Neither engine body is mechanically extracted
+into production; the generated kernel is executed for its four decisions, the
+stable engine is hand-written CLJC checked against its models. The evidence includes exact successful lookup/count/page behavior and
+fail-closed limit, cache, and cursor decisions. It does not mean the entire
+EACL deployment or backend is proved correct. Missing coverage, a failed
+adapter obligation, a surviving mutant, a timeout, an undocumented axiom, or
+an unmet performance gate withholds the claim.

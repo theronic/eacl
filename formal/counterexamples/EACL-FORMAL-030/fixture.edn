@@ -1,0 +1,14 @@
+{:root [:document :read]
+ :permission-nodes
+ [[:document :read]
+  [:team :view]
+  [:folder :view]]
+ :typed-dependency-edges
+ [[[:document :read] [:team :view]]
+  [[:folder :view] [:folder :view]]]
+ :recursive-components
+ [#{[:folder :view]}]
+ :old-name-only-arrow-target
+ {:head [:document :read]
+  :target-permission :view
+  :spurious-target [:folder :view]}}

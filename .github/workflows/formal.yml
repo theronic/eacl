@@ -1,0 +1,677 @@
+name: Formal verification
+
+on:
+  push:
+    branches: ['**']
+  pull_request:
+  workflow_dispatch:
+  schedule:
+    - cron: '23 2 * * 1'
+
+concurrency:
+  group: formal-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dafny-and-generated-boundaries:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name != github.repository
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+          clj-kondo: '2025.02.20'
+          bb: '1.12.213'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache locked formal tools and language dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.npm
+          key: formal-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'deps.edn', 'formal/smoke/js/package-lock.json') }}
+
+      - name: Bootstrap checksum-locked tools
+        run: bin/formal bootstrap
+
+      - name: Verify and deterministically build Dafny targets
+        run: |
+          bin/formal source-closure
+          bin/formal format
+          bin/formal verify
+          bin/formal build-java
+          bin/formal build-js
+          bin/formal browser-bundle
+          bin/formal artifact-size
+
+      - name: Start heap-bounded generated-boundary nREPL
+        run: |
+          JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
+            clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
+            > target/formal/ci-nrepl.log 2>&1 &
+          echo "$!" > target/formal/ci-nrepl.pid
+          for attempt in {1..180}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/formal/ci-nrepl.log
+          exit 1
+
+      - name: Run generated Java differential boundaries through nREPL
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.java-round-trip-test :reload)
+               (require 'eacl.formal.wire-format-bridge-test :reload)
+               (require 'eacl.formal.semantics-bridge-test :reload)
+               (require 'eacl.formal.page-window-bridge-test :reload)
+               (require 'eacl.formal.cross-runtime-vector-test :reload)
+               (require 'eacl.formal.production-kernel-test :reload)
+               (require 'eacl.formal.state-trace-differential-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.formal.java-round-trip-test
+                      'eacl.formal.wire-format-bridge-test
+                      'eacl.formal.semantics-bridge-test
+                      'eacl.formal.page-window-bridge-test
+                      'eacl.formal.cross-runtime-vector-test
+                      'eacl.formal.production-kernel-test
+                      'eacl.formal.state-trace-differential-test)]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"generated Java boundary failed\" result)))
+                 result))"
+
+      - name: Run generated JavaScript and indexed-engine differential boundaries
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.cljs-test-runner
+                 :target :nodejs
+                 :optimizations :none
+                 :output-dir \"target/formal/cljs-smoke-out\"
+                 :output-to \"target/formal/cljs-smoke.js\"}))"
+          node target/formal/cljs-smoke.js
+
+      - name: Run advanced-optimized CLJS production and differential suites
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.cljs-test-runner
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :warnings {:private-var-access false}
+                 :output-dir \"target/formal/cljs-advanced-out\"
+                 :output-to \"target/formal/cljs-advanced.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+               {:main 'eacl.datascript.cljs-test-runner
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :warnings {:private-var-access false}
+                 :output-dir \"target/formal/datascript-cljs-advanced-out\"
+                 :output-to \"target/formal/datascript-cljs-advanced.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+                {:main 'eacl.formal.empty-bundle-entry
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :output-dir \"target/formal/cljs-empty-bundle-out\"
+                 :output-to \"target/formal/cljs-empty-bundle.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+                {:main 'eacl.formal.portable-kernel-bundle-entry
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :output-dir \"target/formal/cljs-portable-kernel-bundle-out\"
+                 :output-to \"target/formal/cljs-portable-kernel-bundle.js\"
+                 :pretty-print false})
+               (cljs/build
+                nil
+                {:main 'eacl.datascript.production-bundle-entry
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :output-dir \"target/formal/cljs-production-bundle-out\"
+                 :output-to \"target/formal/cljs-production-bundle.js\"
+                 :pretty-print false}))"
+          node target/formal/cljs-advanced.js
+          node target/formal/datascript-cljs-advanced.js
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.cljs-production-gate-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.formal.cljs-production-gate-test)]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"CLJS production bundle gate failed\"
+                                   result)))
+                 result))"
+
+      - name: Gate portable CLJS indexed traversal scaling and ceiling
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.indexed-traversal-benchmark
+                 :target :nodejs
+                 :optimizations :advanced
+                 :warnings-as-errors true
+                 :output-dir
+                 \"target/formal/cljs-indexed-traversal-out\"
+                 :output-to
+                 \"target/formal/cljs-indexed-traversal.js\"}))"
+          node target/formal/cljs-indexed-traversal.js
+
+      - name: Restart heap-bounded nREPL for runtime performance suites
+        run: |
+          old_pid="$(cat target/formal/ci-nrepl.pid)"
+          kill "$old_pid" 2>/dev/null || true
+          for attempt in {1..30}; do
+            if ! kill -0 "$old_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill -KILL "$old_pid" 2>/dev/null || true
+          # The retiring listener must release the port before the new JVM
+          # starts, or the readiness probe below can accept against the dying
+          # process and hand the next gate a connection-refused nREPL.
+          for attempt in {1..30}; do
+            if ! (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
+            clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
+            >> target/formal/ci-nrepl.log 2>&1 &
+          echo "$!" > target/formal/ci-nrepl.pid
+          for attempt in {1..180}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          # Readiness is an evaluation round-trip, not a TCP accept.
+          for attempt in {1..12}; do
+            if sh bin/ci-nrepl-eval 7788 ':eacl.formal/nrepl-ready'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          cat target/formal/ci-nrepl.log
+          exit 1
+
+      - name: Run complete verified-authority suites
+        run: |
+          # Run host-sensitive benchmarks before correctness and CLJS
+          # compilation can retain unrelated JVM/compiler state.
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.verified-authority-suite :reload)
+               (eacl.formal.verified-authority-suite/run-heavy!))"
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.verified-authority-suite :reload)
+               (eacl.formal.verified-authority-suite/run-nonbenchmark!))"
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.verified-authority-test-runner
+                 :target :nodejs
+                 :optimizations :none
+                 :output-dir
+                 \"target/formal/cljs-verified-authority-out\"
+                 :output-to
+                 \"target/formal/cljs-verified-authority.js\"}))"
+          node target/formal/cljs-verified-authority.js
+          sh bin/ci-nrepl-eval 7788 \
+            "@(future :eacl.formal/verified-authority-executor-alive)"
+
+      - name: Restart heap-bounded nREPL for generated resource gates
+        run: |
+          old_pid="$(cat target/formal/ci-nrepl.pid)"
+          kill "$old_pid" 2>/dev/null || true
+          for attempt in {1..30}; do
+            if ! kill -0 "$old_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill -KILL "$old_pid" 2>/dev/null || true
+          # The retiring listener must release the port before the new JVM
+          # starts, or the readiness probe below can accept against the dying
+          # process and hand the next gate a connection-refused nREPL.
+          for attempt in {1..30}; do
+            if ! (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
+            clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
+            >> target/formal/ci-nrepl.log 2>&1 &
+          echo "$!" > target/formal/ci-nrepl.pid
+          for attempt in {1..180}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          # Readiness is an evaluation round-trip, not a TCP accept.
+          for attempt in {1..12}; do
+            if sh bin/ci-nrepl-eval 7788 ':eacl.formal/nrepl-ready'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          cat target/formal/ci-nrepl.log
+          exit 1
+
+      - name: Gate routing-certificate logical work and JVM allocation
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require
+                'eacl.formal.routing-certificate-benchmark
+                :reload)
+               (let [result
+                     (eacl.formal.routing-certificate-benchmark/run-gate!)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (= :failed (:status result))
+                   (throw
+                    (ex-info
+                     \"generated routing certificate resource gate regressed\"
+                     result)))
+                 result))"
+
+      - name: Gate generated consistency-boundary overhead
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require
+                'eacl.formal.consistency-boundary-benchmark
+                :reload)
+               (let [result
+                     (eacl.formal.consistency-boundary-benchmark/run-gate!)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (= :failed (get-in result [:summary :status]))
+                   (throw
+                    (ex-info
+                     \"generated JVM consistency boundary regressed\"
+                     result)))
+                 (:summary result)))"
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.formal.consistency-boundary-benchmark
+                 :target :nodejs
+                 :optimizations :none
+                 :output-dir
+                 \"target/formal/consistency-boundary-cljs-out\"
+                 :output-to
+                 \"target/formal/consistency-boundary-cljs.js\"}))"
+          node target/formal/consistency-boundary-cljs.js
+
+      - name: Restart heap-bounded nREPL for recorded-baseline gates
+        run: |
+          old_pid="$(cat target/formal/ci-nrepl.pid)"
+          kill "$old_pid" 2>/dev/null || true
+          for attempt in {1..30}; do
+            if ! kill -0 "$old_pid" 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          kill -KILL "$old_pid" 2>/dev/null || true
+          # The retiring listener must release the port before the new JVM
+          # starts, or the readiness probe below can accept against the dying
+          # process and hand the next gate a connection-refused nREPL.
+          for attempt in {1..30}; do
+            if ! (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
+            clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
+            >> target/formal/ci-nrepl.log 2>&1 &
+          echo "$!" > target/formal/ci-nrepl.pid
+          for attempt in {1..180}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              break
+            fi
+            sleep 1
+          done
+          # Readiness is an evaluation round-trip, not a TCP accept.
+          for attempt in {1..12}; do
+            if sh bin/ci-nrepl-eval 7788 ':eacl.formal/nrepl-ready'; then
+              exit 0
+            fi
+            sleep 5
+          done
+          cat target/formal/ci-nrepl.log
+          exit 1
+
+      - name: Gate populated recursion against recorded v7 baselines
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.bench.recursive-performance-gate-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.bench.recursive-performance-gate-test)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (or (pos? (:fail result)) (pos? (:error result)))
+                   (throw
+                    (ex-info
+                     \"populated-recursion performance gate regressed\"
+                     result)))
+                 result))"
+
+      - name: Gate Explorer enumeration against recorded v7 baselines
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.bench.explorer-enumeration-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.bench.explorer-enumeration-test)]
+                 (binding [*out* *err*]
+                   (prn result)
+                   (flush))
+                 (when (or (pos? (:fail result)) (pos? (:error result)))
+                   (throw
+                    (ex-info
+                     \"explorer enumeration gate regressed\"
+                     result)))
+                 result))"
+
+      - name: Assert verified status remains withheld while gates are unmet
+        run: |
+          if bin/formal manifest; then
+            echo "manifest unexpectedly allowed verified status" >&2
+            exit 1
+          fi
+
+      - name: Stop CI nREPL
+        if: always()
+        run: |
+          if [ -f target/formal/ci-nrepl.pid ]; then
+            nrepl_pid="$(cat target/formal/ci-nrepl.pid)"
+            kill "$nrepl_pid" 2>/dev/null || true
+            for attempt in {1..30}; do
+              if ! kill -0 "$nrepl_pid" 2>/dev/null; then
+                exit 0
+              fi
+              sleep 1
+            done
+            kill -KILL "$nrepl_pid" 2>/dev/null || true
+          fi
+
+      - name: Upload generated/campaign diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-boundary-diagnostics
+          path: |
+            target/formal/ci-nrepl.log
+            target/formal/campaign*.edn
+            target/formal/dafny-verification.json
+            target/formal/dafny-resources/*.csv
+
+  temporal-models:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+
+      - name: Set up Babashka
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          bb: '1.12.213'
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache locked formal tools
+        uses: actions/cache@v4
+        with:
+          path: target/formal-tools
+          key: temporal-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json') }}
+
+      - name: Bootstrap checksum-locked tools
+        run: bin/formal bootstrap
+
+      - name: Typecheck and check bounded/inductive temporal obligations
+        run: |
+          bin/formal tla-typecheck
+          bin/formal apalache-check
+          bin/formal apalache-invariant
+
+      - name: Require temporal cache spec mutants to fail (kill controls)
+        run: bin/formal apalache-mutation-control
+
+      - name: Run larger scheduled temporal bound
+        if: github.event_name == 'schedule'
+        run: bin/formal apalache-scheduled
+
+      - name: Upload model-checker run metadata
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: temporal-model-runs
+          path: target/formal/apalache
+
+  parity-corpus-and-mutations:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+
+      - name: Set up Clojure CLI
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache formal tools and language dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.m2/repository
+            ~/.gitlibs
+            ~/.npm
+          key: parity-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'formal/smoke/js/package-lock.json', 'deps.edn', 'modules/*/deps.edn') }}
+
+      - name: Build released generated runtimes
+        run: |
+          bin/formal bootstrap
+          bin/formal build-java
+          bin/formal browser-bundle
+
+      - name: Start parity nREPL
+        run: |
+          mkdir -p target/formal
+          clojure -M:dev:test:cljs-test:nrepl --port 7788 \
+            > target/formal/parity-nrepl.log 2>&1 &
+          for attempt in {1..180}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/formal/parity-nrepl.log
+          exit 1
+
+      - name: Run coherent generators and mutation controls
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.generators-test :reload)
+               (require 'eacl.formal.cache-strategy-adversarial-test :reload)
+               (require 'eacl.formal.mutation-control-test :reload)
+               (let [result
+                     (clojure.test/run-tests
+                      'eacl.formal.generators-test
+                      'eacl.formal.cache-strategy-adversarial-test
+                      'eacl.formal.mutation-control-test)]
+                 (when (pos? (+ (:fail result 0) (:error result 0)))
+                   (throw (ex-info \"generator/mutation controls failed\" result)))
+                 result))"
+
+      - name: Replay minimized counterexample corpus
+        run: |
+          EACL_NREPL_PORT=7788 bin/formal counterexample-replay
+
+      - name: Compile and run CLJ/CLJS parity suite through nREPL
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require '[cljs.build.api :as cljs] :reload)
+               (cljs/build
+                nil
+                {:main 'eacl.datascript.cljs-test-runner
+                 :target :nodejs
+                 :optimizations :none
+                 :output-dir \"target/datascript-cljs-test-out\"
+                 :output-to \"target/datascript-cljs-test.js\"}))"
+          node target/datascript-cljs-test.js
+
+      - name: Upload parity diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parity-corpus-mutation-runs
+          path: target/formal
+
+  scheduled-generated-campaign:
+    if: github.event_name == 'schedule'
+    needs: dafny-and-generated-boundaries
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Temurin JDK 26
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '26'
+
+      - name: Set up Clojure CLI and Node
+        uses: DeLaGuardo/setup-clojure@13.6.1
+        with:
+          cli: latest
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Cache locked tools and dependencies
+        uses: actions/cache@v4
+        with:
+          path: |
+            target/formal-tools
+            ~/.m2/repository
+            ~/.gitlibs
+          key: scheduled-${{ runner.os }}-${{ hashFiles('formal/toolchain.lock.json', 'deps.edn') }}
+
+      - name: Build generated Java kernel
+        run: |
+          bin/formal bootstrap
+          bin/formal build-java
+
+      - name: Start campaign nREPL
+        run: |
+          clojure -M:dev:formal-smoke:nrepl --port 7788 \
+            > target/formal/campaign-nrepl.log 2>&1 &
+          for attempt in {1..180}; do
+            if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          cat target/formal/campaign-nrepl.log
+          exit 1
+
+      - name: Run 200-seed generated semantic campaign
+        run: |
+          sh bin/ci-nrepl-eval 7788 \
+            "(do
+               (require 'eacl.formal.generators :reload)
+               (require 'eacl.formal.semantics-bridge :reload)
+               (require 'eacl.formal.campaign :reload)
+               (eacl.formal.campaign/run-campaign!
+                {:start 1
+                 :count 200
+                 :output \"target/formal/campaign.edn\"}))"
+
+      - name: Upload retained seeds and minimized failure
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-semantic-campaign
+          path: |
+            target/formal/campaign.edn
+            target/formal/campaign-nrepl.log

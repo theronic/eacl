@@ -1,0 +1,284 @@
+{:schema-version 1
+ :recorded-at "2026-08-08"
+ :change :restore-v8-enumeration-performance
+
+ :root-causes
+ [{:id :recursive-route-overreach
+   :finding
+   :every-enumeration-root-entered-the-recursive-fixed-point-engine-even-when-the-verified-certificate-was-acyclic}
+  {:id :inactive-cycle-guard-work
+   :finding
+   :the-acyclic-route-still-evaluated-in-scc-arrow-paths-whose-exact-guard-relations-were-empty}
+  {:id :datascript-graph-head-query
+   :finding
+   :each-snapshot-adapter-read-the-managed-graph-head-order-through-a-general-datalog-query-including-on-private-page-cache-hits
+   :remediation
+   :read-the-single-head-order-datom-through-the-eavt-index}
+  {:id :relationship-page-replay
+   :finding
+   :datascript-and-datahike-relationship-pages-did-not-use-the-existing-client-private-exact-page-cache}
+  {:id :explorer-cache-provenance
+   :finding
+   :the-background-total-scan-overwrote-the-visible-page-cache-status-without-overwriting-the-visible-page-time}
+  {:id :explorer-stale-cursors
+   :finding
+   :seed-and-schema-mutations-retained-group-and-nested-cursor-stacks-from-the-previous-immutable-snapshot}
+  {:id :cold-count-projection-fragmentation
+   :finding
+   :enabled-subproblem-caching-split-each-bounded-count-window-into-32-item-projection-prefixes-causing-hundreds-of-extra-datascript-index-seeks
+   :remediation
+   :size-count-projections-to-the-bounded-window-plus-sentinel-without-changing-small-list-page-projections}
+  {:id :count-window-traversal-replay
+   :finding
+   :exact-count-rebuilt-the-complete-permission-path-merge-for-every-internal-window-causing-fanout-index-scans-to-scale-with-window-count-times-intermediate-count
+   :remediation
+   :construct-one-merged-traversal-and-consume-its-tail-through-bounded-certified-windows}
+  {:id :content-cursor-proof-scan
+   :counterexample :EACL-FORMAL-064
+   :finding
+   :default-datascript-content-proof-cursor-minting-scanned-the-complete-relationship-dependency-content-even-for-cache-bypassed-small-pages
+   :remediation
+   :bind-default-cursors-to-exact-current-basis-and-reserve-bounded-dependency-stamps-for-explicit-managed-mutation-mode}
+  {:id :pure-permission-alias-frontier-duplication
+   :counterexample :EACL-FORMAL-065
+   :finding
+   :raw-arrow-target-permission-names-created-two-traversal-streams-for-one-exact-pure-alias-denotation
+   :remediation
+   :cycle-guarded-exact-single-self-permission-canonicalization-before-first-occurrence-frontier-deduplication}
+  {:id :cross-host-matched-v7-latency-comparison
+   :finding
+   :a-macos-arm64-jdk24-same-host-baseline-was-enforced-on-linux-x86-64-jdk21-ci-especially-distorting-sub-six-millisecond-scenarios
+   :remediation
+   :exact-host-and-jvm-class-qualification-with-explicit-not-applicable-results-and-portable-correctness-work-gates-retained}]
+
+ :formal-verification
+ {:command "bin/formal verify"
+  :modules 29
+  :proof-efforts 8723
+  :errors 0
+  :retained-exact-page-theorems
+  [PageWindow.MatchingAuthorizationPageScopeReusesExactPage
+   PageWindow.AuthorizationPageScopeMismatchCannotHit]
+  :inactive-recursion-authority
+  [RoutingCertificate.DecideGuardedRoute
+   RoutingCertificate.EmptyRecursiveGuardsSelectAcyclic
+   AcyclicEngine.EmptyRecursiveGuardPreservesAcyclicDenotation]
+  :count-projection-authority
+  [SchemaPlanCost.CountProjectionChunkCoversWindowAndSentinel
+   SchemaPlanCost.CountProjectionChunkNeverShrinksConfiguredBound
+   SchemaPlanCost.ExactCountBuildsOneMergeTraversal
+   SchemaPlanCost.CountWindowAdvanceIsBounded]
+  :cursor-proof-authority
+  [PageWindow.ContentCursorMintingDoesNoRelationProofScan
+   PageWindow.OnlyManagedMutationModeRequestsDependencyProof
+   PageWindow.DataScriptChangedBasisCannotYieldCursorPage]
+  :pure-alias-authority
+  [SchemaPlanCost.CanonicalPermissionAliasPreservesDenotation
+   SchemaPlanCost.CanonicalFrontierDeduplicationCannotAddTraversalStreams
+   SchemaPlanCost.CanonicalFrontierSequenceIsUniqueAndKeepsFirstPath]}
+
+ :runtime-suites
+ {:datascript-clj
+  {:tests 183 :assertions 4641 :failures 0 :errors 0}
+  :datascript-cljs
+  {:tests 169 :assertions 4547 :failures 0 :errors 0}
+  :datahike-clj
+  {:tests 34 :assertions 488 :failures 0 :errors 0}
+  :datomic-clj
+  {:tests 240 :assertions 11204 :failures 0 :errors 0}
+  :shared-core-clj
+  {:tests 85 :assertions 666 :failures 0 :errors 0}
+ :focused-enumeration-routing
+  {:tests 13 :assertions 75 :failures 0 :errors 0}
+  :heavy-explorer-suite
+  {:tests 6 :assertions 87 :failures 0 :errors 0}
+  :heavy-explorer-100000
+  {:count 100000
+   :elapsed-ms 153.7155
+   :warmed-median-ms 149.267
+   :permission-paths 4
+   :backend-scans 462
+   :count-pages 7
+   :recursive-work 0}}
+
+ :matched-v7-cache-bypassed-clj
+ {:host-class {:os :macos
+               :arch :arm64
+               :os-version "26.5.1"
+               :cpu-model "Apple M3 Pro"
+               :logical-processors 12
+               :total-memory-bytes 19327352832
+               :max-heap-bytes 4831838208
+               :jdk "24.0.1"
+               :vm-name "OpenJDK 64-Bit Server VM"
+               :vm-vendor "Eclipse Adoptium"
+               :runtime :datascript-clj
+               :measurement :warmed-median}
+  :qualification :exact-host-and-jvm-class
+  :mismatched-host-policy :not-applicable-never-passed
+  :variance-policy {:warmups 3 :samples 7 :statistic :median}
+  :user-1-forward-page-10000
+  {:v7-median-ms 2.923375
+   :v8-samples-ms
+   [1.487875 1.493542 1.073417 1.030417 1.047167 1.104375 1.0225]
+   :v8-median-ms 1.073417
+   :v8-to-v7-ratio 0.3671841621413606
+   :maximum-ratio 2.0}
+  :owner-0001-exact-count-2000-of-10000
+  {:v7-median-ms 1.6295
+   :v8-samples-ms
+   [1.929333 2.18025 1.915458 1.916708 1.904666 2.115083 2.069042]
+   :v8-median-ms 1.929333
+   :v8-to-v7-ratio 1.1840030684258975
+   :maximum-ratio 2.0}
+  :super-user-exact-count-50000
+  {:v7-median-ms 73.016792
+   :v8-samples-ms
+   [69.401416 69.092542 74.362 73.459416 67.967417 69.867583 73.427334]
+   :v8-median-ms 69.867583
+   :v8-to-v7-ratio 0.9568700717500709
+   :maximum-ratio 2.0}
+  :super-user-exact-count-50000-empty-recursive-schema
+  {:v7-nonrecursive-median-ms 73.016792
+   :v8-samples-ms
+   [102.294458 88.813708 86.83925 90.534834 87.206375 90.366333 97.304875]
+   :v8-median-ms 90.366333
+   :v8-to-v7-ratio 1.2376102883292928
+   :maximum-ratio 2.0}
+  :super-user-exact-count-100000
+  {:v7-median-ms 155.008042
+   :v8-samples-ms
+   [145.260291 158.489583 145.527041 151.186167 144.928458 158.165375 149.267]
+   :v8-median-ms 149.267
+   :v8-to-v7-ratio 0.9629629409808299
+   :maximum-ratio 2.0}}
+
+ :cross-host-ci-observation
+ {:run 31300416898
+  :reported-environment {:runner-image :ubuntu-22.04
+                         :arch :x86-64
+                         :jdk "21.0.11"
+                         :runtime :datascript-clj
+                         :measurement :warmed-median}
+  :latency-gate :not-applicable
+  :observed-ms {:user-1-forward-page 3.758435
+                :owner-0001-exact-count 5.53214
+                :super-user-exact-count-50000 127.508101
+                :super-user-exact-count-100000 256.150414}
+  :portable-gates {:correctness :passed
+                   :deterministic-work :passed}}
+
+ :deterministic-work
+ {:pagination-10000
+  {:successive-pages 10
+   :items 200
+   :duplicates 0
+   :continuation-hits-after-first 9
+   :merge-advances-per-page 21
+   :recursive-work 0}
+  :owner-count-2000
+  {:count 2000
+   :backend-scans 18
+   :merge-advances 2000
+   :recursive-work 0}
+  :super-count-50000
+  {:count 50000
+   :count-pages 4
+   :backend-scans 237
+   :merge-advances 50003
+   :recursive-work 0}
+  :empty-recursive-super-count-50000
+  {:count 50000
+   :count-pages 4
+   :backend-scans 265
+   :merge-advances 50003
+   :recursive-work 0}
+  :super-count-100000
+  {:count 100000
+   :count-pages 7
+   :backend-scans 462
+   :permission-paths 4
+   :merge-advances 100006
+   :recursive-work 0}
+  :cold-user-count-12000-of-40000
+  {:count 12000
+   :count-pages 1
+   :backend-scans 71
+   :merge-advances 12000
+   :recursive-work 0
+   :elapsed-ms 68.182709}
+  :cache-bypassed-page-10000
+  {:page-size 20
+   :cache? false
+   :proof-frame-commands 0
+   :first-page-backend-scans 45
+   :continued-page-backend-scans 24
+   :warmed-median-ms 1.073417}}
+
+ :explorer-browser
+ {:url "http://localhost:18091/index.html"
+  :runtime :datascript-cljs
+  :recursive-schema-10000
+  {:write-and-ui-settle-ms 2482
+   :view-count 10000
+   :admin-count 10000
+   :view-cache-hit-ms 0.4
+   :nested-page-1-cache-hit-ms 1.2
+   :hung false
+   :errors []}
+  :owner-0001-cache-disabled-10000
+  {:count 2000
+   :samples-ms [11.7 15.1 11.5 14.2 11.8 12.8 11.7]
+   :median-ms 11.8}
+  :relationship-cache-hit-10000
+  {:steady-samples-ms [2.6 1.0 1.9 1.0 2.0 1.0 2.4 0.9]
+   :status :hit}
+  :recursive-schema-50000
+  {:view-count 50000
+   :cache-disabled-warmed-samples-ms [495.3 459.4 457.6]
+   :median-ms 459.4
+   :nested-return-page-cache-hit-ms 1.0
+   :snapshot-retention-error false
+   :cursor-reset-to-page 1
+   :errors []}
+  :recursive-schema-40000-clean-build
+  {:schema-write-and-ui-settle-ms 1331
+   :cold-super-user-view-count 40000
+   :cold-super-user-view-count-ms 1029.0
+   :cold-super-user-switch-settle-ms 1212
+   :cold-super-user-admin-count-ms 309.9
+   :warm-super-user-view-count-ms 0.4
+   :cold-user-2-count 2000
+   :cold-user-2-count-ms 31.1
+   :nested-page-1-miss-ms 51.4
+   :nested-page-2-miss-ms 64.1
+   :nested-return-page-cache-hit-ms 0.9
+   :post-seed-snapshot-retention-error false
+   :post-seed-cursor-reset-to-page 1
+   :hung false
+   :errors []}
+  :recursive-schema-100000
+  {:cold-super-user-view-count 100000
+   :cold-super-user-view-count-ms 1087.7
+   :warm-super-user-view-count-ms 0.3
+   :owner-0001-count 2000
+   :owner-0001-count-ms 5.3
+   :snapshot-retention-error false
+   :hung false
+   :errors []}
+  :cljs-count-window-sweep-100000
+  {:window-2048-ms 1051.7
+   :window-8192-ms 885.3
+   :window-16384-ms 876.7
+   :window-65536-ms 918.8
+   :selected-window 16384}}
+
+ :compatibility
+ {:public-authorization-api :unchanged
+  :cursor-frame :eacl-c4-v10-unchanged
+  :new-response-telemetry [:cached? :cache-basis]
+  :telemetry-compatibility :additive
+  :approximate-counts false
+  :recursive-limit-increase false}
+
+ :status :passed}

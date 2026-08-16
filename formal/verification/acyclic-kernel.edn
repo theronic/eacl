@@ -1,0 +1,263 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :generated-decisions-routed-source-specializations-conditionally-refined-review-pending
+ :scope :direct-and-acyclic-kernel
+ :production-routing
+ {:generated-decisions
+  [:enumeration-route :acyclic-page :acyclic-continuation
+   :acyclic-count :acyclic-work]
+  :host-source-specializations
+  [:permission-path-materialization
+   :inclusive-exact-eid-bound-point-probe
+   :ordered-lazy-merge
+   :leapfrog-intersection
+   :arrow-path-selection
+   :outer-path-fold]
+  :recursive-indexed-state-machine :not-used-for-certified-acyclic-roots
+  :classification
+  :mixed-generated-decision-and-digest-locked-source-specialization}
+ :proofs
+ [{:source "formal/dafny/AcyclicEngine.dfy"
+   :verified-obligations 95
+   :claims
+   [:deterministic-path-identity
+    :reachable-dependency-closure
+    :reachable-compilation-denotation
+    :direct-can-sound-and-complete
+    :raw-typed-definition-materialization-is-source-shaped
+    :materialized-paths-are-partitioned-by-static-source-rank
+    :direct-grant-relation-eids-filter-subject-type
+    :direct-grant-positive-implies-complete-path-positive
+    :exhaustive-direct-grant-result-equals-complete-path-result
+    :visited-acyclic-state-performs-zero-path-and-callback-checks
+    :acyclic-path-fold-short-circuits-at-first-effective-positive
+    :mismatched-direct-path-does-not-invoke-the-direct-probe
+    :acyclic-callback-trace-preserves-path-kind-and-index
+    :acyclic-path-and-callback-checks-are-linear-in-materialized-path-count
+    :forward-projection-exact
+    :reverse-projection-exact
+    :bounded-count-law
+    :strictly-ascending-leapfrog-intersection-is-set-intersection
+    :leapfrog-outer-iterations-at-most-input-cardinality-sum
+    :leapfrog-reseek-calls-at-most-outer-iterations
+    :leapfrog-probe-head-examinations-at-most-seventeen-times-outer-iterations
+    :leapfrog-reseek-trace-length-equals-reseek-count
+    :leapfrog-reseek-trace-records-exact-stream-side-and-target
+    :inclusive-reseek-preserves-intersection-candidates
+    :arrow-empty-and-singleton-skip-direct-intersection
+    :arrow-direct-positive-is-sound-under-subset-contract
+    :arrow-exhaustive-negative-is-complete-under-equality-contract
+    :arrow-fallback-refines-complete-far-side-evaluation
+    :arrow-full-candidate-checks-are-bounded-by-intermediate-count
+    :inactive-cycle-guard-eliminates-recursive-contribution
+    :inactive-cycle-guard-preserves-guarded-denotation
+    :public-can-root-classification-hoist-preserves-result
+    :public-generated-can-performs-one-root-classification]}
+  {:source "formal/dafny/OrderedMerge.dfy"
+   :verified-obligations 82
+   :claims
+   [:ascending-merge-set-preservation
+    :descending-merge-set-preservation
+    :ascending-output-unique
+    :descending-output-unique
+    :ascending-step-refines-merge-definition
+    :descending-step-refines-merge-definition
+    :ascending-bounded-chunk-reconstructs-complete-merge
+    :descending-bounded-chunk-reconstructs-complete-merge
+    :production-explicit-last-state-refines-canonical-ascending-merge
+    :production-explicit-last-state-refines-canonical-descending-merge
+    :production-empty-stream-filter-preserves-complete-union
+    :production-adjacent-pairwise-fold-preserves-strict-order-and-complete-union
+    :strict-order-and-set-equality-determine-the-exact-sequence
+    :production-balanced-fold-equals-the-canonical-balanced-fold
+    :production-two-stream-comparison-iterations-are-linear
+    :balanced-ascending-fold-preserves-strict-order-and-complete-union
+    :balanced-descending-fold-preserves-strict-order-and-complete-union]}
+  ]
+ :generated-targets
+ {:java
+  {:status :passed
+   :tests 35
+   :assertions 10393
+   :failures 0
+   :errors 0}
+  :javascript
+  {:status :passed
+   :tests 55
+   :assertions 10945
+   :failures 0
+   :errors 0}}
+ :differential
+ {:fixtures 2
+  :seed-base 820084
+  :implementations
+  [:formal-semantics
+   :generated-java
+   :eacl-engine-v8
+   :eacl-engine-indexed]
+  :status :passed
+  :retained-mismatches 0}
+ :ordered-merge-source-specialization
+ {:hot-path :optimized-clj-cljs-lazy-merge
+  :generated-exact-source-model
+  {:java {:two-stream-fixtures 8192
+          :balanced-fold-fixtures 100
+          :status :passed}
+   :javascript {:two-stream-fixtures 8192
+                :balanced-fold-fixtures 50
+                :status :passed}}
+  :modeled-source-state
+  [:explicit-last-presence
+   :exhausted-tail-drop-while
+   :empty-stream-filter
+   :adjacent-pairwise-fold]
+  :formal-comparison-bound "|left|+|right|"
+  :mutation :ordered-merge-wrong-comparator
+  :counterexample :EACL-FORMAL-040
+  :performance-report
+  "formal/verification/performance-gates.edn"
+  :formal-source-refinement
+  :exact-source-control-model-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
+ :leapfrog-intersection-source-specialization
+ {:hot-path :optimized-clj-cljs-arrow-intersection
+  :generated-oracle
+  {:java {:fixtures 4100 :status :passed}
+   :javascript {:fixtures 4100 :status :passed}}
+  :forced-production-reseek-fixtures 3
+  :mutations
+  [:leapfrog-equal-head-skipped
+   :leapfrog-reseek-target-excluded
+   :leapfrog-probe-limit-off-by-one
+   :leapfrog-reseek-wrong-target
+   :leapfrog-reseek-wrong-side]
+  :counterexample :EACL-FORMAL-041
+  :formal-resource-bounds
+  {:outer-iterations "|left| + |right|"
+   :reseek-calls "outer-iterations"
+   :probe-head-examinations "17 * outer-iterations"
+   :linear-probe-limit 16}
+  :source-counter-agreement
+  {:reseek-calls :exact-on-all-java-and-javascript-fixtures
+   :reseek-side-and-target-trace
+   :exact-on-all-java-and-javascript-fixtures
+   :probe-head-examinations
+   :formal-control-flow-measure-not-instrumented-in-production-source}
+  :resource-qualification
+  :logical-control-flow-only-not-backend-seek-cost-lazy-realization-allocation-heap-or-latency
+  :formal-source-refinement
+  :exact-source-control-and-reseek-trace-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
+ :arrow-path-source-specialization
+ {:hot-path :acyclic-can-arrow-empty-singleton-and-wide-selection
+  :generated-source-fixtures
+  {:java 8
+   :javascript 8}
+  :formal-contracts
+  {:direct-intersection-positive
+   :must-be-a-subset-of-complete-far-side-evaluation
+   :exhaustive-direct-intersection
+   :must-equal-complete-far-side-evaluation}
+  :formal-resource-bounds
+  {:zero-or-one-intermediate-direct-intersection-phases 0
+   :wide-intermediate-direct-intersection-phases 1
+   :full-candidate-checks "at most |intermediates|"}
+  :mutations
+  [:arrow-empty-stream-enters-wide-path
+   :arrow-singleton-enters-wide-path
+   :arrow-direct-hit-runs-full-fallback
+   :arrow-exhaustive-miss-runs-full-fallback
+   :arrow-nonexhaustive-miss-skips-full-fallback]
+  :counterexample :EACL-FORMAL-042
+  :formal-source-refinement
+  :source-shaped-control-and-logical-work-proved-callback-semantics-language-correspondence-and-independent-review-remain-trusted}
+ :permission-path-materialization-source-specialization
+ {:hot-path
+  :raw-relation-and-permission-definitions-to-ranked-resolved-paths
+  :source "modules/eacl/src/eacl/engine/v8.cljc"
+  :generated-source-fixtures
+  {:java 99
+   :javascript 99}
+  :covered-paths
+  [:relation
+   :self-permission
+   :arrow-relation
+   :arrow-permission
+   :missing-source-relation
+   :missing-target-relation
+   :multiple-via-types
+   :multiple-target-subject-types
+   :static-cost-ranking]
+  :direct-grant-summary
+  {:relation-eids :exact-subject-type-filter
+   :exhaustive :iff-every-materialized-path-is-a-relation
+   :soundness
+   :direct-positive-implies-complete-path-positive
+   :completeness
+   :when-exhaustive-direct-result-equals-complete-path-result}
+  :adapter-composition
+  {:certification-version "eacl.adapter-certification/v2"
+   :datomic :passed
+   :datahike :passed
+   :datascript-clj :passed
+   :datascript-cljs :passed}
+  :mutations
+  [:path-materialization-omits-expanded-relation
+   :path-materialization-admits-missing-target
+   :path-materialization-skips-cost-ranking
+   :direct-summary-includes-other-subject-type
+   :direct-summary-ignores-nonrelation-path]
+  :formal-source-refinement
+  :source-shaped-materialization-and-direct-facts-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
+ :acyclic-outer-path-fold-source-specialization
+ {:hot-path :can-uncached-recursion-guard-and-cheapest-first-path-fold
+  :generated-source-fixtures
+  {:java 407
+   :javascript 407}
+  :path-kinds [:relation :self-permission :arrow]
+  :exact-trace
+  [:authorization-result
+   :realized-path-count
+   :direct-probe-count
+   :self-permission-callback-count
+   :arrow-evaluation-count
+   :ordered-callback-kind-and-path-index]
+  :formal-resource-bounds
+  {:path-checks "<= |paths|"
+   :each-callback-kind "<= path-checks"
+   :visited-state-path-and-callback-checks 0}
+  :mutations
+  [:acyclic-visited-state-evaluates-path
+   :acyclic-mismatched-direct-invokes-probe
+   :acyclic-path-fold-does-not-short-circuit
+   :acyclic-self-permission-routed-as-direct
+   :acyclic-arrow-callback-skipped]
+  :formal-source-refinement
+  :source-shaped-outer-fold-and-callback-kind-trace-proved-callback-arguments-and-semantics-language-correspondence-and-independent-review-remain-trusted}
+ :public-can-root-classification-source-specialization
+ {:hot-path :public-can-endpoint-and-root-dispatch
+  :counterexample :EACL-FORMAL-051
+  :formal-result-theorem
+  :public-can-root-classification-hoist-preserves-result
+  :formal-resource-theorem
+  :public-generated-can-performs-one-root-classification
+  :generated-authoritative-root-lookups-per-call 1
+  :jvm-public-client-fixtures 1
+  :local-paired-latency
+  {:before-microseconds 508.292
+   :after-microseconds 483.625
+   :after-to-before-ratio 0.951465}
+  :formal-source-refinement
+  :source-shaped-dispatch-result-and-root-lookup-count-proved-runtime-language-correspondence-and-independent-review-remain-trusted}
+ :limitations
+ [:complete-acyclic-host-engine-is-not-generated-production-authority
+  :ordered-merge-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
+  :ordered-merge-independent-source-refinement-review-is-not-recorded
+  :leapfrog-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
+  :leapfrog-independent-source-refinement-review-is-not-recorded
+  :permission-path-materialization-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
+  :permission-path-materialization-independent-source-refinement-review-is-not-recorded
+  :arrow-full-candidate-booleans-remain-callback-semantic-obligations
+  :arrow-clojure-to-dafny-language-semantics-remain-a-digest-locked-trusted-refinement
+  :arrow-independent-source-refinement-review-is-not-recorded
+  :inclusive-reseek-semantics-remain-an-adapter-obligation
+  :recursive-engine-obligations-remain
+  :full-pagination-and-cursor-obligations-remain]}

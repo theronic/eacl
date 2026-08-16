@@ -2,6 +2,13 @@
 
 Date: 2026-05-17
 
+> [!CAUTION]
+> Superseded on 2026-07-30 by
+> `openspec/changes/add-intelligent-eacl-cache`. Effective grants are not installed in consumer
+> Datomic databases. The replacement uses bounded ephemeral recursive continuations with exact
+> historical replay on cache miss, plus optional generation-coherent non-recursive page caching.
+> This document remains as the rejected persistent-storage design record.
+
 Supersedes for implementation purposes:
 
 - [2026-05-17 reverse pagination performance confidence plan](./2026-05-17-reverse-pagination-performance-confidence-plan.md)

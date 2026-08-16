@@ -1,0 +1,34 @@
+#!/bin/sh
+
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+port=${EACL_NREPL_PORT:-}
+
+[ -n "$port" ] || {
+  printf '%s\n' \
+    "EACL_NREPL_PORT must name an nREPL started with:" \
+    "  clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 0" >&2
+  exit 2
+}
+
+clj-nrepl-eval -p "$port" --timeout 120000 \
+  "(do
+     (require '[cljs.build.api :as cljs] :reload)
+     ;; cljs.main/-main calls shutdown-agents as a CLI lifecycle action. In a
+     ;; persistent nREPL that permanently terminates the executor used by
+     ;; future, making later concurrency regressions order-dependent.
+     (cljs/build
+       nil
+       {:main 'eacl.formal.cljs-test-runner
+        :target :nodejs
+        :optimizations :none
+        :output-dir \"target/formal/cljs-smoke-out\"
+        :output-to \"target/formal/cljs-smoke.js\"}))"
+
+node "$repo_root/target/formal/cljs-smoke.js"
+
+# This is a runtime regression, not a source-text convention: the compile step
+# must leave the persistent nREPL's executors usable by later formal tests.
+clj-nrepl-eval -p "$port" --timeout 10000 \
+  "@(future :eacl.formal/agent-executor-alive)"

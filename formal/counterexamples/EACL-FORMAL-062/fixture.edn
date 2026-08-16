@@ -1,0 +1,14 @@
+{:operation :lookup-and-count-resources
+ :schema-class :recursive
+ :permission-root [:server :view]
+ :cycle-guards
+ [[:server :parent]
+  [:account :parent]]
+ :relationship-prefix-populated? false
+ :before
+ {:selected-route :recursive
+  :observed-error :eacl.recursive-traversal/limit-exceeded}
+ :after
+ {:selected-route :acyclic
+  :recursive-work 0}
+ :risk :inactive-recursive-syntax-consumed-fixed-point-budget}

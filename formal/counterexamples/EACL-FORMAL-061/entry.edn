@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-061
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "eacl-explorer/10000-server/user-1/ten-successive-pages"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["v8.0 commit 34ca6b15039daf8f651dd9ef2ccfb95d483ab112"]
+ :affected-backends [:datascript :datahike]
+ :root-cause
+ "Datomic supplied the engine's private continuation callbacks, but the DataScript and Datahike list entry points used the two-argument engine arity. Public cursors preserved correctness while each later page reopened and replayed the traversal prefix, so work grew with page ordinal."
+ :fix
+ "Define one adapter-neutral bounded continuation contract, key entries by client/source/schema/query/snapshot lineage, supply it from every list and reverse-list adapter, and use generated continuation decisions to distinguish private resume from authenticated deterministic replay."
+ :closing-evidence
+ ["AcyclicEngine.DecideAcyclicContinuation"
+  "eacl.engine.stable-page-test/lookahead-survives-checkpointing-test"
+  "eacl.engine.stable-page-test/cursor-fork-and-idempotence-test"]}

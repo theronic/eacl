@@ -1,0 +1,135 @@
+#!/usr/bin/env bb
+
+(require '[clojure.edn :as edn]
+         '[clojure.java.io :as io])
+
+(def repo-root
+  (-> *file*
+      io/file
+      .getCanonicalFile
+      .getParentFile
+      .getParentFile))
+
+(def config-file
+  (io/file
+   repo-root
+   (or (first *command-line-args*)
+       "formal/verification/generated-artifact-size.edn")))
+
+(def output-file
+  (io/file
+   repo-root
+   (or (System/getenv "EACL_GENERATED_ARTIFACT_SIZE_OUTPUT")
+       "target/formal/generated-artifact-size.edn")))
+
+(def runtime-version
+  (System/getProperty "babashka.version"))
+
+(defn positive-integer!
+  [label value]
+  (when-not (and (integer? value) (pos? value))
+    (throw
+     (ex-info
+      (str label " must be a positive integer")
+      {:label label :value value})))
+  value)
+
+(defn measured-files
+  [{:keys [path kind suffix]}]
+  (let [target (io/file repo-root path)]
+    (when-not (.exists target)
+      (throw
+       (ex-info
+        "Generated artifact is missing."
+        {:path path})))
+    (case kind
+      :file
+      (do
+        (when-not (.isFile target)
+          (throw
+           (ex-info
+            "Expected a generated file."
+            {:path path})))
+        [target])
+
+      :tree-suffix
+      (let [files
+            (->> (file-seq target)
+                 (filter #(.isFile %))
+                 (filter #(.endsWith (.getName %) suffix))
+                 vec)]
+        (when (empty? files)
+          (throw
+           (ex-info
+            "Generated artifact tree contains no matching files."
+            {:path path :suffix suffix})))
+        files)
+
+      (throw
+       (ex-info
+        "Unsupported generated-artifact measurement kind."
+        {:path path :kind kind})))))
+
+(let [config (edn/read-string (slurp config-file))]
+  (when-not (and (= 1 (:schema-version config))
+                 (= :uncompressed-byte-length (:measurement config))
+                 (= :babashka
+                    (get-in config [:gate-runtime :tool]))
+                 (= runtime-version
+                    (get-in config [:gate-runtime :version]))
+                 (map? (:artifacts config)))
+    (throw
+     (ex-info
+      "Invalid generated-artifact size configuration."
+      {:config (.getPath config-file)})))
+  (let [measurements
+        (into
+         (sorted-map)
+         (for [[artifact specification] (:artifacts config)
+               :let [baseline
+                     (positive-integer!
+                      [artifact :baseline-bytes]
+                      (:baseline-bytes specification))
+                     maximum
+                     (positive-integer!
+                      [artifact :maximum-bytes]
+                      (:maximum-bytes specification))
+                     _ (when (< maximum baseline)
+                         (throw
+                          (ex-info
+                           "Generated-artifact maximum is below its baseline."
+                           {:artifact artifact
+                            :baseline-bytes baseline
+                            :maximum-bytes maximum})))
+                     files (measured-files specification)
+                     actual (reduce + 0 (map #(.length %) files))
+                     passed? (<= actual maximum)]]
+           [artifact
+            (cond-> {:path (:path specification)
+                     :kind (:kind specification)
+                     :file-count (count files)
+                     :baseline-bytes baseline
+                     :maximum-bytes maximum
+                     :actual-bytes actual
+                     :growth-from-baseline (/ actual baseline)
+                     :status (if passed? :passed :failed)}
+              (:suffix specification)
+              (assoc :suffix (:suffix specification)))]))
+        passed? (every? #(= :passed (:status %)) (vals measurements))
+        report
+        {:schema-version 1
+         :config
+         (str
+          (.relativize
+           (.toPath repo-root)
+           (.toPath (.getCanonicalFile config-file))))
+         :status (if passed? :passed :failed)
+         :gate-runtime
+         {:tool :babashka
+          :version runtime-version}
+         :measurements measurements}]
+    (io/make-parents output-file)
+    (spit output-file (str (pr-str report) "\n"))
+    (prn report)
+    (when-not passed?
+      (System/exit 1))))

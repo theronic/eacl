@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-026
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "recursive-shadow/stale-cursor/full-ex-data-after-EACL-FORMAL-023"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree after EACL-FORMAL-023 but before complete stale-cursor data normalization"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "EACL-FORMAL-023 removed the generated-only :direction field but did not compare full ExceptionInfo data. Legacy traversal exposed :bound/:actual cursor maps while generated traversal exposed a different :render-error map, so generated authority still changed public error data even though the redacted typed projection passed."
+ :fix
+ "Uncached recursive traversal and generated render rejection now expose one minimal stable public stale-cursor map containing only :eacl/error. Internal cursor and generated-render diagnostics are not part of public ExceptionInfo data, and regressions compare the entire map."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape"
+  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-compare-generated-javascript"
+  "formal mutation :generated-stale-cursor-leaks-render-details"]}

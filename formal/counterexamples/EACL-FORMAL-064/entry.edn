@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-064
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "datascript/lookup-page/cache-bypass/relationship-width"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["v8.0 commit e50f1cb5395e105edf3875d50e0afb16b1ba7cee"]
+ :affected-backends [:datascript]
+ :root-cause
+ "Cursor construction supplied the permission relation closure to a content digest, so even a cache-bypassed seven-item demand page scanned the entire authorization graph merely to mint its cursor."
+ :fix
+ "Use the supported-writer ordered-generation proof frame. Cursor minting reads only the complete dependency generations and stores the scalar frontier, so unrelated later transactions remain valid without relationship-content scans while relevant writes reject the cursor."
+ :closing-evidence
+ ["ScalarFrontierCoherence.UnrelatedMutationPreservesFrontier"
+  "ScalarFrontierCoherence.RelevantMutationAdvancesFrontier"
+  "eacl.engine.stable-page-test/page-composition-test"
+  "eacl.engine.stable-page-test/token-rejection-test"
+  "eacl.bench.explorer-enumeration-test/explorer-10000-user-page-does-not-scale-with-denotation"]}

@@ -1,0 +1,7 @@
+{:capabilities
+ {:minimize-latency true
+  :fully-consistent false}
+ :selection
+ {:fully-consistent :eacl/unsupported-capability}
+ :managed-client-with-connection
+ {:fully-consistent true}}

@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-047
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "forced-authority/current-lookup-cursor/schema-change/bound-result-absent"
+ :minimized-fixture "fixture.edn"
+ :impact :omission
+ :affected-versions
+ ["PR 101 through commit 2276dde92b9741c7d3c61b2a88021b601bd3ccec"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "The generic and Datomic cursor adapters requested stable result-identity rebasing only for recursive-traversal cursors. A recover-current :lookup-eid cursor instead retained per-path frontiers minted under the old dependency proof and was labeled :rebased without proving that its boundary still belonged to the current permission denotation. Generated authority followed the PageWindow rebase-or-restart law and exposed the mismatch."
+ :fix
+ "The final v8 contract deletes recover-current rebase/restart. Current continuation requires the authenticated dependency proof to remain equal; a changed proof uses only verified exact-snapshot reconstruction when supported and freshness-compatible, otherwise it fails typed stale. DataScript is current-basis-only and therefore rejects every changed-proof continuation."
+ :closing-evidence
+ ["formal/dafny/PageWindow.dfy/CurrentContinuationRequiresEqualProof"
+  "formal/dafny/PageWindow.dfy/ChangedProofWithoutExactSnapshotIsRejected"
+  "eacl.datascript.keyset-recursion-test/order-perturbing-write-rejects-current-only-cursor-test"
+  "eacl.datascript.keyset-recursion-test/revoked-boundary-is-stale-test"
+  "formal/verification/verified-authority-suites.edn"]}

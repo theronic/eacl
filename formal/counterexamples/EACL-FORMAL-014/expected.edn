@@ -1,0 +1,8 @@
+{:parent-value :outer
+ :child-value :child
+ :registered-flights 1
+ :self-bypasses 1
+ :maximum-active-computations 2
+ :final-active-computations 0
+ :invariant
+ "A recursive self-bypass executes through the context-aware computation slot: only the current owner context reuses a permit."}

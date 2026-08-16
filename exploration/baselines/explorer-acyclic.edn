@@ -1,0 +1,260 @@
+;; Frozen current-engine baseline. Regenerate via
+;; (eacl.baseline.capture/capture-all!) — see README.md.
+{:fixture :explorer-acyclic,
+ :page-size 7,
+ :forward
+ {:owner-0001
+  {:principal "user:owner-0001",
+   :denotation
+   ["server:server-0001-00001"
+    "server:server-0001-00002"
+    "server:server-0001-00003"
+    "server:server-0001-00004"
+    "server:server-0001-00005"
+    "server:server-0001-00006"
+    "server:server-0001-00007"
+    "server:server-0001-00008"
+    "server:server-0001-00009"
+    "server:server-0001-00010"
+    "server:server-0001-00011"
+    "server:server-0001-00012"],
+   :order
+   ["server:server-0001-00001"
+    "server:server-0001-00002"
+    "server:server-0001-00003"
+    "server:server-0001-00004"
+    "server:server-0001-00005"
+    "server:server-0001-00006"
+    "server:server-0001-00007"
+    "server:server-0001-00008"
+    "server:server-0001-00009"
+    "server:server-0001-00010"
+    "server:server-0001-00011"
+    "server:server-0001-00012"],
+   :pages
+   [{:size 7, :has-next? true, :has-previous? false}
+    {:size 5, :has-next? false, :has-previous? true}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 12, :limit -1},
+   :count-matches-denotation? true},
+  :stranger
+  {:principal "user:stranger",
+   :denotation [],
+   :order [],
+   :pages [{:size 0, :has-next? false, :has-previous? false}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 0, :limit -1},
+   :count-matches-denotation? true},
+  :super-user
+  {:principal "user:super-user",
+   :denotation
+   ["server:server-0001-00001"
+    "server:server-0001-00002"
+    "server:server-0001-00003"
+    "server:server-0001-00004"
+    "server:server-0001-00005"
+    "server:server-0001-00006"
+    "server:server-0001-00007"
+    "server:server-0001-00008"
+    "server:server-0001-00009"
+    "server:server-0001-00010"
+    "server:server-0001-00011"
+    "server:server-0001-00012"
+    "server:server-0002-00001"
+    "server:server-0002-00002"
+    "server:server-0002-00003"
+    "server:server-0002-00004"
+    "server:server-0002-00005"
+    "server:server-0002-00006"
+    "server:server-0002-00007"
+    "server:server-0002-00008"
+    "server:server-0002-00009"
+    "server:server-0002-00010"
+    "server:server-0002-00011"
+    "server:server-0002-00012"
+    "server:server-0003-00001"
+    "server:server-0003-00002"
+    "server:server-0003-00003"
+    "server:server-0003-00004"
+    "server:server-0003-00005"
+    "server:server-0003-00006"
+    "server:server-0003-00007"
+    "server:server-0003-00008"
+    "server:server-0003-00009"
+    "server:server-0003-00010"
+    "server:server-0003-00011"
+    "server:server-0003-00012"],
+   :order
+   ["server:server-0001-00001"
+    "server:server-0001-00002"
+    "server:server-0001-00003"
+    "server:server-0001-00004"
+    "server:server-0001-00005"
+    "server:server-0001-00006"
+    "server:server-0001-00007"
+    "server:server-0001-00008"
+    "server:server-0001-00009"
+    "server:server-0001-00010"
+    "server:server-0001-00011"
+    "server:server-0001-00012"
+    "server:server-0002-00001"
+    "server:server-0002-00002"
+    "server:server-0002-00003"
+    "server:server-0002-00004"
+    "server:server-0002-00005"
+    "server:server-0002-00006"
+    "server:server-0002-00007"
+    "server:server-0002-00008"
+    "server:server-0002-00009"
+    "server:server-0002-00010"
+    "server:server-0002-00011"
+    "server:server-0002-00012"
+    "server:server-0003-00001"
+    "server:server-0003-00002"
+    "server:server-0003-00003"
+    "server:server-0003-00004"
+    "server:server-0003-00005"
+    "server:server-0003-00006"
+    "server:server-0003-00007"
+    "server:server-0003-00008"
+    "server:server-0003-00009"
+    "server:server-0003-00010"
+    "server:server-0003-00011"
+    "server:server-0003-00012"],
+   :pages
+   [{:size 7, :has-next? true, :has-previous? false}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 1, :has-next? false, :has-previous? true}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 36, :limit -1},
+   :count-matches-denotation? true},
+  :user-1
+  {:principal "user:user-1",
+   :denotation
+   ["server:server-0001-00001"
+    "server:server-0001-00002"
+    "server:server-0001-00003"
+    "server:server-0001-00004"
+    "server:server-0001-00005"
+    "server:server-0001-00006"
+    "server:server-0001-00007"
+    "server:server-0001-00008"
+    "server:server-0001-00009"
+    "server:server-0001-00010"
+    "server:server-0001-00011"
+    "server:server-0001-00012"
+    "server:server-0002-00001"
+    "server:server-0002-00002"
+    "server:server-0002-00003"
+    "server:server-0002-00004"
+    "server:server-0002-00005"
+    "server:server-0002-00006"
+    "server:server-0002-00007"
+    "server:server-0002-00008"
+    "server:server-0002-00009"
+    "server:server-0002-00010"
+    "server:server-0002-00011"
+    "server:server-0002-00012"],
+   :order
+   ["server:server-0001-00001"
+    "server:server-0001-00002"
+    "server:server-0001-00003"
+    "server:server-0001-00004"
+    "server:server-0001-00005"
+    "server:server-0001-00006"
+    "server:server-0001-00007"
+    "server:server-0001-00008"
+    "server:server-0001-00009"
+    "server:server-0001-00010"
+    "server:server-0001-00011"
+    "server:server-0001-00012"
+    "server:server-0002-00001"
+    "server:server-0002-00002"
+    "server:server-0002-00003"
+    "server:server-0002-00004"
+    "server:server-0002-00005"
+    "server:server-0002-00006"
+    "server:server-0002-00007"
+    "server:server-0002-00008"
+    "server:server-0002-00009"
+    "server:server-0002-00010"
+    "server:server-0002-00011"
+    "server:server-0002-00012"],
+   :pages
+   [{:size 7, :has-next? true, :has-previous? false}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 7, :has-next? true, :has-previous? true}
+    {:size 3, :has-next? false, :has-previous? true}],
+   :page-composition-equals-one-shot? true,
+   :duplicate-free? true,
+   :count {:count 24, :limit -1},
+   :count-matches-denotation? true}},
+ :reverse
+ {:server-1-1
+  {:resource "server:server-0001-00001",
+   :outcome :ok,
+   :denotation
+   ["user:leader-0001-01"
+    "user:owner-0001"
+    "user:super-user"
+    "user:user-1"
+    "user:vpc-admin-0001-01"],
+   :order
+   ["user:super-user"
+    "user:user-1"
+    "user:owner-0001"
+    "user:leader-0001-01"
+    "user:vpc-admin-0001-01"],
+   :first-page-size 5},
+  :server-3-12
+  {:resource "server:server-0003-00012",
+   :outcome :ok,
+   :denotation
+   ["user:leader-0003-02"
+    "user:owner-0003"
+    "user:super-user"
+    "user:vpc-admin-0003-02"],
+   :order
+   ["user:super-user"
+    "user:owner-0003"
+    "user:leader-0003-02"
+    "user:vpc-admin-0003-02"],
+   :first-page-size 4}},
+ :points
+ {:owner-0001
+  {:authorized-sample
+   {:resource "server:server-0001-00001", :can? true},
+   :unauthorized-sample
+   {:resource "server:server-0002-00001", :can? false}},
+  :stranger
+  {:unauthorized-sample
+   {:resource "server:server-0001-00001", :can? false}},
+  :super-user
+  {:authorized-sample
+   {:resource "server:server-0001-00001", :can? true}},
+  :user-1
+  {:authorized-sample
+   {:resource "server:server-0001-00001", :can? true},
+   :unauthorized-sample
+   {:resource "server:server-0003-00001", :can? false}}},
+ :cursor-behavior
+ {:first-page-repeat-identical? true,
+  :after-cursor-repeat-identical? true,
+  :parent-cursor-reusable-after-child? true,
+  :cancelled-request
+  {:outcome :error,
+   :error-keys [:eacl.execution/cancelled :eacl.execution/cancelled]},
+  :zero-timeout-rejected
+  {:outcome :error,
+   :error-keys
+   [:eacl.execution/invalid-contract
+    :timeout-ms
+    :eacl/invalid-request]}},
+ :stale-basis
+ {:outcome :ok, :detail {:outcome :ok}, :resumed-page-size 2}}

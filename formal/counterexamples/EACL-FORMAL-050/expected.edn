@@ -1,0 +1,13 @@
+{:warm-permission-check
+ {:warmup-calls 15000
+  :measurement-batches 3
+  :samples-per-batch 5000
+  :aggregation :median-of-batch-medians
+  :maximum-microseconds 1000
+  :threshold-relaxed false
+  :last-local-forced-authority
+  {:batch-medians-microseconds [429.083 431.208 430.208]
+   :median-microseconds 430.208
+   :cold-median-microseconds 435.44
+   :completed-cache-hit-median-microseconds 14.79}
+  :status :passed}}

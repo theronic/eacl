@@ -1,0 +1,120 @@
+{:schema-version 1
+ :certification-version "eacl.adapter-certification/v2"
+ :date "2026-08-06"
+ :formal-contract "formal/dafny/SnapshotOracle.dfy"
+ :runtime-contract "eacl.backend.v8/adapter-obligations"
+ :fixture
+ {:generator "eacl.adapter-certification/coherent-fixture"
+  :seeds [820084]
+  :topology
+  {:object-types 3
+   :objects 9
+   :relations 3
+   :permission-definitions 2
+   :relationships 11
+   :scan-directions [:asc :desc]
+   :bound-modes [:unbounded :exclusive :inclusive]}}
+ :required-static-checks
+ [:operation-obligation-coverage
+  :relation-catalog
+  :identity-round-trip
+  :nonnegative-internal-eids
+  :schema-enumeration
+  :permission-path-materialization
+  :snapshot-bound-relation-prefix-population
+  :forward-reverse-scans
+  :direct-match-equivalence
+  :immutable-snapshot]
+ :adapters
+ {:datomic
+  {:status :passed
+   :runtimes [:clj]
+   :representations [:attribute-refs]
+   :static
+   {:namespace eacl.datomic.adapter-certification-test
+    :tests 1
+    :assertions 1
+    :failures 0
+    :errors 0}
+   :history
+   {:namespace eacl.datomic.consistency-v3-test
+    :tests 5
+    :assertions 22
+    :failures 0
+    :errors 0
+    :coverage
+    [:authoritative-sync
+     :causal-anchor
+     :exact-selection
+     :history-divergence
+     :proof-equivalent-cache-lift
+     :relevant-proof-change
+     :source-identity]}}
+  :datascript
+  {:status :passed
+   :runtimes [:clj :cljs]
+   :representations [:numeric-eid]
+   :static
+   {:namespace eacl.datascript.adapter-certification-test
+    :clj {:tests 1 :assertions 1 :failures 0 :errors 0}
+    :cljs-in-full-suite
+    {:tests 163 :assertions 4465 :failures 0 :errors 0}}
+   :history
+   {:namespace eacl.datascript.consistency-v3-test
+    :clj {:tests 7 :assertions 23 :failures 0 :errors 0}
+    :cljs :passed-in-full-suite
+    :coverage
+    [:causal-anchor
+     :reset
+     :clone
+     :sibling-divergence
+     :exact-selection
+     :retention-eviction
+     :proof-equivalent-cache-lift
+     :relevant-proof-change
+     :source-identity]}}
+  :datahike
+  {:status :passed
+   :runtimes [:clj]
+   :representations [:attribute-keywords :attribute-refs]
+   :static
+   {:namespace eacl.datahike.adapter-certification-test
+    :tests 1
+    :assertions 2
+    :failures 0
+    :errors 0}
+   :history
+   {:namespace eacl.datahike.consistency-v3-test
+    :tests 6
+    :assertions 25
+    :failures 0
+    :errors 0
+    :coverage
+    [:causal-anchor
+     :force-rewind
+     :branch
+     :merge-parent-metadata
+     :exact-selection
+     :retention-garbage-collection
+     :proof-equivalent-cache-lift
+     :physical-half-corruption
+     :relevant-proof-change
+     :source-and-branch-identity]}}}
+ :runtime-guards
+ {:status :passed
+  :namespace eacl.backend.v8-test
+  :typed-error :eacl/backend-contract-violation
+  :checked
+  [:output-shape
+   :strict-order
+   :uniqueness
+   :inclusive-exclusive-bounds
+   :relation-prefix-population-boolean
+   :exact-integer-representation
+   :nonnegative-internal-eids]}
+ :claim
+ {:status :adapter-certification-suite-passed
+  :establishes
+  "Executable evidence for the named adapter obligations, including exact resolved/ranked permission paths, on the seeded and adversarial cases."
+  :does-not-establish
+  "A proof of Datomic, DataScript, Datahike, Clojure, ClojureScript, storage engines, or arbitrary backend states."}}

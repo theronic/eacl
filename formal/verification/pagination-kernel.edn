@@ -1,0 +1,110 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :proof-and-cross-runtime-tests-passed
+ :proof
+ {:source "formal/dafny/PageWindow.dfy"
+  :verified-obligations 40
+  :claims
+  [:total-page-normalization
+   :invalid-combinations-rejected
+   :nil-bound-rejected
+   :safe-page-size
+   :forward-window-exact
+   :backward-window-exact
+   :page-size-independent-sequence
+   :page-uniqueness
+   :complete-forward-walk
+   :backward-page-is-exact-preceding-window
+   :unavailable-proof-uses-exact-snapshot-without-generation-reads
+   :complete-proof-uses-managed-dependency-identity
+   :only-complete-ordered-generation-proof-uses-managed-identity
+   :current-continuation-requires-equal-proof
+   :exact-continuation-requires-authenticated-exact-proof
+   :changed-proof-never-continues-on-current
+   :changed-proof-without-exact-snapshot-is-rejected
+   :datascript-exact-proof-continues-only-at-current-basis
+   :datascript-changed-basis-cannot-yield-cursor-page
+   :completed-logical-page-is-exact-slice
+   :mismatched-logical-boundary-is-stale
+   :matching-authorization-page-scope-reuses-exact-page
+   :authorization-page-scope-mismatch-cannot-hit
+   :relationship-keyset-page-decision-exact
+   :relationship-page-from-normalized-request-exact]}
+ :shipped-consumers
+ {:request-normalization
+  [eacl.engine.v8/normalize-page-request
+   eacl.engine.relationships/normalized-page]
+  :keyset-page-decision eacl.engine.relationships/execute-page
+  :cursor-proof-strategy eacl.client.orchestration/cursor-options
+  :continuation-decision eacl.relay/continuation-decision
+  :completed-logical-page eacl.engine.v8/complete-logical-page
+  :retained-exact-page
+  [eacl.relay/lookup-visited-page
+   eacl.engine.v8/cached-recursive-page]}
+ :generated-targets
+ {:java
+  {:status :passed
+   :tests 2
+   :assertions 6754
+   :failures 0
+   :errors 0}
+  :javascript
+  {:status :passed
+   :suite-tests 44
+   :suite-assertions 9978
+   :qualification :full-formal-cljs-suite-includes-page-window-boundaries
+   :failures 0
+   :errors 0}}
+ :production-regression
+ {:clj
+  {:namespaces
+   [eacl.relay-test
+    eacl.secure-format-test
+    eacl.datascript.contract-test]
+   :tests 18
+   :assertions 136
+   :status :passed}
+  :cljs
+  {:tests 90
+   :assertions 1309
+   :status :passed}}
+ :production-authority-routing
+ {:clj-java
+  {:namespace eacl.formal.production-kernel-test
+   :tests 4
+   :assertions 19
+   :status :passed}
+  :cljs-javascript
+  {:namespace eacl.formal.production-kernel-test
+   :tests 4
+   :assertions 19
+   :status :portable-production-and-generated-oracle-passed}
+  :coverage
+  [:lookup-cursor-current-proof
+   :lookup-cursor-changed-proof-rejection
+   :lookup-cursor-exact-fallback
+   :relationship-cursor-current-proof
+   :relationship-page-window
+   :relationship-keyset-page-window
+   :strict-generated-result-validation]}
+ :host-completed-logical-page-boundary
+ {:operation :completed-logical-page
+  :source eacl.engine.v8/complete-logical-page
+  :input
+  {:values :generated-logical-order-complete-denotation-eids
+   :bound [:authenticated-logical-ordinal
+           :authenticated-external-result-identity]}
+  :result
+  [:exact-exclusive-page :stale-logical-boundary]
+  :logical-work
+  {:boundary-validation :constant-index-and-identity-check
+   :slice "at most requested page size"
+   :heap-and-latency :host-regression-gates-not-dafny-claims}
+  :production-authority
+  {:model PageWindow/DecideCompletedLogicalPage
+   :clj-java :host-control-flow-over-generated-logical-denotation
+   :cljs-javascript :same-portable-host-control-flow
+   :runtime-engine-selector :absent}
+  :qualification
+  :proof-model-matches-host-branch-without-mechanized-source-refinement}
+ :remaining [:host-control-source-refinement :independent-review]}

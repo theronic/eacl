@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-033
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "public-shadow/datascript/two-clients/same-graph-distinct-exact-registry-handles"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 uncommitted complete-public-shadow harness after EACL-FORMAL-032"]
+ :affected-backends [:shared :datascript :third-party]
+ :root-cause
+ "The first complete-public graph comparison included :exact-locator in graph identity. DataScript exact locators are client-local registry capabilities, so two clients reading the same immutable graph legitimately mint different locator strings and produced a false shadow divergence."
+ :fix
+ "Complete-public shadow comparison identifies a selected graph by source scope, snapshot identity, graph anchor, and order hint. It excludes the client-local exact locator while retaining separate exact-locator reconstruction and resolved-graph postcondition tests."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/public-shadow-compares-cache-provenance-and-selected-graph"
+  "formal mutation :graph-identity-includes-client-local-exact-locator"]}

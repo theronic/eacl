@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EACL generated-kernel browser smoke</title>
+  </head>
+  <body data-status="running">
+    <main>
+      <h1>EACL generated-kernel browser smoke</h1>
+      <pre id="result">Running…</pre>
+    </main>
+    <script src="./EaclKernel.browser.js"></script>
+    <script>
+      (() => {
+        const requiredProductionModules = [
+          "EaclKernel",
+          "Semantics",
+          "AcyclicEngine",
+          "ConsistencyDecision",
+          "CurrentCache",
+          "IndexedCertification",
+          "IndexedBatching",
+          "IndexedRefinement",
+          "IndexedTraversal",
+          "OrderedMerge",
+          "PageWindow",
+          "RecursiveEngine",
+          "RoutingCertificate",
+          "SubproblemCache",
+          "TemporalSafety",
+          "WireFormat",
+          "_dafny",
+          "BigNumber",
+        ];
+        const missingProductionModules = requiredProductionModules.filter(
+          (moduleName) => globalThis.EaclFormal[moduleName] === undefined,
+        );
+        const { EaclKernel, _dafny, BigNumber } = globalThis.EaclFormal;
+        const invoke = (tag, values, limit) =>
+          EaclKernel.__default.RoundTrip(
+            _dafny.Seq.UnicodeFromString(tag),
+            new _dafny.Seq(...values.map((n) => new BigNumber(n))),
+            new BigNumber(limit),
+          );
+        const accepted = invoke("eacl.round-trip/v1", [0, 7, 42], 3);
+        const rejected = invoke("eacl.round-trip/v1", [1, -1], 2);
+        const values = Array.from(
+          accepted.dtor_items,
+          (n) => n.toNumber(),
+        );
+        const passed =
+          missingProductionModules.length === 0 &&
+          accepted.is_Accepted &&
+          rejected.is_Rejected &&
+          JSON.stringify(values) === JSON.stringify([0, 7, 42]);
+
+        document.body.dataset.status = passed ? "passed" : "failed";
+        document.querySelector("#result").textContent = JSON.stringify(
+          {
+            passed,
+            accepted: accepted.toString(),
+            rejected: rejected.toString(),
+            values,
+            missingProductionModules,
+          },
+          null,
+          2,
+        );
+        if (!passed) {
+          throw new Error("generated-kernel browser smoke failed");
+        }
+      })();
+    </script>
+  </body>
+</html>

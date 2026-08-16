@@ -1,0 +1,6 @@
+{:allowed? false
+ :direct-intersection-phases 0
+ :full-candidate-checks 0
+ :avoided-work
+ [:direct-grant-relation-calculation
+  :subject-side-direct-intersection-setup]}

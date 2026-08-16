@@ -1,0 +1,17 @@
+{:query
+ {:subject {:type :user :id "u1"}
+  :permission :read
+  :resource-type :folder}
+ :unrelated-grant
+ {:subject {:type :team :id "t1"}
+  :relation :team_reader
+  :resource {:type :folder :id "f1"}}
+ :limit {:max-queued-work 1}
+ :materialized-whole-graph-outcome
+ {:status :limit-exceeded
+  :limit-kind :queued-work
+  :initial-pending-set-cardinality 2}
+ :indexed-query-local-outcome
+ {:status :complete
+  :count 2
+  :maximum-queue-depth 1}}

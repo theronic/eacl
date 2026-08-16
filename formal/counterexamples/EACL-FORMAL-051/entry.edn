@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-051
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "github-actions/run-31013235764/job-92330554511/permission-check-benchmark"
+ :minimized-fixture "fixture.edn"
+ :impact :performance
+ :affected-versions
+ ["PR 101 commit d046e37c2e45b4bcd904623a0037f3c2895001c2"]
+ :affected-backends [:datomic :datahike :datascript]
+ :root-cause
+ "The public can? entry point classified whether the permission root existed, then generated-authoritative can* immediately repeated the same schema-generation lookup before selecting the generated indexed engine. The corrected steady-state harness measured three stable GitHub Actions batch medians between 1004.884 and 1006.3265 microseconds, proving that the earlier one-batch miss was not only a tiered-compilation transition."
+ :fix
+ "Hoist the already computed permission-root fact across the public/generated dispatch. A defined root enters generated traversal directly; an undefined root returns false without compiling an invalid plan. Dafny proves result preservation under the established undefined-root-denies contract and proves one root lookup for a generated-authoritative public check. A public-client regression observes exactly one lookup."
+ :closing-evidence
+ ["AcyclicEngine.PublicCanRootClassificationHoistPreservesResult"
+  "AcyclicEngine.PublicCanRootClassificationHoistReducesWork"
+  "eacl.formal.state-trace-differential-test/generated-can-reuses-the-public-root-classification"
+  "eacl.bench.pagination-test/permission-check-benchmark"]}

@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-034
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "formal-cljs-smoke/then-counterexample-replay/same-persistent-nrepl"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 commit 2c3065e2468c199ad9a2947766471936bd8e42c2"]
+ :affected-backends [:shared]
+ :root-cause
+ "The CLJS formal smoke launcher called cljs.main/-main inside the persistent nREPL. The CLI lifecycle calls shutdown-agents, permanently terminating the executor used by Clojure future and making later concurrency regressions fail with RejectedExecutionException."
+ :fix
+ "The launcher now calls cljs.build.api/build, runs the Node suite, and asserts through the same nREPL that a future still completes. Formal evidence no longer depends on whether CLJS compilation ran before JVM concurrency tests."
+ :closing-evidence
+ ["formal/smoke/cljs/run runtime postcondition :eacl.formal/agent-executor-alive"
+  "eacl.characterization-fixture-test/formal-cljs-smoke-preserves-persistent-nrepl-executors-test"
+  "formal mutation :formal-cljs-smoke-terminates-agent-executors"]}

@@ -1,0 +1,20 @@
+{:id :EACL-FORMAL-044
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "recover-current/recursive-cursor/proof-change/stable-bound-still-present"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 through commit c22c2deaca6f1806bd2b378a097bc6498fb3581d"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "After a proof change, the recursive recover-current path discarded the authenticated cursor bound before evaluating the current answer. It therefore restarted even when the bound result identity was still present and could be rebound to its current ordinal."
+ :fix
+ "The final v8 contract supersedes the intermediate rebase fix: continue on current only when the authenticated dependency proof is equal; otherwise reconstruct and continue the exact old snapshot on a history-capable backend without violating a newer freshness floor, or fail with a typed stale/conflict error. Never rebase or restart on changed current data."
+ :closing-evidence
+ ["formal/dafny/PageWindow.dfy/ChangedProofNeverContinuesOnCurrent"
+  "formal/dafny/PageWindow.dfy/ExactContinuationRequiresAuthenticatedExactProof"
+  "eacl.datomic.recursive-cache-test/recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test"
+  "eacl.datomic.recursive-cache-test/exact-cursor-fallback-never-violates-newer-freshness-floor-test"
+  "eacl.contract-support/assert-v8-recursive-contracts!"]}

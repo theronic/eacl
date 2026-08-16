@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-043
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "verified-authoritative/acyclic-root/host-only-dispatch"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 through commit c22c2deaca6f1806bd2b378a097bc6498fb3581d"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "Verified-authoritative dispatch selected the generated indexed state machine only for roots classified as recursive-SCC-dependent. Acyclic roots still used the handwritten optimized Clojure/ClojureScript engine, while the Dafny AcyclicForward/AcyclicReverse functions projected the semantic relation rather than refining that complete host algorithm. The mode therefore could not support a complete generated-authority claim."
+ :fix
+ "Withdraw the false all-root generated-authority claim. Recursive roots execute the generated indexed traversal; certified acyclic roots execute the faster source-specialized host engine with generated routing, page, count, and work decisions plus explicit source-specialization evidence. Keep those assurance classes disjoint in the manifest and regression corpus."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/generated-decisions-and-source-specialized-acyclic-paths-preserve-order-and-point-locality"
+  "formal/verification/acyclic-kernel.edn"
+  "formal/verification/source-specializations.edn"
+  "formal/verification/indexed-traversal.edn"]}

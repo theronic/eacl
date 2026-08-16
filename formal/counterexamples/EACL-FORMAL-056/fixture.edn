@@ -1,0 +1,11 @@
+{:operation :read-relationships
+ :entrypoint :direct-backend-implementation
+ :engine-selection nil
+ :query {:subject/type :user
+         :relation :viewer
+         :resource/type :document
+         :first 20}
+ :before
+ {:page-normalization-kernel :generated-default
+  :keyset-page-kernel nil}
+ :observed-error :eacl.verification/invalid-boundary}

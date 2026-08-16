@@ -1,0 +1,20 @@
+{:engine-mode :verified-authoritative
+ :operation :lookup-resources
+ :schema-shape :one-direct-relation
+ :result-count 15000
+ :page-shape {:direction :reverse :position :last :size 20}
+ :jvm {:initial-heap-bytes 268435456
+       :maximum-heap-bytes 536870912}
+ :before
+ {:java-reverse-page-p50-ms 5707.54
+  :javascript
+  {:sizes [128 256 512 1024]
+   :p50-elapsed-ms [15.9 47.9 160.1 609.7]
+   :normalized-per-result-ratio 4.79}}
+ :after
+ {:java-reverse-page-max-median-ms 2.78
+  :javascript
+  {:sizes [1024 2048 4096 8192 16384]
+   :p50-elapsed-ms
+   [32.214791 64.178541 128.870625 255.644125 511.696209]
+   :normalized-per-result-ratio 0.9927431490243096}}}

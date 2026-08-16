@@ -1,0 +1,202 @@
+#!/usr/bin/env bb
+
+(require '[clojure.edn :as edn]
+         '[clojure.java.io :as io]
+         '[clojure.pprint :as pprint]
+         '[clojure.string :as str])
+
+(import '[java.security MessageDigest])
+
+(def repo-root
+  (.getCanonicalFile
+   (io/file (or (System/getenv "EACL_REPO_ROOT") "."))))
+
+(def output-path
+  (or (System/getenv "EACL_VERIFICATION_MANIFEST_OUTPUT")
+      "target/formal/verification-manifest.edn"))
+
+(defn repo-file
+  [path]
+  (let [file (io/file path)]
+    (if (.isAbsolute file)
+      file
+      (io/file repo-root path))))
+
+(defn relative-path
+  [file]
+  (-> (.toPath repo-root)
+      (.relativize (.toPath (.getCanonicalFile file)))
+      str
+      (str/replace "\\" "/")))
+
+(defn sha256-bytes
+  [bytes]
+  (let [digest (.digest (MessageDigest/getInstance "SHA-256") bytes)]
+    (apply str (map #(format "%02x" (bit-and (int %) 255)) digest))))
+
+(defn file-digest
+  [file]
+  (sha256-bytes
+   (with-open [input (io/input-stream file)]
+     (let [output (java.io.ByteArrayOutputStream.)]
+       (io/copy input output)
+       (.toByteArray output)))))
+
+(defn files-under
+  [path predicate]
+  (->> (file-seq (repo-file path))
+       (filter #(.isFile %))
+       (filter predicate)
+       (sort-by relative-path)))
+
+(def source-files
+  (distinct
+   (concat
+    (files-under "formal/dafny" #(str/ends-with? (.getName %) ".dfy"))
+    (files-under "formal/tla"
+                 #(or (str/ends-with? (.getName %) ".tla")
+                      (str/ends-with? (.getName %) ".cfg")))
+    ;; Lore's external audit demonstrated why a hand-selected source list is
+    ;; not a production-refinement boundary: an omitted callback path can
+    ;; invalidate a resource claim while every named model still verifies.
+    ;; Hash every shipped implementation and regression source across all four
+    ;; modules so neither the claimed code nor its closing evidence can drift.
+    (files-under
+     "modules"
+     #(and (or (str/includes? (relative-path %) "/src/")
+               (str/includes? (relative-path %) "/test/"))
+           (or (str/ends-with? (.getName %) ".clj")
+               (str/ends-with? (.getName %) ".cljc")
+               (str/ends-with? (.getName %) ".cljs"))))
+    (files-under "formal/smoke/clj"
+                 #(str/ends-with? (.getName %) ".clj"))
+    (files-under "formal/smoke/cljs"
+                 #(str/ends-with? (.getName %) ".cljs"))
+    (files-under
+     "formal/runtime"
+     #(or (str/ends-with? (.getName %) ".java")
+          (str/ends-with? (.getName %) ".js")))
+    (map repo-file
+         [".github/workflows/formal.yml"
+          "bin/formal"
+          "bin/generate-verification-manifest"
+          "bin/patch-generated-collections.mjs"
+          "bin/public-source-closure.mjs"
+          "bin/summarize-dafny-verification.mjs"
+          "bin/validate-verification-manifest"
+          "formal/smoke/cljs/run"
+          "formal/smoke/cljs/run-indexed-traversal-benchmark"
+          "formal/smoke/cljs/run-verified-authority"
+          "formal/smoke/java/run"
+          "formal/smoke/js/build_browser_bundle.mjs"
+          "formal/smoke/js/generated_loader.cjs"
+          "formal/smoke/js/package-lock.json"
+          "formal/smoke/js/package.json"
+          "formal/smoke/js/round_trip.mjs"
+          "formal/mutations/registry.edn"
+          "formal/toolchain.lock.json"]))))
+
+(def report-paths
+  (concat
+   (->> (files-under
+         "formal/verification"
+         #(not= "manifest.edn" (.getName %)))
+        (map relative-path))
+   ["docs/reports/2026-08-02-eacl-v8-keyset-relationship-pagination.md"
+    "docs/reports/2026-08-02-eacl-v8-single-db-current-cache-design.md"]))
+
+(defn aggregate-digest
+  [files]
+  (when (seq files)
+    (sha256-bytes
+     (.getBytes
+      (apply
+       str
+       (map
+        (fn [file]
+          (str (relative-path file) "\u0000"
+               (file-digest file) "\n"))
+        files))
+      java.nio.charset.StandardCharsets/UTF_8))))
+
+(def generated-artifacts
+  (let [java-files
+        (when (.exists (repo-file "target/formal/java"))
+          (files-under
+           "target/formal/java"
+           #(or (str/ends-with? (.getName %) ".java")
+                (str/ends-with? (.getName %) ".class"))))
+        candidates
+        {:dafny-verification
+         (when-let [file
+                    (let [file
+                          (repo-file
+                           "target/formal/dafny-verification.json")]
+                      (when (.isFile file) file))]
+           (file-digest file))
+         :java (aggregate-digest java-files)
+         :javascript
+         (when-let [file (let [file (repo-file
+                                     "target/formal/js/EaclKernel.js")]
+                           (when (.isFile file) file))]
+           (file-digest file))
+         :browser-iife
+         (when-let [file (let [file (repo-file
+                                     "target/formal/browser/EaclKernel.browser.js")]
+                           (when (.isFile file) file))]
+           (file-digest file))}]
+    (into {}
+          (map (fn [[target digest]]
+                 [target (or digest :not-built)]))
+          candidates)))
+
+(def template
+  (edn/read-string
+   (slurp (repo-file "formal/verification/manifest.edn"))))
+
+(def counterexample-entries
+  (->> (files-under
+        "formal/counterexamples"
+        #(= "entry.edn" (.getName %)))
+       (map #(edn/read-string (slurp %)))
+       (sort-by :id)
+       vec))
+
+(def generated
+  (assoc
+   template
+   :generator-version 1
+   :source-digests
+   (into
+    (sorted-map)
+    (map (fn [file] [(relative-path file) (file-digest file)]))
+    source-files)
+   :generated-artifact-digests generated-artifacts
+   :input-report-digests
+   (into
+    (sorted-map)
+    (map
+     (fn [path]
+       [path (file-digest (repo-file path))]))
+    report-paths)
+   :counterexample-corpus-revision
+   (assoc
+    (:counterexample-corpus-revision template)
+    :latest (:id (last counterexample-entries))
+    :fixed
+    (mapv :id (filter #(= :fixed (:status %))
+                      counterexample-entries)))))
+
+(let [output (repo-file output-path)]
+  (io/make-parents output)
+  (with-open [writer (io/writer output)]
+    (binding [*out* writer]
+      (pprint/pprint generated)))
+  (println
+   (pr-str
+    {:status :generated
+     :output (relative-path output)
+     :source-files (count source-files)
+     :reports (count report-paths)
+     :counterexamples (count counterexample-entries)
+     :generated-artifacts generated-artifacts})))

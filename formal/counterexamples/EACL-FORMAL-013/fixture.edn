@@ -1,0 +1,11 @@
+{:lifecycle :lifecycle-1
+ :tier :denotation
+ :key :recursive
+ :resolving-keys
+ [[:lifecycle-1 :denotation :recursive]]
+ :correct-lookup-key
+ [:lifecycle-1 :denotation :recursive]
+ :mutant-lookup-key
+ [:denotation :recursive]
+ :before-fix :self-wait
+ :after-fix :recursive-self-miss}

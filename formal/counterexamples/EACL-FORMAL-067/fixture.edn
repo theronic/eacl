@@ -1,0 +1,17 @@
+{:operation :lookup-resources
+ :schema-shape :short-recursive-permission
+ :generated-origin {:seed 5
+                    :subject {:type :user :ordinal 1}
+                    :permission :view
+                    :resource-type :document}
+ :minimized-public-regression
+ {:result-count 7
+  :page-sizes [3 4 1]
+  :implementations
+  [:generated-cached-continuation
+   :generated-cacheless-replay
+   :portable-cacheless-replay]}
+ :before
+ {:page-render-scan-wave-size 64
+  :failure :authenticated-cursor-result-mismatch}
+ :risk :page-size-changed-the-logical-result-sequence}

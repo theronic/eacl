@@ -1,0 +1,3 @@
+{:formal-only-oracles :loaded-only-when-present-on-the-selected-classpath
+ :ordinary-replay-classpath :passes
+ :status :counterexample-corpus-replayed}

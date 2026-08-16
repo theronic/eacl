@@ -1,0 +1,14 @@
+{:present-bound
+ {:status :rebased
+  :ordinal 1
+  :inspected-count 2
+  :forward-page [30 40]}
+ :absent-bound
+ {:status :restarted
+  :inspected-count 3
+  :forward-page [10 30]}
+ :proof-obligations
+ {:rebased-index-holds-bound-eid true
+  :restart-implies-bound-absent true
+  :inspections-at-most-answer-size true
+  :duplicate-result-identities-use-first-occurrence true}}

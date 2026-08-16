@@ -1,0 +1,13 @@
+{:direction :reverse
+ :anchor :resource
+ :small
+ {:reachable-resources 16
+  :backend-commands 1
+  :adapter-fetched-values 1
+  :engine-consumed-values 1}
+ :large
+ {:reachable-resources 1040
+  :backend-commands 1
+  :adapter-fetched-values 1
+  :engine-consumed-values 1}
+ :authorization-result true}

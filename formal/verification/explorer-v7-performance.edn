@@ -1,0 +1,99 @@
+{:schema-version 1
+ :workload :eacl-explorer-deterministic-multipath
+ :schema "modules/eacl/test/eacl/bench/explorer_fixture.cljc"
+ :host-class {:os :macos
+              :arch :arm64
+              :os-version "26.5.1"
+              :cpu-model "Apple M3 Pro"
+              :logical-processors 12
+              :total-memory-bytes 19327352832
+              :max-heap-bytes 4831838208
+              :jdk "24.0.1"
+              :vm-name "OpenJDK 64-Bit Server VM"
+              :vm-vendor "Eclipse Adoptium"
+              :runtime :datascript-clj
+              :measurement :warmed-median}
+ :baseline-source
+ {:kind :same-host-pinned-v7-fresh-jvm
+  :eacl-commit "457b137bad63ae248728885d611421f3227aa75c"
+  :fixture-sha256
+  "800bc7c0934770c5485692db6e08f891cc743076f73ab2917c15ceafcc2bc9f1"
+  :clojure "1.11.4"
+  :reported-on "2026-08-08"
+  :measurement-order
+  [:super-user-exact-count-50000
+   :user-1-forward-page
+   :owner-0001-exact-count
+   :super-user-exact-count-100000]
+  :warmups 3
+  :samples 7
+  :qualification :matched-host-v7-reference}
+ :latency-gate
+ {:maximum-v8-to-v7-ratio 2.0
+  :host-qualification :exact-host-and-jvm-class
+  :mismatched-host-policy :not-applicable-never-passed
+  :variance-policy
+  {:warmups 3
+   :samples 7
+   :statistic :median
+   :logical-work-remains-authoritative true}}
+ :scenarios
+ {:user-1-forward-page
+  {:servers 10000
+   :authorized 8000
+   :page-size 20
+   :v7-samples-ms
+   [2.981041 2.923375 3.000666 2.798625 2.76225 3.726958 2.885542]
+   :v7-median-ms 2.923375
+   :maximum-v8-median-ms 5.84675}
+  :owner-0001-exact-count
+  {:servers 10000
+   :authorized 2000
+   :v7-samples-ms
+   [1.690459 1.445667 1.6295 1.417792 1.4565 1.838209 1.804917]
+   :v7-median-ms 1.6295
+   :maximum-v8-median-ms 3.259}
+  :super-user-exact-count-50000
+  {:servers 50000
+   :authorized 50000
+   :v7-samples-ms
+   [72.836541 79.430625 73.021875 74.626167 71.850625 73.016792
+    72.048709]
+   :v7-median-ms 73.016792
+   :maximum-v8-median-ms 146.033584}
+  :super-user-exact-count-100000
+  {:servers 100000
+   :authorized 100000
+   :v7-samples-ms
+   [175.018584 158.86175 155.008042 153.989333 149.309292
+    155.719958 153.123334]
+   :v7-median-ms 155.008042
+   :maximum-v8-median-ms 310.016084}}
+ :work-envelopes
+ ;; Stable-discovery engine counters: cumulative per-run deltas reported
+ ;; through eacl.engine.v8/*recursive-traversal-stats* (:derived-grants,
+ ;; :advanced-datoms, :queued-work). Deterministic on these fixtures; the
+ ;; maximums are the 2026-08-14 stable-engine observations plus roughly
+ ;; twenty percent headroom. The retired acyclic merge counters
+ ;; (:merge-advances, :backend-scans) left with the engine that produced
+ ;; them.
+ {:page
+  {:maximum-derived-grants 64
+   :maximum-advanced-datoms 8
+   :maximum-queued-work 96}
+  :count-10000
+  {:maximum-derived-grants 24000
+   :maximum-advanced-datoms 1024
+   :maximum-queued-work 72000}
+  :count-50000
+  {:maximum-derived-grants 180000
+   :maximum-advanced-datoms 64000
+   :maximum-queued-work 420000}
+  :count-100000
+  {:maximum-derived-grants 240000
+   :maximum-advanced-datoms 12000
+   :maximum-queued-work 720000}
+  :cold-user-count-40000
+  {:maximum-derived-grants 44000
+   :maximum-advanced-datoms 16000
+   :maximum-queued-work 101000}}}

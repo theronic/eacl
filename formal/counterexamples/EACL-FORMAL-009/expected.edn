@@ -1,0 +1,6 @@
+{:public-result :same-as-legacy
+ :indexed-plan-compilations :positive
+ :indexed-generated-transitions :positive
+ :backends [:datomic :datascript :datahike]
+ :invariant
+ "Engine authority selection is independent of completed-answer cache eligibility."}

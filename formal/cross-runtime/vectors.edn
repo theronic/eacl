@@ -1,0 +1,179 @@
+{:schema-version 1
+ :graph
+ {:fixture
+  {:objects [{:type :user :id "u1"}
+             {:type :user :id "u2"}
+             {:type :document :id "d1"}
+             {:type :document :id "d2"}]
+   :relationships
+   [{:subject {:type :user :id "u1"}
+     :relation :reader
+     :resource {:type :document :id "d1"}}]
+   :rules {[:document :view] [:relation :reader]}}
+  :subject {:type :user :id "u1"}
+  :resource {:type :document :id "d1"}
+  :permission :view
+  :expected
+  {:grants
+   #{[{:type :user :id "u1"}
+      :view
+      {:type :document :id "d1"}]}
+   :forward ["d1"]
+   :reverse ["u1"]}}
+
+ :pages
+ [{:values [0 1 2 3] :request {:first 2}
+   :expected {:status :valid :items [0 1] :start 0 :end 2
+              :has-next? true :has-previous? false}}
+  {:values [0 1 2 3] :request {:first 2 :after 1}
+   :expected {:status :valid :items [2 3] :start 2 :end 4
+              :has-next? false :has-previous? true}}
+  {:values [0 1 2 3] :request {:last 2 :before 3}
+   :expected {:status :valid :items [1 2] :start 1 :end 3
+              :has-next? true :has-previous? true}}
+  {:values [0 1] :request {:first 1 :last 1}
+   :expected {:status :invalid}}]
+
+ :continuations
+ [{:input {:current-proof "p" :cursor-proof "p"}
+   :expected :current}
+  {:input {:current-proof "new" :cursor-proof "old"
+           :exact {:graph 7 :source "source" :proof "old"}}
+   :expected :exact}
+  {:input {:current-proof "new" :cursor-proof "old"
+           :exact nil}
+   :expected :snapshot-unavailable}
+  {:input {:current-proof "p" :cursor-proof "p" :expired? true}
+   :expected :expired}
+  {:input {:current-proof "new" :cursor-proof "old"
+           :exact {:graph 8 :source "source" :proof "old"}}
+   :expected :divergence}]
+
+ :production-acyclic-decisions
+ [{:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? true
+           :recursive? false
+           :recursive-data-active? false}
+   :expected {:status :accepted :route :acyclic}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? true
+           :recursive? true
+           :recursive-data-active? true}
+   :expected {:status :accepted :route :recursive}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? true
+           :recursive? true
+           :recursive-data-active? false}
+   :expected {:status :accepted :route :acyclic}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "schema-v8"
+           :root-defined? false
+           :recursive? true
+           :recursive-data-active? true}
+   :expected {:status :accepted :route :undefined}}
+  {:operation :enumeration-route
+   :input {:schema-identity "schema-v8"
+           :certificate-schema-identity "stale-schema"
+           :root-defined? true
+           :recursive? false
+           :recursive-data-active? false}
+   :expected {:status :rejected :reason :schema-identity-mismatch}}
+  {:operation :acyclic-page
+   :input {:direction :asc
+           :realized-eids [10 20 30]
+           :size 2
+           :bound? false}
+   :expected {:take-count 2
+              :reverse? false
+              :has-next? true
+              :has-previous? false
+              :merge-advances 3
+              :emitted-results 2
+              :recursive-work 0}}
+  {:operation :acyclic-page
+   :input {:direction :desc
+           :realized-eids [30 20]
+           :size 2
+           :bound? true}
+   :expected {:take-count 2
+              :reverse? true
+              :has-next? true
+              :has-previous? false
+              :merge-advances 2
+              :emitted-results 2
+              :recursive-work 0}}
+  {:operation :acyclic-continuation
+   :input {:authenticated? true
+           :schema-matches? true
+           :query-matches? true
+           :snapshot-matches? true
+           :entry-present? true
+           :entry-valid? true}
+   :expected :resume}
+  {:operation :acyclic-continuation
+   :input {:authenticated? true
+           :schema-matches? true
+           :query-matches? true
+           :snapshot-matches? true
+           :entry-present? false
+           :entry-valid? false}
+   :expected :replay}
+  {:operation :acyclic-continuation
+   :input {:authenticated? true
+           :schema-matches? true
+           :query-matches? false
+           :snapshot-matches? true
+           :entry-present? true
+           :entry-valid? true}
+   :expected :reject}
+  {:operation :acyclic-count
+   :input {:unique-count 5 :more? false :limit nil}
+   :expected {:count 5 :truncated? false :recursive-work 0}}
+  {:operation :acyclic-count
+   :input {:unique-count 5 :more? true :limit 5}
+   :expected {:count 5 :truncated? true :recursive-work 0}}
+  {:operation :acyclic-count
+   :input {:unique-count 6 :more? false :limit 5}
+   :expected {:count 5 :truncated? true :recursive-work 0}}
+  {:operation :acyclic-work
+   :input {:requested-window 20
+           :merge-advances 21
+           :emitted-results 20
+           :recursive-work 0}
+   :expected :accepted}
+  {:operation :acyclic-work
+   :input {:requested-window 20
+           :merge-advances 22
+           :emitted-results 20
+           :recursive-work 0}
+   :expected :rejected}
+  {:operation :acyclic-work
+   :input {:requested-window 20
+           :merge-advances 20
+           :emitted-results 20
+           :recursive-work 1}
+   :expected :rejected}]
+
+ ;; Stable first-discovery order (adopt-stable-discovery-enumeration): the
+ ;; canonical reducer discovers 20 before 30 on this fixture; the retired
+ ;; engine's entity-ID merge produced [10 30] then [20].
+ :production-recursive-pages
+ {:first-page [10 20]
+  :continuation-page [30]}
+
+ :round-trips
+ [{:tag "eacl.round-trip/v1" :values [0 7 42] :limit 3
+   :expected {:status :accepted :values [0 7 42]}}
+  {:tag "unknown" :values [1] :limit 1
+   :expected {:status :rejected}}
+  {:tag "eacl.round-trip/v1" :values [1 -1] :limit 2
+   :expected {:status :rejected}}
+  {:tag "eacl.round-trip/v1" :values [1 2] :limit 1
+   :expected {:status :rejected}}]}

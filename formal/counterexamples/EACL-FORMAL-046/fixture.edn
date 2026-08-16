@@ -1,0 +1,33 @@
+{:engine-mode :verified-authoritative
+ :operation :can?
+ :subject {:type :user :id "shared-user"}
+ :resource {:type :server :id "server-0"}
+ :permission-roots
+ {:same-a
+  {:body {:relation :team
+          :target {:type :group :permission :access}}}
+  :same-b
+  {:body {:relation :team
+          :target {:type :group :permission :access}}}
+  :different-relation
+  {:body {:relation :backup
+          :target {:type :group :permission :access}}}
+  :different-target
+  {:body {:relation :team
+          :target {:type :group :permission :other}}}}
+ :expected-decisions
+ {:same-a true
+  :same-b true
+  :different-relation false
+  :different-target false}
+ :before
+ {:same-body-denotation-reused? false}
+ :after
+ {:same-body-denotation-reused? true
+  :different-relation-denotation-reused? false
+  :different-target-denotation-reused? false}
+ :shared-subgraph-benchmark
+ {:completed-answer-only-p50-ms 0.68425
+  :layered-subproblem-p50-ms 0.181959
+  :latency-ratio 0.265925
+  :layered-executed-backend-operations 0}}

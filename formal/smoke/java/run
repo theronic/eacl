@@ -1,0 +1,44 @@
+#!/bin/sh
+
+set -eu
+
+repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
+generated="$repo_root/target/formal/java"
+classes="$generated/classes"
+dafny_runtime="$repo_root/target/formal-tools/dafny-4.11.0/dafny/DafnyRuntime.jar"
+clojure_classpath=$(clojure -Spath)
+java_release=${EACL_JAVA_RELEASE:-26}
+
+case "$java_release" in
+  ''|*[!0-9]*)
+    printf '%s\n' "EACL_JAVA_RELEASE must be an integer from 8 through 26" >&2
+    exit 1
+    ;;
+esac
+
+if [ "$java_release" -lt 8 ] || [ "$java_release" -gt 26 ]; then
+  printf '%s\n' "EACL_JAVA_RELEASE must be an integer from 8 through 26" >&2
+  exit 1
+fi
+
+[ -f "$dafny_runtime" ] || {
+  printf '%s\n' "missing Dafny runtime; run bin/formal bootstrap" >&2
+  exit 1
+}
+
+rm -rf "$classes"
+mkdir -p "$classes"
+
+find "$generated" -type f -name '*.java' -print |
+  sort >"$generated/java-sources.txt"
+[ -s "$generated/java-sources.txt" ] || {
+  printf '%s\n' "Dafny generated no Java sources" >&2
+  exit 1
+}
+
+javac --release "$java_release" -cp "$dafny_runtime:$clojure_classpath" \
+  -d "$classes" @"$generated/java-sources.txt"
+
+printf '%s\n' \
+  "Generated Java compiled for Java $java_release. Run the smoke test through nREPL with:" \
+  "  clojure -M:formal-smoke:nrepl"

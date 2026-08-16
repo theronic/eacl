@@ -1,0 +1,27 @@
+{:legacy-error
+ {:eacl/error :eacl.recursive-traversal/limit-exceeded
+  :limit-kind :derived-grants
+  :limit 1}
+ :generated-error
+ {:eacl/error :eacl.recursive-traversal/limit-exceeded
+  :limit-kind :derived-grants
+  :limit 1}
+ :shadow-compared-fields
+ [:type
+  :eacl/error
+  :operation
+  :reason
+  :direction
+  :limit-kind
+  :filter
+  :key
+  :expected
+  :actual
+  :limit
+  :size
+  :max
+  :count-limit
+  :maximum
+  :maximum-size]
+ :diagnostic-policy
+ :changed-field-names-and-result-variants-only}

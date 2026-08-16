@@ -1,0 +1,91 @@
+{:schema-version 1
+ :status :source-derived-structural-reduction-passed
+ :claim-id :EACL-V8-IMPLEMENTATION-SIMPLICITY-001
+ :baseline
+ {:commit "05ff5f7dd253192abfa41ab436210ae5ee200efc"
+  :source-closure "formal/verification/public-source-closure.json@05ff5f7"
+  :public-roots 63
+  :source-files 55
+  :reachable-definitions 1424
+  :definitions-by-source
+  {"modules/eacl/src/eacl/subproblem_cache.cljc" 67
+   "modules/eacl-datomic/src/eacl/datomic/cache.clj" 35
+   "modules/eacl-datomic/src/eacl/datomic/core.clj" 128
+   "modules/eacl/src/eacl/engine/v8.cljc" 209}
+  :forbidden-coordination-source-occurrences 22
+  :datomic-schema-state-source-occurrences 38
+  :datascript-exact-snapshot-registry-source-occurrences 11}
+ :current-worktree
+ {:source-closure "formal/verification/public-source-closure.json"
+  :source-closure-sha256
+  "73115b8decc4cd0841bcbd506df25b289f91955dcfb0c064567ceb33cc2dabea"
+  :public-roots 63
+  :source-files 57
+  :reachable-definitions 1380
+  :definitions-by-source
+  {"modules/eacl/src/eacl/subproblem_cache.cljc" 48
+   "modules/eacl-datomic/src/eacl/datomic/cache.clj" 4
+   "modules/eacl-datomic/src/eacl/datomic/core.clj" 122
+   "modules/eacl/src/eacl/engine/v8.cljc" 231
+   "modules/eacl/src/eacl/execution.cljc" 21
+   "modules/eacl/src/eacl/proof_frame.cljc" 13}
+  :forbidden-coordination-source-occurrences 0
+  :datomic-schema-state-source-occurrences 0
+  :datascript-exact-snapshot-registry-source-occurrences 0}
+ :delta
+ {:public-roots 0
+  :source-files 2
+  :reachable-definitions -44
+  :subproblem-cache-definitions -19
+  :datomic-cache-definitions -31
+  :datomic-core-definitions -6
+  :shared-engine-definitions 22
+  :normalized-execution-contract-definitions 21
+  :proof-frame-definitions 13
+  :forbidden-coordination-source-occurrences -22
+  :datomic-schema-state-source-occurrences -38
+  :datascript-exact-snapshot-registry-source-occurrences -11}
+ :forbidden-coordination-pattern
+ "single-flight|Semaphore|ReentrantReadWriteLock|\\(locking"
+ :production-source-roots
+ ["modules/eacl/src"
+  "modules/eacl-datomic/src"
+  "modules/eacl-datahike/src"
+  "modules/eacl-datascript/src"]
+ :interpretation
+ {:public-entry-surface :unchanged
+  :proof-only-runtime-code
+  {:execution-contract-verification :independent
+   :generated-eacl-kernel-inclusion :removed
+   :generated-artifact-byte-delta
+   {:java-source -14992
+    :java-classes -12169
+    :javascript -8457
+    :browser-iife -4931}}
+  :cache-attempt-controls
+  {:live [:evaluation-reserve-ms :maximum-atomic-attempts]
+   :deleted-decorative
+   [:stage-timeout-ms
+    :maximum-encoded-bytes
+    :maximum-decoded-weight
+    :maximum-candidates]}
+  :net-reachable-definition-count :reduced-despite-explicit-execution-contract-and-demand-page-machinery
+  :portable-counter-state-updates :one-counter-map-replacement-per-logical-update
+  :pure-permission-alias-frontier
+  :one-cycle-guarded-canonicalizer-replaces-duplicate-traversal-streams
+  :caller-waiting-cache-coordination :deleted
+  :eacl-schema-read-locking :deleted
+  :datascript-history-retention :deleted
+  :cache-hit-miss-bypass-semantic-authority :one-shared-engine}
+ :reproduction
+ {:current-closure ["bin/public-source-closure.mjs write"
+                    "bin/formal source-closure"]
+  :baseline-closure
+  "git show 05ff5f7:formal/verification/public-source-closure.json"
+  :negative-source-audit
+  "rg -n 'single-flight|Semaphore|ReentrantReadWriteLock|\\(locking' modules/eacl/src modules/eacl-datomic/src modules/eacl-datahike/src modules/eacl-datascript/src"}
+ :limitations
+ [:static-source-closure-is-not-a-runtime-or-source-refinement-proof
+  :current-worktree-digest-must-be-rebound-to-the-final-commit
+  :answer-affecting-branch-and-artifact-kind-ratchets-remain-unmechanized
+  :independent-review]}

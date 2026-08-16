@@ -1,0 +1,95 @@
+{:schema-version 1
+ :status :passed
+ :runner eacl.formal.differential-runner
+ :seed-contract
+ {:required true
+  :case-id-required true
+  :portable-case-digest true
+  :typed-errors-compared true}
+ :implementation-classes
+ [:formal-semantics
+  :verified-generated-java
+  :verified-generated-javascript
+  :former-v8-test-oracle
+  :former-indexed-test-oracle
+  :public-cache-enabled
+  :public-cache-disabled
+  :datomic
+  :datascript-clj
+  :datascript-cljs
+  :datahike]
+ :runs
+ [{:name :semantic-generated-former-oracles
+   :namespace eacl.formal.semantics-bridge-test
+   :tests 7
+   :assertions 226
+   :recursive-shapes
+   [:cycle
+    :diamond
+    :mutual-permission-recursion
+    :multiple-seed
+    :negative-empty-seed
+    :deep-chain
+    :wide-fanout
+    :duplicate-path]
+   :limit-outcomes
+   [:derived-grants :advanced-datoms :queued-work]
+   :status :passed}
+  {:name :cross-adapter-cache-cursor-state-trace
+   :namespace eacl.formal.state-trace-differential-test
+   :tests 5
+   :assertions 171
+   :adapters [:datomic :datascript :datahike]
+   :cache-modes [:enabled :disabled]
+   :cursor-directions [:forward :backward]
+   :status :passed}
+  {:name :cljs-public-cache-generated-formal-differential
+   :namespace eacl.formal.production-kernel-test
+   :test
+   datascript-public-recursive-cache-modes-compare-generated-javascript
+   :runtime :cljs-node
+   :adapter :datascript
+   :implementation-classes
+   [:formal-semantics
+    :verified-generated-javascript
+    :public-cache-enabled
+    :public-cache-disabled]
+   :operations
+   [:can?
+    :lookup-resources
+    :lookup-subjects
+    :count-resources
+    :count-subjects
+   :cursor-continuation
+    :typed-indexed-limit-comparison
+    :typed-page-normalization
+    :typed-stale-cursor]
+   :materialized-reference
+   {:authorization-values :complete-results-only
+    :operational-limit-refinement :not-claimed}
+   :suite-tests 28
+   :suite-assertions 1378
+   :status :passed}
+  {:name :shared-recursive-scc-routing
+   :namespace eacl.formal.production-kernel-test
+   :tests
+   [generated-java-classifies-production-recursive-routing
+    generated-java-exhausts-three-node-recursive-routing-graphs
+    generated-javascript-classifies-production-recursive-routing
+    generated-javascript-exhausts-three-node-recursive-routing-graphs]
+   :implementation-classes
+   [:production-iterative-kosaraju
+    :verified-generated-java-typed-least-closure
+    :verified-generated-javascript-typed-least-closure]
+   :adversarial-graph-shapes-per-runtime 7
+   :exhaustive-labeled-three-node-graphs-per-runtime 512
+   :counterexample :EACL-FORMAL-030
+   :status :passed}
+  {:name :portable-runner-clj-cljs
+   :namespace eacl.formal.differential-runner-test
+   :status :passed}
+  {:name :generated-semantic-campaign
+   :seed-range [1 200]
+   :checked 200
+   :unexplained-counterexamples 0
+   :status :passed}]}

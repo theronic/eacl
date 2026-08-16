@@ -1,0 +1,10 @@
+{:engine-selection :verified-authoritative
+ :cache :disabled
+ :permission-shape :recursive-scc-dependent
+ :operation :lookup-resources
+ :observed-before-fix
+ {:public-result-correct-by-legacy true
+  :indexed-plan-compilations 0
+  :indexed-generated-transitions 0}
+ :reason
+ "Correct values concealed that the selected generated authority was never invoked."}

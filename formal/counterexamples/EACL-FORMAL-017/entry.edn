@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-017
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "verified-authoritative/subproblem-lookup/unrepresented-registered-flight"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 worktree after EACL-FORMAL-016 and before coordinator-aware lookup"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "The lifecycle-stable generated lookup input was derived only from the tier's represented entry. A valid same-key flight can remain registered after tier admission rejects it. A second resolver therefore received generated start-computation even though host flight arbitration later forced it to join, so the generated decision was still not authoritative and read/write contention could take an unnecessary failed installation path."
+ :fix
+ "The final v8 cache removes coordinator flights and join behavior. Unrepresented misses compute independently and may only race bounded publication of completed values; no request changes its answer to or waits for another in-flight request."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/independent-identical-misses-never-wait-test"
+  "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

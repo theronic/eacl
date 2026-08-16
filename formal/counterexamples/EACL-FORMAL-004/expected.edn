@@ -1,0 +1,5 @@
+{:page-1 ["a1"]
+ :page-2 ["a2"]
+ :page-2-recovery :rebased
+ :invariant
+ "A non-exact cursor is authenticated to its complete query and page 2 is re-evaluated on one selected current graph. It never relies on proof equivalence as authorization."}

@@ -1,0 +1,7 @@
+{
+  "resource": {
+    "objectType": "document",
+    "objectId": "testdoc"
+  },
+  "permission": "view"
+}

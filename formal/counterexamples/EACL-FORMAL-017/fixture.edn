@@ -1,0 +1,16 @@
+{:mode :verified-authoritative
+ :tier :projection
+ :key :same
+ :represented-entry nil
+ :registered-flight {:lifecycle :current
+                     :tier :projection
+                     :key :same
+                     :status :computing}
+ :before-fix
+ {:generated-candidate :missing
+  :generated-action :start-computation
+  :host-flight-arbitration :join-computation}
+ :after-fix
+ {:generated-candidate :computing
+  :generated-action :join-computation
+  :host-flight-arbitration :join-computation}}

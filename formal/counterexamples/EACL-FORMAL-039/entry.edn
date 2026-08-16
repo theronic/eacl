@@ -1,0 +1,21 @@
+{:id :EACL-FORMAL-039
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "recursive-routing/materialized-paths-to-indexed-dependency-edges"
+ :minimized-fixture "fixture.edn"
+ :impact :fail-open
+ :affected-versions
+ ["PR 101 through commit ec2a2ec39ba1e00d691adbc986fe8675b688fc8c"]
+ :affected-backends [:shared]
+ :root-cause
+ "The generated routing checker proved exact SCC classification only relative to an indexed dependency-edge vector independently supplied by Clojure. It did not verify that self-permission and arrow-permission paths emitted exactly one correctly directed edge, or that relation paths emitted none."
+ :fix
+ "Pass every materialized path kind through the generated boundary, stream-check exact ordered path-to-edge derivation, and build the host graph and certificate from that same edge vector. Acceptance now proves exact derivation plus exact SCC classification in P+2V+E certified loop iterations."
+ :closing-evidence
+ ["eacl.formal.production-kernel-test/generated-java-certifies-production-path-to-edge-derivation"
+  "eacl.formal.production-kernel-test/generated-javascript-certifies-production-path-to-edge-derivation"
+  "formal mutation :routing-permission-path-omits-dependency-edge"
+  "formal mutation :routing-relation-path-invents-dependency-edge"
+  "formal mutation :routing-path-edge-order-unbound"
+  "formal/dafny/RoutingCertificate.dfy"]}

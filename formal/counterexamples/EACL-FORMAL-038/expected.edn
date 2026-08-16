@@ -1,0 +1,11 @@
+{:boundary-result :typed-fail-closed-error
+ :accepted-postconditions
+ {:traversal-count "V"
+  :path-checks "P"
+  :node-checks "2V"
+  :edge-checks "E"}
+ :rejected-postconditions
+ {:path-checks-at-most "P"
+  :node-checks-at-most "2V"
+  :edge-checks-at-most "E"}
+ :runtime-targets [:clj-java :cljs-javascript]}

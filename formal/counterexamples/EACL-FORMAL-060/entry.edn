@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-060
+ :status :fixed
+ :discovered-by :benchmark
+ :seed-or-trace
+ "eacl-explorer/50000-server-super-user/count-resources"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["v8.0 commit 34ca6b15039daf8f651dd9ef2ccfb95d483ab112"]
+ :affected-backends [:shared :datomic :datahike :datascript]
+ :root-cause
+ "The generated routing certificate correctly classified Explorer permissions as acyclic, but the public v8 list and count entry points ignored that result and sent every defined root through the recursive fixed-point engine. A valid 50,000-resource acyclic count therefore consumed recursive advanced-datom budget and failed."
+ :fix
+ "Bind the exact generated routing certificate to normalized schema identity, dispatch certified acyclic roots through the ordered indexed acyclic engine, retain fixed-point traversal only for roots reaching recursive SCCs, and gate 10k/50k workloads with zero recursive counters."
+ :closing-evidence
+ ["RoutingCertificate.SelectEnumerationRoute"
+  "AcyclicEngine.DecideAcyclicPage"
+  "eacl.engine.physical-route-test/exhaustion-count-test"
+  "eacl.bench.explorer-enumeration-test/explorer-50000-super-user-exact-acyclic-acceptance"]}

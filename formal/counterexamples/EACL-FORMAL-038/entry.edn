@@ -1,0 +1,19 @@
+{:id :EACL-FORMAL-038
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "generated-boundary/recursive-routing-certificate/hostile-function-kernel"
+ :minimized-fixture "fixture.edn"
+ :impact :fail-open
+ :affected-versions
+ ["PR 101 through commit c138222bd667f5cbf5b38fb62e4610d6f2dc8506"]
+ :affected-backends [:shared]
+ :root-cause
+ "The strict result validator checked routing-certificate map variants and scalar representations independently, but omitted relational postconditions tying traversal length and logical counters to node-count and edge count from the validated input."
+ :fix
+ "Require accepted traversal length equal to node-count, accepted path, node, and edge counters equal to P, 2V, and E, and every rejected counter to remain within those input-derived maxima."
+ :closing-evidence
+ ["eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input"
+  "formal mutation :routing-certificate-result-length-unbound"
+  "formal mutation :routing-certificate-result-counters-unbound"
+  "formal/dafny/RoutingCertificate.dfy"]}

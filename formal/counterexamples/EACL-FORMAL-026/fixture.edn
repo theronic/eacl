@@ -1,0 +1,13 @@
+{:legacy-error-before-fix
+ {:eacl/error :eacl.pagination/stale-cursor
+  :bound {:ordinal 0 :result {:eid 1}}
+  :actual {:ordinal 0 :result {:eid 2}}}
+ :generated-error-before-fix
+ {:eacl/error :eacl.pagination/stale-cursor
+  :render-error
+  {:reason :cursor-result-mismatch
+   :ordinal 0
+   :expected-eid 1
+   :actual-eid 2}}
+ :redacted-shadow-view-for-both
+ {:eacl/error :eacl.pagination/stale-cursor}}

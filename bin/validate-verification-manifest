@@ -1,0 +1,245 @@
+#!/usr/bin/env bb
+
+(require '[clojure.edn :as edn]
+         '[cheshire.core :as json]
+         '[clojure.java.io :as io]
+         '[clojure.string :as str])
+
+(def repo-root
+  (.getCanonicalFile
+   (io/file (or (System/getenv "EACL_REPO_ROOT") ".") )))
+
+(defn repo-file
+  [path]
+  (let [file (io/file path)]
+    (if (.isAbsolute file)
+      file
+      (io/file repo-root path))))
+
+(defn read-edn
+  [path]
+  (edn/read-string (slurp (repo-file path))))
+
+(def manifest-path
+  (or (System/getenv "EACL_VERIFICATION_MANIFEST")
+      "formal/verification/manifest.edn"))
+
+(def dafny-report-path
+  (or (System/getenv "EACL_DAFNY_VERIFICATION_REPORT")
+      "target/formal/dafny-verification.json"))
+
+(def required-theorems
+  #{:normalized-execution-contract
+    :semantic-foundation
+    :cache-cursor-foundation
+    :strict-wire-format
+    :abstract-snapshot-oracle
+    :direct-and-acyclic-engine
+    :ordered-merge
+    :recursive-engine
+    :recursive-routing-certificate
+    :pagination-and-cursor-kernel
+    :cursor-codec-cost-model
+    :recursive-engine-cost-model
+    :snapshot-consistency-decision
+    :cache-decision-kernel
+    :current-generation-cache
+    :subproblem-cache
+    :indexed-recursive-public-engine
+    :complete-public-engine})
+
+(defn fail!
+  [message data]
+  (binding [*out* *err*]
+    (println message)
+    (prn data))
+  (System/exit 1))
+
+(let [manifest
+      (read-edn manifest-path)
+      dafny-report
+      (json/parse-string (slurp (repo-file dafny-report-path)) true)
+      dafny-counts
+      (into {}
+            (map (juxt :source :proofEfforts))
+            (:modules dafny-report))
+      aggregate-dafny-count
+      (get-in dafny-report [:aggregate :proofEfforts])
+      report
+      (read-edn
+       (get-in manifest [:adapter-certification :report]))
+      adapters [:datomic :datascript :datahike]
+      missing-certifications
+      (filterv
+       (fn [adapter]
+         (or
+          (not=
+           :certification-suite-passed
+           (get-in manifest [:adapter-certification adapter]))
+          (not= :passed
+                (get-in report [:adapters adapter :status]))))
+       adapters)
+      unmet
+      (vec
+       (concat
+        (get-in manifest
+                [:release-gate :unmet-required-obligations])
+        (map #(vector :adapter-certification %) missing-certifications)))
+      verified?
+      (= :verified (:assurance-status manifest))
+      externally-certified?
+      (= :externally-certified (:assurance-status manifest))
+      external-certification (:external-certification manifest)
+      valid-external-signoff?
+      (and (= :signed (:status external-certification))
+           (every?
+            #(and (string? %) (not (str/blank? %)))
+            ((juxt :reviewer :organization :reviewed-at :scope)
+             external-certification))
+           (boolean
+            (re-matches #"[0-9a-f]{40}"
+                        (:source-commit external-certification "")))
+           (boolean
+            (re-matches #"[0-9a-f]{64}"
+                        (:bundle-sha256 external-certification ""))))
+      allowed?
+      (true?
+       (get-in manifest
+               [:release-gate :verified-status-allowed?]))
+      incomplete-theorems
+      (merge
+       (zipmap
+        (remove #(contains? (:theorems manifest) %)
+                required-theorems)
+        (repeat {:status :missing}))
+       (into
+        {}
+        (remove (fn [[_ theorem]]
+                  (= :passed (:status theorem))))
+        (:theorems manifest)))
+      theorem-count-mismatches
+      (into
+       {}
+       (keep
+        (fn [[claim theorem]]
+          (let [sources
+                (cond
+                  (string? (:source theorem)) [(:source theorem)]
+                  (sequential? (:sources theorem)) (:sources theorem)
+                  :else nil)
+                source-counts
+                (when (seq sources)
+                  (mapv
+                   #(get dafny-counts (.getName (io/file %)))
+                   sources))
+                actual
+                (cond
+                  (and (seq source-counts) (every? integer? source-counts))
+                  (reduce + source-counts)
+
+                  (= claim :complete-public-engine)
+                  aggregate-dafny-count
+
+                  :else nil)]
+            (when (and (integer? actual)
+                       (not= actual (:verified-obligations theorem)))
+              [claim
+               {:recorded (:verified-obligations theorem)
+                :actual actual
+                :sources sources}]))))
+       (:theorems manifest))
+      generated-digests
+      (:generated-artifact-digests manifest)
+      missing-generated
+      (into
+       []
+       (keep
+        (fn [[target digest]]
+          (when (= :not-built digest) target)))
+       generated-digests)
+      documented-assumptions
+      #{:verification-toolchain
+        :generated-code-compilers
+        :clj-cljs-runtimes
+        :host-source-specializations
+        :ffi-boundaries
+        :adapter-contract
+        :cryptography
+        :canonicalization
+        :hash-collision-resistance
+        :entropy-and-key-management
+        :clocks
+        :authenticated-snapshot-selection-facts
+        :configured-limits}
+      undocumented-assumptions
+      (vec
+       (remove documented-assumptions
+               (:residual-assumptions manifest)))]
+  (when (and verified? (seq unmet))
+    (fail!
+     "Verification manifest refuses :verified: required obligations are unmet."
+     {:unmet-required-obligations unmet}))
+  (when (and externally-certified?
+             (or (seq unmet)
+                 (not allowed?)
+                 (not valid-external-signoff?)))
+    (fail!
+     "Verification manifest refuses :externally-certified without closed gates and independent bound sign-off."
+     {:unmet-required-obligations unmet
+      :verified-status-allowed? allowed?
+      :external-certification external-certification}))
+  (when (and verified? (not allowed?))
+    (fail!
+     "Verification manifest refuses :verified: the release gate is closed."
+     {:release-gate (:release-gate manifest)}))
+  (when (seq incomplete-theorems)
+    (fail!
+     "Verification status is withheld: theorem results are incomplete."
+     {:incomplete-theorems incomplete-theorems}))
+  (when (seq theorem-count-mismatches)
+    (fail!
+     "Verification manifest theorem counts do not match the exact Dafny report."
+     {:dafny-report dafny-report-path
+      :theorem-count-mismatches theorem-count-mismatches}))
+  (when (seq missing-generated)
+    (fail!
+     "Verification status is withheld: generated targets are missing."
+     {:missing-generated-artifacts missing-generated}))
+  (when (seq undocumented-assumptions)
+    (fail!
+     "Verification manifest contains undocumented assumptions."
+     {:undocumented-assumptions undocumented-assumptions}))
+  (when (empty? (:source-digests manifest))
+    (fail!
+     "Verification status is withheld: source digests are absent."
+     {}))
+  (when (and (seq unmet) allowed?)
+    (fail!
+     "Verification manifest is inconsistent: unmet obligations cannot allow verified status."
+     {:unmet-required-obligations unmet
+      :release-gate (:release-gate manifest)}))
+  (when (and (empty? unmet)
+             (not (every?
+                   #(= :passed
+                       (get-in report [:adapters % :status]))
+                   adapters)))
+    (fail!
+     "Adapter certification report is incomplete."
+     {:adapter-certification (:adapters report)}))
+  (when (seq unmet)
+    (fail!
+     "Verification status is withheld: required obligations are unmet."
+     {:assurance-status (:assurance-status manifest)
+      :verified-status-allowed? allowed?
+      :unmet-required-obligations unmet
+      :incomplete-theorems (set (keys incomplete-theorems))
+      :generated-artifacts generated-digests
+      :adapter-certification :passed}))
+  (println
+   (pr-str
+    {:assurance-status (:assurance-status manifest)
+     :verified-status-allowed? allowed?
+     :unmet-required-obligations unmet
+     :incomplete-theorems (set (keys incomplete-theorems))
+     :generated-artifacts generated-digests
+     :adapter-certification :passed})))

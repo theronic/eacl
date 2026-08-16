@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-056
+ :status :fixed
+ :discovered-by :differential
+ :seed-or-trace
+ "generated-only-cutover/direct-read-relationships-without-explicit-kernel"
+ :minimized-fixture "fixture.edn"
+ :impact :availability
+ :affected-versions
+ ["PR 101 generated-only cutover before EACL-FORMAL-056"]
+ :affected-backends [:datascript :datahike]
+ :root-cause
+ "The relationship paging orchestrator resolved the default generated kernel for page normalization but passed the original nil selection into the second relationship-keyset-page decision. Public clients normally supplied a private selection, so the stale shadow-era fallback masked this direct low-level path."
+ :fix
+ "Resolve the generated selection once at execute-page entry and pass that same non-nil selection to both generated pagination decisions. Keep public and direct implementation matrix regressions."
+ :closing-evidence
+ ["eacl.datascript.impl-test/read-relationships-query-matrix-test"
+  "eacl.datahike.storage-test/relationship-read-filter-matrix-test"]}

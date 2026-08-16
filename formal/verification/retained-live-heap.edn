@@ -1,0 +1,74 @@
+{:schema-version 2
+ :date "2026-08-06"
+ :status :passed
+ :runner "formal/smoke/clj/run-retained-heap"
+ :benchmark eacl.formal.retained-heap-benchmark/run!
+ :fixture
+ {:backend :datascript
+  :engine :generated-only
+  :permission-shape :recursive-chain
+  :result-count 4000
+  :page-size 25
+  :trials 5
+  :cache {:remember-answers false}
+  :measurement :post-full-gc-live-heap-delta}
+ :required
+ {:minimum-positive-retained-signal-bytes 1048576
+  :maximum-retained-delta-bytes 8388608
+  :identical-complete-result-digest true
+  :observed-full-gc-between-every-snapshot true
+  :explicit-baseline-keepalive true}
+ :trials
+ [{:trial 0
+   :retained-delta-bytes 5344744
+   :full-gc-count-before 48
+   :full-gc-count-after 234
+   :walk-items 4000
+   :walk-pages 160
+   :result-sha256
+   "e06030a0c67089509312d361729426c62309a30751ddd6c5bd5cbb93622957b6"}
+  {:trial 1
+   :retained-delta-bytes 5337056
+   :full-gc-count-before 243
+   :full-gc-count-after 444
+   :walk-items 4000
+   :walk-pages 160
+   :result-sha256
+   "e06030a0c67089509312d361729426c62309a30751ddd6c5bd5cbb93622957b6"}
+  {:trial 2
+   :retained-delta-bytes 5337384
+   :full-gc-count-before 453
+   :full-gc-count-after 652
+   :walk-items 4000
+   :walk-pages 160
+   :result-sha256
+   "e06030a0c67089509312d361729426c62309a30751ddd6c5bd5cbb93622957b6"}
+  {:trial 3
+   :retained-delta-bytes 5335984
+   :full-gc-count-before 661
+   :full-gc-count-after 860
+   :walk-items 4000
+   :walk-pages 160
+   :result-sha256
+   "e06030a0c67089509312d361729426c62309a30751ddd6c5bd5cbb93622957b6"}
+  {:trial 4
+   :retained-delta-bytes 5337664
+   :full-gc-count-before 869
+   :full-gc-count-after 1068
+   :walk-items 4000
+   :walk-pages 160
+   :result-sha256
+   "e06030a0c67089509312d361729426c62309a30751ddd6c5bd5cbb93622957b6"}]
+ :summary
+ {:minimum-retained-delta-bytes 5335984
+  :maximum-retained-delta-bytes 5344744
+  :positive-signal? true
+  :below-ceiling? true
+  :same-results? true
+  :status :passed}
+ :qualification
+ [:generated-only-post-full-gc-regression-measurement
+  :not-peak-heap
+  :not-whole-process-rss
+  :not-portable-runtime-guarantee
+  :not-a-formal-asymptotic-bound]}

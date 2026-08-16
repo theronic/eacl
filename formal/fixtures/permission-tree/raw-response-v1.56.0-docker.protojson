@@ -1,0 +1,72 @@
+{
+  "expandedAt": {
+    "token": "Gh8KEzE3ODY0NDYwNTkxMjAwMDAwMDASCDc0YWM1NWZj"
+  },
+  "treeRoot": {
+    "intermediate": {
+      "operation": "OPERATION_UNION",
+      "children": [
+        {
+          "intermediate": {
+            "operation": "OPERATION_UNION",
+            "children": [
+              {
+                "leaf": {
+                  "subjects": [
+                    {
+                      "object": {
+                        "objectType": "user",
+                        "objectId": "fred"
+                      },
+                      "optionalRelation": ""
+                    },
+                    {
+                      "object": {
+                        "objectType": "user",
+                        "objectId": "tom"
+                      },
+                      "optionalRelation": ""
+                    }
+                  ]
+                },
+                "expandedObject": {
+                  "objectType": "folder",
+                  "objectId": "testfolder1"
+                },
+                "expandedRelation": "viewer"
+              },
+              {
+                "leaf": {
+                  "subjects": [
+                    {
+                      "object": {
+                        "objectType": "user",
+                        "objectId": "sarah"
+                      },
+                      "optionalRelation": ""
+                    }
+                  ]
+                },
+                "expandedObject": {
+                  "objectType": "folder",
+                  "objectId": "testfolder2"
+                },
+                "expandedRelation": "viewer"
+              }
+            ]
+          },
+          "expandedObject": {
+            "objectType": "document",
+            "objectId": "testdoc"
+          },
+          "expandedRelation": "view"
+        }
+      ]
+    },
+    "expandedObject": {
+      "objectType": "document",
+      "objectId": "testdoc"
+    },
+    "expandedRelation": "view"
+  }
+}

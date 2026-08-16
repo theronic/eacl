@@ -1,0 +1,18 @@
+{:id :EACL-FORMAL-023
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "recursive-shadow/stale-cursor/render-result-mismatch"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree before complete stale-cursor shadow comparison"]
+ :affected-backends [:shared :datomic :datascript :datahike :third-party]
+ :root-cause
+ "The generated recursive traversal adapter added :direction to stale-cursor ExceptionInfo created for a rejected render boundary, while the established legacy public error omitted it. The existing shadow campaign did not exercise an authenticated cursor whose referenced result had disappeared."
+ :fix
+ "Generated render rejection now preserves the established legacy stale-cursor public shape, and a raw-engine shadow trace deletes the cursor result before continuation so the generated and legacy failures are compared."
+ :closing-evidence
+ ["eacl.formal.state-trace-differential-test/recursive-shadow-compares-stale-cursor-error-shape"
+  "eacl.formal.production-kernel-test/datascript-public-recursive-cache-modes-compare-generated-javascript"
+  "formal mutation :shadow-generated-stale-cursor-adds-direction"]}

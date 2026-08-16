@@ -1,0 +1,12 @@
+{:operation :lookup-resources
+ :trace
+ [:create-two-recursive-results
+  :read-first-result-and-retain-internal-cursor
+  :delete-cursor-result
+  :continue-against-changed-snapshot]
+ :legacy-error
+ {:eacl/error :eacl.pagination/stale-cursor}
+ :generated-error-before-fix
+ {:eacl/error :eacl.pagination/stale-cursor
+  :direction :forward}
+ :shadow-divergence-reported-before-fix true}

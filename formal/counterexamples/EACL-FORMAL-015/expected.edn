@@ -1,0 +1,4 @@
+{:value :recursive-result
+ :registered-flights-after-completion 0
+ :invariant
+ "One linearization point selects the lifecycle used by recursive-self detection, dynamic binding, entry lookup, and flight ownership."}

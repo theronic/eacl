@@ -1,0 +1,17 @@
+{:id :EACL-FORMAL-016
+ :status :fixed
+ :discovered-by :manual-review
+ :seed-or-trace
+ "verified-authoritative/subproblem-lookup/bypass-after-flight-install"
+ :minimized-fixture "fixture.edn"
+ :impact :other
+ :affected-versions
+ ["PR 101 worktree before authoritative lookup transition routing"]
+ :affected-backends [:shared :datomic :datascript :datahike]
+ :root-cause
+ "The host selected or installed a cache flight before invoking the generated lookup decision. The returned generated action only controlled a later recursive-bypass branch, so verified-authoritative lookup was not authoritative over the state transition it purported to decide. A divergent bypass action could leave an unrealized registered flight and incomplete entry behind."
+ :fix
+ "The final v8 cache makes lookup read-only and removes flight installation. A miss never mutates state or starts work; independent computation precedes a separate bounded compare-and-set publication transition."
+ :closing-evidence
+ ["eacl.subproblem-cache-test/lookup-never-starts-work-test"
+  "eacl.subproblem-cache-test/completed-entry-is-validated-once-before-publication-test"]}

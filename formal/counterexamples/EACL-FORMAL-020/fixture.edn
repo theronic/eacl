@@ -1,0 +1,16 @@
+{:direction :asc
+ :key-function :sort-key
+ :streams [[{:sort-key nil :value :left-nil}
+            {:sort-key 2 :value :two}]
+           [{:sort-key nil :value :right-nil}
+            {:sort-key 1 :value :one}]]
+ :before-fix
+ {:last-sentinel nil
+  :observed [{:sort-key 1 :value :one}
+             {:sort-key 2 :value :two}]}
+ :after-fix
+ {:has-last? false
+  :last-value nil
+  :observed [{:sort-key nil :value :left-nil}
+             {:sort-key 1 :value :one}
+             {:sort-key 2 :value :two}]}}

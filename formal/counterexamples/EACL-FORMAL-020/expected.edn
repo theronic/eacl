@@ -1,0 +1,6 @@
+{:result [{:sort-key nil :value :left-nil}
+          {:sort-key 1 :value :one}
+          {:sort-key 2 :value :two}]
+ :duplicate-nil-result [{:sort-key nil :value :left-nil}]
+ :invariant
+ "Uninitialized duplicate-suppression state is disjoint from every generic sort-key value, including nil."}
