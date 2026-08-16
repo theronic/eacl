@@ -11,10 +11,6 @@
 (def permission-key-attr
   :eacl.permission/resource-type+permission-name)
 
-(def max-entid
-  "Compatibility sentinel retained for the public Datahike impl surface."
-  Long/MAX_VALUE)
-
 (def ^:private component-schema
   "The attributes schema-definition composite tuples are derived FROM.
    Datahike's `:write` flexibility needs a declared `:db/valueType` and
@@ -259,7 +255,6 @@
      :db-after db-after}))
 
 (def validate-schema-references model/validate-schema-references)
-(def calc-set-deltas model/calc-set-deltas)
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation
@@ -335,8 +330,10 @@
          (ex-info
           "The EACL schema changed concurrently; retry from the new database value."
           {:type :eacl.schema/concurrent-write
+           :eacl/error :eacl.schema/concurrent-write
            :expected-generation expected-generation
            :actual-generation (current-schema-generation (d/db conn))
+           :backend-error cause-data
            :datahike-error cause-data}
           throwable))
         (throw throwable)))))
@@ -385,6 +382,7 @@
            (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
                                 " because it is used by " cnt " relationships.")
                            {:type :eacl.schema/relation-in-use
+                            :eacl/error :eacl.schema/relation-in-use
                             :relation rel
                             :count cnt})))))
      (let [relation-additions

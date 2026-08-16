@@ -832,7 +832,10 @@
              (:limit-kind (ex-data limit-error))))
       (is (= 1
              (:limit (ex-data limit-error)))))
-    (is (= {:size 0} (ex-data page-error)))))
+    (is (= {:eacl/error :eacl.pagination/invalid-page-size
+            :size 0
+            :type :eacl.pagination/invalid-page-size}
+           (ex-data page-error)))))
 
 (deftest recursive-generated-authority-covers-complete-public-results
   (testing "DataScript"

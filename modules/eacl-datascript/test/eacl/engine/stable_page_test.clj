@@ -238,3 +238,46 @@
     (is (= complete (distinct complete)))
     (testing "reverse pagination composes like forward pagination"
       (is (= complete (drain (dissoc options :checkpoints)))))))
+
+(deftest checkpoint-identity-includes-the-basis-test
+  ;; Mutation control: a checkpoint recorded at one basis must never serve a
+  ;; continuation whose token was minted at another basis, even when both
+  ;; bases produce the same page-1 boundary. Before the fix the checkpoint
+  ;; key omitted the basis, so page 1 at the new basis (whose transition
+  ;; count is not strictly greater) failed nonregression and left the old
+  ;; basis's reducer state under the shared key for the new token to resume.
+  (let [env (seeded :folder-chain)
+        store (page/make-checkpoint-store)
+        options (base-options env {:page-size 3 :checkpoints store})
+        page-1 (page/page options)
+        key-at (fn [adapter]
+                 (#'page/checkpoint-key
+                  (#'page/execution-binding (assoc options :adapter adapter))))
+        _ (ds/transact! (:conn env) [{:db/id -1 :eacl/id "basis-mover"}])
+        moved (datascript-backend/snapshot-adapter
+               (ds/db (:conn env))
+               {:object-id->entid
+                (fn [snapshot object-id]
+                  (ds/entid snapshot [:eacl/id object-id]))
+                :entid->object-id
+                (fn [snapshot internal-id]
+                  (:eacl/id (ds/entity snapshot internal-id)))
+                :conn (:conn env)
+                :source-lifecycle (backend/invoke (:adapter env)
+                                                  :source-lifecycle)})
+        moved-options (assoc options :adapter moved)
+        page-1-moved (page/page moved-options)]
+    (testing "the same page-1 boundary at two bases has two checkpoint identities"
+      (is (= (:data page-1) (:data page-1-moved)))
+      (is (not= (key-at (:adapter env)) (key-at moved)))
+      (is (= 2 (count (:entries @store))))
+      (is (contains? (:entries @store) (key-at (:adapter env))))
+      (is (contains? (:entries @store) (key-at moved))))
+    (testing "the new basis's continuation equals its own pure replay"
+      (let [cursor (get-in page-1-moved [:page-info :end-cursor])
+            via-store (:data (page/page (assoc moved-options :after cursor)))
+            via-replay (:data (page/page (-> moved-options
+                                             (dissoc :checkpoints)
+                                             (assoc :after cursor))))]
+        (is (seq via-store))
+        (is (= via-replay via-store))))))

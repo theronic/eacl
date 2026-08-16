@@ -55,22 +55,6 @@
   [limit]
   (if (nil? limit) default-limit limit))
 
-(defn after-cursor?
-  [scan-kind cursor {:keys [subject-id resource-id]}]
-  (or (nil? cursor)
-      (case scan-kind
-        :forward-anchored (> resource-id (:resource cursor))
-        :reverse-anchored (> subject-id (:subject cursor))
-        :forward-partial
-        (or (> resource-id (:resource cursor))
-            (and (= resource-id (:resource cursor))
-                 (> subject-id (:subject cursor))))
-        :reverse-partial
-        (or (> subject-id (:subject cursor))
-            (and (= subject-id (:subject cursor))
-                 (> resource-id (:resource cursor))))
-        true)))
-
 (defn beyond-cursor?
   "Whether `row` is strictly beyond `cursor` in the requested index direction."
   [scan-kind direction cursor {:keys [subject-id resource-id]}]

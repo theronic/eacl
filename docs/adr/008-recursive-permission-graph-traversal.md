@@ -1,4 +1,4 @@
-# 007. Record architecture decisions
+# 008. Recursive permission graph traversal
 
 Date: 2025-07-21
 

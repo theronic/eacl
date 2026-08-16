@@ -258,3 +258,45 @@
                       :consistency
                       (consistency/at-least-as-fresh
                        delete-token))))))))))))
+
+(deftest exact-fallback-tolerates-unreadable-historical-stamps-test
+  ;; `:eacl/relation-version` is :db/noHistory, so an index job can make the
+  ;; historical stamp read on the exact `d/as-of` snapshot come back empty.
+  ;; The exact snapshot's proof is, by identity, the proof recorded at
+  ;; minting: an unreadable proof on the cursor's own native revision and
+  ;; execution identity must continue as :exact, while a readable proof that
+  ;; differs (rewritten history) or a different revision still diverges.
+  (let [decide #'datomic/exact-fallback-decision
+        identity-fields {:source-scope {:source-id {:database-id "db-1"} :branch nil}
+                         :adapter-fingerprint {:backend :datomic}
+                         :identity-contract :selected-internal/current-external-injective-v2}
+        proof-a {:dependency-scope-digest "scope-a" :proof-digest "proof-a"}
+        proof-b {:dependency-scope-digest "scope-a" :proof-digest "proof-b"}
+        exact-snapshot-proof {:dependency-scope-digest "exact-snapshot" :proof-digest "exact-snapshot-t10"}
+        cursor (merge identity-fields proof-a
+                      {:native-revision {:revision 10 :exact-locator 10}
+                       :cursor/authenticated? true
+                       :cursor/scope-matches? true
+                       :cursor/expired? false})
+        current (merge identity-fields proof-b
+                       {:native-revision {:revision 12 :exact-locator 12}})
+        exact-readable (merge identity-fields proof-a
+                              {:native-revision {:revision 10 :exact-locator 10}})
+        exact-unreadable (merge identity-fields exact-snapshot-proof
+                                {:native-revision {:revision 10 :exact-locator 10}})
+        exact-rewritten (merge identity-fields proof-b
+                               {:native-revision {:revision 10 :exact-locator 10}})
+        exact-other-revision (merge identity-fields exact-snapshot-proof
+                                    {:native-revision {:revision 11 :exact-locator 11}})
+        exact-other-source (merge identity-fields exact-snapshot-proof
+                                  {:native-revision {:revision 10 :exact-locator 10}
+                                   :source-scope {:source-id {:database-id "db-2"} :branch nil}})]
+    (testing "a readable equal proof is exact, as before"
+      (is (= :exact (decide nil current cursor exact-readable true))))
+    (testing "an unreadable proof on the cursor's own revision and source is exact by identity"
+      (is (= :exact (decide nil current cursor exact-unreadable false))))
+    (testing "a readable proof that differs at the same revision still diverges"
+      (is (= :history-divergence (decide nil current cursor exact-rewritten true))))
+    (testing "an unreadable proof never rescues another revision or another source"
+      (is (= :history-divergence (decide nil current cursor exact-other-revision false)))
+      (is (= :history-divergence (decide nil current cursor exact-other-source false))))))

@@ -3,8 +3,7 @@
   adapter. Authorization graph algorithms remain outside this namespace."
   (:require [datomic.api :as d]
             [eacl.backend.v8 :as backend]
-            [eacl.datomic.db :as ddb]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datomic.db :as ddb])
   (:import [java.util UUID]))
 
 (def capabilities
@@ -236,12 +235,14 @@
                         :selected-exact-locator locator))
                 (catch InterruptedException interrupt
                   (throw (ex-info "Exact-basis selection was interrupted."
-                                  {:eacl/error :eacl.basis/selection-failure
+                                  {:type :eacl.basis/selection-failure
+                                   :eacl/error :eacl.basis/selection-failure
                                    :classification :cancelled}
                                   interrupt)))
                 (catch Throwable failure
                   (throw (ex-info "Exact-basis selection failed."
-                                  {:eacl/error :eacl.basis/selection-failure
+                                  {:type :eacl.basis/selection-failure
+                                   :eacl/error :eacl.basis/selection-failure
                                    :classification :retryable
                                    :cause-class (.getName (class failure))}
                                   failure)))))))

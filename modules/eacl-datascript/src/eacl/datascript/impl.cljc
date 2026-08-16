@@ -15,10 +15,6 @@
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
 
-(def max-entid
-  #?(:clj Long/MAX_VALUE
-     :cljs js/Number.MAX_SAFE_INTEGER))
-
 (def permission-def-pull
   '[:db/id
     :eacl.permission/resource-type
@@ -48,16 +44,6 @@
                               (and (= resource-type (nth v 0))
                                    (= relation-name (nth v 1))))))))
     []))
-
-(defn find-relation-def
-  [db resource-type relation-name]
-  (when-let [datom (first (relation-datoms db resource-type relation-name))]
-    (ds/pull db
-             '[:db/id
-               :eacl.relation/subject-type
-               :eacl.relation/resource-type
-               :eacl.relation/relation-name]
-             (:e datom))))
 
 (defn find-permission-defs
   [db resource-type permission-name]
@@ -135,29 +121,6 @@
          (map (comp #(nth % 3) :v))
          (filter within-bound?))))
 
-(defn build-schema-catalog
-  [db]
-  {:relation-defs
-   (reduce (fn [idx {:keys [e v]}]
-             (let [[resource-type relation-name subject-type] v
-                   relation-def {:relation-id e
-                                 :resource-type resource-type
-                                 :relation-name relation-name
-                                 :subject-type subject-type}]
-               (update idx [resource-type relation-name] (fnil conj []) relation-def)))
-           {}
-           (ds/datoms db :avet :eacl.relation/resource-type+relation-name+subject-type))
-   :permission-defs
-   (reduce (fn [idx {:keys [e]}]
-             (let [perm (ds/pull db permission-def-pull e)]
-               (update idx
-                       [(:eacl.permission/resource-type perm)
-                        (:eacl.permission/permission-name perm)]
-                       (fnil conj [])
-                       perm)))
-           {}
-           (ds/datoms db :avet :eacl.permission/resource-type+permission-name))})
-
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]
   (endpoint-pair/forward-value
@@ -184,6 +147,7 @@
       eid
       (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
                {:type :eacl/unknown-object
+                :eacl/error :eacl/unknown-object
                 :object {:type type :id id}})))))
 
 (defn- relation-id
@@ -257,7 +221,14 @@
         (str "Missing Relation: " relation
              " on resource type " resource-type
              " for subject type " subject-type ".")
-        {:resource/type resource-type
+        {:type :eacl/unknown-relation-or-permission
+         :eacl/error :eacl/unknown-relation-or-permission
+         :operation :write-relationships
+         :definition resource-type
+         :relation relation
+         :relation-or-permission relation
+         :schema-kind :relation
+         :resource/type resource-type
          :relation/name relation
          :subject/type subject-type})))
     {:subject subject
@@ -368,6 +339,31 @@
        :operation operation})))
   true)
 
+(defn- relationship-conflict!
+  [relationship]
+  (throw
+   (ex-info
+    ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+    {:type :eacl/relationship-conflict
+     :eacl/error :eacl/relationship-conflict
+     :relationship relationship})))
+
+(defn create-relationship-at-commit
+  "Commit-time precondition behind `:create`. It re-checks the relationship
+  against the transaction-time database, so two writers that both planned a
+  `:create` against the same pre-write value are serialized by the connection:
+  the first commits and the second observes the winner and fails with
+  `:eacl/relationship-conflict`.
+
+  The planned adds remain adjacent to their update in the outer transaction;
+  the shared writer runs every create precondition before those mutations so
+  all updates in one batch retain the calculation-snapshot semantics shared
+  with Datomic."
+  [db resolved relationship]
+  (if (relationship-exists? db resolved)
+    (relationship-conflict! relationship)
+    []))
+
 (defn tx-update-relationship
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)
@@ -381,12 +377,11 @@
 
           :create
           (if exists?
-            (throw
-             (ex-info
-              ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-              {:type :eacl/relationship-conflict
-               :relationship relationship}))
-            (add-relationship-txes resolved))
+            (relationship-conflict! relationship)
+            (into
+             [[:db.fn/call create-relationship-at-commit
+               resolved relationship]]
+             (add-relationship-txes resolved)))
 
           :delete
           ;; Retraction of an absent DataScript datom is harmless. Always

@@ -30,6 +30,13 @@
 (def default-physical-chunk-size 64)
 (def default-sidecar-cap 16)
 (def default-max-admissions 1000000)
+
+(def exhaustion-target
+  "The result target that never stops a run: an exhaustive run ends only when
+  the stack empties (the exact answer) or a typed limit fails. Never a finite
+  constant — a finite target caps counts, point checks and last windows
+  silently once the public limits authorize more work than the constant."
+  #?(:clj Double/POSITIVE_INFINITY :cljs js/Number.POSITIVE_INFINITY))
 (def default-max-commands 1000000)
 (def default-max-transitions 4000000)
 (def default-max-values 4000000)
@@ -120,11 +127,26 @@
   Admission limits are checked before any state mutates, so a rejected
   transition commits nothing (staged atomic admission)."
   [{:keys [admitted] :as state} residual new-work]
-  (let [fresh (into []
-                    (comp (remove nil?)
-                          (map (fn [item] [item (work-id item)]))
-                          (filter (fn [[_ id]] (not (contains? admitted id)))))
-                    new-work)]
+  (let [fresh (loop [items (seq new-work)
+                     ;; Two equal work-ids inside one batch admit once, so
+                     ;; this literally refines StableReducer.Admit (which
+                     ;; folds `seen` through the batch) even if a future
+                     ;; plan shape produced such a batch. The plan
+                     ;; compiler never does today; the cost is one small
+                     ;; batch-local set (batches are a node's consumers,
+                     ;; typically one to three items).
+                     seen (transient #{})
+                     fresh (transient [])]
+                (if items
+                  (let [item (first items)]
+                    (if (nil? item)
+                      (recur (next items) seen fresh)
+                      (let [id (work-id item)]
+                        (if (or (contains? admitted id) (contains? seen id))
+                          (recur (next items) seen fresh)
+                          (recur (next items) (conj! seen id)
+                                 (conj! fresh [item id]))))))
+                  (persistent! fresh)))]
     (when (> (+ (:admissions state) (count fresh)) (:max-admissions state))
       (limit-failure! :max-admissions state
                       {:max-admissions (:max-admissions state)
@@ -333,7 +355,7 @@
   "One bounded pure transition of the unified machine. The work kinds are
   disjoint across directions; the plan and seeding determine which kinds
   ever appear."
-  [{:keys [plan subject-type root] :as context} state item]
+  [{:keys [plan subject-type root]} state item]
   (let [rule (:rule item)]
     (case (:kind item)
       ;; ---- forward ----
@@ -578,7 +600,7 @@
   "Enumerates root resources the subject reaches, in stable first-discovery
   order, until `target` results or exhaustion. Returns the final state;
   :results is the canonical sequence of internal resource ids."
-  [{:keys [adapter fetch-fn plan subject-type subject-eid target cut-point!]
+  [{:keys [adapter fetch-fn plan subject-type subject-eid target]
     :as options}]
   {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
          (keyword? subject-type) (some? subject-eid) (pos? target)]}
@@ -603,7 +625,7 @@
   `resource-eid`, in stable first-discovery order, until `target` results
   or exhaustion. Returns the final state; :results is the canonical
   sequence of internal subject ids."
-  [{:keys [adapter fetch-fn plan subject-type resource-eid target cut-point!]
+  [{:keys [adapter fetch-fn plan subject-type resource-eid target]
     :as options}]
   {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
          (keyword? subject-type) (some? resource-eid) (pos? target)]}

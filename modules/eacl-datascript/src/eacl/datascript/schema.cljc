@@ -5,22 +5,6 @@
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
-(def schema-change-attrs
-  #{:eacl.relation/resource-type
-    :eacl.relation/relation-name
-    :eacl.relation/subject-type
-    :eacl.relation/resource-type+relation-name+subject-type
-    :eacl.permission/resource-type
-    :eacl.permission/permission-name
-    :eacl.permission/source-relation-name
-    :eacl.permission/target-type
-    :eacl.permission/target-name
-    :eacl.permission/resource-type+permission-name
-    :eacl.permission/full-key
-    :eacl/schema-string
-    :eacl/schema-generation
-    :eacl/schema-write-fence})
-
 (def datascript-schema
   {:eacl/id {:db/unique :db.unique/identity}
    :eacl/schema-generation {:db/valueType :db.type/ref}
@@ -167,7 +151,6 @@
      :db-after db-after}))
 
 (def validate-schema-references model/validate-schema-references)
-(def calc-set-deltas model/calc-set-deltas)
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation
@@ -248,8 +231,10 @@
          (ex-info
           "The EACL schema changed concurrently; retry from the new database value."
           {:type :eacl.schema/concurrent-write
+           :eacl/error :eacl.schema/concurrent-write
            :expected-generation expected-generation
            :actual-generation (current-schema-generation (ds/db conn))
+           :backend-error cause-data
            :datascript-error cause-data}
           throwable))
         (throw throwable)))))
@@ -298,6 +283,7 @@
            (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
                                 " because it is used by " cnt " relationships.")
                            {:type :eacl.schema/relation-in-use
+                            :eacl/error :eacl.schema/relation-in-use
                             :relation rel
                             :count cnt})))))
      (let [relation-additions

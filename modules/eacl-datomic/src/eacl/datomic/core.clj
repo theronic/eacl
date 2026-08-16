@@ -20,6 +20,7 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.formal.production-kernel :as production-kernel]
@@ -28,6 +29,7 @@
             [eacl.permission-tree :as permission-tree]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
@@ -83,6 +85,7 @@
               engine/*evaluation-mode* (:evaluation contract)
               engine/*recursive-traversal-limits*
               (:recursive-traversal-limits opts)
+              engine/*service-admission* (:service-admission opts)
               impl.indexed/*recursive-traversal-limits*
               (:recursive-traversal-limits opts)]
       (let [result (f opts)]
@@ -481,17 +484,22 @@
             (when (identical? sync-timeout-marker synced-db)
               (freshness-unavailable!
                "Timed out waiting for the requested EACL revision."
-               {:reason :timeout
+               {:reason :freshness-timeout
                 :requested-t requested-t
                 :observed-t (observed-connection-revision conn)
+                ;; The shared adapters' key names for the same facts.
+                :requested-order-hint requested-t
+                :observed-order-hint (observed-connection-revision conn)
                 :timeout-ms timeout-ms}))
             (let [observed-t (d/basis-t synced-db)]
               (when (< observed-t requested-t)
                 (freshness-unavailable!
                  "The local Peer did not reach the requested EACL revision."
-                 {:reason :revision-not-observed
+                 {:reason :head-behind
                   :requested-t requested-t
                   :observed-t observed-t
+                  :requested-order-hint requested-t
+                  :observed-order-hint observed-t
                   :timeout-ms timeout-ms}))
               synced-db))
           (catch clojure.lang.ExceptionInfo e
@@ -503,6 +511,8 @@
                {:reason :sync-failed
                 :requested-t requested-t
                 :observed-t (observed-connection-revision conn)
+                :requested-order-hint requested-t
+                :observed-order-hint (observed-connection-revision conn)
                 :timeout-ms timeout-ms})))
           (catch Exception _
             (freshness-unavailable!
@@ -510,6 +520,8 @@
              {:reason :sync-failed
               :requested-t requested-t
               :observed-t (observed-connection-revision conn)
+              :requested-order-hint requested-t
+              :observed-order-hint (observed-connection-revision conn)
               :timeout-ms timeout-ms})))))))
 
 (defn- historical-db
@@ -795,22 +807,11 @@
   (and (integer? eid) (pos? eid)))
 
 (defn- cursor-result
+  "Validates the internal cursor of a cached lookup page. Only the stable
+  engine's `:stable-edge` kind is minted; anything else invalidates the
+  cached page so it is recomputed."
   [cursor]
   (case (:kind cursor)
-    :lookup-eid
-    (when (positive-eid? (:result-eid cursor))
-      {:eid (:result-eid cursor)})
-
-    :recursive-logical
-    (when (and (= engine/recursive-cursor-version (:version cursor))
-               (= engine/recursive-order-abi (:order-abi cursor))
-               (contains? #{:forward :reverse} (:traversal cursor))
-               (integer? (:ordinal cursor))
-               (not (neg? (:ordinal cursor)))
-               (positive-eid? (:result-eid cursor)))
-      {:eid (:result-eid cursor)
-       :ordinal (:ordinal cursor)})
-
     :stable-edge
     (when (and (= engine/stable-cursor-version (:version cursor))
                (= engine/stable-order-abi (:order-abi cursor))
@@ -953,6 +954,9 @@
               :evaluation (:evaluation contract)
               :demand (:demand contract)
               :engine-version engine/engine-version
+              ;; The public order ABI is part of an answer's identity: a page
+              ;; cached under one order must never be served under another.
+              :order-abi engine/stable-order-abi
               :source-lifecycle
               (proof-frame/source-lifecycle request-proof-frame)
               :adapter-fingerprint (backend/fingerprint adapter)
@@ -1093,6 +1097,7 @@
       (assoc obj :id eid)
       (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
                {:type :eacl/unknown-object
+                :eacl/error :eacl/unknown-object
                 :object {:type type :id id}})))))
 
 (defn spice-relationship->internal
@@ -1162,12 +1167,20 @@
   (let [updates (vec updates)]
     (doseq [{:keys [operation]} updates]
       (impl/validate-relationship-operation! operation))
+    (let [schema (schema/read-schema (d/db conn))]
+      (doseq [{:keys [relationship]} updates]
+        (schema-errors/validate-relationship-write!
+         schema :write-relationships
+         {:resource-type (:type (:resource relationship))
+          :subject-type (:type (:subject relationship))
+          :relation (:relation relationship)})))
     (loop [attempt 1]
       (let [db (d/db conn)
             internal-updates
             (S/transform [S/ALL :relationship]
                          #(spice-relationship->internal db opts %)
                          updates)
+            _ (relationship-mutations/validate-batch! internal-updates)
             relationship-tx-data
             (->> internal-updates
                  (mapcat #(impl/tx-update-relationship db %))
@@ -1317,6 +1330,33 @@
       {:graph (cursor-revision-code current cursor-envelope exact)
        :source (cursor-execution-identity exact)
        :proof (cursor-continuation-proof exact)})}))
+
+(defn- exact-fallback-decision
+  "Decides an exact-fallback continuation.
+
+  The generated `:cursor-continuation` decision accepts `:exact` only when
+  the exact snapshot's dependency proof equals the cursor's. On Datomic the
+  exact snapshot is `d/as-of` at the cursor's own basis, and its
+  relationship data is exact there — but `:eacl/relation-version` is a
+  `:db/noHistory` attribute whose superseded values an index job may drop,
+  so the historical stamp read can come back empty and the proof frame
+  incomplete. That is not a divergence: the exact snapshot's proof is, by
+  identity, the proof recorded at minting. When the kernel reports
+  divergence purely because the exact snapshot's proof was unreadable
+  (`proof-complete?` false) while its native revision and execution
+  identity are the cursor's own, the continuation is `:exact`. Readable
+  stamps that differ (a rewritten history) still diverge."
+  [kernel current-cursor-context decoded exact-cursor-context proof-complete?]
+  (let [decision (cursor-decision kernel current-cursor-context decoded
+                                  exact-cursor-context)]
+    (if (and (= :history-divergence decision)
+             (not proof-complete?)
+             (= (:native-revision exact-cursor-context)
+                (:native-revision decoded))
+             (= (cursor-execution-identity exact-cursor-context)
+                (cursor-execution-identity decoded)))
+      :exact
+      decision)))
 
 (defn- dependency-cursor-context
   "Cursor continuation context for one selected snapshot.
@@ -1516,11 +1556,22 @@
                         (cursor-snapshot-expired! operation decoded))
                     exact-context
                     (snapshot-result-context opts exact prepare decoded)
+                    exact-relation-ids
+                    (some-> (:permission-dependencies exact-context)
+                            deref
+                            :relationship-dependencies)
+                    exact-proof-complete?
+                    (or (nil? exact-relation-ids)
+                        (proof-frame/complete?
+                         (proof-frame/resolve!
+                          (:request-proof-frame exact-context)
+                          exact-relation-ids)))
                     exact-decision
-                    (cursor-decision
+                    (exact-fallback-decision
                      (:decision-kernel opts)
                      current-cursor-context decoded
-                     (:cursor-context exact-context))]
+                     (:cursor-context exact-context)
+                     exact-proof-complete?)]
                 (if (= :exact exact-decision)
                   (assoc exact-context :mode :at-exact-snapshot)
                   (throw
@@ -1648,6 +1699,9 @@
               :evaluation (:evaluation contract)
               :demand (:demand contract)
               :engine-version engine/engine-version
+              ;; The public order ABI is part of an answer's identity: a page
+              ;; cached under one order must never be served under another.
+              :order-abi engine/stable-order-abi
               :source-lifecycle
               (proof-frame/source-lifecycle request-proof-frame)
               :adapter-fingerprint (backend/fingerprint adapter)
@@ -2307,6 +2361,7 @@
     :cache-attempt
     :recursive-traversal-limits
     :permission-tree-limits
+    :service-admission
     :auto-migrate-v6})
 
 (def ^:private canonical-security-opt-keys
@@ -2582,6 +2637,11 @@
     attempt bound. Cache work may remove evaluator commands but
     cannot enlarge request demand. Remote provider/decode controls are not
     exposed because caller-supplied cache providers are rejected.
+  - :service-admission — {:max-concurrent n :max-replays n :max-replays-per-key n}, the
+    service-edge bulkhead for routed enumerations (slots are held for the full
+    synchronous call chain) and the replay ledger for cursor replays; omitted
+    means no bulkhead. Rejections are :eacl.service/admission-rejected and
+    :eacl.service/replay-rejected.
   - :recursive-traversal-limits — overrides eacl.datomic.impl.indexed/default-recursive-traversal-limits
     for list calls, e.g. {:max-derived-grants 1000000 :max-advanced-datoms 1000000
     :max-queued-work 1000000}. Recursive traversal remains subject to these
@@ -2618,6 +2678,7 @@
            cache-attempt
            recursive-traversal-limits
            permission-tree-limits
+           service-admission
            auto-migrate-v6]}]
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
     (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
@@ -2872,6 +2933,20 @@
                              (datomic-backend/snapshot-adapter
                                db
                                {:entid->object-id entid->object-id
+                                ;; The adapter's :object-id->internal must
+                                ;; use the client's id codec: the engine
+                                ;; hands it internal eids (numbers, passed
+                                ;; through) but expand-permission-tree hands
+                                ;; it the external root id, which a custom
+                                ;; :object-id->lookup-ref/:object-id->ident
+                                ;; must resolve exactly like every other
+                                ;; operation does.
+                                :object-eid-fn
+                                (fn [db object-id]
+                                  (cond
+                                    (nil? object-id) nil
+                                    (number? object-id) object-id
+                                    :else (object-id->entid db object-id)))
                                 :conn conn
                                 :database-id database-id
                                 :source-lifecycle source-lifecycle
@@ -2937,7 +3012,18 @@
                                    recursive-traversal-limits)
                             :permission-tree-limits
                             (permission-tree/normalize-limits
-                             permission-tree-limits)}]
+                             permission-tree-limits)
+                            ;; The service-edge bulkhead and replay ledger
+                            ;; (bounded-physical-execution): nil leaves the
+                            ;; routed engine unguarded, a map installs it.
+                            :service-admission
+                            (some-> (physical/normalize-service-admission
+                                     service-admission)
+                                    physical/make-service-admission)}
+        ;; The stable engine runs only on a qualified topology; the adapter's
+        ;; declared execution profile is checked once here.
+        _ (physical/require-qualified-topology!
+           ((:backend-adapter-fn opts) (d/db conn)))]
     (->Spiceomic conn opts)))
 
 (defn current-zed-token

@@ -2072,7 +2072,10 @@
           (is (= limit-kind (:limit-kind (ex-data limit-error))))
           (is (= 1 (:limit (ex-data limit-error))))))
       (is (nil? (get limit-errors :queued-work)))
-      (is (= {:size 0} (ex-data invalid-page-error)))
+      (is (= {:eacl/error :eacl.pagination/invalid-page-size
+              :size 0
+              :type :eacl.pagination/invalid-page-size}
+             (ex-data invalid-page-error)))
       (is (false? (:cached? cached-forward)))
       (is (true? (:cached? cached-hit)))
       (is (false? (:cached? uncached-forward)))
