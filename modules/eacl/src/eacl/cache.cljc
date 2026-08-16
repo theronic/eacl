@@ -6,7 +6,9 @@
   path that once lived here was deleted by trusted-surface-hygiene 11.1
   (native completed answers are client-private and never flow through
   portable providers)."
-  (:require [eacl.subproblem-cache :as subproblem]
+  (:require [eacl.backend.v8 :as backend]
+            [eacl.consistency :as consistency]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (defprotocol CacheStore
@@ -69,14 +71,66 @@
 
 (defrecord ExactGeneration [snapshot order subproblems])
 (defrecord ManagedGeneration
-  [schema-stamp installed-order subproblems])
-(defrecord CacheLifecycle [exact managed])
+           [schema-stamp installed-order subproblems])
+(defrecord CacheLifecycle [exact managed snapshot-exact])
 (defrecord CurrentGenerationCache [lifecycle metrics max-entries admissions
                                    admit-on-repeat? subproblem-options])
 
 (defn- new-lifecycle
-  []
-  (->CacheLifecycle (atom nil) (atom nil)))
+  [subproblem-options]
+  (->CacheLifecycle
+   (atom nil)
+   (atom nil)
+   ;; One composite-key store retains completed answers from multiple exact
+   ;; snapshots under one weight/LRU budget. It deliberately is not bound as
+   ;; a traversal subproblem store: partial traversal keys do not carry the
+   ;; complete snapshot identity required for historical reuse.
+   (subproblem/store (dissoc subproblem-options :enabled?))))
+
+(defn snapshot-exact-key
+  "Returns the canonical identity of an ordinary selected immutable snapshot.
+
+  Callers must invoke this only after current or authenticated exact selection
+  through a certified backend adapter. Arbitrary filtered/since/history/
+  speculative DB views must bypass snapshot-exact caching rather than infer
+  identity from a numeric revision. The semantic request, result shape,
+  evaluation demand, engine/order ABI, and answer-affecting limits are added
+  separately by `resolve-current!`/`resolve-exact!`."
+  [adapter]
+  (let [native-revision (consistency/native-revision adapter)
+        exact-locator (:exact-locator native-revision)]
+    ;; A captured current adapter may seed this tier only when the backend
+    ;; certifies that the same native locator is independently selectable.
+    ;; In particular, immutable DataScript values and arbitrary caller-owned
+    ;; views cannot acquire an "exact" cache identity from revision equality.
+    (when (and (backend/supports?
+                adapter :consistency :at-exact-snapshot)
+               (some? exact-locator))
+      {:key-version 1
+       :backend (backend/backend-id adapter)
+       :source-scope (consistency/source-scope adapter)
+       :native-revision native-revision
+       :exact-locator exact-locator
+       :view-kind :ordinary-exact
+       :snapshot-id (backend/invoke adapter :snapshot-id)
+       :adapter-fingerprint (backend/fingerprint adapter)
+       :identity-contract (backend/identity-contract adapter)})))
+
+(defn- valid-snapshot-exact-key?
+  [snapshot-key]
+  (and (map? snapshot-key)
+       (= 1 (:key-version snapshot-key))
+       (keyword? (:backend snapshot-key))
+       (map? (:source-scope snapshot-key))
+       (= :ordinary-exact (:view-kind snapshot-key))
+       (some? (:snapshot-id snapshot-key))
+       (some? (:adapter-fingerprint snapshot-key))
+       (keyword? (:identity-contract snapshot-key))
+       (let [{:keys [revision exact-locator]}
+             (:native-revision snapshot-key)]
+         (and (some? revision)
+              (some? exact-locator)
+              (= exact-locator (:exact-locator snapshot-key))))))
 
 (def ^:private empty-answer-sightings
   {:tick 0
@@ -198,8 +252,9 @@
    ;; Validate budgets before a request attempts to install a generation.
    (subproblem/store (dissoc subproblem-cache :enabled?))
    (->CurrentGenerationCache
-    (atom (new-lifecycle))
+    (atom (new-lifecycle subproblem-cache))
     (atom {:exact-hits 0
+           :snapshot-exact-hits 0
            :managed-hits 0
            :misses 0
            :bypasses 0
@@ -250,17 +305,21 @@
   (let [lifecycle @(:lifecycle store)
         exact @(:exact lifecycle)
         managed @(:managed lifecycle)
+        snapshot-exact (:snapshot-exact lifecycle)
         exact-stats
         (when-let [subproblems (:subproblems exact)]
           (subproblem/stats subproblems))
         managed-stats
         (when-let [subproblems (:subproblems managed)]
-          (subproblem/stats subproblems))]
+          (subproblem/stats subproblems))
+        snapshot-exact-stats (subproblem/stats snapshot-exact)]
     (assoc @(:metrics store)
            :exact-entries
            (get-in exact-stats [:tiers :answer :entries] 0)
            :managed-entries
            (get-in managed-stats [:tiers :answer :entries] 0)
+           :snapshot-exact-entries
+           (get-in snapshot-exact-stats [:tiers :answer :entries] 0)
            :admission-entries
            (count (:seen @(:admissions store)))
            :subproblems
@@ -269,7 +328,9 @@
                 (subproblem/store
                  (dissoc (:subproblem-options store) :enabled?))))
            :managed-subproblems
-           managed-stats)))
+           managed-stats
+           :snapshot-exact
+           snapshot-exact-stats)))
 
 (defn record-current-bypass!
   "Records that a configured native cache was deliberately skipped without
@@ -326,7 +387,7 @@
     (throw (ex-info "Expected an EACL current-generation cache."
                     {:type :eacl/invalid-config
                      :cache store})))
-  (reset! (:lifecycle store) (new-lifecycle))
+  (reset! (:lifecycle store) (new-lifecycle (:subproblem-options store)))
   (reset! (:admissions store) empty-answer-sightings)
   (swap! (:metrics store) update :expirations inc)
   nil)
@@ -411,6 +472,109 @@
    :current-cache-decision
    {:stage stage :available? available?}))
 
+(defn- snapshot-answer-entry-key
+  [snapshot-key semantic-key kind]
+  [snapshot-key semantic-key kind])
+
+(defn- retain-snapshot-answer!
+  [store lifecycle snapshot-key semantic-key kind answer-options entry]
+  (when snapshot-key
+    (subproblem/publish!
+     (:snapshot-exact lifecycle)
+     :answer
+     (snapshot-answer-entry-key snapshot-key semantic-key kind)
+     answer-options
+     entry
+     subproblem/*publication-attempt-limit*))
+  nil)
+
+(defn resolve-exact!
+  "Resolves one completed answer for an already selected authenticated exact
+  snapshot.
+
+  This path consults only the lifecycle-owned snapshot-exact answer store. It
+  never probes managed proof-backed entries and never binds historical data as
+  a traversal subproblem store. A miss evaluates on the caller's already
+  selected immutable adapter and may publish the completed semantic answer
+  under the complete canonical snapshot plus request key.
+
+  Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
+  [store
+   {:keys [snapshot-exact-key cache-basis cache-lifecycle decision-kernel
+           remember-answer? answer-weight-fn]
+    :or {remember-answer? true}}
+   semantic-key kind valid-value? compute]
+  (when-not (fn? compute)
+    (throw (ex-info "Snapshot-exact cache computation must be a function."
+                    {:type :eacl/invalid-config})))
+  (when-not (and (current-cache? store)
+                 (valid-snapshot-exact-key? snapshot-exact-key))
+    (throw (ex-info "Invalid snapshot-exact cache context."
+                    {:type :eacl/invalid-config
+                     :snapshot-exact-key snapshot-exact-key})))
+  (let [lifecycle (or cache-lifecycle @(:lifecycle store))
+        answer-store (:snapshot-exact lifecycle)
+        entry-key
+        (snapshot-answer-entry-key snapshot-exact-key semantic-key kind)
+        answer-options (answer-entry-options valid-value? answer-weight-fn)
+        exact-entry
+        (when remember-answer?
+          (:value
+           (subproblem/lookup!
+            answer-store :answer entry-key answer-options)))
+        exact-action
+        (current-cache-action
+         decision-kernel :snapshot-exact-entry (some? exact-entry))
+        evaluate-entry
+        (fn []
+          {:value
+           (binding [subproblem/*store* nil
+                     subproblem/*managed-store* nil
+                     subproblem/*managed-key-fn* nil
+                     subproblem/*managed-scope* nil
+                     subproblem/*decision-kernel*
+                     (or decision-kernel subproblem/*decision-kernel*)]
+             (subproblem/with-decision-memo compute))
+           :cache-basis cache-basis})]
+    (if (= :use-snapshot-exact-entry exact-action)
+      (do
+        (swap! (:metrics store) update :exact-hits inc)
+        (swap! (:metrics store) update :snapshot-exact-hits inc)
+        {:value (:value exact-entry)
+         :cached? true
+         :cache-tier :snapshot-exact
+         :cache-basis (:cache-basis exact-entry)})
+      (if (and remember-answer?
+               (admit-answer? store entry-key))
+      (let [resolved
+            (subproblem/resolve-independent!
+             answer-store :answer entry-key answer-options evaluate-entry)
+            entry (:value resolved)]
+        (if (:cached? resolved)
+          (do
+            (swap! (:metrics store) update :exact-hits inc)
+            (swap! (:metrics store) update :snapshot-exact-hits inc)
+            {:value (:value entry)
+             :cached? true
+             :cache-tier :snapshot-exact
+             :cache-basis (:cache-basis entry)})
+          (do
+            (swap! (:metrics store) update :misses inc)
+            (swap! (:metrics store) update :puts inc)
+            {:value (:value entry)
+             :cached? false
+             :cache-tier nil
+             :cache-basis (:cache-basis entry)})))
+        (let [entry (evaluate-entry)]
+          (swap! (:metrics store)
+                 update
+                 (if remember-answer? :misses :bypasses)
+                 inc)
+          {:value (:value entry)
+           :cached? false
+           :cache-tier nil
+           :cache-basis (:cache-basis entry)})))))
+
 (defn resolve-current!
   "Resolves one completed semantic answer against a captured current snapshot.
 
@@ -432,7 +596,8 @@
 
   Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
   [store
-   {:keys [snapshot snapshot-order same-snapshot? cache-basis cacheable?
+   {:keys [snapshot snapshot-order same-snapshot? snapshot-exact-key
+           cache-basis cacheable?
            cache-lifecycle
            managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
@@ -477,7 +642,7 @@
       (let [lifecycle (or cache-lifecycle @(:lifecycle store))
             {:keys [generation active?]}
             (install-exact-generation!
-            (:exact lifecycle)
+             (:exact lifecycle)
              snapshot snapshot-order same-snapshot?
              (:subproblem-options store))
             entry-key [semantic-key kind]]
@@ -509,110 +674,122 @@
                 (current-cache-action
                  decision-kernel :exact-entry (some? exact-entry))]
             (if (= :use-exact-entry exact-action)
-            (do
-              (swap! (:metrics store) update :exact-hits inc)
-              {:value (:value exact-entry)
-               :cached? true
-               :cache-tier :exact-current
-               :cache-basis (:cache-basis exact-entry)
-               :subproblem-store answer-store})
-            (let [{:keys [schema-stamp dependency-stamp]}
-                  (managed-descriptor
-                   store managed-key-fn)
-                  managed-generation
-                  (when (some? schema-stamp)
-                    (install-managed-generation!
-                     (:managed lifecycle)
-                     schema-stamp snapshot-order
-                     (:subproblem-options store)))
-                  managed-store (:subproblems managed-generation)
-                  managed-entry-key
-                  (when managed-generation
-                    [semantic-key kind dependency-stamp])
-                  managed-entry
-                  (when (and remember-answer? managed-entry-key)
-                    (:value
-                     (subproblem/lookup!
-                      managed-store :answer managed-entry-key
-                      answer-options)))
-                  managed-action
-                  (current-cache-action
-                   decision-kernel :managed-entry (some? managed-entry))]
-              (if (= :use-managed-entry managed-action)
-                (do
+              (do
+                (retain-snapshot-answer!
+                 store lifecycle snapshot-exact-key semantic-key kind
+                 answer-options exact-entry)
+                (swap! (:metrics store) update :exact-hits inc)
+                {:value (:value exact-entry)
+                 :cached? true
+                 :cache-tier :exact-current
+                 :cache-basis (:cache-basis exact-entry)
+                 :subproblem-store answer-store})
+              (let [{:keys [schema-stamp dependency-stamp]}
+                    (managed-descriptor
+                     store managed-key-fn)
+                    managed-generation
+                    (when (some? schema-stamp)
+                      (install-managed-generation!
+                       (:managed lifecycle)
+                       schema-stamp snapshot-order
+                       (:subproblem-options store)))
+                    managed-store (:subproblems managed-generation)
+                    managed-entry-key
+                    (when managed-generation
+                      [semantic-key kind dependency-stamp])
+                    managed-entry
+                    (when (and remember-answer? managed-entry-key)
+                      (:value
+                       (subproblem/lookup!
+                        managed-store :answer managed-entry-key
+                        answer-options)))
+                    managed-action
+                    (current-cache-action
+                     decision-kernel :managed-entry (some? managed-entry))]
+                (if (= :use-managed-entry managed-action)
+                  (do
                   ;; Promote the still-valid managed answer into the selected
                   ;; exact generation so the next identical request hits
                   ;; without dependency-stamp extraction.
-                  (subproblem/resolve-independent!
-                   answer-store :answer entry-key answer-options
-                   (fn [] managed-entry))
-                  (swap! (:metrics store) update :puts inc)
-                  (swap! (:metrics store) update :managed-hits inc)
-                  {:value (:value managed-entry)
-                   :cached? true
-                   :cache-tier :managed-current
-                   :cache-basis (:cache-basis managed-entry)
-                   :subproblem-store answer-store})
-                (let [subproblems-enabled?
-                      (get (:subproblem-options store) :enabled? true)
-                      compute-entry
-                      (fn []
-                        {:value
-                         (binding [subproblem/*store*
-                                   (when subproblems-enabled?
-                                     answer-store)
-                                   subproblem/*managed-store*
-                                   (when subproblems-enabled?
-                                     managed-store)
-                                   subproblem/*managed-key-fn*
-                                   managed-subproblem-key-fn
-                                   subproblem/*managed-scope*
-                                   managed-subproblem-scope
-                                   subproblem/*decision-kernel*
-                                   (or decision-kernel
-                                       subproblem/*decision-kernel*)]
-                           (subproblem/with-decision-memo compute))
-                         :cache-basis cache-basis})
-                      layered-compute
-                      (fn []
-                        (if managed-entry-key
-                          (:value
-                           (subproblem/resolve-independent!
-                            managed-store :answer managed-entry-key
-                            answer-options compute-entry))
-                          (compute-entry)))]
-                  (if (and remember-answer?
-                           (admit-answer? store entry-key))
-                    (let [resolved
-                          (subproblem/resolve-independent!
-                           answer-store :answer entry-key
-                           answer-options layered-compute)
-                          entry (:value resolved)]
-                      (if (:cached? resolved)
+                    (subproblem/resolve-independent!
+                     answer-store :answer entry-key answer-options
+                     (fn [] managed-entry))
+                    (retain-snapshot-answer!
+                     store lifecycle snapshot-exact-key semantic-key kind
+                     answer-options managed-entry)
+                    (swap! (:metrics store) update :puts inc)
+                    (swap! (:metrics store) update :managed-hits inc)
+                    {:value (:value managed-entry)
+                     :cached? true
+                     :cache-tier :managed-current
+                     :cache-basis (:cache-basis managed-entry)
+                     :subproblem-store answer-store})
+                  (let [subproblems-enabled?
+                        (get (:subproblem-options store) :enabled? true)
+                        compute-entry
+                        (fn []
+                          {:value
+                           (binding [subproblem/*store*
+                                     (when subproblems-enabled?
+                                       answer-store)
+                                     subproblem/*managed-store*
+                                     (when subproblems-enabled?
+                                       managed-store)
+                                     subproblem/*managed-key-fn*
+                                     managed-subproblem-key-fn
+                                     subproblem/*managed-scope*
+                                     managed-subproblem-scope
+                                     subproblem/*decision-kernel*
+                                     (or decision-kernel
+                                         subproblem/*decision-kernel*)]
+                             (subproblem/with-decision-memo compute))
+                           :cache-basis cache-basis})
+                        layered-compute
+                        (fn []
+                          (if managed-entry-key
+                            (:value
+                             (subproblem/resolve-independent!
+                              managed-store :answer managed-entry-key
+                              answer-options compute-entry))
+                            (compute-entry)))]
+                    (if (and remember-answer?
+                             (admit-answer? store entry-key))
+                      (let [resolved
+                            (subproblem/resolve-independent!
+                             answer-store :answer entry-key
+                             answer-options layered-compute)
+                            entry (:value resolved)]
+                        (if (:cached? resolved)
                         ;; A compatible completed value was already visible
                         ;; at lookup time; serve it as the exact hit it is.
-                        (do
-                          (swap! (:metrics store) update :exact-hits inc)
-                          {:value (:value entry)
-                           :cached? true
-                           :cache-tier :exact-current
-                           :cache-basis (:cache-basis entry)
-                           :subproblem-store answer-store})
-                        (do
-                          (swap! (:metrics store) update :misses inc)
-                          (swap! (:metrics store) update :puts inc)
-                          {:value (:value entry)
-                           :cached? false
-                           :cache-tier nil
-                           :cache-basis (:cache-basis entry)
-                           :subproblem-store answer-store})))
-                    (let [entry (compute-entry)]
-                      (swap! (:metrics store)
-                             update
-                             (if remember-answer? :misses :bypasses)
-                             inc)
-                      {:value (:value entry)
-                       :cached? false
-                       :cache-tier nil
-                       :cache-basis cache-basis
-                       :subproblem-store answer-store}))))))))))))
+                          (do
+                            (retain-snapshot-answer!
+                             store lifecycle snapshot-exact-key semantic-key kind
+                             answer-options entry)
+                            (swap! (:metrics store) update :exact-hits inc)
+                            {:value (:value entry)
+                             :cached? true
+                             :cache-tier :exact-current
+                             :cache-basis (:cache-basis entry)
+                             :subproblem-store answer-store})
+                          (do
+                            (retain-snapshot-answer!
+                             store lifecycle snapshot-exact-key semantic-key kind
+                             answer-options entry)
+                            (swap! (:metrics store) update :misses inc)
+                            (swap! (:metrics store) update :puts inc)
+                            {:value (:value entry)
+                             :cached? false
+                             :cache-tier nil
+                             :cache-basis (:cache-basis entry)
+                             :subproblem-store answer-store})))
+                      (let [entry (compute-entry)]
+                        (swap! (:metrics store)
+                               update
+                               (if remember-answer? :misses :bypasses)
+                               inc)
+                        {:value (:value entry)
+                         :cached? false
+                         :cache-tier nil
+                         :cache-basis cache-basis
+                         :subproblem-store answer-store}))))))))))))

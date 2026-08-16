@@ -162,6 +162,68 @@
              key :decision boolean?
              (constantly true)))))))
 
+(deftest snapshot-exact-completed-answer-cache-test
+  (let [store (cache/current-cache)
+        current-snapshot (snapshot-object)
+        semantic-key {:operation :can? :query [:alice :read :document]}
+        snapshot-key
+        (fn [lifecycle revision]
+          {:key-version 1
+           :backend :test
+           :source-scope {:source-id :source
+                          :branch nil
+                          :source-lifecycle lifecycle
+                          :backend :test}
+           :native-revision {:revision revision :exact-locator revision}
+           :exact-locator revision
+           :view-kind :ordinary-exact
+           :snapshot-id {:basis-t revision}
+           :adapter-fingerprint :adapter-v1
+           :identity-contract :identity-v1})
+        key-1 (snapshot-key :lifecycle-a 1)
+        key-2 (snapshot-key :lifecycle-a 2)
+        key-1-replaced (snapshot-key :lifecycle-b 1)
+        computations (atom 0)
+        exact
+        (fn [snapshot-key value]
+          (cache/resolve-exact!
+           store
+           {:snapshot-exact-key snapshot-key
+            :cache-basis (:snapshot-id snapshot-key)}
+           semantic-key :decision boolean?
+           (fn []
+             (swap! computations inc)
+             value)))]
+    (testing "a current answer seeds the matching authenticated exact tier"
+      (cache/resolve-current!
+       store
+       {:snapshot current-snapshot
+        :snapshot-order 1
+        :same-snapshot? identical?
+        :snapshot-exact-key key-1
+        :cache-basis {:basis-t 1}}
+       semantic-key :decision boolean? (constantly true))
+      (let [answer (exact key-1 false)]
+        (is (true? (:value answer)))
+        (is (true? (:cached? answer)))
+        (is (= :snapshot-exact (:cache-tier answer)))
+        (is (zero? @computations))))
+
+    (testing "different revisions and repeated numbers after lifecycle rotation cannot collide"
+      (is (false? (:value (exact key-2 false))))
+      (is (false? (:cached? (exact key-1-replaced false))))
+      (is (= 2 @computations))
+      (is (true? (:value (exact key-1 false)))
+          "the older retained snapshot remains independently addressable")
+      (is (false? (:value (exact key-2 true)))
+          "the newer retained snapshot keeps its own completed answer"))
+
+    (testing "explicit cache lifecycle expiry detaches every historical answer"
+      (cache/expire-current! store)
+      (is (false? (:cached? (exact key-1 false))))
+      (is (false? (:value (exact key-1 false))))
+      (is (= 3 @computations)))))
+
 (deftest current-generation-expiry-test
   (let [store (cache/current-cache)
         snapshot (snapshot-object)

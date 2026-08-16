@@ -9,8 +9,8 @@ depend on one adapter module; backend authors depend on core.
 
 | Module | Runtime | Consistency and snapshots | Cursors |
 | --- | --- | --- | --- |
-| `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, exact `d/as-of` | authenticated; proof-equivalent current continuation or exact reconstruction |
-| `eacl-datahike` | Clojure/JVM | current connection DB; configured head barrier and retained exact selection when supported | authenticated; proof-equivalent current continuation or supported exact reconstruction |
+| `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, targeted catch-up plus exact `d/as-of T` | authenticated; proof-equivalent current continuation or full-history exact reconstruction |
+| `eacl-datahike` | Clojure/JVM | current connection DB; durable temporal history when enabled, otherwise conditional retained-commit selection | authenticated; proof-equivalent current continuation or configuration-honest exact reconstruction |
 | `eacl-datascript` | Clojure and ClojureScript | current connection DB; no arbitrary exact selection | authenticated proof-equivalent current continuation |
 | `eacl` | Clojure and ClojureScript | supplied by an adapter | shared protocol, engine, proof, and cache implementation |
 
@@ -43,6 +43,13 @@ generations. The retained identity contains the source lifecycle, schema
 generation, and scalar maximum generation over the complete relation
 dependency closure.
 
+Authenticated `at-exact-snapshot` requests use a separate bounded
+snapshot-exact answer tier after selection. Its key binds the complete
+source/lifecycle, native locator, ordinary-view, adapter/identity, engine,
+semantic request, result-shape, demand, and limit identity. Exact requests do
+not use managed proof lifting; public IDs, basis, tokens, cursors, and metadata
+are rebuilt from the selected adapter on every hit.
+
 All authorization-relevant schema, relationship, identity/liveness, repair,
 and safe-deletion mutations must use EACL APIs or documented EACL transaction
 data/functions transacted intact. Unsupported raw mutation can leave stale
@@ -61,6 +68,27 @@ The exact lifecycle functions are:
 
 See [cache operations](v8-consistency-cache-operations.md) for proof
 availability, custom-codec, time-travel, and multi-process lifecycle rules.
+
+## Exact history and cursor lifetime
+
+Datomic treats a valid same-source exact `T` ahead of the local Peer as lag.
+It waits boundedly on `(d/sync conn T)`, cancels the future on timeout or
+interruption, verifies `basis >= T`, and evaluates only `(d/as-of db T)`. If
+`T` is already local it skips synchronization. Ordinary Datomic history has no
+EACL age-based exact/cursor expiry.
+
+`eacl.datahike/create-conn` enables `:keep-history? true` by default. This
+costs additional storage and write amplification but permits temporal exact
+reconstruction after named commit records are collected. Explicit
+`{:keep-history? false}` opts out: exact selection is then conditional on a
+retained commit graph, and collected commits may become unavailable.
+
+Cursors have no default TTL on any backend. A positive
+`:cursor-ttl-seconds` is an application policy; cache/checkpoint eviction only
+causes replay. Datomic excision and Datahike purge/cutoff, reset, branch force,
+or history replacement require quiescence, completion, shared source-lifecycle
+rotation, complete client/cache detachment, and deliberate signing-key/wire
+version policy before traffic resumes.
 
 ## Optional atomic entity retraction
 
@@ -139,8 +167,9 @@ CLJ/CLJS kernel. The strict request is `{:resource object :permission keyword}`
 plus optional `:consistency`, `:timeout-ms`, and `:cancellation-token`; the response is
 `{:expanded-at token :tree-root node}`. The token and every definition,
 relationship, and rendered ID in the tree come from one selected immutable
-adapter. Datomic can replay the exact token while history is retained;
-Datahike can do so only in configurations with retained exact selection;
+adapter. Datomic can replay the exact token throughout ordinary unreplaced
+history. Datahike can do so durably with temporal history, or conditionally
+while a named commit remains retained when temporal history is disabled;
 DataScript supplies current/causal selection but no arbitrary historical
 reconstruction.
 

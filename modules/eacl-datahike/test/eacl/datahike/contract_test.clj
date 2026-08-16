@@ -122,14 +122,21 @@
       (contract/assert-pinned-permission-tree-golden! client)
       (let [request {:resource (eacl/spice-object :document "testdoc")
                      :permission :view}
-            first-response (eacl/expand-permission-tree client request)]
+            first-response (eacl/expand-permission-tree client request)
+            exact-request
+            (assoc request :consistency
+                   (consistency/at-exact-snapshot
+                    (:expanded-at first-response)))
+            before (datahike/cache-stats client)
+            exact-response (eacl/expand-permission-tree client exact-request)
+            repeated-exact (eacl/expand-permission-tree client exact-request)
+            after (datahike/cache-stats client)]
         (is (= (:tree-root first-response)
-               (:tree-root
-                (eacl/expand-permission-tree
-                 client
-                 (assoc request :consistency
-                        (consistency/at-exact-snapshot
-                         (:expanded-at first-response)))))))))))
+               (:tree-root exact-response)
+               (:tree-root repeated-exact)))
+        (is (= (+ 2 (:snapshot-exact-hits before))
+               (:snapshot-exact-hits after))
+            "tree roots are reusable, while expanded-at is rebuilt per exact request")))))
 
 (deftest datahike-permission-tree-schema-mutation-snapshot-test
   (let [conn (datahike/create-conn)

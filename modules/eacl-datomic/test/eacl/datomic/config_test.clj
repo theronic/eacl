@@ -63,6 +63,32 @@
         (is (= :eacl/invalid-config (:type data)) (pr-str value))
         (is (= :cursor-ttl-seconds (:key data)) (pr-str value))))))
 
+(deftest cursor-expiry-is-optional-and-independent-from-cache-ttl-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:security-key "non-expiring-cursor"})
+          opts (:opts client)
+          token (core/page-token opts {:op :test})
+          decoded (core/token->page-bound opts token)]
+      (is (nil? (:page-token-ttl-seconds opts)))
+      (is (not (contains? decoded :exp))
+          "an omitted cursor TTL mints no age-expiry field"))
+
+    (let [client (core/make-client
+                  conn
+                  {:security-key "expiring-cursor"
+                   :cursor-ttl-seconds 60})
+          opts (:opts client)
+          token (core/page-token opts {:op :test :ttl-seconds 60})]
+      (is (integer? (:exp (core/token->page-bound opts token)))
+          "an explicit positive cursor TTL remains authenticated and enforced"))
+
+    (let [client (core/make-client
+                  conn
+                  {:cursor-ttl-seconds 1
+                   :cache {:ttl-ms 5000}})]
+      (is (= 5000 (get-in client [:opts :lookup-cache-ttl-ms]))
+          "cursor policy no longer caps an independently configured cache TTL"))))
+
 (deftest uniform-construction-option-family-test
   (with-mem-conn [conn schema/v7-schema]
     (let [lookup-ref (fn [object-id] [:eacl/id object-id])

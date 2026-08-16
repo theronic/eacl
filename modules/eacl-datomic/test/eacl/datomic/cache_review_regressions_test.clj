@@ -383,12 +383,13 @@
         (is (= (:data recovered-1) (:data recovered-2)))
         (is (nil? (get-in recovered-1
                           [:page-info :cursor-recovery])))
-        (is (false? (:cached? recovered-1)))
-        (is (false? (:cached? recovered-2)))
-        (is (= (+ 2 (:bypasses before-recovery))
+        (is (true? (:cached? recovered-1)))
+        (is (true? (:cached? recovered-2)))
+        (is (= (:bypasses before-recovery)
                (:bypasses after-recovery)))
-        (is (= (:exact-hits before-recovery)
-               (:exact-hits after-recovery)))))))
+        (is (= (+ 2 (:exact-hits before-recovery))
+               (:exact-hits after-recovery))
+            "exact cursor recovery reuses only the matching historical page")))))
 
 ;; --- L2 ---------------------------------------------------------------------
 

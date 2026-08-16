@@ -906,6 +906,10 @@
             :probe-exact-entry]
            [{:stage :exact-entry :available? false}
             :probe-managed-entry]
+           [{:stage :snapshot-exact-entry :available? true}
+            :use-snapshot-exact-entry]
+           [{:stage :snapshot-exact-entry :available? false}
+            :compute-snapshot-exact-value]
            [{:stage :managed-entry :available? true}
             :use-managed-entry]]]
     (is (= expected

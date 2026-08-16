@@ -148,25 +148,26 @@
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 3 @calls)))
+            (is (= 2 @calls)
+                "the answer computed at that exact immutable basis is reused"))
 
           (testing "fully-consistent observes the relationship deletion"
             (is (false? (eacl/can? client alice :admin account)))
-            (is (= 3 @calls)
+            (is (= 2 @calls)
                 "the exact-current deletion result is reused"))
 
           (testing "at-least-as-fresh accepts the current cached revision"
             (is (false? (eacl/can? client alice :admin account
                                    (consistency/at-least-as-fresh
                                     deleted-token))))
-            (is (= 3 @calls)))
+            (is (= 2 @calls)))
 
           (testing "and repeated exact selection remains snapshot-correct"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 4 @calls)
-                "exact requests bypass completed-answer caching")))))))
+            (is (= 2 @calls)
+                "repeated exact requests hit only the matching snapshot tier")))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
@@ -283,8 +284,8 @@
                       (consistency/at-exact-snapshot created-token))))
       (is (false? (eacl/can? client alice :admin account)))))
 
-  ;; Native current answers are client-private and admitted immediately.
-  ;; Exact replay remains cache-free.
+  ;; Native current answers are client-private and admitted immediately. The
+  ;; same completed semantic answer is also addressable by its exact snapshot.
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -777,7 +778,7 @@
             (is (= future-t
                    (:requested-order-hint (ex-data e))))))))))
 
-(deftest exact-request-bypasses-completed-cache-test
+(deftest exact-request-reuses-only-the-matching-snapshot-cache-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -789,12 +790,13 @@
                   :permission :admin
                   :resource account}]
       (is (true? (eacl/can? client alice :admin account)))
-      (let [result
-            (eacl/check-permission
-             client
-             (assoc demand
-                    :consistency
-                    (consistency/at-exact-snapshot token)))]
-        (is (true? (:allowed? result)))
-        (is (false? (:cached? result))
-            "exact selection bypasses the completed-answer cache")))))
+      (let [exact-demand
+            (assoc demand
+                   :consistency
+                   (consistency/at-exact-snapshot token))
+            first-result (eacl/check-permission client exact-demand)
+            second-result (eacl/check-permission client exact-demand)]
+        (is (true? (:allowed? first-result)))
+        (is (true? (:allowed? second-result)))
+        (is (true? (:cached? second-result))
+            "exact selection reuses the answer computed at the identical basis")))))

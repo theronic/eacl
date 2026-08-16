@@ -34,16 +34,16 @@ or authorization evaluation with the typed unsupported capability error.
 - **THEN** EACL returns `:eacl/unsupported-capability` or the normalized exact-snapshot-unavailable error
 - **AND** does not consult a cache as a historical store
 
-#### Scenario: Graph head token
+#### Scenario: Native revision token
 - **WHEN** DataScript emits a causal token for managed current state
-- **THEN** the token carries source scope, mutation anchor, and order hint
+- **THEN** the token carries backend/source/lifecycle scope and the selected native revision
 - **AND** carries no claim that an old immutable DB can later be reconstructed
 
 ### Requirement: DataScript consistency modes preserve their guarantees
 `:minimize-latency` SHALL select the current complete local DB without an
 authoritative wait. `:fully-consistent` SHALL select the current head of the
-serialized local connection. `:at-least-as-fresh T` SHALL select a current DB
-containing authenticated mutation anchor `T` or wait within the request's
+serialized local connection. `:at-least-as-fresh T` SHALL select a same-scope
+current DB whose native revision is at least `T` or wait within the request's
 execution deadline and fail typed if the floor cannot be established.
 
 #### Scenario: Minimize latency
@@ -56,7 +56,7 @@ execution deadline and fail typed if the floor cannot be established.
 - **THEN** EACL captures the current head of the serialized connection as the request linearization point
 
 #### Scenario: At-least floor already present
-- **WHEN** the current DB contains token `T`'s same-scope mutation anchor
+- **WHEN** the current DB has the same source/lifecycle and native revision at least token `T`
 - **THEN** EACL selects that current DB without waiting
 
 #### Scenario: At-least floor unavailable
@@ -132,4 +132,3 @@ errors.
 #### Scenario: Shared conformance corpus
 - **WHEN** CLJ and CLJS replay current, at-least, cache-hit/miss, raw-write, and cursor-mutation traces
 - **THEN** public values, provenance, selected graph identity, and typed failures are equivalent
-

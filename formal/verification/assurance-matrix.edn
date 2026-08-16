@@ -519,12 +519,15 @@
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]
    :theorems [:exact-current-same-snapshot
+              :snapshot-exact-hit-requires-available-entry
+              :snapshot-exact-miss-computes-without-managed-fallback
+              :numeric-revision-alone-cannot-establish-exact-identity
               :managed-atomic-relation-projection-frame
               :managed-source-schema-scalar-frontier-key-separation
               :changed-relation-slice-requires-changed-stamp
               :forward-scalar-stamp-invalidation
               :late-publication-unreachable
-              :exact-and-arbitrary-db-bypass
+              :arbitrary-db-bypass-and-canonical-exact-admission
               :projection-chunk-concatenation
               :equal-root-rule-bodies-have-equal-semantic-denotations
               :acyclic-subproblem-call-stack-independence
@@ -543,6 +546,10 @@
            "formal/dafny/SubproblemCache.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot
+                         :truthful-canonical-snapshot-exact-key
+                         :durable-history-when-advertised
+                         :targeted-sync-and-exact-as-of-effects
+                         :provider-future-cancellation
                          :complete-compiled-dependencies
                          :atomic-relation-stamped-writer-contract
                          :selected-snapshot-rendering

@@ -314,7 +314,8 @@
     input))
 
 (def ^:private current-cache-stages
-  #{:eligibility :generation :exact-entry :managed-entry})
+  #{:eligibility :generation :exact-entry :snapshot-exact-entry
+    :managed-entry})
 
 (def ^:private current-cache-actions
   #{:bypass-current-cache
@@ -322,7 +323,9 @@
     :use-exact-entry
     :probe-managed-entry
     :use-managed-entry
-    :compute-current-value})
+    :compute-current-value
+    :use-snapshot-exact-entry
+    :compute-snapshot-exact-value})
 
 (defn- validate-current-cache-input!
   [input]
@@ -1863,6 +1866,11 @@
     (if available?
       :use-exact-entry
       :probe-managed-entry)
+
+    :snapshot-exact-entry
+    (if available?
+      :use-snapshot-exact-entry
+      :compute-snapshot-exact-value)
 
     :managed-entry
     (if available?

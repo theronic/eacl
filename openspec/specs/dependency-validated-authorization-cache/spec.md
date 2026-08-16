@@ -16,14 +16,14 @@ EACL SHALL select one immutable snapshot satisfying the request before cross-rev
 - **THEN** every read for the in-flight request remains on the selected immutable value
 
 ### Requirement: Cache lifting is forward-only
-EACL SHALL return a cross-revision candidate only when the selected snapshot contains the candidate's computation mutation anchor and the complete proofs match. Numeric ordering or proof equality alone MUST NOT lift an answer backward from a future or sibling history.
+EACL SHALL return a cross-revision managed candidate only within one configured source lifecycle, for an ordinary current snapshot no older than the candidate's committed native generation, and when complete schema/dependency proofs match. Numeric equality alone MUST NOT lift an answer across replacement or sibling history.
 
 #### Scenario: Candidate causally precedes selected snapshot
-- **WHEN** the selected snapshot contains the candidate computation anchor and has an equal complete dependency proof
+- **WHEN** the selected snapshot is later in the same unreplaced native history and has an equal complete dependency proof
 - **THEN** EACL may proof-lift the answer
 
 #### Scenario: Candidate is from a future sibling
-- **WHEN** a shared cache returns a candidate whose computation anchor is absent from the selected snapshot
+- **WHEN** a candidate belongs to a different lifecycle or is newer than the selected snapshot
 - **THEN** EACL treats it as a miss even if numeric revisions and dependency proof values compare equal
 
 #### Scenario: Validation telemetry is reused
@@ -149,4 +149,3 @@ Provider errors, malformed entries, absent proofs, and proof-computation failure
 #### Scenario: Token anchor is missing
 - **WHEN** consistency selection cannot prove the requested mutation is present
 - **THEN** EACL rejects the request and MUST NOT hide the failure behind an uncached current read
-

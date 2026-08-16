@@ -12,7 +12,7 @@
                   :fully-consistent
                   :at-least-as-fresh
                   :at-exact-snapshot}
-   :snapshots #{:current :authoritative :causal :exact}
+   :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
    :cursor #{:forward :reverse :opaque}
    :transactions #{:schema :relationships :object-deletion}
@@ -43,6 +43,56 @@
   [db]
   (or (exact-commits? db)
       (temporal-history? db)))
+
+(defn- selection-failure!
+  [message phase token-data cause]
+  (throw
+   (ex-info
+    message
+    {:type :eacl.basis/selection-failure
+     :eacl/error :eacl.basis/selection-failure
+     :classification :retryable
+     :phase phase
+     :requested-revision (:revision token-data)
+     :requested-exact-locator (:exact-locator token-data)}
+    cause)))
+
+(defn- missing-commit-error?
+  [error]
+  (some #{:not-found :missing-node}
+        [(:type (ex-data error)) (:error (ex-data error))]))
+
+(defn- load-exact-commit
+  [conn locator token-data]
+  (when locator
+    (try
+      (d/commit-as-db conn (UUID/fromString locator))
+      ;; A locator from another backend format is absence for the conditional
+      ;; commit path. Temporal history may still reconstruct by revision.
+      (catch IllegalArgumentException _
+        nil)
+      (catch InterruptedException interrupt
+        (.interrupt (Thread/currentThread))
+        (throw
+         (ex-info
+          "Datahike exact commit selection was interrupted."
+          {:type :eacl.basis/selection-failure
+           :eacl/error :eacl.basis/selection-failure
+           :classification :cancelled
+           :phase :exact-commit
+           :requested-revision (:revision token-data)
+           :requested-exact-locator locator}
+          interrupt)))
+      (catch clojure.lang.ExceptionInfo info
+        (if (missing-commit-error? info)
+          nil
+          (selection-failure!
+           "Datahike exact commit selection failed."
+           :exact-commit token-data info)))
+      (catch Exception failure
+        (selection-failure!
+         "Datahike exact commit selection failed."
+         :exact-commit token-data failure)))))
 
 (defn- commit-locator
   [db]
@@ -147,6 +197,15 @@
                           :selected-internal/current-external-injective-v2)
       :capabilities
       (cond-> capabilities
+        (exact-reconstruction? db)
+        (update :snapshots conj :exact)
+
+        (temporal-history? db)
+        (update :snapshots conj :durable-history)
+
+        (exact-commits? db)
+        (update :snapshots conj :conditional-exact)
+
         (or (nil? conn)
             (not (direct-writer? db)))
         (update :consistency disj :fully-consistent)
@@ -214,62 +273,40 @@
                     (or (:exact-locator token-data)
                         (and (temporal-history? db)
                              (integer? (:revision token-data)))))
-           (try
-             (let [commit-db
-                   (when (and (exact-commits? db)
-                              (:exact-locator token-data))
-                     (d/commit-as-db
-                      conn
-                      (UUID/fromString
-                       (:exact-locator token-data))))
-                   temporal-db
-                   (when (and (nil? commit-db)
-                              (temporal-history? db)
-                              (integer? (:revision token-data))
-                              (<= (:revision token-data)
-                                  (:max-tx (d/db conn))))
-                     (d/as-of (d/db conn)
-                              (:revision token-data)))]
-               (when-let [selected-db (or commit-db temporal-db)]
-                 (snapshot-adapter
-                  selected-db
-                  (assoc opts'
-                         :selected-order-hint (:revision token-data)
-                         :selected-exact-locator
-                         (:exact-locator token-data)))))
-             ;; Genuine absence maps to the contractual unavailable nil: a
-             ;; foreign locator format fails UUID parsing, and a GC'd
-             ;; commit makes commit-as-db return nil (handled above by the
-             ;; when-let). A store that reports absence through a typed
-             ;; not-found / missing-node error is treated the same. A
-             ;; failed READ is not absence: it stays a classified retryable
-             ;; failure so a transient store outage never expires a valid
-             ;; cursor. Every other Throwable is a classified failure.
-             (catch IllegalArgumentException _
-               nil)
-             (catch clojure.lang.ExceptionInfo info
-               (if (some #{:not-found :missing-node}
-                         [(:type (ex-data info)) (:error (ex-data info))])
-                 nil
-                 (throw (ex-info "Exact-basis selection failed."
-                                 {:type :eacl.basis/selection-failure
-                                  :eacl/error :eacl.basis/selection-failure
-                                  :classification :retryable
-                                  :cause (ex-data info)}
-                                 info))))
-             (catch InterruptedException interrupt
-               (throw (ex-info "Exact-basis selection was interrupted."
-                               {:type :eacl.basis/selection-failure
-                                :eacl/error :eacl.basis/selection-failure
-                                :classification :cancelled}
-                               interrupt)))
-             (catch Throwable failure
-               (throw (ex-info "Exact-basis selection failed."
-                               {:type :eacl.basis/selection-failure
-                                :eacl/error :eacl.basis/selection-failure
-                                :classification :retryable
-                                :cause-class (.getName (class failure))}
-                               failure))))))
+           (let [commit-db
+                 (when (exact-commits? db)
+                   (load-exact-commit
+                    conn (:exact-locator token-data) token-data))
+                 temporal-db
+                 (when (and (nil? commit-db)
+                            (temporal-history? db)
+                            (integer? (:revision token-data)))
+                   (try
+                     (let [current (d/db conn)]
+                       (when (<= (:revision token-data) (:max-tx current))
+                         (d/as-of current (:revision token-data))))
+                     (catch InterruptedException interrupt
+                       (.interrupt (Thread/currentThread))
+                       (throw
+                        (ex-info
+                         "Datahike temporal reconstruction was interrupted."
+                         {:type :eacl.basis/selection-failure
+                          :eacl/error :eacl.basis/selection-failure
+                          :classification :cancelled
+                          :phase :exact-temporal
+                          :requested-revision (:revision token-data)}
+                         interrupt)))
+                     (catch Exception failure
+                       (selection-failure!
+                        "Datahike temporal reconstruction failed."
+                        :exact-temporal token-data failure))))]
+             (when-let [selected-db (or commit-db temporal-db)]
+               (snapshot-adapter
+                selected-db
+                (assoc opts'
+                       :selected-order-hint (:revision token-data)
+                       :selected-exact-locator
+                       (:exact-locator token-data)))))))
 
        :object-id->internal
        (fn [object-id]

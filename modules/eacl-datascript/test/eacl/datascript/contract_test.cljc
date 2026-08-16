@@ -556,8 +556,8 @@
                 thrown))]
         (is (some? error)
             "a cursor from another schema generation must not resume the walk")
-        (is (= :eacl.pagination/invalid-cursor (:type (ex-data error))))
-        (is (= :query-mismatch (:reason (ex-data error))))
+        (is (= :eacl.pagination/stale-cursor (:type (ex-data error))))
+        (is (= :dependency-proof-changed (:reason (ex-data error))))
         (let [fresh-error
               (try
                 (eacl/lookup-resources client query)
@@ -923,7 +923,7 @@
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 11 (:v envelope)))
+      (is (= 12 (:v envelope)))
       (is (= :stable-edge
              (get-in envelope [:edge :kind])))
       (is (= "server-1"
