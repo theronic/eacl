@@ -20,6 +20,7 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.formal.production-kernel :as production-kernel]
@@ -84,6 +85,7 @@
               engine/*evaluation-mode* (:evaluation contract)
               engine/*recursive-traversal-limits*
               (:recursive-traversal-limits opts)
+              engine/*service-admission* (:service-admission opts)
               impl.indexed/*recursive-traversal-limits*
               (:recursive-traversal-limits opts)]
       (let [result (f opts)]
@@ -2359,6 +2361,7 @@
     :cache-attempt
     :recursive-traversal-limits
     :permission-tree-limits
+    :service-admission
     :auto-migrate-v6})
 
 (def ^:private canonical-security-opt-keys
@@ -2634,6 +2637,11 @@
     attempt bound. Cache work may remove evaluator commands but
     cannot enlarge request demand. Remote provider/decode controls are not
     exposed because caller-supplied cache providers are rejected.
+  - :service-admission — {:max-concurrent n :max-replays n :max-replays-per-key n}, the
+    service-edge bulkhead for routed enumerations (slots are held for the full
+    synchronous call chain) and the replay ledger for cursor replays; omitted
+    means no bulkhead. Rejections are :eacl.service/admission-rejected and
+    :eacl.service/replay-rejected.
   - :recursive-traversal-limits — overrides eacl.datomic.impl.indexed/default-recursive-traversal-limits
     for list calls, e.g. {:max-derived-grants 1000000 :max-advanced-datoms 1000000
     :max-queued-work 1000000}. Recursive traversal remains subject to these
@@ -2670,6 +2678,7 @@
            cache-attempt
            recursive-traversal-limits
            permission-tree-limits
+           service-admission
            auto-migrate-v6]}]
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
     (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
@@ -3003,7 +3012,18 @@
                                    recursive-traversal-limits)
                             :permission-tree-limits
                             (permission-tree/normalize-limits
-                             permission-tree-limits)}]
+                             permission-tree-limits)
+                            ;; The service-edge bulkhead and replay ledger
+                            ;; (bounded-physical-execution): nil leaves the
+                            ;; routed engine unguarded, a map installs it.
+                            :service-admission
+                            (some-> (physical/normalize-service-admission
+                                     service-admission)
+                                    physical/make-service-admission)}
+        ;; The stable engine runs only on a qualified topology; the adapter's
+        ;; declared execution profile is checked once here.
+        _ (physical/require-qualified-topology!
+           ((:backend-adapter-fn opts) (d/db conn)))]
     (->Spiceomic conn opts)))
 
 (defn current-zed-token

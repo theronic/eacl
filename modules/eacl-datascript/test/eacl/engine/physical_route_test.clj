@@ -18,6 +18,7 @@
             [eacl.engine.stable-page :as page]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.stable-route :as route]
+            [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]))
 
 (defn- seeded
@@ -420,3 +421,181 @@
                                         :target route/exhaustion-target}))]
         (is (= n (:discovered reverse-run)))
         (is (empty? (:stack reverse-run)))))))
+
+;; ---------------------------------------------------------------------------
+;; Routed wiring of the physical layer (bounded-physical-execution on the
+;; public path): classified + retried reads, the service-edge bulkhead and
+;; replay ledger, and topology qualification.
+;; ---------------------------------------------------------------------------
+
+(defn- adapter-with-scan
+  "The seeded adapter with its forward scan replaced by `scan-fn`, which
+  receives the original operation."
+  [adapter scan-fn]
+  (let [operations (:eacl.backend.v8/operations adapter)
+        original (:subject->resources operations)]
+    (backend/make-adapter
+     {:id (backend/backend-id adapter)
+      :capabilities (backend/capabilities adapter)
+      :operations (assoc operations
+                         :subject->resources (fn [& args] (apply scan-fn original args)))
+      :state (backend/state adapter)
+      :fingerprint (backend/fingerprint adapter)
+      :identity-contract (backend/identity-contract adapter)
+      :traversal-execution (backend/traversal-execution adapter)})))
+
+(defn- routed-lookup
+  [adapter env]
+  (let [principal (val (first (:principals (:fixture env))))
+        db (:db env)]
+    (mapv :id
+          (:data (engine/lookup-resources
+                  adapter
+                  {:subject {:type :user
+                             :id (ds/entid db [:eacl/id (:id principal)])}
+                   :permission (:permission (:fixture env))
+                   :resource/type (:resource-type (:fixture env))
+                   :first 50})))))
+
+(deftest routed-reads-are-classified-and-retried-test
+  (let [env (seeded :folder-chain)
+        expected (routed-lookup (:adapter env) env)
+        clean-scans (let [calls (atom 0)
+                          counting (adapter-with-scan
+                                    (:adapter env)
+                                    (fn [original & args]
+                                      (swap! calls inc)
+                                      (apply original args)))]
+                      (is (= expected (routed-lookup counting env)))
+                      @calls)]
+    (is (seq expected))
+    (is (pos? clean-scans))
+    (testing "a foreign adapter failure is retried under the deadline and the read completes"
+      (let [failures (atom 1)
+            flaky (adapter-with-scan
+                   (:adapter env)
+                   (fn [original & args]
+                     (if (pos? @failures)
+                       (do (swap! failures dec)
+                           (throw (RuntimeException. "transient storage hiccup")))
+                       (apply original args))))
+            stats (atom {})]
+        (is (= expected
+               (binding [engine/*recursive-traversal-stats* stats]
+                 (routed-lookup flaky env))))
+        (is (= (inc clean-scans) (:adapter-attempts @stats))
+            "attempts are counted separately from logical commands: the clean scans plus the one failed attempt")))
+    (testing "a persistently failing read surfaces as a classified retryable failure with its cause"
+      (let [broken (adapter-with-scan
+                    (:adapter env)
+                    (fn [_ & _] (throw (RuntimeException. "storage down"))))
+            data (try (routed-lookup broken env) nil
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :eacl.scan/failure (:eacl/error data)))
+        (is (= :retryable (:classification data)))
+        (is (= "java.lang.RuntimeException" (:cause-class data)))
+        (is (= :subject->resources (:operation data)))))
+    (testing "typed EACL errors pass through the read boundary unwrapped and unretried"
+      (let [calls (atom 0)
+            violating (adapter-with-scan
+                       (:adapter env)
+                       (fn [_ & _]
+                         (swap! calls inc)
+                         (throw (ex-info "contract broken"
+                                         {:type :eacl/backend-contract-violation
+                                          :eacl/error :eacl/backend-contract-violation}))))
+            data (try (routed-lookup violating env) nil
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :eacl/backend-contract-violation (:eacl/error data)))
+        (is (= 1 @calls) "no retry for a typed verdict")))))
+
+(deftest service-admission-bounds-routed-enumerations-test
+  (let [env (seeded :folder-chain)
+        gate (promise)
+        started (promise)
+        blocking (adapter-with-scan
+                  (:adapter env)
+                  (fn [original & args]
+                    (deliver started true)
+                    @gate
+                    (apply original args)))
+        admission (physical/make-service-admission {:max-concurrent 1})]
+    (testing "a second enumeration is rejected while the only slot is held"
+      (let [holder (future
+                     (binding [engine/*service-admission* admission]
+                       (routed-lookup blocking env)))]
+        (is (deref started 5000 false))
+        (let [data (try
+                     (binding [engine/*service-admission* admission]
+                       (routed-lookup (:adapter env) env))
+                     nil
+                     (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+          (is (= :eacl.service/admission-rejected (:eacl/error data)))
+          (is (= 1 (:active data))))
+        (deliver gate true)
+        (is (seq (deref holder 10000 nil)))
+        (is (zero? (:active @admission)) "the slot is released when the work returns")))
+    (testing "the replay ledger governs checkpoint-miss replays"
+      (let [page-1 (page/edge-page {:adapter (:adapter env) :plan (:plan env)
+                                    :direction :forward
+                                    :anchor-eid (ds/entid (:db env)
+                                                          [:eacl/id (:id (val (first (:principals (:fixture env)))))])
+                                    :subject-type :user :page-size 2})
+            edge {:ordinal (+ (:start-ordinal page-1) (count (:eids page-1)))
+                  :eid (peek (:eids page-1))}
+            ledger (physical/make-service-admission {:max-replays 1})
+            continue (fn []
+                       (page/edge-page {:adapter (:adapter env) :plan (:plan env)
+                                        :direction :forward
+                                        :anchor-eid (ds/entid (:db env)
+                                                              [:eacl/id (:id (val (first (:principals (:fixture env)))))])
+                                        :subject-type :user :page-size 2
+                                        :after edge
+                                        :service-admission ledger
+                                        :checkpoint-key [:test :replay]}))]
+        (is (seq (:eids (continue))) "a replay within the quota runs")
+        (is (= :eacl.service/replay-rejected
+               (physical/with-replay-admission
+                ledger [:other :key]
+                #(try (continue) nil
+                      (catch clojure.lang.ExceptionInfo e (:eacl/error (ex-data e))))))
+            "a replay beyond the total quota is rejected typed")))))
+
+(deftest topology-qualification-test
+  (let [env (seeded :folder-chain)
+        capabilities (physical/adapter-topology-capabilities (:adapter env))]
+    (testing "the DataScript adapter's declared strict profile qualifies it"
+      (is (physical/stable-discovery-qualified? capabilities))
+      (is (true? (:failure-classification? capabilities)))
+      (is (= 1 (:deployment-width capabilities)))
+      (is (= capabilities (physical/require-qualified-topology! (:adapter env)))))
+    (testing "an adapter with the conservative default profile is refused"
+      (let [conservative (backend/make-adapter
+                          {:id :synthetic
+                           :capabilities (backend/capabilities (:adapter env))
+                           :operations (:eacl.backend.v8/operations (:adapter env))
+                           :state (backend/state (:adapter env))})
+            data (try (physical/require-qualified-topology! conservative) nil
+                      (catch clojure.lang.ExceptionInfo e (ex-data e)))]
+        (is (= :eacl.topology/unqualified (:eacl/error data)))
+        (is (= :eacl.topology/unqualified (:type data)))
+        (is (false? (get-in data [:capabilities :strict-scan-order?])))))
+    (testing "the client option is validated and installs the bulkhead"
+      (let [{:keys [conn]} (capture/seed-client! ((get capture/fixtures :folder-chain)))]
+        (doseq [bad [{:max-concurrent 0} {:bogus 1} 3]]
+          (is (= :eacl/invalid-config
+                 (try (datascript/make-client conn {:service-admission bad}) nil
+                      (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+              (pr-str bad)))
+        (let [client (datascript/make-client conn {:service-admission {:max-concurrent 4}})
+              admission (:service-admission (:opts client))]
+          (is (some? admission))
+          (is (= 4 (:max-concurrent @admission)))
+          (is (map? (eacl/lookup-resources
+                     client
+                     {:subject (eacl/spice-object
+                                :user (:id (val (first (:principals (:fixture env))))))
+                      :permission (:permission (:fixture env))
+                      :resource/type (:resource-type (:fixture env))
+                      :first 5}))
+              "enumerations run through the bulkhead"))))))

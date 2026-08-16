@@ -126,13 +126,21 @@ held, and no adapter declares a capability record (task 7.7 said "per-adapter
 declarations join the 9.1 splice"; 9.1 landed without them).
 `docs/stable-discovery-engine.md` §Failure semantics and §Topology
 qualification described the routed behaviour as if wired; this branch
-rewords them (see §5). Left as a wiring decision, not repaired here: installing
-`classified-fetch-fn`/`retrying-fetch-fn` on the routed path would wrap
-every adapter exception — including the typed `:eacl/backend-contract-violation`
-thrown by the runtime guards, which today surfaces unchanged — as
-`:eacl.scan/failure` and retry it up to three times, a public error-shape
-change that the pinned error contracts do not authorize; the bulkhead needs
-a new client option. Both belong to a scoped change with their own tests.
+rewords them (see §5). Wired in the follow-up pull request (`agent/wire-physical-execution`):
+`eacl.engine.v8` installs `classified-fetch-fn`/`retrying-fetch-fn` on every
+routed read (three attempts under the request's original absolute deadline;
+typed EACL errors such as `:eacl/backend-contract-violation` pass through
+unwrapped and unretried, so the pinned public error contracts are
+unchanged; foreign failures surface as `:eacl.scan/failure` with
+`:classification` and `:cause-class`; `:adapter-attempts` joins the work
+stats), a `:service-admission` client option installs the bulkhead around
+point checks, lookups and counts and the replay ledger around checkpoint-miss
+replays, backward runs and last windows, and both clients derive the
+adapter's topology capability record from its declared execution profile
+and fail closed with `:eacl.topology/unqualified` at construction
+(`physical_route_test`: `routed-reads-are-classified-and-retried-test`,
+`service-admission-bounds-routed-enumerations-test`,
+`topology-qualification-test`; `config_test/service-admission-option-test`).
 
 ### 2.4 S3 — `with-replay-admission` never removes exhausted keys — **Fixed**
 

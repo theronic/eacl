@@ -996,6 +996,48 @@
   (when-let [contract execution/*contract*]
     (physical/execution-cut-point contract)))
 
+(def ^:dynamic *service-admission*
+  "The client's service-edge admission (an atom from
+  `eacl.engine.physical/make-service-admission`), bound per request by the
+  public clients from their `:service-admission` option. nil disables the
+  bulkhead and the replay ledger."
+  nil)
+
+(def default-physical-attempts
+  "Attempts per read-demand descriptor for `:retryable` adapter failures on
+  the routed path (the original absolute deadline still bounds every retry)."
+  3)
+
+(defn- stable-fetch-fn
+  "The routed physical read path (bounded-physical-execution): the adapter
+  scan realized inside the three-outcome classification boundary (complete
+  | classified failure with a cause | cancelled — typed EACL errors pass
+  through unwrapped and unretried) and retried for `:retryable` failures
+  under the request's original absolute deadline. Returns the fetch-fn and
+  the attempt counter that feeds `:adapter-attempts` in the observer stats."
+  [db]
+  (let [attempts (atom 0)]
+    {:fetch-fn (physical/retrying-fetch-fn
+                (stable-reducer/adapter-fetch-fn db)
+                {:max-attempts default-physical-attempts
+                 :deadline-nanos (:deadline-nanos execution/*contract*)
+                 :attempts attempts})
+     :attempts attempts}))
+
+(defn- report-adapter-attempts!
+  [attempts]
+  (when-let [stats *recursive-traversal-stats*]
+    (swap! stats update :adapter-attempts (fnil + 0) @attempts))
+  nil)
+
+(defn- with-service-admission
+  "Runs `thunk` holding one enumeration slot when the client configured a
+  service-edge bulkhead; the slot is held for the full synchronous duration
+  of the routed work (at width one the enumeration is the physical call
+  chain)."
+  [thunk]
+  (physical/with-admission *service-admission* thunk))
+
 (defn- stable-checkpoints
   "Accepts a stable-page checkpoint store (raw atom) or the client's scoped
   continuation context (fn-map with its own bounds and eviction); anything
@@ -1072,28 +1114,34 @@
             anchor-eid (object-eid db (:id anchor))
             edge (when bound {:ordinal (:ordinal bound)
                               :eid (:result-eid bound)})
+            {:keys [fetch-fn attempts]} (stable-fetch-fn db)
             result (with-stale-boundary-errors
                      bound
                      (fn []
                        (with-public-limit-errors
-                        #(stable-page/edge-page
-                          (merge
-                        (stable-limits)
-                        {:adapter db
-                         :plan plan
-                         :direction traversal
-                         :anchor-eid anchor-eid
-                         :subject-type subject-type
-                         :cut-point! (stable-cut-point)
-                         :page-size size
-                         :after (when (= :asc direction) edge)
-                         :before (when (and (= :desc direction) edge) edge)
-                         :last-window? (and (= :desc direction) (nil? edge))
-                         :checkpoints (stable-checkpoints cache)
-                         :checkpoint-key [(:fingerprint plan)
-                                          (backend/invoke db :native-revision)
-                                          traversal subject-type anchor-eid
-                                          size]})))))]
+                        #(with-service-admission
+                           (fn []
+                             (stable-page/edge-page
+                              (merge
+                               (stable-limits)
+                               {:adapter db
+                                :fetch-fn fetch-fn
+                                :plan plan
+                                :direction traversal
+                                :anchor-eid anchor-eid
+                                :subject-type subject-type
+                                :cut-point! (stable-cut-point)
+                                :page-size size
+                                :after (when (= :asc direction) edge)
+                                :before (when (and (= :desc direction) edge) edge)
+                                :last-window? (and (= :desc direction) (nil? edge))
+                                :checkpoints (stable-checkpoints cache)
+                                :service-admission *service-admission*
+                                :checkpoint-key [(:fingerprint plan)
+                                                 (backend/invoke db :native-revision)
+                                                 traversal subject-type anchor-eid
+                                                 size]})))))))]
+        (report-adapter-attempts! attempts)
         (page-response
          {:items (stable-items plan traversal result-type
                                (:start-ordinal result) (:eids result))
@@ -1113,16 +1161,23 @@
               db resource-type permission))]
     (if defined-root?
       (let [root-node (permission-query-node resource-type permission)
-            plan (stable-plan db root-node)]
-        (with-public-limit-errors
-          #(stable-route/check-eids
-            (merge (stable-limits)
-                   {:adapter db
-                    :plan plan
-                    :subject-type subject-type
-                    :subject-eid subject-eid
-                    :resource-eid resource-eid
-                    :cut-point! (stable-cut-point)}))))
+            plan (stable-plan db root-node)
+            {:keys [fetch-fn attempts]} (stable-fetch-fn db)
+            allowed?
+            (with-public-limit-errors
+              #(with-service-admission
+                 (fn []
+                   (stable-route/check-eids
+                    (merge (stable-limits)
+                           {:adapter db
+                            :fetch-fn fetch-fn
+                            :plan plan
+                            :subject-type subject-type
+                            :subject-eid subject-eid
+                            :resource-eid resource-eid
+                            :cut-point! (stable-cut-point)})))))]
+        (report-adapter-attempts! attempts)
+        allowed?)
       false)))
 (defn lookup-resources
   "Stable-discovery forward pagination.
@@ -1187,18 +1242,23 @@
      (if-not (permission-root-defined? db result-type permission)
        {:count 0 :truncated? false}
        (let [plan (stable-plan
-                   db (permission-query-node result-type permission))]
-         (select-keys
-          (with-public-limit-errors
-            #(stable-route/count-resources
-              (merge (stable-limits)
-                     {:adapter db
-                      :plan plan
-                      :subject-type (:type subject)
-                      :subject-id (:id subject)
-                      :count-limit limit
-                      :cut-point! (stable-cut-point)})))
-          [:count :truncated?])))
+                   db (permission-query-node result-type permission))
+             {:keys [fetch-fn attempts]} (stable-fetch-fn db)
+             counted
+             (with-public-limit-errors
+               #(with-service-admission
+                  (fn []
+                    (stable-route/count-resources
+                     (merge (stable-limits)
+                            {:adapter db
+                             :fetch-fn fetch-fn
+                             :plan plan
+                             :subject-type (:type subject)
+                             :subject-id (:id subject)
+                             :count-limit limit
+                             :cut-point! (stable-cut-point)})))))]
+         (report-adapter-attempts! attempts)
+         (select-keys counted [:count :truncated?])))
      limit)))
 
 (defn count-subjects
@@ -1214,16 +1274,21 @@
      (if-not (permission-root-defined? db (:type resource) permission)
        {:count 0 :truncated? false}
        (let [plan (stable-plan
-                   db (permission-query-node (:type resource) permission))]
-         (select-keys
-          (with-public-limit-errors
-            #(stable-route/count-subjects
-              (merge (stable-limits)
-                     {:adapter db
-                      :plan plan
-                      :subject-type (:subject/type query)
-                      :resource-id (:id resource)
-                      :count-limit limit
-                      :cut-point! (stable-cut-point)})))
-          [:count :truncated?])))
+                   db (permission-query-node (:type resource) permission))
+             {:keys [fetch-fn attempts]} (stable-fetch-fn db)
+             counted
+             (with-public-limit-errors
+               #(with-service-admission
+                  (fn []
+                    (stable-route/count-subjects
+                     (merge (stable-limits)
+                            {:adapter db
+                             :fetch-fn fetch-fn
+                             :plan plan
+                             :subject-type (:subject/type query)
+                             :resource-id (:id resource)
+                             :count-limit limit
+                             :cut-point! (stable-cut-point)})))))]
+         (report-adapter-attempts! attempts)
+         (select-keys counted [:count :truncated?])))
      limit)))
