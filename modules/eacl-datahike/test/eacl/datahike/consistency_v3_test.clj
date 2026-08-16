@@ -697,11 +697,12 @@
            (eacl/->Relationship second-reader :reader document))))
       (finally (d/release conn)))))
 
-(deftest lagging-datahike-reader-awaits-the-exact-revision-test
-  ;; Datahike used to report a locally future revision as missing history while
-  ;; :select-at-least waited for the same revision on the same adapter. Exact
-  ;; selection now awaits it under the caller's bound, so replica lag is
-  ;; reported as bounded lag rather than as durable history that is gone.
+(deftest future-datahike-revision-is-unavailable-without-blocking-test
+  ;; Datahike has no `d/sync` (replikativ/datahike#958), so the only ways to
+  ;; wait for an unobserved revision are unbounded polling or a fixed N-second
+  ;; timeout, and neither distinguishes a revision that is late from one that
+  ;; will never arrive. Exact selection therefore reports a locally future
+  ;; revision as unavailable immediately and leaves the deadline to the caller.
   (let [conn (datahike/create-conn nil {:keep-history? true})
         authorization (client conn)]
     (try
@@ -710,16 +711,21 @@
       (let [db (d/db conn)
             adapter (datahike-backend/snapshot-adapter db {:conn conn})
             future-revision (+ 1000 (:max-tx db))
-            data (try
-                   (backend/invoke
-                    adapter :select-exact
-                    {:revision future-revision :exact-locator nil}
-                    25)
-                   nil
-                   (catch clojure.lang.ExceptionInfo error
-                     (ex-data error)))]
-        (is (= :eacl.consistency/freshness-unavailable (:type data))
-            "an unobserved revision is bounded lag, not missing history")
-        (is (= :freshness-timeout (:reason data)))
-        (is (= future-revision (:requested-order-hint data))))
+            started (System/nanoTime)
+            selected (backend/invoke
+                      adapter :select-exact
+                      {:revision future-revision :exact-locator nil}
+                      30000)
+            elapsed-ms (quot (- (System/nanoTime) started) 1000000)]
+        (is (nil? selected)
+            "a revision the local value has not observed is unavailable")
+        (is (< elapsed-ms 1000)
+            "selection must not spend the caller's timeout waiting for it"))
+      (testing "retained history at or below the local head still resolves"
+        (let [db (d/db conn)
+              adapter (datahike-backend/snapshot-adapter db {:conn conn})]
+          (is (some? (backend/invoke
+                      adapter :select-exact
+                      {:revision (:max-tx db) :exact-locator nil}
+                      30000)))))
       (finally (d/release conn)))))

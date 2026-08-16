@@ -268,7 +268,7 @@
        (fn [] (or (commit-locator db) selected-exact-locator))
 
        :select-exact
-       (fn [token-data timeout-ms]
+       (fn [token-data _timeout-ms]
          (when (and conn
                     (or (:exact-locator token-data)
                         (and (temporal-history? db)
@@ -282,14 +282,18 @@
                             (temporal-history? db)
                             (integer? (:revision token-data)))
                    (try
-                     ;; A reader connection may simply not have observed the
-                     ;; writer's revision yet. Await it exactly as
-                     ;; :select-at-least does, so replica lag is reported as
-                     ;; bounded lag instead of as durable history that is
-                     ;; missing. Retained history older than the local head
-                     ;; still resolves without waiting.
-                     (d/as-of (await-revision-db conn db token-data timeout-ms)
-                              (:revision token-data))
+                     ;; A revision above the local head is reported unavailable
+                     ;; immediately rather than waited for. Datahike has no
+                     ;; `d/sync` (replikativ/datahike#958), so the only ways to
+                     ;; wait are unbounded polling or a fixed N-second timeout,
+                     ;; and neither can distinguish a revision that is merely
+                     ;; late from one that will never arrive. Failing closed
+                     ;; keeps the caller's deadline theirs to spend. Datahike
+                     ;; also caches connections per store config in-process, so
+                     ;; for a direct writer this local head is authoritative.
+                     (let [current (d/db conn)]
+                       (when (<= (:revision token-data) (:max-tx current))
+                         (d/as-of current (:revision token-data))))
                      (catch InterruptedException interrupt
                        (.interrupt (Thread/currentThread))
                        (throw
@@ -301,17 +305,6 @@
                           :phase :exact-temporal
                           :requested-revision (:revision token-data)}
                          interrupt)))
-                     (catch clojure.lang.ExceptionInfo info
-                       ;; A classified freshness or selection failure is the
-                       ;; answer, not a provider fault to re-wrap.
-                       (if (contains?
-                            #{:eacl.consistency/freshness-unavailable
-                              :eacl.basis/selection-failure}
-                            (:type (ex-data info)))
-                         (throw info)
-                         (selection-failure!
-                          "Datahike temporal reconstruction failed."
-                          :exact-temporal token-data info)))
                      (catch Exception failure
                        (selection-failure!
                         "Datahike temporal reconstruction failed."
