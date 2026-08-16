@@ -37,6 +37,7 @@
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate]]
+            [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.permission-tree :as permission-tree]
@@ -299,6 +300,8 @@
                            engine/*proof-frame* request-proof-frame
                            engine/*recursive-traversal-limits*
                            (:recursive-traversal-limits opts)
+                           engine/*service-admission*
+                           (:service-admission opts)
                            engine/*evaluation-mode*
                            (:evaluation contract)
                            execution/*contract* contract
@@ -1049,7 +1052,8 @@
     :adapter-deterministic?
     :consistency-sync-timeout-ms
     :execution-timeout-ms
-    :cache-attempt})
+    :cache-attempt
+    :service-admission})
 
 (defn make-client
   "Builds the shared IAuthorization client over one backend api map.
@@ -1079,7 +1083,7 @@
            consistency-sync-timeout-ms
            execution-timeout-ms
            cache-attempt
-           ]
+           service-admission]
     :or   {object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
@@ -1270,5 +1274,16 @@
                           :spice-object->internal (fn [db obj]
                                                     (update obj :id #(object-id->entid db %)))
                           :internal-cursor->spice internal-cursor->spice
-                          :spice-cursor->internal spice-cursor->internal}]
+                          :spice-cursor->internal spice-cursor->internal
+                          ;; The service-edge bulkhead and replay ledger
+                          ;; (bounded-physical-execution): nil leaves the
+                          ;; routed engine unguarded, a map installs it.
+                          :service-admission
+                          (some-> (physical/normalize-service-admission
+                                   service-admission)
+                                  physical/make-service-admission)}
+        ;; The stable engine runs only on a qualified topology; the adapter's
+        ;; declared execution profile is checked once here.
+        _ (physical/require-qualified-topology!
+           ((:snapshot-adapter api) ((:db api) conn) opts))]
     (->ClientAuthorization conn opts api)))

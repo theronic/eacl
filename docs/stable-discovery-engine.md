@@ -102,32 +102,42 @@ own client options (`:security-key` / page-token keyrings).
 
 ## Failure semantics
 
-The reducer's only effectful call is the adapter scan at the canonical
-head (`eacl.engine.stable-reducer/adapter-fetch-fn`); its semantic state is
-untouched until a complete chunk is realized, so a thrown adapter failure
-leaves the state exactly where it was. Semantic limits fail typed and
-uncommitted (`:eacl.reducer/limit-exceeded`, surfaced publicly as
-`:eacl.recursive-traversal/limit-exceeded`); cancellation and the absolute
-deadline are checked cooperatively at every reducer transition
-(`eacl.engine.physical/execution-cut-point`) and never publish a partial
-page, child cursor, or checkpoint — the parent cursor stays reusable.
-Exact-basis selection classifies its failures in the Datomic and Datahike
-backends (`:eacl.basis/selection-failure` with `:retryable`/`:cancelled`;
-genuine absence maps to the contractual unavailable signal).
+Every routed adapter read has exactly three outcomes
+(`eacl.engine.physical/classified-fetch-fn`, installed on the public path by
+`eacl.engine.v8`):
 
-`eacl.engine.physical` additionally provides, as library components with
-their own tests, the three-outcome read classification
-(`classified-fetch-fn`: complete | classified failure with a cause code and
-atomic partial discard | cancelled — `nil` is never an outcome), retry of
-the exact descriptor under the original absolute deadline
-(`retrying-fetch-fn`), and a service-edge bulkhead with a replay ledger
-(`make-service-admission`, `with-admission`, `with-replay-admission`,
-`:eacl.service/admission-rejected`, `:eacl.service/replay-rejected`). The
-routed public path (`eacl.engine.v8`) currently installs only the
-execution cut-point: adapter exceptions propagate unclassified and no read
-is retried. Installing the wrappers is a `fetch-fn` option on
-`edge-page`/`check-eids`; see the 2026-08-15 audit report for the open
-decision.
+- **complete** — validated values, possibly legitimately empty;
+- **failure** — a foreign adapter exception is classified `:retryable`
+  (or `:terminal` when the adapter says so) with a cause class; the chunk is
+  realized inside the classification boundary, so partial output is
+  discarded atomically and reducer state is untouched;
+- **cancelled** — a thread interrupt inside the read.
+
+`nil` is never an outcome. Missing storage is never an empty scan. Typed
+EACL errors raised inside a read (`:eacl/backend-contract-violation` from
+the runtime guards, limits, deadlines, cooperative cancellation) are already
+verdicts: they pass through the boundary unwrapped and are never retried.
+Retries (`retrying-fetch-fn`) reuse the exact descriptor, run under the
+request's original absolute deadline, stop after three attempts, and are
+counted separately from logical commands (`:adapter-attempts` in the
+traversal work stats); the exhausted failure surfaces as
+`:eacl.scan/failure` with `:classification`, `:cause-class` and the original
+exception as its cause. Exact-basis selection follows the same discipline in
+the Datomic and Datahike backends (`:eacl.basis/selection-failure` with
+classification; genuine absence maps to the contractual unavailable signal).
+Semantic limits fail typed and uncommitted (`:eacl.reducer/limit-exceeded`,
+surfaced publicly as `:eacl.recursive-traversal/limit-exceeded`);
+cancellation and the absolute deadline are checked cooperatively at every
+reducer transition (`execution-cut-point`) and never publish a partial page,
+child cursor, or checkpoint — the parent cursor stays reusable.
+
+Service protection is a bulkhead, not a scheduler: the client option
+`:service-admission {:max-concurrent n :max-replays n :max-replays-per-key n}`
+installs bounded concurrent enumerations with slots held for the full
+synchronous call chain (`:eacl.service/admission-rejected`) and a replay
+ledger keyed by continuation identity that governs checkpoint-miss replays,
+backward runs and last windows (`:eacl.service/replay-rejected`). An
+omitted option installs no bulkhead.
 
 ## Cache artifacts and metrics
 
@@ -148,15 +158,17 @@ drops are silent by contract (the request itself is unaffected).
 
 ## Topology qualification
 
-`eacl.engine.physical/topology-capabilities` defines the closed capability
-record a topology must certify before it is considered qualified for
-stable discovery (`stable-discovery-qualified?`): immutable basis, strict
-scan order and uniqueness, replayability, strict progress, atomic
-responses, and failure-classification fidelity. Deployment width is one
-for every topology in this change; semantic concurrent-read safety is
-recorded separately as the SPI seam for the future concurrency change.
-No backend module declares a capability record yet and the routed path
-does not consult one; the adapters' scan obligations are instead stated
-by `eacl.backend.v8/adapter-obligations` and exercised by the
-certification suites. Datahike/DynamoDB remains unqualified until the
+A topology runs stable discovery only when its closed capability record
+(`eacl.engine.physical/topology-capabilities`) certifies: immutable basis,
+strict scan order and uniqueness, replayability, strict progress, atomic
+responses, and failure-classification fidelity. The record is derived from
+the adapter's declared execution profile (`eacl.backend.v8/traversal-execution`)
+plus the engine's read boundary (`adapter-topology-capabilities`), and both
+public clients check it once at construction
+(`require-qualified-topology!`, failing closed with
+`:eacl.topology/unqualified`); the three bundled adapters declare the strict
+sequential profile and qualify. Deployment width is one for every topology
+in this change; semantic concurrent-read safety and physical cancellability
+are recorded conservatively as the SPI seam for the future concurrency
+change. Datahike/DynamoDB remains unqualified operationally until the
 upstream Konserve failure-cause collapse is repaired or wrapped.
