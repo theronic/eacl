@@ -135,7 +135,11 @@
 (def default-config
   {:store              {:backend :memory}
    :schema-flexibility :write
-   :keep-history?      false
+   ;; EACL-created stores retain temporal values so exact tokens and cursors
+   ;; survive ordinary commit-record cutoff GC. Applications may explicitly
+   ;; opt out with {:keep-history? false} to trade this guarantee for lower
+   ;; storage and write amplification.
+   :keep-history?      true
    ;; EACL object ids come from the caller, so no cap is imposed here; stating 0
    ;; declares that as intentional rather than leaving datahike to warn about it.
    :max-string-length  0})
@@ -143,9 +147,11 @@
 (defn create-conn
   "A datahike connection carrying EACL's schema.
 
-  `config` is merged over `default-config`; pass `{:attribute-refs? true}` to get
-  Datomic's numeric attribute representation. A memory store gets a fresh id per
-  connection unless one is supplied, so two calls do not collide."
+  `config` is merged over `default-config`; temporal history is enabled unless
+  the caller explicitly passes `{:keep-history? false}`. Pass
+  `{:attribute-refs? true}` to get Datomic's numeric attribute representation.
+  A memory store gets a fresh id per connection unless one is supplied, so two
+  calls do not collide."
   ([] (create-conn nil nil))
   ([extra-schema] (create-conn extra-schema nil))
   ([extra-schema config]

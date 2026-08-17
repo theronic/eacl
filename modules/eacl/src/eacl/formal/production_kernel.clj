@@ -854,6 +854,9 @@
     :exact-entry
     (CurrentCacheStage/create_ExactEntryStage)
 
+    :snapshot-exact-entry
+    (CurrentCacheStage/create_SnapshotExactEntryStage)
+
     :managed-entry
     (CurrentCacheStage/create_ManagedEntryStage)))
 
@@ -869,6 +872,8 @@
       (.is_UseExactEntry action) :use-exact-entry
       (.is_ProbeManagedEntry action) :probe-managed-entry
       (.is_UseManagedEntry action) :use-managed-entry
+      (.is_UseSnapshotExactEntry action) :use-snapshot-exact-entry
+      (.is_ComputeSnapshotExactValue action) :compute-snapshot-exact-value
       :else :compute-current-value)))
 
 (defn- ordered-merge-head

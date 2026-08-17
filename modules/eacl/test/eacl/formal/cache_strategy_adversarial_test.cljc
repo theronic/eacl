@@ -478,37 +478,50 @@
          (stale-envelope-mutant selected-snapshot entry))
         "copying computation-snapshot metadata retains a mismatch")))
 
-(deftest completed-cache-is-current-snapshot-only-test
-  (let [current-cache
-        {:mode :current
-         :generation 100
-         :entries {[:can? :q] true}}
-        exact-request
-        {:mode :at-exact-snapshot
-         :generation 90
-         :query [:can? :q]}
+(deftest completed-cache-requires-canonical-snapshot-identity-test
+  (let [identity
+        (fn [lifecycle revision view-kind]
+          {:source-scope :source-a
+           :source-lifecycle lifecycle
+           :native-revision revision
+           :exact-locator revision
+           :view-kind view-kind
+           :adapter-fingerprint :adapter-v1
+           :identity-contract :identity-v1})
+        identity-100 (identity :lifecycle-a 100 :ordinary-exact)
+        exact-cache
+        {:current-generation identity-100
+         :entries {[identity-100 [:can? :q]] true}}
         completed-cache-lookup
         (fn [cache request]
-          (when (and (= :current (:mode request))
-                     (= (:generation cache)
-                        (:generation request)))
-            (get-in cache [:entries (:query request)])))]
+          (let [request-identity (:snapshot-identity request)]
+            (when (and (#{:current :at-exact-snapshot} (:mode request))
+                       (= :ordinary-exact (:view-kind request-identity)))
+              (get-in cache [:entries [request-identity (:query request)]]))))]
+    (is (true? (completed-cache-lookup
+                exact-cache
+                {:mode :at-exact-snapshot
+                 :snapshot-identity identity-100
+                 :query [:can? :q]}))
+        "an authenticated exact request may reuse its identical snapshot")
     (is (nil? (completed-cache-lookup
-               current-cache
-               exact-request))
-        "at-exact-snapshot always bypasses the completed-answer cache")
-    (is (nil? (completed-cache-lookup
-               current-cache
+               exact-cache
                {:mode :current
-                :generation 101
+                :snapshot-identity
+                (identity :lifecycle-a 101 :ordinary-exact)
                 :query [:can? :q]}))
         "a newer current snapshot cannot read the old exact generation")
-    (is (true? (completed-cache-lookup
-                current-cache
-                {:mode :current
-                 :generation 100
-                 :query [:can? :q]}))
-        "the current generation remains a hot cache")
-    (is (= [:can? :q]
-           (first (keys (:entries current-cache))))
-        "database identity is bound by the client cache instance, not every key")))
+    (is (nil? (completed-cache-lookup
+               exact-cache
+               {:mode :at-exact-snapshot
+                :snapshot-identity
+                (identity :lifecycle-b 100 :ordinary-exact)
+                :query [:can? :q]}))
+        "numeric revision equality cannot cross lifecycle replacement")
+    (is (nil? (completed-cache-lookup
+               exact-cache
+               {:mode :at-exact-snapshot
+                :snapshot-identity
+                (identity :lifecycle-a 100 :filtered-view)
+                :query [:can? :q]}))
+        "an arbitrary view cannot masquerade as an ordinary exact snapshot")))

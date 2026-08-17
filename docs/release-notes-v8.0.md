@@ -93,9 +93,12 @@ schemas, relationships, caches, and tokens require no rewrite.
 - `:fully-consistent` explicitly requests a backend synchronization barrier.
 - `:at-least-as-fresh` performs targeted selection and validates the
   authenticated native revision floor within one source lifecycle.
-- `:at-exact-snapshot` performs exact selection and bypasses completed-answer
-  caching on backends that advertise it. DataScript rejects it before cache
-  access because DataScript has no EACL time-travel registry.
+- `:at-exact-snapshot` performs exact selection and may reuse only a completed
+  answer bound to the identical canonical snapshot and semantic request. It
+  never uses managed proof-backed lifting. Datomic catches a lagging Peer up
+  to authenticated `T` with bounded two-argument `d/sync` before exact
+  `d/as-of T`; DataScript rejects exact mode before cache access because it has
+  no EACL time-travel registry.
 - Low-level operations accepting an arbitrary `db`, including caller-created
   `d/as-of`, `d/with`, prospective, or filtered views, bypass completed-answer
   caching.
@@ -134,15 +137,20 @@ permission check.
 ## Completed-answer cache
 
 Each Datomic, Datahike, and DataScript client owns a bounded native cache. It
-has two sound reuse rules:
+has three sound reuse rules:
 
 1. **Exact-current:** accept an entry only for the identical immutable selected
    DB generation.
 2. **Managed-current:** under an explicit stamped-writer contract, accept an
    entry when its schema generation and relevant dependency stamp still match.
+3. **Snapshot-exact:** after authenticated exact selection, accept only the
+   complete answer with the identical source/lifecycle, native locator,
+   ordinary-view, adapter/identity, engine, request, result, demand, and limit
+   identity.
 
 The cache is an optimization over the cache-free evaluator. It does not define
-authorization and does not support time travel.
+authorization; snapshot-exact retention accelerates, but never creates,
+backend time travel.
 
 ### Exact-current tier
 
@@ -154,6 +162,9 @@ authorization and does not support time travel.
   calculation occurs on an exact hit.
 - Publication captures the generation/lifecycle. A delayed computation cannot
   repopulate a newer or explicitly expired lifecycle.
+- Retained historical exact answers share one bounded weighted/LRU composite
+  store. Exact requests never bind this as a partial traversal store and never
+  consult managed relation/schema proof.
 
 ### Managed-current tier
 
@@ -200,7 +211,10 @@ projections) under one relation-stamp framing:
 
 These rotate source/token scope and replace the entire client lifecycle. Use them after reset,
 restore, branch force, manual history manipulation, or unstamped bulk repair.
-Async Datomic excision is outside this v8 contract.
+Datomic excision and Datahike purge/cutoff or branch replacement are outside
+the unchanged-lifecycle contract: quiesce traffic, complete the operation,
+rotate the shared lifecycle and every client/cache, apply deliberate key/wire
+retirement policy, and then resume.
 
 The corresponding `cache-stats` functions report native exact/managed hits,
 misses, bypasses, stamp failures, publications, expirations, and entry counts.
@@ -234,12 +248,19 @@ required.
 
 ## Cursor redesign
 
-Portable cursor payloads are v11 inside the compact `eacl_c4_` authenticated
+Portable cursor payloads are v12 inside the compact `eacl_c4_` authenticated
 frame. Cursors bind the backend/source, operation, complete semantic query
 (including principal and consistency), result kind, semantic/configuration
 identity, source lifecycle, native revision, and exact snapshot locator. Relay window size and
 direction remain caller-controlled so the same boundary supports forward and
 backward navigation.
+
+Cursor expiry is off by default on every backend. A positive
+`:cursor-ttl-seconds` adds explicit policy expiry; answer, navigation, and
+checkpoint eviction only trigger deterministic replay. The v12 query-scope
+digest excludes mutable current schema proof so a changed schema can reach
+proof comparison and exact fallback. v11 decoding remains supported for
+compatible existing envelopes.
 
 - Every permission lookup page uses one `:stable-edge` boundary containing
   traversal direction, the boundary result's one-based ordinal, its identity,
@@ -495,8 +516,9 @@ as replayed counterexamples against the stable engine.
 
 `formal/dafny/CurrentCache.dfy` proves:
 
-- exact/historical/arbitrary-DB completed-cache bypass;
-- exact-hit same-snapshot equality;
+- arbitrary-DB completed-cache bypass and canonical exact-snapshot admission;
+- distinct current-exact, snapshot-exact, and managed hit/miss decisions;
+- snapshot-exact identity equality rather than numeric-revision equality;
 - late publication cannot repopulate an expired lifecycle;
 - forward scalar-stamp invalidation;
 - relevant relationship projection framing for direct, self, arrow-relation,
@@ -504,7 +526,12 @@ as replayed counterexamples against the stable engine.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 8,785 proof efforts across 30 source-project
+The model does not prove Datomic I/O effects or future cancellation, Datahike
+temporal-history retention, or the truthfulness of adapter-provided canonical
+cache-key fields. Those are explicit certified adapter assumptions exercised
+by deterministic effect and real-backend tests.
+
+The locked Dafny run completes 8,793 proof efforts across 30 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Since 2026-08-14 the

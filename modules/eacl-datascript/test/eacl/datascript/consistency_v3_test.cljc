@@ -296,7 +296,8 @@
                           :resource document
                           :cache? :invalid})))))
     (let [after (datascript/cache-stats client)]
-      (is (= (+ 10 (:bypasses before)) (:bypasses after)))
+      (is (= (+ 11 (:bypasses before)) (:bypasses after))
+          "five permission shapes twice plus one relationship page bypass")
       (doseq [metric [:exact-hits :managed-hits :misses :puts]]
         (is (= (metric before) (metric after))
             (str metric " must not change during request bypass"))))))

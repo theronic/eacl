@@ -1,5 +1,6 @@
 (ns eacl.datahike.consistency-v3-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.walk]
             [datahike.api :as d]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
@@ -148,9 +149,10 @@
         (is (= [(second documents)] (:data historical-1)))
         (is (= (:data historical-1) (:data historical-2)))
         (is (nil? (get-in historical-1 [:page-info :cursor-recovery])))
-        (is (false? (:cached? historical-1)))
-        (is (false? (:cached? historical-2)))
-        (is (= (+ 2 (:bypasses before)) (:bypasses after)))))))
+        (is (true? (:cached? historical-1)))
+        (is (true? (:cached? historical-2)))
+        (is (= (:bypasses before) (:bypasses after))
+            "exact replay uses only the matching immutable page/answer tier")))))
 
 (deftest repeated-relationship-page-uses-client-private-navigation-cache-test
   (let [conn (datahike/create-conn)
@@ -241,7 +243,8 @@
                           :resource document
                           :cache? :invalid})))))
     (let [after (datahike/cache-stats authorization)]
-      (is (= (+ 10 (:bypasses before)) (:bypasses after)))
+      (is (= (+ 11 (:bypasses before)) (:bypasses after))
+          "five permission shapes twice plus one relationship page bypass")
       (doseq [metric [:exact-hits :managed-hits :misses :puts]]
         (is (= (metric before) (metric after))
             (str metric " must not change during request bypass"))))))
@@ -270,11 +273,10 @@
               authorization user :view document
               (consistency/at-exact-snapshot token))))
         (let [after (datahike/cache-stats authorization)]
-          (is (= (+ 2 (:bypasses before))
-                 (:bypasses after)))
-          (is (= (:exact-hits before)
+          (is (= (:bypasses before) (:bypasses after)))
+          (is (= (+ 2 (:exact-hits before))
                  (:exact-hits after))
-              "exact requests never consult the completed-answer cache"))))
+              "exact requests reuse only the identical retained snapshot"))))
     (testing "force-moving the branch to a predecessor cannot pass by max-tx"
       (d/force-branch!
        pre-write
@@ -310,6 +312,9 @@
          adapter :consistency :fully-consistent))
     (is (backend/supports?
          adapter :consistency :at-exact-snapshot))
+    (is (true? (get-in (d/db conn) [:config :keep-history?])))
+    (is (backend/supports? adapter :snapshots :durable-history))
+    (is (backend/supports? adapter :snapshots :conditional-exact))
     (let [streaming-db
           (assoc-in (d/db conn)
                     [:config :writer]
@@ -331,7 +336,10 @@
          (:opts authorization))]
     (is (not
          (backend/supports?
-          adapter :consistency :at-exact-snapshot)))))
+          adapter :consistency :at-exact-snapshot)))
+    (is (not (backend/supports? adapter :snapshots :exact)))
+    (is (not (backend/supports? adapter :snapshots :durable-history)))
+    (is (not (backend/supports? adapter :snapshots :conditional-exact)))))
 
 (deftest low-level-db-entry-point-bypasses-completed-cache-test
   (let [conn (datahike/create-conn)
@@ -474,7 +482,7 @@
             authorization user :view document
             (consistency/at-exact-snapshot token))))
       (d/release conn)))
-  (testing "collected commit history expires exact, not causal anchor membership"
+  (testing "temporal history reconstructs exact state after commit cutoff GC"
     ;; Datahike 0.8.1759's in-memory konserve backend cannot mark its
     ;; persistent-set roots (`:flush-before-marking`). Exercise the public GC
     ;; contract on the file backend, where the persisted roots are flushable.
@@ -486,9 +494,10 @@
           (datahike/create-conn
            nil
            {:store {:backend :file
-                    :path (str temp-dir "/db")}})
+                    :path (str temp-dir "/db")}
+            :keep-history? true})
           config (:config (d/db conn))
-          authorization (client conn)
+          authorization (client conn {:cache cache/no-cache})
           _ (seed! conn authorization)
           token
           (:zed/token
@@ -500,16 +509,44 @@
               authorization user :view document
               (consistency/at-exact-snapshot token))))
         @(d/gc-storage conn (Date. (+ 1000 (System/currentTimeMillis))))
+        (is (true?
+             (eacl/can?
+              authorization user :view document
+              (consistency/at-exact-snapshot token)))
+            "temporal d/as-of is durable even when the named commit is gone")
+        (is (false?
+             (eacl/can?
+              authorization user :view document
+              (consistency/at-least-as-fresh token))))
+        (finally
+          (d/release conn)
+          (d/delete-database config)))))
+  (testing "history-disabled collected commits are genuinely unavailable"
+    (let [temp-dir
+          (Files/createTempDirectory
+           "eacl-datahike-gc-no-history-"
+           (make-array FileAttribute 0))
+          conn
+          (datahike/create-conn
+           nil
+           {:store {:backend :file
+                    :path (str temp-dir "/db")}
+            :keep-history? false})
+          config (:config (d/db conn))
+          authorization (client conn {:cache cache/no-cache})
+          _ (seed! conn authorization)
+          token
+          (:zed/token
+           (eacl/create-relationship! authorization relationship))]
+      (try
+        (eacl/delete-relationship! authorization relationship)
+        @(d/gc-storage conn (Date. (+ 1000 (System/currentTimeMillis))))
         (is (= :eacl.consistency/exact-snapshot-unavailable
                (:type
                 (error-data
                  #(eacl/can?
                    authorization user :view document
                    (consistency/at-exact-snapshot token))))))
-        (is (false?
-             (eacl/can?
-              authorization user :view document
-              (consistency/at-least-as-fresh token))))
         (finally
           (d/release conn)
           (d/delete-database config))))))
@@ -613,3 +650,82 @@
                                               [:database-id :store]))))
         "the store identity carries only backend and id, never connection configuration")
     (d/release conn)))
+
+;; --- 2026-08-16 exact-cache review ------------------------------------------
+
+(deftest relation-root-tree-expansion-observes-relationship-writes-test
+  ;; A relation root reads that relation's relationships, but no permission
+  ;; path names it. When the dependency closure missed it, the managed
+  ;; cross-snapshot tier proved a stale tree equal at every later snapshot.
+  (let [conn (datahike/create-conn)
+        authorization (client conn)
+        second-reader (eacl/spice-object :user "second-reader")
+        leaf-subject-ids
+        (fn [tree]
+          (let [ids (atom #{})]
+            (clojure.walk/postwalk
+             (fn [node]
+               (when (and (map? node) (contains? node :subjects))
+                 (swap! ids into (map :id (:subjects node))))
+               node)
+             tree)
+            @ids))]
+    (try
+      (seed! conn authorization)
+      (d/transact conn [{:eacl/id "second-reader"}])
+      (eacl/create-relationship! authorization relationship)
+      (doseq [root [:reader :view]]
+        (testing (str "root " root)
+          (is (= #{"user"}
+                 (leaf-subject-ids
+                  (:tree-root
+                   (eacl/expand-permission-tree
+                    authorization
+                    {:resource document :permission root})))))
+          (eacl/create-relationship!
+           authorization
+           (eacl/->Relationship second-reader :reader document))
+          (is (= #{"user" "second-reader"}
+                 (leaf-subject-ids
+                  (:tree-root
+                   (eacl/expand-permission-tree
+                    authorization
+                    {:resource document :permission root}))))
+              "a cached tree must not survive a write it reports")
+          (eacl/delete-relationship!
+           authorization
+           (eacl/->Relationship second-reader :reader document))))
+      (finally (d/release conn)))))
+
+(deftest future-datahike-revision-is-unavailable-without-blocking-test
+  ;; Datahike has no `d/sync` (replikativ/datahike#958), so the only ways to
+  ;; wait for an unobserved revision are unbounded polling or a fixed N-second
+  ;; timeout, and neither distinguishes a revision that is late from one that
+  ;; will never arrive. Exact selection therefore reports a locally future
+  ;; revision as unavailable immediately and leaves the deadline to the caller.
+  (let [conn (datahike/create-conn nil {:keep-history? true})
+        authorization (client conn)]
+    (try
+      (seed! conn authorization)
+      (eacl/create-relationship! authorization relationship)
+      (let [db (d/db conn)
+            adapter (datahike-backend/snapshot-adapter db {:conn conn})
+            future-revision (+ 1000 (:max-tx db))
+            started (System/nanoTime)
+            selected (backend/invoke
+                      adapter :select-exact
+                      {:revision future-revision :exact-locator nil}
+                      30000)
+            elapsed-ms (quot (- (System/nanoTime) started) 1000000)]
+        (is (nil? selected)
+            "a revision the local value has not observed is unavailable")
+        (is (< elapsed-ms 1000)
+            "selection must not spend the caller's timeout waiting for it"))
+      (testing "retained history at or below the local head still resolves"
+        (let [db (d/db conn)
+              adapter (datahike-backend/snapshot-adapter db {:conn conn})]
+          (is (some? (backend/invoke
+                      adapter :select-exact
+                      {:revision (:max-tx db) :exact-locator nil}
+                      30000)))))
+      (finally (d/release conn)))))

@@ -1,10 +1,15 @@
 # cross-backend-revision-consistency Specification
 
 ## Purpose
-TBD - created by archiving change redesign-cross-backend-freshness-cache. Update Purpose after archive.
+Define backend-specific revision selection behind one authenticated consistency
+surface without portable mutation graphs or hidden snapshot registries.
+
 ## Requirements
+
 ### Requirement: Consistency modes select one immutable snapshot
-Consistency selection SHALL complete before cross-revision cache validation or authorization. Every engine operation, dependency read, proof read, cursor operation, and response token for one request MUST use the selected immutable snapshot.
+Consistency selection SHALL complete before cache validation or authorization.
+Every engine operation, dependency read, proof read, cursor operation, and
+response token for one request MUST use the selected immutable snapshot.
 
 #### Scenario: Concurrent commit follows selection
 - **WHEN** another transaction commits after snapshot selection
@@ -13,101 +18,104 @@ Consistency selection SHALL complete before cross-revision cache validation or a
 #### Scenario: Minimize latency
 - **WHEN** a caller requests `:minimize-latency`
 - **THEN** the adapter selects an already available complete local snapshot without an authoritative-head wait
-- **AND** the completed-answer cache is validated on that snapshot
+- **AND** cache validation, if enabled, is scoped to that selected snapshot
 
 #### Scenario: Exact snapshot
 - **WHEN** a caller requests `:at-exact-snapshot`
-- **THEN** EACL loads only the token's exact locator and verifies its source scope and graph-head identity
-- **AND** returns snapshot-expired if that exact value is unavailable
+- **THEN** EACL authenticates source/lifecycle and exact locator before backend selection
+- **AND** validates the selected adapter's exact revision and locator postconditions
+- **AND** may probe only a matching canonical snapshot-exact completed answer
 
 ### Requirement: Fully consistent requires an authoritative selection barrier
-For `:fully-consistent`, EACL SHALL select a snapshot containing every graph mutation complete at the backend's authoritative barrier when selection began. An adapter lacking such a barrier MUST NOT advertise this capability.
+For `:fully-consistent`, EACL SHALL select a snapshot containing every
+authorization mutation complete at the backend's authoritative barrier when
+selection began. An adapter lacking such a barrier MUST NOT advertise this
+capability.
 
 #### Scenario: Datomic fully consistent selection
 - **WHEN** a Datomic caller requests `:fully-consistent`
 - **THEN** EACL uses bounded zero-argument `d/sync`
 - **AND** evaluates on the database value returned by that synchronization
 
-#### Scenario: Datahike source is a lagging replica
-- **WHEN** a Datahike source can expose only its latest locally replicated value and no writer/store head barrier
-- **THEN** it advertises latest-observed/minimize-latency behavior
-- **AND** rejects `:fully-consistent` as unsupported
+#### Scenario: Datahike source has no head barrier
+- **WHEN** a Datahike source exposes only its latest locally replicated value
+- **THEN** it advertises minimize-latency behavior and rejects `:fully-consistent`
 
 #### Scenario: DataScript connection head
 - **WHEN** a DataScript caller requests `:fully-consistent`
 - **THEN** EACL selects the current immutable value of the serialized local connection
 
-### Requirement: Datomic causal selection
-The Datomic adapter SHALL use native database identity for source scope, basis `t` as an order hint and exact locator, and the EACL mutation journal as the causal postcondition. Managed writes MUST mint tokens from the committed transaction report.
+### Requirement: Datomic causal and exact selection
+The Datomic adapter SHALL use native database identity for source scope and
+basis `t` as its causal order and exact locator. EACL-managed writes SHALL mint
+tokens from the committed transaction report without graph-journal metadata.
 
-#### Scenario: Datomic catches up to a write
-- **WHEN** the local Peer basis is below a same-source token hint
-- **THEN** EACL uses bounded two-argument `d/sync`
-- **AND** verifies that the resulting database contains the token mutation anchor
+#### Scenario: Datomic catches up to an at-least write
+- **WHEN** the local Peer basis is below an authenticated same-source token `T`
+- **THEN** EACL uses bounded `(d/sync conn T)` and verifies the selected basis is at least `T`
 
-#### Scenario: Datomic restore reuses transaction positions
-- **WHEN** a restored/divergent database later reaches a numeric basis at or above an old token but lacks its mutation id
-- **THEN** EACL rejects the old token for that history
+#### Scenario: Datomic exact token is ahead locally
+- **WHEN** an authenticated same-source exact token `T` is ahead of the local Peer
+- **THEN** EACL performs bounded targeted synchronization, verifies `basis >= T`, and evaluates `(d/as-of db T)`
+- **AND** never evaluates the newer synchronized head as the exact answer
 
-#### Scenario: Datomic exact snapshot is available
-- **WHEN** a valid exact token names a retained Datomic basis
-- **THEN** EACL selects `d/as-of` at that basis and verifies the expected graph head
+#### Scenario: Datomic exact token is already local
+- **WHEN** local basis is at least exact token `T`
+- **THEN** EACL skips synchronization and evaluates `(d/as-of local-db T)`
 
-### Requirement: Datahike causal selection
-The Datahike adapter SHALL scope tokens by stable store identity and configured branch, use mutation-anchor membership for causal freshness, and use commit id as an exact locator when available. It MUST treat `:max-tx` only as an order/polling hint.
+#### Scenario: Datomic history replacement
+- **WHEN** restore, reset, excision, or equivalent history replacement can reinterpret an old `T`
+- **THEN** operators quiesce traffic and rotate the shared source lifecycle before resuming
 
-#### Scenario: Datahike branch head advances normally
-- **WHEN** a reader refreshes to a branch head containing the token mutation id
-- **THEN** that immutable database satisfies the at-least floor
+### Requirement: Datahike causal and exact selection
+The Datahike adapter SHALL scope tokens by stable store identity, configured
+branch, and source lifecycle. It SHALL advertise durable temporal exact history
+only when `:keep-history? true`, and conditional retained-commit exact
+selection only when a commit graph is available.
 
-#### Scenario: Datahike branch is force-moved
-- **WHEN** `force-branch!` publishes a head whose `:max-tx` is equal to or newer than a token hint but whose graph lacks the token mutation anchor
-- **THEN** EACL rejects that head as not causally fresh enough
+#### Scenario: Temporal history survives commit collection
+- **WHEN** `:keep-history? true` and a named commit record has been collected
+- **THEN** EACL reconstructs the exact revision through temporal `as-of`
 
-#### Scenario: Datahike commit is retained
-- **WHEN** an exact token's commit id is retained
-- **THEN** the adapter loads it with `commit-as-db` and verifies source and graph identity
+#### Scenario: History-disabled commit is retained
+- **WHEN** temporal history is disabled and the exact commit remains retained
+- **THEN** EACL may load that exact commit
 
-#### Scenario: Datahike commit is unavailable
-- **WHEN** commit reconstruction and capability-gated temporal fallback cannot recover the exact value
-- **THEN** EACL returns `:eacl.consistency/snapshot-expired`
+#### Scenario: History-disabled commit is collected
+- **WHEN** temporal history is disabled and the exact commit was genuinely collected
+- **THEN** EACL returns exact-snapshot unavailable rather than provider failure or a substituted head
 
-### Requirement: DataScript causal selection
-The DataScript adapter SHALL use a durable random causal-family id for source scope, mutation-anchor membership as its causal postcondition, and immutable DB `:max-tx` only as an order hint. It MUST NOT infer common history from equal family ids or transaction numbers.
+#### Scenario: Branch or store history is replaced
+- **WHEN** purge, cutoff history destruction, branch force, reset, or restore changes locator meaning
+- **THEN** operators quiesce traffic and rotate the shared source lifecycle before resuming
 
-#### Scenario: DataScript connection contains the anchor
-- **WHEN** the current immutable DB contains the token's mutation id
-- **THEN** EACL may select it even when later unrelated transactions advanced `:max-tx`
+### Requirement: DataScript is current-basis only
+The DataScript adapter SHALL use connection-local immutable revisions for
+current and causal selection and SHALL NOT advertise arbitrary exact history or
+retain hidden historical database values to emulate it.
 
-#### Scenario: DataScript process restarts
-- **WHEN** a restored connection has the token's durable causal-family id and contains its mutation anchor
-- **THEN** the token remains valid across the process/connection restart
+#### Scenario: DataScript satisfies a local causal floor
+- **WHEN** the serialized connection head has revision at least the same-source token floor
+- **THEN** EACL may select that current immutable value
 
-#### Scenario: DataScript clone predates token
-- **WHEN** a cloned DB copied the family id before the token mutation
-- **THEN** the missing anchor prevents that clone from satisfying the token
+#### Scenario: DataScript exact request
+- **WHEN** a caller requests `:at-exact-snapshot`
+- **THEN** EACL rejects the unsupported capability before cache access or authorization
 
-#### Scenario: DataScript reset creates a numeric collision
-- **WHEN** `reset-conn!` installs a divergent DB with the same or greater `:max-tx` but without the token anchor
-- **THEN** EACL returns history-diverged or freshness-unavailable
-
-#### Scenario: DataScript cannot catch up
-- **WHEN** the supplied connection does not acquire the required mutation anchor before the deadline
-- **THEN** EACL returns `:eacl.consistency/freshness-unavailable`
-- **AND** does not claim a replication mechanism
-
-#### Scenario: DataScript exact value is not retained
-- **WHEN** neither the current DB nor the bounded immutable snapshot registry contains an exact token handle
-- **THEN** EACL returns snapshot-expired regardless of numeric `:max-tx` equality
+#### Scenario: DataScript process or connection is replaced
+- **WHEN** reset or replacement can reuse numeric revisions for different contents
+- **THEN** the consumer rotates source lifecycle and EACL does not infer historical equality from revision numbers
 
 ### Requirement: Capability claims are configuration-specific
-Every adapter SHALL advertise only consistency, authoritative-head, causal-wait, and exact-reconstruction guarantees supported by its configured source. Unsupported guarantees MUST fail before authorization execution with `:eacl/unsupported-capability`.
+Every adapter SHALL advertise only consistency, authoritative-head,
+causal-wait, durable-history, conditional-exact, and exact-reconstruction
+guarantees supported by its configured source. Unsupported guarantees MUST fail
+before cache access or authorization execution.
 
-#### Scenario: Cross-backend at-least conformance
-- **WHEN** the shared contract presents a token to Datomic, Datahike, or DataScript
-- **THEN** the backend either selects a same-scope snapshot containing the token anchor or returns the specified typed failure
+#### Scenario: Native revision values collide across lifecycle replacement
+- **WHEN** clone, restore, reset, branch force, or reseeding reuses an order hint for different contents
+- **THEN** lifecycle inequality prevents token, cursor, proof, or exact-cache reuse
 
-#### Scenario: Backend order hint collides
-- **WHEN** a generated clone, restore, reset, branch, or force-head trace reuses an order hint for different contents
-- **THEN** no adapter accepts equality or numeric ordering as a substitute for mutation-anchor membership
-
+#### Scenario: Completed-answer cache is disabled
+- **WHEN** native revision selection is supported but completed-answer caching is disabled
+- **THEN** EACL still issues and selects authenticated native revision tokens

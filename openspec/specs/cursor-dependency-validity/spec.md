@@ -26,7 +26,7 @@ All backends SHALL use one page-token codec providing both authenticity and conf
 
 #### Scenario: Portable token confidentiality
 - **WHEN** a Datahike or DataScript page token is issued
-- **THEN** its payload (snapshot identifiers, graph anchors, proof digests, result ids) is not recoverable from the token without the key, and tampering is rejected before any payload parse
+- **THEN** its payload (source lifecycle, native revision/exact locator, proof digests, result ids) is not recoverable from the token without the key, and tampering is rejected before any payload parse
 
 ### Requirement: Key-management transparency
 Constructing a client without explicit token key material SHALL emit a startup warning stating that cursors and tokens will not survive process restart or load-balanced deployment. Documentation SHALL state the AEAD nonce-per-key invocation bound and rotation guidance.
@@ -34,4 +34,3 @@ Constructing a client without explicit token key material SHALL emit a startup w
 #### Scenario: Defaulted key warning
 - **WHEN** `make-client` is called with no token key option
 - **THEN** a one-time warning is emitted naming the option to set and the operational consequence of not setting it
-

@@ -696,7 +696,7 @@
     (is (= 1 @calls)
         "generated can? must not repeat the public permission-root lookup")))
 
-(deftest generated-current-cursor-rejects-removed-permission-generation
+(deftest generated-current-cursor-reaches-proof-rejection-after-permission-removal
   (let [conn (datascript/create-conn)
         calls (atom {})
         client
@@ -747,9 +747,9 @@
               (catch clojure.lang.ExceptionInfo thrown
                 thrown))]
         (is (some? error))
-        (is (= :eacl.pagination/invalid-cursor
+        (is (= :eacl.pagination/stale-cursor
                (:type (ex-data error))))
-        (is (= :query-mismatch (:reason (ex-data error))))
+        (is (= :dependency-proof-changed (:reason (ex-data error))))
         (let [fresh-error
               (try
                 (eacl/lookup-resources client query)

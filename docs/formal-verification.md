@@ -113,7 +113,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `IndexedBatching.dfy` | **retired** bounded ordered scan waves and crossing law of the generated indexed traversal; same disposition |
 | `IndexedBatchCompleteness.dfy` | **retired** proof-only pending-scan ghost views; same disposition |
 | `CacheKernel.dfy` | dependency-scope completeness, forward cache acceptance, recomputation equivalence, and telemetry noninterference |
-| `CurrentCache.dfy` | exact/current admission, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
+| `CurrentCache.dfy` | distinct current-exact/snapshot-exact/managed admission, canonical exact identity and lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
 | `ScalarFrontierCoherence.dfy` | globally ordered native generations, scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
