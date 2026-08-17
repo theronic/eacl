@@ -8,7 +8,7 @@ EACL is built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), 
 |-------------------------------------------------------|--------------------------------------------------|
 | Who are you?, i.e. which `<subject>`? | What can `<subject>` do? (what EACL cares about) |
 
-EACL permissions are [_just data_](#data-structures) that live next to your Application Data as attributes on entities, hence _situated_, which has several [benefits](#the-benefits-of-situated-authorization).
+EACL permissions are [just data](#data-structures) that live next to your Application Data as attributes on entities, hence _situated_, which has several [benefits](#the-benefits-of-situated-authorization).
 
 Specifically, it makes EACL suitable for real-time UI view maintenance, because it is cheap to locally compute the subset of online clients that need to re-query to maintain consistent views, without re-running every client query whenever the DB changes, even when unrelated, i.e. it avoids query amplification.
 
