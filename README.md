@@ -2,15 +2,15 @@
 
 EACL is a situated, open-source [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library inspired by [SpiceDB](https://authzed.com/spicedb).
 
-EACL is built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), [Datahike](https://datahike.io/) or [DataScript](https://github.com/tonsky/datascript/). 
+EACL is built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), [Datahike](https://datahike.io/) or [DataScript](https://github.com/tonsky/datascript/).
 
-EACL permissions are [_just data_](#data-structures) that live next to your Application Data as attributes on entities, hence _situated_, which has several benefits: specifically, it makes EACL suitable for real-time UI view maintenance, because it is cheap to compute the subset of online clients that need to re-query to maintain consistent views without re-querying every client whenever the DB changes, i.e. it avoids query amplification.
+| Authentication (AuthN)                                | Authorization (AuthZ)                            |
+|-------------------------------------------------------|--------------------------------------------------|
+| Who are you?, i.e. which `<subject>`? | What can `<subject>` do? (what EACL cares about) |
 
-| Authentication (AuthN)                                | Authorization (AuthZ)      |
-|-------------------------------------------------------|----------------------------|
-| Who are you?, i.e. which `<subject>`? | What can `<subject>` do? |
+EACL permissions are [_just data_](#data-structures) that live next to your Application Data as attributes on entities, hence _situated_, which has several benefits.
 
-EACL is concerned with **authorization**, or AuthZ for short.
+Specifically, it makes EACL suitable for real-time UI view maintenance, because it is cheap to locally compute the subset of online clients that need to re-query to maintain consistent views, without re-running every client query whenever the DB changes, even when unrelated, i.e. it avoids query amplification.
 
 🦅 EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eagle-eye on your permissions.
 
@@ -18,27 +18,7 @@ EACL is concerned with **authorization**, or AuthZ for short.
 
 Yes.
 
-## Overview
-
-- EACL is inspired by [SpiceDB](https://authzed.com/spicedb).
-- SpiceDB is most faithful open-source implementation of the Google Zanzibar [whitepaper](https://authzed.com/zanzibar).
-- Zanzibar powers Google Drive, YouTube, Gmail and Google Calendar, serving billions of authorization requests per day over billions of Relationships.
-- EACL is designed as a stepping stone to SpiceDB once you need hyperscale:
-  - Unlike SpiceDB, EACL is [_situated_](#the-benefits-of-situated-authorization), which has [several benefits](#the-benefits-of-situated-authz).
-  - SpiceDB is benchmarked against 100 billion Relationships, for `CheckPermission`: `5.8ms P95 at 1M QPS with up to 100B relationships` on CockroachDB.
-  - EACL makes no such scale promises, but if you adopt the ReBAC data model, you will avoid future migration hell.
-- EACL supports the same [consistency semantics](#consistency-semantics) as SpiceDB, but owing to EACL's situated nature, some modes are backend-specific, i.e. not every backend supports every mode.
-- EACL is [fast](#performance) even without its [optional cache](#caching).
-  - For small-to-medium workloads, EACL is faster than Spice, but no official benchmarks are published at this time.
-  - Under internal testing, EACL performs well against a database with 1M Relationships and complex, real-world recursive schema.
-  - EACL should be able to handle 10M-100M Relationships, but I haven't benchmarked 10M Relationships yet. Performance will vary depending the complexity of your schema, number of Relationships and _page-size_.
-- EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+/TLC, and Apalache. In short EACL is, IMO, correct:
-  - The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md), i.e. will never serve stale segments for newer time `T`.
-  - The Clojure/ClojureScript backend implementations are internally certified, but are not generated from proofs.
-  - EACL does not attempt to verify the correctness of its supported backends – that is the database authors' problem.
-  - EACL has not been independently audited.
-
-### What can EACL do?
+## What is EACL good for?
 
 EACL can efficiently answer questions like, "Can `<subject>` do `<permission>` on `<resource>`?" E.g.
 ```clojure
@@ -46,7 +26,7 @@ EACL can efficiently answer questions like, "Can `<subject>` do `<permission>` o
 => true | false ; 0.01ms-10ms.
 ```
 
-Or, "Which `<resources>` can `<subject>` do `<permission>` on?" (no older than as-of `<10s ago>`)
+Or, "Which `<resources>` can `<subject>` do `<permission>` on?" (as-of `<10s ago>` or newer)
 
 ```clojure
 (eacl/lookup-resources acl
@@ -61,12 +41,32 @@ Or, "Which `<resources>` can `<subject>` do `<permission>` on?" (no older than a
            {:type :product :id "product-63"}]
     :page-info ...
     :cached? true|false
-    ...} ; in ~1-20ms depending on page size & schema complexity.
+    ...} ; in ~1-20ms depending on cache, page size & schema complexity.
 ``` 
 
-The `:consistency` argument is optional. The default is `minimize-latency`, which means _locally-consistent_ to the Peer. 
+The `:consistency` argument is optional. The default is `minimize-latency`, which means _locally-consistent_ to the Peer.
 
-Refer to the [full EACL API](#eacl-api).
+Refer to the full [EACL API](#eacl-api).
+
+
+## Overview
+
+- EACL is inspired by [SpiceDB](https://authzed.com/spicedb), the most faithful open-source implementation of the Google Zanzibar [whitepaper](https://authzed.com/zanzibar).
+  - Zanzibar powers Google Drive, YouTube, Gmail and Google Calendar, serving billions of authorization requests per day for Billions of (capital B) Relationships.
+- EACL is designed as a stepping stone to SpiceDB once you need hyperscale:
+  - Unlike SpiceDB, EACL is [situated](#the-benefits-of-situated-authorization), which has several [benefits](#the-benefits-of-situated-authz).
+  - SpiceDB is benchmarked against 100 billion Relationships for `CheckPermission`: 5.8ms P95 at 1M QPS with up to 100B relationships on CockroachDB; EACL makes no such scale promises, but if you adopt the ReBAC data model, you will avoid having to rewrite when you do hit hyperscale.
+- EACL supports the same [consistency semantics](#consistency-semantics) as SpiceDB, but owing to EACL's situated nature, some modes are backend-specific, i.e. not every backend supports every mode.
+- EACL is [fast](#performance) even without its [optional cache](#caching).
+  - For small-to-medium workloads, EACL is faster than Spice (in my experience), but no official benchmarks are published at this time. Under internal testing, EACL performs well against a database with 1M Relationships and complex, real-world recursive schema.
+  - EACL should comfortably handle 10M-100M Relationships, but I haven't benchmarked 10M Relationships yet. Performance will vary on the complexity of your schema, number of Relationships and lookup query _page-size_.
+- EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+/TLC, and Apalache. In short EACL is IMO, correct:
+  - The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md), i.e. it will never "yes" when it should say "no", and it will never serve stale cache segments that are behind time `T` as per your request's consistency constraints.
+  - The Clojure/ClojureScript backend implementations are internally certified, but are not generated from proofs.
+  - EACL does not attempt to verify the correctness of its supported backends – that is the database authors' problem.
+  - EACL has not been independently audited.
+
+This README is probably too technical – I will simplify it over time with more examples and link to more technical documentation as-needed.
 
 ## Supported Backends
 
@@ -88,16 +88,16 @@ EACL's situated philosophy aligns with Datomic: if Data is local and Query is lo
 
 As long as the DB basis is recent enough for our consistency demands, we can avoid a network hop. This yields several benefits:
 
-1. **Reduced Latency**: EACL avoids a network hop to an external AuthZ system, but can block on single-writer Transactor to await new data the Peer has not seen (depending on your consistency semantics).
+1. **Reduced Latency**: EACL avoids a network hop to an external AuthZ system, but can ask the Transactor for new data if the Peer is behind (depends on consistency semantics).
 
    Consider that following a mutation, if you want to leverage SpiceDB `at_least_as_fresh` [consistency semantics](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) to do a `LookupResources` query, you need to:
     1. Hit the DB or cache for the latest ZedToken pertaining to an entity,
     2. Pass the ZedToken to SpiceDB so you can retrieve a consistent page of object IDs,
     3. Hydrate entities from your database using those IDs.
 
-Perception scales for readers as long as data or cache _as-of_ Time `T` is valid, but we can await novelty from the Transactor in case the Peer has fallen behind our demand for consistency _as-of_ time `T` via `(d/sync conn T)`.
+    Perception scales for readers as long as data or cache _as-of_ Time `T` is valid, but we can await novelty from the Transactor in case the Peer has fallen behind our demand for consistency _as-of_ time `T` via `(d/sync conn T)`.
 
-Bonus: Relationships are [just data](#data-structures), so permission graph traversal can improve database cache locality for faster entity hydration before display.
+    **Bonus:** Relationships are [just data](#data-structures), so permission graph traversal can improve database cache locality for faster entity hydration before display.
 
 Since you have to hit the DB anyway to show anything useful, we might as well compute permissions in the Peer, and that is exactly what EACL does.
 
@@ -112,15 +112,9 @@ Since you have to hit the DB anyway to show anything useful, we might as well co
 
 5. **Real-time UI updates** for materialized views: it is cheap to compute the subset of online clients that need to re-query while avoiding query amplification due to a busy Transactor.
 
-6. **Situated is faster** for small to medium-applications:
-    - Small: ~1k-100k relationships.
-    - Medium: ~1M-10M Relationships.
-    - Authorization runs on-Peer, so entities can be hydrate without a network.
-
-    - EACL does not promise the same scale as SpiceDB, but it can be faster end-to-end e2e for small to medium-sized workloads.
-
-    - SpiceDB benchmarks focus on `CheckPermission`: ~5.8 ms P95 at 1M QPS with up to 100B relationships on CockroachDB, but you have to consider network I/O.
-    - No EACL benchmarks are currently published, but in my testing, EACL responds in 3-40ms (uncached), and 1-3ms cached, for real-world medium applications.
+6. **Situated is faster** for small (~1k-100k relationships) to medium-applications (~1M-10M Relationships):
+    - Authorization runs in-process, so entities can be hydrate without a network hop.
+    - End-to-end queries don't need to block on network I/O when data is local to the Peer.
 
 7. Application & Authorization Data live together in harmony. In my testing with _small to medium-sized workloads_, EACL is as good, or faster than SpiceDB, owing to reduced latency from its situated design, but no EACL benchmarks are published at this time (benchmarks are a tricky business).
 
@@ -160,7 +154,9 @@ EACL Relationships are light. Relationships are stored directly on entities as t
 - Forward subject->resource tuple: `:eacl.v7.relationship/subject-type+relation+resource-type+resource`
 - Reverse resource->subject tuple: `:eacl.v7.relationship/resource-type+relation+subject-type+subject`
 
-Do not retract a permissioned entity before removing both Relationship halves. Use `eacl/delete-object!`, or explicitly install the optional safe-retraction function described in [Deleting a permissioned entity](#deleting-a-permissioned-entity). The safe-retraction function is not installed by the normal EACL schema.
+To retract Relationships, install & use `:eacl.fn/retractEntity` or call `eacl/delete-relationships!` – *not* `:db.fn/retractEntity`, or you will leave ghost Relationship tuples lying around. EACL's contract with you is that you need to use EACL's API to maintain Relationships to guarantee cache coherence and a clean database. If you mess with EACL's data structures, it becomes your problem.
+
+But you will probably forget, so there are helpers to clean up ghost tuples. Refer [Deleting a permissioned entity](#deleting-a-permissioned-entity).
 
 ### Relations:
 
@@ -206,14 +202,6 @@ EACL uses the same four consistency-mode names as [SpiceDB](https://authzed.com/
 - `fully-consistent` requests the backend's authoritative-head barrier. For Datomic this synchronizes the Peer before selecting a DB. Datahike advertises it only with a direct `:self` writer. A connection-backed DataScript client serializes selection of the current connection head.
 
 Unsupported modes fail with a typed error instead of silently selecting a weaker mode. EACL's `fully-consistent` is defined by the configured backend's synchronization boundary; it is not a claim about an external globally distributed system. See [Consistency and Zed tokens](#consistency-and-zed-tokens) for usage.
-
-## Why EACL?
-
-Situated AuthZ offers some advantages for typical use-cases:
-
-1. Storing permission data directly in Datomic avoids network I/O to an external AuthZ system, reducing latency.
-2. An accurate ReBAC model syncing Relationships 1-for-1 from Datomic to SpiceDB in real-time without complex diffing, for when you need SpiceDB performance or features.
-3. Queries default to the current DB visible to the local backend connection and also support `minimize-latency`, `at-least-as-fresh`, `fully-consistent`, and `at-exact-snapshot`, depending on the backend.
 
 ## Performance
 
