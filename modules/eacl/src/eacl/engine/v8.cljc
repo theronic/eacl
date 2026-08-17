@@ -676,6 +676,20 @@
   [resource-type permission-name]
   [resource-type permission-name])
 
+(defn- node-relation-eids
+  "Relation-definition eids for a node name that is a relation, not a
+  permission.
+
+  Permission-tree expansion accepts a relation as its root and then reads that
+  relation's relationships directly, so those definitions belong in the
+  dependency closure even though no permission path names them. Without this,
+  a relation root closes over nothing, its answer is proof-equal at every later
+  snapshot, and a cached tree survives the relationship writes it reports."
+  [db resource-type relation-name]
+  (into #{}
+        (map :e)
+        (relation-datoms db resource-type relation-name)))
+
 (defn- calc-permission-relationship-eids
   [db resource-type permission-name]
   (loop [stack [(permission-query-node resource-type permission-name)]
@@ -685,6 +699,14 @@
       (if (contains? seen node)
         (recur (pop stack) seen relationship-eids)
         (let [paths (get-permission-paths db node-resource-type node-permission)
+              ;; Only a name with no permission paths can be a relation, so
+              ;; ordinary permission roots never pay this lookup.
+              relationship-eids
+              (if (seq paths)
+                relationship-eids
+                (into relationship-eids
+                      (node-relation-eids
+                       db node-resource-type node-permission)))
               next-nodes
               (keep (fn [path]
                       (case (:type path)

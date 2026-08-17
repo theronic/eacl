@@ -210,3 +210,43 @@
           (is (= :retryable (:classification data)))
           (is (= :exact-sync (:phase data)))
           (is (identical? provider (:cause data))))))))
+
+(deftest bounded-waits-cancel-their-datomic-future-test
+  ;; Cancellation is a property of every bounded EACL wait, not only of exact
+  ;; selection: an abandoned sync stays registered on the connection until its
+  ;; basis arrives, which under retry traffic is unbounded.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [local (d/db conn)
+          local-t (d/basis-t local)
+          target (inc local-t)
+          adapter (datomic-backend/snapshot-adapter
+                   local {:conn conn :source-lifecycle "bounded-waits"})]
+      (testing "a causal-floor timeout cancels the waiter"
+        (let [cancelled? (atom false)
+              data (with-redefs [d/sync (fn [_ _] (waiter ::timeout cancelled?))]
+                     (error-data
+                      #(backend/invoke
+                        adapter :select-at-least {:revision target} 1)))]
+          (is (= :eacl.consistency/freshness-unavailable (:type data)))
+          (is (= :freshness-timeout (:reason data)))
+          (is @cancelled?
+              "the abandoned causal-floor sync must not stay registered")))
+
+      (testing "an authoritative-head timeout cancels the waiter"
+        (let [cancelled? (atom false)
+              data (with-redefs [d/sync (fn [_] (waiter ::timeout cancelled?))]
+                     (error-data
+                      #(backend/invoke adapter :select-authoritative 1)))]
+          (is (= :eacl.consistency/freshness-unavailable (:type data)))
+          (is (= :freshness-timeout (:reason data)))
+          (is @cancelled?)))
+
+      (testing "a failing provider keeps its established classification"
+        (let [data (with-redefs [d/sync (fn [_ _]
+                                          (throw (ex-info "peer down" {})))]
+                     (error-data
+                      #(backend/invoke
+                        adapter :select-at-least {:revision target} 50)))]
+          (is (= :eacl.consistency/freshness-unavailable (:type data)))
+          (is (= :sync-failed (:reason data))
+              "hoisting the waiter must not change the failure taxonomy"))))))

@@ -282,6 +282,15 @@
                             (temporal-history? db)
                             (integer? (:revision token-data)))
                    (try
+                     ;; A revision above the local head is reported unavailable
+                     ;; immediately rather than waited for. Datahike has no
+                     ;; `d/sync` (replikativ/datahike#958), so the only ways to
+                     ;; wait are unbounded polling or a fixed N-second timeout,
+                     ;; and neither can distinguish a revision that is merely
+                     ;; late from one that will never arrive. Failing closed
+                     ;; keeps the caller's deadline theirs to spend. Datahike
+                     ;; also caches connections per store config in-process, so
+                     ;; for a direct writer this local head is authoritative.
                      (let [current (d/db conn)]
                        (when (<= (:revision token-data) (:max-tx current))
                          (d/as-of current (:revision token-data))))

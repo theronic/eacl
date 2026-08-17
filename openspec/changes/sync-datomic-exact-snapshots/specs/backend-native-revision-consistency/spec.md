@@ -5,7 +5,7 @@ Within one unreplaced Datomic database history, EACL SHALL use authenticated dat
 
 #### Scenario: Peer is behind requested floor
 - **WHEN** a Datomic Peer receives an at-least token whose `t` is ahead of its locally observed database
-- **THEN** EACL performs bounded targeted synchronization and selects a database with basis at least that `t` or returns a typed freshness failure
+- **THEN** EACL performs a bounded targeted synchronization and selects a database with basis at least that `t` or returns a typed timeout or unavailable error
 
 #### Scenario: Peer is behind requested exact basis
 - **WHEN** a Datomic Peer receives an authenticated same-source exact token whose `t` is ahead of its locally observed database
@@ -18,70 +18,53 @@ Within one unreplaced Datomic database history, EACL SHALL use authenticated dat
 - **THEN** EACL does not invoke `d/sync`
 - **AND** selects the exact `d/as-of` database at `t`
 
-#### Scenario: Exact catch-up times out
-- **WHEN** a Datomic Peer does not observe an authenticated exact token basis before the bounded consistency deadline
+#### Scenario: Exact catch-up times out or is interrupted
+- **WHEN** the local Peer does not observe `t` before the consistency bound, or the wait is interrupted
 - **THEN** EACL cancels the targeted-sync future
-- **AND** throws `:eacl.consistency/freshness-unavailable` with reason `:freshness-timeout`
-- **AND** does not report the exact snapshot as expired or evaluate a different basis
-
-#### Scenario: Exact catch-up is interrupted
-- **WHEN** the request thread is interrupted while waiting for an exact basis
-- **THEN** EACL cancels the targeted-sync future and preserves interruption
-- **AND** throws a classified cancellation rather than snapshot expiry
+- **AND** returns typed freshness timeout or cancellation without calling `d/as-of`
 
 #### Scenario: Exact synchronization returns behind the token
-- **WHEN** targeted synchronization completes with a database whose basis is below the authenticated exact token basis
-- **THEN** EACL throws `:eacl.consistency/freshness-unavailable` with reason `:head-behind` and the requested and observed bases
-- **AND** does not call `d/as-of` on the insufficient database
+- **WHEN** targeted synchronization returns a database whose basis is below `t`
+- **THEN** EACL returns `:eacl.consistency/freshness-unavailable` with reason `:head-behind`, requested and observed bases
+- **AND** performs no authorization evaluation
 
 #### Scenario: Datomic token fields contradict one another
-- **WHEN** an authenticated payload supplied to Datomic has a non-integer locator or its native revision differs from its exact locator
-- **THEN** EACL rejects it as an invalid or contradictory token before synchronization
-
-#### Scenario: Exact selection provider fails
-- **WHEN** synchronization, storage access, or exact reconstruction fails unexpectedly
-- **THEN** EACL preserves a typed freshness or retryable selection failure with its phase and cause
-- **AND** does not return `nil` or misreport the failure as snapshot expiry
+- **WHEN** the locator is not a non-negative integer or native revision differs from exact locator
+- **THEN** EACL rejects the token before storage or synchronization
 
 #### Scenario: Ordinary Datomic history grows older
 - **WHEN** an authenticated unexpired token names an older `t` in the same unreplaced ordinary Datomic history
 - **THEN** age alone does not make the exact snapshot unavailable
-- **AND** EACL selects `d/as-of` at that `t`
-
-#### Scenario: Datomic history is destructively rewritten
-- **WHEN** restore, reset, excision, or another operation can change the meaning of an old exact locator
-- **THEN** operators quiesce affected traffic and rotate the configured source lifecycle before resuming
-- **AND** old tokens/cursors fail lifecycle comparison rather than being reinterpreted or reported as age-expired
 
 #### Scenario: Ordinary current request
 - **WHEN** a caller requests minimize-latency or fully-consistent current behavior
-- **THEN** EACL does not call `d/as-of` merely to validate or reuse an answer
+- **THEN** EACL does not call `d/as-of` merely to validate or reuse a completed answer
 
 ### Requirement: Backend capability honesty
-Each adapter SHALL advertise only the native revision, authoritative-head, exact-snapshot, durable-history, and ordered-generation proof operations supported by its configured backend. Exact selection from conditionally retained commits SHALL remain distinguishable from durable temporal-history reconstruction. Unsupported consistency modes SHALL be rejected before cache access.
+Each adapter SHALL advertise only the native revision, authoritative-head, exact-snapshot, durable-history, and ordered-generation proof operations supported by its configured backend and SHALL reject unsupported consistency modes before cache access. Exact selection from conditionally retained commits SHALL remain distinguishable from durable temporal-history reconstruction. Native revision capability SHALL remain independent of completed-answer caching and SHALL NOT depend on a cache-authority or proof-mode option.
 
 #### Scenario: Datahike temporal history is enabled
 - **WHEN** a Datahike source has `:keep-history? true`
-- **THEN** EACL may advertise durable exact reconstruction by native revision even when a named commit record is absent
-- **AND** cutoff collection of commit records does not expire an exact cursor whose temporal history remains available
+- **THEN** EACL advertises durable exact reconstruction by native revision even when a named commit record is absent
+- **AND** cutoff collection of commit records does not expire an exact cursor
 
 #### Scenario: Datahike relies only on retained commits
 - **WHEN** Datahike temporal history is disabled but its commit graph supports exact commit loading
-- **THEN** EACL may advertise conditional exact selection
-- **AND** a genuinely collected named commit returns exact-snapshot unavailable rather than a provider-failure or substituted snapshot
+- **THEN** EACL advertises conditional exact selection
+- **AND** a genuinely collected named commit returns exact-snapshot unavailable rather than provider failure or a substituted snapshot
 
-#### Scenario: Datahike cannot reconstruct exact history
-- **WHEN** neither temporal history nor retained exact commits are available
-- **THEN** the adapter does not advertise `:at-exact-snapshot`
+#### Scenario: Datahike capability is not certified for a configuration
+- **WHEN** EACL cannot prove stable commit acquisition and branch selection for the active Datahike store configuration
+- **THEN** the adapter advertises the smaller current-only capability instead of inferring support from implementation details
 
 #### Scenario: DataScript current-only source
-- **WHEN** a DataScript connection cannot reconstruct arbitrary prior immutable values
-- **THEN** its adapter does not advertise `:at-exact-snapshot` and never retains hidden historical values to emulate it
+- **WHEN** a DataScript connection has no retained historical selection mechanism
+- **THEN** its adapter does not advertise arbitrary exact-snapshot selection and never retains hidden historical database values to emulate it
 
 #### Scenario: Ordered-generation proof is not certified
 - **WHEN** an adapter cannot certify complete dependency reads and globally ordered native relation generations
-- **THEN** native revision and snapshot-exact operations may remain available while cross-snapshot managed answer reuse fails closed
+- **THEN** native revision operations may remain available while cross-snapshot managed answer reuse fails closed to exact evaluation
 
 #### Scenario: Completed-answer cache is disabled
-- **WHEN** a client disables completed-answer caching but its adapter and lifecycle support native revision operations
-- **THEN** EACL may still issue and select authenticated native revision tokens and reconstruct exact cursors
+- **WHEN** a client disables completed-answer caching but its adapter and lifecycle support a native revision operation
+- **THEN** EACL may still issue and select authenticated native revision tokens

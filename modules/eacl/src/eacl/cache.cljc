@@ -103,8 +103,14 @@
     ;; certifies that the same native locator is independently selectable.
     ;; In particular, immutable DataScript values and arbitrary caller-owned
     ;; views cannot acquire an "exact" cache identity from revision equality.
+    ;;
+    ;; Determinism is required to MINT the identity, not merely to read it.
+    ;; Readers already refuse a non-deterministic adapter, so minting one here
+    ;; would let current requests fill a bounded tier with entries no exact
+    ;; request on that client can ever consult, evicting answers that could be.
     (when (and (backend/supports?
                 adapter :consistency :at-exact-snapshot)
+               (backend/deterministic? adapter)
                (some? exact-locator))
       {:key-version 1
        :backend (backend/backend-id adapter)
@@ -190,17 +196,62 @@
                  next-state)))
       @admitted?)))
 
+(def ^:private answer-weight-floor 512)
+(def ^:private answer-weight-per-unit 128)
+
+(defn- structural-answer-units
+  "Counts the collection entries an answer retains, walking with an explicit
+  stack so a deep tree cannot exhaust the runtime stack.
+
+  Permission trees carry their payload in nested `:intermediate`/`:leaf` nodes
+  rather than a flat `:data` vector, so a shape-specific rule would weigh a
+  100k-subject tree the same as a boolean. The traversal is bounded by the
+  expansion limits that produced the value and runs only when an answer is
+  published."
+  [value]
+  (loop [stack (list value)
+         units 0]
+    ;; Test the stack, not the element: a nil or false value inside the answer
+    ;; must not end the walk and silently drop everything still queued.
+    (if (seq stack)
+      (let [current (first stack)
+            remaining (rest stack)]
+        (cond
+          (map? current)
+          (recur (into remaining (vals current))
+                 (+ units (count current)))
+
+          (coll? current)
+          (recur (into remaining current)
+                 (+ units (count current)))
+
+          :else
+          (recur remaining units)))
+      units)))
+
 (defn- default-answer-weight
   "Conservative retained-size estimate for one completed answer.
 
   Mirrors the page-weight family the Datomic backend supplies explicitly:
-  paged results weigh in by row count; scalar decisions and counts pay a
-  flat floor. Callers with better knowledge pass `:answer-weight-fn`."
+  paged results weigh in by row count, nested results by retained collection
+  entries, and scalar decisions and counts pay a flat floor. Callers with
+  better knowledge pass `:answer-weight-fn`."
   [value]
   (let [data (when (map? value) (:data value))]
-    (if (counted? data)
-      (+ 512 (* 128 (count data)))
-      512)))
+    (cond
+      ;; `some?` before `counted?`: ClojureScript answers true for
+      ;; `(counted? nil)` while Clojure answers false, so testing countedness
+      ;; alone would silently route every non-page answer down the page branch
+      ;; on one runtime only.
+      (and (some? data) (counted? data))
+      (+ answer-weight-floor (* answer-weight-per-unit (count data)))
+
+      (coll? value)
+      (+ answer-weight-floor
+         (* answer-weight-per-unit (structural-answer-units value)))
+
+      :else
+      answer-weight-floor)))
 
 (defn- answer-entry-options
   "Store options validating and weighing `{:value v :cache-basis b}` wrappers."
@@ -498,6 +549,15 @@
   selected immutable adapter and may publish the completed semantic answer
   under the complete canonical snapshot plus request key.
 
+  An adapter that cannot mint a canonical snapshot identity bypasses this tier
+  instead of failing the request: `snapshot-exact-key` documents nil as the
+  contractual outcome for views that must not acquire an exact identity, and a
+  cache that cannot key an answer is a caching limit, not a request error.
+
+  The reported `:cache-basis` is the caller's selected snapshot, rebuilt per
+  request rather than copied from the entry, which may have been retained from
+  a proof-lifted answer computed at an earlier basis.
+
   Returns `{:value v :cached? b :cache-tier tier :cache-basis basis}`."
   [store
    {:keys [snapshot-exact-key cache-basis cache-lifecycle decision-kernel
@@ -507,73 +567,82 @@
   (when-not (fn? compute)
     (throw (ex-info "Snapshot-exact cache computation must be a function."
                     {:type :eacl/invalid-config})))
-  (when-not (and (current-cache? store)
-                 (valid-snapshot-exact-key? snapshot-exact-key))
-    (throw (ex-info "Invalid snapshot-exact cache context."
+  (when-not (current-cache? store)
+    (throw (ex-info "Expected an EACL current-generation cache."
                     {:type :eacl/invalid-config
-                     :snapshot-exact-key snapshot-exact-key})))
-  (let [lifecycle (or cache-lifecycle @(:lifecycle store))
-        answer-store (:snapshot-exact lifecycle)
-        entry-key
-        (snapshot-answer-entry-key snapshot-exact-key semantic-key kind)
-        answer-options (answer-entry-options valid-value? answer-weight-fn)
-        exact-entry
-        (when remember-answer?
-          (:value
-           (subproblem/lookup!
-            answer-store :answer entry-key answer-options)))
-        exact-action
-        (current-cache-action
-         decision-kernel :snapshot-exact-entry (some? exact-entry))
-        evaluate-entry
+                     :cache store})))
+  (let [isolated-compute
         (fn []
-          {:value
-           (binding [subproblem/*store* nil
-                     subproblem/*managed-store* nil
-                     subproblem/*managed-key-fn* nil
-                     subproblem/*managed-scope* nil
-                     subproblem/*decision-kernel*
-                     (or decision-kernel subproblem/*decision-kernel*)]
-             (subproblem/with-decision-memo compute))
-           :cache-basis cache-basis})]
-    (if (= :use-snapshot-exact-entry exact-action)
+          (binding [subproblem/*store* nil
+                    subproblem/*managed-store* nil
+                    subproblem/*managed-key-fn* nil
+                    subproblem/*managed-scope* nil
+                    subproblem/*decision-kernel*
+                    (or decision-kernel subproblem/*decision-kernel*)]
+            (subproblem/with-decision-memo compute)))]
+    (if-not (valid-snapshot-exact-key? snapshot-exact-key)
       (do
-        (swap! (:metrics store) update :exact-hits inc)
-        (swap! (:metrics store) update :snapshot-exact-hits inc)
-        {:value (:value exact-entry)
-         :cached? true
-         :cache-tier :snapshot-exact
-         :cache-basis (:cache-basis exact-entry)})
-      (if (and remember-answer?
-               (admit-answer? store entry-key))
-      (let [resolved
-            (subproblem/resolve-independent!
-             answer-store :answer entry-key answer-options evaluate-entry)
-            entry (:value resolved)]
-        (if (:cached? resolved)
-          (do
-            (swap! (:metrics store) update :exact-hits inc)
-            (swap! (:metrics store) update :snapshot-exact-hits inc)
-            {:value (:value entry)
-             :cached? true
-             :cache-tier :snapshot-exact
-             :cache-basis (:cache-basis entry)})
-          (do
-            (swap! (:metrics store) update :misses inc)
-            (swap! (:metrics store) update :puts inc)
-            {:value (:value entry)
-             :cached? false
-             :cache-tier nil
-             :cache-basis (:cache-basis entry)})))
-        (let [entry (evaluate-entry)]
-          (swap! (:metrics store)
-                 update
-                 (if remember-answer? :misses :bypasses)
-                 inc)
-          {:value (:value entry)
-           :cached? false
-           :cache-tier nil
-           :cache-basis (:cache-basis entry)})))))
+        (swap! (:metrics store) update :bypasses inc)
+        {:value (isolated-compute)
+         :cached? false
+         :cache-tier nil
+         :cache-basis nil})
+      (let [lifecycle (or cache-lifecycle @(:lifecycle store))
+            answer-store (:snapshot-exact lifecycle)
+            entry-key
+            (snapshot-answer-entry-key snapshot-exact-key semantic-key kind)
+            answer-options (answer-entry-options valid-value? answer-weight-fn)
+            exact-entry
+            (when remember-answer?
+              (:value
+               (subproblem/lookup!
+                answer-store :answer entry-key answer-options)))
+            exact-action
+            (current-cache-action
+             decision-kernel :snapshot-exact-entry (some? exact-entry))
+            evaluate-entry
+            (fn []
+              {:value (isolated-compute)
+               :cache-basis cache-basis})
+            hit
+            (fn [entry]
+              (swap! (:metrics store)
+                     #(-> %
+                          (update :exact-hits inc)
+                          (update :snapshot-exact-hits inc)))
+              {:value (:value entry)
+               :cached? true
+               :cache-tier :snapshot-exact
+               :cache-basis cache-basis})]
+        (if (= :use-snapshot-exact-entry exact-action)
+          (hit exact-entry)
+          (if (and remember-answer?
+                   (admit-answer? store entry-key))
+            (let [resolved
+                  (subproblem/resolve-independent!
+                   answer-store :answer entry-key answer-options
+                   evaluate-entry)
+                  entry (:value resolved)]
+              (if (:cached? resolved)
+                (hit entry)
+                (do
+                  (swap! (:metrics store)
+                         #(-> %
+                              (update :misses inc)
+                              (update :puts inc)))
+                  {:value (:value entry)
+                   :cached? false
+                   :cache-tier nil
+                   :cache-basis cache-basis})))
+            (let [entry (evaluate-entry)]
+              (swap! (:metrics store)
+                     update
+                     (if remember-answer? :misses :bypasses)
+                     inc)
+              {:value (:value entry)
+               :cached? false
+               :cache-tier nil
+               :cache-basis cache-basis})))))))
 
 (defn resolve-current!
   "Resolves one completed semantic answer against a captured current snapshot.
@@ -675,9 +744,11 @@
                  decision-kernel :exact-entry (some? exact-entry))]
             (if (= :use-exact-entry exact-action)
               (do
-                (retain-snapshot-answer!
-                 store lifecycle snapshot-exact-key semantic-key kind
-                 answer-options exact-entry)
+                ;; Deliberately no snapshot-exact retention here. This answer
+                ;; was already offered to that tier when it was computed or
+                ;; promoted; republishing on every hit re-runs the answer
+                ;; validator and weight function on the hot path and records a
+                ;; publication race against the entry it just found.
                 (swap! (:metrics store) update :exact-hits inc)
                 {:value (:value exact-entry)
                  :cached? true
