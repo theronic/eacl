@@ -509,6 +509,109 @@
         (is (= :eacl/backend-contract-violation (:eacl/error data)))
         (is (= 1 @calls) "no retry for a typed verdict")))))
 
+(defn- wide-endpoint-env
+  "One document with `n` direct viewers: a single reverse endpoint wider
+  than any physical chunk, so every chunk command sees a long remainder."
+  [n]
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        users (mapv #(eacl/spice-object :user (str "viewer-" %)) (range n))
+        doc (eacl/spice-object :document "doc-1")]
+    (ds/transact! conn (into [{:eacl/id "doc-1"}]
+                             (map (fn [u] {:eacl/id (:id u)}) users)))
+    (eacl/write-schema! client
+                        "definition user {}
+                         definition document {
+                           relation viewer: user
+                           permission view = viewer
+                         }")
+    (eacl/create-relationships!
+     client (mapv #(eacl/->Relationship % :viewer doc) users))
+    (let [db (ds/db conn)
+          adapter (datascript-backend/snapshot-adapter
+                   db
+                   {:object-id->entid
+                    (fn [snapshot object-id]
+                      (ds/entid snapshot [:eacl/id object-id]))
+                    :entid->object-id
+                    (fn [snapshot internal-id]
+                      (:eacl/id (ds/entity snapshot internal-id)))
+                    :conn conn
+                    :source-lifecycle (str (gensym "physical-route-wide-"))})]
+      {:db db :adapter adapter :doc-eid (ds/entid db [:eacl/id "doc-1"])})))
+
+(defn- adapter-with-realization-ledger
+  "The adapter with both scans wrapped so every value the engine realizes
+  from a scan is recorded under its command index."
+  [adapter ledger]
+  (let [operations (:eacl.backend.v8/operations adapter)
+        wrap (fn [original]
+               (fn [& args]
+                 (let [command (count (swap! ledger conj 0))]
+                   (map (fn [value]
+                          (swap! ledger update (dec command) inc)
+                          value)
+                        (apply original args)))))]
+    (backend/make-adapter
+     {:id (backend/backend-id adapter)
+      :capabilities (backend/capabilities adapter)
+      :operations (-> operations
+                      (update :subject->resources wrap)
+                      (update :resource->subjects wrap))
+      :state (backend/state adapter)
+      :fingerprint (backend/fingerprint adapter)
+      :identity-contract (backend/identity-contract adapter)
+      :traversal-execution (backend/traversal-execution adapter)})))
+
+(deftest routed-reads-realize-only-the-requested-chunk-test
+  ;; Adapter scans are lazy sequences from the exclusive bound to the end
+  ;; of the endpoint. The classification boundary must realize only the
+  ;; chunk the reducer asked for; realizing the whole remainder on every
+  ;; command is quadratic in the endpoint degree and changes no result.
+  (let [n 300
+        chunk reducer/default-physical-chunk-size
+        env (wide-endpoint-env n)
+        query {:resource {:type :document :id (:doc-eid env)}
+               :permission :view
+               :subject/type :user}
+        reference-page (mapv :id (:data (engine/lookup-subjects
+                                         (:adapter env) (assoc query :first 20))))
+        reference-count (:count (engine/count-subjects (:adapter env) query))]
+    (is (= 20 (count reference-page)))
+    (is (= n reference-count))
+    (testing "a first page over a wide endpoint realizes one chunk, not the endpoint"
+      (let [ledger (atom [])
+            counting (adapter-with-realization-ledger (:adapter env) ledger)
+            page (mapv :id (:data (engine/lookup-subjects
+                                   counting (assoc query :first 20))))]
+        (is (= reference-page page) "results are unchanged")
+        (is (= 1 (count @ledger)) "one physical command for a 20-result page")
+        (is (<= (reduce max 0 @ledger) chunk)
+            (str "realized per command " @ledger))))
+    (testing "an exhaustive count realizes each value once, not the quadratic remainder"
+      (let [ledger (atom [])
+            counting (adapter-with-realization-ledger (:adapter env) ledger)
+            counted (:count (engine/count-subjects counting query))]
+        (is (= reference-count counted) "results are unchanged")
+        (is (every? #(<= % chunk) @ledger)
+            (str "every command realizes at most one chunk: " @ledger))
+        (is (<= (reduce + 0 @ledger) (+ n chunk))
+            (str "total realized is linear in the endpoint degree: "
+                 (reduce + 0 @ledger)))))
+    (testing "descriptors without a limit still realize the complete scan"
+      (let [realized (atom 0)
+            unchunked (fn unchunked [coll]
+                        (lazy-seq
+                         (when-let [s (seq coll)]
+                           (swap! realized inc)
+                           (cons (first s) (unchunked (rest s))))))
+            fetch (physical/classified-fetch-fn
+                   (fn [_] (unchunked (range 100))))]
+        (is (= 10 (count (fetch {:limit 10}))))
+        (is (= 10 @realized))
+        (is (= 100 (count (fetch {}))))
+        (is (= 110 @realized))))))
+
 (deftest service-admission-bounds-routed-enumerations-test
   (let [env (seeded :folder-chain)
         gate (promise)
