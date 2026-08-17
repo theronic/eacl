@@ -88,14 +88,14 @@ EACL's situated philosophy aligns with Datomic: if Data is local and Query is lo
 
 As long as the DB basis is recent enough for our consistency demands, we can avoid a network hop. This yields several benefits:
 
-1. **Reduced Latency**: EACL avoids a network hop to an external AuthZ system, but can ask the Transactor for new data if the Peer is behind (depends on consistency semantics).
+1. **Reduced Latency**: EACL avoids a network hop to an external AuthZ system, but we can await new data from the Transactor if the Peer is behind time `T`, as requested by consistency semantics.
 
    Consider that following a mutation, if you want to leverage SpiceDB `at_least_as_fresh` [consistency semantics](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) to do a `LookupResources` query, you need to:
     1. Hit the DB or cache for the latest ZedToken pertaining to an entity,
     2. Pass the ZedToken to SpiceDB so you can retrieve a consistent page of object IDs,
     3. Hydrate entities from your database using those IDs.
 
-    Perception scales for readers as long as data or cache _as-of_ Time `T` is valid, but we can await novelty from the Transactor in case the Peer has fallen behind our demand for consistency _as-of_ time `T` via `(d/sync conn T)`.
+    EACL can skip all that stuff because it's all local, man. As long as the Peer has data valid data as-of time `T`, so we don't need to wait for anyone, and if we want to make sure, we can use `at-least-as-fresh` or `fully_consistent` and the Peer will wait until it has the latest data as-of `T`, or continue if it has the latest data, via `(d/sync conn T)`.
 
     **Bonus:** Relationships are [just data](#data-structures), so permission graph traversal can improve database cache locality for faster entity hydration before display.
 
