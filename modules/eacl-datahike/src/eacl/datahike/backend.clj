@@ -4,8 +4,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datahike.schema :as schema])
   (:import [java.util UUID]))
 
 (def capabilities
@@ -13,29 +12,87 @@
                   :fully-consistent
                   :at-least-as-fresh
                   :at-exact-snapshot}
-   :snapshots #{:current :authoritative :causal :exact}
+   :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
    :cursor #{:forward :reverse :opaque}
    :transactions #{:schema :relationships :object-deletion}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
-(defn- direct-writer?
-  [db]
-  (= :self (get-in db [:config :writer :backend])))
+(def ^:private db-config ddb/db-config)
+(def ^:private direct-writer? ddb/direct-writer?)
 
 (defn- exact-commits?
   [db]
-  (not (false? (get-in db [:config :commit-graph?] true))))
+  (not (false? (get (db-config db) :commit-graph? true))))
 
 (defn- temporal-history?
   [db]
-  (true? (get-in db [:config :keep-history?])))
+  (true? (:keep-history? (db-config db))))
+
+(defn- store-identity
+  "The bounded public identity of the store: backend and id only. The rest
+  of the store map is connection configuration (paths, endpoints,
+  credentials for jdbc/s3 stores) and must not leak into snapshot ids,
+  cache bases, or cursor digests."
+  [db]
+  (let [{:keys [backend id]} (:store (db-config db))]
+    {:backend backend :id (str id)}))
 
 (defn- exact-reconstruction?
   [db]
   (or (exact-commits? db)
       (temporal-history? db)))
+
+(defn- selection-failure!
+  [message phase token-data cause]
+  (throw
+   (ex-info
+    message
+    {:type :eacl.basis/selection-failure
+     :eacl/error :eacl.basis/selection-failure
+     :classification :retryable
+     :phase phase
+     :requested-revision (:revision token-data)
+     :requested-exact-locator (:exact-locator token-data)}
+    cause)))
+
+(defn- missing-commit-error?
+  [error]
+  (some #{:not-found :missing-node}
+        [(:type (ex-data error)) (:error (ex-data error))]))
+
+(defn- load-exact-commit
+  [conn locator token-data]
+  (when locator
+    (try
+      (d/commit-as-db conn (UUID/fromString locator))
+      ;; A locator from another backend format is absence for the conditional
+      ;; commit path. Temporal history may still reconstruct by revision.
+      (catch IllegalArgumentException _
+        nil)
+      (catch InterruptedException interrupt
+        (.interrupt (Thread/currentThread))
+        (throw
+         (ex-info
+          "Datahike exact commit selection was interrupted."
+          {:type :eacl.basis/selection-failure
+           :eacl/error :eacl.basis/selection-failure
+           :classification :cancelled
+           :phase :exact-commit
+           :requested-revision (:revision token-data)
+           :requested-exact-locator locator}
+          interrupt)))
+      (catch clojure.lang.ExceptionInfo info
+        (if (missing-commit-error? info)
+          nil
+          (selection-failure!
+           "Datahike exact commit selection failed."
+           :exact-commit token-data info)))
+      (catch Exception failure
+        (selection-failure!
+         "Datahike exact commit selection failed."
+         :exact-commit token-data failure)))))
 
 (defn- commit-locator
   [db]
@@ -121,11 +178,11 @@
             (str (UUID/randomUUID)))
         source-scope
         (or (:source-scope opts)
-            (let [{:keys [backend id]} (get-in db [:config :store])]
+            (let [{:keys [backend id]} (store-identity db)]
               {:source-id
                {:store-backend backend
-                :store-id (str id)}
-               :branch (get-in db [:config :branch])}))
+                :store-id id}
+               :branch (:branch (db-config db))}))
         opts' (-> opts
                   (dissoc :source-lifecycle-state)
                   (assoc :source-lifecycle source-lifecycle
@@ -140,6 +197,15 @@
                           :selected-internal/current-external-injective-v2)
       :capabilities
       (cond-> capabilities
+        (exact-reconstruction? db)
+        (update :snapshots conj :exact)
+
+        (temporal-history? db)
+        (update :snapshots conj :durable-history)
+
+        (exact-commits? db)
+        (update :snapshots conj :conditional-exact)
+
         (or (nil? conn)
             (not (direct-writer? db)))
         (update :consistency disj :fully-consistent)
@@ -156,11 +222,9 @@
       :operations
       {:snapshot-id
        (fn []
-         {:database-id
-          {:store
-           (update (:store (:config db)) :id str)}
+         {:database-id {:store (store-identity db)}
           :attribute-refs? (boolean
-                            (:attribute-refs? (:config db)))
+                            (:attribute-refs? (db-config db)))
           :basis-t (or (db-revision db) selected-order-hint)})
 
        :source-scope
@@ -209,55 +273,49 @@
                     (or (:exact-locator token-data)
                         (and (temporal-history? db)
                              (integer? (:revision token-data)))))
-           (try
-             (let [commit-db
-                   (when (and (exact-commits? db)
-                              (:exact-locator token-data))
-                     (d/commit-as-db
-                      conn
-                      (UUID/fromString
-                       (:exact-locator token-data))))
-                   temporal-db
-                   (when (and (nil? commit-db)
-                              (temporal-history? db)
-                              (integer? (:revision token-data))
-                              (<= (:revision token-data)
-                                  (:max-tx (d/db conn))))
-                     (d/as-of (d/db conn)
-                              (:revision token-data)))]
-               (when-let [selected-db (or commit-db temporal-db)]
-                 (snapshot-adapter
-                  selected-db
-                  (assoc opts'
-                         :selected-order-hint (:revision token-data)
-                         :selected-exact-locator
-                         (:exact-locator token-data)))))
-             ;; Datahike surfaces genuine absence AS exceptions: a foreign
-             ;; locator format fails UUID parsing, and a GC'd commit fails
-             ;; commit-as-db. Those map to the contractual unavailable nil.
-             ;; Every other Throwable is a classified failure, never nil.
-             (catch IllegalArgumentException _
-               nil)
-             (catch clojure.lang.ExceptionInfo info
-               (if (some #{:not-found :missing-node :read-failed}
-                         [(:type (ex-data info)) (:error (ex-data info))])
-                 nil
-                 (throw (ex-info "Exact-basis selection failed."
-                                 {:eacl/error :eacl.basis/selection-failure
-                                  :classification :retryable
-                                  :cause (ex-data info)}
-                                 info))))
-             (catch InterruptedException interrupt
-               (throw (ex-info "Exact-basis selection was interrupted."
-                               {:eacl/error :eacl.basis/selection-failure
-                                :classification :cancelled}
-                               interrupt)))
-             (catch Throwable failure
-               (throw (ex-info "Exact-basis selection failed."
-                               {:eacl/error :eacl.basis/selection-failure
-                                :classification :retryable
-                                :cause-class (.getName (class failure))}
-                               failure))))))
+           (let [commit-db
+                 (when (exact-commits? db)
+                   (load-exact-commit
+                    conn (:exact-locator token-data) token-data))
+                 temporal-db
+                 (when (and (nil? commit-db)
+                            (temporal-history? db)
+                            (integer? (:revision token-data)))
+                   (try
+                     ;; A revision above the local head is reported unavailable
+                     ;; immediately rather than waited for. Datahike has no
+                     ;; `d/sync` (replikativ/datahike#958), so the only ways to
+                     ;; wait are unbounded polling or a fixed N-second timeout,
+                     ;; and neither can distinguish a revision that is merely
+                     ;; late from one that will never arrive. Failing closed
+                     ;; keeps the caller's deadline theirs to spend. Datahike
+                     ;; also caches connections per store config in-process, so
+                     ;; for a direct writer this local head is authoritative.
+                     (let [current (d/db conn)]
+                       (when (<= (:revision token-data) (:max-tx current))
+                         (d/as-of current (:revision token-data))))
+                     (catch InterruptedException interrupt
+                       (.interrupt (Thread/currentThread))
+                       (throw
+                        (ex-info
+                         "Datahike temporal reconstruction was interrupted."
+                         {:type :eacl.basis/selection-failure
+                          :eacl/error :eacl.basis/selection-failure
+                          :classification :cancelled
+                          :phase :exact-temporal
+                          :requested-revision (:revision token-data)}
+                         interrupt)))
+                     (catch Exception failure
+                       (selection-failure!
+                        "Datahike temporal reconstruction failed."
+                        :exact-temporal token-data failure))))]
+             (when-let [selected-db (or commit-db temporal-db)]
+               (snapshot-adapter
+                selected-db
+                (assoc opts'
+                       :selected-order-hint (:revision token-data)
+                       :selected-exact-locator
+                       (:exact-locator token-data)))))))
 
        :object-id->internal
        (fn [object-id]

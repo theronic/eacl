@@ -74,10 +74,11 @@
 (def cursor-emission-order-version
   "Version of the traversal emission order committed by Relay cursor digests.
 
-  Version 2 activates bounded, ordered scan waves. The batched protocol is
-  extensionally equivalent to the sequential protocol, but pinning the
-  protocol order here prevents a cursor minted by a different emission
-  schedule from being accepted accidentally."
+  Pinning the version in the scope digest prevents a cursor minted under a
+  different emission order from being accepted accidentally. The public
+  order itself is the stable first-discovery order sealed into each plan's
+  composite fingerprint (`eacl.engine.sealed-plan/order-contract`), which
+  the `:stable-edge` boundary carries and `eacl.engine.v8` validates."
   2)
 
 (defn- normalized-cursor-query
@@ -121,11 +122,10 @@
     (:subject query) (update :subject plain-scope-object)
     (:resource query) (update :resource plain-scope-object)))
 
-(defn- cursor-scope
-  "Digest of the complete authenticated query scope, including the selected
-  snapshot's schema generation. A cursor minted under another schema
-  generation therefore fails scope validation unconditionally — recovery
-  mode included."
+(defn- legacy-cursor-scope
+  "Version-11 query scope retained so existing cursors continue while their
+  current schema generation remains unchanged. Version 12 moves the schema
+  proof out of query identity so exact historical recovery can run."
   [adapter opts operation query]
   (secure/canonical-digest
    "eacl/cursor/query-scope/v7"
@@ -133,6 +133,21 @@
     operation
     {:schema-stamp (request-schema-stamp adapter opts)
      :recursive-traversal-limits (:recursive-traversal-limits opts)}
+    (scoped-query-form query)]))
+
+(defn- cursor-scope
+  "Digest of immutable operation/query/principal/configuration identity.
+
+  Snapshot schema and relationship proof live in the separately authenticated
+  dependency context. Keeping them out of this pre-recovery scope allows a
+  changed current schema to reach proof comparison and exact fallback without
+  weakening rejection of an actually changed query."
+  [_adapter opts operation query]
+  (secure/canonical-digest
+   "eacl/cursor/query-scope/v8"
+   [cursor-emission-order-version
+    operation
+    {:recursive-traversal-limits (:recursive-traversal-limits opts)}
     (scoped-query-form query)]))
 
 (defn- navigation-boundary-scope
@@ -398,13 +413,12 @@
     (dependency-context adapter)))
 
 (defn- transform-edge-ids
-  ;; v11 :lookup-eid edges carry only the boundary :result-eid; path
-  ;; frontiers live exclusively in the private continuation store and never
-  ;; cross the cursor envelope (the dead frontier-coercion branch was
-  ;; deleted by trusted-surface-hygiene 11.1).
+  ;; :stable-edge edges carry only the boundary :result-eid; engine
+  ;; checkpoints live exclusively in the private continuation store and never
+  ;; cross the cursor envelope.
   [f edge]
   (case (:kind edge)
-    (:lookup-eid :recursive-logical :stable-edge)
+    :stable-edge
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 
@@ -422,7 +436,7 @@
     (let [token
           (cursor/cursor->token
            (merge
-            {:v 11
+            {:v 12
              :scope scope
              :edge (transform-edge-ids
                     #(backend/invoke adapter :internal-id->object %)
@@ -462,7 +476,7 @@
                error)))
           envelope (:cursor decoded)
           _ (execution/check! (:execution-contract opts) :cursor-decoded)]
-      (when-not (and (= 11 (:v envelope))
+      (when-not (and (contains? #{11 12} (:v envelope))
                      (map? (:edge envelope)))
         (invalid-cursor! "Invalid Relay cursor envelope."
                          {:reason :invalid-envelope}
@@ -472,7 +486,10 @@
              :cursor/expired? (boolean (:expired? decoded))
              :cursor/expired-at (:expired-at decoded)
              :cursor/scope-matches?
-             (= (cursor-scope adapter opts operation query)
+             (= ((if (= 11 (:v envelope))
+                   legacy-cursor-scope
+                   cursor-scope)
+                 adapter opts operation query)
                 (:scope envelope))))))
 
 (def ^:private execution-identity-fields

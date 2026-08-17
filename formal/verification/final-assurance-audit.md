@@ -1,5 +1,7 @@
 # EACL v8 formal-assurance audit
 
+> Supersession note (2026-08-15). This audit describes the interim v8 engines in which the generated indexed kernel was the JVM traversal authority. `adopt-stable-discovery-enumeration` (routed 2026-08-14) replaced traversal with the hand-written CLJC stable-discovery engine; the generated kernel now serves only the four surrounding pure decisions. Read the traversal-authority claims below as the state audited on 2026-08-07, not the current one; the cursor note that follows already records the earlier supersession.
+
 Date: 2026-08-07
 
 Supersession note (2026-08-08): the cursor-rebase/restart conclusions and

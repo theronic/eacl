@@ -100,7 +100,7 @@
    :production-assurance-contribution :none}
   :current-generation-cache
   {:status :passed
-   :verified-obligations 30
+   :verified-obligations 32
    :source "formal/dafny/CurrentCache.dfy"
    :report "formal/verification/cache-kernel.edn"
    :integration-status
@@ -146,7 +146,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8791
+   :verified-obligations 8793
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed

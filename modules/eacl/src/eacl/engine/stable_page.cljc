@@ -22,6 +22,7 @@
     stale-cursor — when they make a page unreachable."
   (:require [clojure.string :as string]
             [eacl.backend.v8 :as backend]
+            [eacl.engine.physical :as physical]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.secure-format :as secure-format]))
 
@@ -59,8 +60,15 @@
    :subject-type subject-type
    :page-size page-size})
 
-(defn- checkpoint-key [binding]
-  (secure-format/canonical-digest token-domain (dissoc binding :basis)))
+(defn- checkpoint-key
+  "The exact execution identity a checkpoint belongs to. The basis is part
+  of it: a checkpoint recorded at one basis carries that basis's admitted
+  set and stack, and resuming it at another basis with a coincidentally
+  equal boundary would silently drop results (a merge point admitted
+  through a branch that no longer exists suppresses the entity when the
+  new basis reaches it another way)."
+  [binding]
+  (secure-format/canonical-digest token-domain binding))
 
 (defn edge-token
   "Mints the authenticated edge token for the boundary result at one-based
@@ -227,7 +235,7 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- resolve-anchor-eid
-  [{:keys [adapter direction anchor]}]
+  [{:keys [adapter anchor]}]
   (backend/invoke adapter :object-id->internal (second anchor)))
 
 (defn- external-id
@@ -235,7 +243,7 @@
   (backend/invoke adapter :internal-id->object internal-id))
 
 (defn- run-fresh
-  [{:keys [adapter plan direction subject-type] :as options} anchor-eid target]
+  [{:keys [direction] :as options} anchor-eid target]
   (let [run-options (merge (select-keys options
                                         [:adapter :fetch-fn :plan
                                          :subject-type :cut-point!
@@ -273,6 +281,17 @@
                      (dissoc (ex-data error) :eacl/error))
         (throw error)))))
 
+(defn- governed-replay
+  "A replay (a checkpoint miss, a backward run, or a last-window run) runs
+  under the service-edge replay ledger when the caller configured one
+  (`:service-admission`), keyed by the continuation identity, and always
+  under the exhaustion guard."
+  [{:keys [service-admission checkpoint-key]} thunk]
+  (physical/with-replay-admission
+   service-admission
+   (or checkpoint-key ::anonymous-replay)
+   #(guard-exhaustion thunk)))
+
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:
   by checkpoint when the exact edge matches, else by governed deterministic
@@ -284,7 +303,8 @@
       (when-let [stats reducer/*observer-stats*]
         (swap! stats update :continuation-hits (fnil inc 0)))
       {:state (:state hit) :pending (:pending hit)})
-    (let [replayed (guard-exhaustion
+    (let [replayed (governed-replay
+                    options
                     #(run-fresh options anchor-eid ordinal))
           results (:results replayed)]
       (when (or (< (count results) ordinal)
@@ -302,7 +322,9 @@
   cursor layer against the same composite fingerprint and exact basis).
   Returns {:eids [..] :start-ordinal k :has-next? :has-previous?} in
   canonical forward order. A `:last-window?` request returns the final
-  window of the exhausted sequence."
+  window of the exhausted sequence. When `:service-admission` names a
+  service-edge admission, replays (checkpoint misses, backward runs and last
+  windows) run under its replay ledger keyed by `:checkpoint-key`."
   [{:keys [plan direction anchor-eid subject-type page-size
            after before last-window? checkpoints checkpoint-key]
     :as options}]
@@ -316,7 +338,8 @@
     before
     (let [{:keys [ordinal eid]} before
           start (max 0 (- ordinal 1 page-size))
-          replayed (guard-exhaustion
+          replayed (governed-replay
+                    options
                     #(run-fresh options anchor-eid ordinal))
           results (:results replayed)]
       (when (or (< (count results) ordinal)
@@ -330,9 +353,10 @@
        :has-previous? (pos? start)})
 
     last-window?
-    (let [run (guard-exhaustion
+    (let [run (governed-replay
+               options
                #(run-fresh options anchor-eid
-                           reducer/default-max-admissions))
+                           reducer/exhaustion-target))
           results (:results run)
           start (max 0 (- (count results) page-size))]
       {:eids (subvec results start)
@@ -349,7 +373,7 @@
             {:state nil :pending []})
           {:keys [page-ids lookahead end-state]}
           (if state
-            (deliver-page options state pending ordinal page-size)
+            (deliver-page options state pending page-size)
             (let [run (guard-exhaustion
                        #(run-fresh options anchor-eid (inc page-size)))]
               {:page-ids (vec (take page-size (:results run)))
@@ -369,10 +393,10 @@
        :has-previous? (pos? ordinal)})))
 
 (defn- deliver-page
-  "Runs from `state`+`pending` at absolute delivered ordinal `from` until
-  `page-size` results plus one lookahead are available or the graph
-  exhausts. Returns page internals."
-  [options state pending from page-size]
+  "Runs from `state`+`pending` (whose scalar `:discovered` count is the
+  absolute delivered ordinal) until `page-size` results plus one lookahead
+  are available or the graph exhausts. Returns page internals."
+  [options state pending page-size]
   (let [needed-fresh (- (inc page-size) (count pending))
         continued (when (pos? needed-fresh)
                     (guard-exhaustion

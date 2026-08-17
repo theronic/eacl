@@ -74,6 +74,9 @@
   ; updates is a seq of RelationshipUpdate maps with {:keys [operation relationship]}, where
   ; operation is one of #{:create :touch :delete} and Relationship has {:keys [subject relation resource]}.
   ; Note :touch is like :create but does not throw if a relationship already exists.
+  ; Repeating one operation for the same resolved relationship has the same
+  ; outcome as one occurrence; mixing different operations for it in one batch
+  ; is rejected before submit.
 
   (write-relationship!
     [this operation subject relation resource]

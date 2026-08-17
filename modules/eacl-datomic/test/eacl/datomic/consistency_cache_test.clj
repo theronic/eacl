@@ -1,9 +1,12 @@
 (ns eacl.datomic.consistency-cache-test
   (:require [clojure.test :refer [deftest is testing]]
+            [clojure.walk]
             [datomic.api :as d]
+            [eacl.backend.v8 :as backend]
             [eacl.cache :as shared-cache]
             [eacl.causal-token :as causal-token]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
+            [eacl.datomic.backend :as datomic-backend]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -148,25 +151,26 @@
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 3 @calls)))
+            (is (= 2 @calls)
+                "the answer computed at that exact immutable basis is reused"))
 
           (testing "fully-consistent observes the relationship deletion"
             (is (false? (eacl/can? client alice :admin account)))
-            (is (= 3 @calls)
+            (is (= 2 @calls)
                 "the exact-current deletion result is reused"))
 
           (testing "at-least-as-fresh accepts the current cached revision"
             (is (false? (eacl/can? client alice :admin account
                                    (consistency/at-least-as-fresh
                                     deleted-token))))
-            (is (= 3 @calls)))
+            (is (= 2 @calls)))
 
           (testing "and repeated exact selection remains snapshot-correct"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 4 @calls)
-                "exact requests bypass completed-answer caching")))))))
+            (is (= 2 @calls)
+                "repeated exact requests hit only the matching snapshot tier")))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
@@ -283,8 +287,8 @@
                       (consistency/at-exact-snapshot created-token))))
       (is (false? (eacl/can? client alice :admin account)))))
 
-  ;; Native current answers are client-private and admitted immediately.
-  ;; Exact replay remains cache-free.
+  ;; Native current answers are client-private and admitted immediately. The
+  ;; same completed semantic answer is also addressable by its exact snapshot.
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -777,7 +781,7 @@
             (is (= future-t
                    (:requested-order-hint (ex-data e))))))))))
 
-(deftest exact-request-bypasses-completed-cache-test
+(deftest exact-request-reuses-only-the-matching-snapshot-cache-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
@@ -789,12 +793,110 @@
                   :permission :admin
                   :resource account}]
       (is (true? (eacl/can? client alice :admin account)))
-      (let [result
-            (eacl/check-permission
-             client
-             (assoc demand
-                    :consistency
-                    (consistency/at-exact-snapshot token)))]
-        (is (true? (:allowed? result)))
-        (is (false? (:cached? result))
-            "exact selection bypasses the completed-answer cache")))))
+      (let [exact-demand
+            (assoc demand
+                   :consistency
+                   (consistency/at-exact-snapshot token))
+            first-result (eacl/check-permission client exact-demand)
+            second-result (eacl/check-permission client exact-demand)]
+        (is (true? (:allowed? first-result)))
+        (is (true? (:allowed? second-result)))
+        (is (true? (:cached? second-result))
+            "exact selection reuses the answer computed at the identical basis")))))
+
+;; --- 2026-08-16 exact-cache review ------------------------------------------
+
+(def ^:private relation-root-schema
+  "definition user {}
+   definition document {
+     relation viewer: user
+     permission view = viewer
+   }")
+
+(defn- leaf-subject-ids
+  [tree]
+  (let [ids (atom #{})]
+    (clojure.walk/postwalk
+     (fn [node]
+       (when (and (map? node) (contains? node :subjects))
+         (swap! ids into (map :id (:subjects node))))
+       node)
+     tree)
+    @ids))
+
+(deftest relation-root-tree-expansion-observes-relationship-writes-test
+  ;; A relation root reads that relation's relationships, but no permission
+  ;; path names it. When the dependency closure missed it, the managed
+  ;; cross-snapshot tier proved a stale tree equal at every later snapshot.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (cached-client conn)
+          alice (spice-object :user "alice")
+          bob (spice-object :user "bob")
+          document (spice-object :document "doc1")]
+      (eacl/write-schema! client relation-root-schema)
+      @(d/transact conn [{:eacl/id "alice"}
+                         {:eacl/id "bob"}
+                         {:eacl/id "doc1"}])
+      (eacl/create-relationship! client (->Relationship alice :viewer document))
+      (doseq [root [:viewer :view]]
+        (testing (str "root " root)
+          (let [before (eacl/expand-permission-tree
+                        client {:resource document :permission root})]
+            (is (= #{"alice"} (leaf-subject-ids (:tree-root before))))
+            (eacl/create-relationship!
+             client (->Relationship bob :viewer document))
+            (let [after (eacl/expand-permission-tree
+                         client {:resource document :permission root})]
+              (is (= #{"alice" "bob"} (leaf-subject-ids (:tree-root after)))
+                  "a cached tree must not survive a write it reports")
+              (eacl/delete-relationship!
+               client (->Relationship bob :viewer document)))))))))
+
+(deftest non-deterministic-clients-do-not-seed-the-snapshot-exact-tier-test
+  ;; Readers refuse a non-deterministic adapter, so minting its snapshot
+  ;; identity would only fill a bounded tier with unreadable entries.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client
+                  conn
+                  {:zed-token-key "consistency-cache-test-key"
+                   :source-lifecycle source-lifecycle
+                   :object-id->lookup-ref (fn [id] [:eacl/id id])
+                   :cache {:remember-answers true}})
+          alice (spice-object :user "alice")
+          account (spice-object :account "account")]
+      (eacl/write-schema! client direct-schema)
+      @(d/transact conn [{:eacl/id "alice"} {:eacl/id "account"}])
+      (eacl/create-relationship! client (->Relationship alice :owner account))
+      (is (false? (backend/deterministic?
+                   ((get-in client [:opts :backend-adapter-fn]) (d/db conn))))
+          "a custom id codec without a fingerprint is not deterministic")
+      (eacl/can? client alice :admin account)
+      (eacl/can? client alice :admin account)
+      (is (zero? (:snapshot-exact-entries (core/cache-stats client)))
+          "current answers must not seed a tier no exact request can read"))))
+
+(deftest filtered-datomic-views-cannot-claim-exact-consistency-test
+  ;; d/filter, d/since and d/history report their origin's database id and
+  ;; basis, so an exact identity minted from one is indistinguishable from the
+  ;; plain value at the same basis while answering a different question.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [db (d/db conn)
+          adapter-for (fn [value]
+                        (datomic-backend/snapshot-adapter
+                         value {:conn conn
+                                :source-lifecycle source-lifecycle
+                                :adapter-fingerprint {:test :fingerprint}
+                                :adapter-deterministic? true}))
+          exact? (fn [value]
+                   (backend/supports?
+                    (adapter-for value) :consistency :at-exact-snapshot))]
+      (is (true? (exact? db))
+          "an ordinary current value selects exact snapshots")
+      (is (true? (exact? (d/as-of db (d/basis-t db))))
+          "an as-of value is the exact view this backend selects")
+      (is (false? (exact? (d/since db 0))))
+      (is (false? (exact? (d/history db))))
+      (is (false? (exact? (d/filter db (fn [_ _] true)))))
+      (is (nil? (shared-cache/snapshot-exact-key (adapter-for (d/since db 0))))
+          "a non-ordinary view mints no snapshot-exact identity")
+      (is (some? (shared-cache/snapshot-exact-key (adapter-for db)))))))

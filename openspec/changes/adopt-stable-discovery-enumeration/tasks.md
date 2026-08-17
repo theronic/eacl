@@ -248,6 +248,29 @@ endpoint; the endpoint caches ~15 s, so scrape with settle delays):
 
 ## 10. Follow-on remote performance qualification
 
+### Release and production deployment record (2026-08-14, later session)
+
+The stable-discovery engine is RELEASED and DEPLOYED. Head `6cce96f`
+went fully green (Tests, Formal verification, guarded Clojars release)
+after three further fixes on top of the excision head: the CLJS
+verified-authority roster re-pin (`a3db95f`), the Explorer enumeration
+gate rebase onto stable counters with recorded envelopes in
+`formal/verification/explorer-v7-performance.edn` (`24719b7`), and the
+formal-workflow nREPL restart race fix — port-release wait plus
+eval-round-trip readiness (`a036ccd`). Clojars published
+`8.0.0-20260814.204412-4`; eacl-datahike-demo deployed it to
+demo.eacl.dev (its branch records provenance in `server/build.clj` and
+`docs/dependencies.md`). Production smoke on the million-server
+`s3-lmdb` store: cold first page 272ms engine time (retired engine:
+148.4s recorded), cached repeats ~20ms, 30k demand-bounded count 5.0s
+cold / 7.4ms cached; an exact 1M count exceeds the 30s execution
+deadline by design, so the explorer's automatic count cap stays at 30k
+pending width>1. Post-deploy S3 GetRequests emitted no CloudWatch
+datapoints in the deploy window — the LMDB serving tier absorbs reads;
+the CloudWatch request-cost alarms (GET/PUT warning+critical, Telegram
+delivery, capacity circuit breaker) were verified live against the v2
+bucket with the filter prefix matching the live store ID.
+
 - [ ] 10.1 Qualify Datahike direct S3 and tiered LMDB/S3 (restart warmth, disk lifecycle, exact-basis behavior at scale) with reproducible fixtures; publish performance envelopes including evicted-checkpoint replay p95/p99.
 - [ ] 10.2 Qualify Datahike/JDBC against real pool behavior and database latency.
 - [ ] 10.3 Repair or wrap Konserve DynamoDB failure classification; verify strongly consistent read/publication on real DynamoDB; only then enable the topology.

@@ -1,5 +1,7 @@
 # Bug Fix: Arrow-to-Relation Permissions in EACL v7
 
+> Historical record (v7, 2025-10-28). The functions and file paths named below belong to the v7 Datomic engine; the v8 stable-discovery engine (`eacl.engine.*`) replaced them, and `eacl.datomic.impl.indexed` is now a thin façade. Kept for the reasoning behind the arrow-to-relation semantics, which still hold.
+
 ## Date: 2025-10-28
 
 ## Summary

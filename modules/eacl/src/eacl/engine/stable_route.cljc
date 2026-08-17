@@ -7,13 +7,18 @@
     admission — the root universe is never enumerated to answer one
     known-resource question.
   - Exact count exhausts the history-free reducer; its scalar discovered
-    count equals the denotation cardinality. An order-insensitive
-    specialization remains permitted only behind an independent
-    denotation-equivalence proof (none exists yet)."
+    count equals the denotation cardinality. Exhaustion is unbounded by
+    construction (`exhaustion-target` is infinite): a run ends at an empty
+    stack or a typed `:max-admissions`/`:max-values` failure, never at a
+    silent cap. An order-insensitive specialization remains permitted only
+    behind an independent denotation-equivalence proof (none exists yet)."
   (:require [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]))
 
-(def exhaustion-target 1000000)
+(def exhaustion-target
+  "Alias of `eacl.engine.stable-reducer/exhaustion-target`: exhaustive routes
+  run until the stack empties or a typed limit fails, never to a finite cap."
+  reducer/exhaustion-target)
 
 (defn- found! []
   (throw (ex-info "found" {::found true})))
@@ -22,7 +27,7 @@
   "Anchored point check over pre-resolved internal ids: does the subject
   hold the plan's root permission on the resource? Terminates on the
   subject's first admission."
-  [{:keys [adapter plan subject-type subject-eid resource-eid] :as options}]
+  [{:keys [subject-eid resource-eid] :as options}]
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
     (let [seen (volatile! 0)
@@ -67,7 +72,7 @@
 (defn count-resources
   "Exact count by exhausting the reducer; :count-limit truncates with an
   explicit marker exactly like the current public contract."
-  [{:keys [adapter plan subject-type subject-id count-limit] :as options}]
+  [{:keys [adapter subject-id count-limit] :as options}]
   (let [subject-eid (backend/invoke adapter :object-id->internal subject-id)
         target (if count-limit (inc count-limit) exhaustion-target)]
     (if (nil? subject-eid)
@@ -90,7 +95,7 @@
 
 (defn count-subjects
   "Exact reverse count by exhaustion, mirroring count-resources."
-  [{:keys [adapter plan subject-type resource-id count-limit] :as options}]
+  [{:keys [adapter resource-id count-limit] :as options}]
   (let [resource-eid (backend/invoke adapter :object-id->internal resource-id)
         target (if count-limit (inc count-limit) exhaustion-target)]
     (if (nil? resource-eid)

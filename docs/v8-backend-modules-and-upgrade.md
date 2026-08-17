@@ -9,8 +9,8 @@ depend on one adapter module; backend authors depend on core.
 
 | Module | Runtime | Consistency and snapshots | Cursors |
 | --- | --- | --- | --- |
-| `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, exact `d/as-of` | authenticated; proof-equivalent current continuation or exact reconstruction |
-| `eacl-datahike` | Clojure/JVM | current connection DB; configured head barrier and retained exact selection when supported | authenticated; proof-equivalent current continuation or supported exact reconstruction |
+| `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, targeted catch-up plus exact `d/as-of T` | authenticated; proof-equivalent current continuation or full-history exact reconstruction |
+| `eacl-datahike` | Clojure/JVM | current connection DB; durable temporal history when enabled, otherwise conditional retained-commit selection | authenticated; proof-equivalent current continuation or configuration-honest exact reconstruction |
 | `eacl-datascript` | Clojure and ClojureScript | current connection DB; no arbitrary exact selection | authenticated proof-equivalent current continuation |
 | `eacl` | Clojure and ClojureScript | supplied by an adapter | shared protocol, engine, proof, and cache implementation |
 
@@ -43,6 +43,13 @@ generations. The retained identity contains the source lifecycle, schema
 generation, and scalar maximum generation over the complete relation
 dependency closure.
 
+Authenticated `at-exact-snapshot` requests use a separate bounded
+snapshot-exact answer tier after selection. Its key binds the complete
+source/lifecycle, native locator, ordinary-view, adapter/identity, engine,
+semantic request, result-shape, demand, and limit identity. Exact requests do
+not use managed proof lifting; public IDs, basis, tokens, cursors, and metadata
+are rebuilt from the selected adapter on every hit.
+
 All authorization-relevant schema, relationship, identity/liveness, repair,
 and safe-deletion mutations must use EACL APIs or documented EACL transaction
 data/functions transacted intact. Unsupported raw mutation can leave stale
@@ -61,6 +68,27 @@ The exact lifecycle functions are:
 
 See [cache operations](v8-consistency-cache-operations.md) for proof
 availability, custom-codec, time-travel, and multi-process lifecycle rules.
+
+## Exact history and cursor lifetime
+
+Datomic treats a valid same-source exact `T` ahead of the local Peer as lag.
+It waits boundedly on `(d/sync conn T)`, cancels the future on timeout or
+interruption, verifies `basis >= T`, and evaluates only `(d/as-of db T)`. If
+`T` is already local it skips synchronization. Ordinary Datomic history has no
+EACL age-based exact/cursor expiry.
+
+`eacl.datahike/create-conn` enables `:keep-history? true` by default. This
+costs additional storage and write amplification but permits temporal exact
+reconstruction after named commit records are collected. Explicit
+`{:keep-history? false}` opts out: exact selection is then conditional on a
+retained commit graph, and collected commits may become unavailable.
+
+Cursors have no default TTL on any backend. A positive
+`:cursor-ttl-seconds` is an application policy; cache/checkpoint eviction only
+causes replay. Datomic excision and Datahike purge/cutoff, reset, branch force,
+or history replacement require quiescence, completion, shared source-lifecycle
+rotation, complete client/cache detachment, and deliberate signing-key/wire
+version policy before traffic resumes.
 
 ## Optional atomic entity retraction
 
@@ -85,8 +113,9 @@ damage whose former eid is unknown.
 
 ## Recursive permissions and safety controls
 
-All adapters use the same strongly connected-component analysis and
-deterministic fixed-point engine. Each client accepts positive
+All adapters use the same stable-discovery engine: one sealed plan per
+permission root and one width-one deterministic reducer that admits each
+(node, entity) exactly once. Each client accepts positive
 `:recursive-traversal-limits` overrides:
 
 ```clojure
@@ -102,6 +131,35 @@ Exceeding a ceiling throws `:eacl.recursive-traversal/limit-exceeded`. Use
 `:count-limit` for bounded counts and raise traversal limits only after
 representative heap and load testing.
 
+Every routed adapter read runs inside the engine's three-outcome
+classification boundary: a foreign adapter failure (a storage or driver
+exception) is classified `:retryable` and retried up to three times for the
+same read-demand descriptor under the request's original absolute deadline,
+then surfaces as `:eacl.scan/failure` with `:classification` and
+`:cause-class`; typed EACL errors (contract violations, limits, deadlines,
+cancellation) pass through unwrapped and unretried. Attempts are reported as
+`:adapter-attempts` in the traversal work stats.
+
+Each client also accepts a `:service-admission` bulkhead for the routed
+enumerations (point checks, lookups, counts) and a replay ledger for cursor
+replays; slots are held for the full synchronous call chain of the work:
+
+```clojure
+(datascript/make-client
+ conn
+ {:service-admission
+  {:max-concurrent 64        ; enumerations holding a slot at once
+   :max-replays 16           ; concurrent cursor replays in total
+   :max-replays-per-key 2}}) ; concurrent replays of one continuation
+```
+
+Rejections are `:eacl.service/admission-rejected` and
+`:eacl.service/replay-rejected`; an omitted option installs no bulkhead.
+Client construction fails closed with `:eacl.topology/unqualified` when the
+backend adapter's declared execution profile does not certify the strict,
+unique, replayable, strict-progress, atomic scan contract over an immutable
+basis that stable discovery requires (the three bundled adapters do).
+
 ## Permission-tree expansion
 
 All bundled adapters implement `expand-permission-tree` through one portable
@@ -109,8 +167,9 @@ CLJ/CLJS kernel. The strict request is `{:resource object :permission keyword}`
 plus optional `:consistency`, `:timeout-ms`, and `:cancellation-token`; the response is
 `{:expanded-at token :tree-root node}`. The token and every definition,
 relationship, and rendered ID in the tree come from one selected immutable
-adapter. Datomic can replay the exact token while history is retained;
-Datahike can do so only in configurations with retained exact selection;
+adapter. Datomic can replay the exact token throughout ordinary unreplaced
+history. Datahike can do so durably with temporal history, or conditionally
+while a named commit remains retained when temporal history is disabled;
 DataScript supplies current/causal selection but no arbitrary historical
 reconstruction.
 
@@ -138,8 +197,8 @@ stored attribute, dependency, or database migration.
 Every bounded read accepts the same per-request cooperative cancellation
 token. Create it with `eacl.core/cancellation-token` and signal it with
 `eacl.core/cancel!`. Adapters do not need a new SPI operation: the shared
-orchestrator and generated traversal check the token before and after adapter
-commands. A synchronous command already in progress must return before the
+orchestrator checks the token at its stages and the engine checks it at every
+reducer transition (which brackets each adapter command). A synchronous command already in progress must return before the
 check can observe cancellation; adapter implementations with their own long
 loops should call `eacl.execution/check!` at bounded internal checkpoints.
 

@@ -1,10 +1,25 @@
 # Trusted computing base and proof assumptions
 
-EACL's target theorem is conditional: the generated JVM kernel refines the
-formal semantics when its validated input and adapter obligations hold. The
-portable ClojureScript kernel is differentially certified against that
-authority; it is not mechanically extracted from Dafny. Neither statement is
-a proof of the whole deployed system.
+> Supersession note (2026-08-15). The routed enumeration engine is now the
+> hand-written CLJC stable-discovery engine (`eacl.engine.sealed-plan`,
+> `stable-reducer`, `stable-page`, `stable-route`) on both targets; its
+> assumptions and evidence are recorded by the release-assurance tree
+> `formal/stable-discovery/` and by `adopt-stable-discovery-enumeration`.
+> The generated JVM kernel and its portable CLJS twin remain authoritative
+> only for the pure decisions around the engine (consistency plan, current
+> cache, cursor continuation, page-request normalization). Sections below
+> that describe the generated indexed traversal, the recursive-routing
+> certificate, the ordered merge or the acyclic evaluator as production
+> authority describe the retired engines; they are retained until the formal
+> cut recorded as task 9.2 of that change removes their models.
+
+EACL's target theorem is conditional: each generated JVM decision refines
+its formal specification when its validated input and adapter obligations
+hold, and the stable engine's executable refinement bridges, oracle
+differentials and mutation controls pass against its proof leaves. The
+portable ClojureScript decision kernel is differentially certified against
+the generated JavaScript; it is not mechanically extracted from Dafny.
+Neither statement is a proof of the whole deployed system.
 
 ## Verification and compilation tools
 
@@ -45,17 +60,17 @@ These obligations are tested and runtime-guarded, not proved as Clojure facts.
 
 ### Portable ClojureScript authority boundary
 
-`eacl.engine.portable-decisions` and `eacl.engine.portable-indexed` implement
-the production CLJS decision and traversal protocols in handwritten CLJC. CI
-compares them with the generated JavaScript oracle, generated cross-runtime
-vectors, the independent fixed-point evaluator, deterministic randomized
-graphs, the minimized counterexample regressions, and mutation controls. The
-full advanced-optimized DataScript/core suite must also exercise every required
-traversal operation through that kernel.
+`eacl.engine.portable-decisions` implements the production CLJS decision
+protocol in handwritten CLJC (`eacl.engine.portable-indexed` is the retired
+CLJS traversal twin, kept only for the formal-smoke oracle until task 9.2
+removes it). CI compares the decision twin with the generated JavaScript
+oracle, generated cross-runtime vectors, the minimized counterexample
+regressions, and mutation controls. Enumeration on ClojureScript runs the
+same CLJC stable-discovery engine as the JVM.
 
 This is strong executable refinement evidence, not a Dafny extraction or a
 host-language proof. Browser authorization is therefore advisory and must be
-re-checked by the generated JVM authority on the server. The production bundle
+re-checked on the server. The production bundle
 gate rejects BigNumber and generated-runtime markers and enforces the recorded
 absolute performance and payload ceilings in `cljs-production.edn`.
 
@@ -86,7 +101,12 @@ For an operation to inherit a kernel theorem, its adapter must establish:
 Backend certification provides evidence for these assumptions. It does not
 verify DataScript, Datomic, Datahike, their storage engines, or host databases.
 
-### Recursive-routing certificate boundary
+### Recursive-routing certificate boundary (retired engine)
+
+Retained as history of the interim v8 routing design; the routed engine
+compiles every root to one sealed plan and never consults a routing
+certificate.
+
 
 `RoutingCertificate.dfy` proves that an accepted certificate classifies every
 indexed permission node exactly according to reachability of a recursive

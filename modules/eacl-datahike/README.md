@@ -2,9 +2,10 @@
 
 Datahike adapter for EACL.
 
-EACL routes permission compilation, direct/arrow traversal, recursive
-fixed-point evaluation, Relay pagination, counts, cache validation, and common
-errors through the same backend-neutral engine used by Datomic and DataScript.
+EACL routes sealed-plan compilation, the stable-discovery reducer (point
+checks, forward/reverse enumeration, counts), Relay pagination, cache
+validation, and common errors through the same backend-neutral engine used by
+Datomic and DataScript.
 
 Responsibilities:
 
@@ -76,6 +77,16 @@ it and the constructor emits an in-process `:db.fn/call`.
 Both keyword and numeric `:attribute-refs?` representations are supported.
 Function values are not transported to remote writers, which receive a
 structured `:unsupported` descriptor/error and must use `delete-object!`.
+
+Relationship `:create` uses the same in-process boundary: with the default
+`{:writer {:backend :self}}` the client plans the write as a transaction
+function (`eacl.datahike.impl/create-relationship-at-commit`) that re-checks
+the relationship against the transaction-time database, so a racing
+duplicate `:create` fails with `:eacl/relationship-conflict` instead of
+committing a redundant datom. Datahike reports a failing transaction
+function wrapped; `eacl.datahike.core/typed-transaction-error` recovers the
+typed error and the client's write path surfaces it. A remote writer keeps
+the plan-time existence check only.
 
 The function computes the target's native component closure, retracts exact
 peer halves discovered from both endpoint indexes, stamps each distinct

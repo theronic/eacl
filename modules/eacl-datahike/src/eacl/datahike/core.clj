@@ -35,9 +35,26 @@
              (contains? attr-reprs a)))
       tx-data))))
 
+(defn typed-transaction-error
+  "The exception carrying EACL's typed `ex-data` inside `error`'s cause chain,
+  or nil. Datahike's writer executes transactions off the calling thread and
+  reports a failing transaction function as a wrapper exception (an ex-info
+  around the future's `ExecutionException` around the original throw), so a
+  commit-time `:eacl/relationship-conflict` has to be recovered from the
+  chain to keep the public write contract."
+  [^Throwable error]
+  (loop [candidate error]
+    (when candidate
+      (if (:eacl/error (ex-data candidate))
+        candidate
+        (recur (.getCause candidate))))))
+
 (defn- transact-native!
   [conn {:keys [tx-data]}]
-  (d/transact conn (vec tx-data)))
+  (try
+    (d/transact conn (vec tx-data))
+    (catch Exception error
+      (throw (or (typed-transaction-error error) error)))))
 
 (def ^:private api
   {:backend-id :datahike

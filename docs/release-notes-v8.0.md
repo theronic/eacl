@@ -24,7 +24,8 @@ generations before managed v4 readers start.
 EACL v8.0 is a workspace with independently consumable modules:
 
 - `modules/eacl` contains the backend-neutral protocol, schema/parser model,
-  shared engine, and stable six-function backend SPI.
+  the shared stable-discovery engine, and the validated v8 backend adapter
+  contract (`eacl.backend.v8`).
 - `modules/eacl-datomic` contains the complete v8 Datomic implementation.
 - `modules/eacl-datascript` contains the CLJ/CLJS DataScript adapter.
 - `modules/eacl-datahike` contains the CLJ Datahike adapter and supports both
@@ -37,12 +38,11 @@ Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
 does not alter v7 relationship storage. Tokens, cursors, cache envelopes, and
 the additive native-generation schema are deliberately new v8 formats; no
-downgrade or dual-format cache/token mode is provided. The original
-six-function SPI remains compatible for third-party adapters, but it does not
-advertise v8 causal selection or proof lifting. The three built-in adapters use
-the validated v8 operation/capability contract and share permission
-compilation, recursive traversal, pagination, counting, and portable cache
-validation.
+downgrade or dual-format cache/token mode is provided. Third-party adapters
+implement the validated v8 operation/capability contract (`eacl.backend.v8`);
+the pre-v8 six-function SPI is gone. The three built-in adapters share
+permission-plan compilation, the stable-discovery reducer, pagination,
+counting, and portable cache validation.
 
 DataScript and Datahike now expose the v8 Relay list/count API and portable
 cache; this is a breaking request/response change from their v7 ports. See the
@@ -93,9 +93,12 @@ schemas, relationships, caches, and tokens require no rewrite.
 - `:fully-consistent` explicitly requests a backend synchronization barrier.
 - `:at-least-as-fresh` performs targeted selection and validates the
   authenticated native revision floor within one source lifecycle.
-- `:at-exact-snapshot` performs exact selection and bypasses completed-answer
-  caching on backends that advertise it. DataScript rejects it before cache
-  access because DataScript has no EACL time-travel registry.
+- `:at-exact-snapshot` performs exact selection and may reuse only a completed
+  answer bound to the identical canonical snapshot and semantic request. It
+  never uses managed proof-backed lifting. Datomic catches a lagging Peer up
+  to authenticated `T` with bounded two-argument `d/sync` before exact
+  `d/as-of T`; DataScript rejects exact mode before cache access because it has
+  no EACL time-travel registry.
 - Low-level operations accepting an arbitrary `db`, including caller-created
   `d/as-of`, `d/with`, prospective, or filtered views, bypass completed-answer
   caching.
@@ -111,9 +114,11 @@ permission check.
 - Client construction does not install or migrate a mutation journal.
 - `write-schema!` publishes the physical schema generation and initializes
   every added relation generation in the same transaction as the schema delta.
-- `:coherence-authority :managed` means every relationship writer atomically
-  publishes the physical relation generations used by the cache. Unknown or
-  mixed writers must remain `:unknown`, which permits exact-current reuse only.
+- Every supported relationship writer atomically publishes the physical
+  relation generations used by the cache; proof-backed reuse is automatic and
+  there is no selectable coherence authority (`remove-unknown-cache-coherence`).
+  Writers outside the EACL APIs must follow the recovery procedure in
+  [cache behavior and recovery](cache.md).
 - Every managed relationship helper stamps each distinct affected relation in
   the same transaction as the tuple change. There is no global graph CAS.
 - Relationship additions carry commit-time endpoint identity CAS guards, so a
@@ -121,8 +126,7 @@ permission check.
   correctness itself depends on generations, not CAS.
 - `integrity/repair-tx-batches` keeps each dangling-half repair and its
   dependency stamps in one transaction. Custom repair or relationship writers
-  must either use the managed mutation builder or keep
-  `:coherence-authority :unknown`.
+  must use the managed mutation builder.
 - Consumers should call `delete-relationships!` before retracting an entity.
   Alternatively, install/prepare the optional target-only
   `:eacl.fn/retractEntity`; it supports multiple invocations and numeric-eid
@@ -133,15 +137,20 @@ permission check.
 ## Completed-answer cache
 
 Each Datomic, Datahike, and DataScript client owns a bounded native cache. It
-has two sound reuse rules:
+has three sound reuse rules:
 
 1. **Exact-current:** accept an entry only for the identical immutable selected
    DB generation.
 2. **Managed-current:** under an explicit stamped-writer contract, accept an
    entry when its schema generation and relevant dependency stamp still match.
+3. **Snapshot-exact:** after authenticated exact selection, accept only the
+   complete answer with the identical source/lifecycle, native locator,
+   ordinary-view, adapter/identity, engine, request, result, demand, and limit
+   identity.
 
 The cache is an optimization over the cache-free evaluator. It does not define
-authorization and does not support time travel.
+authorization; snapshot-exact retention accelerates, but never creates,
+backend time travel.
 
 ### Exact-current tier
 
@@ -153,36 +162,37 @@ authorization and does not support time travel.
   calculation occurs on an exact hit.
 - Publication captures the generation/lifecycle. A delayed computation cannot
   repopulate a newer or explicitly expired lifecycle.
+- Retained historical exact answers share one bounded weighted/LRU composite
+  store. Exact requests never bind this as a partial traversal store and never
+  consult managed relation/schema proof.
 
 ### Managed-current tier
 
-**BREAKING (pre-release):** every backend — DataScript included — now
-defaults to `:coherence-authority :unknown`, which is exact-current-only and
-remains sound with uninstrumented writers. Managed authority is an explicit
-opt-in on all three backends: it is a writer contract (every
-authorization-affecting relationship and schema write goes through EACL's
-writers), and one raw backend transaction outside that contract can retract
-authorization data without touching a relation stamp. The prior DataScript
-default could therefore serve a stale allow to stock consumers; a pinning
-regression test now encodes that adversarial sequence against the default
-configuration. Native-revision token issuance and selection are independent of
-this cache authority; `:unknown` remains exact-cache-only but may use the
-backend's supported consistency modes.
+Proof-backed ("managed") reuse is unconditional on every backend: EACL's
+writers publish the relation generations the proof needs, and the
+`:coherence-authority` option that once selected between `:unknown` and
+`:managed` no longer exists (supplying it is invalid configuration). The
+contract is that every authorization-affecting relationship and schema write
+goes through EACL's writers or documented transaction data; a raw backend
+transaction outside that contract requires the recovery procedure in
+[cache behavior and recovery](cache.md). Native-revision token issuance and
+selection are independent of the cache.
 
-Managed reuse covers completed answers, relationship projections, AND
-completed denotations (acyclic and recursive least fixed points) under one
-relation-stamp framing:
+Managed reuse covers completed answers (and, for page rendering, identity
+projections) under one relation-stamp framing:
 
 - The semantic query key contains normalized internal object IDs, operation,
   permission, result kind, and relevant configuration.
 - A schema-generation object owns all managed entries. A real schema update
   discards the complete old generation.
-- Each entry is keyed by the complete sorted per-relation generation vector over
-  its compiled dependency closure (assertion transaction and stored generation per
-  relation — not a folded maximum), and plan compilation fails with a typed
-  error if a compiled rule could reference a relation outside that closure.
-- Under ordinary forward transactions, a relevant write changes the vector;
-  an unrelated write leaves it unchanged.
+- Each entry is keyed by the schema generation plus the scalar dependency
+  frontier derived from the complete relation-generation closure of its
+  compiled dependencies (`ScalarFrontierCoherence.dfy`; the proof frame reads
+  the complete canonical vector and derives the scalar), and plan compilation
+  fails closed if a compiled rule could reference a relation outside that
+  closure.
+- Under ordinary forward transactions, a relevant write advances the
+  frontier; an unrelated write leaves it unchanged.
 - Missing/malformed stamps disable managed reuse rather than becoming a
   reusable zero value.
 - All backends read the current physical `:eacl/relation-version` assertion;
@@ -201,7 +211,10 @@ relation-stamp framing:
 
 These rotate source/token scope and replace the entire client lifecycle. Use them after reset,
 restore, branch force, manual history manipulation, or unstamped bulk repair.
-Async Datomic excision is outside this v8 contract.
+Datomic excision and Datahike purge/cutoff or branch replacement are outside
+the unchanged-lifecycle contract: quiesce traffic, complete the operation,
+rotate the shared lifecycle and every client/cache, apply deliberate key/wire
+retirement policy, and then resume.
 
 The corresponding `cache-stats` functions report native exact/managed hits,
 misses, bypasses, stamp failures, publications, expirations, and entry counts.
@@ -235,26 +248,35 @@ required.
 
 ## Cursor redesign
 
-Portable cursor payloads are v10 inside the compact `eacl_c4_` authenticated
+Portable cursor payloads are v12 inside the compact `eacl_c4_` authenticated
 frame. Cursors bind the backend/source, operation, complete semantic query
 (including principal and consistency), result kind, semantic/configuration
 identity, source lifecycle, native revision, and exact snapshot locator. Relay window size and
 direction remain caller-controlled so the same boundary supports forward and
 backward navigation.
 
-- Recursive pages use a versioned logical boundary containing traversal,
-  ordinal, and result identity. The order ABI is the generated evaluator's
-  deterministic emission order; page size, adapter chunking, scan-wave size,
-  cache hits, and runtime do not define it.
-- Default `:evaluation :demand` computes only the requested recursive page
-  plus one lookahead result. A private continuation may retain exactly the
-  already-demanded machine state. If it is absent or evicted, EACL replays the
-  authenticated prefix on the same selected immutable snapshot and then
-  demands only the next page plus lookahead.
-- `:evaluation :complete-denotation` is the only public opt-in to exhaustive
-  recursive page computation. Completed pages use the identical generated
-  logical order and validate both cursor ordinal and result identity before
-  slicing; a mismatch is stale, never a restart.
+Cursor expiry is off by default on every backend. A positive
+`:cursor-ttl-seconds` adds explicit policy expiry; answer, navigation, and
+checkpoint eviction only trigger deterministic replay. The v12 query-scope
+digest excludes mutable current schema proof so a changed schema can reach
+proof comparison and exact fallback. v11 decoding remains supported for
+compatible existing envelopes.
+
+- Every permission lookup page uses one `:stable-edge` boundary containing
+  traversal direction, the boundary result's one-based ordinal, its identity,
+  and the sealed plan's composite fingerprint. The order ABI is the plan's
+  stable first-discovery order (`adopt-stable-discovery-enumeration`); page
+  size, adapter chunking, cache hits, and runtime do not define it, and a
+  page-size change is rejected as an incompatible cursor.
+- Default `:evaluation :demand` computes only the requested page plus one
+  lookahead result. The client-private checkpoint store may retain the
+  latest history-free reducer state for that exact snapshot. If it is absent
+  or evicted, EACL replays the authenticated prefix on the same selected
+  immutable snapshot and then demands only the next page plus lookahead.
+- `:evaluation :complete-denotation` is the only public opt-in to a bare
+  `:last` window on a recursive schema. Completed pages validate both cursor
+  ordinal and result identity before slicing; a mismatch is stale, never a
+  restart.
 - Default content/no-proof cursors bind the exact selected immutable snapshot;
   cursor minting does not scan relationship content. Datomic and Datahike may
   reconstruct that authenticated exact snapshot after the current head moves.
@@ -286,9 +308,9 @@ backward navigation.
   materializing and sorting every match before every page.
 
 Permission enumeration presents one deterministic sequence for a fixed query
-on the selected snapshot. Recursive order is the versioned generated logical
-order; acyclic and relationship pages use their certified index order. None is
-a lexical, domain, or cross-backend presentation order.
+on the selected snapshot: the sealed plan's stable first-discovery order.
+Relationship pages use their certified index order. Neither is a lexical,
+domain, or cross-backend presentation order.
 The cursor query and navigation digests include emission-order version 2, so a
 future ordering change cannot silently resume an older traversal state.
 
@@ -302,17 +324,18 @@ with the final v8 formats.
 
 ## Explorer enumeration performance
 
-V8 enumeration now dispatches from the verified routing certificate. Certified
-acyclic roots use the ordered indexed merge/count engine; genuinely active
-recursive roots retain the bounded fixed-point engine. Recursive permission
-syntax whose in-cycle arrow relations are empty is also executed by the
-acyclic engine. Empty recursive guards contribute no denotation and therefore
-must not consume recursive traversal limits.
+V8 enumeration runs every permission root through the stable-discovery
+engine (this replaced the interim routing certificate, entity-ID merge and
+fixed-point engines on 2026-08-14; see
+[docs/stable-discovery-engine.md](stable-discovery-engine.md)). A first page
+follows the plan's cheapest certified path to its first results instead of
+realizing every union branch, which removed the measured 148 s cold first
+page on the deployed 1M-resource store (now ~5 storage reads).
 
-Relationship pages and recursive authorization pages reuse exact, bounded,
-client-private page artifacts after cursor authentication and immutable
-snapshot selection. Recursive traversal state remains opaque and private;
-generated restoration validates it before use. A request with `:cache? false`,
+Relationship pages and permission pages reuse exact, bounded, client-private
+page artifacts after cursor authentication and immutable snapshot selection.
+Engine checkpoint state remains opaque and private; the reducer validates the
+boundary before any resumed page publishes. A request with `:cache? false`,
 a changed query/snapshot proof or ordering ABI, or a different client cannot
 reuse the artifact.
 
@@ -351,20 +374,13 @@ the 50k recursive-schema exact count without recursive-limit or retained
 snapshot errors. Full evidence is recorded in
 `formal/verification/explorer-v8-release.edn`.
 
-Recursive indexed traversal now selects request-ordered scan waves by render
-mode. Page renders admit exactly one outstanding scan independent of requested
-page size; order-insensitive Boolean and count renders admit up to 64. The JVM
-generated kernel owns that policy, and the portable ClojureScript authority is
-kept differentially aligned. Both fold responses in request order. If fuel ends
-with pending scans, both publish the current verified state and that nonempty
-bounded wave; they never roll back and repeat the same prefix. A pending-empty
-fuel cut yields current state. Independent streams not split by fuel use
-exactly `2 × ceil(streams / render-batch-size) + 1` kernel crossings; general recursion records
-fuel-cut wave overhead separately. The generalized pending-work coverage and
-crossing law are proved in `IndexedBatchCompleteness.dfy` and
-`IndexedBatching.dfy`. EACL-FORMAL-066 retains the broad-fanout livelock
-counterexample, and EACL-FORMAL-067 retains the page-size-dependent ordering
-counterexample that forced render-owned batch selection.
+The stable reducer releases exactly one scan value per logical transition
+regardless of render mode; physical chunk width (default 64) is a pure
+acceleration knob and provably cannot change the sequence. There is no fuel
+quantum: progress is preserved by history-free checkpoints and governed
+replay. EACL-FORMAL-066 and EACL-FORMAL-067 (broad-fanout livelock and
+page-size-dependent ordering in the retired generated traversal) are retained
+as replayed counterexamples against the stable engine.
 
 ## Correctness findings closed
 
@@ -500,8 +516,9 @@ counterexample that forced render-owned batch selection.
 
 `formal/dafny/CurrentCache.dfy` proves:
 
-- exact/historical/arbitrary-DB completed-cache bypass;
-- exact-hit same-snapshot equality;
+- arbitrary-DB completed-cache bypass and canonical exact-snapshot admission;
+- distinct current-exact, snapshot-exact, and managed hit/miss decisions;
+- snapshot-exact identity equality rather than numeric-revision equality;
 - late publication cannot repopulate an expired lifecycle;
 - forward scalar-stamp invalidation;
 - relevant relationship projection framing for direct, self, arrow-relation,
@@ -509,24 +526,29 @@ counterexample that forced render-owned batch selection.
 - equality of least fixed points for complete compiled dependencies;
 - selected-snapshot internal-to-public result rendering.
 
-The locked Dafny run completes 8,785 proof efforts across 30 source-project
+The model does not prove Datomic I/O effects or future cancellation, Datahike
+temporal-history retention, or the truthfulness of adapter-provided canonical
+cache-key fields. Those are explicit certified adapter assumptions exercised
+by deterministic effect and real-backend tests.
+
+The locked Dafny run completes 8,793 proof efforts across 30 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
-is pipeline work, not a count of unique theorems. Generated authority routes
-every defined permission root and public authorization operation on the JVM.
-The browser uses the same public boundary with a portable CLJC authority that
-is differentially certified against generated JavaScript and the independent
-fixed-point oracle. Host runtimes, collection semantics, cryptography, FFI
+is pipeline work, not a count of unique theorems. Since 2026-08-14 the
+generated kernel is authoritative for the pure decisions around the engine
+(consistency plan, current-cache decision, cursor continuation, page-request
+normalization); enumeration itself runs on the hand-written CLJC
+stable-discovery engine on both targets, verified by the separate
+`formal/stable-discovery/` assurance tree and differentially certified against
+the independent fixed-point oracle. Host runtimes, collection semantics, cryptography, FFI
 conversion, and backend adapter contracts remain explicitly trusted or
 empirically certified boundaries.
 
 The release manifest is therefore `:conditionally-verified`, not unqualified
 `:verified`. It deliberately withholds verified release status until an
-independent security/formal-methods review is recorded. Generated authority is
-the only packaged JVM decision engine. The portable CLJC engine is the only
-packaged ClojureScript decision engine; generated JavaScript is retained only
-on the formal-smoke classpath as its oracle. No runtime engine selector is
-shipped.
+independent security/formal-methods review is recorded. Generated JavaScript
+is retained only on the formal-smoke classpath as the oracle for the portable
+CLJC decision twin. No runtime engine selector is shipped.
 
 ### ClojureScript production authority
 
@@ -597,8 +619,8 @@ dependency or content proofs.
 - Discard old page cursors and pre-release tokens.
 - Treat omitted consistency as `:minimize-latency`.
 - Request `:fully-consistent` when a backend barrier is required.
-- Use `:coherence-authority :managed` only after auditing every relationship
-  writer for atomic stamp publication.
+- Route every authorization-affecting write through EACL's writers; there is
+  no coherence-authority switch to fall back on.
 - Call `expire-cache!` around excluded history/reset operations.
 - Keep `:cache? false` and `cache/no-cache` available for differential
   diagnostics and cache-free reference checks.

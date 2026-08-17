@@ -2,9 +2,7 @@
   "DataScript storage operations for the shared v8 authorization engine."
   (:require [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
-            [eacl.datascript.db :as ddb]
-            [eacl.datascript.impl :as impl]
-            [eacl.relationships.storage :as relationship-storage])
+            [eacl.datascript.impl :as impl])
   #?(:clj (:import [java.util WeakHashMap])))
 
 (defonce ^:private connection-source-ids

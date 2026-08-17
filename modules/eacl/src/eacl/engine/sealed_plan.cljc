@@ -196,30 +196,28 @@
   "0/1 BFS from the root over REVERSED edges: distance from each node's
   derivation to producing a root fact."
   [node-count root-index edges]
-  (let [incoming (group-by :to edges)
-        ;; distance from node to root over edges node ->(cost) head
-        outgoing (group-by :from edges)]
-    (loop [distance (assoc (vec (repeat node-count nil)) root-index 0)
-           ;; simple iterate-to-fixpoint (small graphs; certificate checker
-           ;; is the trusted component, this generator is not)
-           iterations 0]
-      (if (> iterations node-count)
-        distance
-        (let [next
-              (reduce
-               (fn [distance {:keys [from to cost]}]
-                 (let [head (distance to)
-                       candidate (when head (+ head cost))
-                       current (distance from)]
-                   (if (and candidate
-                            (or (nil? current) (< candidate current)))
-                     (assoc distance from candidate)
-                     distance)))
-               distance
-               edges)]
-          (if (= next distance)
-            distance
-            (recur next (inc iterations))))))))
+  ;; distance from node to root over edges node ->(cost) head; simple
+  ;; iterate-to-fixpoint (small graphs; the certificate checker is the
+  ;; trusted component, this generator is not)
+  (loop [distance (assoc (vec (repeat node-count nil)) root-index 0)
+         iterations 0]
+    (if (> iterations node-count)
+      distance
+      (let [next
+            (reduce
+             (fn [distance {:keys [from to cost]}]
+               (let [head (distance to)
+                     candidate (when head (+ head cost))
+                     current (distance from)]
+                 (if (and candidate
+                          (or (nil? current) (< candidate current)))
+                   (assoc distance from candidate)
+                   distance)))
+             distance
+             edges)]
+        (if (= next distance)
+          distance
+          (recur next (inc iterations)))))))
 
 (defn- witness-arrays
   "For each non-root node with finite distance, a witness edge achieving its

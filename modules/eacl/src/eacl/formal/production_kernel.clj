@@ -9,7 +9,7 @@
     SnapshotConsistencyMode
     SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
-   (dafny DafnySequence DafnySet Tuple2 Tuple3 Tuple5 Tuple6 TypeDescriptor)
+   (dafny DafnySequence Tuple2 TypeDescriptor)
    (IndexedCertification PlanCertificationError)
    (IndexedBatching
     ForwardBatchState
@@ -52,7 +52,6 @@
     BooleanOutcome
     CountOutcome
     LimitKind
-    PermissionDependencyEdge
     SequenceOutcome
     TraversalLimits
     WorkCounters)
@@ -73,11 +72,7 @@
     AcyclicDirection
     AcyclicPageDecision
     AcyclicPageWork
-    AcyclicWorkDecision
-    MaterializedRelationPath
-    RawPermissionDefinition
-    RawRelationDefinition
-    SourceMaterializedPath)
+    AcyclicWorkDecision)
    (Semantics
     ObjectRef
     PermissionNode
@@ -107,33 +102,6 @@
   (DafnySequence/fromList
    TypeDescriptor/BIG_INTEGER
    (mapv dafny-nat values)))
-
-(defn- dafny-long-array
-  [values]
-  (let [^clojure.lang.IPersistentVector values values
-        element-count (long (count values))
-        ^longs elements (long-array element-count)]
-    (loop [index (long 0)]
-      (when (< index element-count)
-        (aset-long
-         elements
-         index
-         (long (.nth values (int index))))
-        (recur (unchecked-inc index))))
-    elements))
-
-(defn- dafny-sequences
-  [streams]
-  (DafnySequence/fromList
-   (DafnySequence/_typeDescriptor TypeDescriptor/BIG_INTEGER)
-   (mapv dafny-sequence streams)))
-
-(defn- dafny-sequences->vectors
-  [^DafnySequence streams]
-  (mapv
-   (fn [^DafnySequence values]
-     (mapv dafny-long values))
-   streams))
 
 (defn- typed-sequence
   [descriptor values]
@@ -202,26 +170,6 @@
   (PermissionNode/create
    (dafny-string resource-type)
    (dafny-string permission)))
-
-(defn- permission-dependency-edge
-  [{:keys [head target]}]
-  (PermissionDependencyEdge/create
-   (permission-node head)
-   (permission-node target)))
-
-(defn typed-traversal-permission?
-  "Runs the generated exact SCC-routing oracle over fully typed dependency
-  edges. This is a semantic oracle; its closure scans are not a resource model
-  of production's iterative O(V+E) Kosaraju implementation."
-  [{:keys [root edges permissions]}]
-  (RecursiveEngine.__default/DecideTypedTraversalPermission
-   (permission-node root)
-   (typed-sequence
-    (PermissionDependencyEdge/_typeDescriptor)
-    (mapv permission-dependency-edge edges))
-   (typed-sequence
-    (PermissionNode/_typeDescriptor)
-    (mapv permission-node permissions))))
 
 (defn- indexed-routing-edge
   [{:keys [head target]}]
@@ -906,6 +854,9 @@
     :exact-entry
     (CurrentCacheStage/create_ExactEntryStage)
 
+    :snapshot-exact-entry
+    (CurrentCacheStage/create_SnapshotExactEntryStage)
+
     :managed-entry
     (CurrentCacheStage/create_ManagedEntryStage)))
 
@@ -921,6 +872,8 @@
       (.is_UseExactEntry action) :use-exact-entry
       (.is_ProbeManagedEntry action) :probe-managed-entry
       (.is_UseManagedEntry action) :use-managed-entry
+      (.is_UseSnapshotExactEntry action) :use-snapshot-exact-entry
+      (.is_ComputeSnapshotExactValue action) :compute-snapshot-exact-value
       :else :compute-current-value)))
 
 (defn- ordered-merge-head
@@ -979,145 +932,6 @@
          left'
          right')]
     (mapv dafny-long merged)))
-
-(defn production-ordered-fold
-  "Executes the generated model of production's non-empty filtering and
-  pairwise balanced-fold schedule. This is source-refinement test support."
-  [{:keys [direction streams]}]
-  (let [^MergeDirection direction'
-        (case direction
-          :asc (MergeDirection/create_Ascending)
-          :desc (MergeDirection/create_Descending))
-        ^DafnySequence streams' (dafny-sequences streams)
-        ^DafnySequence merged
-        (OrderedMerge.__default/ExecuteProductionFold
-         direction'
-         streams')]
-    (mapv dafny-long merged)))
-
-(defn acyclic-leapfrog-intersection
-  "Executes the generated bounded leapfrog oracle for source-specialization
-  tests. This is test-support code, not part of EACL's production kernel SPI."
-  [{:keys [left right]}]
-  (let [^Tuple5 result
-        (AcyclicEngine.__default/LeapfrogSortedEidsIntersectWithWork
-         (dafny-sequence left)
-         (dafny-sequence right))]
-    {:intersects? (.dtor__0 result)
-     :iterations (dafny-long (.dtor__1 result))
-     :reseek-calls (dafny-long (.dtor__2 result))
-     :examined-heads (dafny-long (.dtor__3 result))
-     :reseek-trace
-     (dafny-sequences->vectors (.dtor__4 result))}))
-
-(defn acyclic-arrow-path-decision
-  "Executes the generated source-shaped acyclic arrow fast-path decision.
-  This is test-support code, not part of EACL's production kernel SPI."
-  [{:keys [full-candidate-matches direct-intersects? exhaustive?]}]
-  (let [^Tuple3 result
-        (AcyclicEngine.__default/AcyclicArrowPathDecisionWithWork
-         (typed-sequence TypeDescriptor/BOOLEAN full-candidate-matches)
-         direct-intersects?
-         exhaustive?)]
-    {:allowed? (.dtor__0 result)
-     :direct-intersection-phases (dafny-long (.dtor__1 result))
-     :full-candidate-checks (dafny-long (.dtor__2 result))}))
-
-(defn acyclic-path-fold
-  "Executes the generated source-shaped outer acyclic path fold. This is
-  formal test support, not a public EACL API."
-  [{:keys [visited? kinds direct-subject-type-matches path-results]}]
-  (let [^Tuple6 result
-        (AcyclicEngine.__default/AcyclicPathFoldWithTrace
-         visited?
-         (dafny-sequence kinds)
-         (typed-sequence
-          TypeDescriptor/BOOLEAN
-          direct-subject-type-matches)
-         (typed-sequence TypeDescriptor/BOOLEAN path-results))]
-    {:allowed? (.dtor__0 result)
-     :path-checks (dafny-long (.dtor__1 result))
-     :direct-probe-checks (dafny-long (.dtor__2 result))
-     :self-permission-checks (dafny-long (.dtor__3 result))
-     :arrow-checks (dafny-long (.dtor__4 result))
-     :callback-trace
-     (dafny-sequences->vectors (.dtor__5 result))}))
-
-(defn- raw-relation-definition
-  [{:keys [resource-type relation-name subject-type relation-eid]}]
-  (RawRelationDefinition/create
-   (dafny-string resource-type)
-   (dafny-string relation-name)
-   (dafny-string subject-type)
-   (dafny-nat relation-eid)))
-
-(defn- raw-permission-definition
-  [{:keys [resource-type permission-name source-is-self?
-           source-relation-name target-is-relation? target-name]}]
-  (RawPermissionDefinition/create
-   (dafny-string resource-type)
-   (dafny-string permission-name)
-   source-is-self?
-   (dafny-string source-relation-name)
-   target-is-relation?
-   (dafny-string target-name)))
-
-(defn- materialized-relation-path->map
-  [^MaterializedRelationPath path]
-  {:type :relation
-   :name (dafny-unicode (.dtor_relationName path))
-   :subject-type (dafny-unicode (.dtor_subjectType path))
-   :relation-eid (dafny-long (.dtor_relationEid path))})
-
-(defn- source-materialized-path->map
-  [^SourceMaterializedPath path]
-  (cond
-    (.is_SourceRelationPath path)
-    {:type :relation
-     :name (dafny-unicode (.dtor_relationName path))
-     :subject-type (dafny-unicode (.dtor_subjectType path))
-     :relation-eid (dafny-long (.dtor_relationEid path))}
-
-    (.is_SourceSelfPermissionPath path)
-    {:type :self-permission
-     :target-permission (dafny-unicode (.dtor_targetPermission path))
-     :resource-type (dafny-unicode (.dtor_resourceType path))}
-
-    (.is_SourceArrowRelationPath path)
-    {:type :arrow
-     :via (dafny-unicode (.dtor_viaRelation path))
-     :target-type (dafny-unicode (.dtor_targetType path))
-     :via-relation-eid (dafny-long (.dtor_viaRelationEid path))
-     :target-relation (dafny-unicode (.dtor_targetRelation path))
-     :sub-paths
-     (mapv
-      materialized-relation-path->map
-      (.dtor_subPaths path))}
-
-    :else
-    {:type :arrow
-     :via (dafny-unicode (.dtor_viaRelation path))
-     :target-type (dafny-unicode (.dtor_targetType path))
-     :via-relation-eid (dafny-long (.dtor_viaRelationEid path))
-     :target-permission (dafny-unicode (.dtor_targetPermission path))}))
-
-(defn materialize-permission-paths
-  "Executes the generated source-shaped permission-path materializer and
-  direct-grant summary. This is formal test support, not a public EACL API."
-  [{:keys [relations definitions subject-type]}]
-  (let [^Tuple3 result
-        (AcyclicEngine.__default/MaterializePermissionPaths
-         (typed-sequence
-          (RawRelationDefinition/_typeDescriptor)
-          (mapv raw-relation-definition relations))
-         (typed-sequence
-          (RawPermissionDefinition/_typeDescriptor)
-          (mapv raw-permission-definition definitions))
-         (dafny-string subject-type))]
-    {:paths (mapv source-materialized-path->map (.dtor__0 result))
-     :direct-relation-eids
-     (mapv dafny-long (.dtor__1 result))
-     :exhaustive? (.dtor__2 result)}))
 
 (defn- optional-eid
   [value]

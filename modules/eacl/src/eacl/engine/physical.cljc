@@ -10,7 +10,9 @@
   any partially realized output is discarded because realization happens
   inside the classification boundary), or throws CANCELLED. Nil is never
   an outcome."
-  (:require [eacl.execution :as execution]))
+  (:require [clojure.string]
+            [eacl.backend.v8 :as backend]
+            [eacl.execution :as execution]))
 
 ;; ---------------------------------------------------------------------------
 ;; Three-outcome classification (task 7.1)
@@ -19,6 +21,20 @@
 (defn scan-failure?
   [error]
   (= :eacl.scan/failure (:eacl/error (ex-data error))))
+
+(defn typed-eacl-error?
+  "An error EACL itself raised with its typed shape (`:eacl/error`, or an
+  `:eacl…`-namespaced `:type`): a contract violation, limit, deadline,
+  cancellation, invalid configuration, or the like. These are already
+  classified verdicts and pass through the read boundary unwrapped and
+  unretried; only foreign adapter failures are classified here."
+  [error]
+  (let [data (ex-data error)]
+    (boolean
+     (and (map? data)
+          (or (keyword? (:eacl/error data))
+              (some-> (:type data) namespace
+                      (clojure.string/starts-with? "eacl")))))))
 
 (defn- classification-of
   [throwable]
@@ -41,7 +57,7 @@
     (try
       (vec (fetch-fn descriptor))
       (catch #?(:clj Throwable :cljs :default) failure
-        (if (scan-failure? failure)
+        (if (or (scan-failure? failure) (typed-eacl-error? failure))
           (throw failure)
           (throw (ex-info "Adapter read failed."
                           {:eacl/error :eacl.scan/failure
@@ -82,6 +98,34 @@
 ;; ---------------------------------------------------------------------------
 ;; Service-edge admission and the replay ledger (task 7.5)
 ;; ---------------------------------------------------------------------------
+
+(def service-admission-keys
+  #{:max-concurrent :max-replays :max-replays-per-key})
+
+(defn normalize-service-admission
+  "Validates the client's `:service-admission` option: nil disables the
+  bulkhead; otherwise a map of positive integers under
+  `service-admission-keys`."
+  [options]
+  (when (some? options)
+    (when-not (map? options)
+      (throw (ex-info ":service-admission must be a map."
+                      {:type :eacl/invalid-config
+                       :key :service-admission
+                       :value options})))
+    (when-let [unknown (seq (remove service-admission-keys (keys options)))]
+      (throw (ex-info "Unknown :service-admission option."
+                      {:type :eacl/invalid-config
+                       :key :service-admission
+                       :unknown-keys (vec unknown)
+                       :known-keys service-admission-keys})))
+    (when-not (every? (fn [[_ value]] (and (integer? value) (pos? value)))
+                      options)
+      (throw (ex-info ":service-admission limits must be positive integers."
+                      {:type :eacl/invalid-config
+                       :key :service-admission
+                       :value options})))
+    options))
 
 (defn make-service-admission
   "Bounded service-edge admission: at most `:max-concurrent` enumerations
@@ -153,9 +197,14 @@
         (finally
           (swap! admission
                  (fn [state]
-                   (-> state
-                       (update :total-replays dec)
-                       (update-in [:replays key] dec)))))))))
+                   (let [remaining (dec (get-in state [:replays key] 1))
+                         state (update state :total-replays dec)]
+                     ;; A key at zero leaves the ledger, so a long-lived
+                     ;; admission atom does not grow with every distinct
+                     ;; continuation key it has ever seen.
+                     (if (pos? remaining)
+                       (assoc-in state [:replays key] remaining)
+                       (update state :replays dissoc key))))))))))
 
 (defn execution-cut-point
   "Builds a reducer cut-point hook from a normalized execution context:
@@ -219,6 +268,58 @@
                         :unique-scan-values? :replayable-scans?
                         :strict-progress? :atomic-response?
                         :failure-classification?]))
+
+(defn adapter-topology-capabilities
+  "The closed capability record of one adapter's topology, derived from the
+  execution profile the adapter declares (`eacl.backend.v8/traversal-execution`:
+  immutable basis reads and the strict/unique/replayable/progress/atomic scan
+  contract), its snapshot capabilities (exact selection), and the engine's
+  read boundary, which classifies every adapter failure
+  (`classified-fetch-fn`) so `:failure-classification?` holds for any adapter
+  read through it. Semantic concurrent-read safety and physical
+  cancellability stay conservative until the concurrency change certifies
+  them; deployment width is one."
+  [adapter]
+  (let [{:keys [immutable-basis-reads? scan-contract concurrent-snapshot-reads]}
+        (backend/traversal-execution adapter)]
+    (topology-capabilities
+     {:immutable-basis? (boolean immutable-basis-reads?)
+      :strict-scan-order? (boolean (:strict-order? scan-contract))
+      :unique-scan-values? (boolean (:unique? scan-contract))
+      :replayable-scans? (boolean (:replayable? scan-contract))
+      :strict-progress? (boolean (:strict-progress? scan-contract))
+      :atomic-response? (boolean (:atomic-chunk? scan-contract))
+      :failure-classification? true
+      :physically-cancellable?
+      (boolean (:physically-cancellable? concurrent-snapshot-reads))
+      :termination-on-return?
+      (if (some? concurrent-snapshot-reads)
+        (boolean (:physical-termination-on-return? concurrent-snapshot-reads))
+        true)
+      :nested-retry-exposure
+      (if-let [attempts (:maximum-nested-attempts concurrent-snapshot-reads)]
+        attempts
+        :unknown)
+      :semantic-concurrent-read-safe? false
+      :deployment-width 1
+      :exact-basis-selection?
+      (boolean (backend/supports? adapter :snapshots :exact))})))
+
+(defn require-qualified-topology!
+  "Fails closed with `:eacl.topology/unqualified` when the adapter's derived
+  capability record does not certify stable discovery. Clients call this
+  once at construction against their source adapter, so an adapter whose
+  declared execution profile is the conservative default (no strict scan
+  contract) cannot be routed through the stable engine. Returns the record."
+  [adapter]
+  (let [capabilities (adapter-topology-capabilities adapter)]
+    (when-not (stable-discovery-qualified? capabilities)
+      (throw (ex-info "This backend topology is not qualified for stable-discovery enumeration: its adapter does not declare the strict, unique, replayable, strict-progress, atomic scan contract over an immutable basis."
+                      {:type :eacl.topology/unqualified
+                       :eacl/error :eacl.topology/unqualified
+                       :backend (backend/backend-id adapter)
+                       :capabilities capabilities})))
+    capabilities))
 
 ;; ---------------------------------------------------------------------------
 ;; Per-layer telemetry (task 7.8)

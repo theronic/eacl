@@ -37,6 +37,7 @@
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate]]
+            [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.permission-tree :as permission-tree]
@@ -47,6 +48,7 @@
                [eacl.formal.production-kernel-cljs :as production-kernel])
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
@@ -163,10 +165,14 @@
     {:adapter adapter
      :db (:db (backend/state adapter))
      :selection selection
+     :snapshot-exact?
+     (= :at-exact-snapshot
+        (get-in selection [:descriptor :mode]))
      :completed-cache?
      (and (:completed-cache-request? opts)
-          (not= :at-exact-snapshot
-                (get-in selection [:descriptor :mode])))}))
+          (or (not= :at-exact-snapshot
+                    (get-in selection [:descriptor :mode]))
+              (backend/deterministic? adapter)))}))
 
 (defn- permission-dependencies
   [adapter resource-type permission]
@@ -253,22 +259,26 @@
          adapter current-opts operation query)
         page-adapter
         (:adapter prepared)
+        snapshot-exact?
+        (or (= :at-exact-snapshot
+               (get-in selection [:descriptor :mode]))
+            (not
+             (identical?
+              (:db (backend/state adapter))
+              (:db (backend/state page-adapter)))))
         page-opts
         (assoc
          (cursor-options
           page-adapter opts selection resource-type permission)
+         :snapshot-exact? snapshot-exact?
          :completed-cache?
          (and
           (:completed-cache-request? opts)
-          (not= :at-exact-snapshot
-                (get-in selection [:descriptor :mode]))
-          ;; Cursor authentication and snapshot selection happen before this
-          ;; decision. A continuation that still resolves to the selected
-          ;; current DB is therefore safe to cache; a historical continuation
-          ;; selects another immutable DB and continues to bypass this cache.
-          (identical?
-           (:db (backend/state adapter))
-           (:db (backend/state page-adapter)))))]
+          ;; Historical completed-answer reuse additionally requires a stable
+          ;; adapter/identity contract. Cursor authentication and exact
+          ;; selection have already happened before this decision.
+          (or (not snapshot-exact?)
+              (backend/deterministic? page-adapter))))]
     {:adapter page-adapter
      :db (:db (backend/state page-adapter))
      :opts page-opts
@@ -299,6 +309,8 @@
                            engine/*proof-frame* request-proof-frame
                            engine/*recursive-traversal-limits*
                            (:recursive-traversal-limits opts)
+                           engine/*service-admission*
+                           (:service-admission opts)
                            engine/*evaluation-mode*
                            (:evaluation contract)
                            execution/*contract* contract
@@ -338,11 +350,16 @@
              :evaluation (:evaluation contract)
              :demand (:demand contract)
              :engine-version engine/engine-version
+             ;; The public order ABI is part of an answer's identity: a page
+             ;; cached under one order must never be served under another.
+             :order-abi engine/stable-order-abi
              :source-lifecycle
              (proof-frame/source-lifecycle request-proof-frame)
              :adapter-fingerprint (:adapter-fingerprint opts)
              :recursive-traversal-limits
-             (:recursive-traversal-limits opts)}]
+             (:recursive-traversal-limits opts)
+             :permission-tree-limits
+             (:permission-tree-limits opts)}]
         (execution/check! contract :cache-lookup)
         (let [answer
               (binding
@@ -350,28 +367,36 @@
                    (get-in contract
                            [:cache-attempt :maximum-atomic-attempts]
                            4)]
-                (cache/resolve-current!
-                 (:current-cache-store opts)
-                 {:snapshot db
-          :cache-lifecycle (:cache-lifecycle opts)
-          :snapshot-order (:max-tx db)
-          :same-snapshot? identical?
-          :cache-basis (backend/invoke adapter :snapshot-id)
-          :decision-kernel (:decision-kernel opts)
-          :managed-key-fn
-          (when (:managed-cache-enabled? opts)
-            #(proof-frame/descriptor @complete-proof))
-          :managed-subproblem-key-fn
-          (when (:managed-cache-enabled? opts)
-            (fn [dependency]
-              (proof-frame/subset-descriptor
-               @complete-proof dependency)))
-                :managed-subproblem-scope
-                (consistency-v3/source-scope adapter)}
-               semantic-key
-               operation
-                 valid-value?
-                 evaluate))]
+                (if (:snapshot-exact? opts)
+                  (cache/resolve-exact!
+                   (:current-cache-store opts)
+                   {:snapshot-exact-key (cache/snapshot-exact-key adapter)
+                    :cache-lifecycle (:cache-lifecycle opts)
+                    :cache-basis (backend/invoke adapter :snapshot-id)
+                    :decision-kernel (:decision-kernel opts)}
+                   semantic-key operation valid-value? evaluate)
+                  (cache/resolve-current!
+                   (:current-cache-store opts)
+                   {:snapshot db
+                    :cache-lifecycle (:cache-lifecycle opts)
+                    :snapshot-order (:max-tx db)
+                    :same-snapshot? identical?
+                    :snapshot-exact-key (cache/snapshot-exact-key adapter)
+                    :cache-basis (backend/invoke adapter :snapshot-id)
+                    :decision-kernel (:decision-kernel opts)
+                    :managed-key-fn
+                    (when (and (:managed-cache-enabled? opts)
+                               resource-type permission)
+                      #(proof-frame/descriptor @complete-proof))
+                    :managed-subproblem-key-fn
+                    (when (and (:managed-cache-enabled? opts)
+                               resource-type permission)
+                      (fn [dependency]
+                        (proof-frame/subset-descriptor
+                         @complete-proof dependency)))
+                    :managed-subproblem-scope
+                    (consistency-v3/source-scope adapter)}
+                   semantic-key operation valid-value? evaluate)))]
           (execution/check! contract :cache-publication)
           answer)))))
 
@@ -459,21 +484,22 @@
       (or
        (relay/lookup-visited-page
         adapter cursor-opts :read-relationships filters)
-       (relay/remember-visited-page!
-        adapter
-        cursor-opts
-        :read-relationships
-        filters
-        (assoc
-         (relay/externalize-relationship-page
-          adapter
-          cursor-opts
-          :read-relationships
-          filters
-          ((get-in api [:impl :read-relationships])
-           page-db internal-query (:decision-kernel cursor-opts)))
-         :cached? false
-         :cache-basis nil))))))
+       (let [answer
+             (cached-engine-result
+              adapter cursor-opts :read-relationships
+              (cache/lookup-page-query-identity filters internal-query)
+              nil nil
+              #(and (map? %) (vector? (:data %)) (map? (:page-info %)))
+              #((get-in api [:impl :read-relationships])
+                page-db internal-query (:decision-kernel cursor-opts)))
+             page
+             (with-cache-info
+               (relay/externalize-relationship-page
+                adapter cursor-opts :read-relationships filters
+                (:value answer))
+               answer)]
+         (relay/remember-visited-page!
+          adapter cursor-opts :read-relationships filters page))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal object-id->lookup-ref]}
@@ -502,6 +528,27 @@
     {:zed/token token}
     {}))
 
+(defn- relationship-commit-preconditions-first
+  "Moves relationship transaction functions ahead of the mutations they
+  validate while retaining the leading schema-fence CAS and the relative
+  order of every mutation.
+
+  DataScript and direct-writer Datahike use transaction functions to assert
+  that every planned `:create` was absent at the transaction's linearization
+  point. Running all of those assertions before any add/retract makes one
+  batch observe the same calculation snapshot as the Datomic writer. Without
+  this staging, `[:touch relationship]` followed by `[:create relationship]`
+  made the create observe the touch inside the same transaction and fail only
+  on the portable backends."
+  [tx-data]
+  (if-let [[schema-fence & operations] (seq tx-data)]
+    (let [transaction-function? #(and (vector? %)
+                                      (= :db.fn/call (first %)))]
+      (into [schema-fence]
+            (concat (filter transaction-function? operations)
+                    (remove transaction-function? operations))))
+    []))
+
 (defn write-relationships!
   [api conn opts updates]
   (let [validate-operation!
@@ -512,15 +559,24 @@
         _ (doseq [{:keys [operation]} updates]
             (validate-operation! operation))
         db      ((:db api) conn)
+        schema  ((get-in api [:schema :read-schema]) db)
+        _ (doseq [{:keys [relationship]} updates]
+            (schema-errors/validate-relationship-write!
+             schema :write-relationships
+             {:resource-type (:type (:resource relationship))
+              :subject-type (:type (:subject relationship))
+              :relation (:relation relationship)}))
         internal-updates
         (S/transform [S/ALL :relationship]
                      #(spice-relationship->internal db opts %)
                      updates)
+        _ (relationship-mutations/validate-batch! internal-updates)
         tx-data (->> internal-updates
                      (mapcat #(tx-update-relationship db %))
                      (remove nil?)
                      distinct
-                     vec)]
+                     vec
+                     relationship-commit-preconditions-first)]
     (if (seq tx-data)
       (let [report
             ((:transact! api)
@@ -572,9 +628,12 @@
         opts (ensure-execution-contract
               opts (or (:request-operation opts) :can?) request)
         {selected-db :db adapter :adapter
-         completed-cache? :completed-cache?}
+         completed-cache? :completed-cache?
+         snapshot-exact? :snapshot-exact?}
         (selected-context api db opts consistency)
-        opts (assoc opts :completed-cache? completed-cache?)
+        opts (assoc opts
+                    :completed-cache? completed-cache?
+                    :snapshot-exact? snapshot-exact?)
         _ (schema-errors/validate-permission-request!
            ((get-in api [:schema :read-schema]) selected-db)
            (or (:request-operation opts) :can?)
@@ -674,9 +733,12 @@
    {:as query :keys [subject]}]
   (let [opts (ensure-execution-contract opts :count-resources query)
         {selected-db :db adapter :adapter
-         completed-cache? :completed-cache?}
+         completed-cache? :completed-cache?
+         snapshot-exact? :snapshot-exact?}
         (selected-context api db opts (:consistency query))
-        opts (assoc opts :completed-cache? completed-cache?)
+        opts (assoc opts
+                    :completed-cache? completed-cache?
+                    :snapshot-exact? snapshot-exact?)
         _ (schema-errors/validate-permission-request!
            ((get-in api [:schema :read-schema]) selected-db)
            :count-resources
@@ -775,9 +837,12 @@
    query]
   (let [opts (ensure-execution-contract opts :count-subjects query)
         {selected-db :db adapter :adapter
-         completed-cache? :completed-cache?}
+         completed-cache? :completed-cache?
+         snapshot-exact? :snapshot-exact?}
         (selected-context api db opts (:consistency query))
-        opts (assoc opts :completed-cache? completed-cache?)
+        opts (assoc opts
+                    :completed-cache? completed-cache?
+                    :snapshot-exact? snapshot-exact?)
         _ (schema-errors/validate-permission-request!
            ((get-in api [:schema :read-schema]) selected-db)
            :count-subjects
@@ -814,19 +879,32 @@
   (let [opts (ensure-execution-contract
               opts :expand-permission-tree query)
         contract (:execution-contract opts)
-        {:keys [adapter db]}
+        {adapter :adapter db :db
+         completed-cache? :completed-cache?
+         snapshot-exact? :snapshot-exact?}
         (selected-context api db opts (:consistency query))
+        opts (assoc opts
+                    :completed-cache? completed-cache?
+                    :snapshot-exact? snapshot-exact?)
         _ (schema-errors/validate-expansion-request!
            ((get-in api [:schema :read-schema]) db)
            :expand-permission-tree
            (:type (:resource query))
            (:permission query))
-        tree (permission-tree/expand
-              adapter
-              {:limits (:permission-tree-limits opts)
-               :execution-contract contract}
-              (:resource query)
-              (:permission query))]
+        answer
+        (cached-engine-result
+         adapter opts :expand-permission-tree
+         (dissoc query :consistency :cache? :timeout-ms :cancellation-token)
+         (:type (:resource query))
+         (:permission query)
+         map?
+         #(permission-tree/expand
+           adapter
+           {:limits (:permission-tree-limits opts)
+            :execution-contract contract}
+           (:resource query)
+           (:permission query)))
+        tree (:value answer)]
     (execution/check! contract :permission-tree-token-issuance)
     (let [token
           (permission-tree/selected-adapter-token adapter opts)]
@@ -956,7 +1034,10 @@
 
   (expand-permission-tree [_ query]
     (expand-permission-tree
-     api ((:db api) conn) opts query))
+     api
+     ((:db api) conn)
+     (assoc opts :completed-cache-request? true)
+     query))
 
   IDetailedAuthorization
   (-check-permission
@@ -1039,7 +1120,8 @@
     :adapter-deterministic?
     :consistency-sync-timeout-ms
     :execution-timeout-ms
-    :cache-attempt})
+    :cache-attempt
+    :service-admission})
 
 (defn make-client
   "Builds the shared IAuthorization client over one backend api map.
@@ -1069,7 +1151,7 @@
            consistency-sync-timeout-ms
            execution-timeout-ms
            cache-attempt
-           ]
+           service-admission]
     :or   {object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
@@ -1260,5 +1342,16 @@
                           :spice-object->internal (fn [db obj]
                                                     (update obj :id #(object-id->entid db %)))
                           :internal-cursor->spice internal-cursor->spice
-                          :spice-cursor->internal spice-cursor->internal}]
+                          :spice-cursor->internal spice-cursor->internal
+                          ;; The service-edge bulkhead and replay ledger
+                          ;; (bounded-physical-execution): nil leaves the
+                          ;; routed engine unguarded, a map installs it.
+                          :service-admission
+                          (some-> (physical/normalize-service-admission
+                                   service-admission)
+                                  physical/make-service-admission)}
+        ;; The stable engine runs only on a qualified topology; the adapter's
+        ;; declared execution profile is checked once here.
+        _ (physical/require-qualified-topology!
+           ((:snapshot-adapter api) ((:db api) conn) opts))]
     (->ClientAuthorization conn opts api)))

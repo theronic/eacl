@@ -15,7 +15,7 @@ Rules to guide AI agents in developing and maintaining this project.
 
 ## Language-Specific Rules
 
-- **[Clojure Rules](./clojure-rules.mdc)**: Clojure development guidelines
+- **[Clojure Rules](./clojure-rules.md)**: Clojure development guidelines
 
 ## Purpose
 

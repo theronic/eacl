@@ -38,12 +38,13 @@ Caching does not alter results:
 
 | Layer | Reuse scope | Purpose |
 | --- | --- | --- |
-| Exact completed answer | Same semantic operation and immutable database value | Skips the complete operation with no proof read |
+| Exact completed answer | Same semantic operation and canonical ordinary immutable snapshot | Skips the complete operation with no proof read; retained historical generations share one bounded composite-key tier |
 | Proof-backed completed answer | Same semantic operation, lifecycle, schema generation, and dependency frontier | Survives unrelated forward transactions |
-| Relationship projection | Same exact snapshot, or same proved relation and schema frontier | Shares bounded adjacency chunks and membership probes |
-| Completed denotation | Compatible completed graph result under the same exact or proved generation | Shares acyclic results and recursive least fixed points |
-| Schema plan | Same schema generation | Shares compiled paths, dependency closures, and recursive routing |
-| Navigation/continuation | One authenticated query and snapshot context | Resumes pages without publishing incomplete traversal as an answer |
+| Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
+| Sealed plan | Same source scope, lifecycle, basis, and permission root | Reuses the compiled stable-discovery plan across requests |
+| Schema paths | Same schema generation | Shares permission-path and dependency-closure derivations used for cache dependencies and cursor proofs |
+| Latest checkpoint | One authenticated query, exact snapshot, page size, and boundary | Resumes a continued page from the retained engine state plus its lookahead segment without publishing incomplete traversal as an answer |
+| Visited page | One authenticated query and immutable snapshot | Reuses an already-externalized page (and learns the adjacent opposite-direction page) |
 
 Completed-answer keys include the normalized operation, principal, permission,
 query, bounds, evaluation mode, and result shape. Public IDs and metadata are
@@ -52,7 +53,7 @@ Partially processed worklists and incomplete pages are not completed answers.
 
 ## Exact-first lookup
 
-For a completed operation EACL resolves:
+For an ordinary current completed operation EACL resolves:
 
 1. an exact answer for the selected immutable database value;
 2. a proof-backed answer when complete proof is available;
@@ -62,6 +63,23 @@ For a completed operation EACL resolves:
 An exact hit performs no generation proof reads. A proof-backed hit is promoted
 into the exact store for the selected value, so the next identical request on
 that value is exact.
+
+After successful authenticated `at-exact-snapshot` selection, EACL probes only
+the snapshot-exact completed-answer tier. Its composite identity includes the
+backend/source/branch and configured lifecycle, native revision and exact
+locator, ordinary exact-view kind, adapter fingerprint and identity contract,
+engine/order ABI, normalized semantic request, result kind, demand, and every
+answer-affecting limit. Equal numeric revisions alone are insufficient. A miss
+evaluates on the already selected immutable adapter and may publish only the
+completed answer; it never probes or publishes managed proof-backed entries or
+partial traversal state.
+
+Current requests may seed the same tier only when their adapter certifies that
+the native locator is independently exact-selectable. Filtered, `since`,
+history, speculative, caller-constructed, and current-only DataScript values
+cannot acquire an ordinary snapshot-exact identity. Public tokens, cursor
+envelopes, cache basis, external IDs, and selected-snapshot metadata are rebuilt
+on every hit.
 
 ## Automatic proof-backed coherence
 
@@ -154,9 +172,11 @@ match.
 
 ## Capacity, concurrency, and configuration
 
-Completed answers, projections, and denotations have separate weighted
-least-recently-used budgets. A value heavier than its tier's admission ceiling
-is rejected rather than displacing the tier. `:max-entries` bounds the
+Completed answers and identity projections have separate weighted
+least-recently-used budgets (the `:denotation` tier budget is still accepted
+by the store configuration but no engine path publishes into it). A value
+heavier than its tier's admission ceiling is rejected rather than displacing
+the tier. `:max-entries` bounds the
 second-sighting window and client-private continuation/navigation stores; the
 answer weight budget bounds completed answers.
 
@@ -164,6 +184,10 @@ Identical concurrent misses compute independently. Requests never wait on an
 EACL cache semaphore or inherit another request's failure. Completed results
 race bounded best-effort publication. Late publication from an expired
 lifecycle is unreachable from the replacement lifecycle.
+
+Historical exact entries share the answer tier's weight/LRU/admission bounds;
+retaining more immutable generations does not make memory unbounded. Eviction
+causes exact recomputation and is never interpreted as token or cursor expiry.
 
 Typical configuration:
 
@@ -240,6 +264,13 @@ Rotate lifecycle state after reset, restore, branch replacement, or any event
 that can reuse or regress native revisions. Equal revision numbers from
 different source histories are not comparable.
 
+Treat Datomic excision and Datahike purge/cutoff, branch force, reset, or other
+destructive history operations as explicit lifecycle replacement. Quiesce
+affected authorization traffic, complete the destructive operation, rotate
+the shared lifecycle and all clients/caches, deliberately retire or retain the
+appropriate signing keys and wire versions, then resume. An unchanged
+lifecycle provides no safety across concurrent history destruction.
+
 ## Cursors and time travel
 
 Cursors are authenticated and scoped to operation, normalized query, adapter,
@@ -248,6 +279,12 @@ current value may continue a walk. Otherwise, a history-capable backend may
 reconstruct the authenticated exact snapshot; if it cannot, the cursor fails
 closed. DataScript does not emulate history with hidden retained database
 values.
+
+Cursors carry no expiry unless a positive `:cursor-ttl-seconds` is configured.
+Cache TTL, answer eviction, page-navigation eviction, and checkpoint eviction
+do not limit cursor age; they only cause deterministic replay. An old cursor
+continues the original historical enumeration. Consumers that require current
+authorization at object-consumption time must make a separate current check.
 
 EACL does not promise proof-backed cache availability for `as-of`, `since`,
 filtered, speculative, or caller-constructed database values. Exact historical
@@ -263,7 +300,10 @@ also expose `:cached?` and `:cache-basis`; `can?` returns only a Boolean.
 
 The cache-free evaluator is the behavioral oracle. Differential and randomized
 tests compare cached and bypassed results across all bundled backends. Dafny
-proves the scalar-frontier theorem and cache refinements under the documented
-adapter obligations; backend certification tests establish the executable
-trusted boundary. See [formal verification](formal-verification.md) and the
+proves the scalar-frontier theorem and distinguishes current-exact,
+snapshot-exact, and managed cache decisions under the documented adapter
+obligations. Backend I/O effects, temporal-history retention, future
+cancellation, and canonical-key truthfulness are certified adapter assumptions,
+not kernel theorems. Backend certification and real-store regressions establish
+the executable trusted boundary. See [formal verification](formal-verification.md) and the
 [scalar-frontier measurements](benchmarks/results/2026-08-11-scalar-frontier-coherence.md).

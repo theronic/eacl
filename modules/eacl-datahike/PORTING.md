@@ -16,7 +16,7 @@ asynchronous and the backend SPI is synchronous.
 
 ## Layout
 
-Six namespaces. `eacl.datahike.db` holds entity-id, attribute-representation,
+Seven namespaces. `eacl.datahike.db` holds entity-id, attribute-representation,
 and index-access primitives so Datahike API spelling and temporal-seek behavior
 stay below the EACL relationship model:
 
@@ -26,6 +26,7 @@ stay below the EACL relationship model:
 | `schema.clj` | attribute declarations, `create-conn`, `write-schema!` |
 | `impl.clj` | Datomic-layout relationship transactions, scans, and cleanup |
 | `integrity.clj` | explicit offline dangling-half diagnostics |
+| `safe_retraction.clj` | the optional `:eacl.fn/retractEntity` transaction function and its install/prepare helpers |
 | `backend.clj` | the validated v8 snapshot adapter and cache proofs |
 | `core.clj` | `IAuthorization`, v8 Relay/cache integration, and `make-client` |
 
@@ -94,8 +95,9 @@ are tested; three consequences are load-bearing.
 
 2. `index-range`'s `:attrid` is the one accessor that does **not** accept the
    attribute keyword in both modes: under `:attribute-refs?` it demands the
-   numeric ref and raises. `db/avet-range` resolves it via `db/attr-repr`.
-   (`datoms` and `seek-datoms` take the keyword in either mode.)
+   numeric ref and raises. Resolve it via `db/attr-repr` if a range read is
+   ever reintroduced (`datoms` and `seek-datoms` take the keyword in either
+   mode; the current adapter uses only those).
 
 3. Anything comparing a datom's `:a` directly against a keyword matches
    nothing under `:attribute-refs?`. The adapter avoids raw comparisons and
@@ -149,9 +151,9 @@ representations so a keyword-only implementation cannot pass silently.
 
 The public client uses `eacl.datahike.backend/snapshot-adapter`. Its
 validated operation map adds snapshot identity, object ID conversion,
-permission-node discovery, cursor frontier identity, and scoped schema/relation
-proofs. Direct-writer stores support authoritative current selection; retained
+permission-node discovery, native revision/exact locators, and scoped
+schema/relation proofs. Direct-writer stores support authoritative current selection; retained
 commit graphs or temporal history support exact reconstruction; managed stores
-support causal at-least selection. Authorization graph compilation,
-SCC/fixed-point traversal, Relay behavior, and cache validation stay in
+support causal at-least selection. Sealed-plan compilation, the
+stable-discovery reducer, Relay behavior, and cache validation stay in
 `modules/eacl`.

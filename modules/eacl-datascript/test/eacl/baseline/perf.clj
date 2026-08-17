@@ -85,15 +85,16 @@
   "One instrumented first execution on a fresh client: authoritative logical
   scan/command counters plus a single informational cold-ish latency sample."
   [f]
-  (let [acyclic (atom {})
-        recursive (atom {})
+  (let [recursive (atom {})
         start (System/nanoTime)
-        _ (binding [engine/*acyclic-work-stats* acyclic
-                    engine/*recursive-traversal-stats* recursive]
+        _ (binding [engine/*recursive-traversal-stats* recursive]
             (f))
         elapsed (- (System/nanoTime) start)]
     {:ms (/ elapsed 1e6)
-     :acyclic @acyclic
+     ;; Retained as an empty map so the frozen perf baseline shape
+     ;; (exploration/baselines/perf-clj-datascript.edn) is unchanged: the
+     ;; retired acyclic route never populated it.
+     :acyclic {}
      :recursive (into {}
                       (remove (fn [[_ v]] (coll? v)))
                       @recursive)}))

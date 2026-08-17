@@ -12,7 +12,6 @@
 (def ^:dynamic *recursive-traversal-limits*
   default-recursive-traversal-limits)
 (def ^:dynamic *recursive-traversal-stats* nil)
-(def ^:dynamic *count-stats* nil)
 
 (defn object-eid
   [db object-id]
@@ -40,24 +39,9 @@
   [db resource-type permission-name]
   (ddb/find-permission-defs db resource-type permission-name))
 
-(defn all-permission-nodes
-  [db]
-  (ddb/all-permission-nodes db))
-
-(defn direct-match-datoms-in-relationship-index
-  [db subject-type subject-id relation-id resource-type resource-id]
-  (if (ddb/direct-match?
-       db subject-type subject-id relation-id resource-type resource-id)
-    [true]
-    []))
-
 (defn schema-version
   [db]
   (ddb/schema-version db))
-
-(defn schema-version-stamp
-  [db]
-  (some-> (schema-version db) str))
 
 (defn database-id
   [db]
@@ -80,9 +64,7 @@
   ([schema-cache]
    (reset! (:permission-paths schema-cache) {})
    (reset! (:traversal-permissions schema-cache) {})
-   (some-> (:traversal-analysis schema-cache) (reset! nil))
    (reset! (:relationship-dependencies schema-cache) {})
-   (some-> (:recursive-plans schema-cache) (reset! {}))
    (some-> (:direct-grant-relations schema-cache) (reset! {}))
    nil))
 
@@ -100,8 +82,7 @@
              engine/*recursive-traversal-limits*
              *recursive-traversal-limits*
              engine/*recursive-traversal-stats*
-             *recursive-traversal-stats*
-             engine/*count-stats* *count-stats*]
+             *recursive-traversal-stats*]
      ~@body))
 
 (defn normalize-page-request

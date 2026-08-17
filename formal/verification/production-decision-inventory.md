@@ -1,5 +1,7 @@
 # Production decision inventory
 
+> Revised 2026-08-15 for the routed stable-discovery engine. Sections that still describe the retired routing certificate, ordered merge, acyclic evaluator or generated indexed traversal are historical and are marked as such.
+
 This inventory identifies code that can change an externally observable
 authorization result. Pure encoding, I/O, and backend implementation details
 are included only where they can cause a decision to be accepted, resumed, or
@@ -7,22 +9,23 @@ reused.
 
 | Decision area | Production source | Decision consumed by |
 | --- | --- | --- |
-| Schema path normalization and compilation | `eacl.engine.v8/calc-permission-paths`, `get-permission-paths`, `frontier-permission-paths` | `can?`, forward/reverse lookup, count |
-| Permission dependency closure and recursion routing | `permission-relationship-eids`, `permission-schema-nodes`, `permission-schema-components`, `traversal-permission?` | lookup/count cache keys, cursor proofs, acyclic vs recursive engine selection |
-| Direct and arrow path matching | `direct-match-datoms-in-relationship-index`, `arrow-via-intermediates`, path evaluators in `eacl.engine.v8` | `can?`, lookup, count |
-| Execution normalization and deadline | `eacl.execution/normalize`, deadline checks in orchestration, relay, engine, and backend invocation | evaluation mode, bounded demand, timeout stage/error, whether another command may begin |
-| Recursive rule compilation, demand, and worklists | `compile-recursive-rules`, target-anchored point evaluation, generated forward/reverse traversal | recursive `can?`, bounded/exact count, demand/complete lookup |
-| Recursive stopping and work limits | generated demand target, `normalize-recursive-traversal-limits`, `increment-counter`, `enqueue-work` | Boolean proof/exhaustion, `L+1` count, `N+1` page, typed limit/deadline errors |
-| Recursive continuation and page reuse | `cached-recursive-generated-continuation`, `store-recursive-generated-continuation!`, deterministic replay | recursive lookup pagination; retained state never answers another semantic request |
-| Page-bound validation and window assembly | authenticated logical ordinal/external identity, ordering ABI validation, generated replay/page constructors | lookup page data, order, flags, cursors, stale-cursor rejection |
+| Sealed plan compilation and rank certification | `eacl.engine.sealed-plan/seal-plan` (four-kind rules from adapter definitions, dense canonical ordinals, 0/1 read-rank certificate checked by `valid-certificate?`, composite fingerprint), cached per source/basis/root by `eacl.engine.v8/stable-plan` | every `can?`, lookup, and count; cursor fingerprint validation |
+| Permission dependency closure | `eacl.engine.v8/calc-permission-paths`, `get-permission-paths`, `permission-relationship-eids`, `permission-schema-nodes` | lookup/count cache dependency sets and Relay cursor dependency proofs |
+| Execution normalization and deadline | `eacl.execution/normalize`, deadline/cancellation checks in orchestration, relay, and at every reducer transition (`eacl.engine.physical/execution-cut-point`) | evaluation mode, bounded demand, timeout stage/error, whether another command may begin |
+| Stable-discovery reducer: admission, order, emission, limits | `eacl.engine.stable-reducer` (`schedule`, `step`, `release-one`, `run-forward`, `run-reverse`, `resume`), public limits mapped by `eacl.engine.v8/stable-limits` | forward/reverse enumeration order and uniqueness, exact and bounded counts, anchored `can?` (`eacl.engine.stable-route/check-eids`), typed limit errors |
+| Page composition, checkpoints and replay | `eacl.engine.stable-page/edge-page`, `deliver-page`, `state-at-boundary`, `checkpoint-put!`/`checkpoint-hit`; boundary validation by `eacl.engine.v8/validate-stable-bound!` | lookup page data, one-based `:stable-edge` cursors, page flags, stale-cursor rejection, continuation reuse |
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
 | Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
 | Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
 | Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `captured-current-selection`, `select` | snapshot chosen for every Datomic, Datahike, and DataScript authorization request |
-| Semantic cache key and entry eligibility | exact generated command/snapshot/ABI keys and completed typed artifact validation | `can?`, lookup, count cache-enabled responses; eligibility has zero backend-command authority |
+| Semantic cache key and entry eligibility | canonical source/lifecycle/native-locator/view/adapter identity plus generated current-exact, snapshot-exact, and managed entry decisions and completed typed artifact validation | `can?`, lookup, count, relationship-read, and permission-tree cache-enabled responses; eligibility has zero backend-command authority |
 | Cache miss ownership and publication | `eacl.subproblem-cache/resolve-independent!`, generation-qualified bounded `publish!` | misses compute independently; compatible winners are retained and losing/late candidates are discarded without changing authorization |
 | Local cache failure and invalid-entry handling | `eacl.cache` current-generation decisions plus `eacl.subproblem-cache` lookup/validation/publication | whether a client-private cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
+
+### Retired-engine boundaries (historical, pending the task 9.2 formal cut)
+
+The following paragraphs describe decision boundaries of the interim v8 routing, merge and acyclic engines that the stable-discovery engine replaced; none of the named production vars (`traversal-permission?`, `eacl.lazy-merge-sort` in `src`, `can-uncached*`, the routing certificate consumers) exist on the routed path any more.
 
 Recursive routing now has a typed semantic oracle:
 `RecursiveEngine.DecideTypedTraversalPermission` consumes complete
@@ -39,7 +42,7 @@ materialization, host map-to-descriptor translation, and runtime resource peaks
 remain open source/platform refinements and are not implied by the
 differential campaign.
 
-Consistency selection now has a separate generated decision boundary.
+(Still live.) Consistency selection has a separate generated decision boundary.
 `ConsistencyDecision.dfy` distinguishes capability failure, absent exact
 history, a present malformed adapter, cross-source selection, and failed
 native-revision/exact-locator postconditions. The
@@ -54,6 +57,17 @@ This verifies the finite decision over observed facts. It does not prove that
 an adapter's source scope, native revision, exact reconstruction, or
 authoritative barrier is truthful, and it does not prove token cryptography.
 Those remain explicit adapter and cryptographic refinement obligations.
+
+The generated cache decision now has a separate snapshot-exact entry stage:
+availability selects `UseSnapshotExactEntry`; absence selects
+`ComputeSnapshotExactValue` and can never fall through to managed proof reuse.
+The finite decision proves only that a declared available entry controls the
+corresponding hit. It does not prove that the host's composite key truthfully
+identifies an ordinary immutable snapshot. Backend I/O effects (including
+Datomic targeted sync and `d/as-of`), cancellation of provider futures,
+Datahike full-history retention, and canonical cache-key fields remain named
+adapter/host assumptions covered by deterministic effect tests and real-store
+integration evidence.
 
 The acyclic ordered-EID merge now has an exact production control model rather
 than only a canonical sorted-union oracle. `OrderedMerge.dfy` represents the
@@ -151,8 +165,9 @@ closure instead of silently adding a branch.
 This is a completeness ledger, not a source-refinement proof. Its explicit
 remaining scopes are adapter-operation semantic refinement and theorem
 classification for every reachable definition. `backend-dispatch.edn`
-separately proves the static closure fact that all 56 CLJ and 56 CLJS
-`backend/invoke` sites use literal keys and that their 21-key set equals
-`required-snapshot-operations`; this does not prove what an adapter
+separately proves the static closure fact that every CLJ and CLJS
+`backend/invoke` site uses a literal key from the pinned operation set (the
+required snapshot operations plus `:proof-frame`; the committed ledger holds
+the exact site and key counts); this does not prove what an adapter
 implementation does. The release claim remains withheld until those semantic
 classifications are complete.

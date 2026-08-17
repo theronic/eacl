@@ -1,6 +1,7 @@
 (ns eacl.datomic.config-test
   "As of 2025-06-28, EACL supports configurable ID attributes."
   (:require [clojure.test :as t :refer [deftest testing is]]
+            [clojure.walk]
             [eacl.core :as eacl]
             [datomic.api :as d]
             [eacl.datomic.core :as core]
@@ -61,6 +62,32 @@
                      (ex-data e)))]
         (is (= :eacl/invalid-config (:type data)) (pr-str value))
         (is (= :cursor-ttl-seconds (:key data)) (pr-str value))))))
+
+(deftest cursor-expiry-is-optional-and-independent-from-cache-ttl-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {:security-key "non-expiring-cursor"})
+          opts (:opts client)
+          token (core/page-token opts {:op :test})
+          decoded (core/token->page-bound opts token)]
+      (is (nil? (:page-token-ttl-seconds opts)))
+      (is (not (contains? decoded :exp))
+          "an omitted cursor TTL mints no age-expiry field"))
+
+    (let [client (core/make-client
+                  conn
+                  {:security-key "expiring-cursor"
+                   :cursor-ttl-seconds 60})
+          opts (:opts client)
+          token (core/page-token opts {:op :test :ttl-seconds 60})]
+      (is (integer? (:exp (core/token->page-bound opts token)))
+          "an explicit positive cursor TTL remains authenticated and enforced"))
+
+    (let [client (core/make-client
+                  conn
+                  {:cursor-ttl-seconds 1
+                   :cache {:ttl-ms 5000}})]
+      (is (= 5000 (get-in client [:opts :lookup-cache-ttl-ms]))
+          "cursor policy no longer caps an independently configured cache TTL"))))
 
 (deftest uniform-construction-option-family-test
   (with-mem-conn [conn schema/v7-schema]
@@ -155,3 +182,71 @@
             :cache-attempt {:evaluation-reserve-ms 7}})]
       (is (= 1234 (get-in client [:opts :execution-timeout-ms])))
       (is (= 7 (get-in client [:opts :cache-attempt :evaluation-reserve-ms]))))))
+
+(deftest expand-permission-tree-uses-the-client-id-codec-test
+  ;; The adapter's :object-id->internal must resolve external ids through the
+  ;; client's :object-id->lookup-ref, not a hardwired [:eacl/id id]. Expansion
+  ;; is the one public operation that hands the adapter an external id, so a
+  ;; codec whose external ids differ from :eacl/id used to yield an absent
+  ;; root (no subjects anywhere) instead of the tree.
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
+    (let [external->eacl-id {"S1" "account1-server1" "A1" "account-1" "U1" "user-1"
+                             "G1" "group-1" "SU" "super-user" "P" "platform"
+                             "N1" "nic-1" "L1" "lease-1" "NET1" "network-1" "V1" "vpc-1"}
+          eacl-id->external (into {} (map (juxt val key)) external->eacl-id)
+          codec-client (core/make-client
+                        conn
+                        {:object-id->lookup-ref (fn [id] [:eacl/id (get external->eacl-id id id)])
+                         :entid->object-id (fn [db eid]
+                                             (let [eacl-id (:eacl/id (d/entity db eid))]
+                                               (get eacl-id->external eacl-id eacl-id)))})
+          default-client (core/make-client conn {})
+          rename-ids (fn rename [tree]
+                       (clojure.walk/postwalk
+                        (fn [node]
+                          (if (and (map? node) (contains? node :type) (contains? node :id))
+                            (update node :id #(get eacl-id->external % %))
+                            node))
+                        tree))
+          codec-tree (:tree-root (eacl/expand-permission-tree
+                                  codec-client {:resource (->server "S1") :permission :view}))
+          default-tree (:tree-root (eacl/expand-permission-tree
+                                    default-client {:resource (->server "account1-server1") :permission :view}))
+          leaf-subjects (fn [tree]
+                          (->> (tree-seq map? #(get-in % [:intermediate :children]) tree)
+                               (mapcat #(get-in % [:leaf :subjects]))
+                               (map :id)
+                               set))]
+      (testing "the codec client sees the same topology and subjects as the default client"
+        (is (seq (leaf-subjects default-tree)))
+        (is (= (leaf-subjects (rename-ids default-tree)) (leaf-subjects codec-tree)))
+        (is (= (rename-ids default-tree) codec-tree)))
+      (testing "the other operations agree with expansion under the same codec"
+        (is (true? (eacl/can? codec-client (->user "U1") :view (->server "S1"))))
+        (is (contains? (leaf-subjects codec-tree) "U1"))))))
+
+(deftest service-admission-option-test
+  (with-mem-conn [conn schema/v7-schema]
+    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
+    (testing "the option is validated at construction"
+      (doseq [bad [{:max-concurrent 0} {:bogus 1} :on]]
+        (is (= :eacl/invalid-config
+               (try (core/make-client conn {:service-admission bad}) nil
+                    (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
+            (pr-str bad))))
+    (testing "a configured bulkhead is installed and enumerations run through it"
+      (let [client (core/make-client conn {:service-admission {:max-concurrent 8
+                                                               :max-replays 4}})
+            admission (:service-admission (:opts client))]
+        (is (= 8 (:max-concurrent @admission)))
+        (is (= 4 (:max-replays @admission)))
+        (is (= 2 (count (:data (eacl/lookup-resources client {:subject (->user "user-1")
+                                                              :permission :view
+                                                              :resource/type :server})))))
+        (is (true? (eacl/can? client (->user "user-1") :view (->server "account1-server1"))))
+        (is (zero? (:active @admission)) "slots are released when the work returns")))
+    (testing "the default client installs no bulkhead"
+      (is (nil? (:service-admission (:opts (core/make-client conn {}))))))))

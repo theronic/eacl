@@ -1,6 +1,7 @@
 (ns eacl.datomic.consistency-v3-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.causal-token :as causal-token]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.datomic-helpers
@@ -43,6 +44,12 @@
     nil
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
+
+(defn- token-data
+  [authorization token]
+  (causal-token/token-data
+   (get-in authorization [:opts :format-options])
+   token))
 
 (deftest map-can-rejects-malformed-consistency-test
   (with-mem-conn [conn schema/v7-schema]
@@ -120,6 +127,91 @@
                    #(eacl/can?
                      reader user :view document
                      (consistency/at-exact-snapshot token)))))))))))
+
+(deftest lagging-real-peer-exact-selection-targets-token-basis-test
+  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+    (let [client-opts {:security-key security-key
+                       :zed-token-key security-key
+                       :source-lifecycle source-lifecycle
+                       :consistency-sync-timeout-ms 5000}
+          writer (datomic/make-client writer-conn client-opts)
+          reader (datomic/make-client reader-conn client-opts)
+          _ (seed! writer-conn writer)
+          stale-reader-db @(d/sync reader-conn)
+          token (:zed/token
+                 (eacl/create-relationship! writer relationship))
+          requested-t (:exact-locator (token-data reader token))
+          original-db d/db
+          original-sync d/sync
+          sync-calls (atom [])]
+      (is (< (d/basis-t stale-reader-db) requested-t)
+          "the controlled reader snapshot genuinely predates the writer token")
+      (with-redefs [d/db
+                    (fn [connection]
+                      (if (identical? connection reader-conn)
+                        stale-reader-db
+                        (original-db connection)))
+                    d/sync
+                    (fn
+                      ([connection]
+                       (original-sync connection))
+                      ([connection basis]
+                       (swap! sync-calls conj [connection basis])
+                       (original-sync connection basis)))]
+        (is (true?
+             (eacl/can?
+              reader user :view document
+              (consistency/at-exact-snapshot token))))
+        (is (= [[reader-conn requested-t]] @sync-calls)
+            "real Datomic targeted sync catches the lagging Peer up exactly to T")))))
+
+(deftest lagging-real-peer-resumes-historical-cursor-test
+  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+    (let [client-opts {:security-key security-key
+                       :zed-token-key security-key
+                       :source-lifecycle source-lifecycle
+                       :consistency-sync-timeout-ms 5000}
+          writer (datomic/make-client writer-conn client-opts)
+          reader (datomic/make-client reader-conn client-opts)
+          second-document (eacl/spice-object :document "document-2")
+          _ (seed! writer-conn writer)
+          _ @(d/transact writer-conn [{:eacl/id "document-2"}])
+          stale-reader-db @(d/sync reader-conn)
+          _ (eacl/create-relationships!
+             writer
+             [relationship
+              (eacl/->Relationship user :reader second-document)])
+          query {:subject user
+                 :permission :view
+                 :resource/type :document
+                 :first 1}
+          first-page (eacl/lookup-resources writer query)
+          cursor (get-in first-page [:page-info :end-cursor])
+          expected-page (eacl/lookup-resources writer (assoc query :after cursor))
+          original-db d/db
+          original-sync d/sync
+          sync-calls (atom [])]
+      (is (some? cursor))
+      (with-redefs [d/db
+                    (fn [connection]
+                      (if (identical? connection reader-conn)
+                        stale-reader-db
+                        (original-db connection)))
+                    d/sync
+                    (fn
+                      ([connection]
+                       (original-sync connection))
+                      ([connection basis]
+                       (swap! sync-calls conj [connection basis])
+                       (original-sync connection basis)))]
+        (is (= (:data expected-page)
+               (:data
+                (eacl/lookup-resources reader (assoc query :after cursor))))
+            "a lagging Peer deterministically replays the cursor at its historical basis")
+        (is (= 1 (count @sync-calls)))
+        (is (identical? reader-conn (ffirst @sync-calls)))
+        (is (< (d/basis-t stale-reader-db) (second (first @sync-calls)))
+            "cursor replay catches the lagging Peer up to the authenticated basis")))))
 
 (deftest missing-anchor-and-bounded-wait-test
   (with-mem-conn [conn schema/v7-schema]
@@ -258,3 +350,45 @@
                       :consistency
                       (consistency/at-least-as-fresh
                        delete-token))))))))))))
+
+(deftest exact-fallback-tolerates-unreadable-historical-stamps-test
+  ;; `:eacl/relation-version` is :db/noHistory, so an index job can make the
+  ;; historical stamp read on the exact `d/as-of` snapshot come back empty.
+  ;; The exact snapshot's proof is, by identity, the proof recorded at
+  ;; minting: an unreadable proof on the cursor's own native revision and
+  ;; execution identity must continue as :exact, while a readable proof that
+  ;; differs (rewritten history) or a different revision still diverges.
+  (let [decide #'datomic/exact-fallback-decision
+        identity-fields {:source-scope {:source-id {:database-id "db-1"} :branch nil}
+                         :adapter-fingerprint {:backend :datomic}
+                         :identity-contract :selected-internal/current-external-injective-v2}
+        proof-a {:dependency-scope-digest "scope-a" :proof-digest "proof-a"}
+        proof-b {:dependency-scope-digest "scope-a" :proof-digest "proof-b"}
+        exact-snapshot-proof {:dependency-scope-digest "exact-snapshot" :proof-digest "exact-snapshot-t10"}
+        cursor (merge identity-fields proof-a
+                      {:native-revision {:revision 10 :exact-locator 10}
+                       :cursor/authenticated? true
+                       :cursor/scope-matches? true
+                       :cursor/expired? false})
+        current (merge identity-fields proof-b
+                       {:native-revision {:revision 12 :exact-locator 12}})
+        exact-readable (merge identity-fields proof-a
+                              {:native-revision {:revision 10 :exact-locator 10}})
+        exact-unreadable (merge identity-fields exact-snapshot-proof
+                                {:native-revision {:revision 10 :exact-locator 10}})
+        exact-rewritten (merge identity-fields proof-b
+                               {:native-revision {:revision 10 :exact-locator 10}})
+        exact-other-revision (merge identity-fields exact-snapshot-proof
+                                    {:native-revision {:revision 11 :exact-locator 11}})
+        exact-other-source (merge identity-fields exact-snapshot-proof
+                                  {:native-revision {:revision 10 :exact-locator 10}
+                                   :source-scope {:source-id {:database-id "db-2"} :branch nil}})]
+    (testing "a readable equal proof is exact, as before"
+      (is (= :exact (decide nil current cursor exact-readable true))))
+    (testing "an unreadable proof on the cursor's own revision and source is exact by identity"
+      (is (= :exact (decide nil current cursor exact-unreadable false))))
+    (testing "a readable proof that differs at the same revision still diverges"
+      (is (= :history-divergence (decide nil current cursor exact-rewritten true))))
+    (testing "an unreadable proof never rescues another revision or another source"
+      (is (= :history-divergence (decide nil current cursor exact-other-revision false)))
+      (is (= :history-divergence (decide nil current cursor exact-other-source false))))))

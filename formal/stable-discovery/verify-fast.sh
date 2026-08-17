@@ -78,9 +78,15 @@ if [ "$discovered_source_bridges" != "$declared_source_bridges" ]; then
   exit 1
 fi
 
-if rg -n \
+# grep rather than rg: a missing scanner must fail the gate, not silently
+# skip the escape-hatch check.
+if ! command -v grep >/dev/null 2>&1; then
+  printf 'grep is required for the Dafny escape-hatch scan.\n' >&2
+  exit 1
+fi
+if grep -rEn --include='*.dfy' \
     '^[[:space:]]*(assume|axiom)\b|\{:[[:space:]]*(axiom|extern)\b|\{:[[:space:]]*verify[[:space:]]+false\b|decreases[[:space:]]+\*' \
-    "$model_root" --glob '*.dfy'
+    "$model_root"
 then
   printf 'Dafny proof escape hatch detected; isolate and review it explicitly.\n' >&2
   exit 1
@@ -176,13 +182,11 @@ source_refinement_check() {
     clojure -J-Djava.io.tmpdir="$source_refinement_tmp" -M:dev -e \
       '(do
          (load-file "formal/stable-discovery/randomized_refinement.clj")
-         (load-file "formal/stable-discovery/source_refinement_bridge.clj")
          (load-file "formal/stable-discovery/public_schema_refinement_bridge.clj")
          (load-file "formal/stable-discovery/sealed_plan_refinement_bridge.clj")
          (load-file "formal/stable-discovery/cursor_refinement_bridge.clj")
          (load-file "formal/stable-discovery/progress_checkpoint_refinement_bridge.clj")
          (prn (eacl.exploration.randomized-refinement/run-campaign! 24301 2000))
-         (prn (eacl.exploration.source-refinement-bridge/run-bridge!))
          (prn (eacl.exploration.public-schema-refinement-bridge/run-bridge!))
          (prn (eacl.exploration.sealed-plan-refinement-bridge/run-bridge!))
          (prn (eacl.exploration.cursor-refinement-bridge/run-bridge!))

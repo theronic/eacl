@@ -20,6 +20,7 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.formal.production-kernel :as production-kernel]
@@ -28,6 +29,7 @@
             [eacl.permission-tree :as permission-tree]
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
@@ -44,9 +46,9 @@
            [javax.crypto.spec GCMParameterSpec SecretKeySpec]))
 
 ;; eacl4_ tokens carry a binary envelope; the eacl3_ EDN format they replace is
-;; not read. Cursors are short-lived (300s by default) and every caller already
-;; handles :eacl.pagination/invalid-cursor on expiry, so a rolling deploy
-;; fails the affected continuation closed instead of producing wrong answers.
+;; not read. Cursor expiry is optional policy: without an explicitly configured
+;; TTL, authenticated cursors remain age-valid and exact history supplies their
+;; snapshot semantics.
 (def ^:private page-token-prefix "eacl4_")
 (def ^:private page-token-version 7)
 (def ^:private maximum-page-token-length
@@ -55,10 +57,9 @@
   permission graph; mirrors the cap eacl.datomic.consistency puts on Zed
   tokens."
   16384)
-(def ^:private default-page-token-ttl-seconds 300)
 (def ^:private maximum-page-token-ttl-seconds
-  ;; Keep both the cache's millisecond lifetime and the cursor's second-based
-  ;; expiry representable as signed longs. This is intentionally enormous
+  ;; Keep the cursor's second-based expiry representable as a signed long.
+  ;; This is intentionally enormous
   ;; (about 292 million years); it is a numeric-safety bound, not policy.
   (quot Long/MAX_VALUE 1000))
 (def ^:private default-consistency-sync-timeout-ms 30000)
@@ -83,6 +84,7 @@
               engine/*evaluation-mode* (:evaluation contract)
               engine/*recursive-traversal-limits*
               (:recursive-traversal-limits opts)
+              engine/*service-admission* (:service-admission opts)
               impl.indexed/*recursive-traversal-limits*
               (:recursive-traversal-limits opts)]
       (let [result (f opts)]
@@ -401,16 +403,16 @@
   ttl-seconds)
 
 (defn page-token
-  [opts {:keys [ttl-seconds]
-         :or {ttl-seconds default-page-token-ttl-seconds}
-         :as payload}]
-  (let [ttl-seconds (validate-cursor-ttl! ttl-seconds)]
-    (encrypt-page-token opts
-                        (-> payload
-                            (dissoc :ttl-seconds)
-                            (assoc :v page-token-version
-                                   :exp (+ (now-seconds)
-                                           (long ttl-seconds)))))))
+  [opts {:keys [ttl-seconds] :as payload}]
+  (let [ttl-seconds (when (some? ttl-seconds)
+                      (validate-cursor-ttl! ttl-seconds))]
+    (encrypt-page-token
+     opts
+     (cond-> (-> payload
+                 (dissoc :ttl-seconds)
+                 (assoc :v page-token-version))
+       ttl-seconds
+       (assoc :exp (+ (now-seconds) (long ttl-seconds)))))))
 
 (defn token->page-bound
   [opts token]
@@ -446,96 +448,79 @@
   (some->> (:bound page-req)
            (decrypt-authenticated-page-token opts)))
 
-(def ^:private sync-timeout-marker (Object.))
-
-(declare snapshot-unavailable!)
-
-(defn- freshness-unavailable!
-  [message data]
+(defn- historical-selection-failure!
+  [message phase requested-t timeout-ms cause]
   (throw
-   (ex-info message
-            (assoc data
-                   :type :eacl.consistency/freshness-unavailable
-                   :eacl/error :eacl.consistency/freshness-unavailable))))
+   (ex-info
+    message
+    {:type :eacl.basis/selection-failure
+     :eacl/error :eacl.basis/selection-failure
+     :classification :retryable
+     :phase phase
+     :requested-t requested-t
+     :requested-order-hint requested-t
+     :timeout-ms timeout-ms}
+    cause)))
 
-(defn- observed-connection-revision
-  [conn]
-  (try
-    (d/basis-t (d/db conn))
-    (catch Exception _
-      nil)))
+(defn- cursor-selection-timeout-ms
+  "The catch-up bound for cursor reconstruction.
+
+  Every other selection path bounds its wait by the request's remaining
+  execution time as well as the configured sync timeout; a cursor replay that
+  ignored the deadline could outlive the request that asked for it."
+  [opts]
+  (if-let [contract (:execution-contract opts)]
+    (min (:consistency-sync-timeout-ms opts)
+         (execution/remaining-millis contract))
+    (:consistency-sync-timeout-ms opts)))
 
 (defn- await-revision-db
   "Returns a local DB that has observed `requested-t`, waiting only when needed."
   [conn opts requested-t]
-  (let [local-db (d/db conn)
-        local-t (d/basis-t local-db)]
-    (if (or (nil? requested-t)
-            (<= requested-t local-t))
-      local-db
-      (let [timeout-ms (:consistency-sync-timeout-ms opts)]
+  (let [timeout-ms (cursor-selection-timeout-ms opts)
+        local-db
         (try
-          (let [synced-db (deref (d/sync conn requested-t)
-                                 timeout-ms
-                                 sync-timeout-marker)]
-            (when (identical? sync-timeout-marker synced-db)
-              (freshness-unavailable!
-               "Timed out waiting for the requested EACL revision."
-               {:reason :timeout
-                :requested-t requested-t
-                :observed-t (observed-connection-revision conn)
-                :timeout-ms timeout-ms}))
-            (let [observed-t (d/basis-t synced-db)]
-              (when (< observed-t requested-t)
-                (freshness-unavailable!
-                 "The local Peer did not reach the requested EACL revision."
-                 {:reason :revision-not-observed
-                  :requested-t requested-t
-                  :observed-t observed-t
-                  :timeout-ms timeout-ms}))
-              synced-db))
-          (catch clojure.lang.ExceptionInfo e
-            (if (= :eacl.consistency/freshness-unavailable
-                   (:type (ex-data e)))
-              (throw e)
-              (freshness-unavailable!
-               "Failed while waiting for the requested EACL revision."
-               {:reason :sync-failed
-                :requested-t requested-t
-                :observed-t (observed-connection-revision conn)
-                :timeout-ms timeout-ms})))
-          (catch Exception _
-            (freshness-unavailable!
-             "Failed while waiting for the requested EACL revision."
-             {:reason :sync-failed
-              :requested-t requested-t
-              :observed-t (observed-connection-revision conn)
-              :timeout-ms timeout-ms})))))))
+          (d/db conn)
+          (catch Exception failure
+            (historical-selection-failure!
+             "Failed reading the local Datomic database."
+             :cursor-exact-local-read requested-t timeout-ms failure)))]
+    (if (nil? requested-t)
+      local-db
+      (datomic-backend/await-basis-db
+       conn local-db requested-t timeout-ms :cursor-exact-sync))))
 
 (defn- historical-db
   [conn opts requested-t operation]
   (try
     (d/as-of (await-revision-db conn opts requested-t) requested-t)
     (catch clojure.lang.ExceptionInfo e
-      (if (= :eacl.consistency/freshness-unavailable
-             (:type (ex-data e)))
+      (if (contains? #{:eacl.consistency/freshness-unavailable
+                       :eacl.basis/selection-failure}
+                     (:type (ex-data e)))
         (throw e)
-        (snapshot-unavailable!
-         {:operation operation
-          :revision requested-t
-          :reason :historical-database-unavailable})))
-    (catch Exception _
-      (snapshot-unavailable!
-       {:operation operation
-        :revision requested-t
-        :reason :historical-database-unavailable}))))
-
-(defn- snapshot-unavailable!
-  [data]
-  (throw (ex-info "The requested EACL cache snapshot is unavailable."
-                  (assoc data
-                         :type :eacl.consistency/snapshot-unavailable
-                         :eacl/error :eacl.consistency/snapshot-unavailable))))
+        (historical-selection-failure!
+         "Failed reconstructing the Datomic cursor snapshot."
+         :cursor-exact-as-of requested-t
+         (cursor-selection-timeout-ms opts) e)))
+    (catch InterruptedException interrupt
+      (.interrupt (Thread/currentThread))
+      (throw
+       (ex-info
+        "Datomic cursor reconstruction was interrupted."
+        {:type :eacl.basis/selection-failure
+         :eacl/error :eacl.basis/selection-failure
+         :classification :cancelled
+         :phase :cursor-exact-as-of
+         :operation operation
+         :requested-t requested-t
+         :requested-order-hint requested-t}
+        interrupt)))
+    (catch Exception failure
+      (historical-selection-failure!
+       "Failed reconstructing the Datomic cursor snapshot."
+       :cursor-exact-as-of requested-t
+       (cursor-selection-timeout-ms opts) failure))))
 
 (defn- list-query-identity
   [op query]
@@ -781,7 +766,7 @@
   these three. (The vestigial :latest-result kind was deleted by
   trusted-surface-hygiene 11.1 — nothing has minted it since the v8 cursor
   redesign.)"
-  #{:can? :lookup-page :count})
+  #{:can? :lookup-page :relationship-page :count :permission-tree})
 
 (defn- internal-page-weight
   [page]
@@ -795,22 +780,11 @@
   (and (integer? eid) (pos? eid)))
 
 (defn- cursor-result
+  "Validates the internal cursor of a cached lookup page. Only the stable
+  engine's `:stable-edge` kind is minted; anything else invalidates the
+  cached page so it is recomputed."
   [cursor]
   (case (:kind cursor)
-    :lookup-eid
-    (when (positive-eid? (:result-eid cursor))
-      {:eid (:result-eid cursor)})
-
-    :recursive-logical
-    (when (and (= engine/recursive-cursor-version (:version cursor))
-               (= engine/recursive-order-abi (:order-abi cursor))
-               (contains? #{:forward :reverse} (:traversal cursor))
-               (integer? (:ordinal cursor))
-               (not (neg? (:ordinal cursor)))
-               (positive-eid? (:result-eid cursor)))
-      {:eid (:result-eid cursor)
-       :ordinal (:ordinal cursor)})
-
     :stable-edge
     (when (and (= engine/stable-cursor-version (:version cursor))
                (= engine/stable-order-abi (:order-abi cursor))
@@ -855,6 +829,27 @@
                      (or (nil? (:type end-result))
                          (= (:type (peek data)) (:type end-result)))))))))
 
+(defn- internal-relationship-page?
+  [page]
+  (and (map? page)
+       (vector? (:data page))
+       (every?
+        (fn [{:keys [subject relation resource]}]
+          (and (keyword? relation)
+               (keyword? (:type subject))
+               (positive-eid? (:id subject))
+               (keyword? (:type resource))
+               (positive-eid? (:id resource))))
+        (:data page))
+       (let [{:keys [start-cursor end-cursor
+                     has-next-page? has-previous-page?]}
+             (:page-info page)]
+         (and (map? (:page-info page))
+              (or (nil? start-cursor) (map? start-cursor))
+              (or (nil? end-cursor) (map? end-cursor))
+              (boolean? has-next-page?)
+              (boolean? has-previous-page?)))))
+
 (defn- count-response?
   [response]
   (let [limit (:limit response)]
@@ -890,7 +885,7 @@
   [opts consistency-context op query-identity kind valid-result? weight-fn compute]
   (let [contract (:execution-contract opts)
         {:keys [adapter db relationship-dependencies
-                permission-dependencies basis-t completed-cache?
+                permission-dependencies basis-t snapshot-exact?
                 request-proof-frame]}
         consistency-context
         evaluate
@@ -904,7 +899,8 @@
              value))
         cacheable?
         (and (:current-cache-store opts)
-             completed-cache?
+             (or (not snapshot-exact?)
+                 (backend/deterministic? adapter))
              (or (nil? contract)
                  (execution/cache-stage-available? contract)))]
     (if-not cacheable?
@@ -926,41 +922,58 @@
               (proof-frame/resolve!
                request-proof-frame (relation-ids)))
             _ (execution/check! contract :cache-lookup)
+            semantic-key
+            {:operation op
+             :query query-identity
+             :evaluation (:evaluation contract)
+             :demand (:demand contract)
+             :engine-version engine/engine-version
+             ;; The public order ABI is part of an answer's identity: a page
+             ;; cached under one order must never be served under another.
+             :order-abi engine/stable-order-abi
+             :source-lifecycle
+             (proof-frame/source-lifecycle request-proof-frame)
+             :adapter-fingerprint (backend/fingerprint adapter)
+             :recursive-traversal-limits
+             (:recursive-traversal-limits opts)
+             :permission-tree-limits
+             (:permission-tree-limits opts)}
             answer
-            (shared-cache/resolve-current!
-             (:current-cache-store opts)
-             {:snapshot basis-t
-              :cache-lifecycle (:cache-lifecycle opts)
-              :snapshot-order basis-t
-              :same-snapshot? =
-              :cache-basis basis-t
-              :decision-kernel (:decision-kernel opts)
-              :managed-key-fn
-              (when (:managed-cache-enabled? opts)
-                #(proof-frame/descriptor @complete-proof))
-              :managed-subproblem-key-fn
-              (when (:managed-cache-enabled? opts)
-                (fn [dependency]
-                  (proof-frame/subset-descriptor
-                   @complete-proof dependency)))
-              :managed-subproblem-scope
-              (consistency-v3/source-scope adapter)
-              :answer-weight-fn weight-fn
-              :remember-answer?
-              (:cache-remember-answers? opts)}
-             {:operation op
-              :query query-identity
-              :evaluation (:evaluation contract)
-              :demand (:demand contract)
-              :engine-version engine/engine-version
-              :source-lifecycle
-              (proof-frame/source-lifecycle request-proof-frame)
-              :adapter-fingerprint (backend/fingerprint adapter)
-              :recursive-traversal-limits
-              (:recursive-traversal-limits opts)}
-             kind
-             valid-result?
-             evaluate)
+            (if snapshot-exact?
+              (shared-cache/resolve-exact!
+               (:current-cache-store opts)
+               {:snapshot-exact-key
+                (shared-cache/snapshot-exact-key adapter)
+                :cache-lifecycle (:cache-lifecycle opts)
+                :cache-basis basis-t
+                :decision-kernel (:decision-kernel opts)
+                :answer-weight-fn weight-fn
+                :remember-answer? (:cache-remember-answers? opts)}
+               semantic-key kind valid-result? evaluate)
+              (shared-cache/resolve-current!
+               (:current-cache-store opts)
+               {:snapshot basis-t
+                :cache-lifecycle (:cache-lifecycle opts)
+                :snapshot-order basis-t
+                :same-snapshot? =
+                :snapshot-exact-key
+                (shared-cache/snapshot-exact-key adapter)
+                :cache-basis basis-t
+                :decision-kernel (:decision-kernel opts)
+                :managed-key-fn
+                (when (:managed-cache-enabled? opts)
+                  #(proof-frame/descriptor @complete-proof))
+                :managed-subproblem-key-fn
+                (when (:managed-cache-enabled? opts)
+                  (fn [dependency]
+                    (proof-frame/subset-descriptor
+                     @complete-proof dependency)))
+                :managed-subproblem-scope
+                (consistency-v3/source-scope adapter)
+                :answer-weight-fn weight-fn
+                :remember-answer?
+                (:cache-remember-answers? opts)}
+               semantic-key kind valid-result? evaluate))
             _ (execution/check! contract :cache-result)]
         (assoc consistency-context
                :result (:value answer)
@@ -1023,7 +1036,7 @@
                :has-next-page? false
                :has-previous-page? false}})
 
-(declare capture-result-context)
+(declare capture-result-context with-cache-info)
 
 (defn spiceomic-read-relationships
   [conn
@@ -1038,7 +1051,8 @@
         page-req (impl.indexed/normalize-page-request filters)
         decoded (authenticate-page-bound
                  opts :read-relationships query-shape page-req)
-        {:keys [db basis-t schema-version cursor-context]}
+        {:keys [db basis-t schema-version cursor-context]
+         :as result-context}
         (capture-result-context
          conn opts (:consistency filters)
          (fn [db _decoded]
@@ -1077,10 +1091,19 @@
       (let [filters'     (cond-> filters
                            subject-id (assoc :subject/id subject-eid)
                            resource-id (assoc :resource/id resource-eid))
-            internal-query (internal-page-query filters' page-req decoded)]
-        (coerce-relationship-page
-         db selected-opts :read-relationships query-shape basis-t
-         (impl/read-relationships db internal-query))))))
+            internal-query (internal-page-query filters' page-req decoded)
+            answer
+            (cached-authorization-result
+             selected-opts result-context :read-relationships
+             (shared-cache/lookup-page-query-identity filters internal-query)
+             :relationship-page internal-relationship-page?
+             internal-page-weight
+             #(impl/read-relationships db internal-query))]
+        (with-cache-info
+         (coerce-relationship-page
+          db selected-opts :read-relationships query-shape basis-t
+          (:result answer))
+         answer)))))
 
 (defn- resolve-existing-object
   "Resolves an external spice object to its internal eid, verifying the entity
@@ -1093,6 +1116,7 @@
       (assoc obj :id eid)
       (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
                {:type :eacl/unknown-object
+                :eacl/error :eacl/unknown-object
                 :object {:type type :id id}})))))
 
 (defn spice-relationship->internal
@@ -1162,12 +1186,20 @@
   (let [updates (vec updates)]
     (doseq [{:keys [operation]} updates]
       (impl/validate-relationship-operation! operation))
+    (let [schema (schema/read-schema (d/db conn))]
+      (doseq [{:keys [relationship]} updates]
+        (schema-errors/validate-relationship-write!
+         schema :write-relationships
+         {:resource-type (:type (:resource relationship))
+          :subject-type (:type (:subject relationship))
+          :relation (:relation relationship)})))
     (loop [attempt 1]
       (let [db (d/db conn)
             internal-updates
             (S/transform [S/ALL :relationship]
                          #(spice-relationship->internal db opts %)
                          updates)
+            _ (relationship-mutations/validate-batch! internal-updates)
             relationship-tx-data
             (->> internal-updates
                  (mapcat #(impl/tx-update-relationship db %))
@@ -1317,6 +1349,33 @@
       {:graph (cursor-revision-code current cursor-envelope exact)
        :source (cursor-execution-identity exact)
        :proof (cursor-continuation-proof exact)})}))
+
+(defn- exact-fallback-decision
+  "Decides an exact-fallback continuation.
+
+  The generated `:cursor-continuation` decision accepts `:exact` only when
+  the exact snapshot's dependency proof equals the cursor's. On Datomic the
+  exact snapshot is `d/as-of` at the cursor's own basis, and its
+  relationship data is exact there — but `:eacl/relation-version` is a
+  `:db/noHistory` attribute whose superseded values an index job may drop,
+  so the historical stamp read can come back empty and the proof frame
+  incomplete. That is not a divergence: the exact snapshot's proof is, by
+  identity, the proof recorded at minting. When the kernel reports
+  divergence purely because the exact snapshot's proof was unreadable
+  (`proof-complete?` false) while its native revision and execution
+  identity are the cursor's own, the continuation is `:exact`. Readable
+  stamps that differ (a rewritten history) still diverge."
+  [kernel current-cursor-context decoded exact-cursor-context proof-complete?]
+  (let [decision (cursor-decision kernel current-cursor-context decoded
+                                  exact-cursor-context)]
+    (if (and (= :history-divergence decision)
+             (not proof-complete?)
+             (= (:native-revision exact-cursor-context)
+                (:native-revision decoded))
+             (= (cursor-execution-identity exact-cursor-context)
+                (cursor-execution-identity decoded)))
+      :exact
+      decision)))
 
 (defn- dependency-cursor-context
   "Cursor continuation context for one selected snapshot.
@@ -1516,11 +1575,22 @@
                         (cursor-snapshot-expired! operation decoded))
                     exact-context
                     (snapshot-result-context opts exact prepare decoded)
+                    exact-relation-ids
+                    (some-> (:permission-dependencies exact-context)
+                            deref
+                            :relationship-dependencies)
+                    exact-proof-complete?
+                    (or (nil? exact-relation-ids)
+                        (proof-frame/complete?
+                         (proof-frame/resolve!
+                          (:request-proof-frame exact-context)
+                          exact-relation-ids)))
                     exact-decision
-                    (cursor-decision
+                    (exact-fallback-decision
                      (:decision-kernel opts)
                      current-cursor-context decoded
-                     (:cursor-context exact-context))]
+                     (:cursor-context exact-context)
+                     exact-proof-complete?)]
                 (if (= :exact exact-decision)
                   (assoc exact-context :mode :at-exact-snapshot)
                   (throw
@@ -1540,20 +1610,21 @@
     (when (:revision-checkpoints opts)
       (revision/observe! (:revision-checkpoints opts)
                          (d/basis-t (d/db conn))))
-    (merge
-     selected-context
-     {:mode (or (:mode selected-context) mode)
-      ;; A cursor is authenticated before snapshot selection. It is cacheable
-      ;; only when that selection retained the request's current immutable
-      ;; basis. Historical reconstruction necessarily changes the basis and
-      ;; must never publish into or read from the current completed cache.
-      :completed-cache?
-      (and (not= :at-exact-snapshot
+    (let [snapshot-exact?
+          (or (= :at-exact-snapshot
                  (or (:mode selected-context) mode))
-           (= selected-current-basis (:basis-t selected-context)))
-      :requested-t requested-t
-      :selection selection
-      :response-token nil})))
+              (not= selected-current-basis (:basis-t selected-context)))]
+      (merge
+       selected-context
+       {:mode (or (:mode selected-context) mode)
+        ;; A cursor is authenticated before snapshot selection. Historical
+        ;; reconstruction may use only the separately keyed snapshot-exact
+        ;; tier; current requests retain exact-current plus managed-proof
+        ;; behavior.
+        :snapshot-exact? snapshot-exact?
+        :requested-t requested-t
+        :selection selection
+        :response-token nil}))))
 
 (defn- capture-basic-result-context
   "Selects one immutable snapshot without constructing schema or relation
@@ -1575,6 +1646,7 @@
      :basis-t basis-t
      :request-proof-frame (new-request-proof-frame opts adapter)
      :mode mode
+     :snapshot-exact? (= :at-exact-snapshot mode)
      :requested-t (:revision request-token)
      :selection selection
      :response-token nil}))
@@ -1583,7 +1655,8 @@
   [opts context op query-identity kind valid-result?
    resource-type permission compute]
   (let [contract (:execution-contract opts)
-        {:keys [adapter db basis-t mode request-proof-frame]} context
+        {:keys [adapter db basis-t snapshot-exact? request-proof-frame]}
+        context
         schema-cache
         (delay
           (selected-schema-cache!
@@ -1601,7 +1674,8 @@
         cacheable?
         (and (:current-cache-store opts)
              (:cache-remember-answers? opts)
-             (not= :at-exact-snapshot mode)
+             (or (not snapshot-exact?)
+                 (backend/deterministic? adapter))
              (or (nil? contract)
                  (execution/cache-stage-available? contract)))]
     (if-not cacheable?
@@ -1624,38 +1698,53 @@
                request-proof-frame
                (:relationship-dependencies @dependencies)))
             _ (execution/check! contract :cache-lookup)
+            semantic-key
+            {:operation op
+             :query query-identity
+             :evaluation (:evaluation contract)
+             :demand (:demand contract)
+             :engine-version engine/engine-version
+             ;; The public order ABI is part of an answer's identity: a page
+             ;; cached under one order must never be served under another.
+             :order-abi engine/stable-order-abi
+             :source-lifecycle
+             (proof-frame/source-lifecycle request-proof-frame)
+             :adapter-fingerprint (backend/fingerprint adapter)
+             :recursive-traversal-limits
+             (:recursive-traversal-limits opts)
+             :permission-tree-limits
+             (:permission-tree-limits opts)}
             answer
-            (shared-cache/resolve-current!
-             (:current-cache-store opts)
-             {:snapshot basis-t
-              :cache-lifecycle (:cache-lifecycle opts)
-              :snapshot-order basis-t
-              :same-snapshot? =
-              :cache-basis basis-t
-              :decision-kernel (:decision-kernel opts)
-              :managed-key-fn
-              (when (:managed-cache-enabled? opts)
-                #(proof-frame/descriptor @complete-proof))
-              :managed-subproblem-key-fn
-              (when (:managed-cache-enabled? opts)
-                (fn [dependency]
-                  (proof-frame/subset-descriptor
-                   @complete-proof dependency)))
-              :managed-subproblem-scope
-              (consistency-v3/source-scope adapter)}
-             {:operation op
-              :query query-identity
-              :evaluation (:evaluation contract)
-              :demand (:demand contract)
-              :engine-version engine/engine-version
-              :source-lifecycle
-              (proof-frame/source-lifecycle request-proof-frame)
-              :adapter-fingerprint (backend/fingerprint adapter)
-              :recursive-traversal-limits
-              (:recursive-traversal-limits opts)}
-             kind
-             valid-result?
-             evaluate)
+            (if snapshot-exact?
+              (shared-cache/resolve-exact!
+               (:current-cache-store opts)
+               {:snapshot-exact-key
+                (shared-cache/snapshot-exact-key adapter)
+                :cache-lifecycle (:cache-lifecycle opts)
+                :cache-basis basis-t
+                :decision-kernel (:decision-kernel opts)}
+               semantic-key kind valid-result? evaluate)
+              (shared-cache/resolve-current!
+               (:current-cache-store opts)
+               {:snapshot basis-t
+                :cache-lifecycle (:cache-lifecycle opts)
+                :snapshot-order basis-t
+                :same-snapshot? =
+                :snapshot-exact-key
+                (shared-cache/snapshot-exact-key adapter)
+                :cache-basis basis-t
+                :decision-kernel (:decision-kernel opts)
+                :managed-key-fn
+                (when (:managed-cache-enabled? opts)
+                  #(proof-frame/descriptor @complete-proof))
+                :managed-subproblem-key-fn
+                (when (:managed-cache-enabled? opts)
+                  (fn [dependency]
+                    (proof-frame/subset-descriptor
+                     @complete-proof dependency)))
+                :managed-subproblem-scope
+                (consistency-v3/source-scope adapter)}
+               semantic-key kind valid-result? evaluate))
             _ (execution/check! contract :cache-result)]
         (assoc context
                :result (:value answer)
@@ -2077,7 +2166,7 @@
 
 (defn spiceomic-expand-permission-tree
   [conn opts query]
-  (let [{:keys [adapter db]}
+  (let [{:keys [adapter db] :as context}
         (capture-basic-result-context
          conn opts (:consistency query))
         _ (schema-errors/validate-expansion-request!
@@ -2086,13 +2175,19 @@
            (:type (:resource query))
            (:permission query))
         contract (:execution-contract opts)
-        tree
-        (permission-tree/expand
-         adapter
-         {:limits (:permission-tree-limits opts)
-          :execution-contract contract}
-         (:resource query)
-         (:permission query))]
+        answer
+        (cached-basic-authorization-result
+         opts context :expand-permission-tree
+         (dissoc query :consistency :cache? :timeout-ms :cancellation-token)
+         :permission-tree map?
+         (:type (:resource query)) (:permission query)
+         #(permission-tree/expand
+           adapter
+           {:limits (:permission-tree-limits opts)
+            :execution-contract contract}
+           (:resource query)
+           (:permission query)))
+        tree (:result answer)]
     (execution/check! contract :permission-tree-token-issuance)
     (let [token
           (permission-tree/selected-adapter-token adapter opts)]
@@ -2307,6 +2402,7 @@
     :cache-attempt
     :recursive-traversal-limits
     :permission-tree-limits
+    :service-admission
     :auto-migrate-v6})
 
 (def ^:private canonical-security-opt-keys
@@ -2355,7 +2451,7 @@
   Datomic's completed-answer and continuation stores are client-private.
   Caller-supplied CacheStore adapters used to be accepted but never controlled
   either live store, so they are now rejected instead of being decorative."
-  [cache-option cursor-ttl-seconds]
+  [cache-option]
   (when (boolean? cache-option)
     (throw (ex-info (str "EACL Config Error: :cache takes a configuration map, not"
                          " a boolean. Use eacl.cache/no-cache to"
@@ -2439,8 +2535,6 @@
                      (when enabled? (:remember-answers config))
                      (when enabled? true))
           remember-answers? (boolean remember)
-          token-ttl-ms (* 1000 (or cursor-ttl-seconds
-                                   default-page-token-ttl-seconds))
           ;; No expiry by default. A ttl was originally a staleness bound;
           ;; relation stamps are that bound now, and they are exact rather than
           ;; approximate. What remains is capacity, which :max-weight and
@@ -2487,7 +2581,7 @@
           (if (map? (:checkpoints config))
             (:checkpoints config)
             {})))
-       :ttl-ms (when ttl-ms (min ttl-ms token-ttl-ms))
+       :ttl-ms ttl-ms
        :native-max-entries
        (or (:max-entries config) 1024)
        :native-admit-on-repeat?
@@ -2568,7 +2662,8 @@
     page tokens do not survive restarts and are not portable across clients;
     supply stable key material in production. The :page-token-* names are
     accepted as non-mixable aliases.
-  - :cursor-ttl-seconds — overrides the default page-token expiry.
+  - :cursor-ttl-seconds — optional positive page-token expiry. Omitted means
+    cursors do not expire by age.
     :page-token-ttl-seconds is a non-mixable alias.
   - :zed-token-key / :zed-token-keyring / :zed-token-kid — HMAC key material
     for authenticated Zed tokens. When omitted, purpose-specific signing keys
@@ -2582,6 +2677,11 @@
     attempt bound. Cache work may remove evaluator commands but
     cannot enlarge request demand. Remote provider/decode controls are not
     exposed because caller-supplied cache providers are rejected.
+  - :service-admission — {:max-concurrent n :max-replays n :max-replays-per-key n}, the
+    service-edge bulkhead for routed enumerations (slots are held for the full
+    synchronous call chain) and the replay ledger for cursor replays; omitted
+    means no bulkhead. Rejections are :eacl.service/admission-rejected and
+    :eacl.service/replay-rejected.
   - :recursive-traversal-limits — overrides eacl.datomic.impl.indexed/default-recursive-traversal-limits
     for list calls, e.g. {:max-derived-grants 1000000 :max-advanced-datoms 1000000
     :max-queued-work 1000000}. Recursive traversal remains subject to these
@@ -2618,6 +2718,7 @@
            cache-attempt
            recursive-traversal-limits
            permission-tree-limits
+           service-admission
            auto-migrate-v6]}]
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
     (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
@@ -2777,7 +2878,7 @@
         database-id       (impl.indexed/database-id initial-db)
         diagnostic-schema-version
         (atom (impl.indexed/schema-version initial-db))
-        cache-config       (normalize-cache-config cache page-token-ttl-seconds)
+        cache-config       (normalize-cache-config cache)
         timeout-ms         (if (contains? config-opts
                                           :consistency-sync-timeout-ms)
                              consistency-sync-timeout-ms
@@ -2872,6 +2973,20 @@
                              (datomic-backend/snapshot-adapter
                                db
                                {:entid->object-id entid->object-id
+                                ;; The adapter's :object-id->internal must
+                                ;; use the client's id codec: the engine
+                                ;; hands it internal eids (numbers, passed
+                                ;; through) but expand-permission-tree hands
+                                ;; it the external root id, which a custom
+                                ;; :object-id->lookup-ref/:object-id->ident
+                                ;; must resolve exactly like every other
+                                ;; operation does.
+                                :object-eid-fn
+                                (fn [db object-id]
+                                  (cond
+                                    (nil? object-id) nil
+                                    (number? object-id) object-id
+                                    :else (object-id->entid db object-id)))
                                 :conn conn
                                 :database-id database-id
                                 :source-lifecycle source-lifecycle
@@ -2937,7 +3052,18 @@
                                    recursive-traversal-limits)
                             :permission-tree-limits
                             (permission-tree/normalize-limits
-                             permission-tree-limits)}]
+                             permission-tree-limits)
+                            ;; The service-edge bulkhead and replay ledger
+                            ;; (bounded-physical-execution): nil leaves the
+                            ;; routed engine unguarded, a map installs it.
+                            :service-admission
+                            (some-> (physical/normalize-service-admission
+                                     service-admission)
+                                    physical/make-service-admission)}
+        ;; The stable engine runs only on a qualified topology; the adapter's
+        ;; declared execution profile is checked once here.
+        _ (physical/require-qualified-topology!
+           ((:backend-adapter-fn opts) (d/db conn)))]
     (->Spiceomic conn opts)))
 
 (defn current-zed-token

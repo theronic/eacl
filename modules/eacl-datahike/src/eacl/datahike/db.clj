@@ -8,6 +8,22 @@
   (:require [datahike.api :as d]
             [datahike.db.interface :as dbi]))
 
+(defn db-config
+  "The configuration of `db` through Datahike's database protocol, so
+   temporal and filter wrappers (`AsOfDB` carries only its origin and time
+   point as fields) report their origin's store, writer, history and
+   attribute representation instead of nil."
+  [db]
+  (dbi/-config db))
+
+(defn direct-writer?
+  "True when transactions against `db`'s connection run in this process
+   (Datahike's default `{:writer {:backend :self}}`). Only a direct writer
+   can execute transaction functions: a remote writer receives serialized
+   tx-data, which cannot carry a function value."
+  [db]
+  (= :self (get-in (db-config db) [:writer :backend])))
+
 (defn entid
   "`entid` as DataScript and Datomic define it: a number passes through
    unchanged (an unallocated id is deliberately NOT rejected), an ident or
@@ -202,18 +218,6 @@
              true (filter matches-prefix?)
              true (sort-by (juxt :v :e))
              (= :desc direction) reverse)))))))
-
-(defn avet-range
-  "Datoms of `attr` whose value falls in [`start`, `end`]. Datahike's
-   `index-range` takes a map where DataScript takes positional arguments; tuple
-   values are valid bounds here, unlike a partial tuple in a seek.
-
-   `:attrid` is the one place datahike does NOT accept the attribute keyword in
-   both modes: under `:attribute-refs?` it demands the numeric ref and raises
-   otherwise. It raises rather than denying, which is why this surfaced as an
-   error instead of a wrong answer."
-  [db attr start end]
-  (d/index-range db {:attrid (attr-repr db attr) :start start :end end}))
 
 (defn entity-exists?
   "Whether `eid` has any datom. `entid` passes unallocated numeric ids through

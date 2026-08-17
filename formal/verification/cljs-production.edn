@@ -82,7 +82,7 @@
   {:tests 172 :assertions 4682 :failures 0 :errors 0
    :all-required-indexed-operations-observed true}
   :mutation-registry
-  {:mutants 95 :killed 95 :survived 0}}
+  {:mutants 96 :killed 96 :survived 0}}
  :trust-posture
  {:browser-authorization :advisory
   :server-recheck-required true

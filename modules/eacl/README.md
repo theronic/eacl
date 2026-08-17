@@ -7,7 +7,7 @@ Responsibilities:
 - `eacl.core` protocol and public records
 - cursor/token helpers and consistency semantics
 - schema IR, parser, validation, and diffing
-- validated backend boundary and shared generated authorization engine
+- validated backend boundary and the shared stable-discovery authorization engine (hand-written CLJC; the generated Dafny kernel supplies the surrounding pure decisions)
 - contract test fixtures and backend-neutral tests
 
 This module must not depend on Datomic or a logging backend.
@@ -34,8 +34,9 @@ Maven consumers neither install formal tools nor run verification.
 Backends supply the validated operation map consumed through
 `eacl.backend.v8`. It declares consistency, snapshot, cursor, transaction,
 cache-proof, and runtime capabilities and implements normalized operations for
-snapshot identity, object ID conversion, schema definitions, adjacency,
-direct matches, recursive permission nodes, cursor frontier identity, and
+snapshot identity, source scope/lifecycle, native revision and order hint,
+snapshot selection, exact locators, object ID conversion, schema definitions,
+ordered adjacency scans, direct matches, permission nodes, and
 ordered-generation proof frames. An adapter without certified proof support
 remains a correct exact-current adapter.
 
