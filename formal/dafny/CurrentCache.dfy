@@ -43,6 +43,7 @@ module CurrentCache {
     | EligibilityStage
     | GenerationStage
     | ExactEntryStage
+    | SnapshotExactEntryStage
     | ManagedEntryStage
 
   datatype CurrentCacheAction =
@@ -52,6 +53,8 @@ module CurrentCache {
     | ProbeManagedEntry
     | UseManagedEntry
     | ComputeCurrentValue
+    | UseSnapshotExactEntry
+    | ComputeSnapshotExactValue
 
   function DecideCurrentCache(
     stage: CurrentCacheStage,
@@ -64,6 +67,8 @@ module CurrentCache {
       if available then ProbeExactEntry else BypassCurrentCache
     case ExactEntryStage =>
       if available then UseExactEntry else ProbeManagedEntry
+    case SnapshotExactEntryStage =>
+      if available then UseSnapshotExactEntry else ComputeSnapshotExactValue
     case ManagedEntryStage =>
       if available then UseManagedEntry else ComputeCurrentValue
   }
@@ -76,6 +81,8 @@ module CurrentCache {
               stage.ExactEntryStage? && available
     ensures DecideCurrentCache(stage, available).UseManagedEntry? ==>
               stage.ManagedEntryStage? && available
+    ensures DecideCurrentCache(stage, available).UseSnapshotExactEntry? ==>
+              stage.SnapshotExactEntryStage? && available
   {
   }
 
@@ -95,6 +102,8 @@ module CurrentCache {
   )
     ensures DecideCurrentCache(stage, available).ComputeCurrentValue? ==>
               stage.ManagedEntryStage? && !available
+    ensures DecideCurrentCache(stage, available).ComputeSnapshotExactValue? ==>
+              stage.SnapshotExactEntryStage? && !available
   {
   }
 
@@ -103,16 +112,31 @@ module CurrentCache {
     | ExactCurrentHit(value: T)
     | ManagedCurrentHit(value: T)
 
-  predicate CompletedAnswerCacheable(requestClass: RequestClass) {
-    requestClass.CurrentSnapshot?
+  predicate CompletedAnswerCacheable(
+    requestClass: RequestClass,
+    canonicalExactSnapshotSelected: bool
+  ) {
+    requestClass.CurrentSnapshot? ||
+    (requestClass.ExactSnapshot? && canonicalExactSnapshotSelected)
   }
 
-  lemma HistoricalRequestsBypassCompletedAnswers(
-    requestClass: RequestClass
+  lemma ArbitraryDatabaseValuesBypassCompletedAnswers(
+    canonicalExactSnapshotSelected: bool
   )
-    requires requestClass.ExactSnapshot? ||
-             requestClass.ArbitraryDatabaseValue?
-    ensures !CompletedAnswerCacheable(requestClass)
+    ensures !CompletedAnswerCacheable(
+              ArbitraryDatabaseValue,
+              canonicalExactSnapshotSelected
+            )
+  {
+  }
+
+  lemma ExactRequestsRequireCanonicalSnapshotIdentity(
+    canonicalExactSnapshotSelected: bool
+  )
+    ensures CompletedAnswerCacheable(
+              ExactSnapshot,
+              canonicalExactSnapshotSelected
+            ) == canonicalExactSnapshotSelected
   {
   }
 
@@ -193,22 +217,47 @@ module CurrentCache {
   {
   }
 
+  datatype SnapshotExactIdentity =
+    | SnapshotExactIdentity(
+        sourceScope: string,
+        sourceLifecycle: string,
+        nativeRevision: string,
+        exactLocator: string,
+        viewKind: string,
+        adapterFingerprint: string,
+        identityContract: string
+      )
+
   predicate ExactGenerationMatches(
-    selectedSnapshot: int,
-    generationSnapshot: int
+    selectedSnapshot: SnapshotExactIdentity,
+    generationSnapshot: SnapshotExactIdentity
   ) {
     selectedSnapshot == generationSnapshot
   }
 
   lemma ExactGenerationHitIsSameSnapshot(
-    selectedSnapshot: int,
-    generationSnapshot: int
+    selectedSnapshot: SnapshotExactIdentity,
+    generationSnapshot: SnapshotExactIdentity
   )
     requires ExactGenerationMatches(
                selectedSnapshot,
                generationSnapshot
              )
     ensures selectedSnapshot == generationSnapshot
+  {
+  }
+
+  lemma NumericRevisionAloneCannotEstablishExactIdentity(
+    selectedSnapshot: SnapshotExactIdentity,
+    generationSnapshot: SnapshotExactIdentity
+  )
+    requires selectedSnapshot.nativeRevision ==
+             generationSnapshot.nativeRevision
+    requires selectedSnapshot != generationSnapshot
+    ensures !ExactGenerationMatches(
+              selectedSnapshot,
+              generationSnapshot
+            )
   {
   }
 

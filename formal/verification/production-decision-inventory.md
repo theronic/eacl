@@ -18,7 +18,7 @@ reused.
 | Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
 | Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
 | Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `captured-current-selection`, `select` | snapshot chosen for every Datomic, Datahike, and DataScript authorization request |
-| Semantic cache key and entry eligibility | exact generated command/snapshot/ABI keys and completed typed artifact validation | `can?`, lookup, count cache-enabled responses; eligibility has zero backend-command authority |
+| Semantic cache key and entry eligibility | canonical source/lifecycle/native-locator/view/adapter identity plus generated current-exact, snapshot-exact, and managed entry decisions and completed typed artifact validation | `can?`, lookup, count, relationship-read, and permission-tree cache-enabled responses; eligibility has zero backend-command authority |
 | Cache miss ownership and publication | `eacl.subproblem-cache/resolve-independent!`, generation-qualified bounded `publish!` | misses compute independently; compatible winners are retained and losing/late candidates are discarded without changing authorization |
 | Local cache failure and invalid-entry handling | `eacl.cache` current-generation decisions plus `eacl.subproblem-cache` lookup/validation/publication | whether a client-private cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
@@ -57,6 +57,17 @@ This verifies the finite decision over observed facts. It does not prove that
 an adapter's source scope, native revision, exact reconstruction, or
 authoritative barrier is truthful, and it does not prove token cryptography.
 Those remain explicit adapter and cryptographic refinement obligations.
+
+The generated cache decision now has a separate snapshot-exact entry stage:
+availability selects `UseSnapshotExactEntry`; absence selects
+`ComputeSnapshotExactValue` and can never fall through to managed proof reuse.
+The finite decision proves only that a declared available entry controls the
+corresponding hit. It does not prove that the host's composite key truthfully
+identifies an ordinary immutable snapshot. Backend I/O effects (including
+Datomic targeted sync and `d/as-of`), cancellation of provider futures,
+Datahike full-history retention, and canonical cache-key fields remain named
+adapter/host assumptions covered by deterministic effect tests and real-store
+integration evidence.
 
 The acyclic ordered-EID merge now has an exact production control model rather
 than only a canonical sorted-union oracle. `OrderedMerge.dfy` represents the

@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.relay :as relay]
@@ -40,13 +41,23 @@
   [snapshot-id exact]
   (backend/make-adapter
    {:id :relay-test
-    :capabilities {:snapshots #{:historical}}
+    :capabilities {:consistency #{:at-exact-snapshot}
+                   :snapshots #{:historical}}
     :fingerprint {:adapter :relay-test}
     :deterministic? true
     :operations
     (assoc
      (operation-map snapshot-id nil)
      :select-exact (fn [& _] exact))}))
+
+(deftest snapshot-exact-key-requires-certified-exact-selection-test
+  (let [current-only (adapter 1 nil true)
+        exact-capable (adapter-with-exact 1 current-only)]
+    (is (nil? (cache/snapshot-exact-key current-only))
+        "a current-only or arbitrary immutable view cannot infer exact identity from revision equality")
+    (is (= :ordinary-exact
+           (:view-kind (cache/snapshot-exact-key exact-capable))))
+    (is (= 1 (:exact-locator (cache/snapshot-exact-key exact-capable))))))
 
 (deftest cursor-proof-identity-test
   (testing "even equal dependency proofs cannot lift across revisions"
@@ -270,6 +281,28 @@
     (is (pos? (get @crossings :cursor-continuation 0))
         "the expired token was rejected by a :cursor-continuation kernel decision")))
 
+(deftest cursor-without-configured-ttl-remains-age-valid-test
+  (let [snapshot (adapter 1 nil true)
+        page
+        (relay/externalize-page
+         snapshot {:now-seconds 1000}
+         :lookup-resources lookup-query lookup-page)
+        token (get-in page [:page-info :end-cursor])
+        prepared
+        (relay/prepare-page-query
+         snapshot
+         {:now-seconds 1000000}
+         :lookup-resources
+         (assoc lookup-query :after token))]
+    (is (identical? snapshot (:adapter prepared)))
+    (is (= {:frontier-direction :asc
+            :kind :lookup-eid
+            :result-eid "document-1"}
+           (get-in prepared [:query :after]))
+        "the old authenticated transport is internalized to its exact boundary")
+    (is (not (contains? (:cursor-context (:opts prepared)) :exp))
+        "elapsed age far beyond five minutes is irrelevant without an explicit TTL")))
+
 (deftest exact-snapshot-continuation-never-rebases-test
   (let [exact (adapter 1 nil true)
         current (adapter-with-exact 2 exact)
@@ -294,6 +327,25 @@
                 (get-in page [:page-info :end-cursor])))]
     (is (identical? exact (:adapter prepared)))
     (is (not (contains? prepared :recovery)))))
+
+(deftest changed-current-schema-reaches-exact-cursor-fallback-test
+  (let [exact (adapter 1 nil true)
+        current (adapter-with-exact 2 exact)
+        page
+        (relay/externalize-page
+         exact
+         {:cursor-schema-stamp {:adapter exact :stamp (delay 10)}}
+         :lookup-resources lookup-query lookup-page)
+        prepared
+        (relay/prepare-page-query
+         current
+         {:cursor-consistency-mode :minimize-latency
+          :cursor-schema-stamp {:adapter current :stamp (delay 20)}}
+         :lookup-resources
+         (assoc lookup-query
+                :after (get-in page [:page-info :end-cursor])))]
+    (is (identical? exact (:adapter prepared))
+        "schema proof changes must not masquerade as query-scope changes")))
 
 (deftest one-page-builds-one-snapshot-context-test
   (let [native-revision-calls (atom 0)

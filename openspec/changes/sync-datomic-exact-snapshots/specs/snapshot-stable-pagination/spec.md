@@ -1,8 +1,5 @@
-# snapshot-stable-pagination Specification
+## MODIFIED Requirements
 
-## Purpose
-TBD - created by archiving change redesign-cross-backend-freshness-cache. Update Purpose after archive.
-## Requirements
 ### Requirement: First page binds graph and execution identity
 Every paginated lookup SHALL select one immutable snapshot before scanning. Each cursor SHALL bind under mandatory authentication, and optional advertised encryption, the backend source/branch scope and lifecycle, native revision and exact locator, canonical query scope, engine/adapter/identity/configuration fingerprints, complete schema/relation dependency scope and proof, deterministic direction/position, format version, and optional configured expiry.
 
@@ -33,23 +30,6 @@ Every paginated lookup SHALL select one immutable snapshot before scanning. Each
 - **THEN** graph-equivalent continuation is unavailable
 - **AND** EACL uses exact fallback or returns a typed stale/resource error
 
-### Requirement: Continuation accepts an equal complete dependency proof
-A continuation MAY run on a different immutable snapshot when that snapshot has the same complete schema and relationship dependency proof as the cursor. Equal proof SHALL establish that the deterministically ordered authorization result set and cursor position remain observationally equivalent.
-
-#### Scenario: Unrelated transaction occurs between pages
-- **WHEN** the current selected snapshot differs from page one only in data outside the cursor's complete authorization dependencies
-- **THEN** EACL continues on the current snapshot without historical reconstruction
-- **AND** subsequent cursors bind the selected snapshot's native revision and proof
-
-#### Scenario: Relevant mutation occurs
-- **WHEN** any schema or relation dependency in the cursor proof changes
-- **THEN** EACL MUST NOT continue on that changed graph using the old position
-
-#### Scenario: Relevant content changes away and back
-- **WHEN** mutation-identity proof records intervening relevant churn even though final tuples match
-- **THEN** continuation conservatively treats the proof as changed
-- **AND** MAY continue only through an available exact snapshot
-
 ### Requirement: Exact reconstruction is a fallback
 When the selected current/fresh snapshot proof differs from the cursor, EACL SHALL attempt the original exact locator only if the request does not require a causally newer floor. On an unreplaced full-history source, cursor age and ordinary forward mutations SHALL NOT make that locator unavailable. If the configured backend cannot reconstruct the exact value, continuation MUST fail rather than use a changed graph.
 
@@ -78,34 +58,6 @@ When the selected current/fresh snapshot proof differs from the cursor, EACL SHA
 #### Scenario: History replacement invalidates old locators
 - **WHEN** source lifecycle rotation records restore, reset, excision, purge, branch replacement, or destructive history replacement
 - **THEN** old cursors are rejected for lifecycle mismatch before exact reconstruction
-
-### Requirement: Newer freshness and cursor stability are jointly evaluated
-A continuation carrying an additional `:at-least-as-fresh` token SHALL first select a snapshot satisfying that token and then compare its complete dependency proof with the cursor proof. A newer floor is compatible when the proofs match and incompatible when they differ.
-
-#### Scenario: Newer token but unchanged graph portion
-- **WHEN** the selected snapshot contains the newer token anchor and its cursor dependency proof is equal
-- **THEN** EACL continues on that selected snapshot
-
-#### Scenario: Newer token and changed graph portion
-- **WHEN** every snapshot satisfying the newer floor has a different cursor dependency proof
-- **THEN** EACL returns a typed consistency conflict requiring pagination restart
-- **AND** MUST NOT fall back to the older exact snapshot
-
-### Requirement: Cursor ordering is total and deterministic
-The pagination engine SHALL define a stable total order and complete tie-breaker over results for one proof-equivalent graph. Backend iteration order, hash-map order, or non-unique positions MUST NOT determine continuation.
-
-#### Scenario: Two results share a primary ordering field
-- **WHEN** two authorized results compare equal on the primary field
-- **THEN** the cursor order uses deterministic additional fields to distinguish them
-
-#### Scenario: Backend index iteration differs
-- **WHEN** two adapters enumerate equivalent relationship tuples in different incidental orders
-- **THEN** their shared contract result and continuation order remain canonical
-
-#### Scenario: External object identity changes
-- **WHEN** a result or ordering object's public identity changes between pages
-- **THEN** identity-boundary proof changes and current-snapshot continuation is rejected
-- **AND** the cursor does not reinterpret an old internal position as a different public object
 
 ### Requirement: Cursor failures are distinguishable
 EACL SHALL distinguish authentication/query-scope failure, configured envelope expiry, source-lifecycle replacement, conditional exact-snapshot absence, changed dependency proof, incompatible newer freshness, and replay deadline/resource failure.

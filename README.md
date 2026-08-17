@@ -223,16 +223,16 @@ Unsupported modes fail with a typed error instead of silently selecting a weaker
   are cached per source and basis. The cache never changes authorization
   semantics and can be disabled globally or per request. See
   [Caching](#caching).
-- Lookup cursors are result edges (the boundary result's one-based ordinal and identity, bound to the sealed plan's fingerprint) carried inside an authenticated envelope. A continued page resumes from a compatible client-private checkpoint when one is retained, and otherwise replays the authenticated prefix deterministically against the continuation basis before publishing anything.
-- A first page costs the reader roughly the index scans on the cheapest certified path to the first results (the reducer follows the lowest static read-cost alternatives first), not the realization of every union branch. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix. Counts exhaust the same reducer and read its scalar discovered count; pass `:count-limit` to bound that work. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
+- Lookup cursors are result edges (the boundary result's one-based ordinal and identity, bound to the sealed plan's fingerprint) carried inside an authenticated envelope. A continued page resumes from the client-private latest checkpoint for that exact snapshot when one is retained, and otherwise replays the authenticated prefix deterministically against the same snapshot before publishing anything.
+- A first page costs the reader roughly the index scans on the cheapest certified path to the first results (the reducer follows the lowest static read-cost alternatives first), not the realization of every union branch. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts exhaust the same reducer and read its scalar discovered count; pass `:count-limit` to bound that work. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
 
-Public cursors are opaque, authenticated, and tied to the query, source
-lifecycle, native revision, ordering contract, and selected snapshot proof. A
-continuation may use a newer current database value only when its complete
-dependency and ordering proof is equivalent. After a relevant change, EACL
-reconstructs the cursor's exact snapshot when the backend can do so; otherwise
-it returns a typed error saying that the cursor is stale or expired, or that
-its snapshot is unavailable.
+Public cursors are opaque, authenticated, and tied to the query and database
+snapshot that created them. A cursor walk stays on that snapshot even when the
+current database advances. Cursors have no age expiry unless
+`:cursor-ttl-seconds` is configured. If a conditionally historical backend can
+no longer reconstruct the selected value, EACL returns a typed
+snapshot-unavailable error; ordinary Datomic history and history-enabled
+Datahike do not expire a cursor merely because it is old.
 
 ## Project Status
 
@@ -714,6 +714,12 @@ dependency to your `deps.edn` file:
 ; => true
 ```
 
+EACL-created Datahike databases enable `:keep-history? true` by default so
+exact tokens and cursors survive ordinary commit-record cutoff collection.
+Pass `{:keep-history? false}` to `create-conn` only when lower write/storage
+amplification is worth making exact reconstruction conditional on retained
+commit records.
+
 ### DataScript Quickstart
 
 For server-side or browser demos, use the DataScript adapter:
@@ -936,15 +942,22 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 ```
 
 `make-client` rejects unknown options with `{:type :eacl/invalid-config}`.
-
-Cursor-pagination tokens do not expire by age unless a positive `:cursor-ttl-seconds` is
-configured.
+All backends issue non-expiring cursors by default. Configure a positive
+`:cursor-ttl-seconds` only when the application deliberately wants a maximum
+pagination age; cache TTL and capacity remain independent of cursor age.
 
 ### Caching
 
-Caching is automatic, bounded, and private to each EACL client. Cache data is never written to the application database. EACL first looks for an answer from the exact immutable database value selected by the request.
-
-EACL may reuse an older answer only when it can establish that the relevant schema and relationships have not changed. If it cannot establish that safely, it runs the authorization query normally.
+Caching is automatic, bounded, and private to each EACL client. Cache data is
+never written to the application database. EACL first looks for an answer from
+the exact immutable database value selected by the request. Authenticated
+`at-exact-snapshot` requests may reuse a completed answer only when the full
+source/lifecycle, native locator, ordinary-view, adapter/identity, engine,
+request, result-shape, demand, and limit identity matches. Exact requests never
+use managed proof-backed lifting. Ordinary current requests may reuse an older
+answer only when EACL establishes that the relevant schema and relationships
+have not changed. If it cannot establish either condition safely, it runs the
+authorization query normally.
 
 A long-running request can continue using the immutable database value it
 started with while newer requests see newer data. EACL does not promise cache reuse for arbitrary `as-of`, `since`, filtered, speculative, or caller-constructed database values.
@@ -1050,9 +1063,16 @@ Reads can request stronger behavior when the backend supports it:
            (consistency/at-exact-snapshot prior-token))
 ```
 
-Datomic supports synchronization and exact historical reconstruction while the
-required history remains available. Datahike advertises only the guarantees
-supported by its configured store and writer. DataScript does not provide
+Datomic exact selection treats an authentic same-source token ahead of the
+local Peer as replica lag: it performs bounded `(d/sync conn T)` when needed,
+verifies the returned basis, and always evaluates `(d/as-of db T)`. A locally
+available `T` skips synchronization. Ordinary unreplaced Datomic history has
+no EACL cursor-retention window.
+
+EACL-created Datahike databases retain temporal history by default. External
+history-enabled Datahike stores can reconstruct exact revisions after commit
+record collection; history-disabled stores advertise only conditional exact
+selection while a named commit is retained. DataScript does not provide
 general historical snapshot reconstruction. If a backend cannot satisfy the
 requested guarantee, EACL returns a typed error rather than silently selecting
 a different snapshot.
@@ -1254,14 +1274,17 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
 
 ## Limitations, Deficiencies & Gotchas:
 
-- *Exact snapshots require backend history:* `at-exact-snapshot` requires the
-  backend to reconstruct the selected database value. A cursor may continue
-  on a newer current database value when its complete dependency and ordering
-  proof is equivalent; after a relevant change, continuation requires exact
-  reconstruction. If the required snapshot is unavailable, EACL returns a
-  typed error saying that the cursor is stale or expired, or that its snapshot
-  is unavailable, rather than silently using changed authorization data.
-- *No exclusion or intersection operators yet:* EACL supports Union (`+`) permission operators, but not `-` exclusion or `&` intersection, e.g.
+- *Exact snapshots require backend history:* `at-exact-snapshot` and continued
+  cursors require the backend to reconstruct the selected database value.
+  Ordinary Datomic history and history-enabled Datahike do not age-expire.
+  History-disabled Datahike can lose a conditionally retained commit and then
+  returns snapshot-unavailable rather than silently using a newer value.
+- *History destruction is a lifecycle boundary:* Datomic excision and
+  Datahike purge/cutoff, branch force, reset, restore, or equivalent destructive
+  replacement require quiescing affected traffic, completing the operation,
+  rotating the shared source lifecycle and affected clients/caches, and then
+  resuming with deliberate token/cursor key-version policy.
+- *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
   - `permission admin = owner + shared_admin` is valid,
   - but `permission admin = owner - banned_member` is not.
 - Arrow syntax is limited to one level of nesting, e.g.
@@ -1299,10 +1322,9 @@ but it is not a byte-for-byte or operational clone:
   sets unless your application explicitly sorts them; never compare EACL and
   SpiceDB page membership or cursor bytes.
 - EACL cursors bind the selected native revision and its dependency/order
-  proof. A proof-equivalent current database value may continue the walk;
-  otherwise EACL reconstructs the authenticated exact snapshot or fails
-  closed. A relevant write does not silently change page membership midway
-  through a cursor walk.
+  proof. A cursor walk stays on that exact snapshot. If the backend cannot
+  reconstruct it, EACL fails closed. A relevant write does not silently change
+  page membership midway through a cursor walk.
 - Omitted consistency means `:minimize-latency`. EACL selects the current
   immutable database value visible to the local backend connection. SpiceDB may use
   an optimized cached revision, so freshness can differ. Use each backend's

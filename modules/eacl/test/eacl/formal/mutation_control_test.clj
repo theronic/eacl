@@ -140,6 +140,19 @@
     (and (= :probe-managed-entry correct)
          (not= correct mutant))))
 
+(defn- snapshot-exact-key-omits-lifecycle-killed?
+  []
+  (let [base {:backend :datomic
+              :source :database-a
+              :native-revision 100
+              :exact-locator 100
+              :view-kind :ordinary-exact}
+        before (assoc base :source-lifecycle :lifecycle-a)
+        after (assoc base :source-lifecycle :lifecycle-b)
+        mutant-key #(dissoc % :source-lifecycle)]
+    (and (not= before after)
+         (= (mutant-key before) (mutant-key after)))))
+
 (defn- mismatched-indexed-request-scope-response-killed?
   []
   (let [pending
@@ -1255,6 +1268,8 @@
    immediate-reverse-consumer-registration-killed?
    :current-cache-missing-entry-hit
    current-cache-missing-entry-hit-killed?
+   :snapshot-exact-key-omits-lifecycle
+   snapshot-exact-key-omits-lifecycle-killed?
    :mismatched-indexed-request-scope-response
    mismatched-indexed-request-scope-response-killed?
    :ordered-merge-wrong-comparator

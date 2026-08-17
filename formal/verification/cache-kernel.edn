@@ -20,14 +20,17 @@
    :compare-and-set-race-preserves-chosen-value]}
  :current-generation-proof
  {:source "formal/dafny/CurrentCache.dfy"
-  :verified-obligations 30
+  :verified-obligations 32
   :claims
   [:cache-eligibility-does-not-select-engine-authority
    :generated-current-cache-stage-selection
    :current-cache-hit-requires-available-entry
+   :snapshot-exact-hit-requires-available-entry
+   :snapshot-exact-miss-computes-without-managed-fallback
+   :numeric-revision-alone-cannot-establish-exact-identity
    :current-cache-bypass-requires-ineligible-or-inactive-generation
    :current-cache-computation-requires-managed-miss
-   :exact-and-arbitrary-db-bypass
+   :arbitrary-db-bypass-and-canonical-exact-admission
    :exact-current-hit-is-same-selected-snapshot
    :late-publication-is-unreachable-after-lifecycle-expiry
    :forward-relevant-write-raises-scalar-dependency-stamp

@@ -27,6 +27,8 @@ Object.prototype.ContinueForwardPage;
 Object.prototype.CountForward;
 Object.prototype.CurrentCache;
 Object.prototype.CurrentCacheStage;
+Object.prototype.is_UseSnapshotExactEntry;
+Object.prototype.is_ComputeSnapshotExactValue;
 Object.prototype.DecideAcyclicContinuation;
 Object.prototype.DecideAcyclicCount;
 Object.prototype.DecideAcyclicPage;

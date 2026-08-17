@@ -125,6 +125,10 @@
     (if available? :probe-exact-entry :bypass-current-cache)
     :exact-entry
     (if available? :use-exact-entry :probe-managed-entry)
+    :snapshot-exact-entry
+    (if available?
+      :use-snapshot-exact-entry
+      :compute-snapshot-exact-value)
     :managed-entry
     (if available? :use-managed-entry :compute-current-value)))
 

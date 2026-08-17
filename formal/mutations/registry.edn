@@ -73,6 +73,12 @@
    :killed-by
    {:proof :current-cache-hit-requires-available-entry
     :test :current-cache-stage-boundary-control}}
+  {:id :snapshot-exact-key-omits-lifecycle
+   :mechanism :identify-two-replacement-histories-by-equal-numeric-revision
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :numeric-revision-alone-cannot-establish-exact-identity
+    :test :snapshot-exact-completed-answer-cache-test}}
   {:id :mismatched-indexed-request-scope-response
    :mechanism :accept-scan-response-with-matching-local-id-but-different-traversal-scope
    :control {:kind :clojure}

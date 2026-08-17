@@ -61,7 +61,8 @@
                         source))
           (str resource " must stay free of EACL-owned blocking coordination"))))
   (testing "the vestigial :latest-result answer kind is gone"
-    (is (= #{:can? :lookup-page :count}
+    (is (= #{:can? :lookup-page :count
+             :relationship-page :permission-tree}
            @(resolve 'eacl.datomic.core/answer-cache-kinds))))
   (testing "the write-only provider options are gone from client opts"
     (with-mem-conn [conn schema/v7-schema]
