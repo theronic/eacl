@@ -1,31 +1,231 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-EACL is a _situated_ [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library inspired by [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by Datomic Pro, Datahike or DataScript.
+EACL is a situated, open-source [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library inspired by [SpiceDB](https://authzed.com/spicedb).
 
-_Situated_ here means that your permission data lives _next to_ your application data in the backend you already control, which has some benefits:
-1. Avoids a network hop. To leverage SpiceDB's consistency semantics, you need to hit your DB (or cache) to retrieve the latest stored ZedToken anyway, so you might as well query the DB directly, which is what EACL does.
-2. One less external dependency to deploy & sync relationships.
-3. No relationship-sync lag between the application database and authorization
-   data. Minimize-latency reads use the current database basis visible to the
-   local Peer; that is locally consistent, not a claim of global full
-   consistency.
+EACL is built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), [Datahike](https://datahike.io/) or [DataScript](https://github.com/tonsky/datascript/). 
 
-EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eye on permissions.
+EACL permissions are [_just data_](#data-structures) that live next to your Application Data as simple attributes on entities, hence _situated_. This has several benefits, namely that it makes EACL suitable for real-time UI view maintenance, because it is cheap to compute the subset of online clients that need to re-query to maintain consistent views, while avoiding query amplification due to a busy transactor.
 
-## Goals
+| Authentication (AuthN)                                | Authorization (AuthZ)      |
+|-------------------------------------------------------|----------------------------|
+| Who are you?, i.e. which `<subject>`? | What can `<subject>` do? |
 
-- Best-in-class ReBAC authorization for Clojure applications backed by Datomic Pro, Datahike or Datascript with a performance goal of 10M permissioned entities.
-- Clean migration path to SpiceDB once you need consistency semantics with a heavily optimized cache.
-- Retain compatibility with SpiceDB gRPC API to enable 1-for-1 Relationship syncing by tailing Datomic transactor queue.
+EACL is concerned with **authorization**, or AuthZ for short.
+
+🦅 EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eagle-eye on your permissions.
+
+## Is it any good?
+
+Yes.
+
+## Overview
+
+- EACL is inspired by [SpiceDB](https://authzed.com/docs/spicedb), the most faithful open-source implementation of the [Google Zanzibar whitepaper](https://authzed.com/zanzibar).
+   - Zanzibar powers Google Drive, YouTube, Gmail and Google Calendar, serving billions of authorization requests per day over billions of Relationships.
+   - EACL is designed as a stepping stone to SpiceDB for when you achieve hyperscale, while deferring an external AuthZ system, which would introduce eventual consistency and distributed synchronization overhead.
+- EACL supports the same [consistency semantics](#consistency-semantics) as [SpiceDB](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb), with mild operational differences due to its situated nature and support for multiple backends.
+- Unlike SpiceDB, EACL is [_situated_](#the-benefits-of-situated-authz), which means permissions live in your database and are computed on-Peer.
+  - For small-to-medium workloads, EACL can be faster than Spice, but no official benchmarks are published at this time. 
+- EACL has a multi-tiered cache, but it is [fast](#performance) even without the optional in-memory [cache](#caching).
+- Under internal testing, EACL performs well against a database with 1M Relationships and a complex, real-world _recursive schema_. 
+- EACL should be able to handle 10M-100M Relationships, but I haven't benchmarked it yet. Performance depends on the complexity of your permission schema and page-size.
+- EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+ & Apalache, but has not been independently audited.
+
+### What can EACL do?
+
+EACL can efficiently answer questions like, "Can `<subject>` do `<permission>` on `<resource>`?"
+```clojure
+(eacl/can? acl (->user "alice") :view (->server "account1") consistency/fully-consistent)
+=> true | false ; 0.01ms-10ms.
+```
+
+Or, "Which `<resources>` can `<subject>` do `<permission>` on?" (no older than as-of `<10s ago>`)
+
+```clojure
+(eacl/lookup-resources acl
+  {:subject       (->user "alice")
+   :permission    :view
+   :resource/type :product
+   :first         50
+   :consistency   (consistency/at-least-as-fresh "<10 seconds ago token>")})
+=> {:data [{:type :product :id "product-1"}
+           {:type :product :id "product-7"}
+           ...
+           {:type :product :id "product-63"}]
+    :page-info ...} ; in ~1-20 milliseconds depending on page size & complexity of schema. 
+``` 
+
+The `:consistency` argument is optional. The default is `minimize-latency`, which means _locally-consistent_ to the Peer.
+
+Refer to the [full EACL API](#eacl-api).
+
+## Supported Backends
+
+| Database                                             | Module          | Storage                                                                  |
+|------------------------------------------------------|-----------------|--------------------------------------------------------------------------|
+| [Datomic Pro](https://www.datomic.com/)              | eacl-datomic    | DynamoDB (recommended), Cassandra or SQL                                 |
+| [Datahike](https://datahike.io/)                     | eacl-datahike   | DynamoDB, S3 (cheaper, but slower), LMDB, SQL, Redis, GCS or IndexedDB.  |
+| [DataScript](https://github.com/tonsky/datascript/)  | eacl-datascript | In-memory, but can persist to disk or add a SQL adapter. No time-travel. |
+
+Datahike backed by S3 is attractive for infrequently-accessed apps, because you can trade latency for reduced storage cost, and reduce running cost with [serverless Datahike](https://github.com/replikativ/datahike-serverless).
+
+Note: DataScript does not store full history, so no time travel and no `at-exact-snapshot` semantics. Datahike must be configured for full history to support it.
+
+_Coming Soon:_ [Datalevin](https://datalevin.org/).
+
+## ReBAC: Relationship-based Access Control
+
+In a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) system like EACL, objects (_Subjects_ & _Resources_) are related via _Relationships_.
+
+A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
+- `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`, and
+- `[account1 :account product1]` means subject `account1` is the `:account` for resource `product1`.
+
+EACL models two core concepts to model the permission graph: Schema & Relationship.
+
+1. _Schema_ consists of `Relations` and `Permissions`:
+    - `Relation` defines how a `<subject>` & `<resource>` can be related via a `Relationship`.
+    - `Permission` defines which permissions are granted to a subject via a chain of `Relationships` between subjects & resources.
+        - Permissions can be _Direct Permissions_ or indirect, known as _Arrow Permissions_. An arrow implies a graph traversal.
+2. A _Relationship_ defines how a `<subject>` and `<resource>` are related via a named relation, e.g. `[(->user alice) :owner (->account "acme")]` means that
+    - `(->user "alice")` is the Subject,
+    -  `:owner` is the name of the `Relation` (as defined in the schema)
+    - `(->account "acme")` is the Resource
+    - so this reads as `(->user "alice")` is the `:owner` of `(->account "acme")`.
+    - In EACL, this is expressed as `(->Relationship (->user "alice") :owner (->account "acme"))`, i.e. `(Relationship subject relation resource)`
+    - Subjects & Resources are just maps of `{:keys [type id]}`, e.g. `{:type :user, :id "user-1"}`, or `(->user "user-1")` when using a helper function.
+
+## The Benefits of Situated AuthZ
+
+EACL's situated philosophy is similar to Datomic: permissions are computed on the Peer. Since _Relationships_ are [just data](#data-structures), permission graph traversal can improve Peer cache locality for faster entity hydration before display.
+
+1. **Reduced Latency**: EACL avoids a network hop to an external AuthZ system. Depending on your consistency semantics, it may block while it awaits new data from the Transactor, to enforce consistency.
+
+   Consider that following a mutation, to leverage SpiceDB `at_least_as_fresh` [consistency semantics](https://authzed.com/docs/spicedb/concepts/consistency#consistency-in-spicedb) for a `LookupResources` query, you need to:
+   1. hit your DB (or cache) to retrieve the latest ZedToken,
+   2. pass the ZedToken to SpiceDB and retrieve a page of object IDs,
+   3. hydrate entities from your database using those IDs.
+
+  Since you have to hit the DB anyway to show anything useful, we might as well compute permissions in the Peer, and that is exactly what EACL does.
+
+2. **Time Travel**: Unlike SpiceDB cursors, EACL cursors don't expire because EACL can leverage `(d/as-of conn T)`, as long as the backend retains full history. You can set TTL to avoid `d/as-of` (which can be costly), or use transaction listeners to update clients in real-time.
+
+3. **Consistency:** Syncing to an external system introduces eventual consistency. With situated AuthZ, queries are at least locally-consistent as-of time `T`.
+    - In **single-Peer environments**, the singleton Peer is the only source of novelty, so data is immediately available and the cache will reuse whatever it can.
+   - In **multi-Peer environments**: depending on consistency semantics, EACL may block to catch up to Transactor if the Peer has fallen behind, e.g. `fully-consistent` may await `(d/sync T)` to enforce consistency.
+
+3. **Simple Syncing**: Relationships are just 3-tuples of `[subject relation resource]`, so there is no impedance mismatch when syncing to SpiceDB at scale.
+
+2. **Real-time UI updates** for materialized views:
+    1. use a transaction listener and inspect `tx-data`
+    2. for each affected entity `eid`, call `eacl/lookup-subjects`
+    3. filter this down to only online users
+    4. notify those clients  their UI. This is not a totally optimal materialized view system, but cuts down on 99% of unneeded re-querying given a fast-moving `db` value.
+
+1. **Situated is faster** for small to medium-applications:
+    - Small: ~1k-100k relationships.
+    - Medium: ~1M-10M Relationships.
+    - Authorization runs on-Peer, so entities can be hydrate without a network.
+
+   - EACL does not promise the same scale as SpiceDB, but it can be faster end-to-end e2e for small to medium-sized workloads.
+   
+   - SpiceDB benchmarks focus on `CheckPermission`: ~5.8 ms P95 at 1M QPS with up to 100B relationships on CockroachDB, but you have to consider network I/O.
+   - No EACL benchmarks are currently published, but in my testing, EACL responds in 3-40ms (uncached), and 1-3ms cached, for real-world medium applications.
+
+4. Application & Authorization Data live together in harmony. In my testing with _small to medium-sized workloads_, EACL is as good, or faster than SpiceDB, owing to reduced latency from its situated design, but no EACL benchmarks are published at this time (benchmarks are a tricky business).
+
+- **Planning for Scale:** Avoid a rewrite later by getting your ReBAC data model right the first time.
+
+- **Failover:** If SpiceDB is unreachable, you can fall back to EACL and get the same authoritative answer, except lookup return order will differ.
+- EACL has [limitations](#limitations-deficiencies--gotchas) compared to SpiceDB: mainly, no [Caveats](https://authzed.com/docs/spicedb/concepts/caveats) (yet), Negation or Intersection operators (yet), and a few other minor differences.
+- Otherwise, EACL behaves like SpiceDB under black-box testing aside from lookup object return order (by design), because the implementation is different.
+
+2. **EACL is faster for small applications:** EACL does not promise the same scale as SpiceDB (SpiceDB targets 100B relationships), but it can be faster for small to medium-sized workloads, where Small ~1k-100k entities & medium is ~1M entities / Relationships.
+   - EACL is designed as a stepping stone to SpiceDB for when you achieve hyperscale, or you can keep scaling Peers horizontally. 
+   - SpiceDB benchmarks focus on `CheckPermission`: ~5.8 ms P95 at 1M QPS with up to 100B relationships on CockroachDB, but you have to consider network I/O.
+   - No EACL benchmarks are currently published, but in my testing, EACL responds in 3-40ms (uncached), and 1-3ms cached, for typical applications.
+3. **Simpler:** no syncing to an external system, which introduces eventual consistency, but there is no impedance mismatch when you need to sync to Spice.
+4. Application & Authorization Data live together in harmony..
+
+4. One less external dependency to deploy & sync relationships to.
+
+## Data Structures
+
+### Relationships
+
+EACL Relationships are light. Relationships are stored directly on entities as two tuples:
+- Forward subject->resource tuple: `:eacl.v7.relationship/subject-type+relation+resource-type+resource`
+- Reverse resource->subject tuple: `:eacl.v7.relationship/resource-type+relation+subject-type+subject`
+
+To retract Relationships, Use `:eacl.fn/retractEntity` instead of `:db.fn/retractEntity` to avoid ghost tuples, or call `eacl/delete-relationships!`.
+
+The benefit of `:eacl.fn/retractEntity` is that it only writes one tx to the tx-log, instead of 2 (retract relationships + retract entity.) 
+
+### Relations:
+
+- `:eacl.relation/resource-type`
+- `:eacl.relation/relation-name`
+- `:eacl.relation/subject-type`
+- `:eacl.relation/resource-type+relation-name+subject-type`
+- `:eacl/relation-version` is needed for cache coherence.
+
+### Permissions
+
+- `:eacl.permission/resource-type`
+- `:eacl.permission/permission-name`
+- `:eacl.permission/source-relation-name`
+- `:eacl.permission/target-type`
+- `:eacl.permission/target-name`
+
+Permission Indices (tuples):
+
+- Direct Permissions: `:eacl.permission/resource-type+permission-name`
+- Arrow Permissions:
+- `:eacl.permission/resource-type+source-relation-name+target-type+permission-name`
+- Relation arrows:
+- `:eacl.permission/resource-type+source-relation-name+target-type+target-name`
+- To prevent duplicates: `:eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name`
+
+### EACL Schema
+
+Internal EACL data:
+- `:eacl/id` uniquely identifies Relations & Permissions. It's a string to match SpiceDB IDs.
+- `:eacl/schema-string` stores the valid schema string that was written via `eacl/write-schema!`.
+- `:eacl/storage-version` e.g. v6, v7 (current data model)
+
+## Consistency Semantics
+
+EACL supports [SpiceDB's consistency semantics](https://authzed.com/docs/spicedb/concepts/consistency), which are backend-specific due to its situated nature. 
+
+EACL's cache benefits from a monotonic (ever-increasing) DB basis in an immutable single-writer system. ZedTokens in EACL essentially encode DB basis, so that:
+  - `minimize_latency` (the default) reads directly from the locally-consistent Peer + cache @ time `T`.
+    - In EACL, `minimize_latency` is _locally consistent_ to the Peer.
+    - In _single_-Peer deployments, `minimize_latency` is operationally equivalent to `fully_consistent`, excluding any in-flight transactions. EACL caters for multi-Peer deployments.
+  - `at_least_as_fresh` can read directly from the local Peer or block on `(d/sync T)` if the Peer is behind. If the data @ time `T` is already local to the Peer (or current), no reads from storage occur.
+    - EACL may reuse precomputed cache segments that are still valid at time `T`.
+  - `at_exact_snapshot` time travels into the past via `(d/as-of db T)` or calls `(d/sync T)` if the Peer is behind.
+      - `d/as-of` can be slow, and d/sync can block.
+      - `at_exact_snapshot` skips the exact answer cache. EACL only maintains an exact answer cache for queries against the current DB basis.
+      - Supported in Datomic Pro & Datahike, but not DataScript because it does not maintain full history.
+  - `fully_consistent` blocks on `(d/sync conn)` (i.e. T is `now`) and queries against current database.
+    local Peer; that is locally consistent, not a claim of global full
+    consistency.
+
+
+## Performance
+
+- SpiceDB is benchmarked against 100 billion Relationships.
+- EACL does not promise Spice-scale, but by adopting a ReBAC permission model early, you can avoid a rewrite later.
+
+- EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but the eager Datalog engine materializes intermediate results and cannot efficiently handle every grounding case. Correct bidirectional cursor pagination is non-trivial because parallel paths through the permission graph can yield duplicate resources. EACL handles both graph traversal and correct reversible cursor-pagination.
+
+- EACL has a multi-tiered subgraph cache to speed up queries. The cache is formally verified and will not serve stale answers for any given consistency semantic.
+
+- EACL should be good for small (~10k-100k Relationships) to medium-scale (250k-1M Relationships), you should be able to use EACL by horizontally scaling may never need to migrate from EACL to Spice, because EACL is fast and you can scale Peers horizontally.
 
 ## Rationale
 
 Please refer to [eacl.dev](https://eacl.dev/).
-
-## Authentication vs Authorization
-
-- Authentication or **AuthN** means, "Who are you?"
-- Authorization or **AuthZ** means "What can `<subject>` do?", so AuthZ is all about permissions.
 
 ## Why EACL?
 
@@ -36,14 +236,14 @@ Situated AuthZ offers some advantages for typical use-cases:
 3. An accurate ReBAC model syncing Relationships 1-for-1 from Datomic to SpiceDB in real-time without complex diffing, for when you need SpiceDB performance or features.
 4. Queries default to the current DB visible to the local Peer and also support
    `minimize-latency`, `at-least-as-fresh`, and historical `at-exact-snapshot` semantics.
-5. EACL is fast. You may be tempted to roll your own ReBAC system using recursive Datomic child rules, but the eager Datalog engine materializes intermediate results and cannot efficiently handle every grounding case. Correct bidirectional cursor pagination is also non-trivial because parallel paths through the permission graph can yield duplicate resources. EACL handles both traversal and pagination.
 
 ## Performance
 
-- EACL enumerates permissions with one stable-discovery engine: the permission schema reachable from the queried root is compiled into a sealed plan (dense canonical rule ordinals plus a certified static read-cost rank), and a single width-one depth-first reducer walks that plan over ordered backend index scans (`seek-datoms` on the relationship endpoint tuples), admitting each (node, entity) exactly once. It avoids both recursive Datalog materialization and persisted grant caches. Lookup results are returned in the plan's **stable first-discovery order** — deterministic for one immutable snapshot, schema and query, but not a global entity-ID sort. See [docs/stable-discovery-engine.md](docs/stable-discovery-engine.md).
-  - I have investigated implementing custom Sort Keys, but they are not currently feasible without adding a lot of storage & write costs.
-- EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
+- EACL results are stable-discovery ordered. Reachable permission schema from the queried root is compiled into a sealed plan (dense canonical rule ordinals plus a certified static read-cost rank), and a single width-one depth-first reducer walks that plan over ordered backend index scans (`seek-datoms` on the relationship endpoint tuples), admitting each (node, entity) exactly once. It avoids both recursive Datalog materialization and persisted grant caches. Lookup results are returned in the plan's **stable first-discovery order** — deterministic for one immutable snapshot, schema and query, but not a global entity-ID sort. Refer to [docs/stable-discovery-engine.md](docs/stable-discovery-engine.md).
+- EACL is fast, but makes no strong performance claims at this time. For typical workloads, EACL should be as fast as, or faster than, SpiceDB. EACL is not meant for hyperscalers.
+
 - EACL is internally benchmarked against ~800k permissioned resources with good latency (5-30ms per query). You can scale Datomic Peers horizontally and dedicate peers to EACL as needed.
+ 
 - The performance goal for EACL is to handle 10M permissioned entities with real-time performance.
 - EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - EACL uses a bounded, client-private cache. Repeated operations reuse
@@ -135,28 +335,6 @@ EACL does not select a logging implementation. Applications remain responsible f
 
 For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md).
 
-## ReBAC: Relationship-based Access Control
-
-In a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) system like EACL, objects (_Subjects_ & _Resources_) are related via _Relationships_.
-
-A `Relationship` is just a 3-tuple of `[subject relation resource]`, e.g.
-- `[user1 :owner account1]` means subject `user1` is the `:owner` of resource `account1`, and
-- `[account1 :account product1]` means subject `account1` is the `:account` for resource `product1`.
-
-EACL models two core concepts to model the permission graph: Schema & Relationship.
-
-1. _Schema_ consists of `Relations` and `Permissions`:
-   - `Relation` defines how a `<subject>` & `<resource>` can be related via a `Relationship`.
-   - `Permission` defines which permissions are granted to a subject via a chain of `Relationships` between subjects & resources.
-     - Permissions can be _Direct Permissions_ or indirect, known as _Arrow Permissions_. An arrow implies a graph traversal.
-2. A _Relationship_ defines how a `<subject>` and `<resource>` are related via a named relation, e.g. `[(->user alice) :owner (->account "acme")]` means that
-   - `(->user "alice")` is the Subject,
-   -  `:owner` is the name of the `Relation` (as defined in the schema)
-   - `(->account "acme")` is the Resource
-   - so this reads as `(->user "alice")` is the `:owner` of `(->account "acme")`.
-   - In EACL, this is expressed as `(->Relationship (->user "alice") :owner (->account "acme"))`, i.e. `(Relationship subject relation resource)`
-   - Subjects & Resources are just maps of `{:keys [type id]}`, e.g. `{:type :user, :id "user-1"}`, or `(->user "user-1")` when using a helper function.
-
 ### Schema & Relationships
 
 To create a Relationship, first define your schema using `eacl/write-schema!`:
@@ -190,15 +368,51 @@ In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support negatio
 
 The `IAuthorization` protocol in [modules/eacl/src/eacl/core.cljc](modules/eacl/src/eacl/core.cljc) defines an idiomatic Clojure interface that maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1):
 
-### Queries
+### Permission Checks
+
+```clojure
+(eacl/can? acl subject permission resource)
+=> true | false
+```
+
+```clojure
+(eacl/check-permission acl {:subject subject, :permission permission, :resource resource)
+=> {}
+```
+
+### Lookups
+
+```clojure
+(eacl/lookup-resources acl filters)
+=> {:data [resources...] :page-info {...}}
+```
+
+```clojure
+(eacl/lookup-subjects acl filters)
+=> {:data [subjects...] :page-info {...}}
+```
+
+### Counting
+
+```clojure
+(eacl/count-resources acl filters)
+=> {:keys [count limit]}
+```
+
+```clojure
+(eacl/count-subjects acl filters)
+=> {:keys [count limit]}
+```
+
 
 - `(eacl/can? acl subject permission resource) => true | false`
 - `(eacl/lookup-subjects acl filters) => {:data [subjects...] :page-info {...}}`
 - `(eacl/lookup-resources acl filters) => {:data [resources...] :page-info {...}}`
+- `(eacl/expand-permission-tree acl filters) => {:expanded-at token :tree-root node}`
 - `(eacl/count-resources acl filters) => {:keys [count limit]}` counts the full result set.
 - `(eacl/count-subjects acl filters) => {:keys [count limit]}` counts the full subject result set.
-- `(eacl/expand-permission-tree acl filters) => {:expanded-at token :tree-root node}`
-  returns the shallow SpiceDB-compatible expansion for one resource and
+
+- returns the shallow SpiceDB-compatible expansion for one resource and
   relation or permission.
 
 Pass `:count-limit n` to either count operation to bound work. The result then includes
@@ -231,7 +445,7 @@ API:
 
 ```clojure
 (let [token (eacl/cancellation-token)]
-  ;; Give `token` to the HTTP/request owner before starting the read.
+  ;; Pass `token` to the HTTP/request owner before starting the read.
   (future
     (eacl/lookup-resources
      acl
@@ -390,7 +604,9 @@ These are pagination orders, not a global, cross-backend, or domain sort order.
 Backward pagination returns the previous window; it does not reverse the result
 order.
 
-## Datomic Pro Quickstart
+## Quickstart
+
+### Datomic Pro
 
 The following example is contained in [eacl-example](https://github.com/theronic/eacl-example).
 
@@ -487,7 +703,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 ;                 :has-previous-page? false}}
 ```
 
-## Datahike Quickstart
+### Datahike Quickstart
 
 For Clojure/JVM applications backed by Datahike, add the Datahike adapter
 dependency to your `deps.edn` file:
@@ -536,7 +752,7 @@ dependency to your `deps.edn` file:
 ; => true
 ```
 
-## DataScript Quickstart
+### DataScript Quickstart
 
 For server-side or browser demos, use the DataScript adapter:
 
@@ -764,54 +980,38 @@ DataScript client issues non-expiring cursors unless a TTL is configured); tune 
 
 ### Caching
 
-Caching is automatic, bounded, and private to each EACL client. Cache data is
-never written to the application database. EACL first looks for an answer from
-the exact immutable database value selected by the request. It may reuse an
-older answer only when it can establish that the relevant schema and
-relationships have not changed. If it cannot establish that safely, it runs the
-authorization query normally.
+Caching is automatic, bounded, and private to each EACL client. Cache data is never written to the application database. EACL first looks for an answer from the exact immutable database value selected by the request.
+
+EACL may reuse an older answer only when it can establish that the relevant schema and  relationships have not changed. If it cannot establish that safely, it runs the authorization query normally.
 
 A long-running request can continue using the immutable database value it
-started with while newer requests see newer data. EACL does not promise cache
-reuse for arbitrary `as-of`, `since`, filtered, speculative, or
-caller-constructed database values.
+started with while newer requests see newer data. EACL does not promise cache reuse for arbitrary `as-of`, `since`, filtered, speculative, or caller-constructed database values.
 
-Cache coherence is guaranteed only when authorization mutations use EACL's
-supported paths:
+Cache coherence is only guaranteed as long as authorization mutations use EACL's supported APIs:
 
-- Change schemas with `eacl/write-schema!`.
-- Add and remove relationships with EACL relationship APIs, or transact
-  EACL-produced transaction data intact.
-- Delete permissioned entities with the documented
-  [safe deletion flow](#deleting-a-permissioned-entity).
+- Change schema with `eacl/write-schema!`.
+- Add/retract relationships via EACL relationship APIs
+- Retract permissioned entities via
+  [:eacl.fn/retractEntity](#deleting-a-permissioned-entity).
 
-Ordinary application datoms that do not affect authorization are unrestricted.
-If an application changes EACL schema or relationship storage directly, splits
-EACL transaction data, changes the identity of a permissioned object outside
-the documented contract, or leaves relationships behind during deletion,
-cached authorization results may be stale.
+Ordinary application datoms that do not affect authorization are unrestricted. If an application changes EACL schema or relationship storage directly, splits EACL transaction data, changes the identity of a permissioned object outside the documented contract, or leaves relationships behind during deletion, cached authorization results may be stale.
 
 To recover after an unsupported authorization mutation:
 
 1. Stop affected authorization traffic in every process.
-2. Repair the schema, identity, or relationship data through a supported EACL
-   path.
+2. Repair the schema, identity, or relationship data through a supported EACL path.
 3. Expire or recreate every affected EACL client in every process.
 4. Resume traffic only after repair and cache rotation are complete.
 
 Cache expiry removes remembered answers; it does not repair ghost
-relationships. Rewriting an unchanged schema is also not a cache flush.
+relationships. Rewriting an unchanged schema is not a cache flush.
 
-Most applications need no cache configuration. Disable caching for one client
-with `eacl.cache/no-cache`:
+Most applications need no cache configuration. Disable caching for one client with `eacl.cache/no-cache`:
 
 ```clojure
 (require '[eacl.cache :as eacl-cache])
 
-(def acl
-  (eacl.datomic.core/make-client
-   conn
-   {:cache eacl-cache/no-cache}))
+(def acl (eacl.datomic.core/make-client conn {:cache eacl-cache/no-cache}))
 ```
 
 Or bypass the cache for one request:
