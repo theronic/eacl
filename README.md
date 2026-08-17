@@ -8,15 +8,20 @@ EACL is built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), 
 |-------------------------------------------------------|--------------------------------------------------|
 | Who are you?, i.e. which `<subject>`? | What can `<subject>` do? (what EACL cares about) |
 
-EACL permissions are [just data](#data-structures) that live next to your Application Data as attributes on entities, hence _situated_, which has several [benefits](#the-benefits-of-situated-authorization).
+EACL permissions are [just data](#data-structures) that live next to your Application Data as attributes on entities, hence _situated_. This has [several benefits](#the-benefits-of-situated-authorization), mainly reduced latency.
 
-Specifically, it makes EACL suitable for real-time UI view maintenance, because it is cheap to locally compute the subset of online clients that need to re-query to maintain consistent views, without re-running every client query whenever the DB changes, even when unrelated, i.e. it avoids query amplification.
+EACL's situated nature makes it suitable for real-time UI view maintenance:
+- Let's say you have 1k-10k online clients. When should they refresh their UI? Every time the database changes? It doesn't scale, especially if those queries are expensive.
+- EACL makes it cheap & easy to compute which online users are affected by an entity change via `eacl/lookup-subjects`  because it is designed to compute recursive viewership. 
+- Basically, EACL helps to avoids query amplification without a network hop, while answering authorization questions quickly and correctly.
+
+EACL does not claim to solve the Materialized View problem (related to [DDF](https://timelydataflow.github.io/differential-dataflow/)), but it gets you 95% of the way there, while being fast enough for 1k-10k online users - maybe more.
 
 🦅 EACL is pronounced "EE-kəl", like "eagle" with a `k` because it keeps a watchful eagle-eye on your permissions.
 
 ## Is it any good?
 
-Yes.
+Yes. EACL is best-in-class ReBAC authorization for the Clojure ecosystem.
 
 ## What is EACL good for?
 
@@ -61,8 +66,8 @@ Refer to the full [EACL API](#eacl-api).
   - For small-to-medium workloads, EACL is faster than Spice (in my experience), but no official benchmarks are published at this time. Under internal testing, EACL performs well against a database with 1M Relationships and complex, real-world recursive schema.
   - EACL should comfortably handle 10M-100M Relationships, but I haven't benchmarked 10M Relationships yet. Performance will vary on the complexity of your schema, number of Relationships and lookup query _page-size_.
 - EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+/TLC, and Apalache. In short EACL is IMO, correct:
-  - The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md), i.e. it will never "yes" when it should say "no", and it will never serve stale cache segments that are behind time `T` as per your request's consistency constraints.
-  - The Clojure/ClojureScript backend implementations are internally certified, but are not generated from proofs.
+  - The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md), i.e. it will never say "yes" when  means "no", and it will never serve stale cache segments that are behind time `T` as per your request's consistency constraints.
+  - Clojure/ClojureScript backend implementations are internally certified, but are not generated from proofs.
   - EACL does not attempt to verify the correctness of its supported backends – that is the database authors' problem.
   - EACL has not been independently audited.
 
