@@ -48,6 +48,22 @@
       ;; as retryable costs bounded attempts while the reverse loses reads.
       :else :retryable)))
 
+(defn- realize-chunk
+  "Realizes exactly the requested physical chunk of an adapter scan.
+
+  Adapter scans are ordered lazy sequences from the exclusive bound to the
+  end of the endpoint; the reducer consumes at most `:limit` values per
+  command (`eacl.engine.stable-reducer/fetch-values`), so realizing more
+  than that inside the boundary would re-read the whole endpoint remainder
+  on every command — quadratic in the endpoint degree — without changing a
+  single released value. A descriptor without a positive integer `:limit`
+  realizes the complete scan, which keeps raw callers unchanged."
+  [descriptor values]
+  (let [limit (:limit descriptor)]
+    (if (and (int? limit) (pos? limit))
+      (into [] (take limit) values)
+      (vec values))))
+
 (defn classified-fetch-fn
   "Wraps a read-demand fetch so every outcome is one of the three classes.
   The chunk is fully realized inside the boundary, so a mid-stream failure
@@ -55,7 +71,7 @@
   [fetch-fn]
   (fn [descriptor]
     (try
-      (vec (fetch-fn descriptor))
+      (realize-chunk descriptor (fetch-fn descriptor))
       (catch #?(:clj Throwable :cljs :default) failure
         (if (or (scan-failure? failure) (typed-eacl-error? failure))
           (throw failure)
