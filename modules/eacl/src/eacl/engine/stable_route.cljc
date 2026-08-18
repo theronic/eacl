@@ -177,7 +177,9 @@
                            successors))
                        []
                        rules)]
-                  (if (identical? ::found outcome)
+                  ;; Value comparison, not `identical?`: ClojureScript keyword
+                  ;; literals are not interned objects.
+                  (if (= ::found outcome)
                     (do (report!) true)
                     (let [stack (into stack (rseq outcome))]
                       (when (> (count stack) max-stack)
