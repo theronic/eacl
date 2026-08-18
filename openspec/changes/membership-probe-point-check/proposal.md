@@ -1,5 +1,7 @@
 # Proposal: Membership-Probe Point Check
 
+> Investigation report: [`docs/reports/2026-08-19-hierarchical-cache-investigation.md`](../../../docs/reports/2026-08-19-hierarchical-cache-investigation.md) — measurements, decisions, what shipped, remaining opportunities.
+
 ## Why
 
 The stable-discovery engine answered `can?` by running the reverse reducer

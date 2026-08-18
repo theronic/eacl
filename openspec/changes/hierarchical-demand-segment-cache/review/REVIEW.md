@@ -1,5 +1,7 @@
 # Adversarial review: `hierarchical-demand-segment-cache` (2026-08-18)
 
+> Consolidated report: [`docs/reports/2026-08-19-hierarchical-cache-investigation.md`](../../../../docs/reports/2026-08-19-hierarchical-cache-investigation.md).
+
 Reviewed against the code on `docs/improve-readme` (v8 stable-discovery engine,
 head `9f23109`). The original artifacts are preserved in this folder as
 `original-*.md`; the rewritten `proposal.md`, `design.md`, `specs/` and
