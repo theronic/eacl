@@ -41,7 +41,7 @@ Caching does not alter results:
 | Exact completed answer | Same semantic operation and canonical ordinary immutable snapshot | Skips the complete operation with no proof read; retained historical generations share one bounded composite-key tier |
 | Proof-backed completed answer | Same semantic operation, lifecycle, schema generation, and dependency frontier | Survives unrelated forward transactions |
 | Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
-| Sealed plan | Same source scope, lifecycle, basis, and permission root | Reuses the compiled stable-discovery plan across requests |
+| Sealed plan | Same source scope, lifecycle, schema generation, and permission root | Reuses the compiled stable-discovery plan across requests and unrelated transactions; `expire-cache!` drops it |
 | Schema paths | Same schema generation | Shares permission-path and dependency-closure derivations used for cache dependencies and cursor proofs |
 | Latest checkpoint | One authenticated query, exact snapshot, page size, and boundary | Resumes a continued page from the retained engine state plus its lookahead segment without publishing incomplete traversal as an answer |
 | Visited page | One authenticated query and immutable snapshot | Reuses an already-externalized page (and learns the adjacent opposite-direction page) |
@@ -60,9 +60,12 @@ For an ordinary current completed operation EACL resolves:
 3. engine evaluation, optionally using safe cached subproblems; and
 4. publication into every eligible exact and proof-backed tier.
 
-An exact hit performs no generation proof reads. A proof-backed hit is promoted
-into the exact store for the selected value, so the next identical request on
-that value is exact.
+An exact hit performs no generation proof reads and no schema reads: request
+validation runs on the miss path against the schema parsed once per schema
+generation (a hit implies the request validated under an equal generation;
+an unstamped database validates against a direct read). A proof-backed hit is
+promoted into the exact store for the selected value, so the next identical
+request on that value is exact.
 
 After successful authenticated `at-exact-snapshot` selection, EACL probes only
 the snapshot-exact completed-answer tier. Its composite identity includes the

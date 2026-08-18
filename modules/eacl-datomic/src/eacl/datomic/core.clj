@@ -1036,7 +1036,21 @@
                :has-next-page? false
                :has-previous-page? false}})
 
-(declare capture-result-context with-cache-info)
+(declare capture-result-context with-cache-info with-result-schema)
+
+(defn- request-schema
+  "The parsed EACL schema visible in `db`, for validating one public request.
+
+  Inside a cached computation the client binds its proof-keyed schema
+  generation (`impl.indexed/*schema-cache*`); its `:parsed-schema` is read
+  once per generation, so validation costs no schema enumeration and cache
+  hits never read the schema at all (validation runs on the miss path — no
+  entry can exist for a request that failed validation, and every tier keys
+  by an identity that fixes the schema generation). Outside a bound
+  generation the schema is read from the selected value directly."
+  [_opts db]
+  (or (some-> impl.indexed/*schema-cache* :parsed-schema force)
+      (schema/read-schema db)))
 
 (defn spiceomic-read-relationships
   [conn
@@ -1056,9 +1070,6 @@
         (capture-result-context
          conn opts (:consistency filters)
          (fn [db _decoded]
-           (schema-errors/validate-relationship-read!
-            (schema/read-schema db)
-            filters)
            (let [relation-ids
                  (impl/relationship-relation-ids db filters)]
              {:db db
@@ -1067,6 +1078,14 @@
               {:permission-nodes []
                :relation-ids relation-ids}}))
          :read-relationships decoded)
+        ;; Schema validation runs on the miss path (inside the bound schema
+        ;; generation) and on the empty short-circuits; a cache hit implies
+        ;; the request validated under an equal schema generation.
+        validate!
+        (fn []
+          (schema-errors/validate-relationship-read!
+           (request-schema opts db)
+           filters))
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
@@ -1085,9 +1104,11 @@
       ;; A filter names an object that does not exist: nothing can match.
       ;; A supplied-but-unresolvable ID must not be conflated with an absent
       ;; filter — that conflation degraded this query to a global scan.
-      (if decoded
-        (cursor-anchor-stale! :read-relationships)
-        empty-page)
+      (do
+        (with-result-schema result-context validate!)
+        (if decoded
+          (cursor-anchor-stale! :read-relationships)
+          empty-page))
       (let [filters'     (cond-> filters
                            subject-id (assoc :subject/id subject-eid)
                            resource-id (assoc :resource/id resource-eid))
@@ -1098,7 +1119,11 @@
              (shared-cache/lookup-page-query-identity filters internal-query)
              :relationship-page internal-relationship-page?
              internal-page-weight
-             #(impl/read-relationships db internal-query))]
+             #(with-result-schema
+                result-context
+                (fn []
+                  (validate!)
+                  (impl/read-relationships db internal-query))))]
         (with-cache-info
          (coerce-relationship-page
           db selected-opts :read-relationships query-shape basis-t
@@ -1291,7 +1316,13 @@
         registry (:derived-schema-caches opts)]
     (or (get @registry key)
         (let [created
-              (impl.indexed/make-schema-cache db schema-generation)]
+              (cond-> (impl.indexed/make-schema-cache db schema-generation)
+                ;; Parsed once per generation for request validation
+                ;; (`request-schema`); equal generations denote equal
+                ;; definition sets. An unstamped database has no
+                ;; generation and must not latch anything.
+                (some? schema-generation)
+                (assoc :parsed-schema (delay (schema/read-schema db))))]
           (get (swap! registry
                       #(if (contains? % key)
                          %
@@ -1868,12 +1899,17 @@
   (let [{:keys [db] :as result-context}
         (capture-basic-result-context
          conn opts consistency-value)
-        _ (schema-errors/validate-permission-request!
-           (schema/read-schema db)
+        ;; Schema validation runs on the miss path (inside the bound schema
+        ;; generation) and on the unknown-object short-circuit; a cache hit
+        ;; implies the request validated under an equal schema generation.
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema opts db)
            (or (get-in opts [:execution-contract :operation]) :can?)
            {:resource-type (:type resource)
             :subject-type (:type subject)
-            :permission permission})
+            :permission permission}))
         internal-subject
         (spice-object
          (:type subject)
@@ -1883,9 +1919,11 @@
          (:type resource)
          (object->entid db resource))]
     (if-not (and (:id internal-subject) (:id internal-resource))
-      {:allowed? false
-       :cached? false
-       :cache-basis nil}
+      (do
+        (validate!)
+        {:allowed? false
+         :cached? false
+         :cache-basis nil})
       (let [query-identity
             {:public
              {:subject subject
@@ -1901,8 +1939,10 @@
              boolean-result?
              (:type resource)
              permission
-             #(impl/can? db internal-subject permission
-                         internal-resource))]
+             #(do
+                (validate!)
+                (impl/can? db internal-subject permission
+                           internal-resource)))]
         {:allowed? (:result answer)
          :cached? (:cached? answer)
          :cache-basis (:cache-basis answer)}))))
@@ -1925,12 +1965,6 @@
                  opts :lookup-resources query-shape page-req)
         prepare
         (fn [db decoded-bound]
-          (schema-errors/validate-permission-request!
-           (schema/read-schema db)
-           :lookup-resources
-           {:resource-type (:resource/type query)
-            :subject-type (:type subject)
-            :permission (:permission query)})
           (let [internal-subject (spice-object->internal db subject)
                 query' (assoc query :subject internal-subject)]
             {:db db
@@ -1949,6 +1983,17 @@
                 cache-scope schema-version]
          :as result-context}
         captured
+        ;; Schema validation runs on the miss path (inside the bound schema
+        ;; generation) and on the unknown-subject short-circuit; a cache hit
+        ;; implies the request validated under an equal schema generation.
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema opts db)
+           :lookup-resources
+           {:resource-type (:resource/type query)
+            :subject-type (:type subject)
+            :permission (:permission query)}))
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
@@ -1957,13 +2002,16 @@
     (if (nil? (:id internal-subject))
       ;; Unknown subjects match nothing on a first page. A continued page may
       ;; not silently discard its authenticated anchor.
-      (if decoded
-        (cursor-anchor-stale! :lookup-resources)
-        (assoc empty-page :cached? false :cache-basis nil))
+      (do
+        (with-result-schema result-context validate!)
+        (if decoded
+          (cursor-anchor-stale! :lookup-resources)
+          (assoc empty-page :cached? false :cache-basis nil)))
       (let [compute
             #(with-result-schema
                result-context
                (fn []
+                 (validate!)
                  (impl/lookup-resources
                   db internal-query
                   {:continuation-cache-fn
@@ -2021,18 +2069,22 @@
   (let [{:keys [db] :as result-context}
         (capture-basic-result-context
          conn opts (:consistency query))
-        _ (schema-errors/validate-permission-request!
-           (schema/read-schema db)
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema opts db)
            :count-resources
            {:resource-type (:resource/type query)
             :subject-type (:type subject)
-            :permission (:permission query)})
+            :permission (:permission query)}))
         subject-ent (spice-object->internal db subject)
         query' (-> query
                    (assoc :subject subject-ent)
                    (dissoc :consistency :cache?))]
     (if (nil? (:id subject-ent))
-      (assoc (empty-count-response query) :cached? false :cache-basis nil)
+      (do
+        (validate!)
+        (assoc (empty-count-response query) :cached? false :cache-basis nil))
       (let [answer
             (cached-basic-authorization-result
              opts result-context :count-resources
@@ -2041,7 +2093,7 @@
              :count count-response?
              (:resource/type query')
              (:permission query')
-             #(impl/count-resources db query'))]
+             #(do (validate!) (impl/count-resources db query')))]
         (with-cache-info (:result answer) answer)))))
 
 (defn spiceomic-lookup-subjects
@@ -2056,12 +2108,6 @@
                  opts :lookup-subjects query-shape page-req)
         prepare
         (fn [db decoded-bound]
-          (schema-errors/validate-permission-request!
-           (schema/read-schema db)
-           :lookup-subjects
-           {:resource-type (:type (:resource query))
-            :subject-type (:subject/type query)
-            :permission (:permission query)})
           (let [internal-resource
                 (spice-object->internal db (:resource query))
                 query' (assoc query :resource internal-resource)]
@@ -2081,19 +2127,33 @@
                 cache-scope schema-version]
          :as result-context}
         captured
+        ;; Schema validation runs on the miss path (inside the bound schema
+        ;; generation) and on the unknown-resource short-circuit; a cache hit
+        ;; implies the request validated under an equal schema generation.
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema opts db)
+           :lookup-subjects
+           {:resource-type (:type (:resource query))
+            :subject-type (:subject/type query)
+            :permission (:permission query)}))
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
                :page-cursor-context (:cursor-context captured))]
     (validate-page-token-schema! selected-opts decoded)
     (if (nil? (:id internal-resource))
-      (if decoded
-        (cursor-anchor-stale! :lookup-subjects)
-        (assoc empty-page :cached? false :cache-basis nil))
+      (do
+        (with-result-schema result-context validate!)
+        (if decoded
+          (cursor-anchor-stale! :lookup-subjects)
+          (assoc empty-page :cached? false :cache-basis nil)))
       (let [compute
             #(with-result-schema
                result-context
                (fn []
+                 (validate!)
                  (impl/lookup-subjects
                   db internal-query
                   {:continuation-cache-fn
@@ -2140,19 +2200,23 @@
   (let [{:keys [db] :as result-context}
         (capture-basic-result-context
          conn opts (:consistency query))
-        _ (schema-errors/validate-permission-request!
-           (schema/read-schema db)
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema opts db)
            :count-subjects
            {:resource-type (:type (:resource query))
             :subject-type (:subject/type query)
-            :permission (:permission query)})
+            :permission (:permission query)}))
         resource-ent
         (spice-object->internal db (:resource query))
         query' (-> query
                    (assoc :resource resource-ent)
                    (dissoc :consistency :cache?))]
     (if (nil? (:id resource-ent))
-      (assoc (empty-count-response query) :cached? false :cache-basis nil)
+      (do
+        (validate!)
+        (assoc (empty-count-response query) :cached? false :cache-basis nil))
       (let [answer
             (cached-basic-authorization-result
              opts result-context :count-subjects
@@ -2161,7 +2225,7 @@
              :count count-response?
              (:type resource-ent)
              (:permission query')
-             #(impl/count-subjects db query'))]
+             #(do (validate!) (impl/count-subjects db query')))]
         (with-cache-info (:result answer) answer)))))
 
 (defn spiceomic-expand-permission-tree
@@ -2169,11 +2233,13 @@
   (let [{:keys [adapter db] :as context}
         (capture-basic-result-context
          conn opts (:consistency query))
-        _ (schema-errors/validate-expansion-request!
-           (schema/read-schema db)
+        validate!
+        (fn []
+          (schema-errors/validate-expansion-request!
+           (request-schema opts db)
            :expand-permission-tree
            (:type (:resource query))
-           (:permission query))
+           (:permission query)))
         contract (:execution-contract opts)
         answer
         (cached-basic-authorization-result
@@ -2181,12 +2247,14 @@
          (dissoc query :consistency :cache? :timeout-ms :cancellation-token)
          :permission-tree map?
          (:type (:resource query)) (:permission query)
-         #(permission-tree/expand
-           adapter
-           {:limits (:permission-tree-limits opts)
-            :execution-contract contract}
-           (:resource query)
-           (:permission query)))
+         #(do
+            (validate!)
+            (permission-tree/expand
+             adapter
+             {:limits (:permission-tree-limits opts)
+              :execution-contract contract}
+             (:resource query)
+             (:permission query))))
         tree (:result answer)]
     (execution/check! contract :permission-tree-token-issuance)
     (let [token
@@ -2357,7 +2425,10 @@
        (shared-cache/expire-current! store))
      (some-> (:derived-schema-caches opts) (reset! {}))
      (some-> (:continuation-cache-store opts) continuation/clear!)
-     (some-> (:revision-checkpoints opts) :state (reset! [])))
+     (some-> (:revision-checkpoints opts) :state (reset! []))
+     ;; Sealed plans are keyed by schema generation, not lifecycle; a
+     ;; rotation after reset/restore/source replacement must drop them too.
+     (engine/expire-plans!))
    nil))
 
 (def prepare-cache-coherence!

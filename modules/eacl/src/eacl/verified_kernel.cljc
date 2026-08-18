@@ -62,9 +62,29 @@
   (-read-indexed-result [kernel direction state]
     "Reads the completed public render result and dimensional counters."))
 
+#?(:clj
+   (defonce ^:private kernel-classes
+     ;; Classes already known to satisfy DecisionKernel. `satisfies?` on the
+     ;; JVM walks the class hierarchy against the protocol's extension map on
+     ;; every call (the generated kernels are `extend`ed Java classes, not
+     ;; direct interface implementations), which measured ~10 µs per call and
+     ;; runs several times per request. Only positive answers are memoized:
+     ;; a class cannot stop satisfying a protocol, but a negative answer could
+     ;; become stale if the protocol were extended later.
+     (java.util.concurrent.ConcurrentHashMap.)))
+
 (defn kernel?
   [candidate]
-  (satisfies? DecisionKernel candidate))
+  #?(:clj
+     (if (nil? candidate)
+       false
+       (let [^java.util.concurrent.ConcurrentHashMap known kernel-classes
+             c (class candidate)]
+         (or (.containsKey known c)
+             (and (satisfies? DecisionKernel candidate)
+                  (do (.put known c Boolean/TRUE) true)))))
+     :cljs
+     (satisfies? DecisionKernel candidate)))
 
 (defn indexed-traversal-kernel?
   [candidate]
