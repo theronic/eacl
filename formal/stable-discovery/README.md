@@ -13,12 +13,14 @@ sh formal/stable-discovery/verify-fast.sh
 ```
 
 Requires the pinned toolchain cache under `target/formal-tools/` (see
-`bin/bootstrap-formal-tools`). Budget: 10 s hard ceiling, ~7 s observed. The
+`bin/bootstrap-formal-tools`). Budget: 10 s hard ceiling, ~8 s observed. The
 gate self-checks its model/config/bridge manifests, scans for Dafny escape
 hatches, pins the TLA+ assumption-boundary fingerprint, and enforces the
-exact aggregate obligation count (506).
+exact aggregate obligation count (528).
 
-Contents: 41 Dafny leaves; two TLC families (`AtomicAttempt` with 3 mutants,
+Contents: 42 Dafny leaves (`MembershipProbeCheck.dfy`, added 2026-08-18,
+proves the membership-probe point check equal to reverse-denotation
+membership); two TLC families (`AtomicAttempt` with 3 mutants,
 `ProgressCheckpoint` with 6 mutants); the randomized refinement campaign
 (18,000 checks, 22 mutation controls) and four source bridges (public
 schema, sealed plan/rank, cursor codec, checkpoint publication). The former

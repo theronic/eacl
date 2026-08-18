@@ -75,10 +75,14 @@ EACL's sealed plan.
 - No forward/bidirectional check heuristics in this change (the resource
   side is enumerated; the subject is always probed).
 
-## Formal obligation (follow-up)
+## Formal obligation (discharged 2026-08-18)
 
-State and check the equivalence "membership-probe search returns true iff
-the subject belongs to the exhaustive reverse-discovery denotation" as a
-Dafny leaf next to `formal/stable-discovery/BidirectionalReachability.dfy`
-(`ReverseLookupEqualsForwardAuthorization` is the bridge). Until then the
-oracle differential and the frozen baselines are the evidence.
+`formal/stable-discovery/MembershipProbeCheck.dfy` proves, over the
+StableReducer program model with leaf result nodes, that the probe answer
+(some intermediate reachable through non-result states holds the target as
+a direct successor) equals membership of the target in the reverse reachable
+set (`ProbeAnswerEqualsReachability`) and hence equals the exhaustive
+reverse-enumeration check's answer (`ProbeCheckEqualsEnumerationCheck`, via
+`ReducerCompleteness`/`ExactCountComposition`). The leaf is in the
+`verify-fast.sh` gate (528 obligations); `eacl.engine.point-check-test` is
+the executable oracle differential registered in `execution-contract.edn`.

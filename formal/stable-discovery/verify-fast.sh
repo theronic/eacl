@@ -154,7 +154,8 @@ dafny_check_three() {
     "$model_root/OneValueScanNormalization.dfy" \
     "$model_root/ReducerCost.dfy" \
     "$model_root/GroundedPositiveProgram.dfy" \
-    "$model_root/ExactDedupLowerBound.dfy"
+    "$model_root/ExactDedupLowerBound.dfy" \
+    "$model_root/MembershipProbeCheck.dfy"
 }
 
 dafny_check_four() {
@@ -280,7 +281,7 @@ dafny_obligations=$(awk \
   "$tlc_run_root/dafny-two.log" \
   "$tlc_run_root/dafny-three.log" \
   "$tlc_run_root/dafny-four.log")
-expected_dafny_obligations=506
+expected_dafny_obligations=528
 dafny_count_failed=0
 if [ "$dafny_obligations" -ne "$expected_dafny_obligations" ]; then
   printf 'expected %s Dafny obligations, observed %s\n' \

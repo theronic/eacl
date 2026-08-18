@@ -114,6 +114,9 @@ bounded by reachable intermediates and the reducer budgets — never by the
 number of subjects that hold the permission (a denied check on a resource
 with 5,000 owners went from 16 ms to 24 µs). Probes and enumerations run
 through the routed read boundary below, under the same typed limits.
+`formal/stable-discovery/MembershipProbeCheck.dfy` proves the probe answer
+equal to reverse-denotation membership; `eacl.engine.point-check-test` is
+the executable oracle differential.
 
 ## Failure semantics
 
