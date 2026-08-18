@@ -14,8 +14,8 @@
 - [ ] 2.5 Add a randomized cache-vs-bypass differential that includes popular resources (thousands of direct subjects) on all three backends
 
 ## 3. Formal
-- [ ] 3.1 Dafny leaf: probe-search membership equals reverse-denotation membership; register in `verify-fast.sh` and the assurance matrix
-- [ ] 3.2 Update `docs/stable-discovery-engine.md` and `docs/formal-verification.md` (point-check route)
+- [x] 3.1 Dafny leaf `formal/stable-discovery/MembershipProbeCheck.dfy` (`ProbeAnswerEqualsReachability`, `ProbeCheckEqualsEnumerationCheck`); registered in `verify-fast.sh` (528 obligations, batch three), `ASSURANCE_COVERAGE.md`, `execution-contract.edn` executable evidence
+- [x] 3.2 `docs/stable-discovery-engine.md` and `docs/formal-verification.md` describe the point-check route and its proof
 
 ## 4. Docs
 - [x] 4.1 `stable-route` namespace docstring
