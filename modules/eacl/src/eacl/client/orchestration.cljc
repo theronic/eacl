@@ -1082,6 +1082,9 @@
    (some->
     (get-in client [:opts :continuation-cache-store])
     continuation/clear!)
+   ;; Sealed plans are keyed by schema generation, not lifecycle; a rotation
+   ;; after reset/restore/source replacement must drop them too.
+   (engine/expire-plans!)
    nil))
 
 (defn cache-stats

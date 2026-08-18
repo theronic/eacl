@@ -439,6 +439,8 @@
     ;; The validated assertion generation is already the canonical routing
     ;; identity. Reusing it avoids a semantically duplicate proof acquisition.
     :routing-schema-identity known-schema-generation
+    ;; Sealed plans are keyed by this identity (see `stable-plan-key`).
+    :plan-schema-identity known-schema-generation
     :permission-roots (atom {})
     :permission-paths (atom {})
     :traversal-permissions (atom {})
@@ -480,19 +482,36 @@
 
   DataScript/Datahike raw callers invoke the engine directly on an
   adapter — bind this via engine/*schema-cache* there; the Datomic raw
-  facade binds it automatically."
-  [snapshot]
-  {:backend-id (backend/backend-id snapshot)
-   :source-scope nil
-   :schema-version nil
-   :routing-schema-identity nil
-   :request-local? true
-   :permission-roots (atom {})
-   :permission-paths (atom {})
-   :traversal-permissions (atom {})
-   :recursive-cycle-guards (atom {})
-   :relationship-dependencies (atom {})
-   :direct-grant-relations (atom {})})
+  facade binds it automatically.
+
+  An optional `:schema-identity` (the caller's own cheap read of the
+  schema generation, never a proof-frame operation) lets sealed plans be
+  reused across raw calls and across unrelated transactions; without it the
+  plan cache keys by exact basis."
+  ([snapshot]
+   (request-schema-cache snapshot nil))
+  ([snapshot {:keys [schema-identity]}]
+   {:backend-id (backend/backend-id snapshot)
+    :source-scope nil
+    :schema-version nil
+    :routing-schema-identity nil
+    :plan-schema-identity schema-identity
+    :request-local? true
+    :permission-roots (atom {})
+    :permission-paths (atom {})
+    :traversal-permissions (atom {})
+    :recursive-cycle-guards (atom {})
+    :relationship-dependencies (atom {})
+    :direct-grant-relations (atom {})}))
+
+(defn- plan-schema-identity
+  "The schema-generation identity sealed plans may be keyed by: the bound
+  schema cache's explicit plan identity, else its stamped client generation.
+  nil for unstamped raw evaluation (basis keying)."
+  []
+  (when-let [cache *schema-cache*]
+    (or (:plan-schema-identity cache)
+        (:schema-version cache))))
 
 (defn schema-cache-key
   "Identity of schema-derived state for one selected immutable snapshot.
@@ -885,18 +904,44 @@
 (defonce ^:private stable-plan-cache
   (atom {:entries {} :order []}))
 
-(defn- stable-plan
-  "Seals (or reuses) the direction-specific plan for one root at the exact
-  basis. Keyed by the adapter's declared source identity (scope AND
-  lifecycle — either alone may be caller-fixed across distinct stores) plus
-  basis and root, so re-wrapping the same source at the same basis reuses
-  the plan across requests; bounded FIFO."
+(def ^:private stable-plan-cache-capacity 256)
+
+(defn expire-plans!
+  "Drops every retained sealed plan. Called by the public clients'
+  `expire-cache!` so lifecycle rotation (reset, restore, source replacement)
+  also discards plans sealed under the replaced source history."
+  []
+  (reset! stable-plan-cache {:entries {} :order []})
+  nil)
+
+(declare plan-schema-identity)
+
+(defn- stable-plan-key
+  "A sealed plan is a pure function of the schema definitions visible at the
+  snapshot (`seal-plan` consults no relationship data), so within one source
+  (scope and lifecycle) it is keyed by the schema generation identity the
+  bound schema cache already knows — every supported schema write advances
+  it in the same transaction as the definition change, and reading it costs
+  no proof-frame operation. The native revision does not belong in the key
+  (it re-sealed every root after every unrelated transaction); the lifecycle
+  stays so that distinct stores that alias a source scope never share, and
+  a rotated lifecycle re-seals once. Without a schema identity the key
+  degrades to the exact basis."
   [db root-node]
-  (let [key [(backend/backend-id db)
-             (backend/invoke db :source-scope)
-             (backend/invoke db :source-lifecycle)
-             (backend/invoke db :native-revision)
-             root-node]]
+  [(backend/backend-id db)
+   (backend/invoke db :source-scope)
+   (backend/invoke db :source-lifecycle)
+   (if-let [identity (plan-schema-identity)]
+     [:schema identity]
+     [:basis (backend/invoke db :native-revision)])
+   root-node])
+
+(defn- stable-plan
+  "Seals (or reuses) the direction-specific plan for one root. Reuse is keyed
+  by `stable-plan-key`; the store is a bounded FIFO shared by every client
+  in the process and cleared by `expire-plans!`."
+  [db root-node]
+  (let [key (stable-plan-key db root-node)]
     (or (get-in @stable-plan-cache [:entries key])
         (let [plan (sealed-plan/seal-plan db root-node)]
           (swap! stable-plan-cache
@@ -905,7 +950,7 @@
                      cache
                      (let [order (conj order key)
                            entries (assoc entries key plan)]
-                       (if (> (count order) 128)
+                       (if (> (count order) stable-plan-cache-capacity)
                          {:entries (dissoc entries (first order))
                           :order (subvec order 1)}
                          {:entries entries :order order})))))
