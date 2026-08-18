@@ -826,6 +826,27 @@
                 (:derived-grants replayed))
             "denotation reuse does no more work than uncached recomputation")))))
 
+(deftest page-token-without-configured-ttl-remains-valid-past-five-minutes-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client
+                  conn
+                  {:security-key "recursive-no-expiry"})
+          query {:subject (spice-object :user (user-id 0))
+                 :permission :read
+                 :resource/type :account
+                 :first 3}]
+      (seed-recursive! conn client 10 1)
+      (let [page1 (eacl/lookup-resources client query)
+            cursor (page-end-cursor page1)
+            now-var (ns-resolve 'eacl.datomic.core 'now-seconds)
+            now-fn @now-var
+            page2
+            (with-redefs-fn {now-var #(+ 600 (long (now-fn)))}
+              #(eacl/lookup-resources client (assoc query :after cursor)))]
+        (is (= (mapv account-id (range 3 6))
+               (mapv :id (:data page2)))
+            "a Datomic cursor has no age expiry unless the client configures one")))))
+
 (deftest expired-page-token-reaches-the-kernel-decision-test
   ;; cursor-dependency-validity: expiry is a computed input of the verified
   ;; continuation decision, rejected by the kernel rather than pre-empted at
