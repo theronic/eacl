@@ -442,6 +442,26 @@
       (:recursive-traversal-limits opts)}
      {:request-proof-frame (:request-proof-frame opts)})))
 
+(defn- request-schema
+  "The parsed public schema visible in `db`, for validating one request.
+
+  Inside a cached computation the engine binds the client's proof-keyed
+  schema generation (`engine/*schema-cache*`); its `:parsed-schema` slot is
+  read once per generation, so validation costs no schema enumeration and
+  cache hits never read the schema at all (validation runs on the miss
+  path — no entry can exist for a request that failed validation, and every
+  tier keys by an identity that fixes the schema generation). An unstamped
+  database (no schema generation) or an unbound generation reads the schema
+  directly."
+  [api db]
+  (let [cache engine/*schema-cache*
+        slot (:parsed-schema cache)
+        read-schema (get-in api [:schema :read-schema])]
+    (if (and slot (some? (:schema-version cache)))
+      (or @slot
+          (reset! slot (read-schema db)))
+      (read-schema db))))
+
 (defn read-relationships
   [api db
    {:as opts
@@ -457,9 +477,14 @@
          page-query :query}
         (page-context
          opts selection :read-relationships filters nil nil)
-        _ (schema-errors/validate-relationship-read!
-           ((get-in api [:schema :read-schema]) page-db)
-           filters)
+        ;; Schema validation runs on the miss path (inside the bound schema
+        ;; generation) and on the unknown-object short-circuit; a cache hit
+        ;; implies the request validated under an equal schema generation.
+        validate!
+        (fn []
+          (schema-errors/validate-relationship-read!
+           (request-schema api page-db)
+           filters))
         base-filters
         (apply dissoc filters
                [:first :last :after :before :consistency :cache?
@@ -478,9 +503,11 @@
               resource-id (assoc :resource/id resource-eid)))]
     (if (or (and subject-id (nil? subject-eid))
             (and resource-id (nil? resource-eid)))
-      (if (cursor-request? filters)
-        (stale-cursor-anchor! :read-relationships)
-        (assoc relay/empty-page :cached? false :cache-basis nil))
+      (do
+        (validate!)
+        (if (cursor-request? filters)
+          (stale-cursor-anchor! :read-relationships)
+          (assoc relay/empty-page :cached? false :cache-basis nil)))
       (or
        (relay/lookup-visited-page
         adapter cursor-opts :read-relationships filters)
@@ -490,8 +517,10 @@
               (cache/lookup-page-query-identity filters internal-query)
               nil nil
               #(and (map? %) (vector? (:data %)) (map? (:page-info %)))
-              #((get-in api [:impl :read-relationships])
-                page-db internal-query (:decision-kernel cursor-opts)))
+              #(do
+                 (validate!)
+                 ((get-in api [:impl :read-relationships])
+                  page-db internal-query (:decision-kernel cursor-opts))))
              page
              (with-cache-info
                (relay/externalize-relationship-page
@@ -634,19 +663,23 @@
         opts (assoc opts
                     :completed-cache? completed-cache?
                     :snapshot-exact? snapshot-exact?)
-        _ (schema-errors/validate-permission-request!
-           ((get-in api [:schema :read-schema]) selected-db)
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema api selected-db)
            (or (:request-operation opts) :can?)
            {:resource-type (:type resource)
             :subject-type (:type subject)
-            :permission permission})
+            :permission permission}))
         internal-subject (spice-object->internal selected-db subject)
         internal-resource (spice-object->internal selected-db resource)]
     (if-not (and (:id internal-subject) (:id internal-resource))
-      {:allowed? false
-       :cached? false
-       :cache-basis nil
-       :evaluation (get-in opts [:execution-contract :evaluation])}
+      (do
+        (validate!)
+        {:allowed? false
+         :cached? false
+         :cache-basis nil
+         :evaluation (get-in opts [:execution-contract :evaluation])})
       (let [answer
             (cached-engine-result
              adapter opts :can?
@@ -656,8 +689,10 @@
              (:type internal-resource)
              permission
              boolean?
-             #(engine/can?
-               adapter internal-subject permission internal-resource))]
+             #(do
+                (validate!)
+                (engine/can?
+                 adapter internal-subject permission internal-resource)))]
         {:allowed? (:value answer)
          :cached? (:cached? answer)
          :cache-basis (:cache-basis answer)
@@ -681,17 +716,21 @@
         (page-context
          opts selection :lookup-resources query
          (:resource/type query) (:permission query))
-        _ (schema-errors/validate-permission-request!
-           ((get-in api [:schema :read-schema]) selected-db)
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema api selected-db)
            :lookup-resources
            {:resource-type (:resource/type query)
             :subject-type (:type subject)
-            :permission (:permission query)})
+            :permission (:permission query)}))
         internal-subject (spice-object->internal selected-db subject)]
     (if (nil? (:id internal-subject))
-      (if (cursor-request? query)
-        (stale-cursor-anchor! :lookup-resources)
-        (assoc relay/empty-page :cached? false :cache-basis nil))
+      (do
+        (validate!)
+        (if (cursor-request? query)
+          (stale-cursor-anchor! :lookup-resources)
+          (assoc relay/empty-page :cached? false :cache-basis nil)))
       (or
        (relay/lookup-visited-page
         adapter cursor-opts :lookup-resources query)
@@ -708,12 +747,14 @@
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))
                     (map? (:page-info %)))
-              #(engine/lookup-resources
-                adapter
-                internal-query
-                {:continuation-cache
-                 (continuation-context
-                  adapter cursor-opts :lookup-resources query)}))
+              #(do
+                 (validate!)
+                 (engine/lookup-resources
+                  adapter
+                  internal-query
+                  {:continuation-cache
+                   (continuation-context
+                    adapter cursor-opts :lookup-resources query)})))
              page
              (with-cache-info
                (binding [subproblem/*store*
@@ -739,18 +780,22 @@
         opts (assoc opts
                     :completed-cache? completed-cache?
                     :snapshot-exact? snapshot-exact?)
-        _ (schema-errors/validate-permission-request!
-           ((get-in api [:schema :read-schema]) selected-db)
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema api selected-db)
            :count-resources
            {:resource-type (:resource/type query)
             :subject-type (:type subject)
-            :permission (:permission query)})
+            :permission (:permission query)}))
         internal-subject (spice-object->internal selected-db subject)]
     (if-not (:id internal-subject)
-      (assoc
-       (cond-> {:count 0 :limit (or (:count-limit query) -1)}
-         (contains? query :count-limit) (assoc :truncated? false))
-       :cached? false :cache-basis nil)
+      (do
+        (validate!)
+        (assoc
+         (cond-> {:count 0 :limit (or (:count-limit query) -1)}
+           (contains? query :count-limit) (assoc :truncated? false))
+         :cached? false :cache-basis nil))
       (let [internal-query
             (-> query
                 (assoc :subject internal-subject)
@@ -765,7 +810,8 @@
              (:resource/type internal-query)
              (:permission internal-query)
              #(and (map? %) (integer? (:count %)))
-             #(engine/count-resources adapter internal-query))]
+             #(do (validate!)
+                  (engine/count-resources adapter internal-query)))]
         (with-cache-info (:value answer) answer)))))
 
 (defn lookup-subjects
@@ -780,12 +826,14 @@
         (page-context
          opts selection :lookup-subjects query
          (:type (:resource query)) (:permission query))
-        _ (schema-errors/validate-permission-request!
-           ((get-in api [:schema :read-schema]) selected-db)
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema api selected-db)
            :lookup-subjects
            {:resource-type (:type (:resource query))
             :subject-type (:subject/type query)
-            :permission (:permission query)})
+            :permission (:permission query)}))
         internal-resource
         (spice-object->internal selected-db (:resource query))]
     (when (contains? query :subject/relation)
@@ -793,9 +841,11 @@
                       {:eacl/error :eacl.pagination/unsupported-filter
                        :filter :subject/relation})))
     (if-not (:id internal-resource)
-      (if (cursor-request? query)
-        (stale-cursor-anchor! :lookup-subjects)
-        (assoc relay/empty-page :cached? false :cache-basis nil))
+      (do
+        (validate!)
+        (if (cursor-request? query)
+          (stale-cursor-anchor! :lookup-subjects)
+          (assoc relay/empty-page :cached? false :cache-basis nil)))
       (or
        (relay/lookup-visited-page
         adapter cursor-opts :lookup-subjects query)
@@ -812,12 +862,14 @@
               (:permission internal-query)
               #(and (map? %) (vector? (:data %))
                     (map? (:page-info %)))
-              #(engine/lookup-subjects
-                adapter
-                internal-query
-                {:continuation-cache
-                 (continuation-context
-                  adapter cursor-opts :lookup-subjects query)}))
+              #(do
+                 (validate!)
+                 (engine/lookup-subjects
+                  adapter
+                  internal-query
+                  {:continuation-cache
+                   (continuation-context
+                    adapter cursor-opts :lookup-subjects query)})))
              page
              (with-cache-info
                (binding [subproblem/*store*
@@ -843,19 +895,23 @@
         opts (assoc opts
                     :completed-cache? completed-cache?
                     :snapshot-exact? snapshot-exact?)
-        _ (schema-errors/validate-permission-request!
-           ((get-in api [:schema :read-schema]) selected-db)
+        validate!
+        (fn []
+          (schema-errors/validate-permission-request!
+           (request-schema api selected-db)
            :count-subjects
            {:resource-type (:type (:resource query))
             :subject-type (:subject/type query)
-            :permission (:permission query)})
+            :permission (:permission query)}))
         internal-resource
         (spice-object->internal selected-db (:resource query))]
     (if-not (:id internal-resource)
-      (assoc
-       (cond-> {:count 0 :limit (or (:count-limit query) -1)}
-         (contains? query :count-limit) (assoc :truncated? false))
-       :cached? false :cache-basis nil)
+      (do
+        (validate!)
+        (assoc
+         (cond-> {:count 0 :limit (or (:count-limit query) -1)}
+           (contains? query :count-limit) (assoc :truncated? false))
+         :cached? false :cache-basis nil))
       (let [internal-query
             (-> query
                 (assoc :resource internal-resource)
@@ -870,7 +926,8 @@
              (:type (:resource internal-query))
              (:permission internal-query)
              #(and (map? %) (integer? (:count %)))
-             #(engine/count-subjects adapter internal-query))]
+             #(do (validate!)
+                  (engine/count-subjects adapter internal-query)))]
         (with-cache-info (:value answer) answer)))))
 
 (defn expand-permission-tree
@@ -886,11 +943,13 @@
         opts (assoc opts
                     :completed-cache? completed-cache?
                     :snapshot-exact? snapshot-exact?)
-        _ (schema-errors/validate-expansion-request!
-           ((get-in api [:schema :read-schema]) db)
+        validate!
+        (fn []
+          (schema-errors/validate-expansion-request!
+           (request-schema api db)
            :expand-permission-tree
            (:type (:resource query))
-           (:permission query))
+           (:permission query)))
         answer
         (cached-engine-result
          adapter opts :expand-permission-tree
@@ -898,12 +957,14 @@
          (:type (:resource query))
          (:permission query)
          map?
-         #(permission-tree/expand
-           adapter
-           {:limits (:permission-tree-limits opts)
-            :execution-contract contract}
-           (:resource query)
-           (:permission query)))
+         #(do
+            (validate!)
+            (permission-tree/expand
+             adapter
+             {:limits (:permission-tree-limits opts)
+              :execution-contract contract}
+             (:resource query)
+             (:permission query))))
         tree (:value answer)]
     (execution/check! contract :permission-tree-token-issuance)
     (let [token
