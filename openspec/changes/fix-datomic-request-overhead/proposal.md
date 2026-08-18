@@ -1,5 +1,7 @@
 # Proposal: Fix Per-Request Overheads (sealed-plan thrash, seal cost, schema reads, kernel checks)
 
+> Investigation report: [`docs/reports/2026-08-19-hierarchical-cache-investigation.md`](../../../docs/reports/2026-08-19-hierarchical-cache-investigation.md) — measurements, decisions, what shipped, remaining opportunities.
+
 ## Why
 
 Profiling the live `eacl-datomic-solidjs` demo (110k servers, 59 accounts,

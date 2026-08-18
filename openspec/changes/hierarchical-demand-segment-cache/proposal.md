@@ -1,5 +1,7 @@
 # Proposal: Exact Scan-Response Cache (supersedes the hierarchical demand-segment draft)
 
+> Investigation report: [`docs/reports/2026-08-19-hierarchical-cache-investigation.md`](../../../docs/reports/2026-08-19-hierarchical-cache-investigation.md) — measurements, decisions, what shipped, remaining opportunities.
+
 > Status of this rewrite: the original proposal/design/tasks were reviewed
 > adversarially on 2026-08-18 and rejected as written; see
 > [`review/REVIEW.md`](review/REVIEW.md) for findings and measurements and

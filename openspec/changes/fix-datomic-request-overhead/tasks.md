@@ -4,7 +4,7 @@
 - [x] 1.2 `impl/with-request-engine`: process-stable lifecycle + `:schema-identity` (direct read, no proof op)
 - [x] 1.3 `expire-cache!` (Datomic + orchestration) calls `expire-plans!`
 - [x] 1.4 `seal-plan` encode-once (`sort-by-canonical`); fingerprint/plan invariance checked
-- [x] 1.5 `request-schema` + validation on the miss path at all seven client sites; unstamped databases read directly
+- [x] 1.5 `request-schema` + validation on the miss path at all seven client sites; unstamped databases read directly (Datomic client in #131; the shared Datahike/DataScript client `eacl.client.orchestration` in #135 via the engine's `:parsed-schema` generation slot)
 - [x] 1.6 `kernel?` positive-class memo (JVM)
 - [x] 1.7 `eacl.backend.v8-test` plan-sharing expectations aligned; full battery green; source-closure ledger regenerated
 - [ ] 1.8 Docs: `docs/cache.md` cache-layers table ("Sealed plan | same source scope, lifecycle, schema generation and permission root"), `docs/v8-consistency-cache-operations.md` if it names the plan key

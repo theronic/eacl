@@ -441,6 +441,10 @@
     :routing-schema-identity known-schema-generation
     ;; Sealed plans are keyed by this identity (see `stable-plan-key`).
     :plan-schema-identity known-schema-generation
+    ;; Client-owned memo of the parsed public schema for this generation
+    ;; (request validation reads it on the miss path); the engine never
+    ;; fills it. Left nil-valued for unstamped generations by the clients.
+    :parsed-schema (atom nil)
     :permission-roots (atom {})
     :permission-paths (atom {})
     :traversal-permissions (atom {})
