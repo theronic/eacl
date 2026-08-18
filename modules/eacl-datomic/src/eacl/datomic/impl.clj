@@ -21,17 +21,34 @@
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
 
+(defonce ^:private raw-engine-lifecycle
+  ;; The engine adapters minted by this facade carry one process-stable
+  ;; lifecycle. A raw call has no client lifecycle to rotate; a fresh random
+  ;; lifecycle per call (the previous behaviour) made the engine's sealed-plan
+  ;; cache miss on every request. The lifecycle only distinguishes stores
+  ;; that alias a source scope; every raw call on one database shares it.
+  (str "eacl-datomic-raw-" (java.util.UUID/randomUUID)))
+
 (defmacro ^:private with-request-engine
   "Builds ONE snapshot adapter for the call and binds the shared engine
   context: a caller-supplied impl.indexed schema cache wins; otherwise a
   request-local derived context scoped to this adapter's immutable
   snapshot (eliminating duplicate proof reads, path walks, and plan
-  compiles inside one raw request without cross-request publication)."
+  compiles inside one raw request without cross-request publication).
+
+  The adapter carries the facade's process-stable lifecycle and the
+  request-local context carries the snapshot's schema version (one direct
+  datom read, not a proof-frame operation), so the engine's sealed plans are
+  reused across raw calls and across unrelated transactions."
   [[adapter-sym db] & body]
-  `(let [~adapter-sym (backend/snapshot-adapter ~db)]
+  `(let [db# ~db
+         ~adapter-sym (backend/snapshot-adapter
+                       db# {:source-lifecycle raw-engine-lifecycle})]
      (binding [engine/*schema-cache*
                (or impl.indexed/*schema-cache*
-                   (engine/request-schema-cache ~adapter-sym))
+                   (engine/request-schema-cache
+                    ~adapter-sym
+                    {:schema-identity (impl.indexed/schema-version db#)}))
                engine/*recursive-traversal-limits*
                impl.indexed/*recursive-traversal-limits*
                engine/*recursive-traversal-stats*

@@ -100,6 +100,21 @@ process-local random default is warned about and does not survive restarts
 or load balancing. The public clients take their key material from their
 own client options (`:security-key` / page-token keyrings).
 
+## Point checks
+
+`can?` is decided by a membership-probe search over the sealed plan's
+reverse index (`eacl.engine.stable-route/check-eids`): the resource's
+intermediates are enumerated (its account, teams, vpc — typically a
+handful), and the subject is always looked up by one exact-bound probe (the
+scan strictly after `subject − 1` with limit one equals the subject iff the
+tuple exists). The Boolean equals membership of the subject in the
+exhaustive reverse-discovery denotation (the reverse-enumeration form is
+retained as `enumeration-check-eids`, the test oracle), and the cost is
+bounded by reachable intermediates and the reducer budgets — never by the
+number of subjects that hold the permission (a denied check on a resource
+with 5,000 owners went from 16 ms to 24 µs). Probes and enumerations run
+through the routed read boundary below, under the same typed limits.
+
 ## Failure semantics
 
 Every routed adapter read has exactly three outcomes
