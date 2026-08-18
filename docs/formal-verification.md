@@ -10,7 +10,7 @@ remains an explicit unmet release obligation. Two verified bodies now coexist.
 Enumeration, point checks, and counts run on the hand-written CLJC
 stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 `stable-page`, `stable-route`) on both targets; its evidence is the
-release-assurance tree under `formal/stable-discovery/` (41 Dafny leaves, two
+release-assurance tree under `formal/stable-discovery/` (42 Dafny leaves, two
 TLC families, executable refinement bridges, mutation controls; see
 [docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
 Dafny kernel remains the production authority for the pure decisions that
@@ -103,7 +103,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 
 | Source | Main responsibility |
 | --- | --- |
-| `formal/stable-discovery/*.dfy` (41 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 506 obligations) |
+| `formal/stable-discovery/*.dfy` (42 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 528 obligations) |
 | `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
 | `SnapshotOracle.dfy` | abstract immutable adapter contract |
 | `AcyclicEngine.dfy` | **retired engine model** (path compilation, direct checks, acyclic projections and counts); kept as a regression model until task 9.2's formal cut |
@@ -255,13 +255,19 @@ prove path materialization, nested callback meaning, storage-engine seek cost,
 Clojure language semantics, allocation, retained heap, or wall time.
 
 `can?` is anchored to the known resource: `eacl.engine.stable-route/check-eids`
-runs the stable reducer in the reverse direction from the resource and stops
-at the subject's first emission; a negative check is returned only after the
-reverse search is exhausted. Reverse transition soundness and completeness
-are proved by `EaclReverseProducer.dfy` and `ReducerCompleteness.dfy` in the
-stable-discovery tree. EACL-FORMAL-055 retains the historical subject-forward
-scaling regression of the retired generated state machine as a replayed
-counterexample against the stable engine.
+decides membership by a probe search over the sealed plan's reverse index —
+the resource's intermediates are explored depth-first (a visited set on
+[node entity]) and the subject is looked up by one exact-bound scan per
+direct rule, never by enumerating the subjects that hold the permission.
+`MembershipProbeCheck.dfy` proves that answer equal to membership in the
+exhaustive reverse-discovery denotation (`ProbeAnswerEqualsReachability`,
+`ProbeCheckEqualsEnumerationCheck`), on top of the reverse transition
+soundness and completeness proved by `EaclReverseProducer.dfy` and
+`ReducerCompleteness.dfy`; `eacl.engine.point-check-test` is the executable
+oracle differential against the retained reverse-enumeration form
+(`enumeration-check-eids`). EACL-FORMAL-055 retains the historical
+subject-forward scaling regression of the retired generated state machine as
+a replayed counterexample against the stable engine.
 
 Permission-path materialization now has its own source-shaped boundary rather
 than being assumed by the arrow theorem. Dafny models expansion of typed
