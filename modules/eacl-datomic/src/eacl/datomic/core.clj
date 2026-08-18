@@ -1049,8 +1049,12 @@
   by an identity that fixes the schema generation). Outside a bound
   generation the schema is read from the selected value directly."
   [_opts db]
-  (or (some-> impl.indexed/*schema-cache* :parsed-schema force)
-      (schema/read-schema db)))
+  (let [cache impl.indexed/*schema-cache*
+        slot (:parsed-schema cache)]
+    (if (and slot (some? (:schema-version cache)))
+      (or @slot
+          (reset! slot (schema/read-schema db)))
+      (schema/read-schema db))))
 
 (defn spiceomic-read-relationships
   [conn
@@ -1316,13 +1320,7 @@
         registry (:derived-schema-caches opts)]
     (or (get @registry key)
         (let [created
-              (cond-> (impl.indexed/make-schema-cache db schema-generation)
-                ;; Parsed once per generation for request validation
-                ;; (`request-schema`); equal generations denote equal
-                ;; definition sets. An unstamped database has no
-                ;; generation and must not latch anything.
-                (some? schema-generation)
-                (assoc :parsed-schema (delay (schema/read-schema db))))]
+              (impl.indexed/make-schema-cache db schema-generation)]
           (get (swap! registry
                       #(if (contains? % key)
                          %
