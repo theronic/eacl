@@ -6,7 +6,10 @@
    This namespace is JVM-only, as is the rest of the module: datahike's
    ClojureScript API is asynchronous, and the backend SPI is synchronous."
   (:require [datahike.api :as d]
-            [datahike.db.interface :as dbi]))
+            [datahike.datom :as dd]
+            [datahike.db.interface :as dbi]
+            [datahike.db.search :as dh-search])
+  (:import [datahike.db AsOfDB]))
 
 (defn db-config
   "The configuration of `db` through Datahike's database protocol, so
@@ -67,6 +70,62 @@
   [db]
   (some? (:config db)))
 
+(defn- asof-seekable?
+  "Whether `db` can take the lazy temporal seek path: Datahike's `AsOfDB` over
+   a concrete origin with an integer (transaction-id) time point — the shape
+   EACL constructs for `:at-exact-snapshot`. A date time point instead
+   qualifies transactions through each one's `:db/txInstant` value, which is
+   exactly the per-transaction lookup work the lazy path exists to avoid, so
+   dates and every other wrapper keep the exact-datoms fallback."
+  [db]
+  (and (instance? AsOfDB db)
+       (integer? (:time-point db))
+       (some? (:config (:origin-db db)))))
+
+(defn- asof-event-datoms
+  "The raw temporal event stream behind an `AsOfDB`, positioned at
+   `components` and lazily merged in full index order (for `:avet`: attribute,
+   value, entity, transaction, op). Read from `datahike.db.search` directly:
+   the public wrapper `seek-datoms` post-processing is eager over the whole
+   remaining index, re-reads each distinct transaction's `:db/txInstant`, and
+   returns hash-grouped, order-scrambled datoms — unusable under a take-while
+   guard and the cost this path exists to remove. The stream interleaves
+   assertion and retraction events of every tuple version; `visible-as-of`
+   resolves them."
+  [db index-type components direction]
+  ((if (= :desc direction)
+     dh-search/temporal-rseek-datoms
+     dh-search/temporal-seek-datoms)
+   (:origin-db db) index-type components))
+
+(defn- visible-as-of
+  "Lazily resolve an index-ordered temporal event stream to the datoms visible
+   at transaction `time-point`. Sound because the merged stream keeps every
+   event of one datom adjacent (the temporal comparators order by the index
+   fields, then transaction, then op) and Datahike's temporal indices are a
+   complete per-value event log: a retraction inserts the retracted assertion
+   plus a retraction event, cardinality-one replacement writes an explicit
+   retraction for the replaced value (`-temporal-upsert`), and live multival
+   assertions ride along from the current-index side of the merge. The latest
+   in-time event therefore decides each datom locally — the same answer as
+   Datahike's eager per-entity-and-attribute grouping, with an assertion
+   outranking a retraction inside one transaction exactly as its
+   stable-by-transaction sort does. For an integer time point the filter
+   `(<= tx time-point)` equals the eager path's `filter-txInstant` set,
+   because a transaction's `:db/txInstant` datom carries the transaction id
+   it describes."
+  [time-point direction event-datoms]
+  (let [tx-limit (long time-point)]
+    (->> event-datoms
+         (filter (fn [datom] (<= (dd/datom-tx datom) tx-limit)))
+         (partition-by (fn [{:keys [e v]}] [e v]))
+         (keep (fn [events]
+                 (let [decisive (if (= :desc direction)
+                                  (first events)
+                                  (last events))]
+                   (when (dd/datom-added decisive)
+                     decisive)))))))
+
 (defn seek-tuple-prefix
   "Datoms of composite-tuple attribute `attr` (of `arity` components) whose
    value begins with `prefix`.
@@ -123,9 +182,14 @@
    A full-length lower bound positions the scan at the requested tuple segment.
    The entity and attribute guards prevent a missing prefix from running into a
    different relationship attribute on the same endpoint. Current and
-   retained-commit values use that seek. Temporal/filter wrappers use exact EAVT
-   datoms plus an endpoint-local prefix filter because Datahike 0.8.1759 can
-   skip a historically visible tuple after a later retraction."
+   retained-commit values use that seek. An integer-time `AsOfDB` — the
+   `:at-exact-snapshot` shape — seeks the same bound lazily over the temporal
+   event stream (`visible-as-of`), so one page costs the page rather than the
+   endpoint's whole history. Every other wrapper still materializes its exact
+   EAVT datoms behind an endpoint-local prefix filter, ignoring the seek bound
+   (callers re-apply their cursor): Datahike 0.8.1759's own wrapper seek is
+   eager over the remaining index and order-scrambled, so it can position a
+   scan after a historically visible tuple."
   ([db entity attr arity prefix]
    (eavt-tuple-prefix db entity attr arity prefix nil))
   ([db entity attr arity prefix lower-tail]
@@ -154,7 +218,8 @@
                (and (vector? v)
                     (= arity (count v))
                     (= prefix (subvec v 0 prefix-size))))]
-         (if (direct-db? db)
+         (cond
+           (direct-db? db)
            (let [a-repr (attr-repr db attr)]
              (->> ((if (= :desc direction)
                      d/rseek-datoms
@@ -164,8 +229,21 @@
                   (take-while
                    (fn [{:keys [e a] :as datom}]
                      (and (= entity e)
-                         (= a-repr a)
-                         (matches-prefix? datom))))))
+                          (= a-repr a)
+                          (matches-prefix? datom))))))
+
+           (asof-seekable? db)
+           (let [a-repr (attr-repr db attr)]
+             (->> (asof-event-datoms
+                   db :eavt [entity attr seek-bound] direction)
+                  (take-while
+                   (fn [{:keys [e a] :as datom}]
+                     (and (= entity e)
+                          (= a-repr a)
+                          (matches-prefix? datom))))
+                  (visible-as-of (:time-point db) direction)))
+
+           :else
            (cond->> (eavt-datoms db entity attr)
              true (filter matches-prefix?)
              true (sort-by (juxt :v :e))
@@ -174,9 +252,12 @@
 (defn avet-tuple-prefix
   "Datoms across endpoint entities whose tuple value starts with `prefix`.
 
-  Current direct databases seek natively in either direction. Temporal/filter
-  wrappers use their exact visible datoms and sort only that historical fallback
-  result; current hot-path pagination never materializes the prefix."
+  Current direct databases seek natively in either direction, and an
+  integer-time `AsOfDB` seeks the same bound lazily over the temporal event
+  stream (`visible-as-of`). Remaining temporal/filter wrappers use their exact
+  visible datoms — the whole prefix, ignoring the seek bound (callers re-apply
+  their cursor) — and sort only that fallback result; hot-path pagination
+  never materializes the prefix."
   ([db attr arity prefix]
    (avet-tuple-prefix db attr arity prefix nil :asc))
   ([db attr arity prefix cursor-tail direction]
@@ -203,7 +284,8 @@
                (and (vector? v)
                     (= arity (count v))
                     (= prefix (subvec v 0 prefix-size))))]
-         (if (direct-db? db)
+         (cond
+           (direct-db? db)
            (let [a-repr (attr-repr db attr)]
              (->> ((if (= :desc direction)
                      d/rseek-datoms
@@ -214,6 +296,17 @@
                    (fn [{:keys [a] :as datom}]
                      (and (= a-repr a)
                           (matches-prefix? datom))))))
+
+           (asof-seekable? db)
+           (let [a-repr (attr-repr db attr)]
+             (->> (asof-event-datoms db :avet [attr seek-bound] direction)
+                  (take-while
+                   (fn [{:keys [a] :as datom}]
+                     (and (= a-repr a)
+                          (matches-prefix? datom))))
+                  (visible-as-of (:time-point db) direction)))
+
+           :else
            (cond->> (avet-datoms db attr)
              true (filter matches-prefix?)
              true (sort-by (juxt :v :e))
