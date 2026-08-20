@@ -47,7 +47,7 @@
 
 ## 3. Least-path evaluator
 
-- [ ] 3.1 New namespace `eacl.engine.least-path` (cljc): resumable
+- [x] 3.1 New namespace `eacl.engine.least-path` (cljc): resumable
       nested ordered DFS over the sealed plan — full per-scan
       coordinates, one active scan per level, per-level witness pruning
       of repeated interior states; optional merge iteration only for
@@ -56,16 +56,16 @@
       adapter command; reducer-equivalent typed budgets; assert
       streams-opened-per-page is depth-and-work-bounded via
       `*backend-op-stats*` in tests.
-- [ ] 3.2 Smaller-witness check: earlier-arm membership via exact-bound
+- [x] 3.2 Smaller-witness check: earlier-arm membership via exact-bound
       probes / bidirectional intersections; same-arm earlier-intermediate
       check as the interleaved MIN-SIDE intersection of the candidate's
       via-prefix with the closure-below-bound (never a one-sided fan-in
       scan — the shared-with-10k-orgs fixture must stay bounded);
       request-local memoization only.
-- [ ] 3.3 Descending iteration (reverse seeks and reverse merges, same
+- [x] 3.3 Descending iteration (reverse seeks and reverse merges, same
       witness filter; ascending/descending position agreement test).
       Counts remain on the existing reducer route — out of scope.
-- [ ] 3.4 Property harness before wiring: randomized acyclic schemas +
+- [x] 3.4 Property harness before wiring: randomized acyclic schemas +
       tuples (CLJ and CLJS) — result-set equality vs `run-forward`/
       `run-reverse`, order equality vs a materialize-sort-dedup oracle,
       resume-from-every-boundary equals suffix, ascending/descending
