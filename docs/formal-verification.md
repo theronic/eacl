@@ -271,7 +271,16 @@ subject's holdings whichever side is enumerated (`StrategiesAgree`,
 `DecideEqualsArmAnswer`), and proves the interleaved decision's consumption
 bounded by the SMALLER side (`RoundsBoundedByShorterSide`) — the complexity
 property that makes a check on a widely shared resource cost the subject's
-few holdings rather than the resource's fan-in; `eacl.engine.point-check-test` is the executable
+few holdings rather than the resource's fan-in. Acyclic plans paginate in
+least-derivation-path order (order ABI v2): `LeastPathOrder.dfy` proves
+the per-scan coordinate order strict, total, and a pure function of
+(plan, snapshot); `LeastPathEnumeration.dfy` proves the smaller-witness
+emission filter yields exactly the reachable denotation once per entity
+(bridged onto `ReducerCompleteness`) and that pruning repeated interior
+states drops nothing; `LeastPathResume.dfy` proves seek-past-boundary
+resume equals the enumeration suffix and that descending windows agree
+with ascending positions — the theorems behind self-contained keyset
+cursors with no checkpoint state and no replay; `eacl.engine.point-check-test` is the executable
 oracle differential against the retained reverse-enumeration form
 (`enumeration-check-eids`). EACL-FORMAL-055 retains the historical
 subject-forward scaling regression of the retired generated state machine as

@@ -96,7 +96,8 @@
          max-commands reducer/default-max-commands
          max-transitions reducer/default-max-transitions
          max-values reducer/default-max-values
-         max-stack reducer/default-max-stack}}]
+         max-stack reducer/default-max-stack}
+    :as options}]
   {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
          (keyword? subject-type) (some? subject-eid) (some? resource-eid)]}
   (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
@@ -232,7 +233,7 @@
                                    (update :derived-grants (fnil + 0) admissions)
                                    (update :advanced-datoms (fnil + 0) commands)
                                    (update :queued-work (fnil + 0) transitions)))))))]
-    (loop [stack [[(:root plan) resource-eid]]
+    (loop [stack [[(or (:start-node options) (:root plan)) resource-eid]]
            visited (transient #{})]
       (if (empty? stack)
         (do (report!) false)
@@ -334,6 +335,19 @@
   hold the plan's root permission on the resource? Decided by the
   membership-probe search (`probe-check-eids`); nil ids never hold."
   [{:keys [subject-eid resource-eid] :as options}]
+  (if (or (nil? subject-eid) (nil? resource-eid))
+    false
+    (probe-check-eids options)))
+
+(defn derives-from-node?
+  "The membership-probe point check anchored at an arbitrary plan node:
+  does the subject reach `:start-node`'s permission on the resource?
+  Same machinery, budgets, and typed failures as `check-eids`; used by
+  the least-path evaluator's witness clauses (acyclic-keyset-pagination),
+  where a smaller-witness test asks derivability of one specific rule
+  target rather than the sealed root."
+  [{:keys [subject-eid resource-eid start-node] :as options}]
+  {:pre [(some? start-node)]}
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
     (probe-check-eids options)))

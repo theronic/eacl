@@ -381,8 +381,12 @@
       (is (= 200 (count (distinct emitted))))
       (doseq [report page-reports]
         (assert-work-envelope! report page-envelope))
+      ;; Order ABI v2 (acyclic-keyset-pagination): acyclic pages are
+      ;; keyset-resumed from cursor coordinates — no continuation
+      ;; checkpoints exist to hit, and per-page work is flat by
+      ;; construction (the envelope above pins it).
       (doseq [report (rest page-reports)]
-        (is (= 1 (get-in report [:work :continuation-hits])))))
+        (is (nil? (get-in report [:work :continuation-hits])))))
     (testing "owner and super-user exact counts stay deduplicated and bounded"
       (is (= 2000 (get-in owner-count [:value :count])))
       (is (= 10000 (get-in super-count [:value :count])))

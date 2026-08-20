@@ -32,9 +32,19 @@
 
 (def order-contract
   "The complete order-ABI contract sealed into every fingerprint. Any change
-  to rule ordering, rank costs, admission-key granularity, scan order, or
-  logical release width is a new contract."
-  {:abi-version 1
+  to rule ordering, rank costs, admission-key granularity, scan order,
+  logical release width, or per-plan order-mode selection is a new
+  contract.
+
+  ABI v2 (acyclic-keyset-pagination): every plan seals exactly one public
+  order mode, statically selected from its reachable rule graph —
+  `:least-path` for acyclic roots (results ordered by their least
+  derivation path: lexicographic over sealed rule ordinals and ascending
+  scan eids; `LeastPathOrder.dfy`), `:first-discovery` for recursive
+  roots (the v1 stable-discovery order, unchanged). The mode and the
+  recursiveness classification are folded into the digest, so cursors
+  can never cross regimes."
+  {:abi-version 2
    :rule-order :canonical-encoding-ordinal
    :alternative-order :rank-then-ordinal
    :rank-costs {:relation 1 :self-permission 0
@@ -42,7 +52,9 @@
    :admission-keys {:merge-points :target-node-and-entity
                     :scans :rule-ordinal-and-binding-excluding-bound}
    :logical-release-width 1
-   :scan-order :strict-ascending-eid})
+   :scan-order :strict-ascending-eid
+   :order-mode-selection {:acyclic :least-path
+                          :recursive :first-discovery}})
 
 (defn- compile-error!
   [message data]
@@ -364,10 +376,15 @@
 (defn- plan-records
   "Complete canonical record sequence for the composite fingerprint. Record
   order is contractual."
-  [{:keys [version root root-index nodes rules edges certificate]}]
+  [{:keys [version root root-index nodes rules edges certificate
+           order-mode recursive?]}]
   (concat
    [[:header version root root-index (count nodes) (count rules)]
-    [:order-contract order-contract]]
+    [:order-contract order-contract]
+    ;; ABI v2: the selected order mode and the classification that
+    ;; selected it are part of the plan's identity — a cursor minted
+    ;; under one regime can never authenticate under another.
+    [:order-mode order-mode recursive?]]
    (map-indexed (fn [i node] [:node i node]) nodes)
    (map (fn [rule] [:rule (:ordinal rule) rule]) rules)
    (map-indexed (fn [i edge] [:edge i edge]) edges)
@@ -421,6 +438,7 @@
             (compile-error! "Rank certificate failed validation."
                             {:root root-node}))
         ranked (rank-rules rules node->index distance)
+        recursive? (cyclic-nodes? (count nodes) edges)
         plan {:version plan-version
               :root root-node
               :root-index root-index
@@ -429,11 +447,13 @@
               :edges edges
               :certificate certificate
               :order-contract order-contract
+              ;; ABI v2: order mode is selected statically per plan and
+              ;; participates in the digest (an acyclic root's whole
+              ;; reachable program is acyclic, so regimes never compose).
+              :recursive? recursive?
+              :order-mode (if recursive? :first-discovery :least-path)
               :indexes (indexes ranked)}]
     (assoc plan
            :fingerprint
            (secure-format/canonical-records-digest
-            fingerprint-domain (vec (plan-records plan)))
-           ;; Derived from already-fingerprinted structure; excluded from
-           ;; the digest so the composite fingerprint stays unchanged.
-           :recursive? (cyclic-nodes? (count nodes) edges))))
+            fingerprint-domain (vec (plan-records plan))))))

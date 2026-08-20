@@ -919,15 +919,21 @@
                                              :after
                                              (get-in page-2
                                                      [:page-info :end-cursor])))]
-    (testing "v8 acyclic cursors carry only the stable result boundary"
+    (testing "v8 acyclic cursors carry only the least-path boundary coords"
+      ;; Order ABI v2 (acyclic-keyset-pagination): an acyclic root's
+      ;; cursor is the boundary result's per-scan coordinate sequence —
+      ;; self-contained, no ordinal, no checkpoint reference. Coordinates
+      ;; stay INTERNAL inside the authenticated, basis-pinned envelope.
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
       (is (= 12 (:v envelope)))
-      (is (= :stable-edge
+      (is (= :least-path-edge
              (get-in envelope [:edge :kind])))
-      (is (= "server-1"
-             (get-in envelope [:edge :result-eid])))
+      (is (vector? (get-in envelope [:edge :coords])))
+      (is (every? integer? (get-in envelope [:edge :coords])))
+      (is (nil? (get-in envelope [:edge :ordinal])))
+      (is (nil? (get-in envelope [:edge :result-eid])))
       (is (nil? (get-in envelope [:edge :direction])))
       (is (nil? (get-in envelope [:edge :path-frontiers])))
       (is (nil? (get-in envelope [:edge :heads]))))

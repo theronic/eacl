@@ -355,16 +355,36 @@
           (binding [idx/*recursive-traversal-stats* page-3-stats]
             (eacl/lookup-resources
              acl (assoc query :first 3 :after cursor-2)))]
-      (is (= 1 (:continuation-hits @page-2-stats 0))
-          "the continuation is served from the client-scoped checkpoint")
-      (is (= 1 (:continuation-hits @page-3-stats 0))
-          "later pages continue from private state")
-      ;; Both pages continue from checkpoints (no prefix replay); the final
-      ;; page also pays the schema-constant exhaustion tail — every residual
-      ;; rule scans empty once — which is independent of page ordinal.
-      (is (<= (:advanced-datoms @page-3-stats 0)
-              (+ 10 (:advanced-datoms @page-2-stats 0)))
-          "continuation work does not grow with page ordinal")
+      ;; Order ABI v2 (acyclic-keyset-pagination): an acyclic root's
+      ;; pages are keyset-resumed from the cursor's coordinates — no
+      ;; checkpoint is consulted or published, so continuation hits are
+      ;; exactly zero. Per-page work is content-bounded, never
+      ;; ordinal-bounded: the observer counters carry the evaluator's own
+      ;; scans and the smaller-witness probes, so adjacent windows vary
+      ;; with the emitted entities' path structure, while a page whose
+      ;; cost grew with the ordinal (checkpoint replay) would blow
+      ;; through an early-page-anchored ceiling by the end of the walk.
+      (is (= 0 (:continuation-hits @page-2-stats 0))
+          "keyset pages consult no client-scoped checkpoint")
+      (is (= 0 (:continuation-hits @page-3-stats 0))
+          "later pages remain stateless")
+      (let [reference (max 1
+                           (:advanced-datoms @page-2-stats 0)
+                           (:advanced-datoms @page-3-stats 0))
+            ceiling (+ 10 (* 4 reference))]
+        (loop [after (get-in page-3 [:page-info :end-cursor]) k 4]
+          (is (< k 20) "walk terminates")
+          (when (and after (< k 20))
+            (let [stats (atom {})
+                  page (binding [idx/*recursive-traversal-stats* stats]
+                         (eacl/lookup-resources
+                          acl (assoc query :first 3 :after after)))]
+              (is (<= (:advanced-datoms @stats 0) ceiling)
+                  (str "page " k " keyset work stays within the "
+                       "early-page ceiling"))
+              (when (get-in page [:page-info :has-next-page?])
+                (recur (get-in page [:page-info :end-cursor])
+                       (inc k)))))))
       (is (= (mapv :id (:data (eacl/lookup-resources
                                oracle
                                (assoc query :first 3 :after cursor-1))))

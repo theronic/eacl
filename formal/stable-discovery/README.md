@@ -16,14 +16,19 @@ Requires the pinned toolchain cache under `target/formal-tools/` (see
 `bin/bootstrap-formal-tools`). Budget: 10 s hard ceiling, ~8 s observed. The
 gate self-checks its model/config/bridge manifests, scans for Dafny escape
 hatches, pins the TLA+ assumption-boundary fingerprint, and enforces the
-exact aggregate obligation count (541).
+exact aggregate obligation count (631).
 
-Contents: 43 Dafny leaves (`MembershipProbeCheck.dfy`, added 2026-08-18,
+Contents: 46 Dafny leaves (`MembershipProbeCheck.dfy`, added 2026-08-18,
 proves the membership-probe point check equal to reverse-denotation
 membership; `BidirectionalArrowIntersection.dfy`, added 2026-08-20, proves
 two-layer arrow arms strategy-independent — either side of the
 via-set/holdings intersection may be enumerated — and the interleaved
-decision bounded by the smaller side); two TLC families (`AtomicAttempt` with 3 mutants,
+decision bounded by the smaller side; `LeastPathOrder.dfy`,
+`LeastPathEnumeration.dfy`, `LeastPathResume.dfy`, added 2026-08-20,
+prove the acyclic keyset order: least-derivation-path order is strict,
+total, and history-free, the filtered DFS emits exactly the reachable
+denotation once per entity, repeated-state pruning is sound, keyset
+resume equals the suffix, and descending agrees with ascending); two TLC families (`AtomicAttempt` with 3 mutants,
 `ProgressCheckpoint` with 6 mutants); the randomized refinement campaign
 (18,000 checks, 22 mutation controls) and four source bridges (public
 schema, sealed plan/rank, cursor codec, checkpoint publication). The former

@@ -1,6 +1,7 @@
 (ns eacl.engine.v8
   (:require [eacl.backend.v8 :as backend]
             [eacl.core :refer [spice-object]]
+            [eacl.engine.least-path :as least-path]
             [eacl.engine.physical :as physical]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-page :as stable-page]
@@ -35,9 +36,14 @@
 (def ^:dynamic *recursive-traversal-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
-  Receives the stable reducer's per-run work deltas under the public
-  counter names (:derived-grants, :advanced-datoms, :queued-work) and
-  :continuation-hits on checkpoint hits. Request-shape observers live in
+  Receives per-run work deltas under the public counter names from every
+  stable route. The reducer and the witness probe-checks report
+  :derived-grants, :advanced-datoms, and :queued-work; the least-path
+  evaluator reports its emissions as :derived-grants, its physical
+  commands as :advanced-datoms, and its scan opens as :stream-opens (it
+  keeps no work queue, so it never reports :queued-work).
+  :continuation-hits counts checkpoint hits and :adapter-attempts counts
+  physical attempts on the routed path. Request-shape observers live in
   *request-shape-stats*. Observation-only."
   nil)
 (def ^:dynamic *request-shape-stats*
@@ -902,7 +908,7 @@
     :evaluation *evaluation-mode*
     :page-request (select-keys query [:first :after :last :before])}))
 
-(def stable-order-abi 1)
+(def stable-order-abi 2)
 (def stable-cursor-version 1)
 
 (defonce ^:private stable-plan-cache
@@ -978,6 +984,45 @@
    :traversal traversal
    :ordinal ordinal
    :result-eid eid})
+
+(defn- least-path-edge
+  "The keyset cursor of an acyclic (:least-path) plan: the boundary
+  result's full per-scan coordinate sequence. Self-contained — resume is
+  a per-level seek (LeastPathResume.dfy), no checkpoint store and no
+  replay (acyclic-keyset-pagination)."
+  [plan traversal coords]
+  {:kind :least-path-edge
+   :version stable-cursor-version
+   :order-abi stable-order-abi
+   :fingerprint (:fingerprint plan)
+   :traversal traversal
+   :coords coords})
+
+(defn- validate-least-path-bound!
+  [plan traversal bound]
+  (when bound
+    (when-not (= :least-path-edge (:kind bound))
+      (page-error!
+       "Lookup page cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:kind bound)}))
+    (when (not= (:fingerprint plan) (:fingerprint bound))
+      (page-error!
+       "Cursor is bound to an incompatible sealed plan."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :plan-fingerprint-mismatch}))
+    (when (not= traversal (:traversal bound))
+      (page-error!
+       "Cursor traversal direction does not match the request."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:traversal bound)}))
+    (when-not (and (vector? (:coords bound))
+                   (seq (:coords bound))
+                   (every? integer? (:coords bound)))
+      (page-error!
+       "Cursor boundary is malformed."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :malformed-boundary}))))
 
 (defn- validate-stable-bound!
   [plan traversal bound]
@@ -1105,10 +1150,40 @@
                  :attempts attempts})
      :attempts attempts}))
 
+(defn- least-path-fetch-fn
+  "The routed physical read path for the least-path evaluator: identical
+  classification/retry envelope to `stable-fetch-fn`, over the
+  direction-aware seam (descending windows issue :desc scans)."
+  [db]
+  (let [attempts (atom 0)]
+    {:fetch-fn (physical/retrying-fetch-fn
+                (least-path/adapter-fetch-fn db)
+                {:max-attempts default-physical-attempts
+                 :deadline-nanos (:deadline-nanos execution/*contract*)
+                 :attempts attempts})
+     :attempts attempts}))
+
 (defn- report-adapter-attempts!
   [attempts]
   (when-let [stats *recursive-traversal-stats*]
     (swap! stats update :adapter-attempts (fnil + 0) @attempts))
+  nil)
+
+(defn- report-least-path-run!
+  "The least-path evaluator's per-run work deltas for
+  *recursive-traversal-stats*, mirroring the reducer's report: emissions
+  are the logical admissions (:derived-grants) and commands the physical
+  commands (:advanced-datoms); :stream-opens has no reducer analog and
+  reports under its own name."
+  [run]
+  (when-let [stats *recursive-traversal-stats*]
+    (let [{:keys [emissions commands stream-opens]} (:counters run)]
+      (swap! stats
+             (fn [counters]
+               (-> (or counters {})
+                   (update :derived-grants (fnil + 0) (or emissions 0))
+                   (update :advanced-datoms (fnil + 0) (or commands 0))
+                   (update :stream-opens (fnil + 0) (or stream-opens 0)))))))
   nil)
 
 (defn- with-service-admission
@@ -1164,9 +1239,80 @@
                        {:eacl/error :eacl.pagination/stale-cursor})
           (throw error))))))
 
+(declare first-discovery-lookup-page)
+
+(defn- least-path-lookup-page
+  "Keyset pagination for an acyclic plan: ascending pages resume strictly
+  past the boundary coordinates; :before/:last run descending and return
+  the window in canonical forward order. No checkpoint store is
+  consulted and no replay exists (acyclic-keyset-pagination)."
+  [db plan traversal query {:keys [direction size bound]}
+   result-type anchor subject-type]
+  (validate-least-path-bound! plan traversal bound)
+  (let [anchor-eid (object-eid db (:id anchor))]
+    (if (nil? anchor-eid)
+      (page-response {:items [] :has-next? false
+                      :has-previous? (boolean bound)})
+      (let [{:keys [fetch-fn attempts]} (least-path-fetch-fn db)
+            descending? (or (= :desc direction) (some? (:before query)))
+            run-options
+            (merge
+             (stable-limits)
+             {:plan plan
+              :fetch-fn fetch-fn
+              :subject-type subject-type
+              :page-size size
+              :cut-point! (stable-cut-point)}
+             (if (= :forward traversal)
+               {:subject-eid anchor-eid}
+               {:resource-eid anchor-eid})
+             (cond
+               (and bound (= :asc direction))
+               {:after-coords (:coords bound)}
+               (and bound (= :desc direction))
+               {:before-coords (:coords bound)}
+               (= :desc direction)
+               {:last? true}
+               :else {}))
+            ;; Coordinate resume that cannot reproduce against this plan
+            ;; (arity, ordinal, or emptiness defects) surfaces as the
+            ;; public stale-cursor error, exactly like the replay route.
+            run (with-stale-boundary-errors
+                  bound
+                  (fn []
+                    (with-public-limit-errors
+                      #(with-service-admission
+                         (fn []
+                           (if (= :forward traversal)
+                             (least-path/forward-page run-options)
+                             (least-path/reverse-page run-options)))))))
+            emissions (:emissions run)
+            ;; Descending runs return descending coordinates; the public
+            ;; page is canonical forward order in both modes.
+            ordered (if descending? (vec (reverse emissions)) emissions)
+            items (mapv (fn [{:keys [value coords]}]
+                          {:node (spice-object result-type value)
+                           :cursor (least-path-edge plan traversal coords)})
+                        ordered)]
+        (report-least-path-run! run)
+        (report-adapter-attempts! attempts)
+        (page-response
+         {:items items
+          :has-next? (if descending?
+                       (boolean bound)
+                       (boolean (:has-more? run)))
+          :has-previous? (if descending?
+                           (boolean (:has-more? run))
+                           (boolean bound))})))))
+
 (defn- stable-lookup-page
-  [db traversal query cache]
-  (let [{:keys [direction size bound]} (normalize-page-request query)
+  "`cache-fn` is a thunk producing the continuation cache (or nil): the
+  least-path route consults no continuation state, so the context —
+  query canonicalization, proof-frame resolution, its backend reads —
+  must only be built when the plan actually routes to first-discovery."
+  [db traversal query cache-fn]
+  (let [{:keys [direction size bound] :as page-req}
+        (normalize-page-request query)
         forward? (= :forward traversal)
         result-type (if forward?
                       (:resource/type query)
@@ -1182,15 +1328,26 @@
       (page-response {:items [] :has-next? false
                       :has-previous? (boolean bound)})
       (let [root-node (permission-query-node root-type (:permission query))
-            plan (stable-plan db root-node)
-            ;; A bare :last window on a recursive schema exhausts a
-            ;; data-dependent traversal; that cost stays opt-in via
-            ;; :evaluation :complete-denotation (public v8 contract).
-            _ (when (and (:recursive? plan)
-                         (= :demand *evaluation-mode*)
-                         (= :desc direction)
-                         (nil? bound))
-                (complete-evaluation-required! query))
+            plan (stable-plan db root-node)]
+        (if (= :least-path (:order-mode plan))
+          (least-path-lookup-page db plan traversal query page-req
+                                  result-type anchor subject-type)
+          (first-discovery-lookup-page db plan traversal query page-req
+                                       cache-fn result-type anchor
+                                       subject-type))))))
+
+(defn- first-discovery-lookup-page
+  [db plan traversal query {:keys [direction size bound]} cache-fn
+   result-type anchor subject-type]
+  (let [cache (when cache-fn (cache-fn))
+        ;; A bare :last window on a recursive schema exhausts a
+        ;; data-dependent traversal; that cost stays opt-in via
+        ;; :evaluation :complete-denotation (public v8 contract).
+        _ (when (and (:recursive? plan)
+                     (= :demand *evaluation-mode*)
+                     (= :desc direction)
+                     (nil? bound))
+            (complete-evaluation-required! query))
             _ (validate-stable-bound! plan traversal bound)
             anchor-eid (object-eid db (:id anchor))
             edge (when bound {:ordinal (:ordinal bound)
@@ -1227,7 +1384,7 @@
          {:items (stable-items plan traversal result-type
                                (:start-ordinal result) (:eids result))
           :has-next? (:has-next? result)
-          :has-previous? (:has-previous? result)})))))
+          :has-previous? (:has-previous? result)})))
 
 (defn can?
   [db subject permission resource]
@@ -1268,9 +1425,12 @@
   ([db query]
    (lookup-resources db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn]}]
-   (let [cache (or continuation-cache
-                   (when continuation-cache-fn (continuation-cache-fn)))]
-     (stable-lookup-page db :forward query cache))))
+   ;; Deferred: an acyclic (least-path) plan never touches continuation
+   ;; state, so the cache context is only built on the recursive route.
+   (let [cache-fn (fn [] (or continuation-cache
+                             (when continuation-cache-fn
+                               (continuation-cache-fn))))]
+     (stable-lookup-page db :forward query cache-fn))))
 
 (defn lookup-subjects
   "Stable-discovery reverse pagination; cursors are only valid against the
@@ -1285,9 +1445,10 @@
      (page-error! ":subject/relation is not supported by lookup-subjects."
                   {:eacl/error :eacl.pagination/unsupported-filter
                    :filter :subject/relation}))
-   (let [cache (or continuation-cache
-                   (when continuation-cache-fn (continuation-cache-fn)))]
-     (stable-lookup-page db :reverse query cache))))
+   (let [cache-fn (fn [] (or continuation-cache
+                             (when continuation-cache-fn
+                               (continuation-cache-fn))))]
+     (stable-lookup-page db :reverse query cache-fn))))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])

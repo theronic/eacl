@@ -422,6 +422,19 @@
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 
+    ;; Least-path coordinates pass through UNTRANSFORMED: they interleave
+    ;; rule ordinals with eids of several types (no single external
+    ;; mapping applies), and the exact basis makes internal ids stable
+    ;; for the cursor's whole lifetime (acyclic-keyset-pagination).
+    ;; NOTE the confidentiality consequence: the portable envelope is
+    ;; authenticated plaintext, so on clients without an encrypting
+    ;; token codec (DataScript/Datahike; Datomic's AES-GCM codec is
+    ;; unaffected) a token holder can read the raw internal eids of the
+    ;; boundary's whole derivation path — intermediates that never
+    ;; appear in any response.
+    :least-path-edge
+    edge
+
     :relationship-index
     (-> edge
         (update :subject-id f)

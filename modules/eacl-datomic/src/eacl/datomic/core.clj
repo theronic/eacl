@@ -780,9 +780,10 @@
   (and (integer? eid) (pos? eid)))
 
 (defn- cursor-result
-  "Validates the internal cursor of a cached lookup page. Only the stable
-  engine's `:stable-edge` kind is minted; anything else invalidates the
-  cached page so it is recomputed."
+  "Validates the internal cursor of a cached lookup page. The stable
+  engine mints `:stable-edge` (recursive plans) and `:least-path-edge`
+  (acyclic plans); anything else invalidates the cached page so it is
+  recomputed."
   [cursor]
   (case (:kind cursor)
     :stable-edge
@@ -794,6 +795,18 @@
                (positive-eid? (:result-eid cursor)))
       {:eid (:result-eid cursor)
        :ordinal (:ordinal cursor)})
+
+    ;; Keyset cursor of an acyclic plan: the boundary result's eid is the
+    ;; deepest coordinate (acyclic-keyset-pagination).
+    :least-path-edge
+    (when (and (= engine/stable-cursor-version (:version cursor))
+               (= engine/stable-order-abi (:order-abi cursor))
+               (contains? #{:forward :reverse} (:traversal cursor))
+               (vector? (:coords cursor))
+               (seq (:coords cursor))
+               (every? integer? (:coords cursor))
+               (positive-eid? (peek (:coords cursor))))
+      {:eid (peek (:coords cursor))})
 
     nil))
 

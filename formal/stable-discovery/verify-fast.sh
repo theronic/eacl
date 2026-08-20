@@ -14,7 +14,11 @@
 set -eu
 
 gate_started_at=$(date +%s)
-gate_hard_limit_seconds=10
+# Iteration-speed guardrail, not a proof property. Raised 10 -> 12 with
+# the least-path leaves (obligations 541 -> 631): the critical path is
+# the source-refinement JVM, and the prior ceiling was already exactly
+# at the wall on a loaded workstation.
+gate_hard_limit_seconds=12
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 model_root="$repo_root/formal/stable-discovery"
@@ -123,7 +127,8 @@ dafny_check_one() {
     "$model_root/OwnedTransientSnapshot.dfy" \
     "$model_root/ReducerCompleteness.dfy" \
     "$model_root/ExactCountComposition.dfy" \
-    "$model_root/StaticReverseFrontier.dfy"
+    "$model_root/StaticReverseFrontier.dfy" \
+    "$model_root/LeastPathOrder.dfy"
 }
 
 dafny_check_two() {
@@ -140,7 +145,8 @@ dafny_check_two() {
     "$model_root/EdgeBoundaryAuthentication.dfy" \
     "$model_root/RelayCheckpointExecution.dfy" \
     "$model_root/LookaheadPagination.dfy" \
-    "$model_root/PaginationComposition.dfy"
+    "$model_root/PaginationComposition.dfy" \
+    "$model_root/LeastPathResume.dfy"
 }
 
 dafny_check_three() {
@@ -173,7 +179,8 @@ dafny_check_four() {
     "$model_root/ReadRankCertificate.dfy" \
     "$model_root/SealedVectorOrder.dfy" \
     "$model_root/SealedPlanReducerComposition.dfy" \
-    "$model_root/RecordFraming.dfy"
+    "$model_root/RecordFraming.dfy" \
+    "$model_root/LeastPathEnumeration.dfy"
 }
 
 source_refinement_check() {
@@ -282,7 +289,7 @@ dafny_obligations=$(awk \
   "$tlc_run_root/dafny-two.log" \
   "$tlc_run_root/dafny-three.log" \
   "$tlc_run_root/dafny-four.log")
-expected_dafny_obligations=541
+expected_dafny_obligations=631
 dafny_count_failed=0
 if [ "$dafny_obligations" -ne "$expected_dafny_obligations" ]; then
   printf 'expected %s Dafny obligations, observed %s\n' \
