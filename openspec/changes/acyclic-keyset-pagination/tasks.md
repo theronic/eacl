@@ -95,7 +95,7 @@
       latency flat in ordinal.
 - [x] 5.2 Regenerate acyclic frozen page-order baselines; point-check and
       count expectations must be byte-identical (order-independent).
-- [ ] 5.3 Perf gates: (a) cache-off 100-page walk on the 20k fixture
+- [x] 5.3 Perf gates: (a) cache-off 100-page walk on the 20k fixture
       O(page) flat (was O(k²)); (b) cache-on warm page regression ceiling
       ≤1.5× the checkpoint-resume baseline; (c) streams opened per page
       work-bounded, never closure-bounded (asserted engine-level in
@@ -152,13 +152,24 @@ Verified state at handover:
   asserted), :last/:before under demand, lookup-subjects walks, cursor
   envelope round-trip on both clients.
 
-- [ ] 7.1 Perf-gate A/B numbers for the PR (task 5.3 a/b): run
+- [x] 7.1 Perf-gate A/B numbers for the PR (task 5.3 a/b): run
       `scratchpad/bench3.clj` `run-gates` on TWO fresh JVMs — this
       branch vs origin/main — strictly serialized (kill other JVMs;
       earlier session showed parallel/warm A/Bs are contaminated).
       Expect: cache-off 100-page walk flat (was O(k²), main measured
       ~996-1,600 ms/20k walk), cache-on within 1.5× of main's
       checkpoint-resume pages.
+      DONE (2026-08-20, branch @ 4afd57b vs main @ 9d5f67b, protocol
+      followed: every other JVM killed, one fresh default-heap JVM per
+      side, 3 fresh 20k fixtures each, medians):
+      (a) cache-off 100x50 walk 1053 ms -> 171 ms total (6.2x); first
+      page 4.2 -> 4.35 ms, deep page 18.6 -> 1.40 ms — main grows 4.4x
+      first-to-deep, the branch's deep page is CHEAPER than page 1
+      (plan compile), flat in the ordinal. PASS.
+      (b) cache-on warm walk 167.7 -> 213.5 ms = 1.27x <= the 1.5x
+      ceiling (warm deep pages at parity: 1.76 vs 1.71 ms). PASS.
+      Bonus: bare :last 50 window 76.5 -> 1.74 ms (44x) — reverse
+      keyset instead of exhausting the forward walk.
 - [x] 7.2 Wire least-path's own counters into the observer stats
       (*recursive-traversal-stats*): today only the witness probe-checks
       report (via stable-route report!); the evaluator's own
