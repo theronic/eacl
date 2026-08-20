@@ -154,8 +154,10 @@ one rule ordinal plus one or two eids per plan level, schema-bounded —
 inside the existing authenticated envelope (HMAC, basis, fingerprint,
 page size, direction: unchanged). Resume: seek each level strictly past
 its coordinate (sub-arm merges seek all their streams past the one
-bound), deepest level first, and continue the DFS. O(schema depth)
-seeks, independent of ordinal, no server-side state. The 16 KB cursor
+bound), deepest level first, and continue the DFS. O(alternatives ×
+depth) seeks — every closure-level merge re-seeks all its sub-arm
+streams past the shared bound — schema-bounded and independent of
+ordinal, with no server-side state. The 16 KB cursor
 budget holds with orders of magnitude of headroom.
 
 Fingerprint or basis mismatch fails typed exactly as the existing
