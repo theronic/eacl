@@ -36,19 +36,48 @@
   snapshot (eliminating duplicate proof reads, path walks, and plan
   compiles inside one raw request without cross-request publication).
 
-  The adapter carries the facade's process-stable lifecycle and the
-  request-local context carries the snapshot's schema version (one direct
-  datom read, not a proof-frame operation), so the engine's sealed plans are
-  reused across raw calls and across unrelated transactions."
+  Sealed plans are reused across raw calls ONLY for ordinary views
+  (current and as-of) of a STAMPED schema generation. A d/filter, d/since,
+  or d/history view reports the plain value's database id, basis, and
+  schema stamp, so a stable plan key cannot distinguish it from the plain
+  database — and sealed plans embed relation eids, so serving one view's
+  plan to the other yields wrong answers in both directions. An unstamped
+  database (no write-schema! generation) can only key plans by basis,
+  which a d/with speculative value aliases with the later committed basis.
+  Both classes therefore mint a fresh per-call lifecycle and no schema
+  identity — plans compile per call there, matching the unstamped regime's
+  documented recompute-instead-of-latch contract. The residual assumption
+  for reused plans is the same one every derived cache already makes:
+  schema-definition datoms change only through write-schema!, which bumps
+  the stamped generation (a d/with that writes definition datoms without
+  the stamp is outside the supported contract on the committed path too).
+
+  Otherwise the adapter carries the facade's process-stable lifecycle and
+  the request-local context carries the snapshot's schema version (one
+  direct datom read, not a proof-frame operation), so the engine's sealed
+  plans are reused across raw calls and across unrelated transactions.
+
+  A caller-supplied schema cache (the public client, or a v7-compat caller
+  binding impl.indexed/*schema-cache*) keeps the pre-existing contract: no
+  stamp read here (the bound generation already carries the plan identity)
+  and the stable lifecycle, with view/coherence discipline owned by that
+  caller — the public client only ever evaluates ordinary conn-derived
+  values."
   [[adapter-sym db] & body]
   `(let [db# ~db
+         bound-cache# impl.indexed/*schema-cache*
+         schema-identity# (when (and (nil? bound-cache#)
+                                     (backend/ordinary-view? db#))
+                            (impl.indexed/schema-version db#))
          ~adapter-sym (backend/snapshot-adapter
-                       db# {:source-lifecycle raw-engine-lifecycle})]
+                       db# (if (or bound-cache# schema-identity#)
+                             {:source-lifecycle raw-engine-lifecycle}
+                             {}))]
      (binding [engine/*schema-cache*
-               (or impl.indexed/*schema-cache*
+               (or bound-cache#
                    (engine/request-schema-cache
                     ~adapter-sym
-                    {:schema-identity (impl.indexed/schema-version db#)}))
+                    {:schema-identity schema-identity#}))
                engine/*recursive-traversal-limits*
                impl.indexed/*recursive-traversal-limits*
                engine/*recursive-traversal-stats*

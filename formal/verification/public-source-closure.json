@@ -69,7 +69,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/backend.clj",
-      "sha256": "e1dc1f75a1b7258eeb8c3ce3d7d8703324514f63884333d8c1b68c5d3367d696"
+      "sha256": "a1a1163ca4473603e4774c190de42a940d3622749945e11e4a253ffce8449242"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/cache.clj",
@@ -97,7 +97,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/impl.clj",
-      "sha256": "e62676a78d6c1533312ad231d54deefe6510c7d4dc21aa95369aab015a047008"
+      "sha256": "9d939291c92f46e95c991704072231be4090f0685ec3788b23f267950f5b7b5e"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/impl/base.clj",
@@ -185,11 +185,11 @@
     },
     {
       "path": "modules/eacl/src/eacl/engine/stable_route.cljc",
-      "sha256": "b90d8cf65932e6a10250a7d3e698842817081a0b34142726391115acebe21dd6"
+      "sha256": "d9bf8865d3b1e2d84e071ac8b39fc8f37c3a72d4a1cfdaaddb6b5e91ed5854ea"
     },
     {
       "path": "modules/eacl/src/eacl/engine/v8.cljc",
-      "sha256": "ab5241b2556265ba811b954743a1355b87fbbda800baa27ea30b23facbd34ed3"
+      "sha256": "d56e58a70b833f1d3ab1353f409e1a4b2efa9f6ceb951c9059c641f001b1c1ff"
     },
     {
       "path": "modules/eacl/src/eacl/execution.cljc",
@@ -333,9 +333,9 @@
       "eacl.datascript.core/make-client"
     ],
     "rootCount": 61,
-    "unionInternalDefinitionCount": 1361,
-    "unionInternalDefinitionIdsSha256": "6d87683676144824fb984aa4e1e0f6301b5d6e59aa5e2538aefcdd728abe3bf5",
-    "unionDefinitionLocationsSha256": "c0646778e94d18a8ea27e6eb4fd367d9e1a29b42534476f9ae1cac8aa5ac5262",
+    "unionInternalDefinitionCount": 1362,
+    "unionInternalDefinitionIdsSha256": "cd86fa75404a7b85981db51608d7f804c8de6cbd4cee7f5df3b114add2a14674",
+    "unionDefinitionLocationsSha256": "5e74273450d47fffdd7a005e3ca1de325a595f9deb514035747273f68f8c6f86",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 18,
@@ -482,8 +482,8 @@
         "idsSha256": "644155693f1acb0313241f6be91da9e0e5c196216deddfb1e01aaeff4bf9c19d"
       },
       "modules/eacl/src/eacl/engine/stable_route.cljc": {
-        "count": 7,
-        "idsSha256": "de4e5f5c124c098eca2fad2588049fa060d9918e9ddb6f946b4b44f594c3a66e"
+        "count": 8,
+        "idsSha256": "8ddbeee3ad877f7af902a5b4d82fbe1efa5a1136e705fbe70ba4881cc807bacd"
       },
       "modules/eacl/src/eacl/engine/v8.cljc": {
         "count": 82,
@@ -569,8 +569,8 @@
   },
   "roots": {
     "eacl.engine.v8/can?": {
-      "internalDefinitionCount": 122,
-      "internalDefinitionIdsSha256": "471c655848eabea63c822490c9767ff8c5e59bd17d05952b4cdf100f5ff51044",
+      "internalDefinitionCount": 123,
+      "internalDefinitionIdsSha256": "5f17bf9b23106b6d6b5fcc48be3e0ad879734735e4180d1ed5410168163e916e",
       "externalCallCount": 9,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -935,11 +935,14 @@
       "externalCalls": []
     },
     "eacl.datomic.core/Spiceomic": {
-      "internalDefinitionCount": 824,
-      "internalDefinitionIdsSha256": "235d99fca98493509e9f6824d1695c9916af7bb6f68dd7b7608c0f087b90c021",
-      "externalCallCount": 37,
+      "internalDefinitionCount": 825,
+      "internalDefinitionIdsSha256": "c287cee78c70331768df2683d358ffa9454f98151070bd66bb8fbba189029b82",
+      "externalCallCount": 40,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.set/difference",
@@ -1054,11 +1057,14 @@
       ]
     },
     "eacl.datomic.core/spiceomic-can?": {
-      "internalDefinitionCount": 463,
-      "internalDefinitionIdsSha256": "81c3f51383e9dbb18442ee219565652f1daa73b1d7336286bbafe51547458863",
-      "externalCallCount": 24,
+      "internalDefinitionCount": 464,
+      "internalDefinitionIdsSha256": "3c957e6d37ae7a4a114b1209232454c94b7ba964cec78302bda704cc2e426507",
+      "externalCallCount": 27,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.string/join",
@@ -1087,9 +1093,12 @@
     "eacl.datomic.core/spiceomic-lookup-resources": {
       "internalDefinitionCount": 621,
       "internalDefinitionIdsSha256": "898f85c698a2316bcf8eeb76bd4281f90fe57f04a867b3a7396ea8d69336bb66",
-      "externalCallCount": 24,
+      "externalCallCount": 27,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.string/join",
@@ -1118,9 +1127,12 @@
     "eacl.datomic.core/spiceomic-count-resources": {
       "internalDefinitionCount": 487,
       "internalDefinitionIdsSha256": "bad75986ea692653f7f4ec17891b67ab6bce3afd951301998001aa62d467b833",
-      "externalCallCount": 24,
+      "externalCallCount": 27,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.string/join",
@@ -1149,9 +1161,12 @@
     "eacl.datomic.core/spiceomic-lookup-subjects": {
       "internalDefinitionCount": 621,
       "internalDefinitionIdsSha256": "5d6a4cf1bec5d5be589aefe64177dd3448cf13d6b95c32478ac199d1b476f2cf",
-      "externalCallCount": 24,
+      "externalCallCount": 27,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.string/join",
@@ -1180,9 +1195,12 @@
     "eacl.datomic.core/spiceomic-count-subjects": {
       "internalDefinitionCount": 487,
       "internalDefinitionIdsSha256": "795da970872d28f402a47ba9ceb88c8f4f7b984f8fc940a1e5b13f86e209de69",
-      "externalCallCount": 24,
+      "externalCallCount": 27,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.string/join",
@@ -1244,11 +1262,14 @@
       ]
     },
     "eacl.datomic.core/current-zed-token": {
-      "internalDefinitionCount": 825,
-      "internalDefinitionIdsSha256": "672a7baae527140394ecd7c729ffe696baef950fbd3b3fd3caf00f03ef218fe0",
-      "externalCallCount": 37,
+      "internalDefinitionCount": 826,
+      "internalDefinitionIdsSha256": "9d8d734ca3914bf2aa4bd5d417ced2d5e56535351d65795eea4c6e9da1c264fc",
+      "externalCallCount": 40,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.set/difference",
@@ -1288,11 +1309,14 @@
       ]
     },
     "eacl.datomic.core/zed-token-at-least-seconds-ago": {
-      "internalDefinitionCount": 827,
-      "internalDefinitionIdsSha256": "aeafebf3f7b1326302fc0f8a071915653bb6607cd06ce593a561f1d35f988cac",
-      "externalCallCount": 37,
+      "internalDefinitionCount": 828,
+      "internalDefinitionIdsSha256": "4038ac3ae65844a692c812e83907068e63c3ef9a0f019874f591c3177a81c085",
+      "externalCallCount": 40,
       "externalCalls": [
+        "clj-kondo/unknown-namespace/bound-cache#",
         "clj-kondo/unknown-namespace/db#",
+        "clj-kondo/unknown-namespace/if",
+        "clj-kondo/unknown-namespace/schema-identity#",
         "cljs.reader/read-string",
         "clojure.edn/read-string",
         "clojure.set/difference",
@@ -1332,8 +1356,8 @@
       ]
     },
     "eacl.client.orchestration/ClientAuthorization": {
-      "internalDefinitionCount": 647,
-      "internalDefinitionIdsSha256": "282480d877c2bf4ce276f70e1ff40fdb2bbcdb7068e805feb4dbc9b9887f2d26",
+      "internalDefinitionCount": 648,
+      "internalDefinitionIdsSha256": "a23852fa87bf5860ac3dfaf1990798c96d996b25381f31a877bc19e26e1d7ade",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1471,8 +1495,8 @@
       ]
     },
     "eacl.datahike.core/datahike-can?": {
-      "internalDefinitionCount": 577,
-      "internalDefinitionIdsSha256": "b557de79b564f024e77beb41ae58a29fa558f7a994d84786edd0c2dced9391f5",
+      "internalDefinitionCount": 578,
+      "internalDefinitionIdsSha256": "9d9b6db8f54164908390644839e727cb36f164cce9705fb5a007611b179ce5ba",
       "externalCallCount": 28,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1778,8 +1802,8 @@
       ]
     },
     "eacl.datascript.core/datascript-can?": {
-      "internalDefinitionCount": 562,
-      "internalDefinitionIdsSha256": "3fc15b366eb4b74ca163051140b086d9a6bd699e05c92b9d1cdfd109dffaf9b9",
+      "internalDefinitionCount": 563,
+      "internalDefinitionIdsSha256": "8f48298c3eb0134b6b28656e4beef0496df451a51381c6a3f7305398c9017885",
       "externalCallCount": 27,
       "externalCalls": [
         "cljs.reader/read-string",
