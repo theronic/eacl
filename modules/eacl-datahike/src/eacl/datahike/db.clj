@@ -82,6 +82,15 @@
        (integer? (:time-point db))
        (some? (:config (:origin-db db)))))
 
+(defn- asof-attr-repr
+  "`attr-repr` against the wrapper's origin. The attribute representation is
+   a creation-time constant, so the origin answers identically — but resolving
+   through the wrapper itself re-enters Datahike's eager as-of entity search
+   on every scan (measured ~27us against ~7us under `:attribute-refs?`),
+   which would tax the very path built to avoid that machinery."
+  [db attr]
+  (attr-repr (:origin-db db) attr))
+
 (defn- asof-event-datoms
   "The raw temporal event stream behind an `AsOfDB`, positioned at
    `components` and lazily merged in full index order (for `:avet`: attribute,
@@ -135,9 +144,14 @@
    continues into the next attribute when the requested prefix has no match.
 
    Datahike carries an `AsOfDB` temporal context into `seek-datoms`, but
-   0.8.1759 can position a full-tuple temporal seek after a historically visible
-   tuple that was retracted later. Wrapper values therefore use exact AVET
-   datoms plus a schema-bounded prefix filter."
+   0.8.1759's wrapper post-processing is eager over the remaining index and
+   order-scrambled, so it can position a full-tuple temporal seek after a
+   historically visible tuple that was retracted later. An integer-time
+   `AsOfDB` therefore seeks the lazy temporal event stream instead — schema
+   segments are small, but this runs per definition lookup on exact
+   snapshots, where the eager path's per-transaction `:db/txInstant` reads
+   add up. Remaining wrappers use exact AVET datoms plus a schema-bounded
+   prefix filter, in no particular order."
   [db attr arity prefix]
   (let [prefix (vec prefix)
         n      (count prefix)]
@@ -148,7 +162,8 @@
               (and (vector? v)
                    (= arity (count v))
                    (= prefix (subvec v 0 n))))]
-        (if (direct-db? db)
+        (cond
+          (direct-db? db)
           (let [padded (into prefix (repeat (- arity n) nil))
                 a-repr (attr-repr db attr)]
             (->> (d/seek-datoms
@@ -159,6 +174,18 @@
                   (fn [{:keys [a] :as datom}]
                     (and (= a-repr a)
                          (matches-prefix? datom))))))
+
+          (asof-seekable? db)
+          (let [padded (into prefix (repeat (- arity n) nil))
+                a-repr (asof-attr-repr db attr)]
+            (->> (asof-event-datoms db :avet [attr padded] :asc)
+                 (take-while
+                  (fn [{:keys [a] :as datom}]
+                    (and (= a-repr a)
+                         (matches-prefix? datom))))
+                 (visible-as-of (:time-point db) :asc)))
+
+          :else
           (filter matches-prefix?
                   (d/datoms db {:index :avet
                                 :components [attr]})))))))
@@ -233,7 +260,7 @@
                           (matches-prefix? datom))))))
 
            (asof-seekable? db)
-           (let [a-repr (attr-repr db attr)]
+           (let [a-repr (asof-attr-repr db attr)]
              (->> (asof-event-datoms
                    db :eavt [entity attr seek-bound] direction)
                   (take-while
@@ -298,7 +325,7 @@
                           (matches-prefix? datom))))))
 
            (asof-seekable? db)
-           (let [a-repr (attr-repr db attr)]
+           (let [a-repr (asof-attr-repr db attr)]
              (->> (asof-event-datoms db :avet [attr seek-bound] direction)
                   (take-while
                    (fn [{:keys [a] :as datom}]

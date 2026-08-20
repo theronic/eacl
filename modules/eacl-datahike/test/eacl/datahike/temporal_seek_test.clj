@@ -27,6 +27,7 @@
             [eacl.relationships.storage :as relationship-storage]))
 
 (def ^:private fwd relationship-storage/forward-attribute)
+(def ^:private rev-attr relationship-storage/reverse-attribute)
 (def ^:private pagination-arity 4)
 
 (defn- sig
@@ -80,25 +81,35 @@
     (mapv (fn [id] (ddb/entid db [:eacl/id id])) ids)))
 
 (defn- deterministic-history!
-  "A small forward-tuple history with adds, retracts and re-adds across
-   several endpoints. Returns the scan ingredients plus every revision."
+  "A small relationship-tuple history with adds, retracts and re-adds across
+   several endpoints, populated on BOTH storage attributes so every scan has
+   a live neighbor segment: the reverse attribute sorts immediately below the
+   forward one in AVET, and `hub` carries both attributes, so descending
+   scans and attribute guards cross real boundaries instead of empty space.
+   Returns the scan ingredients plus every revision."
   [conn]
   (let [[rel hub s2 s3 & resources]
         (entities! conn (into ["rel" "hub" "s2" "s3"]
                               (map #(str "r" %) (range 1 7))))
         [r1 r2 r3 r4 r5 r6] resources
-        tup (fn [r] [:user rel :doc r])
+        F (fn [r] [:user rel :doc r])
+        R (fn [s] [:doc rel :user s])
         revs (atom [])
         tx! (fn [data]
               (d/transact conn data)
               (swap! revs conj (:max-tx (d/db conn))))]
-    (tx! [[:db/add hub fwd (tup r1)] [:db/add hub fwd (tup r2)]
-          [:db/add hub fwd (tup r3)] [:db/add s2 fwd (tup r1)]
-          [:db/add s3 fwd (tup r2)]])
-    (tx! [[:db/retract hub fwd (tup r2)]])
-    (tx! [[:db/add hub fwd (tup r2)] [:db/retract s2 fwd (tup r1)]])
-    (tx! [[:db/add hub fwd (tup r4)] [:db/retract hub fwd (tup r1)]])
-    (tx! [[:db/add hub fwd (tup r5)] [:db/add s2 fwd (tup r6)]])
+    (tx! [[:db/add hub fwd (F r1)] [:db/add hub fwd (F r2)]
+          [:db/add hub fwd (F r3)] [:db/add s2 fwd (F r1)]
+          [:db/add s3 fwd (F r2)]
+          [:db/add r1 rev-attr (R hub)] [:db/add r2 rev-attr (R hub)]
+          [:db/add hub rev-attr (R s2)]])
+    (tx! [[:db/retract hub fwd (F r2)] [:db/retract r2 rev-attr (R hub)]])
+    (tx! [[:db/add hub fwd (F r2)] [:db/retract s2 fwd (F r1)]
+          [:db/add r2 rev-attr (R hub)]])
+    (tx! [[:db/add hub fwd (F r4)] [:db/retract hub fwd (F r1)]
+          [:db/retract hub rev-attr (R s2)]])
+    (tx! [[:db/add hub fwd (F r5)] [:db/add s2 fwd (F r6)]
+          [:db/add hub rev-attr (R s3)]])
     {:rel rel :hub hub :s2 s2 :s3 s3 :resources resources :revs @revs}))
 
 (deftest asof-scan-matches-eager-visibility-test
@@ -111,21 +122,27 @@
             [r2] (drop 1 resources)]
         (doseq [rev revs
                 direction [:asc :desc]
-                prefix [[:user rel :doc]
-                        [:user rel]
-                        [:user]
-                        [:user rel :doc r2]]]
+                [attr prefix] (concat
+                               (map (fn [p] [fwd p])
+                                    [[:user rel :doc]
+                                     [:user rel]
+                                     [:user]
+                                     [:user rel :doc r2]])
+                               (map (fn [p] [rev-attr p])
+                                    [[:doc rel :user]
+                                     [:doc]]))]
           (let [asof (d/as-of (d/db conn) rev)]
-            (testing (pr-str {:rev rev :direction direction :prefix prefix})
+            (testing (pr-str {:rev rev :direction direction
+                              :attr attr :prefix prefix})
               (is (= (sig (reference-avet-scan
-                           asof fwd pagination-arity prefix direction))
+                           asof attr pagination-arity prefix direction))
                      (sig (ddb/avet-tuple-prefix
-                           asof fwd pagination-arity prefix nil direction))))
+                           asof attr pagination-arity prefix nil direction))))
               (doseq [entity [hub s2 s3]]
                 (is (= (sig (reference-eavt-scan
-                             asof entity fwd pagination-arity prefix direction))
+                             asof entity attr pagination-arity prefix direction))
                        (sig (ddb/eavt-tuple-prefix
-                             asof entity fwd pagination-arity prefix
+                             asof entity attr pagination-arity prefix
                              nil direction)))))))))
       (finally (d/release conn)))))
 
@@ -276,6 +293,71 @@
               (is (= 1 (count lazy)) "the same-transaction assertion wins")))))
       (finally (d/release conn)))))
 
+(deftest cardinality-one-lifecycle-matches-eager-test
+  ;; The lazy path's soundness for cardinality-one attributes leans on
+  ;; Datahike's -temporal-upsert writing an explicit retraction event for a
+  ;; replaced value. Exercise the full lifecycle — assert, overwrite,
+  ;; retract, re-add, same-value re-assert (which writes no event at all) —
+  ;; rather than trusting the source reading. Also pins seek-tuple-prefix's
+  ;; as-of routing against its unordered eager fallback, set-wise.
+  (let [card-one-attr :temporal-seek-test/one-tuple
+        conn (datahike/create-conn
+              [{:db/ident card-one-attr
+                :db/valueType :db.type/tuple
+                :db/tupleTypes [:db.type/keyword :db.type/ref
+                                :db.type/keyword :db.type/ref]
+                :db/cardinality :db.cardinality/one
+                :db/index true}])]
+    (try
+      (let [[rel e1 e2 r1 r2 r3] (entities! conn ["rel" "e1" "e2"
+                                                  "r1" "r2" "r3"])
+            T (fn [r] [:user rel :doc r])
+            revs (atom [])
+            tx! (fn [data]
+                  (d/transact conn data)
+                  (swap! revs conj (:max-tx (d/db conn))))]
+        (tx! [[:db/add e1 card-one-attr (T r1)]
+              [:db/add e2 card-one-attr (T r2)]])
+        (tx! [[:db/add e1 card-one-attr (T r2)]])
+        (tx! [[:db/retract e1 card-one-attr (T r2)]])
+        (tx! [[:db/add e1 card-one-attr (T r3)]])
+        (tx! [[:db/add e2 card-one-attr (T r2)]])
+        (doseq [rev @revs
+                direction [:asc :desc]]
+          (let [asof (d/as-of (d/db conn) rev)]
+            (is (= (sig (reference-avet-scan
+                         asof card-one-attr pagination-arity
+                         [:user rel :doc] direction))
+                   (sig (ddb/avet-tuple-prefix
+                         asof card-one-attr pagination-arity
+                         [:user rel :doc] nil direction)))
+                (pr-str {:rev rev :direction direction}))
+            (is (= (sig (reference-eavt-scan
+                         asof e1 card-one-attr pagination-arity
+                         [:user rel :doc] direction))
+                   (sig (ddb/eavt-tuple-prefix
+                         asof e1 card-one-attr pagination-arity
+                         [:user rel :doc] nil direction)))
+                (pr-str {:rev rev :direction direction :eavt true}))))
+        (doseq [rev @revs
+                prefix [[:user] [:user rel] [:user rel :doc]]]
+          (let [asof (d/as-of (d/db conn) rev)
+                n (count prefix)
+                reference (->> (d/datoms asof {:index :avet
+                                               :components [card-one-attr]})
+                               (filter (fn [{:keys [v]}]
+                                         (and (vector? v)
+                                              (= pagination-arity (count v))
+                                              (= (vec prefix)
+                                                 (subvec v 0 n)))))
+                               sig
+                               sort)]
+            (is (= reference
+                   (sort (sig (ddb/seek-tuple-prefix
+                               asof card-one-attr pagination-arity prefix))))
+                (pr-str {:rev rev :prefix prefix})))))
+      (finally (d/release conn)))))
+
 (deftest non-asof-wrappers-keep-exact-fallback-test
   ;; Only an integer-time AsOfDB takes the lazy path. Date-based as-of,
   ;; since and history wrappers must keep the exact-datoms fallback
@@ -299,7 +381,17 @@
                          wrapper hub fwd pagination-arity prefix direction))
                    (sig (ddb/eavt-tuple-prefix
                          wrapper hub fwd pagination-arity prefix
-                         nil direction)))))))
+                         nil direction))))
+            (is (= (sort (sig (filter (fn [{:keys [v]}]
+                                        (and (vector? v)
+                                             (= pagination-arity (count v))
+                                             (= prefix (subvec v 0 3))))
+                                      (d/datoms wrapper
+                                                {:index :avet
+                                                 :components [fwd]}))))
+                   (sort (sig (ddb/seek-tuple-prefix
+                               wrapper fwd pagination-arity prefix))))
+                "seek-tuple-prefix keeps the exact fallback set"))))
       (finally (d/release conn)))))
 
 (deftest asof-page-realizes-only-the-page-test
