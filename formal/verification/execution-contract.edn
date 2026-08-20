@@ -97,6 +97,10 @@
   eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test
   eacl.engine.point-check-test/probe-check-equals-enumeration-oracle-test
   eacl.engine.point-check-test/probe-check-cost-is-bounded-by-intermediates-test
+  eacl.engine.point-check-test/bidirectional-arrow-cost-is-bounded-by-smaller-side-test
+  eacl.engine.point-check-test/bidirectional-arrow-equals-enumeration-oracle-test
+  eacl.datomic.raw-plan-isolation-test/filtered-view-never-shares-plans-with-the-plain-database-test
+  eacl.datomic.raw-plan-isolation-test/speculative-value-never-shares-plans-with-the-committed-basis-test
   eacl.relay-test/cursor-is-bound-to-normalized-traversal-limits-test
   eacl.datomic.api-contract-test/recursive-traversal-limits-are-configurable-test
   eacl.datomic.recursive-cache-test/datomic-recursive-cursor-binds-normalized-traversal-limits-test
