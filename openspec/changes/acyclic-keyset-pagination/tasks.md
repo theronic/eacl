@@ -127,7 +127,11 @@
 - [ ] 6.3 Release note: acyclic order change and one-time cursor
       invalidation (typed failure, restart walk); demo repos: verify the
       cache-off pagination pathology is gone end-to-end on the Datomic and
-      Datahike demos.
+      Datahike demos. NOTE (2026-08-20): release-note half DONE —
+      docs/release-notes-v8.0.md cursor-redesign section now documents
+      order ABI v2's per-plan boundary kinds, the flat cache-off cost,
+      and the one-time typed cursor invalidation. Demo verification
+      remains post-merge (7.4).
 
 ## 7. Session handover (2026-08-20, pre-compaction state)
 
@@ -155,10 +159,20 @@ Verified state at handover:
       Expect: cache-off 100-page walk flat (was O(k²), main measured
       ~996-1,600 ms/20k walk), cache-on within 1.5× of main's
       checkpoint-resume pages.
-- [ ] 7.2 Wire least-path's own counters into the observer stats
+- [x] 7.2 Wire least-path's own counters into the observer stats
       (*recursive-traversal-stats*): today only the witness probe-checks
       report (via stable-route report!); the evaluator's own
       scans/emissions are invisible to observers. Small, engine-only.
+      DONE (2026-08-20): the evaluator counts emissions in its run
+      counters; v8 reports emissions as :derived-grants, commands as
+      :advanced-datoms, and scan opens as :stream-opens (no reducer
+      analog, own name). Two observation-basis recalibrations, physical
+      work unchanged (:adapter-attempts identical before/after): the
+      explorer :page work envelope re-recorded (64/352/32), and the
+      cache-differential adjacent-page ±10 flatness assertion re-anchored
+      to a 4x early-page ceiling over the whole walk (per-page cost is
+      content-bounded — least-path order emits cheap-to-derive entities
+      first, so adjacent windows legitimately differ by more than 10).
 - [ ] 7.3 Open the PR onto main (agent/* branch, no assistant mentions):
       lead with the formal leaves, the O(k²)→O(page) cache-off fix, the
       stateless/multi-node cursor property, the honest witness-cost

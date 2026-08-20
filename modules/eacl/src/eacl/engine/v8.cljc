@@ -36,9 +36,14 @@
 (def ^:dynamic *recursive-traversal-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
-  Receives the stable reducer's per-run work deltas under the public
-  counter names (:derived-grants, :advanced-datoms, :queued-work) and
-  :continuation-hits on checkpoint hits. Request-shape observers live in
+  Receives per-run work deltas under the public counter names from every
+  stable route. The reducer and the witness probe-checks report
+  :derived-grants, :advanced-datoms, and :queued-work; the least-path
+  evaluator reports its emissions as :derived-grants, its physical
+  commands as :advanced-datoms, and its scan opens as :stream-opens (it
+  keeps no work queue, so it never reports :queued-work).
+  :continuation-hits counts checkpoint hits and :adapter-attempts counts
+  physical attempts on the routed path. Request-shape observers live in
   *request-shape-stats*. Observation-only."
   nil)
 (def ^:dynamic *request-shape-stats*
@@ -1164,6 +1169,23 @@
     (swap! stats update :adapter-attempts (fnil + 0) @attempts))
   nil)
 
+(defn- report-least-path-run!
+  "The least-path evaluator's per-run work deltas for
+  *recursive-traversal-stats*, mirroring the reducer's report: emissions
+  are the logical admissions (:derived-grants) and commands the physical
+  commands (:advanced-datoms); :stream-opens has no reducer analog and
+  reports under its own name."
+  [run]
+  (when-let [stats *recursive-traversal-stats*]
+    (let [{:keys [emissions commands stream-opens]} (:counters run)]
+      (swap! stats
+             (fn [counters]
+               (-> (or counters {})
+                   (update :derived-grants (fnil + 0) (or emissions 0))
+                   (update :advanced-datoms (fnil + 0) (or commands 0))
+                   (update :stream-opens (fnil + 0) (or stream-opens 0)))))))
+  nil)
+
 (defn- with-service-admission
   "Runs `thunk` holding one enumeration slot when the client configured a
   service-edge bulkhead; the slot is held for the full synchronous duration
@@ -1266,6 +1288,7 @@
                           {:node (spice-object result-type value)
                            :cursor (least-path-edge plan traversal coords)})
                         ordered)]
+        (report-least-path-run! run)
         (report-adapter-attempts! attempts)
         (page-response
          {:items items

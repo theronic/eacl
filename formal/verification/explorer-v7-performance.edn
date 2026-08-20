@@ -79,12 +79,16 @@
  ;; them.
  ;; :page re-recorded 2026-08-20 for the least-path keyset engine
  ;; (acyclic-keyset-pagination): acyclic pages no longer resume reducer
- ;; checkpoints; the reported counters are the smaller-witness probe
- ;; checks (flat per page — observed 63-66 advanced-datoms on page 1 and
- ;; page 10 alike; ~45 percent headroom).
+ ;; checkpoints. Re-recorded same day once the evaluator's own counters
+ ;; joined the observer stats (task 7.2): pages now report the
+ ;; evaluator's emissions and physical commands on top of the
+ ;; smaller-witness probe checks (flat per page — observed 42-43
+ ;; derived-grants and 232-239 advanced-datoms on page 1 and page 10
+ ;; alike; ~45 percent headroom). The physical work itself is unchanged:
+ ;; :adapter-attempts already reported 239 per page before the wiring.
  {:page
-  {:maximum-derived-grants 32
-   :maximum-advanced-datoms 96
+  {:maximum-derived-grants 64
+   :maximum-advanced-datoms 352
    :maximum-queued-work 32}
   :count-10000
   {:maximum-derived-grants 24000

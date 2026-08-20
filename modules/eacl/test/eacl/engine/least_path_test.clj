@@ -402,7 +402,9 @@
                               (:coords (nth whole (- (count whole) 3)))))]
         (is (<= (:stream-opens (:counters deep-page))
                 (+ 8 (* 4 (:stream-opens (:counters first-page)))))
-            "deep-page stream opens are bounded by per-page work")))))
+            "deep-page stream opens are bounded by per-page work")
+        (is (= 3 (:emissions (:counters first-page)))
+            "counted emissions are the derived results incl. the lookahead")))))
 
 (deftest budgets-fail-typed-test
   (let [{:keys [adapter plan]} (seeded-case 11)

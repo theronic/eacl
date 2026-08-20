@@ -262,12 +262,20 @@ digest excludes mutable current schema proof so a changed schema can reach
 proof comparison and exact fallback. v11 decoding remains supported for
 compatible existing envelopes.
 
-- Every permission lookup page uses one `:stable-edge` boundary containing
-  traversal direction, the boundary result's one-based ordinal, its identity,
-  and the sealed plan's composite fingerprint. The order ABI is the plan's
-  stable first-discovery order (`adopt-stable-discovery-enumeration`); page
-  size, adapter chunking, cache hits, and runtime do not define it, and a
-  page-size change is rejected as an incompatible cursor.
+- Every permission lookup page uses one boundary cursor bound to the sealed
+  plan's composite fingerprint; order ABI v2 selects the boundary kind per
+  plan (`acyclic-keyset-pagination`). A recursive root mints a
+  `:stable-edge` containing traversal direction, the boundary result's
+  one-based ordinal, and its identity, in the plan's stable first-discovery
+  order (`adopt-stable-discovery-enumeration`); page size, adapter chunking,
+  cache hits, and runtime do not define that order, and a page-size change
+  is rejected as an incompatible cursor. An acyclic root mints a
+  `:least-path-edge` carrying the boundary result's full per-scan
+  derivation coordinates in least-derivation-path order — a self-contained
+  keyset boundary whose resume is a per-level seek: no continuation
+  checkpoints, no replay, and per-page cost that does not grow with the
+  page ordinal even with caching disabled (previously the cache-off walk
+  cost grew quadratically in the ordinal).
 - Default `:evaluation :demand` computes only the requested page plus one
   lookahead result. The client-private checkpoint store may retain the
   latest history-free reducer state for that exact snapshot. If it is absent
@@ -308,11 +316,19 @@ compatible existing envelopes.
   materializing and sorting every match before every page.
 
 Permission enumeration presents one deterministic sequence for a fixed query
-on the selected snapshot: the sealed plan's stable first-discovery order.
-Relationship pages use their certified index order. Neither is a lexical,
-domain, or cross-backend presentation order.
+on the selected snapshot: a recursive root the sealed plan's stable
+first-discovery order, an acyclic root the plan's least-derivation-path
+order (proved by the `LeastPath*` Dafny leaves). Relationship pages use
+their certified index order. None of these is a lexical, domain, or
+cross-backend presentation order.
 The cursor query and navigation digests include emission-order version 2, so a
 future ordering change cannot silently resume an older traversal state.
+
+Adopting order ABI v2 changes the enumeration order of acyclic roots once:
+cursors minted under the previous ABI are bound to the old plan
+fingerprint, so they fail as typed invalid-cursor errors rather than
+resuming out of order — restart the affected walk from page one. Recursive
+roots keep their order and their cursors.
 
 Under concurrent mutation, results granted below a keyset boundary
 between pages are not revisited and revoked results disappear — ordinary

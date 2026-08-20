@@ -81,7 +81,7 @@
   {:pre [(or (some? adapter) (some? fetch-fn))]}
   (let [fetch-fn (or fetch-fn (adapter-fetch-fn adapter))
         counters (volatile! {:commands 0 :fetched-values 0
-                             :stream-opens 0})]
+                             :stream-opens 0 :emissions 0})]
     {:counters counters
      :chunk physical-chunk-size
      :fetch!
@@ -960,7 +960,8 @@
       (let [[emission level'] (next-fn env level)]
         (if (nil? emission)
           {:emissions emissions :has-more? false}
-          (recur level' (conj emissions emission)))))))
+          (do (vswap! (:counters (:ctx env)) update :emissions inc)
+              (recur level' (conj emissions emission))))))))
 
 (defn forward-page
   "One least-path page of root entities for the subject.

@@ -12,6 +12,7 @@
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
+            [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]))
 
 (def ^:private acyclic-schema
@@ -103,6 +104,25 @@ definition doc {
                          :resource/type :doc :last 10 :before before})]
           (is (= (vec (take-last 10 (drop-last 10 forward)))
                  (:data prev))))))))
+
+(deftest least-path-work-reports-to-traversal-observers-test
+  ;; Task 7.2: the evaluator's own scans and emissions must be visible to
+  ;; observers under the public counter names, not only the witness
+  ;; probe-checks.
+  (with-mem-conn [conn schema/v7-schema]
+    (let [acl (seed! conn 60)
+          alice (spice-object :user "alice")
+          stats (atom {})
+          page (binding [impl.indexed/*recursive-traversal-stats* stats]
+                 (eacl/lookup-resources
+                  acl {:subject alice :permission :view
+                       :resource/type :doc :first 20}))]
+      (is (= 20 (count (:data page))))
+      (testing "emissions, commands, and scan opens reach the observer"
+        (is (<= 20 (:derived-grants @stats 0))
+            "each emitted entity is one logical admission")
+        (is (pos? (:advanced-datoms @stats 0)))
+        (is (pos? (:stream-opens @stats 0)))))))
 
 (deftest lookup-subjects-least-path-round-trip-test
   (with-mem-conn [conn schema/v7-schema]
