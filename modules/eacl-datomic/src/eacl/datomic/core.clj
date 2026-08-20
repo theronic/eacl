@@ -795,6 +795,18 @@
       {:eid (:result-eid cursor)
        :ordinal (:ordinal cursor)})
 
+    ;; Keyset cursor of an acyclic plan: the boundary result's eid is the
+    ;; deepest coordinate (acyclic-keyset-pagination).
+    :least-path-edge
+    (when (and (= engine/stable-cursor-version (:version cursor))
+               (= engine/stable-order-abi (:order-abi cursor))
+               (contains? #{:forward :reverse} (:traversal cursor))
+               (vector? (:coords cursor))
+               (seq (:coords cursor))
+               (every? integer? (:coords cursor))
+               (positive-eid? (peek (:coords cursor))))
+      {:eid (peek (:coords cursor))})
+
     nil))
 
 (defn- internal-page?

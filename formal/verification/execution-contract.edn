@@ -101,6 +101,13 @@
   eacl.engine.point-check-test/bidirectional-arrow-equals-enumeration-oracle-test
   eacl.datomic.raw-plan-isolation-test/filtered-view-never-shares-plans-with-the-plain-database-test
   eacl.datomic.raw-plan-isolation-test/speculative-value-never-shares-plans-with-the-committed-basis-test
+  eacl.engine.least-path-test/forward-least-path-matches-oracles-test
+  eacl.engine.least-path-test/reverse-least-path-matches-oracles-test
+  eacl.engine.least-path-test/resume-equals-suffix-test
+  eacl.engine.least-path-test/descending-agrees-with-ascending-test
+  eacl.engine.least-path-test/stream-opens-do-not-scale-with-boundary-test
+  eacl.datomic.least-path-client-test/cache-off-pagination-is-flat-in-the-page-ordinal-test
+  eacl.datomic.least-path-client-test/last-window-works-under-demand-evaluation-test
   eacl.relay-test/cursor-is-bound-to-normalized-traversal-limits-test
   eacl.datomic.api-contract-test/recursive-traversal-limits-are-configurable-test
   eacl.datomic.recursive-cache-test/datomic-recursive-cursor-binds-normalized-traversal-limits-test

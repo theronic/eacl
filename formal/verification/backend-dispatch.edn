@@ -8,7 +8,10 @@
   "modules/eacl-datascript/src"]
  :runtime-passes
  {:clj
-  {:invoke-call-count 59
+  {;; 59 -> 61 (2026-08-20): eacl.engine.least-path/adapter-fetch-fn
+   ;; adds one :subject->resources and one :resource->subjects literal
+   ;; dispatch (the direction-aware keyset seam); no new operations.
+   :invoke-call-count 61
    :operations
    #{:snapshot-id
      :source-scope
@@ -30,7 +33,7 @@
      :all-permission-nodes
      :proof-frame}}
   :cljs
-  {:invoke-call-count 59
+  {:invoke-call-count 61
    :operations
    #{:snapshot-id
      :source-scope

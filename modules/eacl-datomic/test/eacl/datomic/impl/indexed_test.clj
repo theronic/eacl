@@ -420,8 +420,12 @@
                resources))
         (testing "end cursor should be the last resource"
           (is page1-end-cursor)
-          (let [last-resource-ent
-                (d/entity db (:result-eid page1-end-cursor))
+          (let [;; ABI v2: acyclic cursors carry coordinates; the boundary
+                ;; result's eid is the deepest coordinate
+                ;; (acyclic-keyset-pagination).
+                boundary-eid (or (:result-eid page1-end-cursor)
+                                 (peek (:coords page1-end-cursor)))
+                last-resource-ent (d/entity db boundary-eid)
                 last-resource-internal (spice-object :server (:eacl/id last-resource-ent))]
             (is (= (spice-object :server "account2-server1") last-resource-internal))))))
 

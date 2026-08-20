@@ -422,6 +422,13 @@
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 
+    ;; Least-path coordinates stay INTERNAL inside the authenticated,
+    ;; basis-pinned envelope: they interleave rule ordinals with eids of
+    ;; several types, and the exact basis makes internal ids stable for
+    ;; the cursor's whole lifetime (acyclic-keyset-pagination).
+    :least-path-edge
+    edge
+
     :relationship-index
     (-> edge
         (update :subject-id f)

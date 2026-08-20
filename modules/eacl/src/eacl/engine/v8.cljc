@@ -1,6 +1,7 @@
 (ns eacl.engine.v8
   (:require [eacl.backend.v8 :as backend]
             [eacl.core :refer [spice-object]]
+            [eacl.engine.least-path :as least-path]
             [eacl.engine.physical :as physical]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-page :as stable-page]
@@ -979,6 +980,45 @@
    :ordinal ordinal
    :result-eid eid})
 
+(defn- least-path-edge
+  "The keyset cursor of an acyclic (:least-path) plan: the boundary
+  result's full per-scan coordinate sequence. Self-contained — resume is
+  a per-level seek (LeastPathResume.dfy), no checkpoint store and no
+  replay (acyclic-keyset-pagination)."
+  [plan traversal coords]
+  {:kind :least-path-edge
+   :version stable-cursor-version
+   :order-abi stable-order-abi
+   :fingerprint (:fingerprint plan)
+   :traversal traversal
+   :coords coords})
+
+(defn- validate-least-path-bound!
+  [plan traversal bound]
+  (when bound
+    (when-not (= :least-path-edge (:kind bound))
+      (page-error!
+       "Lookup page cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:kind bound)}))
+    (when (not= (:fingerprint plan) (:fingerprint bound))
+      (page-error!
+       "Cursor is bound to an incompatible sealed plan."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :plan-fingerprint-mismatch}))
+    (when (not= traversal (:traversal bound))
+      (page-error!
+       "Cursor traversal direction does not match the request."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:traversal bound)}))
+    (when-not (and (vector? (:coords bound))
+                   (seq (:coords bound))
+                   (every? integer? (:coords bound)))
+      (page-error!
+       "Cursor boundary is malformed."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :malformed-boundary}))))
+
 (defn- validate-stable-bound!
   [plan traversal bound]
   (when bound
@@ -1105,6 +1145,19 @@
                  :attempts attempts})
      :attempts attempts}))
 
+(defn- least-path-fetch-fn
+  "The routed physical read path for the least-path evaluator: identical
+  classification/retry envelope to `stable-fetch-fn`, over the
+  direction-aware seam (descending windows issue :desc scans)."
+  [db]
+  (let [attempts (atom 0)]
+    {:fetch-fn (physical/retrying-fetch-fn
+                (least-path/adapter-fetch-fn db)
+                {:max-attempts default-physical-attempts
+                 :deadline-nanos (:deadline-nanos execution/*contract*)
+                 :attempts attempts})
+     :attempts attempts}))
+
 (defn- report-adapter-attempts!
   [attempts]
   (when-let [stats *recursive-traversal-stats*]
@@ -1164,9 +1217,69 @@
                        {:eacl/error :eacl.pagination/stale-cursor})
           (throw error))))))
 
+(declare first-discovery-lookup-page)
+
+(defn- least-path-lookup-page
+  "Keyset pagination for an acyclic plan: ascending pages resume strictly
+  past the boundary coordinates; :before/:last run descending and return
+  the window in canonical forward order. No checkpoint store is
+  consulted and no replay exists (acyclic-keyset-pagination)."
+  [db plan traversal query {:keys [direction size bound]}
+   result-type anchor subject-type]
+  (validate-least-path-bound! plan traversal bound)
+  (let [anchor-eid (object-eid db (:id anchor))]
+    (if (nil? anchor-eid)
+      (page-response {:items [] :has-next? false
+                      :has-previous? (boolean bound)})
+      (let [{:keys [fetch-fn attempts]} (least-path-fetch-fn db)
+            descending? (or (= :desc direction) (some? (:before query)))
+            run-options
+            (merge
+             (stable-limits)
+             {:plan plan
+              :fetch-fn fetch-fn
+              :subject-type subject-type
+              :page-size size
+              :cut-point! (stable-cut-point)}
+             (if (= :forward traversal)
+               {:subject-eid anchor-eid}
+               {:resource-eid anchor-eid})
+             (cond
+               (and bound (= :asc direction))
+               {:after-coords (:coords bound)}
+               (and bound (= :desc direction))
+               {:before-coords (:coords bound)}
+               (= :desc direction)
+               {:last? true}
+               :else {}))
+            run (with-public-limit-errors
+                  #(with-service-admission
+                     (fn []
+                       (if (= :forward traversal)
+                         (least-path/forward-page run-options)
+                         (least-path/reverse-page run-options)))))
+            emissions (:emissions run)
+            ;; Descending runs return descending coordinates; the public
+            ;; page is canonical forward order in both modes.
+            ordered (if descending? (vec (reverse emissions)) emissions)
+            items (mapv (fn [{:keys [value coords]}]
+                          {:node (spice-object result-type value)
+                           :cursor (least-path-edge plan traversal coords)})
+                        ordered)]
+        (report-adapter-attempts! attempts)
+        (page-response
+         {:items items
+          :has-next? (if descending?
+                       (boolean bound)
+                       (boolean (:has-more? run)))
+          :has-previous? (if descending?
+                           (boolean (:has-more? run))
+                           (boolean bound))})))))
+
 (defn- stable-lookup-page
   [db traversal query cache]
-  (let [{:keys [direction size bound]} (normalize-page-request query)
+  (let [{:keys [direction size bound] :as page-req}
+        (normalize-page-request query)
         forward? (= :forward traversal)
         result-type (if forward?
                       (:resource/type query)
@@ -1182,15 +1295,25 @@
       (page-response {:items [] :has-next? false
                       :has-previous? (boolean bound)})
       (let [root-node (permission-query-node root-type (:permission query))
-            plan (stable-plan db root-node)
-            ;; A bare :last window on a recursive schema exhausts a
-            ;; data-dependent traversal; that cost stays opt-in via
-            ;; :evaluation :complete-denotation (public v8 contract).
-            _ (when (and (:recursive? plan)
-                         (= :demand *evaluation-mode*)
-                         (= :desc direction)
-                         (nil? bound))
-                (complete-evaluation-required! query))
+            plan (stable-plan db root-node)]
+        (if (= :least-path (:order-mode plan))
+          (least-path-lookup-page db plan traversal query page-req
+                                  result-type anchor subject-type)
+          (first-discovery-lookup-page db plan traversal query page-req
+                                       cache result-type anchor
+                                       subject-type))))))
+
+(defn- first-discovery-lookup-page
+  [db plan traversal query {:keys [direction size bound]} cache
+   result-type anchor subject-type]
+  (let [;; A bare :last window on a recursive schema exhausts a
+        ;; data-dependent traversal; that cost stays opt-in via
+        ;; :evaluation :complete-denotation (public v8 contract).
+        _ (when (and (:recursive? plan)
+                     (= :demand *evaluation-mode*)
+                     (= :desc direction)
+                     (nil? bound))
+            (complete-evaluation-required! query))
             _ (validate-stable-bound! plan traversal bound)
             anchor-eid (object-eid db (:id anchor))
             edge (when bound {:ordinal (:ordinal bound)
@@ -1227,7 +1350,7 @@
          {:items (stable-items plan traversal result-type
                                (:start-ordinal result) (:eids result))
           :has-next? (:has-next? result)
-          :has-previous? (:has-previous? result)})))))
+          :has-previous? (:has-previous? result)})))
 
 (defn can?
   [db subject permission resource]

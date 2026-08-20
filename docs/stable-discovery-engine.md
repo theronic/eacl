@@ -8,10 +8,20 @@ is the operator/consumer summary.
 
 ## Order ABI
 
-Public enumeration order is the **stable first-discovery order** of the
-sealed-plan reducer: deterministic for one exact basis, normalized query,
-composite plan fingerprint, and adapter scan-order contract. It is not a
-global entity-ID sort and not identical across adapters.
+Order ABI v2 selects the public order per sealed plan
+(`acyclic-keyset-pagination`): an **acyclic** root paginates in
+**least-derivation-path order** — results ordered by the
+lexicographically least per-scan coordinate sequence deriving them
+(sealed rule ordinals interleaved with ascending scan eids; a pure
+function of plan and snapshot, proved by `LeastPathOrder.dfy` /
+`LeastPathEnumeration.dfy` / `LeastPathResume.dfy`) — with
+self-contained keyset cursors, no continuation checkpoints, and no
+replay. A **recursive** root keeps the **stable first-discovery order**
+of the sealed-plan reducer described below: deterministic for one exact
+basis, normalized query, composite plan fingerprint, and adapter
+scan-order contract. Neither order is a global entity-ID sort, and the
+selected mode plus the recursiveness classification are folded into the
+plan fingerprint, so cursors can never cross regimes.
 
 Order inputs, all sealed at plan compilation (`eacl.engine.sealed-plan`):
 dense canonical rule ordinals (canonical-encoding sort of the semantic

@@ -37,9 +37,13 @@
     {:fixture fixture :conn conn :client client}))
 
 (deftest repeated-pagination-reuses-checkpoints-test
-  (let [{:keys [fixture client]} (seeded-caching-client :explorer-acyclic)
+  ;; Checkpoints belong to RECURSIVE plans (order ABI v2:
+  ;; acyclic-keyset-pagination gives acyclic roots self-contained keyset
+  ;; cursors that never touch the continuation store — see
+  ;; acyclic-pagination-needs-no-checkpoints-test below).
+  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
         store (get-in client [:opts :continuation-cache-store])
-        query {:subject (get-in fixture [:principals :super-user])
+        query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)
                :first 5}
@@ -219,3 +223,28 @@
        context [:k] (assoc-in checkpoint [:state :transitions] 5))
       (is (= 10 (get-in (checkpoint-hit context [:k] 2 42)
                         [:state :transitions]))))))
+
+(deftest acyclic-pagination-needs-no-checkpoints-test
+  ;; The keyset regime: an acyclic root paginates statelessly — exact
+  ;; pages, zero continuation-store traffic (acyclic-keyset-pagination).
+  (let [{:keys [fixture client]} (seeded-caching-client :explorer-acyclic)
+        store (get-in client [:opts :continuation-cache-store])
+        query {:subject (get-in fixture [:principals :super-user])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)
+               :first 5}
+        one-shot (mapv :id (:data (eacl/lookup-resources
+                                   client (assoc query :first 1000))))
+        puts-before (:puts (continuation/stats store))
+        walked
+        (loop [q query acc []]
+          (let [{:keys [data page-info]} (eacl/lookup-resources client q)
+                acc (into acc (map :id) data)]
+            (if (and (:has-next-page? page-info) (:end-cursor page-info)
+                     (seq data))
+              (recur (assoc q :after (:end-cursor page-info)) acc)
+              acc)))]
+    (is (= one-shot walked)
+        "keyset pages compose exactly with no server-side state")
+    (is (= puts-before (:puts (continuation/stats store)))
+        "acyclic pagination publishes nothing to the continuation store")))

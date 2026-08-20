@@ -77,10 +77,15 @@
  ;; twenty percent headroom. The retired acyclic merge counters
  ;; (:merge-advances, :backend-scans) left with the engine that produced
  ;; them.
+ ;; :page re-recorded 2026-08-20 for the least-path keyset engine
+ ;; (acyclic-keyset-pagination): acyclic pages no longer resume reducer
+ ;; checkpoints; the reported counters are the smaller-witness probe
+ ;; checks (flat per page — observed 63-66 advanced-datoms on page 1 and
+ ;; page 10 alike; ~45 percent headroom).
  {:page
-  {:maximum-derived-grants 64
-   :maximum-advanced-datoms 8
-   :maximum-queued-work 96}
+  {:maximum-derived-grants 32
+   :maximum-advanced-datoms 96
+   :maximum-queued-work 32}
   :count-10000
   {:maximum-derived-grants 24000
    :maximum-advanced-datoms 1024

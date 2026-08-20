@@ -355,16 +355,17 @@
           (binding [idx/*recursive-traversal-stats* page-3-stats]
             (eacl/lookup-resources
              acl (assoc query :first 3 :after cursor-2)))]
-      (is (= 1 (:continuation-hits @page-2-stats 0))
-          "the continuation is served from the client-scoped checkpoint")
-      (is (= 1 (:continuation-hits @page-3-stats 0))
-          "later pages continue from private state")
-      ;; Both pages continue from checkpoints (no prefix replay); the final
-      ;; page also pays the schema-constant exhaustion tail — every residual
-      ;; rule scans empty once — which is independent of page ordinal.
+      ;; Order ABI v2 (acyclic-keyset-pagination): an acyclic root's
+      ;; pages are keyset-resumed from the cursor's coordinates — no
+      ;; checkpoint is consulted or published, so continuation hits are
+      ;; exactly zero and per-page work stays flat by construction.
+      (is (= 0 (:continuation-hits @page-2-stats 0))
+          "keyset pages consult no client-scoped checkpoint")
+      (is (= 0 (:continuation-hits @page-3-stats 0))
+          "later pages remain stateless")
       (is (<= (:advanced-datoms @page-3-stats 0)
               (+ 10 (:advanced-datoms @page-2-stats 0)))
-          "continuation work does not grow with page ordinal")
+          "keyset work does not grow with page ordinal")
       (is (= (mapv :id (:data (eacl/lookup-resources
                                oracle
                                (assoc query :first 3 :after cursor-1))))
