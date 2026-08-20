@@ -347,34 +347,20 @@ Unsupported modes fail with a typed error instead of silently selecting a weaker
 
 ## Performance
 
-- The goal for EACL is to handle <=10M Relationships with good performance, suitable for real-time.
-- EACL makes no strong performance claims at this time. EACL should be as fast as, or faster than, SpiceD, for small to medium workloads.
 - EACL is not meant for hyperscalers.
-- EACL is internally benchmarked against ~1M permissioned resources with good latency (5-30ms per query) and a real-world, recursive schema.
+- The goal for EACL is to handle 0-10M Relationships with good performance and remain suitable for real-time UIs, owing to its situated nature.
+- EACL makes no strong performance claims at this time, but EACL should be as fast as, or faster than, SpiceDB, for small-to-medium workloads.
+- EACL is internally benchmarked against at least 1M Relationships and a real-world, recursive schema with good latency (~1-40ms per query, depending on schema & query complexity).
 - If you encounter high load, you can scale Datomic Peers horizontally, or dedicate Peers to authorization.
-- EACL should be good for small (~10k-100k Relationships) to medium-scale (250k-1M Relationships). You can scale Peers horizontally and may never need to migrate from EACL to SpiceDB.
-- EACL does not support all SpiceDB features. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- EACL cache is bounded LRU and private to the client / Peer. Repeated operations reuse complete answers at the same immutable snapshot (and, when the proof-backed dependency check passes, across unrelated transactions); continued pages reuse the latest engine checkpoint for their exact snapshot; sealed plans are cached per source and basis. The cache never changes authorization
-  semantics and can be disabled globally or per request. See
-  [Caching](#caching).
-- Lookup cursors are result edges (the boundary result's one-based ordinal and identity, bound to the sealed plan's fingerprint) carried inside an authenticated envelope. A continued page resumes from the client-private latest checkpoint for that exact snapshot when one is retained, and otherwise replays the authenticated prefix deterministically against the same snapshot before publishing anything.
-- A first page costs the reader roughly the index scans on the cheapest certified path to the first results (the reducer follows the lowest static read-cost alternatives first), not the realization of every union branch. Continuation hits make a sequential walk approximately linear in traversed work; a continuation miss deterministically replays the prefix against the same exact snapshot. Counts exhaust the same reducer and read its scalar discovered count; pass `:count-limit` to bound that work. Subjects are typically sparse compared to resources, i.e. 1k users will have access to 1M resources – rarely the other way around.
-
-Public cursors are opaque, authenticated, and tied to the query and database
-snapshot that created them. A cursor walk stays on that snapshot even when the
-current database advances. Cursors have no age expiry unless
-`:cursor-ttl-seconds` is configured. If a conditionally historical backend can
-no longer reconstruct the selected value, EACL returns a typed
-snapshot-unavailable error; ordinary Datomic history and history-enabled
-Datahike do not expire a cursor merely because it is old.
+- EACL does not support all SpiceDB features yet. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
+- EACL [cache](#caching) is per-client and uses LRU for eviction.
 
 ## Formal Verification
 
-- EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+/TLC, and Apalache.
+- EACL is "[formally verified](https://en.wikipedia.org/wiki/Formal_verification)" using Dafny, TLA+/TLC, and Apalache, but not independently audited. Better than most.
 - The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md), i.e. it will never say "yes" when it should say "no", and it will never serve stale cache segments that are behind time `T` as per your request's consistency semantics.
 - Clojure/ClojureScript backend implementations are internally certified, but are not generated from proofs.
 - EACL does not attempt to verify the correctness of its supported backends – responsibility for backend correctness falls with the database author.
-- EACL has not been independently audited.
 
 ## Example Schema
 
