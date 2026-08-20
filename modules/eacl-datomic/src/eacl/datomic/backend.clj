@@ -25,7 +25,7 @@
   [^datomic.Database db]
   (or (.asOfT db) (d/basis-t db)))
 
-(defn- ordinary-view?
+(defn ordinary-view?
   "True when `db` is an ordinary current or as-of database value.
 
   `d/filter`, `d/since` and `d/history` views report the same database id and
@@ -34,7 +34,10 @@
   different questions. Exact-snapshot consistency is therefore refused for
   them, which is also what keeps them out of the snapshot-exact cache tier. An
   as-of value is ordinary — it is precisely the exact view this backend
-  selects."
+  selects. Public: the raw facade uses the same discrimination to keep
+  filtered/since/history views out of the process-global sealed-plan
+  cache (they report the plain value's database id, basis, and schema
+  stamp, so a stable plan key cannot tell them apart)."
   [^datomic.Database db]
   (and (not (.isFiltered db))
        (not (.isHistory db))
