@@ -4,10 +4,16 @@ EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_acce
 
 EACL permissions are [just data](#data-structures) that co-exist with your application data – hence, _situated_, which has [several benefits](#the-benefits-of-situated-authorization), notably:
 
-- reduced network latency,
-- strong local consistency,
-- horizontal scaling, and
-- [real-time view maintenence](#speeding-up-real-time-ui-maintenance).
+- Reduced network latency,
+- Strong local consistency,
+- Horizontal scaling, and
+- [Real-time view maintenance](#speeding-up-real-time-ui-maintenance).
+
+| Authentication (AuthN)                                | Authorization (AuthZ)                            |
+|-------------------------------------------------------|--------------------------------------------------|
+| Who are you?, i.e. which `<subject>`? | What can `<subject>` do? (what EACL cares about) |
+
+EACL is all about permissions: fast & correct.
 
 🦅 EACL is pronounced "EE-kəl", like "eagle" with a `k` because EACL _monitors the situation_ 🥁.
 
@@ -15,34 +21,55 @@ EACL permissions are [just data](#data-structures) that co-exist with your appli
 
 Yes.
 
+## Supported Backends
+
+| Database                                             | Module                                                       | Storage                                                                  |
+|------------------------------------------------------|--------------------------------------------------------------|--------------------------------------------------------------------------|
+| [Datomic Pro](https://www.datomic.com/)              | [eacl-datomic](https://clojars.org/dev.eacl/eacl-datomic)     | DynamoDB (recommended), Cassandra or SQL                                 |
+| [Datahike](https://datahike.io/)                     | [eacl-datahike](https://clojars.org/dev.eacl/eacl-datahike)   | DynamoDB, S3 (cheaper, but slower), LMDB, SQL, Redis, GCS or IndexedDB.  |
+| [DataScript](https://github.com/tonsky/datascript/)  | [eacl-datascript](https://clojars.org/dev.eacl/eacl-datascript) | In-memory, but can persist to disk or add a SQL adapter. No time-travel. |
+
+S3-backed Datahike is attractive for infrequently-accessed apps, because you can trade latency for reduced storage cost, and supports [serverless](https://github.com/replikativ/datahike-serverless) to reduce running costs.
+
+*Note:* DataScript does not store full history, so it has no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots.
+
+_Coming Soon:_ [Datalevin](https://datalevin.org/).
+
 ## Overview
 
+Want to try EACL? Jump to the [Quickstart section](#quickstart).
+
+- EACL is free & open-source under [EPL 2.0](#licence).
 - EACL is inspired by [SpiceDB](https://authzed.com/spicedb):
     - SpiceDB is the most faithful open-source implementation of [Google Zanzibar](https://authzed.com/zanzibar).
     - Zanzibar powers Google Drive, YouTube, Gmail and Google Calendar, serving billions of authorization requests per day over billions of Relationships.
-- EACL supports the SpiceDB [consistency semantics](#consistency-semantics), with backend-specific limitations.
-- If you adopt the ReBAC data model, you won't have to rewrite your app later when you attain hyperscale, because you can easily migrate to SpiceDB which is an external AuthZ system.
-- Like Datomic, EACL is situated, which has several [benefits](#the-benefits-of-situated-authorization).
-- EACL is [fast](#performance).
-- EACL has a [cache](#caching) which includes checkpoint continuation for recursive schema, which is fundamentally costly to deduplicate.
+- EACL does not promise the same scale as SpiceDB: EACL is designed for ~10M Relationships or less in a situated environment – potentially 100M, but not 100B like SpiceDB.
+- However, by adopting a [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) data model early, you can avoid a rewrite and easily migrate to SpiceDB once you achieve hyperscale.
+- EACL uses [formal verification techniques](#formal-verification) to enforce correctness.
+- EACL is [fast](#performance) with a [cache](#caching) that benefits from a strong concept of time in single-writer environments, i.e. the `t` in `[e a v t]`.
+- EACL supports SpiceDB's [consistency semantics](#consistency-semantics), with some backend-specific limitations.
+- EACL is black-box tested against SpiceDB, but with a different lookup return order (by design) because EACL is a different implementation.
+- The cost of building EACL over 18+ months by an experienced engineer is estimated at ~\$150k–\$250k.
+  - The first versions of EACL were tradcoded (pre-AI).
+  - Using 2026+ frontier models, you may be able to rebuild EACL for <$50k, but good luck finding a cleanroom model, because every model since has been trained on EACL's & SpiceDB's source code.
+  - If you decide to roll your own AuthZ, you will have to go through the same optimizations that EACL already has, but do not attempt to use Datalog child rules, because they do not scale (that was EACL v1).
 
-This README is probably too technical – I will simplify it over time with more examples and link to more technical documentation as-needed.
-
+This README is too long & too technical, so I am working to simplify it and break it out into area-specific documents. Despite my best attempts, EACL has become a large project.
 
 ## Table of Contents
 
 <!-- TOC -->
 * [🦅 **EACL**: Enterprise Access ControL](#-eacl-enterprise-access-control)
   * [Is it any good?](#is-it-any-good)
+  * [Supported Backends](#supported-backends)
   * [Overview](#overview)
   * [Table of Contents](#table-of-contents)
   * [Project Status](#project-status)
+  * [Real-Time UI Maintenance](#real-time-ui-maintenance)
   * [EACL API](#eacl-api)
     * [Checking Permissions](#checking-permissions)
     * [Lookups](#lookups)
     * [Counting](#counting)
-  * [Real-Time UI Maintenance](#real-time-ui-maintenance)
-  * [Supported Backends](#supported-backends)
   * [The Benefits of Situated Authorization](#the-benefits-of-situated-authorization)
   * [ReBAC: Relationship-based Access Control](#rebac-relationship-based-access-control)
   * [Data Structures](#data-structures)
@@ -77,7 +104,7 @@ This README is probably too technical – I will simplify it over time with more
     * [Permission Checks](#permission-checks)
     * [Arrow Permissions](#arrow-permissions)
   * [EACL ID Configuration](#eacl-id-configuration)
-    * [Caching](#caching)
+  * [Caching](#caching)
     * [Consistency and Zed tokens](#consistency-and-zed-tokens)
     * [Unknown object IDs](#unknown-object-ids)
     * [Deleting a permissioned entity](#deleting-a-permissioned-entity)
@@ -95,6 +122,21 @@ This README is probably too technical – I will simplify it over time with more
 > EACL is used in production, but under active development.
 > EACL is [available on Clojars](https://clojars.org/dev.eacl/). Use the `8.0.0-SNAPSHOT`.
 > An official v8.0.0 release should be available by end-August 2026.
+
+## Real-Time UI Maintenance
+
+Consider 10,000 online users – how often should clients re-query to keep their UIs up-to-date?
+- If you poll, they are always out-of-date (eventually consistent).
+- Refreshing each user's view on every DB write does not scale. In a single-writer system, more users means more frequent writes, i.e. `tx_rate(num_users, tx_rate_per_user)`.
+- More frequent writes means more queries, so `num_users * tx_rate(num_users, tx_rate_per_user) * queries_per_view` quickly becomes a Read Amplification problem that can dramatically lower Peer performance, or require horizontal scaling.
+
+What if you could compute exactly which users are affected by every DB write and notify only those clients, in real-time?
+- Well, EACL already knows which resources each subject (or principal) can access based on your [permission schema](#schema--relationships).
+- The EACL backends support transaction listeners via `d/listen`, so you can inspect `tx-data` for every transaction, and call EACL's efficient `eacl/lookup-subjects` to retrieve a list of users who can see the affected resource, filter it down to online users and notify them. Alternatively, call `eacl/can?` for each online user in parallel.
+- To compute perfect viewership for complex nested queries would require [Different Dataflow](https://timelydataflow.github.io/differential-dataflow/), but you can get 80-90% of the way there by leveraging the permission graph – as long as mutations touch a resource that the principal can see.
+- EACL cursors do not expire, because we can leverage time in our supported backends and ensure cache coherence.
+
+EACL does not claim to solve the Materialized View problem (related to [DDF](https://timelydataflow.github.io/differential-dataflow/)), but it gets you 95% of the way there, while being fast enough for 1k-10k online users - maybe more.
 
 ## EACL API
 
@@ -145,8 +187,6 @@ If you need cache provenance, use `check-permission` instead of `can?`, otherwis
 
 The `:consistency` argument is optional. The default is `minimize-latency`, which means _locally-consistent_ to the Peer.
 
-Refer to the full [EACL API](#eacl-api).
-
 ```clojure
 (eacl/lookup-resources acl filters)
 => {:data [resources...] :page-info {...} :cached? boolean :cache-basis ...}
@@ -174,41 +214,6 @@ result set. Pass `:count-limit n` to bound work. The result then includes
 `:truncated?`; `true` means at least one additional result exists.
 
 Note: the default :limit will soon move to 50k instead of -1 (infinite), because are count-limits can exhaust Peers and trigger costly I/O.
-
-## Real-Time UI Maintenance
-
-Consider 10,000 online users – how often should those clients re-query to keep their UIs up-to-date?
- - Refreshing each user's view on every DB write in a single-writer system does not scale. More users typically means more frequent writes, i.e. `tx_rate(num_users, tx_rate_per_user)`.
- - More frequent writes means more queries, so `num_users * tx_rate(num_users, tx_rate_per_user) * queries_per_view` quickly becomes a Read Amplification problem that can dramatically lower Peer performance, or require horizontal scaling.
-
-What if you could compute exactly which users are affected by every DB write and notify only those clients, in real-time?
-  - Well, EACL already knows which resources each subject (or principal) can access based on your [permission schema](#schema--relationships).
-  - The EACL backend support transaction listeners via `d/listen`, so you can inspect `tx-data` for every transaction, and call EACL's efficient `eacl/lookup-subjects` to retrieve a list of users who can see the affected resource, filter it down to online users and notify them. Alternatively, call `eacl/can?` for each online user in parallel.
-  - To compute perfect viewership for complex nested queries would require [Different Dataflow](https://timelydataflow.github.io/differential-dataflow/), but you can get 80-90% of the way there by leveraging the permission graph – as long as mutations touch a resource that the principal can see.
-
-- EACL leverages the strong concept of time in supported backends to ensure cache coherence with good cahe reuse and where time travel is supported, cursors do not expire.
-
-EACL does not claim to solve the Materialized View problem (related to [DDF](https://timelydataflow.github.io/differential-dataflow/)), but it gets you 95% of the way there, while being fast enough for 1k-10k online users - maybe more.
-
-| Authentication (AuthN)                                | Authorization (AuthZ)                            |
-|-------------------------------------------------------|--------------------------------------------------|
-| Who are you?, i.e. which `<subject>`? | What can `<subject>` do? (what EACL cares about) |
-
-EACL is all about permissions: fast & correct.
-
-## Supported Backends
-
-| Database                                             | Module                                                       | Storage                                                                  |
-|------------------------------------------------------|--------------------------------------------------------------|--------------------------------------------------------------------------|
-| [Datomic Pro](https://www.datomic.com/)              | [eacl-datomic](https://clojars.org/dev.eacl/eacl-datomic)     | DynamoDB (recommended), Cassandra or SQL                                 |
-| [Datahike](https://datahike.io/)                     | [eacl-datahike](https://clojars.org/dev.eacl/eacl-datahike)   | DynamoDB, S3 (cheaper, but slower), LMDB, SQL, Redis, GCS or IndexedDB.  |
-| [DataScript](https://github.com/tonsky/datascript/)  | [eacl-datascript](https://clojars.org/dev.eacl/eacl-datascript) | In-memory, but can persist to disk or add a SQL adapter. No time-travel. |
-
-Datahike backed by S3 is attractive for infrequently-accessed apps, because you can trade latency for reduced storage cost, and it supports [serverless](https://github.com/replikativ/datahike-serverless) to reduce running cost.
-
-*Note:* DataScript does not store full history, so it has no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots.
-
-_Coming Soon:_ [Datalevin](https://datalevin.org/).
 
 ## The Benefits of Situated Authorization
 
@@ -333,24 +338,27 @@ But you will probably forget, so there are helpers to clean up ghost tuples. Ref
 
 EACL uses the same four consistency-mode names as [SpiceDB](https://authzed.com/docs/spicedb/concepts/consistency), but each adapter advertises only the guarantees its backend can provide:
 
-- `minimize-latency` (the default) selects the current immutable database value visible to the local backend connection without an explicit synchronization barrier.
-- `at-least-as-fresh` selects a database value at least as new as an authenticated EACL mutation token, or waits up to the configured synchronization timeout when the backend can catch up.
-- `at-exact-snapshot` selects the exact database value named by a token. Datomic supports this while history is available. Datahike supports it when a retained commit graph or temporal history can reconstruct the value. DataScript rejects it.
-- `fully-consistent` requests the backend's authoritative-head barrier. For Datomic this synchronizes the Peer before selecting a DB. Datahike advertises it only with a direct `:self` writer. A connection-backed DataScript client serializes selection of the current connection head.
+- `minimize-latency` (default) is fast and locally-consistent to the Peer.
+- `at-least-as-fresh` uses the current basis if Peer has `T` or newer.
+  - If Peer is behind, EACL will block on `(d/sync conn T)` and reuse any cache segments valid for time `T`.
+- `fully-consistent` (slow) blocks on `(d/sync conn)` because Peer may be behind.
+- `at-exact-snapshot` is the most-complex semantic and requires time-travel, so EACL will:
+  - use local DB-basis if `T` is in the present,
+  - call `(d/as-of conn T)` if `T` is in the past
+    - Note: `d/as-of` can be expensive, so you will typically only use this if you want to time travel. Unlike SpiceDB, EACL will let you query into any point-in-time in the past.
+  - block on `(d/sync conn T)` if `T` is in the future.
+  - throw if `T` is newer than what the Transactor has seen.
+  - reuse whatever cache segments are valid for `T`.
+  - This semantic is not supported by DataScript, because DataScript does not retain full history.
 
-Unsupported modes fail with a typed error instead of silently selecting a weaker mode. EACL's `fully-consistent` is defined by the configured backend's synchronization boundary; it is not a claim about an external globally distributed system. See [Consistency and Zed tokens](#consistency-and-zed-tokens) for usage.
-
-## EACL Lookup Return Order vs. SpiceDB
-
-- EACL lookup result order differs from SpiceDB.
-- Like in SpiceDB, do not rely on return order in EACL.
+Unsupported modes by backend will return an error. Refer [Consistency and ZedTokens](#consistency-and-zed-tokens).
 
 ## Performance
 
 - EACL is not meant for hyperscalers.
 - The goal for EACL is to handle 0-10M Relationships with good performance and remain suitable for real-time UIs, owing to its situated nature.
 - EACL makes no strong performance claims at this time, but EACL should be as fast as, or faster than, SpiceDB, for small-to-medium workloads.
-- EACL is internally benchmarked against at least 1M Relationships and a real-world, recursive schema with good latency (~1-40ms per query, depending on schema & query complexity).
+- EACL is internally benchmarked against at least 1M Relationships and a real-world, recursive schema with good latency @ ~1-40ms per query e2e (incl. hydration), depending on schema & query complexity.
 - If you encounter high load, you can scale Datomic Peers horizontally, or dedicate Peers to authorization.
 - EACL does not support all SpiceDB features yet. Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
 - EACL [cache](#caching) is per-client and uses LRU for eviction.
@@ -1045,23 +1053,27 @@ All backends issue non-expiring cursors by default. Configure a positive
 `:cursor-ttl-seconds` only when the application deliberately wants a maximum
 pagination age; cache TTL and capacity remain independent of cursor age.
 
-### Caching
+## Caching
 
-Caching is automatic, bounded, and private to each EACL client. Cache data is
-never written to the application database. EACL first looks for an answer from
-the exact immutable database value selected by the request. Authenticated
-`at-exact-snapshot` requests may reuse a completed answer only when the full
-source/lifecycle, native locator, ordinary-view, adapter/identity, engine,
-request, result-shape, demand, and limit identity matches. Exact requests never
-use managed proof-backed lifting. Ordinary current requests may reuse an older
-answer only when EACL establishes that the relevant schema and relationships
-have not changed. If it cannot establish either condition safely, it runs the
-authorization query normally.
+I was loath to implement a cache because EACL is fast, but it was necessary to support performant cyclic schema traversal a.k.a. recursive schema. The cache provides:
 
-A long-running request can continue using the immutable database value it
-started with while newer requests see newer data. EACL does not promise cache reuse for arbitrary `as-of`, `since`, filtered, speculative, or caller-constructed database values.
+1. Faster traversal of cyclic paths with continuation checkpoints (which are memory-intensive), and
+2. Reuse of exact answers on hot queries, which lowers compute/memory/latency.
+
+EACL is so fast that acyclic paths did not require a cache, but cyclic paths / recursive schema are inherently a _hard problem_ that requires memory to make fast.
+
+Unfortunately, recursive traversal can yield eids lower than seen, and if you want deduplicated lookups, you need to keep track of *seen* eids (expensive). Nevertheless, EACL does OK on this, until that cache is evicted. There are pathological cases, but EACL tries to solve for it.
+
+I suspect SpiceDB does not support counting for the same reason, but EACL currently does support unbounded counts even if it's a bad idea. In the future, eliding `:limit` will probably default to 30k or 50k, instead of occupying a peer to count, which can expensive.
+
+The way EACL maintains a coherent cache across peers is by bumping `:eacl.relation/version "datomic.tx"` for any affected Relations. Unfortunately, this invalidates a bunch of unrelated cache, but it's a lightweight way to do inter-Peer coordination without implementing a shared cache (a likely future feature). 
+
+So when db-basis moves, EACL will try to reuse unaffected cache segments that are provably relevant to answer queries without recomputation.
+
+`at-exact-snapshot` semantics in the past may call `(d/as-of conn T)`, in which case, EACL will reuse cache segments that are valid for `T`. Unlike SpiceDB, EACL cursors do not expire, because EACL backends support time-travel (aside from DataScript).
 
 Cache coherence is only guaranteed as long as authorization mutations use EACL's supported APIs:
+
 
 - Change schema with `eacl/write-schema!`.
 - Add/retract relationships via EACL relationship APIs
