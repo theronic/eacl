@@ -184,11 +184,20 @@ Verified state at handover:
       to a 4x early-page ceiling over the whole walk (per-page cost is
       content-bounded — least-path order emits cheap-to-derive entities
       first, so adjacent windows legitimately differ by more than 10).
-- [ ] 7.3 Open the PR onto main (agent/* branch, no assistant mentions):
+- [x] 7.3 Open the PR onto main (agent/* branch, no assistant mentions):
       lead with the formal leaves, the O(k²)→O(page) cache-off fix, the
       stateless/multi-node cursor property, the honest witness-cost
       trade (page work 4→63-66 commands, flat), and the two pre-existing
       environmental items recorded in 5.3's note.
+      DONE (2026-08-20): https://github.com/theronic/eacl/pull/139 —
+      branch @ d3844e7 onto main @ 9d5f67b (base == origin/main, zero
+      drift). Body leads with the formal leaves, then the cache-off
+      fix, the stateless-cursor/ABI-v2 section, the witness trade, the
+      two 5.3 count items, and the 8.6 follow-up list. The witness
+      trade quotes the post-review numbers (92-98 commands/page
+      explorer envelope, 1.15x warm ceiling, 122,008→20,418 shared
+      witness walk) — the handover's 63-66 figure predates 8.2/8.3 and
+      was not re-measured, so the PR does not cite it.
 - [ ] 7.4 After merge: demo verification per the standing recipe (build
       8.0.0-SNAPSHOT with :local-repo + Java 26 classes, restart the
       demo server, confirm the datahike demo's cache-off pagination is
