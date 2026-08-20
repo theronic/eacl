@@ -13,6 +13,11 @@
 // set. The probe answer holds iff some admitted intermediate has the target
 // as a direct successor (one exact-bound scan per direct rule).
 //
+// Two-layer arrow arms are additionally decided bidirectionally at runtime;
+// BidirectionalArrowIntersection.dfy proves that refinement's answer equal
+// to the intersection this model's exploration would decide, so the
+// theorems here remain the semantic anchor.
+//
 // Exploratory proof model; intentionally excluded from release artifacts.
 include "ExactCountComposition.dfy"
 
