@@ -4,7 +4,7 @@
 
 ### Requirement: Acyclic plans paginate by least-derivation-path keyset order
 
-For a sealed plan whose reachable rule graph is acyclic, `lookup-resources` and `lookup-subjects` MUST order results by ascending least-derivation-path: each result's position is the lexicographically least sequence of `(rule-ordinal, eid)` coordinates that derives it, with rule ordinals compared by the sealed `(rank, canonical-ordinal)` alternative order and eids ascending. Each derivable entity MUST be emitted exactly once, at its least path. The order MUST be a pure function of the sealed plan and the selected snapshot — never of traversal history, cache state, physical chunking, or prior requests. Duplicate suppression MUST be decided by bounded index probes for a strictly smaller witness path, using only the certified adapter scan operations; no server-side traversal state may be required for correctness.
+For a sealed plan whose reachable rule graph is acyclic, `lookup-resources` and `lookup-subjects` MUST order results by ascending least-derivation-path: each result's position is the lexicographically least per-scan coordinate sequence that derives it — the interleaved sequence of rule ordinals (compared by the sealed `(rank, canonical-ordinal)` alternative order) and scan-bound eids (ascending), with each step's arity determined by the sealed rule kind. Each derivable entity MUST be emitted exactly once, at its least path. The order MUST be a pure function of the sealed plan and the selected snapshot — never of traversal history, cache state, physical chunking, or prior requests. Intermediate closures behind arrow-to-permission steps MUST be iterated in ascending eid by merging their sub-arms' ascending streams, so the number of index streams opened per page is bounded by the plan's alternative count times its depth — never by closure size or result ordinal. Duplicate suppression MUST be decided by bounded min-side interleaved intersections for a strictly smaller witness path, using only the certified adapter scan operations; witness work for one emission MUST be bounded by the smaller side of each intersection, never by an entity's total fan-in alone; no server-side traversal state may be required for correctness.
 
 #### Scenario: Deterministic order without history
 
@@ -18,7 +18,7 @@ For a sealed plan whose reachable rule graph is acyclic, `lookup-resources` and 
 
 ### Requirement: Acyclic cursors are self-contained and resume in constant work per page
 
-An acyclic page cursor MUST carry the boundary result's derivation path — at most one `(rule-ordinal, eid)` pair per plan level — inside the existing authenticated envelope, and MUST remain within the existing cursor size budget. Resuming from a valid cursor MUST cost O(plan depth) index seeks plus the page's own enumeration, independent of the boundary ordinal, and MUST NOT require continuation checkpoints, prefix replay, or any other server-side state. A cursor presented against a mismatched fingerprint or basis MUST fail typed exactly as the existing cursor contract specifies; a validated path not reproducible at the pinned basis MUST fail `:eacl.pagination/stale-cursor`.
+An acyclic page cursor MUST carry the boundary result's per-scan coordinate sequence — a rule ordinal plus at most two eids per plan level — inside the existing authenticated envelope, and MUST remain within the existing cursor size budget. Resuming from a valid cursor MUST cost O(plan depth) index seeks (a sub-arm merge resumes by seeking all its streams past one shared bound) plus the page's own enumeration, independent of the boundary ordinal, and MUST NOT require continuation checkpoints, prefix replay, or any other server-side state. A cursor presented against a mismatched fingerprint or basis MUST fail typed exactly as the existing cursor contract already specifies — no additional rejection or migration machinery is required; a validated coordinate sequence not reproducible at the pinned basis MUST fail `:eacl.pagination/stale-cursor`.
 
 #### Scenario: Stateless deep page
 
@@ -30,19 +30,19 @@ An acyclic page cursor MUST carry the boundary result's derivation path — at m
 - **WHEN** a client paginates an acyclic root with per-request caching disabled
 - **THEN** per-page cost does not grow with the page ordinal
 
-### Requirement: Descending windows and exact counts share the least-path enumeration
+### Requirement: Descending windows share the least-path enumeration
 
-`:last`/`:before` on an acyclic root MUST be served by descending derivation-path iteration with reverse index seeks, emitting each entity at its least path so ascending and descending walks agree on every emission position; the `:evaluation :complete-denotation` requirement MUST NOT apply to acyclic roots. `count-resources`/`count-subjects` on an acyclic root MUST count least-path emissions (honoring `:count-limit` with target limit+1) and MUST equal the denotation cardinality under the same proof that licenses the page order.
+`:last`/`:before` on an acyclic root MUST be served by descending coordinate iteration with reverse index seeks, emitting each entity at its least path so ascending and descending walks agree on every emission position; the `:evaluation :complete-denotation` requirement MUST NOT apply to acyclic roots. Counts are governed by the existing contract and are out of this capability's scope.
 
 #### Scenario: Last window without complete evaluation
 
 - **WHEN** a caller requests `:last N` on an acyclic root under demand evaluation
 - **THEN** the final window is returned without exhausting the traversal or requiring `:complete-denotation`
 
-#### Scenario: Count equals paginated union
+#### Scenario: Descending agrees with ascending
 
-- **WHEN** an acyclic root is fully paginated and separately counted
-- **THEN** the count equals the number of distinct results delivered
+- **WHEN** an acyclic root is fully paginated forward and backward on one snapshot
+- **THEN** the backward sequence is exactly the reverse of the forward sequence
 
 ### Requirement: The least-path regime is certified before it routes
 

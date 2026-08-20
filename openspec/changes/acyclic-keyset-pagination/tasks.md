@@ -2,24 +2,30 @@
 
 ## 1. Formal models (gate-green before any engine routing)
 
-- [ ] 1.1 `formal/stable-discovery/LeastPathOrder.dfy`: derivation
-      coordinates over an acyclic `StableReducer.Program`; strict total
-      lexicographic order; existence and uniqueness of the least path per
-      derivable entity; order is a pure function of (program, tuples).
-- [ ] 1.2 `formal/stable-discovery/LeastPathEnumeration.dfy`: ordered DFS
+- [ ] 1.1 `formal/stable-discovery/LeastPathOrder.dfy`: per-scan
+      derivation coordinates over an acyclic `StableReducer.Program`
+      (arity per rule kind); strict total lexicographic order; existence
+      and uniqueness of the least path per derivable entity; order is a
+      pure function of (program, tuples).
+- [ ] 1.2 `formal/stable-discovery/LeastPathEnumeration.dfy`: the
+      per-level sub-arm merge of ascending duplicate-free streams is
+      ascending and duplicate-free; the ordered DFS over merged closures
       with the smaller-witness filter emits exactly the reachable
-      denotation (bridge to `ReducerCompleteness`), exactly once per
-      entity, in ascending least-path order; emission count equals
-      denotation cardinality (licenses the count route).
+      denotation (bridge to `ReducerCompleteness` /
+      `EaclForwardGrounding`), exactly once per entity, in ascending
+      least-path order.
 - [ ] 1.3 `formal/stable-discovery/LeastPathResume.dfy`: seeking every
       level strictly past a boundary path equals the suffix of the full
       enumeration; descending iteration emits each entity at the same
       position as ascending.
-- [ ] 1.4 Witness-check equivalence lemmas: the probe-decided
-      "strictly smaller path derives e" predicate equals the
-      order-theoretic predicate, built on
-      `BidirectionalArrowIntersection.dfy` (extend that leaf or add a
-      fourth file if cleaner).
+- [ ] 1.4 Witness-check equivalence lemmas: the level-wise
+      decomposition of "a strictly smaller path derives e" into
+      earlier-rule and smaller-eid clauses, each decided by an
+      interleaved MIN-SIDE intersection (never a one-sided fan-in
+      scan), equals the order-theoretic predicate — built on
+      `BidirectionalArrowIntersection.dfy`'s `DecideEqualsArmAnswer`,
+      extended per level (extend that leaf or add a fourth file if
+      cleaner).
 - [ ] 1.5 Register all new leaves in `verify-fast.sh` (manifest + batch
       assignment balanced against the 10 s ceiling), update
       `expected_dafny_obligations`, run the full gate green.
@@ -30,29 +36,33 @@
       record and INTO the canonical digest; `order-contract` gains
       `:abi-version 2` documenting both modes; acyclic roots seal
       `:least-path`, recursive roots `:first-discovery`.
-- [ ] 2.2 Bump the engine's public `stable-order-abi`; confirm cursor,
-      continuation, and answer-cache identities that embed the fingerprint
-      or order-abi reject stale values typed (they already carry both —
-      add regression tests for both directions of mismatch).
+- [ ] 2.2 Bump the engine's public `stable-order-abi`. Pre-release: no
+      migration or extra rejection machinery — one smoke test that an
+      old-fingerprint cursor fails typed via the existing envelope is
+      sufficient.
 - [ ] 2.3 Re-run `SealedVectorOrder`/`RecordFraming`-adjacent gate leaves
       and the sealed-plan refinement bridge against the extended record;
       adjust the bridge fixtures for the new digest fields.
 
 ## 3. Least-path evaluator
 
-- [ ] 3.1 New namespace `eacl.engine.least-path` (cljc): resumable ordered
-      DFS over the sealed plan — per-level stream state
-      `(rule-ordinal, bound-eid)`, one open stream per level, chunked
-      scans through the routed fetch-fn; cut-point before every adapter
-      command; reducer-equivalent typed budgets
-      (`:max-commands`/`:max-values`/`:max-stack` analogues).
+- [ ] 3.1 New namespace `eacl.engine.least-path` (cljc): resumable
+      ordered DFS over the sealed plan — per-scan coordinates; closures
+      behind arrow-to-permission steps iterated via per-level sub-arm
+      merges (schema-bounded stream count; merge resume = one shared
+      bound, all sub-streams seek past it); chunked scans through the
+      routed fetch-fn; cut-point before every adapter command;
+      reducer-equivalent typed budgets; assert streams-opened-per-page
+      ≤ plan alternatives × depth via `*backend-op-stats*` in tests.
 - [ ] 3.2 Smaller-witness check: earlier-arm membership via exact-bound
       probes / bidirectional intersections; same-arm earlier-intermediate
-      check via the candidate's via-set scan cut at the current
-      intermediate with per-candidate point checks; memoize per-page
-      arm-level closures in request-local state only.
-- [ ] 3.3 Descending iteration (reverse seeks, same witness filter) and
-      the count route (`limit+1` target, emission counting).
+      check as the interleaved MIN-SIDE intersection of the candidate's
+      via-prefix with the closure-below-bound (never a one-sided fan-in
+      scan — the shared-with-10k-orgs fixture must stay bounded);
+      request-local memoization only.
+- [ ] 3.3 Descending iteration (reverse seeks and reverse merges, same
+      witness filter; ascending/descending position agreement test).
+      Counts remain on the existing reducer route — out of scope.
 - [ ] 3.4 Property harness before wiring: randomized acyclic schemas +
       tuples (CLJ and CLJS) — result-set equality vs `run-forward`/
       `run-reverse`, order equality vs a materialize-sort-dedup oracle,
@@ -61,15 +71,15 @@
 
 ## 4. Engine routing and cursors
 
-- [ ] 4.1 `engine/v8.cljc`: route `stable-lookup-page`, `count-resources`,
-      `count-subjects` on the sealed `:order-mode`; recursive plans reach
-      the existing stable-page path untouched; acyclic `:last`/`:before`
-      no longer requires `:complete-denotation` (update
-      `complete-evaluation-required!` guard and its tests).
-- [ ] 4.2 Acyclic cursor payload: derivation path in place of
-      `(ordinal, eid)` inside the existing authenticated envelope; size
-      assertion against the cursor budget; stale/invalid/mismatch typing
-      per the spec; continuation store not consulted for acyclic plans.
+- [ ] 4.1 `engine/v8.cljc`: route `stable-lookup-page` on the sealed
+      `:order-mode`; counts and recursive plans reach their existing
+      paths untouched; acyclic `:last`/`:before` no longer requires
+      `:complete-denotation` (update `complete-evaluation-required!`
+      guard and its tests).
+- [ ] 4.2 Acyclic cursor payload: per-scan coordinate sequence inside
+      the existing authenticated envelope; size assertion against the
+      cursor budget; stale/invalid typing via the existing envelope
+      checks only; continuation store not consulted for acyclic plans.
 - [ ] 4.3 Relay/orchestration plumbing: cursor externalization for path
       payloads on the shared client and the Datomic client; per-request
       `:cache? false` on acyclic lookups keeps O(page) pagination (add the
@@ -84,10 +94,12 @@
 - [ ] 5.2 Regenerate acyclic frozen page-order baselines; point-check and
       count expectations must be byte-identical (order-independent).
 - [ ] 5.3 Perf gates: (a) cache-off 100-page walk on the 20k fixture
-      O(page) flat (was O(k²)); (b) acyclic count ≥5× vs reducer
-      exhaustion; (c) Datahike stream-open count per page bounded by
-      plan depth + witness probes (assert via `*backend-op-stats*`), never
-      by total stream count; (d) no regression on recursive-plan gates.
+      O(page) flat (was O(k²)); (b) cache-on warm page regression ceiling
+      ≤1.5× the checkpoint-resume baseline; (c) streams opened per page
+      ≤ plan alternatives × depth (assert via `*backend-op-stats*`),
+      never closure-bounded; (d) witness cost bounded on the
+      shared-with-10k-intermediates overlap fixture (min-side property);
+      (e) no regression on recursive-plan gates.
 - [ ] 5.4 CLJS parity: compile + run the DataScript CLJS suite with the
       new evaluator; parity corpus updated.
 
