@@ -136,8 +136,6 @@ What if you could compute exactly which users are affected by every DB write and
 - To compute perfect viewership for complex nested queries would require [Different Dataflow](https://timelydataflow.github.io/differential-dataflow/), but you can get 80-90% of the way there by leveraging the permission graph – as long as mutations touch a resource that the principal can see.
 - EACL cursors do not expire, because we can leverage time in our supported backends and ensure cache coherence.
 
-EACL does not claim to solve the Materialized View problem (related to [DDF](https://timelydataflow.github.io/differential-dataflow/)), but it gets you 95% of the way there, while being fast enough for 1k-10k online users - maybe more.
-
 ## EACL API
 
 EACL implements the `IAuthorization` [protocol](modules/eacl/src/eacl/core.cljc) for each supported backend. This idiomatic Clojure interface maps to and extends the [SpiceDB gRPC API](https://buf.build/authzed/api/docs/main:authzed.api.v1).
