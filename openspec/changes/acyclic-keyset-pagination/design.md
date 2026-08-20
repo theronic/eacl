@@ -87,8 +87,16 @@ interleaved sequence:
 
     [rule-ordinal₁, eid₁ᵃ, (eid₁ᵇ)?, rule-ordinal₂, ...]
 
-- rule ordinals compare by the sealed `(rank, canonical-ordinal)`
-  alternative order (already fingerprinted);
+- rule ordinals compare NUMERICALLY (the sealed canonical ordinal is the
+  coordinate; `LeastPathOrder.dfy`'s `Lex` compares path elements
+  numerically, and `compare-coords`/the cursor grammar carry ordinals,
+  not ranks). The per-node `(rank, ordinal)` alternative order is the
+  reducer's scheduling order only — the least-path traversal walks arms
+  ordinal-ascending. (Corrected 2026-08-20: this line previously said
+  `(rank, canonical-ordinal)`, and the evaluator's first cut followed it
+  while stamping numeric ordinals into coordinates — emitting sequences
+  out of lexicographic order whenever a node's rank order disagreed with
+  its ordinal order.);
 - eids compare ascending;
 - a self-permission step contributes only its ordinal (no scan); an
   arrow-relation step contributes its via eid and its target eid; the

@@ -83,6 +83,13 @@
         counters (volatile! {:commands 0 :fetched-values 0
                              :stream-opens 0 :emissions 0})]
     {:counters counters
+     ;; Request-local witness-child prefixes (task 3.2's memoization):
+     ;; every arrow-permission witness on this request alternates against
+     ;; the SAME ascending child enumeration, so its emission prefix is
+     ;; computed once and replayed — without this, each emission's
+     ;; witness re-enumerates the child from scratch and a page over a
+     ;; large-fan-in arm multiplies its own traversal by the page size.
+     :witness-children (volatile! {})
      :chunk physical-chunk-size
      :fetch!
      (fn [descriptor]
@@ -186,28 +193,78 @@
               (b-member? bv) true
               :else (recur a' b'))))))))
 
+(defn- least-common
+  "The LEAST element of the intersection of two ascending streams, or nil
+  when it is empty — strict alternation with the opposite side's exact
+  membership probe. Both streams are ascending, so the first common
+  element either side reaches IS the least common element; cost is
+  bounded by the SMALLER side's prefix, never one side's total fan-in
+  (the same min-side property `isect2?` has for the decision form)."
+  [ctx a-stream a-member? b-stream b-member?]
+  (loop [a a-stream b b-stream]
+    (let [[av a'] (stream-next ctx a)]
+      (cond
+        (nil? av) nil
+        (a-member? av) av
+        :else
+        (let [[bv b'] (stream-next ctx b)]
+          (cond
+            (nil? bv) nil
+            (b-member? bv) bv
+            :else (recur a' b')))))))
+
+(defn- shared-child-pull
+  "Pulls emission `pos` of the request-shared witness child enumeration
+  keyed by `key` (one ascending least-filtered enumeration per key per
+  request), extending the shared prefix on demand. Returns
+  [emission pos'] or [nil pos] at exhaustion. The prefix is append-only,
+  so every consumer replays identical emissions regardless of the order
+  in which consumers interleave."
+  [ctx env key mk-level next-fn pos]
+  (let [cache (:witness-children ctx)
+        entry (or (get @cache key)
+                  (let [entry {:emissions [] :state (mk-level) :done? false}]
+                    (vswap! cache assoc key entry)
+                    entry))]
+    (if (< pos (count (:emissions entry)))
+      [(nth (:emissions entry) pos) (inc pos)]
+      (if (:done? entry)
+        [nil pos]
+        (let [[emission state'] (next-fn env (:state entry))
+              entry' (if (nil? emission)
+                       (assoc entry :done? true :state nil)
+                       (-> entry
+                           (update :emissions conj emission)
+                           (assoc :state state')))]
+          (vswap! cache assoc key entry')
+          (if (nil? emission)
+            [nil pos]
+            [emission (inc pos)]))))))
+
 (defn- alternate-witness?
   "Alternates one entity-side candidate (tested by `entity-hit?`) with one
   closure-side emission (accepted by `child-hit?`, optionally cut off by
-  `child-stop?`). Returns true on the first hit from either side; false
-  when the entity side exhausts (it completely covers the candidates that
-  can carry the base tuple) — so cost is bounded by the smaller side
+  `child-stop?`), the closure side pulled through `pull-child`
+  ((fn [pos]) -> [emission pos']) so its enumeration can be shared across
+  witnesses. Returns true on the first hit from either side; false when
+  the entity side exhausts (it completely covers the candidates that can
+  carry the base tuple) — so cost is bounded by the smaller side
   (spec: witness work never bounded by an entity's total fan-in alone)."
-  [ctx entity-stream entity-hit? env child child-next child-hit? child-stop?]
-  (loop [es entity-stream child child]
+  [ctx entity-stream entity-hit? pull-child child-hit? child-stop?]
+  (loop [es entity-stream pos 0 child-done? false]
     (let [[cand es'] (stream-next ctx es)]
       (cond
         (and cand (entity-hit? cand)) true
         (nil? cand) false
         :else
-        (if (nil? child)
-          (recur es' nil)
-          (let [[emission child'] (child-next env child)]
+        (if child-done?
+          (recur es' pos true)
+          (let [[emission pos'] (pull-child pos)]
             (cond
-              (nil? emission) (recur es' nil)
-              (and child-stop? (child-stop? emission)) (recur es' nil)
+              (nil? emission) (recur es' pos true)
+              (and child-stop? (child-stop? emission)) (recur es' pos true)
               (child-hit? emission) true
-              :else (recur es' child'))))))))
+              :else (recur es' pos' false))))))))
 
 (defn- derives?
   "Does `subject-eid` reach `node`'s permission on `resource-eid`? The
@@ -259,10 +316,17 @@
   (get-in (:plan env) [:indexes :reverse-rules node]))
 
 (defn- rule-order
+  "Rule indexes in SEALED-ORDINAL order (reversed when descending). The
+  plan's per-node rule lists are in (rank, ordinal) alternative order —
+  the reducer's scheduling order — which the least-path contract does
+  not follow: the public order is lexicographic over sealed ordinals
+  (order-contract :rule-order :canonical-encoding-ordinal), so a level
+  must traverse its arms ordinal-ascending regardless of rank."
   [env rules]
-  (if (:desc? env)
-    (vec (reverse (range (count rules))))
-    (vec (range (count rules)))))
+  (let [asc (vec (sort-by #(:ordinal (nth rules %)) (range (count rules))))]
+    (if (:desc? env)
+      (vec (rseq asc))
+      asc)))
 
 (defn- fwd-mk-level
   [env node]
@@ -347,22 +411,25 @@
       :arrow-permission
       ;; ∃ I in V's via-set with subject reaching target-node on I:
       ;; alternate V's via candidates (each decided by the certified
-      ;; node-anchored check) with the closure's own least-path
-      ;; enumeration (each emission probed against V).
-      (alternate-witness?
-       ctx
-       (stream #(rev-scan (:resource-type rule) v
-                          (:via-relation-eid rule)
-                          (:intermediate-type rule) %1 %2 false)
-               nil)
-       #(derives? env (:target-node rule) subject-eid %)
-       (assoc env :desc? false)
-       (fwd-mk-level (assoc env :desc? false) (:target-node rule))
-       fwd-level-next
-       #(probe-rev? ctx (:resource-type rule) v
-                    (:via-relation-eid rule)
-                    (:intermediate-type rule) (:value %))
-       nil))))
+      ;; node-anchored check) with the closure's request-shared
+      ;; least-path enumeration (each emission probed against V).
+      (let [node (:target-node rule)
+            asc-env (assoc env :desc? false)]
+        (alternate-witness?
+         ctx
+         (stream #(rev-scan (:resource-type rule) v
+                            (:via-relation-eid rule)
+                            (:intermediate-type rule) %1 %2 false)
+                 nil)
+         #(derives? env node subject-eid %)
+         (fn [pos]
+           (shared-child-pull ctx asc-env [node subject-eid]
+                              #(fwd-mk-level asc-env node)
+                              fwd-level-next pos))
+         #(probe-rev? ctx (:resource-type rule) v
+                      (:via-relation-eid rule)
+                      (:intermediate-type rule) (:value %))
+         nil)))))
 
 (defn- fwd-least-coords
   "The least derivation coordinates of `v` under `node`, or nil when not
@@ -372,7 +439,10 @@
   entity's via candidates). Bounded by depth × alternatives × probes."
   [env node v]
   (let [{:keys [ctx subject-type subject-eid]} env
-        rules (vec (node-rules env node))]
+        ;; Ordinal order, not the plan's (rank, ordinal) list order: the
+        ;; first deriving rule is the least ONLY when arms are walked
+        ;; ordinal-ascending (the ordinal is the leading coordinate).
+        rules (vec (sort-by :ordinal (node-rules env node)))]
     (loop [oi 0]
       (when (< oi (count rules))
         (let [rule (nth rules oi)]
@@ -391,21 +461,28 @@
 
              :arrow-relation
              (when (= subject-type (:target-subject-type rule))
-               ;; least eid in (subject's holdings ∩ v's via-set):
-               ;; ascending interleave to the first common element.
-               (let [i (loop [s (stream #(fwd-scan subject-type subject-eid
-                                                   (:target-relation-eid rule)
-                                                   (:intermediate-type rule)
-                                                   %1 %2 false)
-                                        nil)]
-                         (let [[cand s'] (stream-next ctx s)]
-                           (cond
-                             (nil? cand) nil
-                             (probe-rev? ctx (:resource-type rule) v
-                                         (:via-relation-eid rule)
-                                         (:intermediate-type rule) cand)
-                             cand
-                             :else (recur s'))))]
+               ;; least eid in (subject's holdings ∩ v's via-set): the
+               ;; min-side alternation — a one-sided holdings scan here
+               ;; cost O(holdings prefix) per call and broke the
+               ;; shared-with-10k-orgs bound on the witness path.
+               (let [i (least-common
+                        ctx
+                        (stream #(fwd-scan subject-type subject-eid
+                                           (:target-relation-eid rule)
+                                           (:intermediate-type rule)
+                                           %1 %2 false)
+                                nil)
+                        #(probe-rev? ctx (:resource-type rule) v
+                                     (:via-relation-eid rule)
+                                     (:intermediate-type rule) %)
+                        (stream #(rev-scan (:resource-type rule) v
+                                           (:via-relation-eid rule)
+                                           (:intermediate-type rule)
+                                           %1 %2 false)
+                                nil)
+                        #(probe-fwd? ctx subject-type subject-eid
+                                     (:target-relation-eid rule)
+                                     (:intermediate-type rule) %))]
                  (when i [(:ordinal rule) i v])))
 
              :arrow-permission
@@ -444,7 +521,8 @@
   probed against v and cut at `i-coords`)."
   [env rule i-coords v]
   (let [{:keys [ctx]} env
-        asc-env (assoc env :desc? false)]
+        asc-env (assoc env :desc? false)
+        node (:target-node rule)]
     (alternate-witness?
      ctx
      (stream #(rev-scan (:resource-type rule) v
@@ -452,12 +530,12 @@
                         (:intermediate-type rule) %1 %2 false)
              nil)
      (fn [cand]
-       (when-let [least (fwd-least-coords
-                         asc-env (:target-node rule) cand)]
+       (when-let [least (fwd-least-coords asc-env node cand)]
          (neg? (compare-coords least i-coords))))
-     asc-env
-     (fwd-mk-level asc-env (:target-node rule))
-     fwd-level-next
+     (fn [pos]
+       (shared-child-pull ctx asc-env [node (:subject-eid env)]
+                          #(fwd-mk-level asc-env node)
+                          fwd-level-next pos))
      #(probe-rev? ctx (:resource-type rule) v
                   (:via-relation-eid rule)
                   (:intermediate-type rule) (:value %))
@@ -497,11 +575,13 @@
 ;; --- the forward machine ---------------------------------------------------
 
 (defn- fwd-earlier-in-sealed-order
-  "Indexes (into :order space) of rules sealed-before the current one —
+  "Rule indexes of arms sealed-before the current one — compared by
+  SEALED ORDINAL, never by list position (the per-node lists are in
+  (rank, ordinal) order, which need not agree with ordinal order) —
   direction-independent witness domain."
   [{:keys [rules order oi]}]
-  (let [current (nth order oi)]
-    (filterv #(< % current) order)))
+  (let [ordinal (:ordinal (nth rules (nth order oi)))]
+    (filterv #(< (:ordinal (nth rules %)) ordinal) order)))
 
 (defn- fwd-emit2?
   [env level rule binding v]
@@ -664,21 +744,23 @@
                     nil))
 
       :arrow-permission
-      (alternate-witness?
-       ctx
-       (stream #(rev-scan (:resource-type rule) entity
-                          (:via-relation-eid rule)
-                          (:intermediate-type rule) %1 %2 false)
-               nil)
-       #(derives? env (:target-node rule) s %)
-       (assoc env :desc? false :subject-eid s)
-       (fwd-mk-level (assoc env :desc? false :subject-eid s)
-                     (:target-node rule))
-       fwd-level-next
-       #(probe-rev? ctx (:resource-type rule) entity
-                    (:via-relation-eid rule)
-                    (:intermediate-type rule) (:value %))
-       nil))))
+      (let [node (:target-node rule)
+            child-env (assoc env :desc? false :subject-eid s)]
+        (alternate-witness?
+         ctx
+         (stream #(rev-scan (:resource-type rule) entity
+                            (:via-relation-eid rule)
+                            (:intermediate-type rule) %1 %2 false)
+                 nil)
+         #(derives? env node s %)
+         (fn [pos]
+           (shared-child-pull ctx child-env [node s]
+                              #(fwd-mk-level child-env node)
+                              fwd-level-next pos))
+         #(probe-rev? ctx (:resource-type rule) entity
+                      (:via-relation-eid rule)
+                      (:intermediate-type rule) (:value %))
+         nil)))))
 
 (defn- rev-same-rule-witness?
   "I' < I (eid) through the same rule deriving the same subject."
@@ -705,27 +787,31 @@
                             (:intermediate-type rule) %)
                i)
       :arrow-permission
-      (alternate-witness?
-       ctx
-       (stream #(rev-scan (:resource-type rule) entity
-                          (:via-relation-eid rule)
-                          (:intermediate-type rule) %1 %2 false)
-               nil)
-       #(and (< % i) (derives? env (:target-node rule) s %))
-       (assoc env :desc? false :subject-eid s)
-       (fwd-mk-level (assoc env :desc? false :subject-eid s)
-                     (:target-node rule))
-       fwd-level-next
-       #(and (< (:value %) i)
-             (probe-rev? ctx (:resource-type rule) entity
-                         (:via-relation-eid rule)
-                         (:intermediate-type rule) (:value %)))
-       nil))))
+      (let [node (:target-node rule)
+            child-env (assoc env :desc? false :subject-eid s)]
+        (alternate-witness?
+         ctx
+         (stream #(rev-scan (:resource-type rule) entity
+                            (:via-relation-eid rule)
+                            (:intermediate-type rule) %1 %2 false)
+                 nil)
+         #(and (< % i) (derives? env node s %))
+         (fn [pos]
+           (shared-child-pull ctx child-env [node s]
+                              #(fwd-mk-level child-env node)
+                              fwd-level-next pos))
+         #(and (< (:value %) i)
+               (probe-rev? ctx (:resource-type rule) entity
+                           (:via-relation-eid rule)
+                           (:intermediate-type rule) (:value %)))
+         nil)))))
 
 (defn- rev-earlier-in-sealed-order
-  [{:keys [order oi]}]
-  (let [current (nth order oi)]
-    (filterv #(< % current) order)))
+  "Mirror of `fwd-earlier-in-sealed-order`: sealed-ordinal comparison,
+  never list position."
+  [{:keys [rules order oi]}]
+  (let [ordinal (:ordinal (nth rules (nth order oi)))]
+    (filterv #(< (:ordinal (nth rules %)) ordinal) order)))
 
 (defn- rev-emit?
   [env level rule i s]
@@ -835,6 +921,20 @@
                   (assoc data :eacl/error :eacl.page/invalid-cursor
                          :reason reason))))
 
+(defn- check-arity!
+  "Coordinate arity is a function of the rule kind; a mismatch must fail
+  typed (the caller maps it to the public stale-cursor error), never as
+  a raw index error out of `nth`/`subvec`."
+  [rule coords]
+  (let [n (count coords)
+        ok? (case (:rule rule)
+              :relation (= 2 n)
+              :arrow-relation (= 3 n)
+              :self-permission (<= 3 n)
+              :arrow-permission (<= 4 n))]
+    (when-not ok?
+      (invalid-coords! :bad-arity {:rule-kind (:rule rule) :count n}))))
+
 (defn fwd-resume-level
   "A forward level positioned strictly after `coords` (the boundary's
   coordinate suffix for this level). O(depth) stream seeks: each
@@ -848,6 +948,7 @@
                                                   :ordinal (nth coords 0)}))
         oi (order-position order ri)
         rule (nth rules ri)
+        _ (check-arity! rule coords)
         {:keys [subject-type subject-eid desc?]} env
         sub
         (case (:rule rule)
@@ -898,6 +999,7 @@
                                                   :ordinal (nth coords 0)}))
         oi (order-position order ri)
         rule (nth rules ri)
+        _ (check-arity! rule coords)
         {:keys [subject-type desc?]} env
         sub
         (case (:rule rule)

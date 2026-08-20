@@ -194,6 +194,75 @@ Verified state at handover:
       demo server, confirm the datahike demo's cache-off pagination is
       flat end-to-end).
 
+## 8. Adversarial review findings (2026-08-20, post-7.1/7.2)
+
+- [x] 8.1 ORDER BUG (correctness): the evaluator traversed each node's
+      arms in the plan's (rank, ordinal) list order while stamping
+      sealed ordinals into coordinates — on any node where those orders
+      diverge, emissions left lexicographic coordinate order,
+      fwd-least-coords returned non-least coordinates, and the witness
+      "earlier" domain disagreed with compare-coords. Caught by a
+      4-level dual-arrow oracle fixture (46 random-seed failures); the
+      shipped 3-level harness cannot express the divergence. FIXED:
+      rule-order / earlier-in-sealed-order / fwd-least-coords are now
+      ordinal-ordered (the plan's per-node lists stay the reducer's
+      scheduling order); design.md D1 corrected — it specified
+      (rank, canonical-ordinal) against the Dafny Lex, the oracle,
+      compare-coords, and the ABI docs. Regression:
+      emission-order-follows-sealed-ordinals-test. Explorer/differential
+      frozen baselines pass unchanged (their fixtures do not diverge).
+- [x] 8.2 Witness-child re-enumeration (perf): every emission's
+      arrow-permission witness re-enumerated the target closure from
+      scratch, multiplying page cost by page size on large sparse
+      fan-ins — measured 122,008 commands for a page of 10 over a
+      10k-group arm. FIXED: request-local shared witness-child prefixes
+      (the memoization task 3.2 promised; :witness-children in the read
+      context) plus a min-side least-common intersection replacing
+      fwd-least-coords' one-sided holdings scan. Same page now 20,418
+      commands (6x; the floor is the main walk plus ONE shared child
+      walk). Regression:
+      witness-child-enumeration-is-shared-across-a-page-test.
+- [x] 8.3 Eager continuation context (perf): v8 forced the
+      continuation-cache thunk before dispatching on :order-mode and the
+      shared client passed a pre-built context — every cache-on acyclic
+      page paid canonicalization + proof-frame resolution + ~5 backend
+      reads for state the keyset route never consults (why bench3
+      cache-on trailed cache-off). FIXED: thunked end to end, forced
+      only on the first-discovery branch. Regression:
+      acyclic-lookup-never-builds-continuation-context-test.
+      Bench3 re-run (same serialized protocol, same-day baselines):
+      cache-on warm walk 140.2 -> 161.3 ms = 1.15x of main (was 1.27x;
+      third run at outright parity 115.9 vs cache-off 117.9); cache-off
+      910 -> 156 ms (5.8x), deep page 16.1 -> 1.32 ms flat; :last 50
+      window 73.0 -> 1.32 ms (55x). Explorer 10k page work fell from
+      232-239 to 92-98 advanced-datoms per page (envelope re-recorded
+      34/144/8, ~45 percent headroom over the deterministic
+      observation).
+- [x] 8.4 Typed cursor errors: wrong-arity coords crashed as raw index
+      errors and :eacl.page/invalid-cursor escaped untranslated on the
+      least-path route. FIXED: per-kind coordinate arity validation
+      (check-arity!) and with-stale-boundary-errors around the run.
+      Regression: malformed-coordinates-fail-typed-test.
+- [x] 8.5 Docs: the relay comment claimed coords stay "internal" — the
+      portable envelope is authenticated PLAINTEXT, so coords expose
+      derivation-path eids on DataScript/Datahike (Datomic's AES-GCM
+      token is unaffected); the comment now states the disclosure.
+      cursor-result's docstring covers both cursor kinds.
+- [ ] 8.6 Recorded, NOT fixed (follow-up changes): (a) the plaintext
+      coords disclosure itself — encrypt or externalize is a
+      threat-model decision; (b) cache-on acyclic walks still run the
+      full answer-cache pipeline per page and mint near-unreusable
+      per-bound entries (policy: auto-bypass vs caller :cache? false);
+      (c) Datahike as-of wrapper scans materialize+sort the whole
+      endpoint segment per command (~4,000x measured, pre-existing,
+      multiplied by probe-heavy keyset pages); (d) Datahike
+      hitchhiker-tree desc rslice is O(database) IF that index config is
+      reachable (protocol-incompatible in the pinned build); (e)
+      backend guard-scan! realizes unbounded scans when guards are
+      enabled; (f) the datascript module's ISOLATED classpath is broken
+      (persistent-sorted-set 0.3.0 lacks CurrentCache; only loads under
+      the aggregate root where datahike's 0.4.137 shadows it).
+
 Known non-blockers recorded for separate changes: DataScript explorer
 COUNT latency ceilings fail on origin/main too on this host
 (re-baseline on an idle matched host — evidence in 5.3's note); stale

@@ -752,9 +752,13 @@
                  (engine/lookup-resources
                   adapter
                   internal-query
-                  {:continuation-cache
-                   (continuation-context
-                    adapter cursor-opts :lookup-resources query)})))
+                  ;; Thunked: the engine forces this only on the
+                  ;; first-discovery route — an acyclic keyset page
+                  ;; never pays for context it cannot use.
+                  {:continuation-cache-fn
+                   (fn []
+                     (continuation-context
+                      adapter cursor-opts :lookup-resources query))})))
              page
              (with-cache-info
                (binding [subproblem/*store*
@@ -867,9 +871,10 @@
                  (engine/lookup-subjects
                   adapter
                   internal-query
-                  {:continuation-cache
-                   (continuation-context
-                    adapter cursor-opts :lookup-subjects query)})))
+                  {:continuation-cache-fn
+                   (fn []
+                     (continuation-context
+                      adapter cursor-opts :lookup-subjects query))})))
              page
              (with-cache-info
                (binding [subproblem/*store*

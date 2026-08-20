@@ -780,9 +780,10 @@
   (and (integer? eid) (pos? eid)))
 
 (defn- cursor-result
-  "Validates the internal cursor of a cached lookup page. Only the stable
-  engine's `:stable-edge` kind is minted; anything else invalidates the
-  cached page so it is recomputed."
+  "Validates the internal cursor of a cached lookup page. The stable
+  engine mints `:stable-edge` (recursive plans) and `:least-path-edge`
+  (acyclic plans); anything else invalidates the cached page so it is
+  recomputed."
   [cursor]
   (case (:kind cursor)
     :stable-edge

@@ -16,7 +16,8 @@
             [eacl.backend.v8 :as backend]
             [eacl.engine.least-path :as lp]
             [eacl.engine.sealed-plan :as sealed-plan]
-            [eacl.engine.stable-reducer :as reducer]))
+            [eacl.engine.stable-reducer :as reducer]
+            [eacl.engine.v8 :as engine]))
 
 ;; ---------------------------------------------------------------------------
 ;; Synthetic snapshot adapter over an in-memory tuple store
@@ -366,6 +367,143 @@
               (lp/reverse-page (assoc base :page-size 1000 :last? true))]
           (is (= (vec (reverse asc)) emissions)))))))
 
+;; ---------------------------------------------------------------------------
+;; Ordinal order vs (rank, ordinal) list order — the regression fixture
+;; ---------------------------------------------------------------------------
+;;
+;; The plan's per-node rule lists are in (rank, ordinal) alternative
+;; order (the reducer's scheduling order); the least-path contract is
+;; lexicographic over SEALED ORDINALS. On this schema the two disagree
+;; at doc.view (direct arms rank-sort around the arrows while their
+;; canonical ordinals interleave), so a traversal that walks arms in
+;; list order emits out of coordinate order and reports non-least
+;; coordinates for entities derivable through both a low-ordinal arrow
+;; and a high-ordinal direct arm.
+
+(def ^:private divergent-schema
+  {:relations
+   [{:relation-id 401 :resource-type :doc :relation-name :owner
+     :subject-type :user}
+    {:relation-id 402 :resource-type :doc :relation-name :org
+     :subject-type :org}
+    {:relation-id 403 :resource-type :doc :relation-name :escrow
+     :subject-type :org}
+    {:relation-id 404 :resource-type :doc :relation-name :wallet
+     :subject-type :wallet}
+    {:relation-id 405 :resource-type :org :relation-name :member
+     :subject-type :user}
+    {:relation-id 406 :resource-type :wallet :relation-name :holder
+     :subject-type :user}]
+   :permissions
+   [{:resource-type :doc :permission-name :view
+     :source-relation-name :self :target-type :relation :target-name :owner}
+    {:resource-type :doc :permission-name :view
+     :source-relation-name :org :target-type :permission :target-name :oview}
+    {:resource-type :doc :permission-name :view
+     :source-relation-name :escrow :target-type :permission :target-name :oview}
+    {:resource-type :doc :permission-name :view
+     :source-relation-name :wallet :target-type :relation :target-name :holder}
+    {:resource-type :org :permission-name :oview
+     :source-relation-name :self :target-type :relation :target-name :member}]})
+
+(deftest emission-order-follows-sealed-ordinals-test
+  (let [tuples #{[:user 1 401 :doc 92]        ;; owner of d92
+                 [:org 50 402 :doc 90] [:org 50 402 :doc 91]
+                 [:user 1 405 :org 50]        ;; org member -> d90 d91
+                 [:org 51 403 :doc 93]        ;; escrow -> d93
+                 [:user 1 405 :org 51]
+                 [:wallet 60 404 :doc 94] [:wallet 60 404 :doc 92]
+                 [:user 1 406 :wallet 60]}    ;; wallet -> d94 and d92
+        adapter (synthetic-adapter (assoc divergent-schema :tuples tuples))
+        plan (sealed-plan/seal-plan adapter [:doc :view])
+        rules (get-in plan [:indexes :reverse-rules [:doc :view]])
+        base {:plan plan :adapter adapter :subject-type :user :subject-eid 1}
+        expected (least-emissions
+                  (naive-fwd-derivs plan tuples :user 1 [:doc :view]))
+        got (full-walk lp/forward-page base 2)]
+    (testing "the fixture really diverges: list order is not ordinal order"
+      (is (not= (mapv :ordinal rules)
+                (sort (mapv :ordinal rules)))
+          "if this ever sorts equal, strengthen the schema — the
+           regression needs a node whose (rank, ordinal) list order
+           differs from ordinal order"))
+    (testing "emissions equal the ordinal-lexicographic oracle"
+      (is (= expected got)))
+    (testing "the emitted sequence is ascending under compare-coords"
+      (is (= (mapv :coords got)
+             (vec (sort lp/compare-coords (mapv :coords got))))))
+    (testing "descending walk agrees"
+      (let [{:keys [emissions]} (lp/forward-page
+                                 (assoc base :page-size 100 :last? true))]
+        (is (= (vec (reverse got)) emissions))))
+    (testing "resume from every boundary equals the suffix"
+      (doseq [k (range (count got))]
+        (is (= (subvec got (inc k))
+               (:emissions (lp/forward-page
+                            (assoc base :page-size 100
+                                   :after-coords (:coords (nth got k)))))))))))
+
+(deftest malformed-coordinates-fail-typed-test
+  (let [{:keys [adapter plan]} (seeded-case 11)
+        base {:plan plan :adapter adapter
+              :subject-type :user :subject-eid (first users)}
+        typed (fn [coords]
+                (try (lp/forward-page (assoc base :page-size 5
+                                             :after-coords coords))
+                     :no-error
+                     (catch Exception e
+                       (:eacl/error (ex-data e)))))
+        ordinals (mapv :ordinal
+                       (get-in plan [:indexes :reverse-rules [:doc :view]]))]
+    (doseq [coords (concat [[(first ordinals)]
+                            [999999 1]
+                            [(first ordinals) 1 2 3 4 5 6 7 8]]
+                           (for [o (rest ordinals)] [o]))]
+      (is (= :eacl.page/invalid-cursor (typed coords))
+          (str "coords " coords " must fail typed, never as a raw
+                index error")))))
+
+(deftest witness-child-enumeration-is-shared-across-a-page-test
+  ;; A page over an arrow-permission arm whose child has a large sparse
+  ;; fan-in: every emission's smaller-witness check alternates against
+  ;; the SAME child enumeration, so the page must pay for at most a
+  ;; small constant number of full child walks (the main traversal's and
+  ;; the shared witness prefix) — never one walk per emission.
+  (let [n-groups 400
+        groups (vec (range 1000 (+ 1000 n-groups)))
+        schema {:relations
+                [{:relation-id 501 :resource-type :doc :relation-name :org
+                  :subject-type :org}
+                 {:relation-id 502 :resource-type :org :relation-name :grp
+                  :subject-type :group}
+                 {:relation-id 503 :resource-type :group
+                  :relation-name :gmember :subject-type :user}]
+                :permissions
+                [{:resource-type :doc :permission-name :view
+                  :source-relation-name :org :target-type :permission
+                  :target-name :oview}
+                 {:resource-type :org :permission-name :oview
+                  :source-relation-name :grp :target-type :relation
+                  :target-name :gmember}]}
+        tuples (set (concat
+                     (for [g groups] [:user 1 503 :group g])
+                     ;; both orgs' groups sit at the END of the holdings
+                     [[:group (+ 1000 (- n-groups 2)) 502 :org 2001]
+                      [:group (+ 1000 (- n-groups 1)) 502 :org 2002]]
+                     (for [d (range 3001 3021) o [2001 2002]]
+                       [:org o 501 :doc d])))
+        adapter (synthetic-adapter (assoc schema :tuples tuples))
+        plan (sealed-plan/seal-plan adapter [:doc :view])
+        run (lp/forward-page {:plan plan :adapter adapter
+                              :subject-type :user :subject-eid 1
+                              :page-size 10})]
+    (is (= 10 (count (:emissions run))))
+    (is (<= (:commands (:counters run)) (* 3 n-groups))
+        (str "a page must cost at most a few full child walks over the "
+             n-groups "-group fan-in; unshared witness children cost "
+             "page-size walks (" (:commands (:counters run))
+             " commands seen)"))))
+
 (deftest before-cursor-pages-backward-test
   (let [{:keys [adapter plan]} (seeded-case 41)
         u (nth users 1)
@@ -405,6 +543,22 @@
             "deep-page stream opens are bounded by per-page work")
         (is (= 3 (:emissions (:counters first-page)))
             "counted emissions are the derived results incl. the lookahead")))))
+
+(deftest acyclic-lookup-never-builds-continuation-context-test
+  ;; The keyset route consults no continuation state; the context (query
+  ;; canonicalization, proof-frame resolution, backend reads on the
+  ;; cached clients) must never be built for it. The thunk records
+  ;; instead of throwing so a failure reads as a count, not a stack.
+  (let [{:keys [adapter]} (seeded-case 11)
+        forced (atom 0)
+        page (engine/lookup-resources
+              adapter
+              {:subject {:type :user :id (first users)}
+               :permission :view :resource/type :doc :first 3}
+              {:continuation-cache-fn #(do (swap! forced inc) nil)})]
+    (is (map? (:page-info page)))
+    (is (zero? @forced)
+        "least-path pages must not force the continuation context")))
 
 (deftest budgets-fail-typed-test
   (let [{:keys [adapter plan]} (seeded-case 11)

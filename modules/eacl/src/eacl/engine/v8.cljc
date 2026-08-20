@@ -1274,12 +1274,18 @@
                (= :desc direction)
                {:last? true}
                :else {}))
-            run (with-public-limit-errors
-                  #(with-service-admission
-                     (fn []
-                       (if (= :forward traversal)
-                         (least-path/forward-page run-options)
-                         (least-path/reverse-page run-options)))))
+            ;; Coordinate resume that cannot reproduce against this plan
+            ;; (arity, ordinal, or emptiness defects) surfaces as the
+            ;; public stale-cursor error, exactly like the replay route.
+            run (with-stale-boundary-errors
+                  bound
+                  (fn []
+                    (with-public-limit-errors
+                      #(with-service-admission
+                         (fn []
+                           (if (= :forward traversal)
+                             (least-path/forward-page run-options)
+                             (least-path/reverse-page run-options)))))))
             emissions (:emissions run)
             ;; Descending runs return descending coordinates; the public
             ;; page is canonical forward order in both modes.
@@ -1300,7 +1306,11 @@
                            (boolean bound))})))))
 
 (defn- stable-lookup-page
-  [db traversal query cache]
+  "`cache-fn` is a thunk producing the continuation cache (or nil): the
+  least-path route consults no continuation state, so the context —
+  query canonicalization, proof-frame resolution, its backend reads —
+  must only be built when the plan actually routes to first-discovery."
+  [db traversal query cache-fn]
   (let [{:keys [direction size bound] :as page-req}
         (normalize-page-request query)
         forward? (= :forward traversal)
@@ -1323,13 +1333,14 @@
           (least-path-lookup-page db plan traversal query page-req
                                   result-type anchor subject-type)
           (first-discovery-lookup-page db plan traversal query page-req
-                                       cache result-type anchor
+                                       cache-fn result-type anchor
                                        subject-type))))))
 
 (defn- first-discovery-lookup-page
-  [db plan traversal query {:keys [direction size bound]} cache
+  [db plan traversal query {:keys [direction size bound]} cache-fn
    result-type anchor subject-type]
-  (let [;; A bare :last window on a recursive schema exhausts a
+  (let [cache (when cache-fn (cache-fn))
+        ;; A bare :last window on a recursive schema exhausts a
         ;; data-dependent traversal; that cost stays opt-in via
         ;; :evaluation :complete-denotation (public v8 contract).
         _ (when (and (:recursive? plan)
@@ -1414,9 +1425,12 @@
   ([db query]
    (lookup-resources db query nil))
   ([db query {:keys [continuation-cache continuation-cache-fn]}]
-   (let [cache (or continuation-cache
-                   (when continuation-cache-fn (continuation-cache-fn)))]
-     (stable-lookup-page db :forward query cache))))
+   ;; Deferred: an acyclic (least-path) plan never touches continuation
+   ;; state, so the cache context is only built on the recursive route.
+   (let [cache-fn (fn [] (or continuation-cache
+                             (when continuation-cache-fn
+                               (continuation-cache-fn))))]
+     (stable-lookup-page db :forward query cache-fn))))
 
 (defn lookup-subjects
   "Stable-discovery reverse pagination; cursors are only valid against the
@@ -1431,9 +1445,10 @@
      (page-error! ":subject/relation is not supported by lookup-subjects."
                   {:eacl/error :eacl.pagination/unsupported-filter
                    :filter :subject/relation}))
-   (let [cache (or continuation-cache
-                   (when continuation-cache-fn (continuation-cache-fn)))]
-     (stable-lookup-page db :reverse query cache))))
+   (let [cache-fn (fn [] (or continuation-cache
+                             (when continuation-cache-fn
+                               (continuation-cache-fn))))]
+     (stable-lookup-page db :reverse query cache-fn))))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])
