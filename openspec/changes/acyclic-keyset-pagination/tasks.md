@@ -8,12 +8,12 @@
       and uniqueness of the least path per derivable entity; order is a
       pure function of (program, tuples).
 - [ ] 1.2 `formal/stable-discovery/LeastPathEnumeration.dfy`: the
-      per-level sub-arm merge of ascending duplicate-free streams is
-      ascending and duplicate-free; the ordered DFS over merged closures
-      with the smaller-witness filter emits exactly the reachable
-      denotation (bridge to `ReducerCompleteness` /
-      `EaclForwardGrounding`), exactly once per entity, in ascending
-      least-path order.
+      ordered DFS with the smaller-witness emission filter emits exactly
+      the reachable denotation (bridge to `ReducerCompleteness`), exactly
+      once per entity, in ascending least-path order; pruning repeated
+      interior states preserves the emitted sequence
+      (`PruneRepeatedStateSound`); merge of ascending duplicate-free
+      streams is ascending and duplicate-free (leaf-level optimization).
 - [ ] 1.3 `formal/stable-discovery/LeastPathResume.dfy`: seeking every
       level strictly past a boundary path equals the suffix of the full
       enumeration; descending iteration emits each entity at the same
@@ -47,13 +47,14 @@
 ## 3. Least-path evaluator
 
 - [ ] 3.1 New namespace `eacl.engine.least-path` (cljc): resumable
-      ordered DFS over the sealed plan — per-scan coordinates; closures
-      behind arrow-to-permission steps iterated via per-level sub-arm
-      merges (schema-bounded stream count; merge resume = one shared
-      bound, all sub-streams seek past it); chunked scans through the
-      routed fetch-fn; cut-point before every adapter command;
-      reducer-equivalent typed budgets; assert streams-opened-per-page
-      ≤ plan alternatives × depth via `*backend-op-stats*` in tests.
+      nested ordered DFS over the sealed plan — full per-scan
+      coordinates, one active scan per level, per-level witness pruning
+      of repeated interior states; optional merge iteration only for
+      closure levels whose arms are all direct scans (never nested);
+      chunked scans through the routed fetch-fn; cut-point before every
+      adapter command; reducer-equivalent typed budgets; assert
+      streams-opened-per-page is depth-and-work-bounded via
+      `*backend-op-stats*` in tests.
 - [ ] 3.2 Smaller-witness check: earlier-arm membership via exact-bound
       probes / bidirectional intersections; same-arm earlier-intermediate
       check as the interleaved MIN-SIDE intersection of the candidate's

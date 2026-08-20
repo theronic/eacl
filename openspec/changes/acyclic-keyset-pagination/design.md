@@ -1,5 +1,14 @@
 # Design: Acyclic Keyset Pagination
 
+> Revision 3. Implementation planning found that revision 2's D2
+> (merge-based closure iteration) composes only ONE level deep: a
+> closure sitting under another closure would need one merge input per
+> intermediate — closure-sized streams, the very cost D2 rejects. The
+> general construction is the nested ordered DFS over D1's full per-scan
+> coordinates with per-level witness PRUNING; merges are demoted to an
+> optimization for closure levels whose arms are all direct scans.
+> Resume drops back to O(depth) active-scan seeks.
+>
 > Revision 2. The first revision had four defects found in adversarial
 > review: (1) intermediate iteration for arrow-to-permission arms assumed
 > a sorted closure it could not produce (fixed by per-level bounded
@@ -43,9 +52,9 @@ three.
 
 - Self-contained cursors for acyclic plans: resume cost independent of
   page ordinal; zero server-side state required for correctness.
-- Streams touched per page bounded by the schema (arms × depth), never
-  by closure size or result ordinal — cold-S3 Datahike behaves like the
-  current discovery DFS.
+- Streams touched per page bounded by depth and per-page traversal
+  work, never by closure size or result ordinal — cold-S3 Datahike
+  behaves like the current discovery DFS.
 - One certified public order that is a pure function of
   (sealed plan, snapshot) — never of traversal history.
 - Exact descending windows (`:last`/`:before`) for acyclic roots without
@@ -97,27 +106,33 @@ The realization is an ordered DFS: at each level, alternatives are taken
 in sealed rule order and scan values in ascending eid order, so emission
 order equals coordinate order without any sorting.
 
-### D2 — Iterating a closure in eid order: per-level bounded sub-arm merges
+### D2 — Nested ordered DFS; merges only where they stay schema-bounded
 
-An arrow-to-**relation** step iterates one index scan — already
-ascending. An arrow-to-**permission** step must iterate the
-intermediates of a sub-*denotation* (e.g. "accounts the subject can
-admin" = `owner + parent->admin + platform->super_admin`) in ascending
-eid. That set is produced by **merging the sub-arms' own ascending
-streams** (each sub-arm bottoms out in index scans; nested
-arrow-to-permission sub-arms merge recursively). Properties:
+The enumeration is a **nested DFS in coordinate order**: at each level,
+alternatives in sealed rule order; within an alternative, scan values in
+ascending eid; descend, and on exhaustion advance the parent. One active
+scan per level — streams open per page are O(depth) plus the witness
+probes, bounded by traversal work, never by closure size.
 
-- The number of open streams per page is bounded by the plan's total
-  alternative count times depth — a schema constant (≈10–20 realistic),
-  NOT the closure size. This is the decisive difference from the
-  rejected global-eid merge, whose stateless resume realizes one stream
-  per *intermediate* (~400 cold konserve descents on the demo shape).
-- The merge output is ascending, so intermediate-level duplicates
-  (an account derivable as both owned and platform-admin'd) collapse
-  for free at the merge front — no witness work at intermediate level.
-- A merge resumes from a **single eid bound**: every sub-stream seeks
-  strictly past it. Cursors therefore carry one eid per scan step, never
-  per-sub-stream state.
+Interior duplicate states — the same (node, eid) reached through a
+lex-smaller prefix — are **pruned** with the same witness predicate used
+at emission (D3). Pruning is an optimization, not a correctness
+requirement: any result derivable under the repeated state is derivable
+under the earlier occurrence with a lex-smaller path, so its least path
+never lies in the pruned subtree (proved as `PruneRepeatedStateSound`,
+F2). Correctness rests only on the emission-time witness check.
+
+A closure level whose arms are ALL direct index scans from one anchor
+(the common two-level shape — `admin = owner + platform->super_admin`)
+MAY be iterated by a k-way merge of those arms' streams instead: output
+ascending, intermediate duplicates collapse at the merge front, resume
+from one shared bound. That merge width is the closure's own arm count —
+schema-bounded — and the optimization never nests: a closure under a
+closure is always DFS-iterated. (Revision 2 made the merge structural
+and recursive; recursive merging needs one input stream per intermediate
+of the inner closure — closure-sized, exactly the cost the rejected
+global merge pays. Demoting it to a leaf-level optimization removes the
+hole.)
 
 ### D3 — Entity-level duplicate suppression by min-side witness probes
 
@@ -154,10 +169,10 @@ one rule ordinal plus one or two eids per plan level, schema-bounded —
 inside the existing authenticated envelope (HMAC, basis, fingerprint,
 page size, direction: unchanged). Resume: seek each level strictly past
 its coordinate (sub-arm merges seek all their streams past the one
-bound), deepest level first, and continue the DFS. O(alternatives ×
-depth) seeks — every closure-level merge re-seeks all its sub-arm
-streams past the shared bound — schema-bounded and independent of
-ordinal, with no server-side state. The 16 KB cursor
+bound), deepest level first, and continue the DFS: O(depth) active-scan
+seeks, plus the sub-arm streams of any merge-optimized leaf closure on
+the boundary path (that closure's own arm count). Schema-bounded and
+independent of ordinal, with no server-side state. The 16 KB cursor
 budget holds with orders of magnitude of headroom.
 
 Fingerprint or basis mismatch fails typed exactly as the existing
@@ -206,12 +221,13 @@ New leaves in `formal/stable-discovery/`, registered in
   lexicographic order on the finite derivation set of an acyclic
   program; existence/uniqueness of least paths; order is a pure
   function of (program, tuples).
-- **F2 `LeastPathEnumeration.dfy`** — the ordered DFS with per-level
-  sub-arm merges and the smaller-witness filter emits exactly the
-  reachable denotation (bridging `ReducerCompleteness` /
-  `EaclForwardGrounding`), exactly once per entity, in ascending
-  least-path order; the per-level merge of ascending duplicate-free
-  streams is ascending and duplicate-free.
+- **F2 `LeastPathEnumeration.dfy`** — the ordered DFS with the
+  smaller-witness emission filter emits exactly the reachable
+  denotation (bridging `ReducerCompleteness`), exactly once per entity,
+  in ascending least-path order; pruning a repeated interior state
+  preserves the emitted sequence (`PruneRepeatedStateSound`); and the
+  k-way merge of ascending duplicate-free streams used by the leaf-level
+  optimization is ascending and duplicate-free.
 - **F3 `LeastPathResume.dfy`** — seeking every scan strictly past a
   boundary coordinate sequence equals the suffix of the full
   enumeration; descending emission positions equal ascending ones.
