@@ -943,22 +943,31 @@
 (defn- stable-plan
   "Seals (or reuses) the direction-specific plan for one root. Reuse is keyed
   by `stable-plan-key`; the store is a bounded FIFO shared by every client
-  in the process and cleared by `expire-plans!`."
+  in the process and cleared by `expire-plans!`.
+
+  A request-local schema context WITHOUT a plan schema identity (raw
+  evaluation of an unstamped database or a non-ordinary view) compiles
+  without touching the shared FIFO: its basis-and-lifecycle key can never
+  be re-hit, so inserting it would only evict live stamped plans."
   [db root-node]
-  (let [key (stable-plan-key db root-node)]
-    (or (get-in @stable-plan-cache [:entries key])
-        (let [plan (sealed-plan/seal-plan db root-node)]
-          (swap! stable-plan-cache
-                 (fn [{:keys [entries order] :as cache}]
-                   (if (contains? entries key)
-                     cache
-                     (let [order (conj order key)
-                           entries (assoc entries key plan)]
-                       (if (> (count order) stable-plan-cache-capacity)
-                         {:entries (dissoc entries (first order))
-                          :order (subvec order 1)}
-                         {:entries entries :order order})))))
-          plan))))
+  (if (and *schema-cache*
+           (true? (:request-local? *schema-cache*))
+           (nil? (plan-schema-identity)))
+    (sealed-plan/seal-plan db root-node)
+    (let [key (stable-plan-key db root-node)]
+      (or (get-in @stable-plan-cache [:entries key])
+          (let [plan (sealed-plan/seal-plan db root-node)]
+            (swap! stable-plan-cache
+                   (fn [{:keys [entries order] :as cache}]
+                     (if (contains? entries key)
+                       cache
+                       (let [order (conj order key)
+                             entries (assoc entries key plan)]
+                         (if (> (count order) stable-plan-cache-capacity)
+                           {:entries (dissoc entries (first order))
+                            :order (subvec order 1)}
+                           {:entries entries :order order})))))
+            plan)))))
 
 (defn- stable-edge
   [plan traversal ordinal eid]
@@ -1060,9 +1069,10 @@
 
 (defn- stable-cut-point
   "Execution enforcement (deadline and cancellation) for the routed stable
-  engine: one bounded check per reducer transition, installed only when the
-  caller runs under an execution contract so raw local evaluation keeps a
-  bare hot path."
+  engine: one bounded check per reducer transition (and, on the point-check
+  route, before every adapter command), installed only when the caller runs
+  under an execution contract so raw local evaluation keeps a bare hot
+  path."
   []
   (when-let [contract execution/*contract*]
     (physical/execution-cut-point contract)))

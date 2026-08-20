@@ -130,6 +130,7 @@ dafny_check_two() {
   "$dafny" verify \
     --verification-time-limit 15 \
     "$model_root/BidirectionalReachability.dfy" \
+    "$model_root/BidirectionalArrowIntersection.dfy" \
     "$model_root/EaclBidirectionalReachability.dfy" \
     "$model_root/ChunkedScan.dfy" \
     "$model_root/DescriptorIdentity.dfy" \
@@ -281,7 +282,7 @@ dafny_obligations=$(awk \
   "$tlc_run_root/dafny-two.log" \
   "$tlc_run_root/dafny-three.log" \
   "$tlc_run_root/dafny-four.log")
-expected_dafny_obligations=528
+expected_dafny_obligations=541
 dafny_count_failed=0
 if [ "$dafny_obligations" -ne "$expected_dafny_obligations" ]; then
   printf 'expected %s Dafny obligations, observed %s\n' \

@@ -263,7 +263,15 @@ direct rule, never by enumerating the subjects that hold the permission.
 exhaustive reverse-discovery denotation (`ProbeAnswerEqualsReachability`,
 `ProbeCheckEqualsEnumerationCheck`), on top of the reverse transition
 soundness and completeness proved by `EaclReverseProducer.dfy` and
-`ReducerCompleteness.dfy`; `eacl.engine.point-check-test` is the executable
+`ReducerCompleteness.dfy`. Two-layer arrow arms — an arrow to a relation,
+or an arrow to a permission whose every derivation is a base relation — are
+decided bidirectionally: `BidirectionalArrowIntersection.dfy` proves the arm
+answer equal to a nonempty intersection of the resource's via-set with the
+subject's holdings whichever side is enumerated (`StrategiesAgree`,
+`DecideEqualsArmAnswer`), and proves the interleaved decision's consumption
+bounded by the SMALLER side (`RoundsBoundedByShorterSide`) — the complexity
+property that makes a check on a widely shared resource cost the subject's
+few holdings rather than the resource's fan-in; `eacl.engine.point-check-test` is the executable
 oracle differential against the retained reverse-enumeration form
 (`enumeration-check-eids`). EACL-FORMAL-055 retains the historical
 subject-forward scaling regression of the retired generated state machine as

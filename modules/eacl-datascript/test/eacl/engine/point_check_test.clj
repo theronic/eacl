@@ -144,3 +144,138 @@
     (testing "nil ids never hold"
       (is (false? (route/check-eids (assoc options :subject-eid nil))))
       (is (false? (route/check-eids (assoc options :resource-eid nil)))))))
+
+;; ---------------------------------------------------------------------------
+;; Bidirectional two-layer arrow arms (bidirectional-arrow-point-check)
+;; ---------------------------------------------------------------------------
+
+(defn- two-layer-fetch-fn
+  "Synthetic base-tuple store for one document behind one via relation (200)
+  whose intermediates carry one membership relation (300):
+  `vias` is the document's sorted via-set, `member-pairs` the set of
+  [subject-eid intermediate-eid] membership tuples. Answers the three scan
+  shapes the routes issue, honouring :bound-eid (exclusive) and :limit."
+  [commands doc-eid vias member-pairs]
+  (fn [{:keys [operation bound-eid limit] :as descriptor}]
+    (swap! commands inc)
+    (let [after (fn [values]
+                  (cond->> (sort values)
+                    bound-eid (drop-while #(<= % bound-eid))
+                    limit (take limit)))]
+      (case operation
+        :resource->subjects
+        (condp = (:relation-eid descriptor)
+          200 (do (assert (= doc-eid (:resource-eid descriptor)))
+                  (after vias))
+          300 (after (keep (fn [[subject intermediate]]
+                             (when (= intermediate
+                                      (:resource-eid descriptor))
+                               subject))
+                           member-pairs)))
+        :subject->resources
+        (do (assert (= 300 (:relation-eid descriptor)))
+            (after (keep (fn [[subject intermediate]]
+                           (when (= subject (:subject-eid descriptor))
+                             intermediate))
+                         member-pairs)))))))
+
+(def ^:private arrow-permission-plan
+  {:root [:doc :view]
+   :recursive? false
+   :indexes
+   {:reverse-rules
+    {[:doc :view] [{:rule :arrow-permission :node [:doc :view]
+                    :resource-type :doc :permission :view
+                    :via-relation-eid 200 :intermediate-type :org
+                    :target-node [:org :view] :ordinal 0 :rank 2}]
+     [:org :view] [{:rule :relation :node [:org :view]
+                    :resource-type :org :permission :view
+                    :relation-eid 300 :subject-type :user
+                    :ordinal 1 :rank 1}]}}})
+
+(def ^:private arrow-relation-plan
+  {:root [:doc :view]
+   :recursive? false
+   :indexes
+   {:reverse-rules
+    {[:doc :view] [{:rule :arrow-relation :node [:doc :view]
+                    :resource-type :doc :permission :view
+                    :via-relation-eid 200 :intermediate-type :org
+                    :target-relation-eid 300 :target-subject-type :user
+                    :ordinal 0 :rank 2}]}}})
+
+(deftest bidirectional-arrow-cost-is-bounded-by-smaller-side-test
+  ;; A document shared with a million intermediates: the arm must cost the
+  ;; subject's side (here at most one holding), never the via fan-in — and
+  ;; symmetrically, a subject holding a million memberships against a
+  ;; single-via document must cost the via side.
+  (let [n 1000000
+        doc-eid 5000001
+        subject 6000001
+        run (fn [plan vias member-pairs]
+              (let [commands (atom 0)]
+                [(route/check-eids
+                  {:fetch-fn (two-layer-fetch-fn commands doc-eid
+                                                 vias member-pairs)
+                   :plan plan :subject-type :user
+                   :subject-eid subject :resource-eid doc-eid})
+                 @commands]))
+        wide-vias (range 1 (inc n))]
+    (doseq [plan [arrow-permission-plan arrow-relation-plan]]
+      (testing "grant: a million vias, one holding"
+        (let [[answer commands]
+              (run plan wide-vias #{[subject 500000]})]
+          (is (true? answer))
+          (is (<= commands 6) (str commands " commands"))))
+      (testing "deny: a million vias, no holdings"
+        (let [[answer commands] (run plan wide-vias #{})]
+          (is (false? answer))
+          (is (<= commands 4) (str commands " commands"))))
+      (testing "grant: one via, a million holdings"
+        (let [[answer commands]
+              (run plan [777777]
+                   (into #{} (map (fn [i] [subject i]))
+                         (range 1 (inc n))))]
+          (is (true? answer))
+          (is (<= commands 4) (str commands " commands"))))
+      (testing "deny: one via outside a million holdings"
+        (let [[answer commands]
+              (run plan [2000001]
+                   (into #{} (map (fn [i] [subject i]))
+                         (range 1 (inc n))))]
+          (is (false? answer))
+          (is (<= commands 6) (str commands " commands")))))))
+
+(deftest bidirectional-arrow-equals-enumeration-oracle-test
+  ;; Randomized differential over dense small universes: the bidirectional
+  ;; decision must agree with the reverse-enumeration oracle on every
+  ;; subject, for both two-layer arm shapes.
+  (let [random (java.util.Random. 424242)
+        doc-eid 900001
+        random-subset (fn [universe density]
+                        (set (filter (fn [_] (< (.nextDouble random) density))
+                                     universe)))]
+    (dotimes [round 60]
+      (let [vias (random-subset (range 1 41) (+ 0.05 (* 0.4 (.nextDouble random))))
+            subjects (range 101 116)
+            member-pairs (set (for [subject subjects
+                                    intermediate (range 1 41)
+                                    :when (< (.nextDouble random) 0.08)]
+                                [subject intermediate]))]
+        (doseq [plan [arrow-permission-plan arrow-relation-plan]
+                subject subjects]
+          (let [options {:plan plan :subject-type :user
+                         :subject-eid subject :resource-eid doc-eid}
+                probe (route/check-eids
+                       (assoc options
+                              :fetch-fn (two-layer-fetch-fn
+                                         (atom 0) doc-eid vias member-pairs)))
+                oracle (route/enumeration-check-eids
+                        (assoc options
+                               :fetch-fn (two-layer-fetch-fn
+                                          (atom 0) doc-eid vias member-pairs)))]
+            (is (= oracle probe)
+                (str "round " round " subject " subject
+                     " vias " (vec (sort vias))
+                     " members " (vec (sort (filter #(= subject (first %))
+                                                    member-pairs)))))))))))

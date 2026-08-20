@@ -4,14 +4,19 @@
   point check, membership-probe-point-check).
 
   - Point checks are anchored to the known resource and answered by a
-    membership-probe search over the sealed plan's reverse index: the few
-    intermediates a resource reaches are enumerated, the subject itself is
-    always looked up by one exact-bound probe. Cost is bounded by the number
-    of reachable intermediates, never by the number of subjects that hold
-    the permission (the reverse-enumeration check it replaces was linear in
-    that number: a denied check on a resource with 5,000 owners cost 16 ms).
-    The reverse-enumeration form is retained as `enumeration-check-eids`,
-    the test oracle.
+    membership-probe search over the sealed plan's reverse index: the
+    subject itself is always looked up by one exact-bound probe, and each
+    two-layer arrow arm is decided bidirectionally — the resource's via-set
+    and the subject's holdings are consumed in alternating rounds, so the
+    arm costs the SMALLER side, never the via fan-in
+    (BidirectionalArrowIntersection.dfy; the resource-side-only probe paid
+    the full fan-in — a denied check on a document shared with 10,000
+    groups cost 37 ms — and the reverse-enumeration check before it was
+    linear in the number of subjects holding the permission: a denied check
+    on a resource with 5,000 owners cost 16 ms). Only arrows to recursive
+    permissions still enumerate their intermediates and descend. The
+    reverse-enumeration form is retained as `enumeration-check-eids`, the
+    test oracle.
   - Exact count exhausts the history-free reducer; its scalar discovered
     count equals the denotation cardinality. Exhaustion is unbounded by
     construction (`exhaustion-target` is infinite): a run ends at an empty
@@ -51,6 +56,16 @@
    :relation-eid relation-eid :subject-type subject-type
    :bound-eid bound-eid :limit limit})
 
+(defn- forward-scan
+  "Read-demand descriptor for one forward scan (the subject's holdings of
+  one relation), shaped exactly like the reducer's so the routed fetch-fn
+  layers (classification, retry, telemetry) apply unchanged."
+  [subject-type subject-eid relation-eid resource-type bound-eid limit]
+  {:operation :subject->resources
+   :subject-type subject-type :subject-eid subject-eid
+   :relation-eid relation-eid :resource-type resource-type
+   :bound-eid bound-eid :limit limit})
+
 (defn- probe-check-eids
   "Iterative depth-first membership search. Returns true iff a derivation
   of the plan's root permission on `resource-eid` bottoms out in a tuple
@@ -60,7 +75,16 @@
   Reachability over the rule graph is decided by a visited set on
   [node eid]; a base tuple is decided by one exact-bound probe (the scan
   strictly after `subject-eid - 1`, limit one, equals `subject-eid` iff the
-  tuple exists). Only intermediates are enumerated. Typed limits mirror the
+  tuple exists). Two-layer arrow arms — an arrow to a relation, or an arrow
+  to a permission every one of whose derivations is a base relation — are
+  decided BIDIRECTIONALLY: the resource's via-set and the subject's
+  holdings are consumed in alternating rounds, each realized candidate is
+  probed on the opposite index, and the arm resolves at the first positive
+  probe or as soon as EITHER side exhausts, so its cost is bounded by the
+  smaller side plus one chunk — never by the via fan-in alone
+  (BidirectionalArrowIntersection.dfy: DecideEqualsArmAnswer,
+  RoundsBoundedByShorterSide). Only arrows to recursive permissions still
+  enumerate their intermediates and descend. Typed limits mirror the
   reducer's budgets: `:max-admissions` bounds distinct visited states,
   `:max-transitions` visits, `:max-commands` fetches, `:max-values` fetched
   values, `:max-stack` instantaneous stack depth."
@@ -80,6 +104,12 @@
         counters (volatile! {:admissions 0 :transitions 0 :commands 0
                              :fetched-values 0})
         fetch! (fn [descriptor]
+                 ;; Deadline/cancellation enforcement per adapter command,
+                 ;; matching the reducer's per-transition granularity: a
+                 ;; single DFS pop may issue many fetches (chunk loops,
+                 ;; per-candidate probes), so checking only per pop let up
+                 ;; to max-commands reads run past an expired deadline.
+                 (when cut-point! (cut-point! @counters))
                  (when (>= (:commands @counters) max-commands)
                    (limit-failure! :max-commands @counters
                                    {:max-commands max-commands}))
@@ -111,6 +141,88 @@
                             (if (< (count chunk) physical-chunk-size)
                               (persistent! acc)
                               (recur (peek chunk) acc)))))
+        ;; One exact-bound probe per side of a two-layer arrow arm
+        ;; (BidirectionalArrowIntersection.dfy): a via candidate is decided
+        ;; on the subject's forward index, a holding candidate on the
+        ;; resource's reverse index.
+        holding-probe? (fn [target-relation-eid intermediate-type candidate]
+                         (= candidate
+                            (first (fetch! (forward-scan
+                                            subject-type subject-eid
+                                            target-relation-eid
+                                            intermediate-type
+                                            (dec candidate) 1)))))
+        via-probe? (fn [resource-type eid via-relation-eid intermediate-type
+                        candidate]
+                     (= candidate
+                        (first (fetch! (reverse-scan
+                                        resource-type eid
+                                        via-relation-eid
+                                        intermediate-type
+                                        (dec candidate) 1)))))
+        ;; The interleaved bidirectional decision for one two-layer arm:
+        ;; vias(resource) ∩ holdings(subject) ≠ ∅. Round order and both
+        ;; exhaustion exits follow the verified model exactly
+        ;; (BidirectionalArrowIntersection.dfy `Decide`); enumeration is
+        ;; buffered in physical chunks, probing stays per candidate, so the
+        ;; cost is bounded by the smaller side plus one chunk per side.
+        intersect-arm?
+        (fn [resource-type eid via-relation-eid intermediate-type
+             target-relation-eid]
+          (loop [vias [] via-index 0 via-bound nil vias-done? false
+                 holdings [] holding-index 0 holding-bound nil
+                 holdings-done? false]
+            (let [[vias via-index via-bound vias-done?]
+                  (if (and (>= via-index (count vias)) (not vias-done?))
+                    (let [chunk (fetch! (reverse-scan resource-type eid
+                                                      via-relation-eid
+                                                      intermediate-type
+                                                      via-bound
+                                                      physical-chunk-size))]
+                      [chunk 0 (if (seq chunk) (peek chunk) via-bound)
+                       (< (count chunk) physical-chunk-size)])
+                    [vias via-index via-bound vias-done?])]
+              (if (>= via-index (count vias))
+                ;; The via side is exhausted with every candidate probed
+                ;; negative: the intersection is empty.
+                false
+                (if (holding-probe? target-relation-eid intermediate-type
+                                    (nth vias via-index))
+                  true
+                  (let [[holdings holding-index holding-bound holdings-done?]
+                        (if (and (>= holding-index (count holdings))
+                                 (not holdings-done?))
+                          (let [chunk (fetch! (forward-scan
+                                               subject-type subject-eid
+                                               target-relation-eid
+                                               intermediate-type
+                                               holding-bound
+                                               physical-chunk-size))]
+                            [chunk 0
+                             (if (seq chunk) (peek chunk) holding-bound)
+                             (< (count chunk) physical-chunk-size)])
+                          [holdings holding-index holding-bound
+                           holdings-done?])]
+                    (if (>= holding-index (count holdings))
+                      ;; The holdings side is exhausted with every candidate
+                      ;; probed negative: the intersection is empty.
+                      false
+                      (if (via-probe? resource-type eid via-relation-eid
+                                      intermediate-type
+                                      (nth holdings holding-index))
+                        true
+                        (recur vias (inc via-index) via-bound vias-done?
+                               holdings (inc holding-index) holding-bound
+                               holdings-done?)))))))))
+        ;; A target permission every one of whose derivations is a base
+        ;; relation reduces its arrow to a union of two-layer intersections;
+        ;; any other shape keeps the enumerate-and-descend route.
+        relation-only-rules
+        (fn [target-node]
+          (let [rules (get reverse-rules target-node)]
+            (when (and (seq rules)
+                       (every? #(= :relation (:rule %)) rules))
+              rules)))
         report! (fn []
                   (when-let [stats reducer/*observer-stats*]
                     (let [{:keys [admissions commands transitions]} @counters]
@@ -157,24 +269,53 @@
                            (conj successors [(:target-node rule) eid])
 
                            :arrow-permission
-                           (into successors
-                                 (map (fn [i] [(:target-node rule) i]))
-                                 (intermediates (:resource-type rule) eid
-                                                (:via-relation-eid rule)
-                                                (:intermediate-type rule)))
+                           (if-let [target-rules
+                                    (relation-only-rules (:target-node rule))]
+                             ;; Every derivation of the target permission is
+                             ;; a base relation: the arm is a union of
+                             ;; two-layer intersections, each decided
+                             ;; bidirectionally without materializing the
+                             ;; via fan-in.
+                             (if (some (fn [target-rule]
+                                         (and (= subject-type
+                                                 (:subject-type target-rule))
+                                              (intersect-arm?
+                                               (:resource-type rule) eid
+                                               (:via-relation-eid rule)
+                                               (:intermediate-type rule)
+                                               (:relation-eid target-rule))))
+                                       target-rules)
+                               (reduced ::found)
+                               successors)
+                             (into successors
+                                   (map (fn [i] [(:target-node rule) i]))
+                                   (intermediates (:resource-type rule) eid
+                                                  (:via-relation-eid rule)
+                                                  (:intermediate-type rule))))
 
                            :arrow-relation
                            (if (and (= subject-type (:target-subject-type rule))
-                                    (some (fn [i]
-                                            (probe? (:intermediate-type rule) i
-                                                    (:target-relation-eid rule)))
-                                          (intermediates (:resource-type rule) eid
-                                                         (:via-relation-eid rule)
-                                                         (:intermediate-type rule))))
+                                    (intersect-arm?
+                                     (:resource-type rule) eid
+                                     (:via-relation-eid rule)
+                                     (:intermediate-type rule)
+                                     (:target-relation-eid rule)))
                              (reduced ::found)
                              successors)
 
-                           successors))
+                           :relation
+                           successors
+
+                           ;; Fail closed on an unrecognized rule kind, like
+                           ;; the reducer's reverse-goal-work: silently
+                           ;; skipping one would under-derive and answer
+                           ;; false where enumeration paths error.
+                           (throw
+                            (ex-info
+                             "Point check met an unrecognized sealed rule kind."
+                             {:eacl/error :eacl.plan/unknown-rule-kind
+                              :rule-kind (:rule rule)
+                              :node node}))))
                        []
                        rules)]
                   ;; Value comparison, not `identical?`: ClojureScript keyword
