@@ -902,7 +902,7 @@
     :evaluation *evaluation-mode*
     :page-request (select-keys query [:first :after :last :before])}))
 
-(def stable-order-abi 1)
+(def stable-order-abi 2)
 (def stable-cursor-version 1)
 
 (defonce ^:private stable-plan-cache

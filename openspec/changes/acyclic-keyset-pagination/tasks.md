@@ -32,17 +32,18 @@
 
 ## 2. Sealed-plan and order-contract ABI v2
 
-- [ ] 2.1 `sealed_plan.cljc`: add `{:order-mode :recursive?}` to the plan
+- [x] 2.1 `sealed_plan.cljc`: add `{:order-mode :recursive?}` to the plan
       record and INTO the canonical digest; `order-contract` gains
       `:abi-version 2` documenting both modes; acyclic roots seal
       `:least-path`, recursive roots `:first-discovery`.
-- [ ] 2.2 Bump the engine's public `stable-order-abi`. Pre-release: no
+- [x] 2.2 Bump the engine's public `stable-order-abi`. Pre-release: no
       migration or extra rejection machinery — one smoke test that an
       old-fingerprint cursor fails typed via the existing envelope is
       sufficient.
-- [ ] 2.3 Re-run `SealedVectorOrder`/`RecordFraming`-adjacent gate leaves
+- [x] 2.3 Re-run `SealedVectorOrder`/`RecordFraming`-adjacent gate leaves
       and the sealed-plan refinement bridge against the extended record;
-      adjust the bridge fixtures for the new digest fields.
+      adjust the bridge fixtures for the new digest fields. (Ran green
+      unchanged: the bridge does not pin the record list shape.)
 
 ## 3. Least-path evaluator
 

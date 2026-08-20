@@ -14,7 +14,11 @@
 set -eu
 
 gate_started_at=$(date +%s)
-gate_hard_limit_seconds=10
+# Iteration-speed guardrail, not a proof property. Raised 10 -> 12 with
+# the least-path leaves (obligations 541 -> 631): the critical path is
+# the source-refinement JVM, and the prior ceiling was already exactly
+# at the wall on a loaded workstation.
+gate_hard_limit_seconds=12
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 model_root="$repo_root/formal/stable-discovery"
