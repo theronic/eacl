@@ -56,6 +56,8 @@ Want to try EACL? Jump to the [Quickstart section](#quickstart).
 
 This README is too long & too technical, so I am working to simplify it and break it out into area-specific documents. Despite my best attempts, EACL has become a large project.
 
+[Continue to Project Status →](#project-status).
+
 ## Table of Contents
 
 <!-- TOC -->
