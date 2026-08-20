@@ -2,23 +2,23 @@
 
 ## 1. Formal models (gate-green before any engine routing)
 
-- [ ] 1.1 `formal/stable-discovery/LeastPathOrder.dfy`: per-scan
+- [x] 1.1 `formal/stable-discovery/LeastPathOrder.dfy`: per-scan
       derivation coordinates over an acyclic `StableReducer.Program`
       (arity per rule kind); strict total lexicographic order; existence
       and uniqueness of the least path per derivable entity; order is a
       pure function of (program, tuples).
-- [ ] 1.2 `formal/stable-discovery/LeastPathEnumeration.dfy`: the
+- [x] 1.2 `formal/stable-discovery/LeastPathEnumeration.dfy`: the
       ordered DFS with the smaller-witness emission filter emits exactly
       the reachable denotation (bridge to `ReducerCompleteness`), exactly
       once per entity, in ascending least-path order; pruning repeated
       interior states preserves the emitted sequence
       (`PruneRepeatedStateSound`); merge of ascending duplicate-free
       streams is ascending and duplicate-free (leaf-level optimization).
-- [ ] 1.3 `formal/stable-discovery/LeastPathResume.dfy`: seeking every
+- [x] 1.3 `formal/stable-discovery/LeastPathResume.dfy`: seeking every
       level strictly past a boundary path equals the suffix of the full
       enumeration; descending iteration emits each entity at the same
       position as ascending.
-- [ ] 1.4 Witness-check equivalence lemmas: the level-wise
+- [x] 1.4 Witness-check equivalence lemmas: the level-wise
       decomposition of "a strictly smaller path derives e" into
       earlier-rule and smaller-eid clauses, each decided by an
       interleaved MIN-SIDE intersection (never a one-sided fan-in
@@ -26,7 +26,7 @@
       `BidirectionalArrowIntersection.dfy`'s `DecideEqualsArmAnswer`,
       extended per level (extend that leaf or add a fourth file if
       cleaner).
-- [ ] 1.5 Register all new leaves in `verify-fast.sh` (manifest + batch
+- [x] 1.5 Register all new leaves in `verify-fast.sh` (manifest + batch
       assignment balanced against the 10 s ceiling), update
       `expected_dafny_obligations`, run the full gate green.
 
