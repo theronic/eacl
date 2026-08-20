@@ -79,8 +79,8 @@ first-page regressions), but that reason does not apply to acyclic roots.
 ### New Capabilities
 
 - `acyclic-keyset-pagination`: least-derivation-path public order,
-  self-contained constant-size cursors, descending windows, and exact
-  counts for acyclic plans, certified equal to the existing denotation.
+  self-contained constant-size cursors, and descending windows for
+  acyclic plans, certified equal to the existing denotation.
 
 ### Modified Capabilities
 
@@ -91,7 +91,7 @@ first-page regressions), but that reason does not apply to acyclic roots.
 
 ## Impact
 
-- **Engine**: new acyclic page/count evaluator in
+- **Engine**: new acyclic page evaluator in
   `modules/eacl/src/eacl/engine/` (resumable ordered DFS with
   least-witness suppression); routing split in `engine/v8.cljc` on
   `:recursive?`; `sealed_plan.cljc` folds `{:order-mode, :recursive?}`
