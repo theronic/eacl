@@ -121,7 +121,7 @@ This README is too long & too technical, so I am working to simplify it and brea
     * [Cache Coherence](#cache-coherence)
     * [Consistency and Zed tokens](#consistency-and-zed-tokens)
     * [Unknown object IDs](#unknown-object-ids)
-    * [Deleting a permissioned entity](#deleting-a-permissioned-entity)
+    * [Deleting a Secured Entity](#deleting-a-secured-entity)
   * [Schema Syntax](#schema-syntax)
   * [Example Schema](#example-schema-1)
   * [Limitations, Deficiencies & Gotchas:](#limitations-deficiencies--gotchas)
@@ -139,7 +139,7 @@ This README is too long & too technical, so I am working to simplify it and brea
 
 ## Real-Time UI Maintenance
 
-Consider 10,000 online users – how often should clients re-query to keep their UIs up-to-date?
+Consider 10,000 online users: how often should clients re-query to keep their UIs up-to-date?
 - If they poll on a schedule, clients are always out-of-date (eventually consistent).
 - Refreshing each user's view on every DB write does not scale. In a single-writer system, more users means more frequent writes, i.e. `tx_rate(num_users, tx_rate_per_user)`.
 - More frequent writes means more queries, so `num_users * tx_rate(num_users, tx_rate_per_user) * queries_per_view` quickly becomes a Read Amplification problem that can dramatically lower Peer performance, or require horizontal scaling.
@@ -386,7 +386,7 @@ Even in a fast-moving DB, EACL will reuse cache segments that are unaffected by 
 4. `at-exact-snapshot` always time-travels with `(d/as-of db T)`: 
     - Note: `d/as-of` can be expensive, so you will typically only use this if you need historical data.
     - Unlike SpiceDB, EACL allows arbitrary point-in-time queries over full history (if supported by the backend).
-    - If `T` is in the future (relative to Peer), EACL may blocks on `(d/sync conn T)` before `(d/as-of db T)`.
+    - If `T` is in the future (relative to Peer), EACL may block on `(d/sync conn T)` before `(d/as-of db T)`.
        - EACL will throw if `T` is newer than the Transactor has seen.
        - EACL will only reuse cache segments that are valid for `T`.
     - Supported by Datahike if history is enabled.
@@ -404,9 +404,9 @@ Unsupported modes by backend will return an error. Refer [Consistency and ZedTok
 
 EACL co-exists with your data in Datomic, Datahike or DataScript. As a result, EACL installs and maintains some attributes in your data store, all of which are prefixed by `:eacl*`.
 
-Presently, EACL Relationships are stored in history to support auditability, `d/as-of` & `at-exact-snapshot` semantics, but in a future version of EACL, history could be optional to save on storage, but then you lose time travel & auditability.
+Presently, EACL Relationships are stored in history to support auditability, `d/as-of` & `at-exact-snapshot` semantics, but in a future version of EACL, history could be optional to save on storage, but then you lose time travel & auditability. For many applications that only care about permissions as-of "now", this would be acceptable.
 
-The EACL attributes are detailed below.
+The EACL-specific attributes are detailed below.
 
 ### Relationships
 
@@ -414,13 +414,17 @@ EACL Relationships are light by virtue of being stored directly on entities as t
 - Forward subject->resource tuple: `:eacl.v7.relationship/subject-type+relation+resource-type+resource`
 - Reverse resource->subject tuple: `:eacl.v7.relationship/resource-type+relation+subject-type+subject`
 
-To retract a Relationship, use the optional Transactor function, `:eacl.fn/retractEntity`, or call `eacl/delete-relationships!`. Do not call `:db.fn/retractEntity` on permissioned entities, or you will leave a ghost Relationship tuple on the contra-object.
+To retract an entity and its Relationships, use `:eacl.fn/retractEntity`, an optional Transactor function you can install.
 
-- `:eacl.fn/retractEntity` is preferred because it reduces transactor noise, i.e. instead of a tx for delete-relationships! + retract entity, you can have one tx in the log.
+If you only want to retract Relationships, call `eacl/delete-relationships!`.
 
-EACL's contract with you is that you need to use EACL's API to maintain Relationships to guarantee cache coherence and a clean database. If you mess with EACL's data structures, it becomes your problem.
+To retract an entity and its Relationships, you may call `eacl/delete-relationships!` followed by `:db.fn/retractEntity`, but this will write two transactions to the tx-log, which is fine, but not ideal and adds noise to the Transactor, so prefer `:eacl.fn/retractEntity` for full entity retractions.
 
-But you will probably forget, so there are helpers to clean up ghost tuples. Refer [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+If you call `:db.fn/retractEntity` without `eacl/delete-relationships!`, you *will* leave ghost Relationship tuples lying around on the contra-object (subject or resource), so it's safer to use `:eacl.fn/retractEntity` for secured entities and reduce transactor noise.
+
+EACL's contract with you is that you *MUST* use the EACL APIs to maintain Relationships so we can guarantee cache coherence and a clean database. If you mess with EACL's data structures, it becomes your problem.
+
+But you will probably forget one day, so there are helpers to fined & clean up ghost tuples :). Refer [Deleting a Secured Entity](#deleting-a-secured-entity).
 
 ### Relations:
 
@@ -428,7 +432,7 @@ But you will probably forget, so there are helpers to clean up ghost tuples. Ref
 - `:eacl.relation/relation-name`
 - `:eacl.relation/subject-type`
 - `:eacl.relation/resource-type+relation-name+subject-type`
-- `:eacl/relation-version` is needed for cache coherence, and gets bumped on relevant Relationship writes to prevent stale cache.
+- `:eacl/relation-version` tracks cache coherence – it gets bumped on relevant Relationship writes that affect this Relation to prevent stale cache answers.
 
 ### Permissions
 
@@ -448,28 +452,28 @@ But you will probably forget, so there are helpers to clean up ghost tuples. Ref
 
 ### Schema Tracking
 
-- `:eacl/id` uniquely identifies Relations & Permissions. It's a string to match SpiceDB IDs, but you can also use it for external ID. Some IDs are reserved, like in SpiceDB.
-- `:eacl/schema-string` stores the valid schema string that was written via `eacl/write-schema!`.
+- `:eacl/id` uniquely identifies Relations & Permissions. It's a string to match SpiceDB IDs, but you can also use it for external ID. Like in SpiceDB, Some IDs are reserved by EACL internals (todo: document EACL ID prefixes).
+- `:eacl/schema-string` stores a valid schema string was written via `eacl/write-schema!`.
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
 - `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript.
 - `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
-- `:eacl.fn/assert-relation-unused` Transactor function is Datomic's commit-time guard against removing a Relation with active Relationships (avoids orphaned Relationships).
+- `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
 ## Performance
 
 - EACL is not meant for hyperscalers.
 - The goal for EACL is to handle 100M Relationships with good performance and remain suitable for real-time UIs, due to its situated nature.
-- EACL is internally benchmarked against 1M Relationships queried over a real-world, recursive schema with good expected latency @ ~1-40ms per query e2e (incl. hydration), depending on schema & query complexity.
+- EACL is internally benchmarked against 1M Relationships, tested against a real-world, recursive schema with e2e latency @ ~1-40ms per query (incl. hydration), depending on schema & query complexity.
 - EACL makes no strong performance claims at this time, but EACL should be as fast as, or faster than, SpiceDB, for small-to-medium workloads.
-- You can scale Datomic Peers horizontally, or dedicate Peers to EACL as-needed.
+- As load increases, you can scale Datomic Peers horizontally and even dedicate Peers to EACL as-needed.
 - EACL does not support all SpiceDB features (yet). Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- EACL [cache](#caching) is per-client and uses LRU for eviction.
+- The EACL [cache](#caching) is stored in-memory per-client with LRU eviction. You can extend it with a shared cache _ see `eacl/CacheProvider`.
 
 ## Formal Verification
 
-- EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+/TLC, and Apalache, but has not independently audited or certified.
-- The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md). The engine is heavily tested to never say "yes" when it should say "no", and the cache will only use cached answers that are proven to be valid for snapshot _S_ with basis _B_ at time _T_ to satisfy the requested consistency semantics.
-- Clojure/ClojureScript backend implementations are internally certified, but not generated from proofs.
+- EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+/TLC, and Apalache, but has not been independently audited or certified.
+- The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md). The engine is heavily tested to never say "yes" when it should say "no". The cache will only use cached answers that are proven to be valid for snapshot _S_ with basis _B_ at time _T_ to satisfy your requested consistency semantics.
+- The Clojure/ClojureScript backend implementations are internally certified, but not generated from proofs.
 - EACL does not attempt to verify the correctness of its supported backends – that responsibility lies with the database authors.
 
 ## Example Schema
@@ -498,15 +502,15 @@ definition document {
 }
 ```
 
-Basically, a user has documents and documents go in a folder. Folders can nest, i.e. folders have children.
+Basically, a user owns folders & documents; documents go in a folder and folders can nest, i.e. folders have children – it's a file system:
 
 - You can `:view` a document if you are the owner, a viewer, or if you can view the folder it's in.
 - You can `:view` a folder if you can view a parent folder (recursive schema).
 - You can `:edit` a document if you are the owner, or if you can edit the folder (or any of its parents).
 
-You can share documents or folders with other users by making them a `viewer` by adding `(Relationship (->user "bob") :viewer (->folder "my-folder"))`, to share `my-folder` with user "bob".
+You can share documents or folders with other users by making them a `viewer`, i.e. by adding `(Relationship (->user "bob") :viewer (->folder "my-folder"))`, to share `my-folder` with user "bob".
 
-Because of the recursive `view` permission, user `bob` can `:view` any nested files or folders under `my-folder`.  
+Because of the recursive `view` permission, user `bob` will be able to `:view` any nested files or folders under the folder, `my-folder`, that you shared with them.
 
 ## Modules
 
@@ -526,20 +530,16 @@ EACL supports multiple backends. Each adapter will bring in the shared EACL engi
 {:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
-For source development, clone the full repository, prepare the generated core
-runtime as described below, then keep the same library coordinate and use
-`:local/root`. The backend module resolves the sibling core module:
+### Development from source
+
+For source development, clone the full repository, prepare the generated core  runtime as described below, then keep the same library coordinate and use :local/root`. The backend module resolves the sibling core module:
 
 ```clojure
 {:deps {dev.eacl/eacl-datomic
         {:local/root "/absolute/path/to/eacl/core/modules/eacl-datomic"}}}
 ```
 
-### Development from source
-
-Source consumers who compile the EACL kernel locally need the Clojure CLI,
-Node.js, and the repository-pinned Dafny, Apalache, and TLA+ tools. Prepare the
-generated JVM and browser runtimes before using a `:local/root` dependency:
+Source consumers who compile the EACL kernel locally need the Clojure CLI, Node.js, and the repository-pinned Dafny, Apalache, and TLA+ tools. Prepare the generated JVM and browser runtimes before using a `:local/root` dependency:
 
 ```bash
 cd modules/eacl
@@ -556,8 +556,6 @@ Pass the same `:java-release` to `prep` and `jar` or `install`. The default is
 Java 26; source builds may target Java 8 through Java 26, subject to their
 backend and application dependencies. See [formal/README.md](formal/README.md)
 for tool versions and the full verification commands.
-
-EACL does not select a logging implementation. Applications remain responsible for their own logging backend and configuration.
 
 For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md).
 
@@ -585,21 +583,43 @@ To create a Relationship, first define your schema using `eacl/write-schema!`:
 ```
 
 This schema defines:
-- An `account` can have `owner` and `viewer` users, with `admin` permission granted to owners
+- An `account`, which can have an `owner` and `viewer` users, with `admin` permission granted to owners.
 - A `product` belongs to an `account`, with `edit` permission for account admins and `view` permission for account admins and viewers
 
 In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support exclusion (`-`) or intersection (`&`) yet.
 
 ### Relationship Maintenance
 
-- `(eacl/read-relationships acl filters) => {:data [relationships...] :page-info {...} :cached? boolean :cache-basis ...}`
-- `(eacl/write-relationships! acl updates) => {:zed/token "eacl_z4_..."}`,
-  - where `updates` is a collection of `RelationshipUpdate` records (`(eacl/->RelationshipUpdate operation relationship)`) or maps `{:operation op :relationship rel}`, and `operation` is one of `:create`, `:touch` or `:delete`. A bare `[operation relationship]` vector is rejected as an unsupported update.
-  - schema names are validated before any endpoint is resolved: an unknown definition, relation, or a subject type the relation does not declare fails with the same typed `:eacl/unknown-definition` / `:eacl/unknown-relation-or-permission` errors the read operations use.
-  - `:create` fails with `:eacl/relationship-conflict` when the relationship already exists, and the check is decided inside the transaction on every backend (Datomic: a transactor-side relation stamp CAS with re-planning; DataScript and Datahike with the default in-process writer: a transaction function), so two racing `:create`s of one relationship produce exactly one success. A Datahike remote writer cannot transport a transaction function and keeps the plan-time check only. `:touch` is idempotent. Repeating one operation for the same relationship inside a batch has the same outcome as submitting it once (`:create` still conflicts when the relationship existed before the batch); mixing different operations for the same resolved relationship throws `:eacl/invalid-relationship-update-batch` before submission.
+```clojure
+(eacl/read-relationships acl filters)
+=> {:data [relationships...]
+    :page-info {...}
+    :cached? boolean
+    :cache-basis ...}
+```
+
+```clojure
+(eacl/write-relationships! acl updates)
+=> {:zed/token "eacl_z4_..."}
+```
+where `updates` is a collection of `RelationshipUpdate` records:
+  - `(eacl/->RelationshipUpdate operation relationship)`,
+  - or, maps `{:operation op :relationship rel}`, and
+  - `operation` is one of `:create`, `:touch` or `:delete`.
+  - A bare `[operation relationship]` vector is rejected as an unsupported update.
+
+- Schema names are validated: unknown definitions, relations or bad subject types will fail with `:eacl/unknown-definition` / `:eacl/unknown-relation-or-permission`.
+
+Relationship Conflicts?
+ 
+- `:create` will fail with `:eacl/relationship-conflict` if the same if the same Relationship already exists.
+  - Datomic: a transactor-side relation stamp CAS with re-planning; DataScript and Datahike with the default in-process writer: a transaction function,
+  - Two racing `:create`s of one relationship produce exactly one success.
+  - A Datahike remote writer cannot transport a transaction function and keeps the plan-time check only
+  - `:touch` is idempotent. Repeating one operation for the same relationship inside a batch has the same outcome as submitting it once (`:create` still conflicts when the relationship existed before the batch); mixing different operations for the same resolved relationship throws `:eacl/invalid-relationship-update-batch` before submission.
 - `(eacl/create-relationships! acl relationships)` simply calls `write-relationships!` with `:create` operation.
 - `(eacl/delete-relationships! acl relationships)` simply calls `write-relationships!` with `:delete` operation.
-- `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a permissioned entity — see [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+- `(eacl/delete-object! acl object) => {:zed/token "eacl_z4_...", :retracted-datoms n}` is a convenience helper that removes every relationship touching `object`, in both directions. `n` counts relationship datoms actually retracted by the committed transactions. On Datomic the retractions are committed in batches of 1,000 (a concurrent reader can observe a partially deleted object between batches); on DataScript and Datahike they are one atomic transaction. Consumers are expected to delete relationships before retracting a secured entity — see [Deleting a Secured Entity](#deleting-a-secured-entity).
 
 All list APIs use the v8 Relay pagination contract:
 
@@ -1202,10 +1222,10 @@ Cache coherence is only guaranteed as long as authorization mutations use EACL's
 
 - Change schema with `eacl/write-schema!`.
 - Add/retract relationships via EACL relationship APIs
-- Retract permissioned entities via
+- Retract secured entities via
   [:eacl.fn/retractEntity](#deleting-a-permissioned-entity).
 
-Ordinary application datoms that do not affect authorization are unrestricted. If an application changes EACL schema or relationship storage directly, splits EACL transaction data, changes the identity of a permissioned object outside the documented contract, or leaves relationships behind during deletion, cached authorization results may be stale.
+Ordinary application datoms that do not affect authorization are unrestricted. If an application changes EACL schema or relationship storage directly, splits EACL transaction data, changes the identity of a secured object outside the documented contract, or leaves relationships behind during deletion, cached authorization results may be stale.
 
 To recover after an unsupported authorization mutation:
 
@@ -1355,11 +1375,11 @@ dangling relationship left by retracting an entity before its relationships.
 `read-relationships` still returns the damaged relationship half with a nil
 ID so it can be repaired.
 
-### Deleting a permissioned entity
+### Deleting a Secured Entity
 
 > [!IMPORTANT]
 > Do not call the backend's ordinary entity-retraction operation on a
-> permissioned entity before removing its EACL relationships.
+> secured entity before removing its EACL relationships.
 
 EACL stores both directions of a relationship. A native entity retraction
 removes the half stored on the target, but it cannot follow the peer ID stored
@@ -1529,13 +1549,13 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   relation, permission, union, and arrow boundaries. Use `can?` for an
   authorization decision.
 - *Cache coherence requires EACL authorization writers:* Bypassing EACL for
-  schema, relationship, permissioned identity, or deletion mutations can
+  schema, relationship, secured identity, or deletion mutations can
   leave cached answers stale. Stop affected traffic, repair the data, and
   expire every affected client before resuming.
 - *Deleting entities:* Native entity retraction does not remove the
   relationship stored at the other endpoint. Delete relationships first with
   `delete-object!`, or use the optional safe-retraction function — see
-  [Deleting a permissioned entity](#deleting-a-permissioned-entity).
+  [Deleting a Secured Entity](#deleting-a-secured-entity).
 - *Recursive permissions have safety limits:* use `:count-limit` to bound
   counts, and raise recursive traversal limits only after load testing. If a
   cached continuation is unavailable, EACL may replay earlier traversal work
