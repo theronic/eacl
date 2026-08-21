@@ -7,7 +7,7 @@ EACL permissions are [just data](#data-structures) that co-exist with your appli
 - Reduced network latency,
 - Strong local consistency,
 - Horizontal scaling, and
-- [Real-time view maintenance](#speeding-up-real-time-ui-maintenance).
+- [Real-time view maintenance](#real-time-ui-maintenance).
 
 | Authentication (AuthN)                                | Authorization (AuthZ)                            |
 |-------------------------------------------------------|--------------------------------------------------|
@@ -81,7 +81,6 @@ This README is too long & too technical, so I am working to simplify it and brea
       * [Permission Tuples (indices):](#permission-tuples-indices)
     * [Schema Tracking](#schema-tracking)
   * [Consistency Semantics](#consistency-semantics)
-  * [EACL Lookup Return Order vs. SpiceDB](#eacl-lookup-return-order-vs-spicedb)
   * [Performance](#performance)
   * [Formal Verification](#formal-verification)
   * [Example Schema](#example-schema)
