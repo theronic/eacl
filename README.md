@@ -392,7 +392,18 @@ definition document {
 
   permission view = owner + viewer + folder->view
   permission edit = owner + folder->edit
+}
 ```
+
+Basically, a user has documents and documents go in a folder. Folders can nest, i.e. they have a parent.
+
+You can view a document if you are the owner, a viewer, or if you can view the folder it's in.
+
+You can view a folder if you can view a parent folder (recursive schema).
+
+You can edit a document if you are the owner, or if you can edit the folder (or any of its parents).
+
+You can share documents or folders with others users by making the viewers, and the same recursive properties nest, i.e. if you give another user access to a root folder, they have access to all documents and folders under it.
 
 ## Modules
 
