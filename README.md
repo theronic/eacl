@@ -402,7 +402,7 @@ Unsupported modes by backend will return an error. Refer [Consistency and ZedTok
 
 ## Data Structures
 
-EACL co-exists with you data in Datomic, Datahike or DataScript. As a result, EACL installs and maintains some attributes in your data store, all of which are prefixed by `:eacl*`.
+EACL co-exists with your data in Datomic, Datahike or DataScript. As a result, EACL installs and maintains some attributes in your data store, all of which are prefixed by `:eacl*`.
 
 Presently, EACL Relationships are stored in history to support auditability, `d/as-of` & `at-exact-snapshot` semantics, but in a future version of EACL, history could be optional to save on storage, but then you lose time travel & auditability.
 
@@ -428,7 +428,7 @@ But you will probably forget, so there are helpers to clean up ghost tuples. Ref
 - `:eacl.relation/relation-name`
 - `:eacl.relation/subject-type`
 - `:eacl.relation/resource-type+relation-name+subject-type`
-- `:eacl/relation-version` is needed for cache coherence, and gets bumped on Relationship writes to prevent stale cache.
+- `:eacl/relation-version` is needed for cache coherence, and gets bumped on relevant Relationship writes to prevent stale cache.
 
 ### Permissions
 
@@ -448,12 +448,12 @@ But you will probably forget, so there are helpers to clean up ghost tuples. Ref
 
 ### Schema Tracking
 
-- `:eacl/id` uniquely identifies Relations & Permissions. It's a string to match SpiceDB IDs, but you can also use it for external ID. Some IDs, like are reserved, like in SpiceDB.
+- `:eacl/id` uniquely identifies Relations & Permissions. It's a string to match SpiceDB IDs, but you can also use it for external ID. Some IDs are reserved, like in SpiceDB.
 - `:eacl/schema-string` stores the valid schema string that was written via `eacl/write-schema!`.
-- `:eacl/schema-version` to track Datomic's schema revision.
+- `:eacl/schema-version` track the schema revision in Datomic Pro.
 - `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript.
-- `:eacl/storage-version` identifies Datomic's current Relationship storage model as version 7.
-- `:eacl.fn/assert-relation-unused` is Datomic's commit-time guard against removing a Relation with active Relationships.
+- `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
+- `:eacl.fn/assert-relation-unused` Transactor function is Datomic's commit-time guard against removing a Relation with active Relationships (avoids orphaned Relationships).
 
 ## Performance
 
@@ -468,50 +468,49 @@ But you will probably forget, so there are helpers to clean up ghost tuples. Ref
 ## Formal Verification
 
 - EACL is [formally verified](https://en.wikipedia.org/wiki/Formal_verification) using Dafny, TLA+/TLC, and Apalache, but has not independently audited or certified.
-- The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md). The engine is heavily tested to never say "yes" when it should say "no", and the cache will only use cached answers that proven to be valid for snapshot _S_ with basis _B_ at time _T_ to satisfy the requested consistency semantics.
+- The EACL kernel (decision engine + cache) is generated from [formal models](formal/README.md). The engine is heavily tested to never say "yes" when it should say "no", and the cache will only use cached answers that are proven to be valid for snapshot _S_ with basis _B_ at time _T_ to satisfy the requested consistency semantics.
 - Clojure/ClojureScript backend implementations are internally certified, but not generated from proofs.
-- EACL does not attempt to verify the correctness of its supported backends. That responsibility lies with the individual database authors.
+- EACL does not attempt to verify the correctness of its supported backends – that responsibility lies with the database authors.
 
 ## Example Schema
 
-Let's design a permission schema for a simple file system, similar to Google Drive, using the [SpiceDB schema DSL](https://authzed.com/docs/spicedb/concepts/schema):
+Let's design a simple permission schema for a Google Drive clone using the [SpiceDB schema DSL](https://authzed.com/docs/spicedb/concepts/schema):
 
 ```spicedb
 definition user {}
 
 definition folder {
-  relation owner: user
-  relation viewer: user
-  relation parent: folder
+  relation owner: user                             ; a folder as an ownerh
+  relation viewer: user                            ; a folder can have viewers, who may not be the owner
+  relation parent: folder                          ; a folder can have parent, i.e. nested file system
   
-  permission view = owner + viewer + parent->view
-  permission edit = owner + parent->edit
+  permission view = owner + viewer + parent->view  ; can view a folder as the owner, or view its parent 
+  permission edit = owner + parent->edit           ; you can edit a folder if you are the owner, or can edit its parent
 }
 
 definition document {
-  relation owner: user
-  relation viewer: user
-  relation folder: folder  
+  relation owner: user                             ; a document has an owner 
+  relation viewer: user                            ; a document can have viewers who aren't the owner
+  relation folder: folder                          ; a document belongs in a folder
 
-  permission view = owner + viewer + folder->view
-  permission edit = owner + folder->edit
+  permission view = owner + viewer + folder->view  ; you can view a document if you own it, ar a viewer or can view the parent folder 
+  permission edit = owner + folder->edit           ; you can edit a document if own it, or if you can edit the folder
 }
 ```
 
-Basically, a user has documents and documents go in a folder. Folders can nest, i.e. they have a parent.
+Basically, a user has documents and documents go in a folder. Folders can nest, i.e. folders have children.
 
 - You can `:view` a document if you are the owner, a viewer, or if you can view the folder it's in.
 - You can `:view` a folder if you can view a parent folder (recursive schema).
 - You can `:edit` a document if you are the owner, or if you can edit the folder (or any of its parents).
 
-You can share documents or folders with other users by making them a `viewer`, e.g. `(Relationship (->user "bob") :viewer (->folder "my-folder"))`.
+You can share documents or folders with other users by making them a `viewer` by adding `(Relationship (->user "bob") :viewer (->folder "my-folder"))`, to share `my-folder` with user "bob".
 
 Because of the recursive `view` permission, user `bob` can `:view` any nested files or folders under `my-folder`.  
 
 ## Modules
 
-Choose the adapter for your backend. It brings in the shared EACL module at
-the same version:
+EACL supports multiple backends. Each adapter will bring in the shared EACL engine:
 
 ```clojure
 ;; Datomic Pro
@@ -523,7 +522,7 @@ the same version:
 ;; DataScript
 {:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 
-;; Core-only consumers and backend authors
+;; Core-only consumers and backend authors (you typically won't need this)
 {:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
@@ -535,8 +534,6 @@ runtime as described below, then keep the same library coordinate and use
 {:deps {dev.eacl/eacl-datomic
         {:local/root "/absolute/path/to/eacl/core/modules/eacl-datomic"}}}
 ```
-
-<a id="source-dependencies-and-formal-tooling"></a>
 
 ### Development from source
 
