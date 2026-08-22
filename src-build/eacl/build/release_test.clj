@@ -26,7 +26,7 @@
                      :java-class-major-version
                      (config/java-class-major-version options)})]
       (release/build-set! {:version "8.1.0" :java-release 17})
-      (is (= config/module-order (mapv first @builds)))
+      (is (= config/release-module-order (mapv first @builds)))
       (is (every? #(= {:version "8.1.0" :java-release 17} (second %))
                   @builds)))))
 
@@ -54,7 +54,7 @@
             :version "8.1.0"
             :java-release 26
             :java-class-major-version 70})
-         config/module-order)]
+         config/release-module-order)]
     (testing "a local audit failure occurs before the first deploy call"
       (with-redefs [module/audit-built!
                     (fn [module-id _]
@@ -80,7 +80,7 @@
       :version "8.1.0"
       :java-release 26
       :java-class-major-version 70})
-   config/module-order))
+   config/release-module-order))
 
 (deftest every-local-release-failure-precedes-all-uploads
   (let [credentials {:username "theronic" :token "not-a-real-token"}]

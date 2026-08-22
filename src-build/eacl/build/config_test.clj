@@ -4,7 +4,7 @@
             [eacl.build.module :as module]))
 
 (deftest coordinated-module-identities-and-versions
-  (testing "the release set has exactly the requested dependency order"
+  (testing "the workspace has exactly the requested dependency order"
     (is (= [:eacl :eacl-datomic :eacl-datahike :eacl-datascript
             :eacl-datalevin]
            config/module-order))
@@ -15,6 +15,11 @@
              dev.eacl/eacl-datalevin]
            (mapv (comp :lib config/module) config/module-order)))
     (is (true? (config/assert-coordinate-set!))))
+  (testing "the release set excludes modules with unpublished dependencies"
+    (is (= [:eacl :eacl-datomic :eacl-datahike :eacl-datascript]
+           config/release-module-order))
+    (is (= :datalevin-fork-artifact-unpublished
+           (:release-blocker (config/module :eacl-datalevin)))))
   (testing "one version is applied to every transitive core edge"
     (doseq [module-id (rest config/module-order)]
       (is (= {:mvn/version "8.3.1"}
@@ -25,6 +30,7 @@
           dependencies
           (config/dependencies :eacl-datalevin "8.3.1")]
       (is (= "eacl/datalevin/core.cljc" (:required-entry module)))
+      (is (false? (:release-ready? module)))
       (is (= #{'org.clojure/clojure
                'dev.eacl/eacl
                'com.rpl/specter

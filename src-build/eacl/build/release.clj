@@ -33,7 +33,7 @@
     (module/assert-module-coordinates!)
     (mapv #(module/jar! % {:version version
                            :java-release java-release})
-          config/module-order)))
+          config/release-module-order)))
 
 (defn assert-release-set!
   [artifacts expected-version]
@@ -41,7 +41,7 @@
         (mapv
          (fn [module-id]
            [module-id (:lib (config/module module-id)) expected-version])
-         config/module-order)
+         config/release-module-order)
         actual
         (mapv (juxt :module-id :lib :version) artifacts)
         java-targets
@@ -221,7 +221,7 @@
     (try
       (doseq [artifact artifacts]
         (module/install-built! artifact local-repo))
-      (doseq [module-id config/module-order
+      (doseq [module-id config/release-module-order
               :let [project
                     (write-consumer!
                      consumer-root local-repo version module-id expected-major)

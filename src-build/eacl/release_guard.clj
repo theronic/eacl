@@ -9,7 +9,6 @@
     "isolated-modules (eacl-datomic)"
     "isolated-modules (eacl-datahike)"
     "isolated-modules (eacl-datascript)"
-    "isolated-modules (eacl-datalevin)"
     "dafny-and-generated-boundaries"
     "temporal-models"
     "parity-corpus-and-mutations"})
