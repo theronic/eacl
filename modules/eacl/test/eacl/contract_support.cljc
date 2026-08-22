@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
             [clojure.string :as str]
             [eacl.authorization-oracle :as oracle]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.spicedb.consistency :as consistency]))
@@ -928,9 +929,17 @@
         (eacl/create-relationship!
          client denied :auditor (folder 0))
         (let [after-unrelated-write
-              (eacl/lookup-resources client all-query)]
-          (is (true? (:cached? after-unrelated-write))
-              "an unrelated stamped write preserves the dependency frontier")
+              (eacl/lookup-resources client all-query)
+              ordered-proofs?
+              (contains?
+               (:cache-proofs
+                (snapshot-provider/capabilities
+                 (get-in client [:opts :snapshot-provider])))
+               :ordered-generations)]
+          (is (= ordered-proofs? (:cached? after-unrelated-write))
+              (if ordered-proofs?
+                "an unrelated stamped write preserves the dependency frontier"
+                "a backend without ordered proofs recomputes after any revision"))
           (is (= (mapv folder (range recursive-connected-folder-count))
                  (:data after-unrelated-write))))
 

@@ -25,6 +25,7 @@
             [eacl.datascript.contract-test]
             [eacl.datascript.impl-test]
             [eacl.datascript.safe-retraction-test]
+            [eacl.datascript.snapshot-lifecycle-test]
             [eacl.datascript.storage-test]))
 
 (nodejs/enable-util-print!)
@@ -63,6 +64,7 @@
                'eacl.datascript.contract-test
                'eacl.datascript.impl-test
                'eacl.datascript.safe-retraction-test
+               'eacl.datascript.snapshot-lifecycle-test
                'eacl.datascript.storage-test))
 
 (set! *main-cli-fn* -main)

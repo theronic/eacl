@@ -475,14 +475,6 @@
   (and (exact-integer? value)
        (not (neg? value))))
 
-(defn- strictly-ordered?
-  [direction values]
-  (or (< (count values) 2)
-      (every?
-       (fn [[left right]]
-         ((if (= :desc direction) > <) left right))
-       (partition 2 1 values))))
-
 (defn- within-bound?
   [direction bound inclusive? value]
   (if (= :desc direction)
@@ -499,33 +491,36 @@
     (when-not (sequential? value)
       (contract-violation!
        backend-id operation-key :finite-sequential-result value))
-    (let [values (vec value)]
-      (when-not (every? exact-integer? values)
-        (contract-violation!
-         backend-id operation-key :exact-integer values))
-      (when-not (every? exact-natural? values)
-        (contract-violation!
-         backend-id operation-key :nonnegative values))
-      (when-not (= (count values) (count (distinct values)))
-        (contract-violation!
-         backend-id operation-key :unique values))
-      (when-not (contains? #{:asc :desc} direction)
-        (contract-violation!
-         backend-id operation-key :known-direction direction))
-      (when-not (strictly-ordered? direction values)
-        (contract-violation!
-         backend-id operation-key :strict-order values))
-      (when (and (some? bound)
-                 (not
-                  (every?
-                   #(within-bound?
-                     direction bound inclusive? %)
-                   values)))
-        (contract-violation!
-         backend-id operation-key
-         :inclusive-exclusive-bound
-         {:options options :values values}))
-      value)))
+    (when-not (contains? #{:asc :desc} direction)
+      (contract-violation!
+       backend-id operation-key :known-direction direction))
+    (loop [remaining (seq value)
+           previous nil
+           first? true]
+      (if-not remaining
+        value
+        (let [item (first remaining)]
+          (when-not (exact-integer? item)
+            (contract-violation!
+             backend-id operation-key :exact-integer value))
+          (when-not (exact-natural? item)
+            (contract-violation!
+             backend-id operation-key :nonnegative value))
+          (when-not first?
+            (if (= previous item)
+              (contract-violation!
+               backend-id operation-key :unique value)
+              (when-not ((if (= :desc direction) > <) previous item)
+                (contract-violation!
+                 backend-id operation-key :strict-order value))))
+          (when (and (some? bound)
+                     (not (within-bound?
+                           direction bound inclusive? item)))
+            (contract-violation!
+             backend-id operation-key
+             :inclusive-exclusive-bound
+             {:options options :values value}))
+          (recur (next remaining) item false))))))
 
 (defn- guard-output!
   [adapter operation-key args value]

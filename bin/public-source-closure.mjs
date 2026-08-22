@@ -12,6 +12,7 @@ const sourcePaths = [
   "modules/eacl-datomic/src",
   "modules/eacl-datahike/src",
   "modules/eacl-datascript/src",
+  "modules/eacl-datalevin/src",
 ];
 const reportPath = "formal/verification/public-source-closure.json";
 const toolchainPath = "formal/toolchain.lock.json";
@@ -77,6 +78,15 @@ const roots = [
   "eacl.datascript.core/datascript-lookup-subjects",
   "eacl.datascript.core/datascript-count-subjects",
   "eacl.datascript.core/make-client",
+  "eacl.datalevin.core/datalevin-read-relationships",
+  "eacl.datalevin.core/datalevin-write-relationships!",
+  "eacl.datalevin.core/datalevin-delete-object!",
+  "eacl.datalevin.core/datalevin-can?",
+  "eacl.datalevin.core/datalevin-lookup-resources",
+  "eacl.datalevin.core/datalevin-count-resources",
+  "eacl.datalevin.core/datalevin-lookup-subjects",
+  "eacl.datalevin.core/datalevin-count-subjects",
+  "eacl.datalevin.core/make-client",
 ];
 const ignoredRuntimeNamespaces = new Set(["clojure.core", "cljs.core"]);
 

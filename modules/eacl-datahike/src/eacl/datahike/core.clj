@@ -62,6 +62,12 @@
    :entid ddb/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))
    :snapshot-adapter datahike-backend/snapshot-adapter
+   :snapshot-provider datahike-backend/provider
+   :db-native-revision
+   (fn [db]
+     {:revision (:max-tx db)
+      :exact-locator
+      (some-> (get-in db [:meta :datahike/commit-id]) str)})
    :relationship-retraction-count relationship-retraction-count
    :transact! transact-native!
    ;; Vars, not values: late binding keeps instrumentation (with-redefs in

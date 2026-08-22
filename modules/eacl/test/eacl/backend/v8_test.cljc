@@ -156,6 +156,27 @@
     (is (every? #(= :one (get-in % [3 :source-id]))
                 (keys @registry)))))
 
+(deftest unavailable-proof-uses-a-fresh-request-local-schema-cache-test
+  (let [registry (atom {})
+        adapter
+        (backend/make-adapter
+         {:id :test
+          :capabilities
+          {:consistency #{:fully-consistent}
+           :snapshots #{:current}
+           :cursor #{:forward :reverse}
+           :transactions #{}
+           :cache-proofs #{:snapshot-bound}
+           :runtime #{#?(:clj :clj :cljs :cljs)}}
+          :operations (operation-map)})
+        first-cache (engine/schema-cache-for! registry adapter)
+        second-cache (engine/schema-cache-for! registry adapter)]
+    (is (true? (:request-local? first-cache)))
+    (is (nil? (:schema-version first-cache)))
+    (is (some? (:parsed-schema first-cache)))
+    (is (not (identical? first-cache second-cache)))
+    (is (empty? @registry))))
+
 (deftest invalid-v8-adapter-test
   (is (= :eacl/invalid-backend-adapter
          (:type

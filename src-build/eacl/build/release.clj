@@ -15,7 +15,8 @@
   {:eacl 'eacl.core
    :eacl-datomic 'eacl.datomic.core
    :eacl-datahike 'eacl.datahike.core
-   :eacl-datascript 'eacl.datascript.core})
+   :eacl-datascript 'eacl.datascript.core
+   :eacl-datalevin 'eacl.datalevin.core})
 
 (defn- temporary-directory
   [prefix]
@@ -48,7 +49,7 @@
     (when-not (= expected actual)
       (throw
        (ex-info
-        "The release set must contain all four modules in dependency order."
+        "The release set must contain every coordinated module in dependency order."
         {:type :eacl.release/invalid-artifact-set
          :expected expected
          :actual actual})))
@@ -84,12 +85,58 @@
          :output output})))
     output))
 
+(def ^:private datalevin-jvm-options
+  ["--add-opens=java.base/java.lang=ALL-UNNAMED"
+   "--add-opens=java.base/java.nio=ALL-UNNAMED"
+   "--add-opens=java.base/java.util=ALL-UNNAMED"
+   "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+   "--enable-native-access=ALL-UNNAMED"])
+
+(defn- datalevin-smoke-source
+  []
+  (str
+   "  (let [dir (u/tmp-dir (str \"eacl-packaged-datalevin-\" (random-uuid)))\n"
+   "        conn (datalevin/create-conn dir)\n"
+   "        watermark (atom 0)]\n"
+   "    (try\n"
+   "      (let [client\n"
+   "            (datalevin/make-client\n"
+   "             conn\n"
+   "             {:security-key \"01234567890123456789012345678901\"\n"
+   "              :source-lifecycle \"packaged-smoke\"\n"
+   "              :revision-watermark watermark\n"
+   "              :advance-revision-watermark! #(swap! watermark max %)\n"
+   "              :datalevin-topology\n"
+   "              backend/certified-topology-declaration})\n"
+   "            alice (eacl/spice-object :user \"alice\")\n"
+   "            document (eacl/spice-object :document \"document-1\")]\n"
+   "        (eacl/write-schema!\n"
+   "         client\n"
+   "         \"definition user {}\\ndefinition document {\\n  relation viewer: user\\n  permission view = viewer\\n}\")\n"
+   "        (d/transact! conn [{:eacl/id \"alice\"}\n"
+   "                           {:eacl/id \"document-1\"}])\n"
+   "        (eacl/create-relationship! client alice :viewer document)\n"
+   "        (assert (true? (eacl/can? client alice :view document)))\n"
+   "        (assert (= {:active 0 :oldest-age-ms nil}\n"
+   "                   (d/active-read-snapshot-info))))\n"
+   "      (finally\n"
+   "        (d/close conn)\n"
+   "        (u/delete-files dir))))\n"))
+
 (defn- smoke-source
-  [entry-point expected-major]
+  [module-id entry-point expected-major]
   (str
    "(ns smoke\n"
    "  (:require [clojure.java.io :as io]\n"
-   "            [" entry-point "]\n"
+   (when-not (= :eacl-datalevin module-id)
+     (str "            [" entry-point "]\n"))
+   (when (= :eacl-datalevin module-id)
+     (str
+      "            [datalevin.core :as d]\n"
+      "            [datalevin.util :as u]\n"
+      "            [eacl.core :as eacl]\n"
+      "            [eacl.datalevin.backend :as backend]\n"
+      "            [eacl.datalevin.core :as datalevin]\n"))
    "            [eacl.formal.production-kernel])\n"
    "  (:import (java.io DataInputStream)\n"
    "           (dafny DafnySequence TypeDescriptor)\n"
@@ -112,23 +159,39 @@
    "         (biginteger 1))]\n"
    "    (assert (instance? WireResult_Accepted result))\n"
    "    (assert (= [7N] (mapv bigint (.dtor_items result)))))\n"
+   (when (= :eacl-datalevin module-id)
+     (datalevin-smoke-source))
    "  (println \"EACL Maven smoke passed\"))\n"))
 
 (defn- write-consumer!
   [consumer-root local-repo version module-id expected-major]
   (let [project (io/file consumer-root (name module-id))
         source-directory (io/file project "src")
-        {:keys [lib]} (config/module module-id)]
+        {:keys [lib]} (config/module module-id)
+        clojure-coordinate
+        (get (config/dependencies module-id version)
+             'org.clojure/clojure)]
     (.mkdirs source-directory)
     (spit
      (io/file project "deps.edn")
      (pr-str
       {:paths ["src"]
        :mvn/local-repo (.getCanonicalPath (io/file local-repo))
-       :deps {lib {:mvn/version version}}}))
+       ;; The installation-level Clojure CLI basis may carry a newer Clojure
+       ;; version. Pin the module's declared runtime so the smoke process
+       ;; exercises the packaged graph instead of silently selecting that
+       ;; installation default.
+       :deps {lib {:mvn/version version}
+              'org.clojure/clojure clojure-coordinate}
+       :aliases
+       {:smoke
+        (cond-> {}
+          (= :eacl-datalevin module-id)
+          (assoc :jvm-opts datalevin-jvm-options))}}))
     (spit
      (io/file source-directory "smoke.clj")
-     (smoke-source (consumer-entry-points module-id) expected-major))
+     (smoke-source
+      module-id (consumer-entry-points module-id) expected-major))
     project))
 
 (defn- assert-isolated-classpath!
@@ -166,7 +229,8 @@
                     (run-command!
                      project ["clojure" "-Srepro" "-Spath"])]]
         (assert-isolated-classpath! repository-root classpath)
-        (run-command! project ["clojure" "-Srepro" "-M" "-m" "smoke"]))
+        (run-command!
+         project ["clojure" "-Srepro" "-M:smoke" "-m" "smoke"]))
       true
       (finally
         (b/delete {:path (.getPath consumer-root)})

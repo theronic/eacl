@@ -157,6 +157,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # eacl-datalevin joins this matrix only after its maintained fork is
+        # published from an immutable public source commit.
         module: [eacl, eacl-datomic, eacl-datascript, eacl-datahike]
     runs-on: ubuntu-latest
     steps:

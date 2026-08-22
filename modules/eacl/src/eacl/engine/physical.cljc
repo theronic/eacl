@@ -11,6 +11,7 @@
   inside the classification boundary), or throws CANCELLED. Nil is never
   an outcome."
   (:require [clojure.string]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]))
 
@@ -285,19 +286,10 @@
                         :strict-progress? :atomic-response?
                         :failure-classification?]))
 
-(defn adapter-topology-capabilities
-  "The closed capability record of one adapter's topology, derived from the
-  execution profile the adapter declares (`eacl.backend.v8/traversal-execution`:
-  immutable basis reads and the strict/unique/replayable/progress/atomic scan
-  contract), its snapshot capabilities (exact selection), and the engine's
-  read boundary, which classifies every adapter failure
-  (`classified-fetch-fn`) so `:failure-classification?` holds for any adapter
-  read through it. Semantic concurrent-read safety and physical
-  cancellability stay conservative until the concurrency change certifies
-  them; deployment width is one."
-  [adapter]
+(defn- declared-topology-capabilities
+  [traversal-execution exact-basis-selection?]
   (let [{:keys [immutable-basis-reads? scan-contract concurrent-snapshot-reads]}
-        (backend/traversal-execution adapter)]
+        traversal-execution]
     (topology-capabilities
      {:immutable-basis? (boolean immutable-basis-reads?)
       :strict-scan-order? (boolean (:strict-order? scan-contract))
@@ -318,8 +310,31 @@
         :unknown)
       :semantic-concurrent-read-safe? false
       :deployment-width 1
-      :exact-basis-selection?
-      (boolean (backend/supports? adapter :snapshots :exact))})))
+      :exact-basis-selection? (boolean exact-basis-selection?)})))
+
+(defn adapter-topology-capabilities
+  "The closed capability record of one adapter's topology, derived from the
+  execution profile the adapter declares (`eacl.backend.v8/traversal-execution`:
+  immutable basis reads and the strict/unique/replayable/progress/atomic scan
+  contract), its snapshot capabilities (exact selection), and the engine's
+  read boundary, which classifies every adapter failure
+  (`classified-fetch-fn`) so `:failure-classification?` holds for any adapter
+  read through it. Semantic concurrent-read safety and physical
+  cancellability stay conservative until the concurrency change certifies
+  them; deployment width is one."
+  [adapter]
+  (declared-topology-capabilities
+   (backend/traversal-execution adapter)
+   (backend/supports? adapter :snapshots :exact)))
+
+(defn provider-topology-capabilities
+  "Derives stable-discovery qualifications from provider-static metadata.
+
+  This function never acquires or retains a request snapshot."
+  [provider]
+  (declared-topology-capabilities
+   (snapshot-provider/traversal-execution provider)
+   (snapshot-provider/supports? provider :snapshots :exact)))
 
 (defn require-qualified-topology!
   "Fails closed with `:eacl.topology/unqualified` when the adapter's derived
@@ -335,6 +350,23 @@
                        :eacl/error :eacl.topology/unqualified
                        :backend (backend/backend-id adapter)
                        :capabilities capabilities})))
+    capabilities))
+
+(defn require-qualified-provider-topology!
+  "Provider-static counterpart of `require-qualified-topology!`.
+
+  Client construction uses this boundary so topology validation cannot leak
+  or accidentally pin a request snapshot."
+  [provider]
+  (let [capabilities (provider-topology-capabilities provider)]
+    (when-not (stable-discovery-qualified? capabilities)
+      (throw
+       (ex-info
+        "This backend topology is not qualified for stable-discovery enumeration: its provider does not declare the strict, unique, replayable, strict-progress, atomic scan contract over an immutable basis."
+        {:type :eacl.topology/unqualified
+         :eacl/error :eacl.topology/unqualified
+         :backend (snapshot-provider/backend-id provider)
+         :capabilities capabilities})))
     capabilities))
 
 ;; ---------------------------------------------------------------------------

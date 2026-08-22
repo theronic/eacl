@@ -507,6 +507,7 @@
     :routing-schema-identity nil
     :plan-schema-identity schema-identity
     :request-local? true
+    :parsed-schema (atom nil)
     :permission-roots (atom {})
     :permission-paths (atom {})
     :traversal-permissions (atom {})
@@ -560,25 +561,31 @@
   immutable generation even if a later install evicts it from the registry."
   [registry snapshot]
   (let [schema-generation (schema-version snapshot)
-        key (schema-cache-key snapshot schema-generation)
-        existing (get @registry key)]
-    (if existing
-      existing
-      (let [created
-            (make-schema-cache
-             snapshot
-             schema-generation)
-            selected (volatile! created)]
-        (swap! registry
-               (fn [generations]
-                 (if-let [installed (get generations key)]
-                   (do
-                     (vreset! selected installed)
-                     generations)
-                   (trim-schema-generations
-                    (assoc generations key created)
-                    key))))
-        @selected))))
+        ;; Without a complete ordered-generation proof, cross-snapshot reuse
+        ;; must fail closed. A fresh request-local cache still avoids repeating
+        ;; pure schema derivations within this one immutable selected snapshot.
+        request-local? (nil? schema-generation)]
+    (if request-local?
+      (request-schema-cache snapshot)
+      (let [key (schema-cache-key snapshot schema-generation)
+            existing (get @registry key)]
+        (if existing
+          existing
+          (let [created
+                (make-schema-cache
+                 snapshot
+                 schema-generation)
+                selected (volatile! created)]
+            (swap! registry
+                   (fn [generations]
+                     (if-let [installed (get generations key)]
+                       (do
+                         (vreset! selected installed)
+                         generations)
+                       (trim-schema-generations
+                        (assoc generations key created)
+                        key))))
+            @selected))))))
 
 (defn- permission-paths-cache-key
   [resource-type permission-name]

@@ -238,10 +238,18 @@
       (some #(string/ends-with? entry-name %)
             [".clj" ".cljc" ".cljs" ".edn" ".xml"])))
 
+(def ^:private credential-patterns
+  [#"-----BEGIN (?:[A-Z]+ )?PRIVATE KEY-----"
+   #"AKIA[0-9A-Z]{16}"
+   #"gh[pousr]_[A-Za-z0-9_]{20,}"])
+
+(declare jar-entries)
+
 (defn- assert-no-workspace-content!
   [{:keys [root jar-file pom-file]}]
   (let [root-path (.getCanonicalPath ^java.io.File root)
-        forbidden [root-path "target/formal" "cloudafrica/"]
+        forbidden [root-path "target/formal" "cloudafrica/"
+                   "/Users/" "/home/" "C:\\Users\\"]
         pom (slurp pom-file)]
     (doseq [fragment forbidden]
       (when (string/includes? pom fragment)
@@ -267,8 +275,49 @@
                   {:type :eacl.build/workspace-content
                    :path jar-file
                    :entry entry-name
-                   :fragment fragment}))))))))
+                   :fragment fragment}))))
+            (doseq [pattern credential-patterns]
+              (when (re-find pattern content)
+                (throw
+                 (ex-info
+                  "Generated JAR contains credential-shaped material."
+                  {:type :eacl.build/credential-content
+                   :path jar-file
+                   :entry entry-name
+                   :pattern (str pattern)}))))))))
     true))
+
+(defn assert-adapter-jar-isolation!
+  "Rejects backend implementation or native payloads outside the selected
+  adapter's source namespace. Datalevin's native runtime belongs exclusively
+  to its pinned dependency artifact, never to the EACL adapter JAR."
+  [module-id jar-file]
+  (when (= :eacl-datalevin module-id)
+    (let [entries (jar-entries jar-file)
+          forbidden-prefixes
+          ["eacl/datomic/"
+           "eacl/datahike/"
+           "eacl/datascript/"
+           "datalevin/"
+           "org/bytedeco/"
+           "META-INF/native-image/"]
+          forbidden
+          (into
+           []
+           (filter
+            (fn [entry]
+              (and (not (string/ends-with? entry "/"))
+                   (some #(string/starts-with? entry %)
+                         forbidden-prefixes))))
+           entries)]
+      (when (seq forbidden)
+        (throw
+         (ex-info
+          "The Datalevin EACL adapter JAR contains another backend or native runtime payload."
+          {:type :eacl.build/backend-isolation-failed
+           :module module-id
+           :entries (vec (sort forbidden))})))))
+  true)
 
 (defn assert-generated-bytecode!
   ([class-root]
@@ -415,6 +464,7 @@
         missing (vec (sort (remove entries required)))]
     (assert-pom! module-id artifact)
     (assert-no-workspace-content! artifact)
+    (assert-adapter-jar-isolation! module-id jar-file)
     (when (seq missing)
       (throw
        (ex-info

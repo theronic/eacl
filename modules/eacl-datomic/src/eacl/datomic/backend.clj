@@ -2,6 +2,7 @@
   "Datomic's storage-specific implementation of the shared v8 snapshot
   adapter. Authorization graph algorithms remain outside this namespace."
   (:require [datomic.api :as d]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.backend.v8 :as backend]
             [eacl.datomic.db :as ddb])
   (:import [java.util UUID]
@@ -514,3 +515,43 @@
         :proof-frame
         (fn [relation-ids]
           (ordered-generation-frame db relation-ids))}}))))
+
+(defn provider
+  "Builds the borrowed immutable-snapshot provider for one Datomic conn."
+  [conn opts]
+  (let [adapter-fn
+        (or (:backend-adapter-fn opts)
+            #(snapshot-adapter % (assoc opts :conn conn)))
+        current-adapter
+        (fn [] (adapter-fn (d/db conn)))
+        static-adapter (current-adapter)
+        source-scope (backend/invoke static-adapter :source-scope)
+        source-lifecycle
+        (fn []
+          (or (some-> (:source-lifecycle-state opts) deref)
+              (:source-lifecycle opts)))
+        select!
+        (fn [operation-key & args]
+          (let [selected
+                (apply backend/invoke
+                       (current-adapter) operation-key args)]
+            (or selected
+                (throw
+                 (ex-info
+                  "The requested Datomic snapshot is unavailable."
+                  {:type :eacl.consistency/exact-snapshot-unavailable
+                   :eacl/error :eacl.consistency/exact-snapshot-unavailable
+                   :backend :datomic})))))]
+    (snapshot-provider/borrowed-adapter-provider
+     {:static-adapter static-adapter
+      :topology {:deployment :embedded-or-peer
+                 :snapshot-values :immutable}
+      :source-scope-fn (constantly source-scope)
+      :source-lifecycle-fn source-lifecycle
+      :acquire-current! current-adapter
+      :acquire-authoritative!
+      #(select! :select-authoritative %)
+      :acquire-at-least!
+      #(select! :select-at-least %1 %2)
+      :acquire-exact!
+      #(select! :select-exact %1 %2)})))

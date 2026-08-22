@@ -5,13 +5,18 @@
  ["modules/eacl/src"
   "modules/eacl-datomic/src"
   "modules/eacl-datahike/src"
-  "modules/eacl-datascript/src"]
+  "modules/eacl-datascript/src"
+  "modules/eacl-datalevin/src"]
  :runtime-passes
  {:clj
-  {;; 59 -> 61 (2026-08-20): eacl.engine.least-path/adapter-fetch-fn
-   ;; adds one :subject->resources and one :resource->subjects literal
-   ;; dispatch (the direction-aware keyset seam); no new operations.
-   :invoke-call-count 61
+  {;; 61 -> 75 (2026-08-22): snapshot-provider-backed consistency
+   ;; selection adds fourteen literal adapter observations while moving
+   ;; acquisition/release ownership behind the provider and cross-checking
+   ;; native revision against both order and exact locators; no new operations.
+   ;; 75 -> 77 (2026-08-22): the synchronous composed-snapshot view captures
+   ;; its fixed provider's source scope and lifecycle through the same literal,
+   ;; guarded dispatch boundary; again, no new operation keys are introduced.
+   :invoke-call-count 77
    :operations
    #{:snapshot-id
      :source-scope
@@ -33,7 +38,7 @@
      :all-permission-nodes
      :proof-frame}}
   :cljs
-  {:invoke-call-count 61
+  {:invoke-call-count 77
    :operations
    #{:snapshot-id
      :source-scope

@@ -38,6 +38,11 @@
    :entid ds/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (ds/entity db eid)))
    :snapshot-adapter datascript-backend/snapshot-adapter
+   :snapshot-provider datascript-backend/provider
+   :db-native-revision
+   (fn [db]
+     {:revision (:max-tx db)
+      :exact-locator nil})
    :native-source-id datascript-backend/connection-source-id
    :relationship-retraction-count relationship-retraction-count
    :transact! transact-native!

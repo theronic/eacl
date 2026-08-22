@@ -5,12 +5,14 @@
 
 (deftest coordinated-module-identities-and-versions
   (testing "the release set has exactly the requested dependency order"
-    (is (= [:eacl :eacl-datomic :eacl-datahike :eacl-datascript]
+    (is (= [:eacl :eacl-datomic :eacl-datahike :eacl-datascript
+            :eacl-datalevin]
            config/module-order))
     (is (= '[dev.eacl/eacl
              dev.eacl/eacl-datomic
              dev.eacl/eacl-datahike
-             dev.eacl/eacl-datascript]
+             dev.eacl/eacl-datascript
+             dev.eacl/eacl-datalevin]
            (mapv (comp :lib config/module) config/module-order)))
     (is (true? (config/assert-coordinate-set!))))
   (testing "one version is applied to every transitive core edge"
@@ -18,6 +20,25 @@
       (is (= {:mvn/version "8.3.1"}
              (get (config/dependencies module-id "8.3.1")
                   'dev.eacl/eacl)))))
+  (testing "the Datalevin module pins the maintained fork exactly"
+    (let [module (config/module :eacl-datalevin)
+          dependencies
+          (config/dependencies :eacl-datalevin "8.3.1")]
+      (is (= "eacl/datalevin/core.cljc" (:required-entry module)))
+      (is (= #{'org.clojure/clojure
+               'dev.eacl/eacl
+               'com.rpl/specter
+               'dev.eacl/datalevin-embedded-eacl}
+             (set (keys dependencies))))
+      (is (= {:mvn/version "1.0.2-eacl.1"}
+             (get dependencies
+                  'dev.eacl/datalevin-embedded-eacl)))
+      (is (not-any?
+           #(contains? dependencies %)
+           '[com.datomic/peer
+             org.replikativ/datahike
+             datascript/datascript
+             org.datalevin/datalevin-embedded]))))
   (testing "local and explicit versions are validated"
     (is (= config/default-version (config/version {})))
     (is (= "8.1.0" (config/version {:version "8.1.0"})))

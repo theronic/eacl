@@ -149,6 +149,50 @@
   Omitted or nil consistency defaults to :minimize-latency."
   (-check-permission [this demand]))
 
+(defprotocol ISnapshotAuthorization
+  "Optional synchronous composition boundary for multiple read operations that
+  must observe one selected immutable backend snapshot."
+  (-with-snapshot [this consistency request-options f]))
+
+(defn with-snapshot
+  "Runs `f` synchronously with a read-only authorization view fixed to one
+  selected immutable snapshot.
+
+  The view must not escape `f`, rejects writes and cross-thread use, and fails
+  deterministically after scope exit. Omitted consistency uses
+  :minimize-latency. Backends that do not implement the lifecycle boundary fail
+  with a typed unsupported-capability error.
+
+  The four-argument form accepts one request-options map (for example
+  :timeout-ms and :cancellation-token) whose execution budget covers snapshot
+  selection and every nested read."
+  ([authorization f]
+   (with-snapshot authorization nil {} f))
+  ([authorization consistency f]
+   (with-snapshot authorization consistency {} f))
+  ([authorization consistency request-options f]
+   (when-not (map? request-options)
+     (throw
+      (ex-info
+       "with-snapshot request options must be a map."
+       {:type :eacl/invalid-snapshot-request-options
+        :eacl/error :eacl/invalid-snapshot-request-options
+        :value request-options})))
+   (when-not (fn? f)
+     (throw
+      (ex-info
+       "with-snapshot requires a synchronous callback."
+       {:type :eacl/invalid-snapshot-callback
+        :eacl/error :eacl/invalid-snapshot-callback})))
+   (if (satisfies? ISnapshotAuthorization authorization)
+     (-with-snapshot authorization consistency request-options f)
+     (throw
+      (ex-info
+       "This authorization implementation has no composable snapshot lifecycle."
+       {:type :eacl/unsupported-capability
+        :eacl/error :eacl/unsupported-capability
+        :capability :snapshot-composition})))))
+
 (defn check-permission
   "Returns an authorization decision with cache provenance.
 

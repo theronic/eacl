@@ -287,6 +287,8 @@
   [adapter]
   (fn [{:keys [operation bound-eid] :as descriptor}]
     (let [options (cond-> {:direction :asc}
+                    (:limit descriptor)
+                    (assoc :limit (:limit descriptor))
                     bound-eid (assoc :bound-eid bound-eid
                                      :inclusive-bound? false))]
       (case operation

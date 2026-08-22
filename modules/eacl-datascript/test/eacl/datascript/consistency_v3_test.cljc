@@ -354,9 +354,9 @@
     (is (= :eacl/invalid-config (:type removed-option-error)))
     (is (= [:exact-snapshot-registry-size]
            (:unknown-keys removed-option-error)))
-    (is (= :eacl/unsupported-capability (:type exact-error)))
-    (is (= :consistency (:capability exact-error)))
-    (is (= :at-exact-snapshot (:requested exact-error)))
+    (is (= :eacl.consistency/exact-snapshot-unavailable
+           (:type exact-error)))
+    (is (= :exact-snapshot-unavailable (:reason exact-error)))
     (is (= before after)
         "unsupported exact selection must fail before cache access")))
 
@@ -464,7 +464,7 @@
          (:cached?
           (eacl/lookup-resources authorization query))))
     (eacl/delete-relationship! authorization relationship)
-    (is (= :eacl/unsupported-capability
+    (is (= :eacl.consistency/exact-snapshot-unavailable
            (:type
             (error-data
              #(eacl/can?
