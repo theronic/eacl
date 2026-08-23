@@ -71,7 +71,7 @@
   nil)
 
 (def ^:private relay-page-keys
-  #{:first :last :after :before :consistency :cache?
+  #{:first :last :after :before :consistency :cache? :populate-cache?
     :cancellation-token})
 
 (def ^:private cursor-transport-keys
@@ -79,7 +79,7 @@
   caller-controlled so one boundary cursor can support forward and backward
   navigation. Consistency, principal, permission, filters, and resource type
   remain part of the authenticated semantic scope."
-  #{:first :last :after :before :cache? :timeout-ms
+  #{:first :last :after :before :cache? :populate-cache? :timeout-ms
     :cancellation-token})
 
 (def cursor-emission-order-version
@@ -120,7 +120,7 @@
                 (proof-frame/request-frame adapter)))
             proof (proof-frame/resolve! frame [])]
         (when (proof-frame/complete? proof)
-          (:schema-stamp proof))))))
+          (:schema-generation proof))))))
 
 (defn- plain-scope-object
   [object]
@@ -311,7 +311,8 @@
   [adapter opts operation query page]
   (let [cache (:page-navigation-cache opts)]
     (execution/check! (:execution-contract opts) :page-cache-publication)
-    (when (page-cache-enabled? cache opts)
+    (when (and (:populate-cache-request? opts true)
+               (page-cache-enabled? cache opts))
       (when-not (instance? PageNavigationCache cache)
         (throw
          (ex-info

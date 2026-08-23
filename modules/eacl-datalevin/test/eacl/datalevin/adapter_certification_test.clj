@@ -52,6 +52,14 @@
                         :runtime :clj})]
                   (is (some? (v8/invoke adapter :schema-generation)))
                   (is (:passed? report) (pr-str (:checks report)))
+                  (is (= :not-claimed
+                         (:status
+                          (certification/certify-ordered-generation-transition!
+                           {:before-adapter adapter
+                            :after-adapter adapter
+                            :relation-ids []
+                            :affected-relation-ids []})))
+                      "the executable temporal gate records Datalevin's current conservative non-claim")
                   (testing "persistent Datalevin transaction IDs are not exposed as proof generations"
                     (is (= #{:snapshot-bound :database-visible}
                            (:cache-proofs (v8/capabilities adapter))))
@@ -69,3 +77,25 @@
           (finally
             (d/close conn)
             (u/delete-files dir)))))))
+
+(deftest datalevin-durable-source-identity-certification-test
+  (let [dir (u/tmp-dir (str "eacl-datalevin-source-cert-" (random-uuid)))
+        first-conn (datalevin/create-conn dir)
+        first-scope
+        {:source-id (backend/connection-source-id first-conn)
+         :branch nil}]
+    (d/close first-conn)
+    (let [second-conn (datalevin/create-conn dir)]
+      (try
+        (is (= :certified
+               (:status
+                (certification/certify-live-source-identity!
+                 {:backend :datalevin
+                  :durability :durable
+                  :first-scope first-scope
+                  :second-scope
+                  {:source-id (backend/connection-source-id second-conn)
+                   :branch nil}}))))
+        (finally
+          (d/close second-conn)
+          (u/delete-files dir))))))

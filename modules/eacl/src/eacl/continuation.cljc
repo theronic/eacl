@@ -227,7 +227,8 @@
   ([store adapter operation query-identity]
    (private-context store adapter operation query-identity {}))
   ([store adapter operation query-identity
-    {:keys [snapshot-identity request-proof-frame]}]
+    {:keys [snapshot-identity request-proof-frame populate-cache?]
+     :or {populate-cache? true}}]
    (when store
      (let [basis-identity (:basis-identity request-proof-frame)
            scope
@@ -258,7 +259,7 @@
                   (proof-frame/resolve!
                    frame [])]
               (when (proof-frame/complete? proof)
-                (:schema-stamp proof)))
+                (:schema-generation proof)))
             :snapshot-identity
             (or snapshot-identity
                 {:kind :exact
@@ -280,25 +281,28 @@
             (evict! store (key-for :acyclic-continuation edge)))))
         :put!
         (fn [edge value weight]
-          (put!
-           store :recursive-continuation
-           (key-for :recursive-continuation edge)
-           value weight))
+          (and populate-cache?
+               (put!
+                store :recursive-continuation
+                (key-for :recursive-continuation edge)
+                value weight)))
         :get-page
         #(get! store :recursive-page
                (key-for :recursive-page %))
         :put-page!
         (fn [page-key value weight]
-          (put!
-           store :recursive-page
-           (key-for :recursive-page page-key)
-           value weight))
+          (and populate-cache?
+               (put!
+                store :recursive-page
+                (key-for :recursive-page page-key)
+                value weight)))
         :get-heads
         #(get! store :acyclic-continuation
                (key-for :acyclic-continuation %))
         :put-heads!
         (fn [edge value weight]
-          (put!
-           store :acyclic-continuation
-           (key-for :acyclic-continuation edge)
-           value weight))})))))
+          (and populate-cache?
+               (put!
+                store :acyclic-continuation
+                (key-for :acyclic-continuation edge)
+                value weight)))})))))

@@ -4,7 +4,8 @@
 (def ^:private endpoint-keys #{:type :id :relation})
 (def ^:private page-control-keys
   #{:first :last :after :before :cursor :limit :page/basis
-    :consistency :cache? :evaluation :timeout-ms :cancellation-token
+    :consistency :cache? :populate-cache? :evaluation
+    :timeout-ms :cancellation-token
     :aggregate-limits})
 (def ^:private lookup-resource-keys
   (into page-control-keys

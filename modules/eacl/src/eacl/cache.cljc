@@ -53,6 +53,18 @@
                      :value cache-option})))
   cache-option)
 
+(defn validate-request-populate-option!
+  "Validates the per-request `:populate-cache?` publication control."
+  [populate-option]
+  (when-not (or (nil? populate-option) (boolean? populate-option))
+    (throw
+     (ex-info
+      "EACL Error: per-request :populate-cache? must be true or false."
+      {:type :eacl/invalid-request :eacl/error :eacl/invalid-request
+       :key :populate-cache?
+       :value populate-option})))
+  populate-option)
+
 (defn lookup-page-query-identity
   "Builds the semantic cache identity for an authenticated lookup page.
 
@@ -64,17 +76,21 @@
   [public-query internal-query]
   {:public
    (dissoc public-query
-           :consistency :cache? :after :before :cancellation-token)
+           :consistency :cache? :populate-cache?
+           :after :before :cancellation-token)
    :internal
-   (dissoc internal-query :consistency :cache? :cancellation-token)})
+   (dissoc internal-query
+           :consistency :cache? :populate-cache? :cancellation-token)})
 
 (defrecord ExactGeneration [snapshot order subproblems last-used])
 (defrecord ManagedGeneration
-           [generation-key schema-stamp installed-order subproblems last-used])
+           [generation-key schema-generation subproblems last-used])
 (defrecord CacheLifecycle [bases managed])
 (defrecord BasisCache [lifecycle metrics max-entries admissions
                                    admit-on-repeat? subproblem-options
-                                   retained-bases])
+                                   retained-bases managed-lifting-disabled?
+                                   reported-contract-violations
+                                   proof-contract-reporter])
 
 (defn- new-lifecycle
   [subproblem-options]
@@ -265,7 +281,8 @@
   second-sighting window (default 1024), its historical admission role."
   ([]
    (basis-cache {}))
-  ([{:keys [max-entries admit-on-repeat? subproblem-cache retained-bases]
+  ([{:keys [max-entries admit-on-repeat? subproblem-cache retained-bases
+            proof-contract-reporter]
      :or {max-entries 1024
           admit-on-repeat? false
           retained-bases 4
@@ -287,6 +304,12 @@
      (throw (ex-info "Basis cache :subproblem-cache must be a map."
                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                       :subproblem-cache subproblem-cache})))
+   (when-not (or (nil? proof-contract-reporter)
+                 (fn? proof-contract-reporter))
+     (throw
+      (ex-info "Basis cache :proof-contract-reporter must be a function."
+               {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                :proof-contract-reporter proof-contract-reporter})))
    (when-not (boolean? (get subproblem-cache :enabled? true))
      (throw (ex-info "Basis cache subproblem :enabled? must be boolean."
                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
@@ -302,13 +325,18 @@
            :stamp-failures 0
            :proof-unavailable 0
            :proof-unavailable-reasons {}
+           :proof-contract-violations 0
+           :proof-contract-violation-reasons {}
            :puts 0
            :expirations 0})
     max-entries
     (atom empty-answer-sightings)
     admit-on-repeat?
     subproblem-cache
-    retained-bases)))
+    retained-bases
+    (atom false)
+    (atom #{})
+    proof-contract-reporter)))
 
 (defn basis-cache?
   [value]
@@ -336,12 +364,14 @@
   `no-cache` disables it. Cache stores are client-private and cannot be
   supplied by applications. A closed config map contributes only the four
   documented capacity/admission settings."
-  [value]
-  (cond
+  ([value]
+   (basis-cache-for-option value {}))
+  ([value {:keys [proof-contract-reporter]}]
+   (cond
     (no-cache? value) nil
 
     (nil? value)
-    (basis-cache)
+    (basis-cache {:proof-contract-reporter proof-contract-reporter})
 
     (basis-cache? value)
     (invalid-cache-option!
@@ -372,12 +402,14 @@
          {:reason :unknown-cache-options
           :unknown-keys (vec unknown)
           :known-keys cache-option-keys}))
-      (basis-cache value))
+      (basis-cache (assoc value
+                          :proof-contract-reporter
+                          proof-contract-reporter)))
 
     :else
     (invalid-cache-option!
      "EACL :cache must be a configuration map or eacl.cache/no-cache."
-     value {:reason :unsupported-provider-store})))
+     value {:reason :unsupported-provider-store}))))
 
 (defn- merge-stat-values
   [left right]
@@ -418,6 +450,8 @@
            (subproblem/store
             (dissoc (:subproblem-options store) :enabled?))))]
     (assoc @(:metrics store)
+           :managed-lifting-disabled?
+           @(:managed-lifting-disabled? store)
            :exact-entries
            (reduce + 0 (map #(get-in % [:tiers :answer :entries] 0)
                             exact-stats))
@@ -466,6 +500,49 @@
                             (fnil inc 0))))))
   nil)
 
+(defn record-proof-diagnostic!
+  "Records a typed proof outcome and disables managed lifting on violations.
+
+  A reporter is invoked at most once for each reason in one cache lifecycle;
+  reporter failures never change authorization or cache decisions."
+  [store {:keys [status reason] :as diagnostic}]
+  (when store
+    (when-not (basis-cache? store)
+      (throw (ex-info "Expected an EACL basis cache."
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                       :cache store})))
+    (case status
+      :unavailable
+      (record-proof-unavailable! store diagnostic)
+
+      :contract-violation
+      (do
+        (reset! (:managed-lifting-disabled? store) true)
+        (swap! (:metrics store)
+               (fn [metrics]
+                 (-> metrics
+                     (update :proof-contract-violations inc)
+                     (update-in [:proof-contract-violation-reasons reason]
+                                (fnil inc 0)))))
+        (when (and (:proof-contract-reporter store)
+                   (not (contains? @(:reported-contract-violations store)
+                                   reason)))
+          (let [report? (volatile! false)]
+            (swap! (:reported-contract-violations store)
+                   (fn [reported]
+                     (if (contains? reported reason)
+                       reported
+                       (do (vreset! report? true)
+                           (conj reported reason)))))
+            (when @report?
+              (try
+                ((:proof-contract-reporter store) diagnostic)
+                (catch #?(:clj Throwable :cljs :default) _)))))
+        nil)
+
+      nil))
+  nil)
+
 (defn capture-cache-lifecycle
   "Captures the cache lifecycle object at a public request boundary.
 
@@ -492,6 +569,8 @@
                      :cache store})))
   (reset! (:lifecycle store) (new-lifecycle (:subproblem-options store)))
   (reset! (:admissions store) empty-answer-sightings)
+  (reset! (:managed-lifting-disabled? store) false)
+  (reset! (:reported-contract-violations store) #{})
   (swap! (:metrics store) update :expirations inc)
   nil)
 
@@ -530,17 +609,31 @@
            {:tick tick :generations generations})))
       {:generation @selected :active? true})))
 
+(defn- select-exact-generation!
+  "Selects an existing exact generation for read-only requests; installs one
+  only when publication is enabled."
+  [store lifecycle basis-key snapshot order populate?]
+  (if populate?
+    (install-exact-generation! store lifecycle basis-key snapshot order)
+    {:generation
+     (when (valid-exact-basis-key? basis-key)
+       (get-in @(:bases lifecycle) [:generations basis-key]))
+     :active? (valid-exact-basis-key? basis-key)}))
+
 (defn- managed-generation-key
-  [source-scope schema-stamp]
-  (when (and (map? source-scope)
-             (keyword? (:backend source-scope))
-             (some? (:source-id source-scope))
-             (some? (:source-lifecycle source-scope))
-             (subproblem/proof-stamp? schema-stamp))
-    {:source-scope
-     (select-keys source-scope
-                  [:backend :source-id :branch :source-lifecycle])
-     :schema-stamp schema-stamp}))
+  [lineage schema-generation]
+  (when (and (map? lineage)
+             (map? (:source-scope lineage))
+             (keyword? (get-in lineage [:source-scope :backend]))
+             (some? (get-in lineage [:source-scope :source-id]))
+             (some? (:source-lifecycle lineage))
+             (subproblem/proof-stamp? schema-generation))
+    {:lineage
+     {:source-scope
+      (select-keys (:source-scope lineage)
+                   [:backend :source-id :branch])
+      :source-lifecycle (:source-lifecycle lineage)}
+     :schema-generation schema-generation}))
 
 (defn- install-managed-generation!
   "Installs or touches one lineage-and-schema managed generation.
@@ -548,9 +641,9 @@
   Revision order is recorded only for diagnostics. It is never an admission
   predicate: equal complete schema and dependency frontiers prove an equal
   deterministic answer in either revision direction."
-  [store lifecycle source-scope schema-stamp order]
+  [store lifecycle lineage schema-generation]
   (when-let [generation-key
-             (managed-generation-key source-scope schema-stamp)]
+             (managed-generation-key lineage schema-generation)]
     (let [selected (volatile! nil)]
       (swap!
        (:managed lifecycle)
@@ -561,8 +654,7 @@
                  (assoc existing :last-used tick)
                  (->ManagedGeneration
                   generation-key
-                  schema-stamp
-                  order
+                  schema-generation
                   (subproblem/store
                    (dissoc (:subproblem-options store) :enabled?))
                   tick))
@@ -583,16 +675,28 @@
            {:tick tick :generations generations})))
       @selected)))
 
+(defn- select-managed-generation!
+  "Selects an existing lineage generation without creating it for read-only
+  requests."
+  [store lifecycle lineage schema-generation populate?]
+  (if populate?
+    (install-managed-generation!
+     store lifecycle lineage schema-generation)
+    (when-let [generation-key
+               (managed-generation-key lineage schema-generation)]
+      (get-in @(:managed lifecycle) [:generations generation-key]))))
+
 (defn- valid-managed-descriptor?
   [descriptor]
-  (let [{:keys [schema-stamp dependency-stamp]} descriptor]
+  (let [{:keys [schema-generation dependency-stamp]} descriptor]
     (and (map? descriptor)
-         (subproblem/proof-stamp? schema-stamp)
+         (subproblem/proof-stamp? schema-generation)
          (subproblem/proof-stamp? dependency-stamp))))
 
 (defn- managed-descriptor
   [store managed-key-fn]
-  (when managed-key-fn
+  (when (and managed-key-fn
+             (not @(:managed-lifting-disabled? store)))
     (try
       (let [descriptor (managed-key-fn)]
         (when (valid-managed-descriptor? descriptor)
@@ -616,8 +720,10 @@
   generation selected by the complete basis identity."
   [store
    {:keys [snapshot snapshot-order exact-basis-key cache-basis
-           cache-lifecycle decision-kernel remember-answer? answer-weight-fn]
-    :or {remember-answer? true}}
+           cache-lifecycle decision-kernel remember-answer? answer-weight-fn
+           populate-cache?]
+    :or {remember-answer? true
+         populate-cache? true}}
    semantic-key kind valid-value? compute]
   (when-not (fn? compute)
     (throw (ex-info "Exact-basis cache computation must be a function."
@@ -647,13 +753,15 @@
                       (get-in exact-basis-key
                               [:basis-identity :revision]))
             {:keys [generation]}
-            (install-exact-generation!
-             store lifecycle exact-basis-key snapshot order)
+            (select-exact-generation!
+             store lifecycle exact-basis-key snapshot order populate-cache?)
             answer-store (:subproblems generation)
             entry-key [semantic-key kind]
-            answer-options (answer-entry-options valid-value? answer-weight-fn)
+            answer-options
+            (assoc (answer-entry-options valid-value? answer-weight-fn)
+                   :populate? populate-cache?)
             exact-entry
-            (when remember-answer?
+            (when (and remember-answer? answer-store)
               (:value
                (subproblem/lookup!
                 answer-store :answer entry-key answer-options)))
@@ -663,7 +771,8 @@
             evaluate-entry
             (fn []
               {:value
-               (binding [subproblem/*store*
+               (binding [subproblem/*populate?* populate-cache?
+                         subproblem/*store*
                          (when (get (:subproblem-options store)
                                     :enabled? true)
                            answer-store)
@@ -685,6 +794,8 @@
         (if (= :use-exact-entry exact-action)
           (hit exact-entry)
           (if (and remember-answer?
+                   answer-store
+                   populate-cache?
                    (admit-answer?
                     store [:exact-basis exact-basis-key entry-key]))
             (let [resolved
@@ -727,9 +838,11 @@
            cache-lifecycle
            managed-key-fn
            managed-subproblem-key-fn managed-subproblem-scope
-           decision-kernel remember-answer? answer-weight-fn]
+           decision-kernel remember-answer? answer-weight-fn
+           populate-cache?]
     :or {cacheable? true
-         remember-answer? true}}
+         remember-answer? true
+         populate-cache? true}}
    semantic-key kind valid-value? compute]
   (when-not (fn? compute)
     (throw (ex-info "Basis cache computation must be a function."
@@ -765,8 +878,9 @@
                          :snapshot-order snapshot-order})))
       (let [lifecycle (or cache-lifecycle @(:lifecycle store))
             {:keys [generation active?]}
-            (install-exact-generation!
-             store lifecycle exact-basis-key snapshot snapshot-order)
+            (select-exact-generation!
+             store lifecycle exact-basis-key snapshot snapshot-order
+             populate-cache?)
             entry-key [semantic-key kind]
             admission-key [:exact-basis exact-basis-key entry-key]]
         (if (= :bypass-current-cache
@@ -787,9 +901,10 @@
              :cache-basis nil})
           (let [answer-store (:subproblems generation)
                 answer-options
-                (answer-entry-options valid-value? answer-weight-fn)
+                (assoc (answer-entry-options valid-value? answer-weight-fn)
+                       :populate? populate-cache?)
                 exact-entry
-                (when remember-answer?
+                (when (and remember-answer? answer-store)
                   (:value
                    (subproblem/lookup!
                     answer-store :answer entry-key answer-options)))
@@ -804,14 +919,14 @@
                  :cache-tier :exact-basis
                  :cache-basis (:cache-basis exact-entry)
                  :subproblem-store answer-store})
-              (let [{:keys [schema-stamp dependency-stamp]}
+              (let [{:keys [schema-generation dependency-stamp]}
                     (managed-descriptor
                      store managed-key-fn)
                     managed-generation
-                    (when (some? schema-stamp)
-                      (install-managed-generation!
+                    (when (some? schema-generation)
+                      (select-managed-generation!
                        store lifecycle managed-subproblem-scope
-                       schema-stamp snapshot-order))
+                       schema-generation populate-cache?))
                     managed-store (:subproblems managed-generation)
                     managed-entry-key
                     (when managed-generation
@@ -830,10 +945,11 @@
                   ;; Promote the still-valid managed answer into the selected
                   ;; exact generation so the next identical request hits
                   ;; without dependency-stamp extraction.
-                    (subproblem/resolve-independent!
-                     answer-store :answer entry-key answer-options
-                     (fn [] managed-entry))
-                    (swap! (:metrics store) update :puts inc)
+                    (when (and populate-cache? answer-store)
+                      (subproblem/resolve-independent!
+                       answer-store :answer entry-key answer-options
+                       (fn [] managed-entry))
+                      (swap! (:metrics store) update :puts inc))
                     (swap! (:metrics store) update :managed-hits inc)
                     {:value (:value managed-entry)
                      :cached? true
@@ -845,7 +961,8 @@
                         compute-entry
                         (fn []
                           {:value
-                           (binding [subproblem/*store*
+                           (binding [subproblem/*populate?* populate-cache?
+                                     subproblem/*store*
                                      (when subproblems-enabled?
                                        answer-store)
                                      subproblem/*managed-store*
@@ -869,6 +986,8 @@
                               answer-options compute-entry))
                             (compute-entry)))]
                     (if (and remember-answer?
+                             answer-store
+                             populate-cache?
                              (admit-answer? store admission-key))
                       (let [resolved
                             (subproblem/resolve-independent!

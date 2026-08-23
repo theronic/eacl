@@ -8,6 +8,10 @@ module ScalarFrontierCoherence {
     authorizationSlice: set<nat>
   )
 
+  // `lifecycle` abstracts the runtime lineage key: the complete source scope
+  // (backend, persisted or per-live-source id, branch) paired with the
+  // operator-rotated source lifecycle. Equality is required before two
+  // snapshots can inhabit one supported history.
   datatype Snapshot = Snapshot(
     lifecycle: nat,
     transaction: Transaction,

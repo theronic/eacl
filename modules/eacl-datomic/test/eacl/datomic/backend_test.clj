@@ -76,11 +76,8 @@
               :direct-match?
               :user alice relation-id :account account)))
         (let [proof (backend/invoke adapter :proof-frame [relation-id])]
-          (is (= #{:schema-stamp :relation-stamps}
-                 (set (keys proof))))
-          (is (integer? (:schema-stamp proof)))
-          (is (= relation-id (ffirst (:relation-stamps proof))))
-          (is (integer? (second (first (:relation-stamps proof))))))
+          (is (= relation-id (ffirst proof)))
+          (is (integer? (second (first proof)))))
         (testing "the source advertises Datomic selection guarantees"
           (doseq [mode [:fully-consistent
                         :minimize-latency
@@ -88,3 +85,63 @@
                         :at-exact-snapshot]]
             (is (source/supports? (:source client)
                                   :consistency mode))))))))
+
+(deftest relation-generation-history-is-readable-through-as-of-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {})]
+      (eacl/write-schema! client test-schema)
+      @(d/transact conn [{:eacl/id "alice"}
+                         {:eacl/id "account-1"}])
+      (let [before-db (d/db conn)
+            before-t (d/basis-t before-db)
+            relation-id
+            (:e (first (d/datoms before-db
+                                 :aevt
+                                 :eacl.relation/relation-name)))
+            before-proof
+            (backend/invoke
+             (datomic-backend/basis-adapter before-db {})
+             :proof-frame
+             [relation-id])]
+        @(d/transact conn [{:eacl/id "unrelated"}])
+        (eacl/create-relationship!
+         client
+         (eacl/->Relationship
+          (eacl/spice-object :user "alice")
+          :owner
+          (eacl/spice-object :account "account-1")))
+        (let [current-t (d/basis-t (d/db conn))]
+          (d/request-index conn)
+          (is (not= ::timeout
+                    (deref (d/sync-index conn current-t)
+                           10000
+                           ::timeout)))
+          (let [as-of-db (d/as-of (d/db conn) before-t)
+                as-of-proof
+                (backend/invoke
+                 (datomic-backend/basis-adapter as-of-db {})
+                 :proof-frame
+                 [relation-id])
+                current-proof
+                (backend/invoke
+                 (datomic-backend/basis-adapter (d/db conn) {})
+                 :proof-frame
+                 [relation-id])]
+            (is (= before-proof as-of-proof)
+                "the older immutable basis retains its relation generation")
+            (is (< (second (first as-of-proof))
+                   (second (first current-proof))))))))))
+
+(deftest existing-no-history-relation-generation-schema-is-upgraded-test
+  (let [legacy-schema
+        (mapv (fn [attribute]
+                (if (= :eacl/relation-version (:db/ident attribute))
+                  (assoc attribute :db/noHistory true)
+                  attribute))
+              schema/v7-schema)]
+    (with-mem-conn [conn legacy-schema]
+      (is (true? (:db/noHistory
+                  (d/entity (d/db conn) :eacl/relation-version))))
+      (schema/write-schema! conn test-schema)
+      (is (false? (:db/noHistory
+                   (d/entity (d/db conn) :eacl/relation-version)))))))

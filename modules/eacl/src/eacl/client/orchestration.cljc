@@ -68,7 +68,8 @@
             [eacl.subproblem-cache :as subproblem]
             [eacl.spicedb.consistency :as consistency]))
 
-(declare request-cache-enabled? validate-permission-root!)
+(declare request-cache-controls
+         validate-permission-root!)
 
 (defn- ensure-execution-contract
   [opts operation request]
@@ -238,7 +239,7 @@
       :proof-diagnostic-fn
       (when (:completed-cache-request? opts)
         (fn [diagnostic]
-          (cache/record-proof-unavailable!
+          (cache/record-proof-diagnostic!
            (:basis-cache-store opts)
            diagnostic)))})))
 
@@ -296,7 +297,7 @@
                      :proof-diagnostic-fn
                      (when (:completed-cache-request? opts)
                        (fn [diagnostic]
-                         (cache/record-proof-unavailable!
+                         (cache/record-proof-diagnostic!
                           (:basis-cache-store opts)
                           diagnostic)))}))
                  (selected-context api source opts consistency-value))]
@@ -327,6 +328,7 @@
            :historical-basis? historical-basis?
            :snapshot-semantic-identity
            (request-context/basis-identity context)
+           :request-lineage (request-context/lineage context)
            :request-proof-frame (request-context/proof-frame context)
            :request-schema-cache (delay (request-context/derived context)))))
 
@@ -355,7 +357,7 @@
           :schema-generation-fn #(force schema-generation)
           :diagnostic-fn
           (fn [diagnostic]
-            (cache/record-proof-unavailable!
+            (cache/record-proof-diagnostic!
              (:basis-cache-store opts)
              diagnostic))})]
     {:proof-frame request-proof-frame
@@ -447,6 +449,8 @@
     (assoc opts
            :snapshot-semantic-identity
            basis-identity
+           :request-lineage
+           (request-context/lineage-for-basis basis-identity)
            :request-proof-frame request-proof-frame
            :cursor-consistency-mode
            (get-in selection [:descriptor :mode])
@@ -647,8 +651,6 @@
              ;; The public order ABI is part of an answer's identity: a page
              ;; cached under one order must never be served under another.
              :order-abi engine/stable-order-abi
-             :source-lifecycle
-             (proof-frame/source-lifecycle request-proof-frame)
              :adapter-fingerprint (:adapter-fingerprint opts)
              :recursive-traversal-limits
              (:recursive-traversal-limits opts)
@@ -661,39 +663,28 @@
                 (get-in contract
                         [:cache-attempt :maximum-atomic-attempts]
                         4)]
-                (if (:historical-basis? opts)
-                  (cache/resolve-exact!
-                   (:basis-cache-store opts)
-                   {:snapshot semantic-snapshot
-                    :snapshot-order (:revision semantic-snapshot)
-                    :exact-basis-key exact-basis-key
-                    :cache-lifecycle (:cache-lifecycle opts)
-                    :cache-basis (backend/invoke adapter :snapshot-id)
-                    :decision-kernel (:decision-kernel opts)}
-                   semantic-key operation valid-value? evaluate)
-                  (cache/resolve-basis!
-                   (:basis-cache-store opts)
-                   {:snapshot semantic-snapshot
-                    :cache-lifecycle (:cache-lifecycle opts)
-                    :snapshot-order (:revision semantic-snapshot)
-                    :exact-basis-key exact-basis-key
-                    :cache-basis (backend/invoke adapter :snapshot-id)
-                    :decision-kernel (:decision-kernel opts)
-                    :managed-key-fn
-                    (when (and (:managed-cache-enabled? opts)
-                               resource-type permission)
-                      #(proof-frame/descriptor @complete-proof))
-                    :managed-subproblem-key-fn
-                    (when (and (:managed-cache-enabled? opts)
-                               resource-type permission)
-                      (fn [dependency]
-                        (proof-frame/subset-descriptor
-                         @complete-proof dependency)))
-                    :managed-subproblem-scope
-                    (select-keys
-                     semantic-snapshot
-                     [:backend :source-id :branch :source-lifecycle])}
-                   semantic-key operation valid-value? evaluate)))]
+                (cache/resolve-basis!
+                 (:basis-cache-store opts)
+                 {:snapshot semantic-snapshot
+                  :cache-lifecycle (:cache-lifecycle opts)
+                  :snapshot-order (:revision semantic-snapshot)
+                  :exact-basis-key exact-basis-key
+                  :cache-basis (backend/invoke adapter :snapshot-id)
+                  :decision-kernel (:decision-kernel opts)
+                  :populate-cache?
+                  (:populate-cache-request? opts true)
+                  :managed-key-fn
+                  (when (and (:managed-cache-enabled? opts)
+                             resource-type permission)
+                    #(proof-frame/descriptor @complete-proof))
+                  :managed-subproblem-key-fn
+                  (when (and (:managed-cache-enabled? opts)
+                             resource-type permission)
+                    (fn [dependency]
+                      (proof-frame/subset-descriptor
+                       @complete-proof dependency)))
+                  :managed-subproblem-scope (:request-lineage opts)}
+                 semantic-key operation valid-value? evaluate))]
           (execution/check! contract :cache-publication)
           answer)))))
 
@@ -709,7 +700,8 @@
    dissoc
    query
    [:first :last :after :before
-    :consistency :cache? :timeout-ms :cancellation-token]))
+    :consistency :cache? :populate-cache?
+    :timeout-ms :cancellation-token]))
 
 (defn- stale-cursor-anchor!
   [operation]
@@ -737,7 +729,8 @@
       :evaluation (get-in opts [:execution-contract :evaluation])
       :recursive-traversal-limits
       (:recursive-traversal-limits opts)}
-     {:request-proof-frame (:request-proof-frame opts)})))
+     {:request-proof-frame (:request-proof-frame opts)
+      :populate-cache? (:populate-cache-request? opts true)})))
 
 (defn- request-schema
   "The parsed public schema visible in `db`, for validating one request.
@@ -876,6 +869,7 @@
                   base-filters
                   (apply dissoc filters
                          [:first :last :after :before :consistency :cache?
+                          :populate-cache?
                           :evaluation :timeout-ms :cancellation-token
                           :aggregate-limits :authorization])
                   subject-id (:subject/id base-filters)
@@ -888,7 +882,8 @@
                     (object-id->entid page-db resource-id))
                   internal-query
                   (-> page-query
-                      (dissoc :consistency :cache? :evaluation :timeout-ms
+                      (dissoc :consistency :cache? :populate-cache?
+                              :evaluation :timeout-ms
                               :cancellation-token :aggregate-limits
                               :authorization)
                       (cond->
@@ -1129,6 +1124,7 @@
 (defn check-permissions
   [api source opts request]
   (let [request (batch/validate-request! request (:aggregate-limits opts))
+        cache-controls (request-cache-controls request)
         checks (:checks request)]
     (if (empty? checks)
       (do
@@ -1141,7 +1137,9 @@
                 (assoc :request-operation :check-permissions
                        :execution-request request
                        :completed-cache-request?
-                       (request-cache-enabled? (:cache? request)))
+                       (:cache-enabled? cache-controls)
+                       :populate-cache-request?
+                       (:populate-cache? cache-controls))
                 (ensure-execution-contract :check-permissions request))]
         (batch/call-with-demand-error
          0 batch/empty-aggregate-counters
@@ -1367,7 +1365,8 @@
                            :cached? false :cache-basis nil)))
                 (let [internal-query
                       (-> page-query
-                          (dissoc :consistency :cache? :evaluation :timeout-ms
+                          (dissoc :consistency :cache? :populate-cache?
+                                  :evaluation :timeout-ms
                                   :cancellation-token :aggregate-limits
                                   :resource/relationship)
                           (assoc :subject internal-subject))]
@@ -1472,12 +1471,13 @@
             (let [internal-query
                   (-> query
                       (assoc :subject internal-subject)
-                      (dissoc :consistency :cache? :evaluation :timeout-ms
+                      (dissoc :consistency :cache? :populate-cache?
+                              :evaluation :timeout-ms
                               :cancellation-token))
                   answer
                   (cached-engine-result
                    request-context adapter opts :count-resources
-                   {:public (dissoc query :consistency :cache?
+                   {:public (dissoc query :consistency :cache? :populate-cache?
                                     :cancellation-token)
                     :internal internal-query}
                    (:resource/type internal-query)
@@ -1534,7 +1534,8 @@
                            :cached? false :cache-basis nil)))
                 (let [internal-query
                       (-> page-query
-                          (dissoc :consistency :cache? :evaluation :timeout-ms
+                          (dissoc :consistency :cache? :populate-cache?
+                                  :evaluation :timeout-ms
                                   :cancellation-token :aggregate-limits
                                   :subject/relationship)
                           (assoc :resource internal-resource))]
@@ -1639,12 +1640,13 @@
             (let [internal-query
                   (-> query
                       (assoc :resource internal-resource)
-                      (dissoc :consistency :cache? :evaluation :timeout-ms
+                      (dissoc :consistency :cache? :populate-cache?
+                              :evaluation :timeout-ms
                               :cancellation-token))
                   answer
                   (cached-engine-result
                    request-context adapter opts :count-subjects
-                   {:public (dissoc query :consistency :cache?
+                   {:public (dissoc query :consistency :cache? :populate-cache?
                                     :cancellation-token)
                     :internal internal-query}
                    (:type (:resource internal-query))
@@ -1677,7 +1679,7 @@
               answer
               (cached-engine-result
                request-context adapter opts :expand-permission-tree
-               (dissoc query :consistency :cache? :timeout-ms
+               (dissoc query :consistency :cache? :populate-cache? :timeout-ms
                        :cancellation-token)
                (:type (:resource query))
                (:permission query)
@@ -1698,10 +1700,15 @@
             {:expanded-at token
              :tree-root tree}))))))
 
-(defn- request-cache-enabled?
-  [cache-option]
-  (cache/validate-request-cache-option! cache-option)
-  (not (false? cache-option)))
+(defn- request-cache-controls
+  [request]
+  (let [cache-option
+        (cache/validate-request-cache-option! (:cache? request))
+        populate-option
+        (cache/validate-request-populate-option!
+         (:populate-cache? request))]
+    {:cache-enabled? (not (false? cache-option))
+     :populate-cache? (not (false? populate-option))}))
 
 #?(:clj (ns-unmap *ns* 'Runtime))
 (defrecord Runtime [])
@@ -1718,6 +1725,7 @@
     :spice-object->internal :internal-cursor->spice
     :spice-cursor->internal :format-options :cursor-ttl-seconds
     :token-ttl-seconds :managed-cache-enabled?
+    :proof-contract-reporter
     :recursive-traversal-limits :permission-tree-limits
     :execution-timeout-ms :consistency-sync-timeout-ms
     :service-admission :source-lifecycle :source-lifecycle-state
@@ -1969,67 +1977,83 @@
 (defrecord Snapshot [runtime basis api]
   IAuthorizationReader
   (-check-permission [_ {:keys [subject permission resource consistency]
-                         cache? :cache? :as request}]
+                         :as request}]
     (assert-snapshot-consistency! runtime basis request)
-    (check-permission
-     api nil
-     (assoc (snapshot-opts runtime basis)
-            :request-operation :check-permission
-            :execution-request request
-            :completed-cache-request? (request-cache-enabled? cache?))
-     subject permission resource
-     (or consistency consistency/minimize-latency)))
+    (let [{:keys [cache-enabled? populate-cache?]}
+          (request-cache-controls request)]
+      (check-permission
+       api nil
+       (assoc (snapshot-opts runtime basis)
+              :request-operation :check-permission
+              :execution-request request
+              :completed-cache-request? cache-enabled?
+              :populate-cache-request? populate-cache?)
+       subject permission resource
+       (or consistency consistency/minimize-latency))))
   (-read-schema [_ request]
     (assert-snapshot-consistency! runtime basis request)
     (read-current-schema api nil (snapshot-opts runtime basis) request))
   (-read-relationships [_ request]
     (assert-snapshot-consistency! runtime basis request)
-    (read-relationships
-     api nil
-     (assoc (snapshot-opts runtime basis)
-            :completed-cache-request?
-            (request-cache-enabled? (:cache? request)))
-     (dissoc request :cache?)))
+    (let [{:keys [cache-enabled? populate-cache?]}
+          (request-cache-controls request)]
+      (read-relationships
+       api nil
+       (assoc (snapshot-opts runtime basis)
+              :completed-cache-request? cache-enabled?
+              :populate-cache-request? populate-cache?)
+       (dissoc request :cache? :populate-cache?))))
   (-lookup-resources [_ request]
     (assert-snapshot-consistency! runtime basis request)
-    (let [cache-enabled? (request-cache-enabled? (:cache? request))]
+    (let [{:keys [cache-enabled? populate-cache?]}
+          (request-cache-controls request)]
       (lookup-resources
        api nil
        (assoc (snapshot-opts runtime basis)
               :completed-cache-request? cache-enabled?
+              :populate-cache-request? populate-cache?
               :continuation-cache-request? cache-enabled?)
-       (dissoc request :cache?))))
+       (dissoc request :cache? :populate-cache?))))
   (-lookup-subjects [_ request]
     (assert-snapshot-consistency! runtime basis request)
-    (let [cache-enabled? (request-cache-enabled? (:cache? request))]
+    (let [{:keys [cache-enabled? populate-cache?]}
+          (request-cache-controls request)]
       (lookup-subjects
        api nil
        (assoc (snapshot-opts runtime basis)
               :completed-cache-request? cache-enabled?
+              :populate-cache-request? populate-cache?
               :continuation-cache-request? cache-enabled?)
-       (dissoc request :cache?))))
+       (dissoc request :cache? :populate-cache?))))
   (-count-resources [_ request]
     (assert-snapshot-consistency! runtime basis request)
-    (count-resources
-     api nil
-     (assoc (snapshot-opts runtime basis)
-            :completed-cache-request?
-            (request-cache-enabled? (:cache? request)))
-     (dissoc request :cache?)))
+    (let [{:keys [cache-enabled? populate-cache?]}
+          (request-cache-controls request)]
+      (count-resources
+       api nil
+       (assoc (snapshot-opts runtime basis)
+              :completed-cache-request? cache-enabled?
+              :populate-cache-request? populate-cache?)
+       (dissoc request :cache? :populate-cache?))))
   (-count-subjects [_ request]
     (assert-snapshot-consistency! runtime basis request)
-    (count-subjects
-     api nil
-     (assoc (snapshot-opts runtime basis)
-            :completed-cache-request?
-            (request-cache-enabled? (:cache? request)))
-     (dissoc request :cache?)))
+    (let [{:keys [cache-enabled? populate-cache?]}
+          (request-cache-controls request)]
+      (count-subjects
+       api nil
+       (assoc (snapshot-opts runtime basis)
+              :completed-cache-request? cache-enabled?
+              :populate-cache-request? populate-cache?)
+       (dissoc request :cache? :populate-cache?))))
   (-expand-permission-tree [_ request]
     (assert-snapshot-consistency! runtime basis request)
-    (expand-permission-tree
-     api nil (assoc (snapshot-opts runtime basis)
-                    :completed-cache-request? true)
-     request))
+    (let [{:keys [cache-enabled? populate-cache?]}
+          (request-cache-controls request)]
+      (expand-permission-tree
+       api nil (assoc (snapshot-opts runtime basis)
+                      :completed-cache-request? cache-enabled?
+                      :populate-cache-request? populate-cache?)
+       (dissoc request :cache? :populate-cache?))))
 
   IBatchedAuthorization
   (-check-permissions [_ request]
@@ -2412,7 +2436,8 @@
   (-check-permissions [_ request]
     (let [request
           (batch/validate-request!
-           request (:aggregate-limits (runtime-options runtime)))]
+           request (:aggregate-limits (runtime-options runtime)))
+          _ (request-cache-controls request)]
       (if (empty? (:checks request))
         (do
           (execution/normalize
@@ -2630,6 +2655,7 @@
     :spice-cursor->internal
     :cursor-ttl-seconds
     :cache
+    :proof-contract-reporter
     :recursive-traversal-limits
     :permission-tree-limits
     :security-key
@@ -2738,6 +2764,7 @@
            spice-cursor->internal
            cursor-ttl-seconds
            cache
+           proof-contract-reporter
            recursive-traversal-limits
            permission-tree-limits
            security-key
@@ -2770,6 +2797,14 @@
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :adapter-deterministic?
                      :value adapter-deterministic?})))
+  (when-not (or (nil? proof-contract-reporter)
+                (fn? proof-contract-reporter))
+    (throw
+     (ex-info "EACL Config Error: :proof-contract-reporter must be a function."
+              {:type :eacl/invalid-config
+               :eacl/error :eacl/invalid-config
+               :key :proof-contract-reporter
+               :value proof-contract-reporter})))
   (when adapter-fingerprint
     (try
       (secure/encode-canonical adapter-fingerprint)
@@ -2867,7 +2902,8 @@
             (and (some? adapter-fingerprint)
                  (true? adapter-deterministic?)))
         basis-cache-store
-        (cache/basis-cache-for-option cache)
+        (cache/basis-cache-for-option
+         cache {:proof-contract-reporter proof-contract-reporter})
         cursor-codec-cache
         (when basis-cache-store
           (cursor/codec-cache
@@ -2928,6 +2964,7 @@
               causal-token/default-token-ttl-seconds)
           :basis-cache-store
           basis-cache-store
+          :proof-contract-reporter proof-contract-reporter
           :continuation-cache-store
           (when basis-cache-store
             (continuation/make-store

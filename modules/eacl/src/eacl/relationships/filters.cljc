@@ -13,12 +13,13 @@
   "Filter + pagination + execution keys read-relationships accepts. :cursor
   and :limit are named so their rejection classifies as an unsupported
   pagination option rather than an unknown key; :consistency, :page/basis,
-  :cache?, :timeout-ms, and :cancellation-token are validated and consumed by
+  :cache?, :populate-cache?, :timeout-ms, and :cancellation-token are validated and consumed by
   the client layer but must be listed, since an unknown key is a hard error
   rather than something to ignore."
   (into known-anchor-keys
         [:first :last :after :before :cursor :limit
-         :page/basis :consistency :cache? :evaluation :timeout-ms
+         :page/basis :consistency :cache? :populate-cache?
+         :evaluation :timeout-ms
          :cancellation-token :aggregate-limits :authorization]))
 
 (defn validate!

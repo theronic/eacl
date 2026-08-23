@@ -492,11 +492,26 @@
                (backend/invoke adapter :exact-locator))
             "Native revision disagreed with the exact locator.")
     (when ordered-generations?
-      (demand (= #{:schema-stamp :relation-stamps}
-                 (set (keys proof-frame)))
-              "Ordered-generation frame had an unexpected shape.")
-      (demand (= relation-ids (mapv first (:relation-stamps proof-frame)))
+      (demand (vector? proof-frame)
+              "Ordered-generation frame must be a vector."
+              {:proof-frame proof-frame})
+      (demand (= relation-ids (mapv first proof-frame))
               "Ordered-generation frame was incomplete or noncanonical.")
+      (demand (every? (fn [[_ generation]]
+                        (backend/schema-generation? generation))
+                      proof-frame)
+              "Relation generations must share the exact-natural revision domain."
+              {:proof-frame proof-frame :native-revision revision})
+      (demand (every? (fn [[_ generation]]
+                        (<= generation (:revision revision)))
+                      proof-frame)
+              "A relation generation exceeded the selected native revision."
+              {:proof-frame proof-frame :native-revision revision})
+      (demand (and (backend/schema-generation? schema-generation)
+                   (<= schema-generation (:revision revision)))
+              "Schema generation was absent or exceeded the selected native revision."
+              {:schema-generation schema-generation
+               :native-revision revision})
       (demand (= proof-frame
                  (backend/invoke adapter :proof-frame relation-ids))
               "Ordered-generation frame was unstable on an immutable adapter."))
@@ -505,6 +520,122 @@
      :native-revision revision
      :schema-generation schema-generation
      :ordered-generation-proof? ordered-generations?}))
+
+(defn certify-ordered-generation-transition!
+  "Executes the temporal proof obligations across one supported relationship
+  mutation. Bundled adapters call this with immutable values selected
+  immediately before and after the committed writer operation. An adapter that
+  does not advertise ordered generations returns an explicit non-claim."
+  [{:keys [before-adapter after-adapter relation-ids
+           affected-relation-ids]}]
+  (let [claimed-before?
+        (backend/supports?
+         before-adapter :cache-proofs :ordered-generations)
+        claimed-after?
+        (backend/supports?
+         after-adapter :cache-proofs :ordered-generations)]
+    (if-not (or claimed-before? claimed-after?)
+      {:status :not-claimed
+       :backend (backend/backend-id after-adapter)}
+      (do
+        (demand (and claimed-before? claimed-after?)
+                "Ordered-generation capability changed across one mutation.")
+        (let [relation-ids (vec (sort relation-ids))
+              affected (set affected-relation-ids)
+              before-revision
+              (:revision (backend/invoke before-adapter :native-revision))
+              after-revision
+              (:revision (backend/invoke after-adapter :native-revision))
+              before-schema
+              (backend/invoke before-adapter :schema-generation)
+              after-schema
+              (backend/invoke after-adapter :schema-generation)
+              before-frame
+              (backend/invoke before-adapter :proof-frame relation-ids)
+              after-frame
+              (backend/invoke after-adapter :proof-frame relation-ids)
+              before-generations (into {} before-frame)
+              after-generations (into {} after-frame)]
+          (doseq [[label value]
+                  [[:before-revision before-revision]
+                   [:after-revision after-revision]
+                   [:before-schema-generation before-schema]
+                   [:after-schema-generation after-schema]]]
+            (demand (backend/schema-generation? value)
+                    "A certified generation left the native exact-natural domain."
+                    {:field label :value value}))
+          (demand (< before-revision after-revision)
+                  "A supported relationship mutation did not advance revision."
+                  {:before before-revision :after after-revision})
+          (demand (= before-schema after-schema)
+                  "A relationship-only mutation changed schema generation."
+                  {:before before-schema :after after-schema})
+          (doseq [[label frame revision]
+                  [[:before before-frame before-revision]
+                   [:after after-frame after-revision]]]
+            (demand (and (vector? frame)
+                         (= relation-ids (mapv first frame)))
+                    "A temporal proof frame was incomplete or noncanonical."
+                    {:phase label :frame frame :relation-ids relation-ids})
+            (demand (every?
+                     (fn [[_ generation]]
+                       (and (backend/schema-generation? generation)
+                            (<= generation revision)))
+                     frame)
+                    "A temporal proof generation left its domain or ceiling."
+                    {:phase label :frame frame :revision revision}))
+          (demand (set/subset? affected (set relation-ids))
+                  "Affected relations were absent from the certified frame."
+                  {:affected affected :relation-ids relation-ids})
+          (doseq [relation-id relation-ids]
+            (if (contains? affected relation-id)
+              (demand (= after-revision
+                         (get after-generations relation-id))
+                      "An affected relation was not stamped at commit revision."
+                      {:relation-id relation-id
+                       :generation (get after-generations relation-id)
+                       :revision after-revision})
+              (demand (= (get before-generations relation-id)
+                         (get after-generations relation-id))
+                      "An unaffected relation generation changed."
+                      {:relation-id relation-id
+                       :before (get before-generations relation-id)
+                       :after (get after-generations relation-id)})))
+          {:status :certified
+           :backend (backend/backend-id after-adapter)
+           :before-revision before-revision
+           :after-revision after-revision
+           :affected-relation-ids affected})))))
+
+(defn certify-live-source-identity!
+  "Certifies the source-id rule for two separately opened live sources.
+
+  Non-durable sources must differ even when caller configuration is reused.
+  Durable reopenings of the same store must retain their persisted identity."
+  [{:keys [backend durability first-scope second-scope]}]
+  (doseq [[label scope] [[:first first-scope] [:second second-scope]]]
+    (demand (and (map? scope)
+                 (some? (:source-id scope))
+                 (contains? scope :branch))
+            "A live source supplied no complete source scope."
+            {:backend backend :position label :scope scope}))
+  (case durability
+    :non-durable
+    (demand (not= first-scope second-scope)
+            "Two non-durable live sources reused one source identity."
+            {:backend backend :first first-scope :second second-scope})
+
+    :durable
+    (demand (= first-scope second-scope)
+            "A durable store identity changed across reopen."
+            {:backend backend :first first-scope :second second-scope})
+
+    (demand false "Unknown source durability profile."
+            {:backend backend :durability durability}))
+  {:status :certified
+   :backend backend
+   :durability durability
+   :distinct? (not= first-scope second-scope)})
 
 (defn certify
   "Runs the portable static-snapshot obligations and returns a machine-readable

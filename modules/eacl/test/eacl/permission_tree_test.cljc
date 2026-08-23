@@ -87,17 +87,21 @@
 
 (deftest strict-request-contract
   (is (= {:resource (eacl/spice-object :document "d1")
-          :permission :view}
+          :permission :view
+          :cache? false
+          :populate-cache? false}
          (permission-tree/validate-request!
           {:resource (eacl/spice-object :document "d1")
-           :permission :view})))
+           :permission :view
+           :cache? false
+           :populate-cache? false})))
   (doseq [request
           [nil
            {}
            {:resource (eacl/spice-object :document "d1")}
            {:resource (eacl/spice-object :document "d1")
             :permission :view
-            :cache? false}
+            :unsupported-control true}
            {:resource (eacl/spice-object :document "d1" :member)
             :permission :view}
            {:resource {:type :document :id nil}

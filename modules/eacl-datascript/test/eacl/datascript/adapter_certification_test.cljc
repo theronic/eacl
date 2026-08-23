@@ -63,6 +63,64 @@
         (is (:passed? report)
             (pr-str (:checks report)))))))
 
+(deftest datascript-ordered-generation-transition-certification-test
+  (let [fixture (certification/coherent-fixture 820084)
+        conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        adapter-for
+        (fn []
+          (datascript-backend/basis-adapter
+           (ds/db conn)
+           {:object-id->entid
+            (fn [snapshot object-id]
+              (ds/entid snapshot [:eacl/id object-id]))
+            :entid->object-id
+            (fn [snapshot internal-id]
+              (:eacl/id (ds/entity snapshot internal-id)))}))]
+    (eacl/write-schema! client (:schema fixture))
+    (ds/transact!
+     conn
+     (map-indexed
+      (fn [index {:keys [id]}]
+        {:db/id (- (inc index)) :eacl/id id})
+      (:objects fixture)))
+    (eacl/create-relationships! client (:relationships fixture))
+    (let [before (adapter-for)
+          relation-ids
+          (->> (:relations fixture)
+               (mapcat
+                (fn [{:keys [resource-type relation-name]}]
+                  (v8/invoke
+                   before :relation-defs resource-type relation-name)))
+               (map :relation-id)
+               sort
+               vec)
+          affected
+          (:relation-id
+           (first (v8/invoke before :relation-defs :group :member)))]
+      (eacl/delete-relationship! client (first (:relationships fixture)))
+      (is (= :certified
+             (:status
+              (certification/certify-ordered-generation-transition!
+               {:before-adapter before
+                :after-adapter (adapter-for)
+                :relation-ids relation-ids
+                :affected-relation-ids [affected]})))))))
+
+(deftest datascript-live-source-identity-certification-test
+  (let [first-conn (datascript/create-conn)
+        second-conn (datascript/create-conn)]
+    (is (= :certified
+           (:status
+            (certification/certify-live-source-identity!
+             {:backend :datascript
+              :durability :non-durable
+              :first-scope
+              (datascript-backend/database-source-scope (ds/db first-conn))
+              :second-scope
+              (datascript-backend/database-source-scope
+               (ds/db second-conn))}))))))
+
 (deftest current-db-reference-identity-test
   (testing "the exact-basis cache can use immutable DB object identity"
     (let [conn (datascript/create-conn)

@@ -178,6 +178,10 @@ module NativeGenerationCoherence {
     )
   }
 
+  // ForwardHistory orders the two immutable values so the proof can reason
+  // about intervening commits. Reuse itself is direction-agnostic: equality
+  // of the resulting frames is symmetric, so an answer produced at the last
+  // snapshot is equally valid when the first snapshot is selected later.
   lemma DependencyEquivalentFramesAreEqual(
     history: seq<Snapshot>,
     query: Query,

@@ -30,6 +30,66 @@
                                    :eacl/id id})
                                 contract/smoke-objects))))
 
+(defn- error-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(defn- current-source-scope
+  [client]
+  (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+    (select-keys (eacl/basis snapshot) [:backend :source-id :branch])))
+
+(deftest fixed-memory-store-id-does-not-become-lineage-test
+  (let [key "01234567890123456789012345678901"
+        fixed-id (random-uuid)
+        config {:store {:backend :memory :id fixed-id}}
+        first-conn (datahike/create-conn nil config)
+        first-config (:config (d/db first-conn))
+        first-result
+        (try
+          (let [first-client
+                (datahike/make-client first-conn {:security-key key})]
+            (eacl/write-schema! first-client contract/smoke-schema)
+            (seed-objects! first-conn)
+            {:token
+             (:zed/token
+              (eacl/create-relationship!
+               first-client
+               (first contract/smoke-relationships)))
+             :scope (current-source-scope first-client)})
+          (finally
+            (d/release first-conn)
+            (d/delete-database first-config)))
+        second-conn (datahike/create-conn nil config)]
+    (try
+      (let [second-client
+            (datahike/make-client second-conn {:security-key key})
+            second-scope
+            (current-source-scope second-client)]
+        (is (not= (:scope first-result) second-scope))
+        (is (not= (str fixed-id)
+                  (get-in first-result [:scope :source-id :store-id])))
+        (is (not= (str fixed-id)
+                  (get-in second-scope [:source-id :store-id])))
+        (is (= :eacl.consistency/incomparable-scope
+               (:type
+                (error-data
+                 #(eacl/can?
+                   second-client
+                   (contract/->user "user-1")
+                   :admin
+                   (contract/->account "account-1")
+                   (consistency/at-least-as-fresh
+                    (:token first-result))))))))
+      (finally
+        (let [second-config (:config (d/db second-conn))]
+          (d/release second-conn)
+          (d/delete-database second-config))))))
+
 (deftest default-source-lifecycle-is-cross-client-constant-test
   (let [conn (datahike/create-conn)
         key "01234567890123456789012345678901"

@@ -66,13 +66,34 @@
   Tx entity ids increase monotonically with `t`, so a max over a dependency set
   is strictly increasing on any write to it.
 
-  :db/noHistory because only the current stamp is ever read; without it every
-  EACL write would accumulate a permanent datom per relation."
+  History must remain available because proof-equivalent reuse is valid for any
+  readable immutable basis, including `d/as-of` values. Datomic indexing may
+  discard superseded values of a `:db/noHistory true` attribute, which would
+  make an otherwise valid historical proof unreadable."
   {:db/ident       :eacl/relation-version
    :db/doc         "Ref to the transaction that last changed a relationship using this relation. Bumped by EACL's relationship tx-data helpers; read by the result cache to scope invalidation to affected relations."
    :db/valueType   :db.type/ref
    :db/cardinality :db.cardinality/one
-   :db/noHistory   true})
+   :db/noHistory   false})
+
+(defn- ensure-relation-version-history!
+  "Installs the relation-generation attribute when requested and upgrades
+  existing databases to retain future generation history."
+  [conn install-if-missing?]
+  (let [db (d/db conn)
+        relation-version-eid (d/entid db :eacl/relation-version)]
+    (cond
+      (and (nil? relation-version-eid) install-if-missing?)
+      @(d/transact conn [relation-version-attr-definition])
+
+      (and relation-version-eid
+           (true? (:db/noHistory
+                   (d/entity db relation-version-eid))))
+      @(d/transact conn [{:db/id :eacl/relation-version
+                          :db/noHistory false}])
+
+      :else
+      nil)))
 
 (def assert-relation-unused-fn-definition
   "Commit-time guard for relation removal.
@@ -315,6 +336,7 @@
   Datomic schema generations predate this migration and must already exist;
   a missing schema version fails closed instead of inventing authority."
   [conn]
+  (ensure-relation-version-history! conn false)
   (let [db (d/db conn)
         schema-eid (d/entid db [:eacl/id "schema-string"])]
     (when-not (and (d/entid db :eacl/relation-version)
@@ -465,13 +487,11 @@
      ;; path. :eacl/relation-version is installed the same way so a database
      ;; created before per-relation stamps picks it up on its next valid schema
      ;; write rather than silently running without result caching.
+     (ensure-relation-version-history! conn true)
      (let [db (d/db conn)
            missing (cond-> []
                      (not (d/entid db :eacl/schema-version))
                      (conj schema-version-attr-definition)
-
-                     (not (d/entid db :eacl/relation-version))
-                     (conj relation-version-attr-definition)
 
                      (not (d/entid db :eacl.fn/assert-relation-unused))
                      (conj assert-relation-unused-fn-definition))]

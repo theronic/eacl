@@ -245,6 +245,34 @@
       (is (= 10 (get-in (checkpoint-hit context [:k] 2 42)
                         [:state :transitions]))))))
 
+(deftest read-without-publication-can-read-but-not-write-checkpoints-test
+  (let [{:keys [conn]} (capture/seed-client!
+                        ((get capture/fixtures :explorer-acyclic)))
+        adapter (datascript-backend/basis-adapter
+                 (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {})
+        writable
+        (continuation/private-context
+         store adapter :lookup-resources {:query {:q 1}})
+        read-only
+        (continuation/private-context
+         store adapter :lookup-resources {:query {:q 1}}
+         {:populate-cache? false})]
+    (is (false? ((:put! read-only) :edge :suppressed 1)))
+    (is (false? ((:put-page! read-only) :page :suppressed 1)))
+    (is (false? ((:put-heads! read-only) :heads :suppressed 1)))
+    (is (nil? ((:get read-only) :edge)))
+    (is (nil? ((:get-page read-only) :page)))
+    (is (nil? ((:get-heads read-only) :heads)))
+    (is (true? ((:put! writable) :edge :stored 1)))
+    (is (true? ((:put-page! writable) :page :stored 1)))
+    (is (true? ((:put-heads! writable) :heads :stored 1)))
+    (is (= :stored ((:get read-only) :edge)))
+    (is (= :stored ((:get-page read-only) :page)))
+    (is (= :stored ((:get-heads read-only) :heads)))
+    (is (= 3 (:puts (continuation/stats store)))
+        "only the writable context publishes")))
+
 (deftest acyclic-pagination-needs-no-checkpoints-test
   ;; The keyset regime: an acyclic root paginates statelessly — exact
   ;; pages, zero continuation-store traffic (acyclic-keyset-pagination).

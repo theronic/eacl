@@ -11,7 +11,7 @@ result rendering, and cursor construction all use that value.
 | omitted / `:minimize-latency` | current DB visible to the Peer | current connection DB | current connection DB | new owned read snapshot | exact-first, then automatic proof-backed reuse when certified |
 | `:fully-consistent` | bounded zero-argument `d/sync` | authoritative head barrier when supported | serialized connection head | new owned read snapshot under the sole-writer topology | enabled for the selected ordinary basis |
 | `:at-least-as-fresh` | targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | bounded acquire/check/release retry | enabled only when selection is an ordinary basis |
-| `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | unsupported | matching exact-basis answers only; managed proof reuse prohibited |
+| `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | unsupported | exact-first; managed reuse when the historical value has a readable contract-valid frame |
 
 These modes select a basis only when the target is an `acl`. On a retained
 snapshot they are assertions: omitted or minimize-latency evaluates that basis;
@@ -41,23 +41,27 @@ collection of the named commit can make that snapshot unavailable.
 
 Every client owns a bounded basis cache. Exact answers are attached to the
 selected immutable database identity and are checked first without proof. On
-an exact miss, deterministic ordinary current requests automatically attempt a
-complete ordered-generation proof. A proof-backed answer may serve an older or
-newer ordinary selected basis in the same scope and lifecycle when normalized
-operation, result shape, schema generation, and scalar dependency frontier are
-equal; selected revision order is not part of that equality proof.
+an exact miss, deterministic requests on any admissible basis automatically
+attempt a complete ordered-generation proof when that value can read one. A
+proof-backed answer may serve an older or newer selected basis in the same
+lineage—complete source scope plus source lifecycle—when normalized operation,
+result shape, schema generation, and scalar dependency frontier are equal.
+Selected revision order is not part of that equality proof.
 
-Missing, malformed, partial, oversized, unsupported, or exceptional proof
-evidence falls back to evaluation
-and exact caching for the selected value. It never becomes an authorization
-error and never permits partial-proof reuse.
+Missing, partial, oversized, unsupported, or exceptionally unavailable proof
+evidence falls back to evaluation and exact caching for the selected value. A
+malformed, non-numeric, non-canonical, or above-revision frame is an adapter
+contract violation: authorization and exact caching continue, while managed
+lifting becomes sticky-disabled until lifecycle expiry. Neither case permits
+partial-proof reuse.
 
 Authenticated exact requests use the same bounded exact-basis tier as ordinary
 selected bases. The key includes source scope and lifecycle, native revision
 and locator, basis kind, adapter and identity contracts, engine ABI, result
-shape, demand, and answer-affecting limits. Historical requests never probe the
-managed tier. Public IDs, tokens, cursors, cache basis, and other metadata are
-rebuilt from the selected adapter on every hit.
+shape, demand, and answer-affecting limits. Historical requests probe the
+managed tier only when their own immutable value supplies a complete readable
+frame. Public IDs, tokens, cursors, cache basis, and other metadata are rebuilt
+from the selected adapter on every hit.
 
 Disable caching:
 
@@ -69,9 +73,13 @@ Disable caching:
 (datascript/make-client conn {:cache cache/no-cache})
 ```
 
-Or pass `:cache? false` on one request. `cache-stats` reports exact and
-proof-backed hits, misses, bypasses, proof-unavailable reasons, publications,
-expirations, and bounded-store metrics.
+Or pass `:cache? false` on one request. Pass `:populate-cache? false` to retain
+lookups and request-local memoization while suppressing completed answers,
+managed subproblems, checkpoints, and visited pages. Both options are excluded
+from semantic and cursor identity; `:cache? false` dominates either populate
+value. `cache-stats` reports exact and proof-backed hits, misses, bypasses,
+proof-unavailable and contract-violation reasons, publications, expirations,
+and bounded-store metrics.
 
 ## Mutation contract
 
@@ -123,6 +131,10 @@ snapshot continues only when its complete proof admits the cursor basis;
 otherwise EACL throws `:eacl.consistency/basis-conflict` with `:source :cursor`.
 It never drops a bound, silently restarts page one, or acquires through a
 retained snapshot.
+
+A contract-violating frame is never cursor equality evidence. It degrades to
+exact-snapshot context; continuation either reconstructs that authenticated
+exact value or returns the ordinary typed stale/basis-conflict outcome.
 
 Continuation state is a private performance optimization. Eviction replays the
 authenticated prefix on the already selected snapshot and does not select a

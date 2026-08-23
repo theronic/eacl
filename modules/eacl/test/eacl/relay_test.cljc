@@ -4,6 +4,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
+            [eacl.proof-frame :as proof-frame]
             [eacl.relay :as relay]
             [eacl.verified-kernel :as verified]))
 
@@ -45,6 +46,29 @@
    :exact-locator revision
    :backend-snapshot-id {:revision revision}})
 
+(defn- proof-adapter
+  [revision provider]
+  (backend/make-adapter
+   {:id :relay-test
+    :capabilities {:cache-proofs #{:ordered-generations}}
+    :fingerprint {:adapter :relay-test}
+    :deterministic? true
+    :operations
+    (merge
+     (operation-map revision nil)
+     {:schema-generation (constantly 3)
+      :proof-frame provider})}))
+
+(defn- proof-opts
+  [selected revision]
+  (let [identity (basis-identity revision)]
+    {:snapshot-semantic-identity identity
+     :cursor-dependency-relation-ids (delay [1])
+     :request-proof-frame
+     (proof-frame/request-frame selected {:basis-identity identity})}))
+
+(declare lookup-query lookup-page)
+
 (deftest cursor-proof-identity-test
   (testing "even equal dependency proofs cannot lift across revisions"
     (let [first-context
@@ -73,6 +97,44 @@
            (adapter 2 {:digest "same"} false))]
       (is (not= (:proof-digest first-context)
                 (:proof-digest later-context))))))
+
+(deftest contract-violating-cursor-proof-falls-back-exact-and-cannot-equal-test
+  (let [producer (proof-adapter 10 (constantly [[1 5]]))
+        invalid-at-10-adapter
+        (proof-adapter 10 (constantly [[1 11]]))
+        consumer (proof-adapter 11 (constantly [[1 12]]))
+        query lookup-query
+        first-page
+        (relay/externalize-page
+         producer (proof-opts producer 10)
+         :lookup-resources query lookup-page)
+        continuation-query
+        (assoc query :after (get-in first-page [:page-info :end-cursor]))
+        error
+        (try
+          (relay/internalize-page-query
+           consumer (proof-opts consumer 11)
+           :lookup-resources continuation-query)
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) cause
+            (ex-data cause)))
+        invalid-at-10
+        (relay/dependency-context
+         invalid-at-10-adapter [1])
+        invalid-at-11
+        (relay/dependency-context consumer [1])
+        exact-at-10 (relay/dependency-context invalid-at-10-adapter)
+        exact-at-11 (relay/dependency-context consumer)]
+    (is (= :eacl.pagination/stale-cursor (:type error)))
+    (is (= :dependency-scope-changed (:reason error)))
+    (is (= (:dependency-scope-digest exact-at-10)
+           (:dependency-scope-digest invalid-at-10)
+           (:dependency-scope-digest exact-at-11)
+           (:dependency-scope-digest invalid-at-11))
+        "violated evidence is represented only by exact-snapshot fallback")
+    (is (not= (:proof-digest invalid-at-10)
+              (:proof-digest invalid-at-11))
+        "equal violation status across revisions is never equality evidence")))
 
 (def lookup-query
   {:subject {:type :user :id "user-1"}
@@ -184,6 +246,26 @@
     (is (nil? (relay/lookup-visited-page
                snapshot opts :lookup-resources authoritative-query))
         "a cached public cursor must never cross consistency query scope")))
+
+(deftest read-without-publication-can-read-but-not-write-visited-pages-test
+  (let [snapshot (adapter 1 nil true)
+        page-cache (relay/page-navigation-cache)
+        base-opts {:page-navigation-cache page-cache
+                   :completed-cache? true
+                   :snapshot-semantic-identity (basis-identity 1)}
+        read-only-opts (assoc base-opts :populate-cache-request? false)
+        public-page
+        (relay/externalize-page
+         snapshot base-opts :lookup-resources lookup-query lookup-page)]
+    (relay/remember-visited-page!
+     snapshot read-only-opts :lookup-resources lookup-query public-page)
+    (is (nil? (relay/lookup-visited-page
+               snapshot base-opts :lookup-resources lookup-query)))
+    (relay/remember-visited-page!
+     snapshot base-opts :lookup-resources lookup-query public-page)
+    (is (some? (relay/lookup-visited-page
+                snapshot read-only-opts :lookup-resources lookup-query))
+        "publication control must not disable visited-page lookup")))
 
 (deftest cursor-is-bound-to-normalized-traversal-limits-test
   (let [snapshot (adapter 1 nil true)

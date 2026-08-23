@@ -297,9 +297,11 @@
 
   `request` is a closed envelope containing `:checks` and optional
   request-wide `:consistency`, `:timeout-ms`, `:cancellation-token`, `:cache?`,
-  `:evaluation`, and `:aggregate-limits`. Implementations that cannot hold one
-  immutable snapshot across the complete batch fail with a typed unsupported
-  capability instead of looping over public scalar calls."
+  `:populate-cache?`, `:evaluation`, and `:aggregate-limits`. A false
+  `:populate-cache?` preserves cache lookup while suppressing publication.
+  Implementations that cannot hold one immutable snapshot across the complete
+  batch fail with a typed unsupported capability instead of looping over public
+  scalar calls."
   [target request]
   (reader! target)
   (if (satisfies? IBatchedAuthorization target)

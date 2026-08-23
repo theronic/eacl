@@ -56,6 +56,25 @@
            error
       (ex-data error))))
 
+(deftest recreated-connection-rejects-prior-source-token-test
+  (let [first-conn (datascript/create-conn)
+        first-client (managed-client first-conn {})
+        _ (seed! first-conn first-client)
+        old-token
+        (:zed/token
+         (eacl/create-relationship! first-client relationship))
+        second-conn (datascript/create-conn)
+        second-client (managed-client second-conn {})
+        _ (seed! second-conn second-client)
+        _ (eacl/create-relationship! second-client relationship)]
+    (is (= :eacl.consistency/incomparable-scope
+           (:type
+            (error-data
+             #(eacl/can?
+               second-client
+               user :view document
+               (consistency/at-least-as-fresh old-token))))))))
+
 (deftest map-can-rejects-malformed-consistency-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})
@@ -82,6 +101,56 @@
     (is (not
          (backend/supports?
           adapter :consistency :fully-consistent)))))
+
+(deftest proof-contract-violation-degrades-to-available-exact-authorization-test
+  (let [conn (datascript/create-conn)
+        reports (atom [])
+        client
+        (managed-client
+         conn {:proof-contract-reporter #(swap! reports conj %)})
+        _ (seed! conn client)
+        _ (eacl/create-relationship! client relationship)
+        original datascript-backend/basis-adapter
+        violating-adapter
+        (fn [db options]
+          (assoc-in
+           (original db options)
+           [:eacl.backend.v8/operations :proof-frame]
+           (fn [relation-ids]
+             (mapv (fn [relation-id]
+                     [relation-id (inc (:max-tx db))])
+                   relation-ids))))]
+    (with-redefs [datascript-backend/basis-adapter violating-adapter]
+      (let [first-decision
+            (eacl/check-permission
+             client {:subject user :permission :view :resource document})
+            repeated-decision
+            (eacl/check-permission
+             client {:subject user :permission :view :resource document})]
+        (is (true? (:allowed? first-decision)))
+        (is (false? (:cached? first-decision)))
+        (is (true? (:allowed? repeated-decision)))
+        (is (true? (:cached? repeated-decision))
+            "exact-basis caching remains available after disablement"))
+      (ds/transact! conn [{:eacl/id "unrelated-after-violation"}])
+      (is (true?
+           (eacl/can?
+            client
+            {:subject user :permission :view :resource document})))
+      (let [snapshot (eacl/snapshot client)]
+        (try
+          (is (string? (eacl/basis-token snapshot))
+              "revision-token issuance does not depend on managed proofs")
+          (finally
+            (eacl/release! snapshot))))
+      (let [stats (datascript/cache-stats client)]
+        (is (true? (:managed-lifting-disabled? stats)))
+        (is (= 1 (:proof-contract-violations stats)))
+        (is (= {:relation-generation-above-revision 1}
+               (:proof-contract-violation-reasons stats))))
+      (is (= 1 (count @reports)))
+      (is (= :relation-generation-above-revision
+             (:reason (first @reports)))))))
 
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
   (let [conn (datascript/create-conn)
@@ -482,8 +551,7 @@
          (ds/datoms
           (ds/db conn) :eavt document-eid
           relationship-storage/reverse-attribute))]
-    (is (integer? (:schema-stamp before-proof)))
-    (is (= relation-id (ffirst (:relation-stamps before-proof))))
+    (is (= relation-id (ffirst before-proof)))
     (testing "unsupported raw mutation leaves the managed proof unchanged"
       (ds/transact!
        conn
@@ -512,8 +580,8 @@
               (select-keys (:runtime authorization)
                            datascript-backend/adapter-config-keys))
              :proof-frame [relation-id])]
-        (is (< (second (first (:relation-stamps before-proof)))
-               (second (first (:relation-stamps after-proof)))))))))
+        (is (< (second (first before-proof))
+               (second (first after-proof))))))))
 
 (deftest relationship-cursor-changed-proof-is-stale-test
   (let [conn (datascript/create-conn)
