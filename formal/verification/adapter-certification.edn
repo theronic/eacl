@@ -9,7 +9,7 @@
   {:formal-contract "formal/dafny/ConsistencyDecision.dfy"
    :runtime-contract "eacl.backend.source/source-obligations"}
   :writer
-  {:formal-contracts ["formal/dafny/CacheKernel.dfy"
+  {:formal-contracts ["formal/dafny/CurrentCache.dfy"
                       "formal/dafny/ScalarFrontierCoherence.dfy"]
    :runtime-contract "eacl.backend.writer/writer-obligations"}}
  :fixture

@@ -82,7 +82,8 @@
   {:tests 172 :assertions 4682 :failures 0 :errors 0
    :all-required-indexed-operations-observed true}
   :mutation-registry
-  {:mutants 96 :killed 96 :survived 0}}
+  {:scope :executed-production-cljs
+   :mutants 18 :killed 18 :survived 0}}
  :trust-posture
  {:browser-authorization :advisory
   :server-recheck-required true

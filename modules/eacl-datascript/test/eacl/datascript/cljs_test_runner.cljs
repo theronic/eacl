@@ -21,6 +21,7 @@
             [eacl.verified-kernel-test]
             [eacl.formal.cache-strategy-adversarial-test]
             [eacl.formal.differential-runner-test]
+            [eacl.formal.executed-mutation-controls]
             [eacl.formal.generators-test]
             [eacl.datascript.adapter-certification-test]
             [eacl.datascript.batch-test]
@@ -64,6 +65,7 @@
                'eacl.verified-kernel-test
                'eacl.formal.cache-strategy-adversarial-test
                'eacl.formal.differential-runner-test
+               'eacl.formal.executed-mutation-controls
                'eacl.formal.generators-test
                'eacl.datascript.adapter-certification-test
                'eacl.datascript.batch-test

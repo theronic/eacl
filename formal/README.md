@@ -9,9 +9,9 @@ the generated release manifest.
 ## Layout
 
 - `stable-discovery/` contains the release-assurance tree of the shipped
-  enumeration engine: 42 Dafny leaves, two TLC families, five executable
+  enumeration engine: 46 Dafny leaves, two TLC families, five executable
   refinement bridges and the randomized refinement campaign
-  (`verify-fast.sh`, 528 obligations; see its README).
+  (`verify-fast.sh`, 631 obligations; see its README).
 - `dafny/` contains the executable mathematical semantics, the generated
   decision kernels, and proof lemmas. The `AcyclicEngine`, `RecursiveEngine`,
   `OrderedMerge`, `RoutingCertificate`, `CursorCost` and `Indexed*` leaves
