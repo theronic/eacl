@@ -9,7 +9,6 @@
             [eacl.backend.writer :as writer]
             [eacl.cache :as cache]
             [eacl.core :as eacl]
-            [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
@@ -640,18 +639,19 @@
            (observed-failure
             conn #(eacl/can? cached-client user :admin account))
            "injected cache publication failure"))))
-    (testing "cursor-construction failures release the selected snapshot"
+    (testing "cursor-encoding failures release the selected snapshot"
       (with-redefs
-       [cursor/cursor->token
-        (fn [& _]
-          (throw (ex-info "injected cursor construction failure"
-                          {:type :test/cursor-construction-failure})))]
+       [execution/check!
+        (fail-execution-stage
+         :cursor-encode
+         (ex-info "injected cursor encoding failure"
+                  {:type :test/cursor-encoding-failure}))]
         (assert-one-release!
          (observed-failure
           conn
           #(eacl/read-relationships
             client {:subject/type :user :first 1}))
-         "injected cursor construction failure")))))
+         "injected cursor encoding failure")))))
 
 (deftest write-planning-snapshot-releases-before-commit-test
   (let [{:keys [conn client user account]} (fixture)

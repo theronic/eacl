@@ -322,7 +322,7 @@
         externalizations (atom 0)
         default-entid->object-id
         (:entid->object-id (:runtime client))
-        counting-client
+        base-client
         (datascript/make-client
          conn
          {:entid->object-id
@@ -332,26 +332,31 @@
           :adapter-fingerprint {:codec :counting-test}
           :adapter-deterministic? true})
         internal-queries (atom [])
-        read-relationships impl/read-relationships]
-    (with-redefs
-      [impl/read-relationships
-       (fn [& args]
-         ;; The public three-arity delegates to the new window-aware
-         ;; four-arity. Count the public engine invocation, not that local
-         ;; arity dispatch, as a second backend query.
-         (when (= 3 (count args))
-           (swap! internal-queries conj (second args)))
-         (apply read-relationships args))]
-      (let [page (eacl/read-relationships counting-client
-                                          {:subject/type :user
-                                           :first 20})]
-        (is (= 20 (count (:data page))))
-        (is (= 44 @externalizations)
-            "20 relationships plus two 2-endpoint cursor edges are externalized")
-        (is (= 1 (count @internal-queries)))
-        (is (= 20 (:first (first @internal-queries))))
-        (is (not (contains? (first @internal-queries) :limit))
-            "the public wrapper must not drain an unbounded legacy page")))))
+        read-relationships impl/read-relationships
+        counting-client
+        (assoc
+         base-client
+         :api
+         (assoc-in
+          (:api base-client)
+          [:impl :read-relationships]
+          (fn [& args]
+            ;; The public three-arity delegates to the new window-aware
+            ;; four-arity. Count the public engine invocation, not that local
+            ;; arity dispatch, as a second backend query.
+            (when (= 3 (count args))
+              (swap! internal-queries conj (second args)))
+            (apply read-relationships args))))
+        page (eacl/read-relationships counting-client
+                                      {:subject/type :user
+                                       :first 20})]
+    (is (= 20 (count (:data page))))
+    (is (= 44 @externalizations)
+        "20 relationships plus two 2-endpoint cursor edges are externalized")
+    (is (= 1 (count @internal-queries)))
+    (is (= 20 (:first (first @internal-queries))))
+    (is (not (contains? (first @internal-queries) :limit))
+        "the public wrapper must not drain an unbounded legacy page")))
 
 (deftest relationship-continuation-authenticates-cursor-once-test
   (let [{:keys [conn client]} (seed-bulk-read-db 100)

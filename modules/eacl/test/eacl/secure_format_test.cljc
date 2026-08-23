@@ -65,9 +65,13 @@
         (str/split
          (subs token (count cursor/cursor-prefix))
          #"\."
-         -1)]
+         -1)
+        ciphertext-bytes (secure/b64url-decode ciphertext)
+        tampered-ciphertext
+        (secure/b64url-encode
+         (update ciphertext-bytes 0 bit-xor 1))]
     (str cursor/cursor-prefix
-         kid "." nonce "." (tamper ciphertext) "." tag)))
+         kid "." nonce "." tampered-ciphertext "." tag)))
 
 (deftest canonical-portable-format-test
   (is (= (secure/encode-canonical {:b #{3 2 1} :a [1 true nil]})
@@ -354,17 +358,16 @@
                :proof "private-proof"}
         encoded (cursor/cursor->token value options)
         tampered (tamper-encrypted-cursor-payload encoded)
-        payload-parses (atom 0)
-        decode secure/decode-canonical
+        codec-work (atom {})
         data
-        (with-redefs [secure/decode-canonical
-                      (fn [& args]
-                        (swap! payload-parses inc)
-                        (apply decode args))]
+        (binding [cursor/*codec-work* codec-work]
           (error-data #(cursor/token->cursor tampered options)))]
     (is (= :authentication-failed (:reason data)))
-    (is (= 1 @payload-parses)
-        "only the visible key id is parsed before ciphertext authentication")))
+    (is (= 1 (:authentication-passes @codec-work))
+        "the visible key id is accepted and the ciphertext is authenticated")
+    (is (zero? (:decryption-passes @codec-work 0)))
+    (is (zero? (:payload-canonical-passes @codec-work 0))
+        "the private payload is neither decrypted nor parsed before authentication")))
 
 (deftest encrypted-cursor-hides-payload-and-randomizes-ciphertext-test
   (let [value {:v 12

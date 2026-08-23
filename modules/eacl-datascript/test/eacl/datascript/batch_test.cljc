@@ -1,4 +1,5 @@
 (ns eacl.datascript.batch-test
+  #?(:cljs (:require-macros [eacl.core :as eacl]))
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [clojure.string :as str]
@@ -10,8 +11,7 @@
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.execution :as execution]
-            [eacl.request.counters :as request-counters]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.request.counters :as request-counters]))
 
 (def ^:private batch-schema
   "definition user {}
@@ -562,26 +562,25 @@
       (is (= 1 (get-in backend-data
                        [:aggregate-counters :output-units]))))))
 
-(deftest completed-artifacts-before-publication-failure-remain-independent-test
+(deftest completed-artifacts-before-later-backend-failure-remain-independent-test
   (let [{:keys [client alice carol document]} (fixture)
         first-demand (demand alice :view document)
         second-demand (demand carol :view document)
-        original-publish subproblem/publish!
-        answer-attempts (atom 0)
+        backend-calls (atom 0)
         error
-        (with-redefs
-         [subproblem/publish!
-          (fn [& args]
-            (when (and (= :answer (second args))
-                       (= 3 (swap! answer-attempts inc)))
+        (binding
+         [backend/*invoke-observer*
+          (fn [{:keys [phase operation]}]
+            (when (and (= :before phase)
+                       (= :object-id->internal operation)
+                       (= 3 (swap! backend-calls inc)))
               (throw
-               (ex-info "injected publication failure"
-                        {:type :test/publication-failure})))
-            (apply original-publish args))]
+               (ex-info "injected backend failure"
+                        {:type :test/backend-failure}))))]
          (caught
           #(eacl/check-permissions
             client {:checks [first-demand second-demand]})))]
-    (is (= :test/publication-failure (:type (ex-data error))))
+    (is (= :test/backend-failure (:type (ex-data error))))
     (is (= 1 (:demand-index (ex-data error))))
     (is (true? (:cached?
                 (eacl/check-permission client first-demand))))))
