@@ -1,6 +1,6 @@
 {:schema-version 1
- :certification-version "eacl.adapter-certification/v2"
- :date "2026-08-06"
+ :certification-version "eacl.adapter-certification/v3"
+ :date "2026-08-23"
  :formal-contract "formal/dafny/SnapshotOracle.dfy"
  :runtime-contract "eacl.backend.v8/adapter-obligations"
  :fixture
@@ -33,7 +33,7 @@
    :static
    {:namespace eacl.datomic.adapter-certification-test
     :tests 1
-    :assertions 1
+    :assertions 2
     :failures 0
     :errors 0}
    :history
@@ -56,9 +56,9 @@
    :representations [:numeric-eid]
    :static
    {:namespace eacl.datascript.adapter-certification-test
-    :clj {:tests 1 :assertions 1 :failures 0 :errors 0}
+    :clj {:tests 2 :assertions 5 :failures 0 :errors 0}
     :cljs-in-full-suite
-    {:tests 163 :assertions 4465 :failures 0 :errors 0}}
+    {:tests 258 :assertions 7953 :failures 0 :errors 0}}
    :history
    {:namespace eacl.datascript.consistency-v3-test
     :clj {:tests 7 :assertions 23 :failures 0 :errors 0}
@@ -79,8 +79,8 @@
    :representations [:attribute-keywords :attribute-refs]
    :static
    {:namespace eacl.datahike.adapter-certification-test
-    :tests 1
-    :assertions 2
+    :tests 2
+    :assertions 7
     :failures 0
     :errors 0}
    :history
@@ -99,7 +99,30 @@
      :proof-equivalent-cache-lift
      :physical-half-corruption
      :relevant-proof-change
-     :source-and-branch-identity]}}}
+     :source-and-branch-identity]}}
+  :datalevin
+  {:status :passed
+   :runtimes [:clj]
+   :representations [:numeric-eid :explicit-owned-reader]
+   :static
+   {:namespace eacl.datalevin.adapter-certification-test
+    :tests 1
+    :assertions 5
+    :failures 0
+    :errors 0}
+   :history
+   {:namespace eacl.datalevin.contract-test
+    :tests 24
+    :assertions 1134
+    :failures 0
+    :errors 0
+    :coverage
+    [:explicit-reader-lifecycle
+     :owner-thread
+     :identical-basis-cache
+     :no-ordered-generation-claim
+     :direct-match-equivalence
+     :aggregate-scan-and-enumerate]}}}
  :runtime-guards
  {:status :passed
   :namespace eacl.backend.v8-test

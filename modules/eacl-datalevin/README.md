@@ -10,7 +10,8 @@ embedded Datalevin database. The initial contract is deliberately narrow:
 - no exact historical snapshot selection, remote/server, HA, replica,
   multiple-writer, or WAL qualification;
 - physical schema frozen after bootstrap; and
-- revision-bound cache and cursor reuse with no ordered-generation proofs.
+- revision-bound completed-answer and cursor reuse with no ordered-generation
+  proofs, plus certified-generation reuse of schema-derived plans.
 
 Every request snapshot owns a public Datalevin read handle and closes it after
 the complete EACL response is realized. The module never treats Datalevin's
@@ -65,8 +66,18 @@ at the qualified local sole-writer head. `at-least-as-fresh` retries fresh
 readers until the authenticated revision floor is visible or the original
 deadline/cancellation terminates the request. `at-exact-snapshot` always
 throws `:eacl.consistency/exact-snapshot-unavailable`. The module never
-advertises ordered generations and never supplies a `:proof-frame`, so cached
-answers cannot lift across revisions.
+advertises ordered generations and never supplies a `:proof-frame`, so
+completed answers cannot lift across revisions. Its independent, memoized
+`:schema-generation` probe still lets validation catalogs, dependency
+closures, routing analysis, and sealed plans survive relationship-only
+revisions. Snapshot acquisition reads only revision bounds from the maintained
+fork; it does not read full metadata or fingerprint physical schema.
+
+The shared aggregate routes use the same owned reader for their complete
+batch or candidate window. Datalevin's certified `:direct-match?` operation is
+reused by the enumerate route as exactly one snapshot-bound relationship probe
+per candidate. The adapter has no backend-private aggregate loop, makes no
+ordered-generation claim, and never moves an owned reader to another thread.
 
 The advance callback is synchronous and release-critical: EACL does not
 acknowledge a bootstrap or authorization commit until the callback returns and

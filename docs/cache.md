@@ -42,7 +42,7 @@ Caching does not alter results:
 | Proof-backed completed answer | Same semantic operation, lifecycle, schema generation, and dependency frontier | Survives unrelated forward transactions |
 | Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
 | Sealed plan | Same source scope, lifecycle, schema generation, and permission root | Reuses the compiled stable-discovery plan across requests and unrelated transactions; `expire-cache!` drops it |
-| Schema paths | Same schema generation | Shares permission-path and dependency-closure derivations used for cache dependencies and cursor proofs |
+| Schema-derived generation | Same engine ABI, adapter/source scope, lifecycle, and certified schema generation | Shares parsed validation catalogs, permission roots and paths, dependency closures, routing analysis, direct-grant relations, cycle guards, and sealed plans |
 | Latest checkpoint | One authenticated query, exact snapshot, page size, and boundary | Resumes a continued page from the retained engine state plus its lookahead segment without publishing incomplete traversal as an answer |
 | Visited page | One authenticated query and immutable snapshot | Reuses an already-externalized page (and learns the adjacent opposite-direction page) |
 
@@ -50,6 +50,40 @@ Completed-answer keys include the normalized operation, principal, permission,
 query, bounds, evaluation mode, and result shape. Public IDs and metadata are
 rendered from the selected database after an internal result is resolved.
 Partially processed worklists and incomplete pages are not completed answers.
+
+Aggregate batch, scan-route, and enumerate-route results use these same layers;
+they do not have a weaker side cache. The exact key binds the operation and
+complete normalized aggregate shape, including authorization or direct-
+relationship clauses, page direction/demand, candidate window, and selected
+snapshot. Proof-backed aggregate reuse additionally binds every direct
+relationship dependency used by the filter. A request-local repeated decision
+may remove work inside one aggregate but is not reported as a durable
+`:cached? true` result. Datalevin can hit an aggregate page only at the
+identical selected revision because it deliberately omits ordered-generation
+proofs; its certified schema generation still reuses validation and plans.
+
+## Certified schema generation
+
+Every bundled adapter implements the independent `:schema-generation`
+operation. It reads EACL's transactionally maintained schema stamp with at
+most one index probe, and the selected adapter memoizes that result. A managed
+schema write advances the stamp; a relationship-only or unrelated write does
+not. This operation is available on Datalevin even though Datalevin does not
+advertise ordered relationship-generation proofs.
+
+A certified stamp selects one bounded, client-owned derived generation. Its
+key contains the engine ABI, backend and adapter identity, source scope,
+lifecycle, and schema generation—never the native database revision. All
+pure schema artifacts, including sealed plans and validation catalogs, live
+inside that generation. A relationship write can therefore advance the
+native revision without causing definition reads or plan sealing on the next
+request.
+
+If an adapter cannot certify a schema generation, EACL creates the same
+derived slots in a request-local floor and discards them when the request
+ends. It never falls back to native revision keying and has no process-global
+sealed-plan FIFO. `expire-cache!` clears the client's generation registry;
+ordinary relationship writes leave it intact.
 
 ## Exact-first lookup
 
@@ -60,8 +94,9 @@ For an ordinary current completed operation EACL resolves:
 3. engine evaluation, optionally using safe cached subproblems; and
 4. publication into every eligible exact and proof-backed tier.
 
-An exact hit performs no generation proof reads and no schema reads: request
-validation runs on the miss path against the schema parsed once per schema
+An exact hit performs no ordered-generation proof reads and no schema reads;
+the independent schema-generation operation is not forced on that path.
+Request validation runs on the miss path against the schema parsed once per schema
 generation (a hit implies the request validated under an equal generation;
 an unstamped database validates against a direct read). A proof-backed hit is
 promoted into the exact store for the selected value, so the next identical
@@ -129,10 +164,12 @@ relation; unrelated relations share no EACL coordination point.
 
 Each request owns one lazy proof frame bound to its exact adapter, source
 lifecycle, and immutable database value. Equal dependency closures share their
-resolved evidence. The frame validates the schema generation and the complete
-canonical `[relation-id generation]` set, derives the scalar frontier, and can
-derive subset frontiers only from relations already in the proved closure. It
-never combines evidence from another adapter, lifecycle, or snapshot.
+resolved evidence. The frame validates the complete canonical
+`[relation-id generation]` set, derives the scalar frontier, and can derive
+subset frontiers only from relations already in the proved closure. The
+proof's schema stamp must agree with the independent certified schema
+generation when both are available. The frame never combines evidence from
+another adapter, lifecycle, or snapshot.
 
 Proof is unavailable when:
 

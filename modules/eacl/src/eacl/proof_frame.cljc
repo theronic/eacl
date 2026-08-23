@@ -35,7 +35,8 @@
   internally, observes typed unavailable results and cannot affect decisions."
   ([adapter]
    (request-frame adapter {}))
-  ([adapter {:keys [maximum-relation-count diagnostic-fn]
+  ([adapter {:keys [maximum-relation-count diagnostic-fn
+                    schema-generation-fn]
              :or {maximum-relation-count
                   default-maximum-relation-count}}]
    (when-not (backend/adapter? adapter)
@@ -43,10 +44,22 @@
       (ex-info
        "A proof frame requires a selected backend adapter."
        {:type :eacl/invalid-config})))
+   (when (and (some? schema-generation-fn)
+              (not (fn? schema-generation-fn)))
+     (throw
+      (ex-info
+       "A proof frame schema-generation resolver must be a function."
+       {:type :eacl/invalid-config
+        :key :schema-generation-fn})))
    {:adapter adapter
     :snapshot-id-delay (delay (backend/invoke adapter :snapshot-id))
     :source-lifecycle-delay
     (delay (backend/invoke adapter :source-lifecycle))
+    :schema-generation-delay
+    (delay
+      (if schema-generation-fn
+        (schema-generation-fn)
+        (backend/invoke adapter :schema-generation)))
     :maximum-relation-count maximum-relation-count
     :diagnostic-fn diagnostic-fn
     :resolutions (atom {})}))
@@ -58,6 +71,22 @@
 (defn source-lifecycle
   [frame]
   (force (:source-lifecycle-delay frame)))
+
+(defn schema-generation
+  [frame]
+  (force (:schema-generation-delay frame)))
+
+(defn- schema-generation-mismatch!
+  [frame proof-generation certified-generation]
+  (throw
+   (ex-info
+    "Ordered-generation proof disagrees with the certified schema generation."
+    {:type :eacl/backend-integrity-error
+     :eacl/error :eacl/backend-integrity-error
+     :backend (backend/backend-id (:adapter frame))
+     :reason :schema-generation-mismatch
+     :proof-schema-generation proof-generation
+     :certified-schema-generation certified-generation})))
 
 (defn- unavailable
   [frame reason details]
@@ -104,19 +133,25 @@
        {:relation-ids relation-ids :relation-stamps relation-stamps})
 
       :else
-      {:status :complete
-       :snapshot-id (snapshot-id frame)
-       :source-lifecycle (source-lifecycle frame)
-       :schema-stamp (:schema-stamp raw)
-       :relation-ids relation-ids
-       :relation-stamps relation-stamps
-       :relation-stamp-map (into {} relation-stamps)
-       :dependency-stamp
-       (reduce
-        (fn [frontier [_ generation]]
-          (max frontier generation))
-        0
-        relation-stamps)})))
+      (let [proof-generation (:schema-stamp raw)
+            certified-generation (schema-generation frame)]
+        (when (and (some? certified-generation)
+                   (not= certified-generation proof-generation))
+          (schema-generation-mismatch!
+           frame proof-generation certified-generation))
+        {:status :complete
+         :snapshot-id (snapshot-id frame)
+         :source-lifecycle (source-lifecycle frame)
+         :schema-stamp proof-generation
+         :relation-ids relation-ids
+         :relation-stamps relation-stamps
+         :relation-stamp-map (into {} relation-stamps)
+         :dependency-stamp
+         (reduce
+          (fn [frontier [_ generation]]
+            (max frontier generation))
+          0
+          relation-stamps)}))))
 
 (defn- acquire
   [frame relation-ids]
@@ -141,10 +176,13 @@
        relation-ids
        (backend/invoke (:adapter frame) :proof-frame relation-ids))
       (catch #?(:clj Throwable :cljs :default) error
-        (unavailable
-         frame :proof-provider-failure
-         {:error-class #?(:clj (.getName (class error))
-                          :cljs (or (.-name error) "Error"))})))))
+        (if (= :eacl/backend-integrity-error
+               (:type (ex-data error)))
+          (throw error)
+          (unavailable
+           frame :proof-provider-failure
+           {:error-class #?(:clj (.getName (class error))
+                            :cljs (or (.-name error) "Error"))}))))))
 
 (defn resolve!
   "Returns one immutable complete or typed-unavailable proof result.

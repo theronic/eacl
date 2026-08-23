@@ -522,6 +522,72 @@
    :killed-by
    {:proof :certified-acyclic-work-has-zero-recursive-work
     :test :acyclic-recursive-counter-and-limit-isolation}}
+  {:id :aggregate-snapshot-mixing
+   :mechanism :evaluate-one-aggregate-prefix-on-a-different-selected-snapshot
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :one-selected-snapshot-per-request
+    :test :aggregate-snapshot-mixing-control}}
+  {:id :aggregate-output-reordered-or-deduplicated
+   :mechanism :replace-ordered-aggregate-results-with-set-materialization
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :ordered-batch-and-stable-page-refinement
+    :test :aggregate-output-reordered-or-deduplicated-control}}
+  {:id :batch-cross-demand-contamination
+   :mechanism :reuse-one-demand-decision-under-another-demand-key
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :exact-demand-key-memoization
+    :test :batch-cross-demand-contamination-control}}
+  {:id :aggregate-deadline-renewal
+   :mechanism :construct-a-fresh-relative-deadline-for-each-candidate
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :one-absolute-request-deadline
+    :test :aggregate-deadline-renewal-control}}
+  {:id :aggregate-counter-reset
+   :mechanism :reset-cumulative-work-at-each-demand-or-window
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :hierarchical-counters-never-reset
+    :test :aggregate-counter-reset-control}}
+  {:id :candidate-failure-as-denial
+   :mechanism :convert-a-candidate-resource-failure-to-a-rejected-predicate
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :request-wide-failures-are-atomic
+    :test :candidate-failure-as-denial-control}}
+  {:id :authorized-cursor-proof-omission
+   :mechanism :omit-the-authorization-or-direct-relation-from-cursor-proof-scope
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :authorized-cursor-complete-proof-union
+    :test :authorized-cursor-proof-omission-control}}
+  {:id :window-boundary-skip-or-duplicate
+   :mechanism :resume-exclusively-after-the-unemitted-sentinel-or-before-the-last-examined-candidate
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :filtered-pagination-sentinel-replay-and-progress-anchor
+    :test :window-boundary-skip-or-duplicate-control}}
+  {:id :per-candidate-plan-sealing
+   :mechanism :prepare-the-permission-root-again-for-every-candidate
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :one-prepared-root-per-request-generation
+    :test :per-candidate-plan-sealing-control}}
+  {:id :enumerate-permission-reevaluation
+   :mechanism :run-a-point-permission-check-after-stable-discovery-for-each-enumerate-candidate
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :enumerate-route-performs-only-direct-match-predicate-work
+    :test :enumerate-permission-reevaluation-control}}
+  {:id :aggregate-release-imbalance
+   :mechanism :skip-owned-snapshot-release-on-an-aggregate-failure
+   :control {:kind :clojure}
+   :killed-by
+   {:proof :request-context-exactly-once-cleanup
+    :test :aggregate-release-imbalance-control}}
   {:id :partial-denotation-hit
    :mechanism :allow-partial-denotation-as-cache-hit
    :control

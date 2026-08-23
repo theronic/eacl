@@ -7,8 +7,10 @@
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
+            [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
-            [eacl.proof-frame :as proof-frame]))
+            [eacl.proof-frame :as proof-frame]
+            [eacl.request.counters :as request-counters]))
 
 (def schema
   "definition user {}
@@ -87,12 +89,98 @@
             client {:resource account :permission :admin})]]]
     (doseq [[operation f] operations]
       (testing (name operation)
-        (let [{:keys [value provider-calls db-calls]}
-              (observed-call conn f)]
+        (let [ledger (request-counters/make-ledger)
+              {:keys [value provider-calls db-calls]}
+              (binding [request-counters/*ledger* ledger]
+                (observed-call conn f))
+              counts (request-counters/snapshot ledger)]
           (is (some? value))
           (is (= 1 (:acquire-current! provider-calls 0)))
           (is (= 1 (:release! provider-calls 0)))
-          (is (= 1 db-calls)))))))
+          (is (= 1 db-calls))
+          (is (= 1 (:public-entries counts)))
+          (is (= 1 (:acquisitions counts)))
+          (is (= 1 (:context-constructions counts)))
+          (is (= 1 (:releases counts))))))))
+
+(deftest composed-snapshot-reuses-one-request-context-test
+  (let [{:keys [conn client user account]} (fixture)
+        cached-client (datascript/make-client conn {:cache {}})
+        ledger (request-counters/make-ledger)
+        {:keys [value provider-calls db-calls]}
+        (binding [request-counters/*ledger* ledger]
+          (observed-call
+           conn
+           #(eacl/with-snapshot
+             cached-client
+             (fn [view]
+               {:uncached-decision
+                (eacl/check-permission
+                 view {:subject user
+                       :permission :admin
+                       :resource account
+                       :cache? false})
+                :cached-decisions
+                (mapv
+                 (fn [_]
+                   (eacl/check-permission
+                    view {:subject user
+                          :permission :admin
+                          :resource account}))
+                 (range 2))
+                :count
+                (eacl/count-resources
+                 view {:subject user
+                       :resource/type :account
+                       :permission :admin
+                       :cache? false})}))))
+        counts (request-counters/snapshot ledger)]
+    (is (= {:allowed? true
+            :cached? false
+            :cache-basis nil
+            :evaluation :demand}
+           (:uncached-decision value)))
+    (is (= [false true]
+           (mapv :cached? (:cached-decisions value))))
+    (is (every? :allowed? (:cached-decisions value)))
+    (is (= 1 (get-in value [:count :count])))
+    (is (false? (get-in value [:count :cached?])))
+    (is (= 1 (:acquire-current! provider-calls 0)))
+    (is (= 1 (:release! provider-calls 0)))
+    (is (= 1 db-calls))
+    (is (= {:public-entries 1
+            :acquisitions 1
+            :context-constructions 1
+            :releases 1}
+           (select-keys counts
+                        [:public-entries :acquisitions
+                         :context-constructions :releases])))))
+
+(deftest composed-snapshot-nested-read-cannot-renew-deadline-test
+  (let [{:keys [conn client user account]} (fixture)
+        now (atom 0)
+        ledger (request-counters/make-ledger)
+        {:keys [value provider-calls]}
+        (binding [execution/*monotonic-nanos* #(deref now)
+                  request-counters/*ledger* ledger]
+          (observed-call
+           conn
+           #(eacl/with-snapshot
+             client nil {:timeout-ms 10}
+             (fn [view]
+               (reset! now 11000000)
+               (try
+                 (eacl/can? view user :admin account)
+                 nil
+                 (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
+                     error
+                   (ex-data error)))))))
+        counts (request-counters/snapshot ledger)]
+    (is (= :eacl.execution/deadline-exceeded (:type value)))
+    (is (= 1 (:acquire-current! provider-calls 0)))
+    (is (= 1 (:release! provider-calls 0)))
+    (is (= 1 (:context-constructions counts)))
+    (is (= 1 (:releases counts)))))
 
 (deftest selected-snapshot-releases-on-public-validation-error-test
   (let [{:keys [conn client user account]} (fixture)
@@ -148,92 +236,115 @@
     (is (= 1 (:release! provider-calls 0)))
     (is (= 1 db-calls))))
 
-#?(:clj
-   (defn- observed-failure
-     [conn f]
-     (let [failure (atom nil)
-           observation
-           (observed-call
+(defn- observed-failure
+  [conn f]
+  (let [failure (atom nil)
+        observation
+        (observed-call
+         conn
+         #(try
+            (f)
+            (catch #?(:clj Throwable :cljs :default) error
+              (reset! failure error))))]
+    (assoc observation :failure @failure)))
+
+(defn- failure-message
+  [failure]
+  #?(:clj (.getMessage ^Throwable failure)
+     :cljs (.-message failure)))
+
+(defn- fail-execution-stage
+  [target-stage error]
+  (fn
+    ([stage]
+     (if (= target-stage stage)
+       (throw error)
+       execution/*contract*))
+    ([contract stage]
+     (if (= target-stage stage)
+       (throw error)
+       contract))
+    ([contract stage consumed-work]
+     (if (= target-stage stage)
+       (throw error)
+       contract))))
+
+(deftest selected-snapshot-releases-across-post-selection-fault-boundaries-test
+  (let [{:keys [conn client user account]} (fixture)
+        assert-one-release!
+        (fn [{:keys [failure provider-calls db-calls]} expected-message]
+          (is (= expected-message (failure-message failure)))
+          (is (= 1 (:acquire-current! provider-calls 0)))
+          (is (= 1 (:release! provider-calls 0)))
+          (is (= 1 db-calls)))]
+    (testing "backend evaluation failures release the selected snapshot"
+      (let [error (ex-info "injected foreign failure"
+                           {:type :test/foreign-failure})]
+        (with-redefs
+         [engine/can? (fn [& _] (throw error))]
+          (assert-one-release!
+           (observed-failure
+            conn #(eacl/can? client user :admin account))
+           "injected foreign failure"))))
+    (testing "post-selection cancellation releases the selected snapshot"
+      (let [token (eacl/cancellation-token)]
+        (with-redefs
+         [execution/check!
+          (fail-execution-stage
+           :consistency-selected
+           (ex-info
+            "EACL authorization execution was cancelled."
+            {:type :eacl.execution/cancelled
+             :eacl/error :eacl.execution/cancelled}))]
+          (assert-one-release!
+           (observed-failure
             conn
-            #(try
-               (f)
-               (catch Throwable error
-                 (reset! failure error))))]
-       (assoc observation :failure @failure))))
-
-#?(:clj
-   (defn- fail-execution-stage
-     [original target-stage error]
-     (fn
-       ([stage]
-        (if (= target-stage stage)
-          (throw error)
-          (original stage)))
-       ([contract stage]
-        (if (= target-stage stage)
-          (throw error)
-          (original contract stage)))
-       ([contract stage consumed-work]
-        (if (= target-stage stage)
-          (throw error)
-          (original contract stage consumed-work))))))
-
-#?(:clj
-   (deftest selected-snapshot-releases-across-post-selection-fault-boundaries-test
-     (let [{:keys [conn client user account]} (fixture)
-           assert-one-release!
-           (fn [{:keys [failure provider-calls db-calls]} expected-message]
-             (is (= expected-message (.getMessage ^Throwable failure)))
-             (is (= 1 (:acquire-current! provider-calls 0)))
-             (is (= 1 (:release! provider-calls 0)))
-             (is (= 1 db-calls)))]
-       (testing "foreign runtime failures release the selected snapshot"
-         (let [original execution/check!
-               error (RuntimeException. "injected foreign failure")]
-           (with-redefs
-            [execution/check!
-             (fail-execution-stage original :semantic-evaluation error)]
-             (assert-one-release!
-              (observed-failure
-               conn #(eacl/can? client user :admin account))
-              "injected foreign failure"))))
-       (testing "proof failures release the selected snapshot"
-         (with-redefs
-          [proof-frame/resolve!
-           (fn [& _]
-             (throw (ex-info "injected proof failure"
-                             {:type :test/proof-failure})))]
-           (assert-one-release!
-            (observed-failure
-             conn #(eacl/can? client user :admin account))
-            "injected proof failure")))
-       (testing "cache-publication failures release the selected snapshot"
-         (let [cached-client
-               (datascript/make-client conn {:cache {}})
-               original execution/check!]
-           (with-redefs
-            [execution/check!
-             (fail-execution-stage
-              original
-              :cache-publication
-              (ex-info "injected cache publication failure"
-                       {:type :test/cache-publication-failure}))]
-             (assert-one-release!
-              (observed-failure
-               conn #(eacl/can? cached-client user :admin account))
-              "injected cache publication failure"))))
-       (testing "cursor-construction failures release the selected snapshot"
-         (with-redefs
-          [cursor/cursor->token
-           (fn [& _]
-             (throw (ex-info "injected cursor construction failure"
-                             {:type :test/cursor-construction-failure})))]
-           (assert-one-release!
-            (observed-failure
-             conn
-             #(eacl/read-relationships
-               client {:subject/type :user :first 1}))
-            "injected cursor construction failure"))))))
+            #(eacl/can?
+              client {:subject user
+                      :permission :admin
+                      :resource account
+                      :cancellation-token token}))
+           "EACL authorization execution was cancelled."))))
+    (testing "proof failures release the selected snapshot"
+      (let [proof-client (datascript/make-client conn {:cache {}})]
+        (with-redefs
+         [proof-frame/resolve!
+          (fn [& _]
+            (throw (ex-info "injected proof failure"
+                            {:type :test/proof-failure})))]
+          (let [{:keys [value provider-calls db-calls]}
+                (observed-call
+                 conn #(eacl/can? proof-client user :admin account))]
+            (is (true? value)
+                "unavailable proof falls back to exact evaluation")
+            (is (= 1 (:acquire-current! provider-calls 0)))
+            (is (= 1 (:release! provider-calls 0)))
+            (is (= 1 db-calls))))))
+    (testing "cache-publication failures release the selected snapshot"
+      (let [cached-client
+            (datascript/make-client conn {:cache {}})]
+        (with-redefs
+         [execution/check!
+          (fail-execution-stage
+           :cache-publication
+           (ex-info "injected cache publication failure"
+                    {:type :test/cache-publication-failure}))]
+          (assert-one-release!
+           (observed-failure
+            conn #(eacl/can? cached-client user :admin account))
+           "injected cache publication failure"))))
+    (testing "cursor-construction failures release the selected snapshot"
+      (with-redefs
+       [cursor/cursor->token
+        (fn [& _]
+          (throw (ex-info "injected cursor construction failure"
+                          {:type :test/cursor-construction-failure})))]
+        (assert-one-release!
+         (observed-failure
+          conn
+          #(eacl/read-relationships
+            client {:subject/type :user :first 1}))
+         "injected cursor construction failure")))))
 
 (deftest write-planning-snapshot-releases-before-commit-test
   (let [{:keys [conn client user account]} (fixture)

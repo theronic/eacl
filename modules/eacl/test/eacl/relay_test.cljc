@@ -370,7 +370,8 @@
               1)
             :internal-id->object str})})
         edge {:kind :relationship-index
-              :v 1
+              :v 2
+              :anchor :progress
               :scan-index 0
               :subject-id 10
               :resource-id 20}

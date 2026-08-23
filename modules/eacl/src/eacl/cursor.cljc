@@ -1,16 +1,22 @@
 (ns eacl.cursor
-  "Authenticated portable cursor envelopes.
-
-  Confidentiality is a separate adapter capability. Datomic retains its
-  encrypted page-token codec; this portable format provides mandatory
-  authenticity for synchronous CLJ/CLJS clients."
+  "Authenticated-encryption portable cursor envelopes for CLJ and CLJS."
   (:require [clojure.string :as str]
-            [eacl.secure-format :as secure]))
+            [eacl.secure-format :as secure]
+            #?@(:cljs [[goog.crypt.Aes]]))
+  #?(:clj
+     (:import [javax.crypto Cipher]
+              [javax.crypto.spec SecretKeySpec])))
 
-(def cursor-version 4)
-(def cursor-prefix "eacl_c4_")
-(def cursor-domain "eacl/cursor/envelope/v4")
+(def cursor-version 5)
+(def cursor-prefix "eacl_c5_")
+(def cursor-domain "eacl/cursor/envelope/v5")
 (def payload-keys #{:version :cursor :issued-at :expires-at})
+(def ^:private nonce-size 12)
+(def ^:private aes-block-size 16)
+(def ^:private maximum-counter 4294967295)
+(def ^:private encryption-key-domain "eacl/cursor/aead/encryption/v1")
+(def ^:private authentication-key-domain
+  "eacl/cursor/aead/authentication/v1")
 
 (def ^:dynamic *codec-work*
   "Optional atom populated with deterministic cursor-codec work counters.
@@ -43,7 +49,9 @@
    (->CursorCodecCache
     (atom {:order []
            :by-token {}
-           :by-cursor {}})
+           :by-cursor {}
+           :context-order []
+           :by-context {}})
     max-entries)))
 
 (defn clear-codec-cache!
@@ -55,8 +63,54 @@
     (reset! (:state cache)
             {:order []
              :by-token {}
-             :by-cursor {}}))
+             :by-cursor {}
+             :context-order []
+             :by-context {}}))
   nil)
+
+(defn memoized-context!
+  "Returns one bounded client-private cursor construction artifact.
+
+  `key` must contain every semantic input to `build`. The cache shares the
+  codec cache's entry bound and lifecycle but remains separate from token
+  lookup, so a context value can never authenticate an unknown token."
+  [cache key build]
+  (when-not (fn? build)
+    (throw (ex-info "Cursor context builder must be a function."
+                    {:type :eacl/invalid-config})))
+  (if-not cache
+    (build)
+    (do
+      (when-not (instance? CursorCodecCache cache)
+        (throw (ex-info "Expected an EACL cursor codec cache."
+                        {:type :eacl/invalid-config})))
+      (let [state (:state cache)]
+        (if (contains? (:by-context @state) key)
+          (do
+            (record-work! :context-cache-hits 1)
+            (get-in @state [:by-context key]))
+          (let [_ (record-work! :context-builds 1)
+                candidate (build)]
+            (swap!
+             state
+             (fn [{:keys [context-order by-context] :as current}]
+               (if (contains? by-context key)
+                 current
+                 (let [order' (conj context-order key)
+                       by-context' (assoc by-context key candidate)
+                       overflow (- (count order') (:max-entries cache))
+                       evicted (when (pos? overflow)
+                                 (take overflow order'))]
+                   (assoc current
+                          :context-order
+                          (if (seq evicted)
+                            (vec (drop overflow order'))
+                            order')
+                          :by-context
+                          (if (seq evicted)
+                            (apply dissoc by-context' evicted)
+                            by-context'))))))
+            (get-in @state [:by-context key])))))))
 
 (defn- now-seconds
   [options]
@@ -77,15 +131,94 @@
   [options]
   (merge options (:format-options options)))
 
-(defn- compact-signing-input
-  [kid-segment payload-segment]
-  (str cursor-domain "\n" kid-segment "." payload-segment))
+(defn- aead-error!
+  [reason data]
+  (throw (ex-info "Invalid encrypted cursor."
+                  (merge {:type :eacl.format/invalid
+                          :eacl/error :eacl.format/invalid
+                          :reason reason}
+                         data))))
 
-(defn- encode-compact
+(defn- uint32-bytes
+  [value]
+  [(bit-and (bit-shift-right value 24) 255)
+   (bit-and (bit-shift-right value 16) 255)
+   (bit-and (bit-shift-right value 8) 255)
+   (bit-and value 255)])
+
+(defn- aes-block-encrypter
+  [key]
+  #?(:clj
+     (let [cipher (Cipher/getInstance "AES/ECB/NoPadding")
+           key-bytes (byte-array (map unchecked-byte key))]
+       (.init cipher
+              Cipher/ENCRYPT_MODE
+              (SecretKeySpec. key-bytes "AES"))
+       (fn [block]
+         (mapv #(bit-and (int %) 255)
+               (.doFinal
+                cipher
+                (byte-array (map unchecked-byte block))))))
+     :cljs
+     (let [cipher (goog.crypt.Aes. (clj->js key))]
+       (fn [block]
+         (vec (.encrypt cipher (clj->js block)))))))
+
+(defn- ctr-transform
+  [key nonce input]
+  (when-not (= nonce-size (count nonce))
+    (aead-error! :invalid-nonce {:nonce-size (count nonce)}))
+  (let [input (vec input)
+        block-count
+        (quot (+ (count input) (dec aes-block-size)) aes-block-size)]
+    (when (> block-count maximum-counter)
+      (aead-error! :too-large {:maximum-blocks maximum-counter}))
+    (let [encrypt-block (aes-block-encrypter key)]
+      (loop [offset 0
+             counter 1
+             output (transient [])]
+        (if (= offset (count input))
+          (persistent! output)
+          (let [stream
+                (encrypt-block (into nonce (uint32-bytes counter)))
+                remaining (- (count input) offset)
+                length (min aes-block-size remaining)
+                output'
+                (loop [index 0
+                       result output]
+                  (if (= index length)
+                    result
+                    (recur
+                     (inc index)
+                     (conj!
+                      result
+                      (bit-xor
+                       (nth input (+ offset index))
+                       (nth stream index))))))]
+            (recur (+ offset length) (inc counter) output')))))))
+
+(defn- aead-keys
+  [domain-key]
+  {:encryption-key
+   (secure/derive-key domain-key encryption-key-domain)
+   :authentication-key
+   (secure/derive-key domain-key authentication-key-domain)})
+
+(defn- authentication-input
+  [kid-segment nonce-segment ciphertext-segment]
+  (str cursor-domain "\n"
+       kid-segment "." nonce-segment "." ciphertext-segment))
+
+(defn- encode-aead
   [options payload]
   (let [format-options (format-options options)
-        {:keys [kid key]}
+        maximum-size
+        (or (:maximum-size format-options)
+            secure/default-maximum-size)
+        {domain-key :key :keys [kid]}
         (secure/signing-context format-options cursor-domain)
+        {:keys [encryption-key authentication-key]}
+        (aead-keys domain-key)
         kid-bytes
         (secure/utf8-bytes
          (secure/encode-canonical
@@ -94,25 +227,35 @@
         payload-bytes
         (secure/utf8-bytes
          (secure/encode-canonical payload format-options))
+        nonce (secure/random-bytes nonce-size)
+        ciphertext (ctr-transform encryption-key nonce payload-bytes)
         kid-segment (secure/b64url-encode kid-bytes)
-        payload-segment (secure/b64url-encode payload-bytes)
-        signing-input
-        (compact-signing-input kid-segment payload-segment)
+        nonce-segment (secure/b64url-encode nonce)
+        ciphertext-segment (secure/b64url-encode ciphertext)
+        associated-input
+        (authentication-input
+         kid-segment nonce-segment ciphertext-segment)
         tag
-        (secure/hmac-sha-256 key signing-input)]
+        (secure/hmac-sha-256 authentication-key associated-input)
+        token
+        (str cursor-prefix
+             kid-segment "."
+             nonce-segment "."
+             ciphertext-segment "."
+             (secure/b64url-encode tag))]
+    (when (> (count token) maximum-size)
+      (aead-error! :too-large {:maximum-size maximum-size}))
     (record-work! :encode-calls 1)
     (record-work! :payload-canonical-passes 1)
     (record-work! :payload-input-bytes (count payload-bytes))
+    (record-work! :encryption-passes 1)
     (record-work! :authentication-passes 1)
     (record-work! :authentication-input-bytes
-                  (count (secure/utf8-bytes signing-input)))
-    (record-work! :base64-encode-passes 3)
-    (str cursor-prefix
-         kid-segment "."
-         payload-segment "."
-         (secure/b64url-encode tag))))
+                  (count (secure/utf8-bytes associated-input)))
+    (record-work! :base64-encode-passes 4)
+    token))
 
-(defn- decode-compact
+(defn- decode-aead
   [options token]
   (let [format-options (format-options options)
         maximum-size
@@ -121,7 +264,7 @@
     (when-not (and (string? token)
                    (<= (count token) maximum-size)
                    (str/starts-with? token cursor-prefix))
-      (throw (ex-info "Invalid compact cursor."
+      (throw (ex-info "Invalid encrypted cursor."
                       {:type :eacl.format/invalid
                        :reason :malformed-token})))
     (let [segments
@@ -129,14 +272,15 @@
            (subs token (count cursor-prefix))
            #"\."
            -1)]
-      (when-not (and (= 3 (count segments))
+      (when-not (and (= 4 (count segments))
                      (every? not-empty segments))
-        (throw (ex-info "Invalid compact cursor."
+        (throw (ex-info "Invalid encrypted cursor."
                         {:type :eacl.format/invalid
                          :reason :malformed-token})))
-      (let [[kid-segment payload-segment tag-segment] segments
+      (let [[kid-segment nonce-segment ciphertext-segment tag-segment]
+            segments
             _ (when (> (count kid-segment) 1368)
-                (throw (ex-info "Invalid compact cursor key id."
+                (throw (ex-info "Invalid encrypted cursor key id."
                                 {:type :eacl.format/invalid
                                  :reason :malformed-token})))
             kid
@@ -150,34 +294,41 @@
                  {:default secure/default-root-key})
              kid)]
         (when-not root-key
-          (throw (ex-info "Compact cursor authentication failed."
+          (throw (ex-info "Encrypted cursor authentication failed."
                           {:type :eacl.format/invalid
                            :reason :authentication-failed})))
-        (let [key (secure/derive-key root-key cursor-domain)
-              signing-input
-              (compact-signing-input kid-segment payload-segment)
+        (let [domain-key (secure/derive-key root-key cursor-domain)
+              {:keys [encryption-key authentication-key]}
+              (aead-keys domain-key)
+              associated-input
+              (authentication-input
+               kid-segment nonce-segment ciphertext-segment)
               expected
-              (secure/hmac-sha-256 key signing-input)
+              (secure/hmac-sha-256
+               authentication-key associated-input)
               supplied
               (secure/b64url-decode tag-segment)]
           (record-work! :decode-calls 1)
           (record-work! :authentication-passes 1)
           (record-work! :authentication-input-bytes
-                        (count (secure/utf8-bytes signing-input)))
-          (record-work! :base64-decode-passes 3)
+                        (count (secure/utf8-bytes associated-input)))
           (when-not (secure/secure-equal? expected supplied)
             (throw
-             (ex-info "Compact cursor authentication failed."
+             (ex-info "Encrypted cursor authentication failed."
                       {:type :eacl.format/invalid
                        :reason :authentication-failed})))
-          (let [payload-bytes
-                (secure/b64url-decode payload-segment)
+          (let [nonce (secure/b64url-decode nonce-segment)
+                ciphertext (secure/b64url-decode ciphertext-segment)
+                payload-bytes
+                (ctr-transform encryption-key nonce ciphertext)
                 payload
                 (secure/decode-canonical
                  (secure/bytes->utf8 payload-bytes)
                  (cond-> format-options
                    payload-keys
                    (assoc :allowed-keys payload-keys)))]
+            (record-work! :base64-decode-passes 4)
+            (record-work! :decryption-passes 1)
             (record-work! :payload-canonical-passes 1)
             (record-work! :payload-input-bytes (count payload-bytes))
             payload))))))
@@ -226,9 +377,10 @@
              evicted (when (pos? overflow)
                        (take overflow order'))]
          (if-not (seq evicted)
-           {:order order'
-            :by-token by-token'
-            :by-cursor by-cursor'}
+           (assoc state
+                  :order order'
+                  :by-token by-token'
+                  :by-cursor by-cursor')
            (reduce
             (fn [current evicted-token]
               (let [{evicted-identity :identity
@@ -239,14 +391,15 @@
                     (update :by-cursor
                             dissoc
                             [evicted-identity evicted-cursor]))))
-            {:order (vec (drop overflow order'))
-             :by-token by-token'
-             :by-cursor by-cursor'}
+            (assoc state
+                   :order (vec (drop overflow order'))
+                   :by-token by-token'
+                   :by-cursor by-cursor')
             evicted))))))
   token)
 
 (defn cursor->token
-  "Authenticates an internal cursor map as an opaque compact version-4 token."
+  "Encrypts and authenticates an internal cursor map as an opaque token."
   ([cursor]
    (cursor->token cursor nil))
   ([cursor {:keys [cursor-ttl-seconds] :as options}]
@@ -261,7 +414,7 @@
                  expires-at (when cursor-ttl-seconds
                               (+ issued-at cursor-ttl-seconds))
                  token
-                 (encode-compact
+                 (encode-aead
                   options
                   {:version cursor-version
                    :cursor cursor
@@ -310,7 +463,7 @@
                 :expired-at nil}))
            (let [payload
                  (try
-                   (decode-compact options token)
+                   (decode-aead options token)
                    (catch #?(:clj Exception :cljs :default) error
                      (cursor-error!
                       (or (:reason (ex-data error)) :undecodable)

@@ -102,6 +102,14 @@
               'eacl.engine.relationships/execute-page
               'eacl.client.orchestration/cursor-options
               'eacl.relay]}
+  {:source "formal/dafny/FilteredPagination.dfy"
+   :class :proof-only-host-control-model
+   :consumer ['eacl.engine.relationships/execute-filtered-window
+              'eacl.engine.v8/execute-filtered-lookup-window
+              'eacl.client.orchestration/authorization-scan-page
+              'eacl.client.orchestration/relationship-filtered-lookup-page
+              'eacl.datomic.core/spiceomic-read-relationships
+              'eacl.datomic.core/filtered-lookup-state]}
   {:source "formal/dafny/PermissionTree.dfy"
    :class :proof-only-host-control-and-semantic-model
    :consumer ['eacl.permission-tree]
@@ -399,12 +407,18 @@
         :mutation-control]}
   {:operation :relationship-pagination
    :entry-points ['eacl.engine.relationships/execute-page
+                  'eacl.engine.relationships/execute-filtered-window
+                  'eacl.engine.v8/execute-filtered-lookup-window
                   'eacl.relay/externalize-relationship-page]
    :theorems [:relationship-keyset-page-decision-exact
               :single-permitted-graph
               :matching-relationship-page-scope-reuses-exact-page
-              :relationship-page-scope-mismatch-cannot-hit]
+              :relationship-page-scope-mismatch-cannot-hit
+              :arbitrary-window-concatenation-is-exact
+              :unbounded-has-next-is-exact
+              :deadline-cut-publishes-no-page]
    :dafny ["formal/dafny/PageWindow.dfy"
+           "formal/dafny/FilteredPagination.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot :ordered-complete-scans
                          :exact-selection :source-fingerprint]

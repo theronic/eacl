@@ -2,6 +2,8 @@
   "Portable structured failures for public requests that name schema entries
   absent from the request's selected immutable snapshot.")
 
+(def ^:private catalog-key ::catalog)
+
 (defn- unknown-definition!
   [operation definition position]
   (throw
@@ -37,30 +39,37 @@
   EACL persists relation and permission declarations rather than empty
   definition shells, so a definition is observable when it owns a declaration
   or appears as a relation subject type."
-  [{:keys [relations permissions]}]
-  (let [relations (or relations [])
-        permissions (or permissions [])]
-    {:definitions
-     (into
+  [{:keys [relations permissions] :as schema}]
+  (or
+   (get schema catalog-key)
+   (let [relations (or relations [])
+         permissions (or permissions [])]
+     {:definitions
+      (into
+       (into #{}
+             (map :eacl.permission/resource-type)
+             permissions)
+       (mapcat
+        (juxt :eacl.relation/resource-type
+              :eacl.relation/subject-type)
+        relations))
+      :relations
       (into #{}
-            (map :eacl.permission/resource-type)
-            permissions)
-      (mapcat
-       (juxt :eacl.relation/resource-type
-             :eacl.relation/subject-type)
-       relations))
-     :relations
-     (into #{}
-           (map (juxt :eacl.relation/resource-type
-                      :eacl.relation/relation-name))
-           relations)
-     :relation-names
-     (into #{} (map :eacl.relation/relation-name) relations)
-     :permissions
-     (into #{}
-           (map (juxt :eacl.permission/resource-type
-                      :eacl.permission/permission-name))
-           permissions)}))
+            (map (juxt :eacl.relation/resource-type
+                       :eacl.relation/relation-name))
+            relations)
+      :relation-names
+      (into #{} (map :eacl.relation/relation-name) relations)
+      :permissions
+      (into #{}
+            (map (juxt :eacl.permission/resource-type
+                       :eacl.permission/permission-name))
+            permissions)})))
+
+(defn with-catalog
+  "Attaches a generation-owned validation catalog to a parsed schema value."
+  [schema names]
+  (assoc schema catalog-key names))
 
 (defn require-definition!
   [schema operation definition position]
@@ -163,4 +172,45 @@
                       (contains? relation-names relation))))
       (unknown-relation-or-permission!
        operation resource-type relation :relation)))
+  schema)
+
+(defn validate-authorized-relationship-read!
+  "Validates the ordinary relationship filters plus the permission root used
+  to authorize the designated endpoint. Shape validation has already proved
+  that the designated endpoint type is present."
+  [schema filters]
+  (validate-relationship-read! schema filters)
+  (when-let [{:keys [subject permission on]} (:authorization filters)]
+    (validate-permission-request!
+     schema
+     :read-relationships
+     {:resource-type (get filters (case on
+                                    :subject :subject/type
+                                    :resource :resource/type))
+      :subject-type (:type subject)
+      :permission permission}))
+  schema)
+
+(defn validate-lookup-relationship!
+  "Validates an enumerate-route direct relationship predicate against the
+  same selected schema as the permission root."
+  [schema operation query]
+  (case operation
+    :lookup-resources
+    (when-let [{:keys [relation subject]} (:resource/relationship query)]
+      (validate-relationship-write!
+       schema operation
+       {:resource-type (:resource/type query)
+        :subject-type (:type subject)
+        :relation relation}))
+
+    :lookup-subjects
+    (when-let [{:keys [relation resource]} (:subject/relationship query)]
+      (validate-relationship-write!
+       schema operation
+       {:resource-type (:type resource)
+        :subject-type (:subject/type query)
+        :relation relation}))
+
+    nil)
   schema)

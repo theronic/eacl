@@ -22,7 +22,7 @@
       (ex-data error))))
 
 (defn- adapter
-  [{:keys [backend-id source-id lifecycle branch revision schema-identity]
+  [{:keys [backend-id source-id lifecycle branch revision]
     :or {backend-id :test
          source-id "source"
          lifecycle "life"
@@ -47,8 +47,7 @@
            backend/required-snapshot-operations)
      {:snapshot-id
       (constantly
-       (cond-> {:database-id source-id :basis-t revision}
-         schema-identity (assoc :schema-identity schema-identity)))
+       {:database-id source-id :basis-t revision})
       :source-scope
       (constantly {:source-id source-id :branch branch})
       :source-lifecycle (constantly lifecycle)

@@ -72,6 +72,7 @@
               (mapv (fn [relation-id]
                       [relation-id generation])
                     relation-ids)})
+           :schema-generation (constantly generation)
            :source-scope (constantly {:source-id :one}))}))
 
 (defn- error-data [f]
@@ -126,6 +127,7 @@
             adapter consistency/fully-consistent)))
     (is (= {:schema-stamp 1 :relation-stamps []}
            (backend/invoke adapter :proof-frame [])))
+    (is (nil? (backend/invoke adapter :schema-generation)))
     (testing "unsupported guarantees fail before execution"
       (is (= {:type :eacl/unsupported-capability
               :capability :consistency
@@ -177,6 +179,15 @@
     (is (not (identical? first-cache second-cache)))
     (is (empty? @registry))))
 
+(deftest schema-generation-resolution-does-not-read-proof-frame-test
+  (let [stats (atom {})
+        adapter (generation-adapter 11)]
+    (is (= 11
+           (binding [backend/*backend-op-stats* stats]
+             (engine/schema-version adapter))))
+    (is (= 1 (get @stats :schema-generation)))
+    (is (zero? (get @stats :proof-frame 0)))))
+
 (deftest invalid-v8-adapter-test
   (is (= :eacl/invalid-backend-adapter
          (:type
@@ -191,17 +202,58 @@
            #(backend/make-adapter
              {:id :broken
               :capabilities {:consistency #{:eventually-maybe}}
-              :operations (operation-map)}))))))
+              :operations (operation-map)})))))
+  (is (= {:type :eacl/invalid-backend-adapter
+          :operation :schema-generation}
+         (select-keys
+          (error-data
+           #(backend/make-adapter
+             {:id :broken
+              :capabilities {}
+              :operations
+              (assoc (operation-map) :schema-generation :not-callable)}))
+          [:type :operation]))))
 
 (deftest adapter-obligation-registry-test
-  (is (= (conj backend/required-snapshot-operations :proof-frame)
+  (is (= (into (conj backend/required-snapshot-operations :proof-frame)
+               backend/optional-snapshot-operations)
          (set
           (keys
            (backend/certification-obligations)))))
   (is (contains?
        (backend/certification-obligations
         :subject->resources)
-       :strict-order)))
+       :strict-order))
+  (is (= #{:schema-generation}
+         backend/optional-snapshot-operations))
+  (is (every?
+       (backend/certification-obligations :schema-generation)
+       [:at-most-one-index-probe
+        :memoized-per-selected-adapter
+        :independent-of-ordered-generations
+        :nil-when-uncertified])))
+
+(deftest schema-generation-is-optional-independent-and-memoized-test
+  (let [reads (atom 0)
+        adapter
+        (backend/make-adapter
+         {:id :schema-generation-only
+          :capabilities
+          {:cache-proofs #{:snapshot-bound}}
+          :operations
+          (assoc (dissoc (operation-map) :proof-frame)
+                 :schema-generation
+                 (fn []
+                   (swap! reads inc)
+                   7))})]
+    (is (= 7 (backend/invoke adapter :schema-generation)))
+    (is (= 7 (backend/invoke adapter :schema-generation)))
+    (is (= 1 @reads))
+    (is (not (backend/supports?
+              adapter :cache-proofs :ordered-generations)))
+    (is (= :eacl/unsupported-capability
+           (:type
+            (error-data #(backend/invoke adapter :proof-frame [])))))))
 
 (deftest optional-runtime-guards-fail-closed-test
   (let [operations
@@ -271,6 +323,8 @@
                  [:order-hint
                   (fn [& _] (dec backend/minimum-exact-integer))
                   [] :exact-integer]
+                 [:schema-generation
+                  (fn [& _] -1) [] :exact-natural-or-nil]
                  [:snapshot-id (fn [& _] :not-a-map) [] :map-shape]
                  [:source-scope (fn [& _] nil) [] :map-shape]
                  [:native-revision (fn [& _] []) [] :map-shape]
@@ -475,8 +529,12 @@
                                (let [lifecycle
                                      (str (gensym "compiled-once-other-"))]
                                  (fn [] lifecycle)))})]
-            (is (= [] (:data (engine/lookup-resources
-                              other (query 1003)))))
+            (is (= []
+                   (:data
+                    (binding [engine/*schema-cache*
+                              (engine/make-schema-cache other 1)]
+                      (engine/lookup-resources
+                       other (query 1003))))))
             (is (= 2 @seals)
                 "a distinct source never shares another store's plan")))))))
 

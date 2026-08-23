@@ -2,6 +2,7 @@
   (:require [cljs.nodejs :as nodejs]
             [cljs.test :as t]
             [eacl.backend.v8-test]
+            [eacl.authorization.batch-test]
             [eacl.cache-test]
             [eacl.core-test]
             [eacl.causal-model-test]
@@ -12,6 +13,8 @@
             [eacl.permission-tree-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
+            [eacl.request.context-test]
+            [eacl.request.counters-test]
             [eacl.secure-format-test]
             [eacl.spicedb.parser-portability-test]
             [eacl.subproblem-cache-test]
@@ -20,6 +23,7 @@
             [eacl.formal.differential-runner-test]
             [eacl.formal.generators-test]
             [eacl.datascript.adapter-certification-test]
+            [eacl.datascript.batch-test]
             [eacl.datascript.cache-model-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
@@ -41,6 +45,7 @@
 
 (defn -main []
   (t/run-tests 'eacl.backend.v8-test
+               'eacl.authorization.batch-test
                'eacl.cache-test
                'eacl.core-test
                'eacl.causal-model-test
@@ -51,6 +56,8 @@
                'eacl.permission-tree-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
+               'eacl.request.context-test
+               'eacl.request.counters-test
                'eacl.secure-format-test
                'eacl.spicedb.parser-portability-test
                'eacl.subproblem-cache-test
@@ -59,6 +66,7 @@
                'eacl.formal.differential-runner-test
                'eacl.formal.generators-test
                'eacl.datascript.adapter-certification-test
+               'eacl.datascript.batch-test
                'eacl.datascript.cache-model-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test

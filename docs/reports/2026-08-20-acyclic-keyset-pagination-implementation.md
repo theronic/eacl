@@ -99,7 +99,8 @@ need the equal-prefix-longer convention.
   so the keyset route never builds it.
 - **Cursors**: `:least-path-edge {kind version order-abi fingerprint
   traversal coords}` — relay passes coords through (portable envelope
-  is authenticated plaintext; Datomic's AES-GCM token unaffected);
+  is the confidential `eacl_c5_` AES-CTR-HMAC envelope; Datomic's AES-GCM
+  token remains confidential);
   wrong-fingerprint or wrong-arity cursors fail typed through the
   existing envelope. Pre-release stance per project decision: no
   legacy-cursor migration or rejection machinery beyond the typed

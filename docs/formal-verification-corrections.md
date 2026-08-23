@@ -26,7 +26,7 @@ no verified-release claim existed.
   authenticated complete snapshot/proof identity, with deterministic exact
   replay on miss or eviction.
 - **Migration:** v8 release-candidate portable cursors are replaced by the
-  compact `eacl_c4_` format; no compatibility guarantee applies before the
+  compact authenticated-encryption `eacl_c5_` format; no compatibility guarantee applies before the
   first stable v8 release. Clients may see lower work and fewer limit errors.
 
 ## EACL-FORMAL-003 — authenticated cache loses logical admission kind

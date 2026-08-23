@@ -108,6 +108,18 @@
   (testing "attributes as numeric refs (:attribute-refs?, Datomic's representation)"
     (run-contract! {:attribute-refs? true})))
 
+(deftest datahike-certified-generation-plan-reuse-test
+  (doseq [[label config]
+          [["attributes as keywords" nil]
+           ["attributes as numeric refs" {:attribute-refs? true}]]]
+    (testing label
+      (let [conn (datahike/create-conn nil config)
+            client (datahike/make-client conn {})]
+        (eacl/write-schema! client contract/smoke-schema)
+        (seed-objects! conn)
+        (eacl/create-relationships! client contract/smoke-relationships)
+        (contract/assert-certified-generation-plan-reuse! client)))))
+
 (deftest datahike-pinned-spicedb-permission-tree-golden-test
   (doseq [config [nil {:attribute-refs? true}]]
     (let [conn (datahike/create-conn nil config)

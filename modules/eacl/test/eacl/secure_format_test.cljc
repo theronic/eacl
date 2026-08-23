@@ -14,6 +14,9 @@
              :current current-key}})
 
 (def portable-cursor-vector
+  "eacl_c5_OmN1cnJlbnQ.AAECAwQFBgcICQoL.QZ_P3mknLrCiPflRU2H_hccCTQDt3aST6krVrhIEy_I4dnWIfbanUmV8cfHj6sDjMhIN8Cd0lHIwkYS96UxCLc_WdfnW2VPzKBMSBiUyisCbhT9UFcFddkxT5ucySUPkLI31YQ68regKJar5aOo90d9lE3m6f7zG_vos_8kHIuEb.sOgle-nVuH1EijEmdIzlDQKGcUjJmxvyjlgYMDrjkUQ")
+
+(def legacy-portable-cursor-vector
   "eacl_c4_OmN1cnJlbnQ.ezpjdXJzb3IgezpraW5kIDpyZWxhdGlvbnNoaXBzLCA6b2Zmc2V0IDIsIDpzY29wZSBbOnJlYWQgezpzdWJqZWN0L2lkICJ1MSJ9XSwgOnYgOX0sIDpleHBpcmVzLWF0IDEwNSwgOmlzc3VlZC1hdCAxMDAsIDp2ZXJzaW9uIDR9.977hLzhIglQl_tClD4faSO8IvVpkEFUatzI9hAFDHfY")
 
 (def portable-cache-vector
@@ -48,13 +51,23 @@
 
 (defn- tamper-compact-authenticator
   [token]
-  (let [[kid payload tag]
+  (let [[kid nonce ciphertext tag]
         (str/split
          (subs token (count cursor/cursor-prefix))
          #"\."
          -1)]
     (str cursor/cursor-prefix
-         kid "." payload "." (tamper tag))))
+         kid "." nonce "." ciphertext "." (tamper tag))))
+
+(defn- tamper-encrypted-cursor-payload
+  [token]
+  (let [[kid nonce ciphertext tag]
+        (str/split
+         (subs token (count cursor/cursor-prefix))
+         #"\."
+         -1)]
+    (str cursor/cursor-prefix
+         kid "." nonce "." (tamper ciphertext) "." tag)))
 
 (deftest canonical-portable-format-test
   (is (= (secure/encode-canonical {:b #{3 2 1} :a [1 true nil]})
@@ -334,6 +347,85 @@
                (tamper-compact-authenticator encoded)
                options)))))))
 
+(deftest encrypted-cursor-rejects-tampering-before-payload-parse-test
+  (let [value {:v 12
+               :scope "private-scope"
+               :edge {:kind :stable-edge :ordinal 7}
+               :proof "private-proof"}
+        encoded (cursor/cursor->token value options)
+        tampered (tamper-encrypted-cursor-payload encoded)
+        payload-parses (atom 0)
+        decode secure/decode-canonical
+        data
+        (with-redefs [secure/decode-canonical
+                      (fn [& args]
+                        (swap! payload-parses inc)
+                        (apply decode args))]
+          (error-data #(cursor/token->cursor tampered options)))]
+    (is (= :authentication-failed (:reason data)))
+    (is (= 1 @payload-parses)
+        "only the visible key id is parsed before ciphertext authentication")))
+
+(deftest encrypted-cursor-hides-payload-and-randomizes-ciphertext-test
+  (let [value {:v 12
+               :scope "scope-secret-7f8a"
+               :position "position-secret-31c2"
+               :proof "proof-secret-98bd"}
+        token-a (cursor/cursor->token value (assoc options :now-seconds 100))
+        token-b (cursor/cursor->token value (assoc options :now-seconds 100))
+        plaintext
+        (secure/encode-canonical
+         {:version cursor/cursor-version
+          :cursor value
+          :issued-at 100
+          :expires-at nil})
+        encoded-plaintext
+        (secure/b64url-encode (secure/utf8-bytes plaintext))]
+    (is (not= token-a token-b)
+        "fresh random nonces produce distinct ciphertexts")
+    (is (not (str/includes? token-a encoded-plaintext))
+        "the old base64-plaintext payload is absent")
+    (doseq [secret ["scope-secret-7f8a"
+                    "position-secret-31c2"
+                    "proof-secret-98bd"]]
+      (is (not (str/includes? token-a secret))))
+    (is (= value (cursor/token->cursor token-a
+                                      (assoc options :now-seconds 100))))))
+
+(deftest encrypted-cursor-size-bound-rejects-instead-of-truncating-test
+  (let [value {:v 12 :scope (apply str (repeat 80 "x"))}
+        nonce (vec (range 12))
+        full-token
+        (with-redefs [secure/random-bytes (fn [_] nonce)]
+          (cursor/cursor->token value options))
+        maximum-size (dec (count full-token))
+        data
+        (with-redefs [secure/random-bytes (fn [_] nonce)]
+          (error-data
+           #(cursor/cursor->token
+             value (assoc options :maximum-size maximum-size))))]
+    (is (= :too-large (:reason data)))
+    (is (= :malformed-token
+           (:reason
+            (error-data
+             #(cursor/token->cursor
+               full-token
+               (assoc options :maximum-size maximum-size))))))))
+
+(deftest encrypted-cursor-key-rotation-test
+  (let [value {:v 12 :edge {:kind :least-path-edge :coords [1 2 3]}}
+        old-token
+        (cursor/cursor->token value (assoc options :current-kid :old))]
+    (is (= value (cursor/token->cursor old-token options))
+        "the retained old key decrypts a cursor after the current kid rotates")
+    (is (= :authentication-failed
+           (:reason
+            (error-data
+             #(cursor/token->cursor
+               old-token
+               {:current-kid :current
+                :keyring {:current current-key}})))))))
+
 (deftest private-cursor-codec-cache-test
   (let [value {:v 10
                :scope [:lookup {:subject/id "user-1"}]
@@ -368,7 +460,36 @@
                  (tamper-compact-authenticator encoded)
                  cached-options))))))))
 
-(deftest compact-cursor-operation-count-and-growth-test
+(deftest private-cursor-construction-context-cache-is-bounded-test
+  (let [codec-cache (cursor/codec-cache {:max-entries 2})
+        builds (atom {})
+        build
+        (fn [key]
+          #(do
+             (swap! builds update key (fnil inc 0))
+             {:built-from key}))]
+    (is (= {:built-from :one}
+           (cursor/memoized-context! codec-cache :one (build :one))))
+    (is (= {:built-from :two}
+           (cursor/memoized-context! codec-cache :two (build :two))))
+    (let [token
+          (cursor/cursor->token
+           {:v 10 :scope :scope :edge {:kind :lookup-eid}}
+           (assoc options :cursor-codec-cache codec-cache))]
+      (is (string? token))
+      (is (= {:built-from :one}
+             (cursor/memoized-context! codec-cache :one (build :one)))
+          "token publication preserves construction contexts"))
+    (is (= {:built-from :three}
+           (cursor/memoized-context! codec-cache :three (build :three))))
+    (is (= {:built-from :two}
+           (cursor/memoized-context! codec-cache :two (build :two))))
+    (is (= {:built-from :one}
+           (cursor/memoized-context! codec-cache :one (build :one)))
+        "the oldest context is rebuilt after bounded eviction")
+    (is (= {:one 2 :two 1 :three 1} @builds))))
+
+(deftest encrypted-cursor-operation-count-and-growth-test
   (let [small
         {:v 10
          :scope "scope"
@@ -392,8 +513,10 @@
     (doseq [work [@encode-work @decode-work]]
       (is (= 1 (:payload-canonical-passes work)))
       (is (= 1 (:authentication-passes work))))
-    (is (= 3 (:base64-encode-passes @encode-work)))
-    (is (= 3 (:base64-decode-passes @decode-work)))
+    (is (= 1 (:encryption-passes @encode-work)))
+    (is (= 1 (:decryption-passes @decode-work)))
+    (is (= 4 (:base64-encode-passes @encode-work)))
+    (is (= 4 (:base64-decode-passes @decode-work)))
     (is (< (count token)
            (+ 128 (* 2 (:payload-input-bytes @encode-work))))
         "compact framing grows linearly and leaves no nested envelope pass")))
@@ -450,13 +573,24 @@
          {:domain "eacl/cache-entry/envelope/v3"
           :prefix "eacl_ce3_"})]
     (is (= portable-cursor-vector
-           (cursor/cursor->token
-            cursor-payload
-            vector-options)))
+           (with-redefs [secure/random-bytes
+                         (fn [n]
+                           (is (= 12 n))
+                           (vec (range n)))]
+             (cursor/cursor->token
+              cursor-payload
+              vector-options))))
     (is (= cursor-payload
            (cursor/token->cursor
             portable-cursor-vector
             vector-options)))
+    (is (= :malformed-token
+           (:reason
+            (error-data
+             #(cursor/token->cursor
+               legacy-portable-cursor-vector
+               vector-options))))
+        "the removed authenticated-plaintext cursor format is not decoded")
     (is (= portable-cache-vector
            (secure/encode-authenticated
             cache-options

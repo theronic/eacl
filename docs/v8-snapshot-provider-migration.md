@@ -56,16 +56,24 @@ database object identity. The identity contains exactly:
  :source-lifecycle ...
  :revision ...
  :exact-locator ...
- :schema-identity ...
  :backend-snapshot-id ...}
 ```
 
 The adapter's native revision must agree with both `:order-hint` and
-`:exact-locator`. `:schema-identity` is required when schema can change without
-the native revision changing; otherwise it may be nil. Independently acquired
-snapshots may compare equal only when every EACL-visible dimension above is
-equal. Mutable values, directory paths, credentials, and process-local object
-identities must not appear in tokens or portable cache identity.
+`:exact-locator`. Independently acquired snapshots may compare equal only when
+every EACL-visible dimension above is equal. Mutable values, directory paths,
+credentials, and process-local object identities must not appear in tokens or
+portable cache identity. A provider must reject a snapshot identity that
+contains the retired `:schema-identity` field.
+
+Schema generation is deliberately separate from basis identity. The selected
+adapter exposes it through the memoized `:schema-generation` operation, where
+it keys schema-derived registries and is checked against an ordered proof
+frame when one exists. It is not copied into native revision tokens, exact
+locators, or semantic snapshot identity. In particular, an owned Datalevin
+provider reads only revision bounds while acquiring a native reader; it does
+not fetch full metadata or fingerprint physical schema. Its adapter performs
+the one schema-generation probe lazily if a request needs derived state.
 
 For at-least and exact modes, the selected adapter is compared directly with
 the authenticated token's backend, source, branch, and lifecycle. A lifecycle
@@ -90,7 +98,12 @@ tokens, invalidation, and any external monotonic watermark hook.
 - Test use-after-close, double close, foreign-thread access/release, release
   failure/retry, and unsupported runtime rejection.
 - Test equal revision, changed revision, lifecycle/source/branch changes, and
-  independent schema drift in semantic cache identity.
+  exact-locator changes in semantic cache identity.
+- Test the independent schema-generation operation: one probe at most, stable
+  across relationship-only writes, advanced by a managed schema write, and
+  consistent with an ordered proof frame when that capability is advertised.
+- Keep physical schema metadata and fingerprints out of acquisition, basis
+  identity, tokens, cursors, and cache keys.
 - Prove returned public values can be fully traversed after release without
   backend access.
 - Do not advertise exact history, ordered proofs, concurrency, durability, or

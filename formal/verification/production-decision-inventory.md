@@ -15,7 +15,7 @@ reused.
 | Stable-discovery reducer: admission, order, emission, limits | `eacl.engine.stable-reducer` (`schedule`, `step`, `release-one`, `run-forward`, `run-reverse`, `resume`), public limits mapped by `eacl.engine.v8/stable-limits` | forward/reverse enumeration order and uniqueness, exact and bounded counts, anchored `can?` (`eacl.engine.stable-route/check-eids`), typed limit errors |
 | Page composition, checkpoints and replay | `eacl.engine.stable-page/edge-page`, `deliver-page`, `state-at-boundary`, `checkpoint-put!`/`checkpoint-hit`; boundary validation by `eacl.engine.v8/validate-stable-bound!` | lookup page data, one-based `:stable-edge` cursors, page flags, stale-cursor rejection, continuation reuse |
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
-| Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
+| Relationship and authorized pagination | `eacl.engine.relationships` physical keyset pages and bounded authorization windows; `eacl.engine.v8/execute-filtered-lookup-window` over stable discovery; route orchestration in `eacl.client.orchestration` and the Datomic historical facade | relationship pages, authorization scan pages, enumerate-route pages, progress anchors, `:bounded?`, and exact lookahead |
 | Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
 | Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `captured-current-selection`, `select` | snapshot chosen for every Datomic, Datahike, and DataScript authorization request |
 | Semantic cache key and entry eligibility | canonical source/lifecycle/native-locator/view/adapter identity plus generated current-exact, snapshot-exact, and managed entry decisions and completed typed artifact validation | `can?`, lookup, count, relationship-read, and permission-tree cache-enabled responses; eligibility has zero backend-command authority |
@@ -140,6 +140,8 @@ The decisions above flow into these externally observable families:
 - exact and bounded count;
 - lookup cursor continuation in both supported page directions;
 - relationship pagination and cursor continuation;
+- authorization-filtered relationship scans and relationship-filtered resource/subject enumeration;
+- ordered batch permission checks under one selected snapshot and aggregate budget;
 - cache-enabled variants of checks, lookup, and count.
 
 No production decision may be omitted from the assurance matrix when it can
@@ -167,7 +169,7 @@ remaining scopes are adapter-operation semantic refinement and theorem
 classification for every reachable definition. `backend-dispatch.edn`
 separately proves the static closure fact that every CLJ and CLJS
 `backend/invoke` site uses a literal key from the pinned operation set (the
-required snapshot operations plus `:proof-frame`; the committed ledger holds
+required snapshot operations plus `:schema-generation` and `:proof-frame`; the committed ledger holds
 the exact site and key counts); this does not prove what an adapter
 implementation does. The release claim remains withheld until those semantic
 classifications are complete.

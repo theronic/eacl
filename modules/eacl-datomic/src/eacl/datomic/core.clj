@@ -2,6 +2,8 @@
   "Reifies eacl.core/IAuthorization for Datomic-backed EACL in eacl.datomic.impl."
   (:require [com.rpl.specter :as S]
             [datomic.api :as d]
+            [eacl.authorization.batch :as batch]
+            [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as shared-cache]
@@ -9,6 +11,7 @@
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl :refer [IAuthorization
+                                        IBatchedAuthorization
                                         IDetailedAuthorization
                                         spice-object
                                         ->Relationship
@@ -32,6 +35,7 @@
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.request.counters :as request-counters]
             [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
@@ -74,23 +78,31 @@
   "Normalizes one Datomic public request before snapshot/cache work and binds
   the same demand/deadline contract used by the shared clients."
   [opts operation request f]
-  (let [contract (execution/normalize opts operation request)
-        opts (assoc opts
-                    :execution-contract contract
-                    :cache-lifecycle
-                    (shared-cache/capture-current-lifecycle
-                     (:current-cache-store opts)))]
-    (execution/check! contract :request-start)
-    (binding [execution/*contract* contract
-              engine/*evaluation-mode* (:evaluation contract)
-              engine/*recursive-traversal-limits*
-              (:recursive-traversal-limits opts)
-              engine/*service-admission* (:service-admission opts)
-              impl.indexed/*recursive-traversal-limits*
-              (:recursive-traversal-limits opts)]
-      (let [result (f opts)]
-        (execution/check! contract :request-complete)
-        result))))
+  (let [ledger (or request-counters/*ledger*
+                   (request-counters/make-ledger))]
+    (request-counters/call-with-ledger
+     ledger
+     (fn []
+       (request-counters/add! :public-entries)
+       (request-counters/add! :contract-normalizations)
+       (request-counters/add! :context-constructions)
+       (let [contract (execution/normalize opts operation request)
+             opts (assoc opts
+                         :execution-contract contract
+                         :cache-lifecycle
+                         (shared-cache/capture-current-lifecycle
+                          (:current-cache-store opts)))]
+         (execution/check! contract :request-start)
+         (binding [execution/*contract* contract
+                   engine/*evaluation-mode* (:evaluation contract)
+                   engine/*recursive-traversal-limits*
+                   (:recursive-traversal-limits opts)
+                   engine/*service-admission* (:service-admission opts)
+                   impl.indexed/*recursive-traversal-limits*
+                   (:recursive-traversal-limits opts)]
+           (let [result (f opts)]
+             (execution/check! contract :request-complete)
+             result)))))))
 
 (defn- utf8-bytes [s]
   (.getBytes (str s) StandardCharsets/UTF_8))
@@ -548,7 +560,7 @@
         (assoc :consistency
                (select-keys
                 (consistency/descriptor (:consistency query))
-                [:mode]))) }))
+                [:mode])))}))
 
 (defn- list-query-shape
   [op query]
@@ -791,6 +803,7 @@
   (case (:kind cursor)
     :stable-edge
     (when (and (= engine/stable-cursor-version (:version cursor))
+               (= :progress (:anchor cursor))
                (= engine/stable-order-abi (:order-abi cursor))
                (contains? #{:forward :reverse} (:traversal cursor))
                (integer? (:ordinal cursor))
@@ -803,6 +816,7 @@
     ;; deepest coordinate (acyclic-keyset-pagination).
     :least-path-edge
     (when (and (= engine/stable-cursor-version (:version cursor))
+               (= :progress (:anchor cursor))
                (= engine/stable-order-abi (:order-abi cursor))
                (contains? #{:forward :reverse} (:traversal cursor))
                (vector? (:coords cursor))
@@ -824,7 +838,8 @@
        (let [{:keys [start-cursor
                      end-cursor
                      has-next-page?
-                     has-previous-page?]} (:page-info page)
+                     has-previous-page?
+                     bounded?]} (:page-info page)
              data (:data page)
              start-result (some-> start-cursor cursor-result)
              end-result (some-> end-cursor cursor-result)]
@@ -832,10 +847,17 @@
               (boolean? has-next-page?)
               (boolean? has-previous-page?)
               (if (empty? data)
-                (and (nil? start-cursor)
-                     (nil? end-cursor)
-                     (false? has-next-page?)
-                     (false? has-previous-page?))
+                (if (contains? (:page-info page) :bounded?)
+                  (and (boolean? bounded?)
+                       (or (nil? start-cursor) start-result)
+                       (or (nil? end-cursor) end-result)
+                       (if (or has-next-page? has-previous-page?)
+                         (or start-result end-result)
+                         true))
+                  (and (nil? start-cursor)
+                       (nil? end-cursor)
+                       (false? has-next-page?)
+                       (false? has-previous-page?)))
                 (and start-result
                      end-result
                      (= (:id (first data)) (:eid start-result))
@@ -927,7 +949,7 @@
                :result (evaluate)
                :cached? false
                :cache-tier nil
-             :cache-basis basis-t))
+               :cache-basis basis-t))
       (let [relation-ids
             #(or relationship-dependencies
                  (some-> permission-dependencies
@@ -1066,10 +1088,19 @@
   generation the schema is read from the selected value directly."
   [_opts db]
   (let [cache impl.indexed/*schema-cache*
-        slot (:parsed-schema cache)]
-    (if (and slot (some? (:schema-version cache)))
-      (or @slot
-          (reset! slot (schema/read-schema db)))
+        slot (:parsed-schema cache)
+        catalog-slot (:validation-catalog cache)]
+    (if (and slot
+             (or (some? (:schema-version cache))
+                 (true? (:request-local? cache))))
+      (let [parsed
+            (engine/memoized-derived! slot #(schema/read-schema db))
+            names
+            (if catalog-slot
+              (engine/memoized-derived!
+               catalog-slot #(schema-errors/catalog parsed))
+              (schema-errors/catalog parsed))]
+        (schema-errors/with-catalog parsed names))
       (schema/read-schema db))))
 
 (defn spiceomic-read-relationships
@@ -1080,30 +1111,41 @@
   ;; page normalization or snapshot work (backend-unification 9.1), so
   ;; misuse classifies identically on every backend.
   (relationship-filters/validate! filters)
+  (authorization-filters/validate-scan-authorization! filters)
   (reject-live-basis! filters)
   (let [query-shape (list-query-shape :read-relationships filters)
         page-req (impl.indexed/normalize-page-request filters)
         decoded (authenticate-page-bound
                  opts :read-relationships query-shape page-req)
-        {:keys [db basis-t schema-version cursor-context]
+        {:keys [db basis-t schema-version cursor-context adapter schema-cache
+                request-proof-frame]
          :as result-context}
         (capture-result-context
          conn opts (:consistency filters)
          (fn [db _decoded]
            (let [relation-ids
                  (impl/relationship-relation-ids db filters)]
-             {:db db
-              :relationship-dependencies relation-ids
-              :schema-dependencies
-              {:permission-nodes []
-               :relation-ids relation-ids}}))
+             (cond->
+              {:db db
+               :relationship-dependencies relation-ids
+               :schema-dependencies
+               {:permission-nodes []
+                :relation-ids relation-ids}}
+               (:authorization filters)
+               (assoc
+                :permission-dependency-key
+                [(get filters
+                      (case (get-in filters [:authorization :on])
+                        :subject :subject/type
+                        :resource :resource/type))
+                 (get-in filters [:authorization :permission])]))))
          :read-relationships decoded)
         ;; Schema validation runs on the miss path (inside the bound schema
         ;; generation) and on the empty short-circuits; a cache hit implies
         ;; the request validated under an equal schema generation.
         validate!
         (fn []
-          (schema-errors/validate-relationship-read!
+          (schema-errors/validate-authorized-relationship-read!
            (request-schema opts db)
            filters))
         selected-opts
@@ -1132,7 +1174,11 @@
       (let [filters'     (cond-> filters
                            subject-id (assoc :subject/id subject-eid)
                            resource-id (assoc :resource/id resource-eid))
-            internal-query (internal-page-query filters' page-req decoded)
+            internal-query
+            (-> filters'
+                (dissoc :authorization :aggregate-limits)
+                (internal-page-query page-req decoded))
+            authorization (:authorization filters)
             answer
             (cached-authorization-result
              selected-opts result-context :read-relationships
@@ -1143,12 +1189,53 @@
                 result-context
                 (fn []
                   (validate!)
-                  (impl/read-relationships db internal-query))))]
+                  (if-not authorization
+                    (impl/read-relationships db internal-query)
+                    (let [{:keys [subject permission on]} authorization
+                          internal-subject
+                          ((:spice-object->internal opts) db subject)
+                          contract (:execution-contract opts)
+                          limits (:aggregate-limits contract)
+                          ledger request-counters/*ledger*
+                          ledger-before (request-counters/snapshot ledger)
+                          work-stats (atom {})
+                          work-before @work-stats
+                          counters
+                          (fn [output-units]
+                            (batch/aggregate-counters
+                             work-before @work-stats ledger-before
+                             (request-counters/snapshot ledger)
+                             output-units))
+                          accept?
+                          (fn [relationship]
+                            (execution/check!
+                             contract :authorization-candidate (counters 0))
+                            (let [allowed?
+                                  (and
+                                   (:id internal-subject)
+                                   (binding [engine/*schema-cache* @schema-cache
+                                             engine/*proof-frame*
+                                             request-proof-frame]
+                                     (engine/can?
+                                      adapter internal-subject permission
+                                      (get relationship on))))]
+                              (batch/check-aggregate-limits!
+                               limits (counters 0) nil)
+                              (boolean allowed?)))
+                          page
+                          (binding [engine/*aggregate-work-stats* work-stats]
+                            (impl/read-relationships
+                             db internal-query (:decision-kernel opts)
+                             {:candidate-window (:candidate-window limits)
+                              :accept? accept?}))]
+                      (batch/check-aggregate-limits!
+                       limits (counters (count (:data page))) nil)
+                      page)))))]
         (with-cache-info
-         (coerce-relationship-page
-          db selected-opts :read-relationships query-shape basis-t
-          (:result answer))
-         answer)))))
+          (coerce-relationship-page
+           db selected-opts :read-relationships query-shape basis-t
+           (:result answer))
+          answer)))))
 
 (defn- resolve-existing-object
   "Resolves an external spice object to its internal eid, verifying the entity
@@ -1160,9 +1247,9 @@
     (if (and eid (seq (d/datoms db :eavt eid)))
       (assoc obj :id eid)
       (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
-               {:type :eacl/unknown-object
-                :eacl/error :eacl/unknown-object
-                :object {:type type :id id}})))))
+                      {:type :eacl/unknown-object
+                       :eacl/error :eacl/unknown-object
+                       :object {:type type :id id}})))))
 
 (defn spice-relationship->internal
   "Resolves both relationship endpoints to existing internal eids.
@@ -1473,7 +1560,7 @@
         (delay
           (selected-schema-cache!
            opts snapshot-adapter db request-proof-frame))
-        {:keys [permission-dependency-key]
+        {:keys [permission-dependency-key relationship-dependencies]
          :as prepared}
         (prepare db decoded)
         permission-dependencies
@@ -1483,12 +1570,20 @@
               (apply permission-cache-dependencies
                      db permission-dependency-key))))
         cache-scope [:basis basis-t]
+        permission-relation-ids
+        (some-> permission-dependencies deref :relationship-dependencies)
+        complete-relationship-dependencies
+        (when (or (some? relationship-dependencies)
+                  (some? permission-relation-ids))
+          (vec
+           (sort
+            (distinct
+             (concat (or relationship-dependencies [])
+                     (or permission-relation-ids []))))))
         cursor-context
         (dependency-cursor-context
          snapshot-adapter request-proof-frame
-         (some-> permission-dependencies
-                 deref
-                 :relationship-dependencies))]
+         complete-relationship-dependencies)]
     (assoc prepared
            :db db
            :adapter snapshot-adapter
@@ -1499,6 +1594,7 @@
            :cursor-context cursor-context
            :schema-cache schema-cache
            :permission-dependencies permission-dependencies
+           :relationship-dependencies complete-relationship-dependencies
            ;; The actual schema mutation identity of the selected snapshot —
            ;; not a basis-t proxy — so the unconditional schema-generation
            ;; check fires only on a real generation change. The token stays
@@ -1539,7 +1635,8 @@
         selection
         (consistency-v3/select
          provider consistency-value selection-options)
-        selected (:selected-snapshot selection)]
+        selected (:selected-snapshot selection)
+        _ (when selected (request-counters/add! :acquisitions))]
     (try
       (execution/check! contract :consistency-selected)
       ;; Datomic DB values are immutable and the compatibility provider owns
@@ -1549,7 +1646,8 @@
       (dissoc selection :selected-snapshot)
       (finally
         (when selected
-          (snapshot-provider/release! selected))))))
+          (snapshot-provider/release! selected)
+          (request-counters/add! :releases))))))
 
 (defn- select-current-request-db
   [conn opts]
@@ -1635,9 +1733,7 @@
                     exact-context
                     (snapshot-result-context opts exact prepare decoded)
                     exact-relation-ids
-                    (some-> (:permission-dependencies exact-context)
-                            deref
-                            :relationship-dependencies)
+                    (:relationship-dependencies exact-context)
                     exact-proof-complete?
                     (or (nil? exact-relation-ids)
                         (proof-frame/complete?
@@ -1857,13 +1953,13 @@
   (let [batch (vec batch)]
     (loop [attempt 1]
       (let [db (select-current-request-db conn opts)
-          stamped (impl/stamp-relation-versions batch)
-          guarded (impl/optimistic-relationship-tx-data db stamped)
-          submission
-          (try
-            {:report @(d/transact conn guarded)}
-            (catch Throwable throwable
-              {:error throwable}))]
+            stamped (impl/stamp-relation-versions batch)
+            guarded (impl/optimistic-relationship-tx-data db stamped)
+            submission
+            (try
+              {:report @(d/transact conn guarded)}
+              (catch Throwable throwable
+                {:error throwable}))]
         (if-let [throwable (:error submission)]
           (if (and (datomic-cas-failure? throwable)
                    (< attempt maximum-relationship-write-attempts))
@@ -1921,23 +2017,40 @@
           (assoc (write-response db-after opts)
                  :retracted-datoms retracted))))))
 
-(defn spiceomic-check-permission
-  [conn {:keys [object->entid] :as opts}
-   subject permission resource consistency-value]
-  (let [{:keys [db] :as result-context}
-        (capture-basic-result-context
-         conn opts consistency-value)
-        ;; Schema validation runs on the miss path (inside the bound schema
+(defn- spiceomic-validate-permission-root!
+  [opts {:keys [db prepared-roots]} subject permission resource]
+  (let [validate!
+        #(do
+           (schema-errors/validate-permission-request!
+            (request-schema opts db)
+            (or (get-in opts [:execution-contract :operation]) :can?)
+            {:resource-type (:type resource)
+             :subject-type (:type subject)
+             :permission permission})
+           true)]
+    (if prepared-roots
+      (let [root [(:type resource) permission (:type subject)]
+            candidate (delay (validate!))
+            selected
+            (get
+             (swap! prepared-roots
+                    #(if (contains? % root)
+                       %
+                       (assoc % root candidate)))
+             root)]
+        @selected)
+      (validate!))))
+
+(defn- spiceomic-check-permission-in-context
+  [{:keys [object->entid] :as opts}
+   {:keys [db] :as result-context}
+   subject permission resource]
+  (let [;; Schema validation runs on the miss path (inside the bound schema
         ;; generation) and on the unknown-object short-circuit; a cache hit
         ;; implies the request validated under an equal schema generation.
         validate!
-        (fn []
-          (schema-errors/validate-permission-request!
-           (request-schema opts db)
-           (or (get-in opts [:execution-contract :operation]) :can?)
-           {:resource-type (:type resource)
-            :subject-type (:type subject)
-            :permission permission}))
+        #(spiceomic-validate-permission-root!
+          opts result-context subject permission resource)
         internal-subject
         (spice-object
          (:type subject)
@@ -1975,17 +2088,168 @@
          :cached? (:cached? answer)
          :cache-basis (:cache-basis answer)}))))
 
+(defn spiceomic-check-permission
+  [conn opts subject permission resource consistency-value]
+  (spiceomic-check-permission-in-context
+   opts
+   (capture-basic-result-context conn opts consistency-value)
+   subject permission resource))
+
+(defn- datomic-batch-counters
+  [work-before work-stats ledger-before ledger output-units]
+  (batch/aggregate-counters
+   work-before @work-stats
+   ledger-before (request-counters/snapshot ledger)
+   output-units))
+
+(defn spiceomic-check-permissions
+  [conn opts {:keys [checks consistency aggregate-limits]}]
+  (let [result-context
+        (assoc
+         (capture-basic-result-context conn opts consistency)
+         :prepared-roots (atom {}))
+        batch-contract (:execution-contract opts)
+        scalar-opts
+        (assoc opts :execution-contract (batch/scalar-contract batch-contract))
+        ledger (or request-counters/*ledger* (request-counters/make-ledger))
+        ledger-before (request-counters/snapshot ledger)
+        work-stats (atom {})
+        work-before @work-stats
+        counters-fn
+        #(datomic-batch-counters
+          work-before work-stats ledger-before ledger %)]
+    (request-counters/call-with-ledger
+     ledger
+     (fn []
+       (binding [engine/*aggregate-work-stats* work-stats]
+         (loop [index 0
+                decisions {}
+                output (transient [])]
+           (if (= index (count checks))
+             (let [counters (counters-fn index)]
+               (try
+                 (execution/check! batch-contract :batch-complete counters)
+                 (catch Throwable error
+                   (batch/throw-demand-error!
+                    error (dec index) counters)))
+               (persistent! output))
+             (let [demand (nth checks index)
+                   demand-key (batch/demand-key demand)
+                   decision
+                   (try
+                     (execution/check!
+                      batch-contract
+                      :batch-demand-schedule
+                      (counters-fn index))
+                     (if (contains? decisions demand-key)
+                       (get decisions demand-key)
+                       (let [{:keys [subject permission resource]} demand]
+                         (spiceomic-check-permission-in-context
+                          scalar-opts result-context
+                          subject permission resource)))
+                     (catch Throwable error
+                       (batch/throw-demand-error!
+                        error index (counters-fn index))))
+                   decisions'
+                   (if (contains? decisions demand-key)
+                     decisions
+                     (assoc decisions demand-key decision))
+                   next-count (inc index)
+                   counters (counters-fn next-count)]
+               (try
+                 (batch/check-aggregate-limits!
+                  aggregate-limits counters index)
+                 (catch Throwable error
+                   (batch/throw-demand-error! error index counters)))
+               (recur next-count decisions'
+                      (conj! output decision))))))))))
+
 (defn spiceomic-can?
   [conn opts subject permission resource consistency-value]
   (:allowed?
    (spiceomic-check-permission
     conn opts subject permission resource consistency-value)))
 
+(defn- lookup-relationship-dependencies
+  [db operation query]
+  (let [clause
+        (case operation
+          :lookup-resources (:resource/relationship query)
+          :lookup-subjects (:subject/relationship query))]
+    (when clause
+      (impl/relationship-relation-ids
+       db
+       (case operation
+         :lookup-resources
+         {:resource/type (:resource/type query)
+          :resource/relation (:relation clause)
+          :subject/type (get-in clause [:subject :type])}
+
+         :lookup-subjects
+         {:resource/type (get-in clause [:resource :type])
+          :resource/relation (:relation clause)
+          :subject/type (:subject/type query)})))))
+
+(defn- filtered-lookup-state
+  [opts result-context operation query]
+  (let [contract (:execution-contract opts)
+        limits (:aggregate-limits contract)
+        clause
+        (case operation
+          :lookup-resources (:resource/relationship query)
+          :lookup-subjects (:subject/relationship query))
+        public-anchor
+        (case operation
+          :lookup-resources (:subject clause)
+          :lookup-subjects (:resource clause))
+        internal-anchor
+        ((:spice-object->internal opts) (:db result-context) public-anchor)
+        relation-id (first (:direct-relationship-dependencies result-context))
+        ledger request-counters/*ledger*
+        ledger-before (request-counters/snapshot ledger)
+        work-stats (atom {})
+        work-before @work-stats
+        counters
+        (fn [output-units]
+          (batch/aggregate-counters
+           work-before @work-stats ledger-before
+           (request-counters/snapshot ledger)
+           output-units))
+        accept?
+        (fn [candidate]
+          (execution/check! contract :authorization-probe (counters 0))
+          (request-counters/add! :probes)
+          (let [matches?
+                (if-not (:id internal-anchor)
+                  false
+                  (case operation
+                    :lookup-resources
+                    (backend/invoke
+                     (:adapter result-context) :direct-match?
+                     (:type internal-anchor) (:id internal-anchor)
+                     relation-id (:type candidate) (:id candidate))
+
+                    :lookup-subjects
+                    (backend/invoke
+                     (:adapter result-context) :direct-match?
+                     (:type candidate) (:id candidate)
+                     relation-id (:type internal-anchor)
+                     (:id internal-anchor))))]
+            (execution/check!
+             contract :authorization-probe-complete (counters 0))
+            (batch/check-aggregate-limits! limits (counters 0) nil)
+            (boolean matches?)))]
+    {:work-stats work-stats
+     :counters counters
+     :candidate-filter {:candidate-window (:candidate-window limits)
+                        :accept? accept?}}))
+
 (defn spiceomic-lookup-resources
   [conn
    {:as opts
     :keys [spice-object->internal]}
-  {:as query :keys [subject]}]
+   {:as query :keys [subject]}]
+  (authorization-filters/validate-lookup! :lookup-resources query)
   (reject-live-basis! query)
   (let [query-shape (list-query-shape :lookup-resources query)
         page-req (impl.indexed/normalize-page-request query)
@@ -1994,13 +2258,18 @@
         prepare
         (fn [db decoded-bound]
           (let [internal-subject (spice-object->internal db subject)
-                query' (assoc query :subject internal-subject)]
+                query' (assoc query :subject internal-subject)
+                direct-dependencies
+                (lookup-relationship-dependencies
+                 db :lookup-resources query)]
             {:db db
              :internal-subject internal-subject
              :query' query'
              :query-shape query-shape
              :internal-query
              (internal-page-query query' page-req decoded-bound)
+             :direct-relationship-dependencies direct-dependencies
+             :relationship-dependencies direct-dependencies
              :permission-dependency-key
              [(:resource/type query') (:permission query')]}))
         captured
@@ -2016,12 +2285,15 @@
         ;; implies the request validated under an equal schema generation.
         validate!
         (fn []
-          (schema-errors/validate-permission-request!
-           (request-schema opts db)
-           :lookup-resources
-           {:resource-type (:resource/type query)
-            :subject-type (:type subject)
-            :permission (:permission query)}))
+          (let [schema (request-schema opts db)]
+            (schema-errors/validate-permission-request!
+             schema
+             :lookup-resources
+             {:resource-type (:resource/type query)
+              :subject-type (:type subject)
+              :permission (:permission query)})
+            (schema-errors/validate-lookup-relationship!
+             schema :lookup-resources query)))
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
@@ -2035,25 +2307,52 @@
         (if decoded
           (cursor-anchor-stale! :lookup-resources)
           (assoc empty-page :cached? false :cache-basis nil)))
-      (let [compute
+      (let [engine-query
+            (dissoc internal-query
+                    :resource/relationship :aggregate-limits)
+            compute
             #(with-result-schema
                result-context
                (fn []
                  (validate!)
-                 (impl/lookup-resources
-                  db internal-query
-                  {:continuation-cache-fn
-                   (fn []
-                     (continuation-context
-                      selected-opts
-                      :lookup-resources
-                      (list-query-identity :lookup-resources query')
-                      result-context))})))
+                 (let [filtered
+                       (when (:resource/relationship query)
+                         (filtered-lookup-state
+                          selected-opts result-context
+                          :lookup-resources query))
+                       lookup-options
+                       (cond->
+                        {:continuation-cache-fn
+                         (fn []
+                           (continuation-context
+                            selected-opts
+                            :lookup-resources
+                            (list-query-identity :lookup-resources query')
+                            result-context))}
+                         filtered
+                         (assoc :candidate-filter
+                                (:candidate-filter filtered)))
+                       run
+                       (fn []
+                         (impl/lookup-resources
+                          db engine-query lookup-options))
+                       page
+                       (if filtered
+                         (binding [engine/*aggregate-work-stats*
+                                   (:work-stats filtered)]
+                           (run))
+                         (run))]
+                   (when filtered
+                     (batch/check-aggregate-limits!
+                      (get-in selected-opts
+                              [:execution-contract :aggregate-limits])
+                      ((:counters filtered) (count (:data page))) nil))
+                   page)))
             answer
             (cached-authorization-result
              selected-opts result-context :lookup-resources
              (shared-cache/lookup-page-query-identity
-              query internal-query)
+              query engine-query)
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
@@ -2067,17 +2366,17 @@
                             (:cache-scope answer)
                             cache-scope)]
         (with-cache-info
-         (coerce-lookup-page
-          selected-db selected-opts :lookup-resources query-shape
-          selected-basis token-scope
+          (coerce-lookup-page
+           selected-db selected-opts :lookup-resources query-shape
+           selected-basis token-scope
           ;; Historical when a cursor/exact request pinned an older basis, or
           ;; when a staleness mode selected an older cached answer to coerce
           ;; against. Only then is an unresolvable eid a snapshot-age question
           ;; rather than a live data-integrity fault.
-          (or (not same-basis?)
-              (= :at-exact-snapshot (:mode result-context)))
-          internal-page)
-         answer)))))
+           (or (not same-basis?)
+               (= :at-exact-snapshot (:mode result-context)))
+           internal-page)
+          answer)))))
 
 (defn- empty-count-response
   [query]
@@ -2127,8 +2426,9 @@
 (defn spiceomic-lookup-subjects
   [conn
    {:as opts
-    :keys [spice-object->internal]}
-  query]
+   :keys [spice-object->internal]}
+   query]
+  (authorization-filters/validate-lookup! :lookup-subjects query)
   (reject-live-basis! query)
   (let [query-shape (list-query-shape :lookup-subjects query)
         page-req (impl.indexed/normalize-page-request query)
@@ -2138,13 +2438,18 @@
         (fn [db decoded-bound]
           (let [internal-resource
                 (spice-object->internal db (:resource query))
-                query' (assoc query :resource internal-resource)]
+                query' (assoc query :resource internal-resource)
+                direct-dependencies
+                (lookup-relationship-dependencies
+                 db :lookup-subjects query)]
             {:db db
              :internal-resource internal-resource
              :query' query'
              :query-shape query-shape
              :internal-query
              (internal-page-query query' page-req decoded-bound)
+             :direct-relationship-dependencies direct-dependencies
+             :relationship-dependencies direct-dependencies
              :permission-dependency-key
              [(:type internal-resource) (:permission query')]}))
         captured
@@ -2160,12 +2465,15 @@
         ;; implies the request validated under an equal schema generation.
         validate!
         (fn []
-          (schema-errors/validate-permission-request!
-           (request-schema opts db)
-           :lookup-subjects
-           {:resource-type (:type (:resource query))
-            :subject-type (:subject/type query)
-            :permission (:permission query)}))
+          (let [schema (request-schema opts db)]
+            (schema-errors/validate-permission-request!
+             schema
+             :lookup-subjects
+             {:resource-type (:type (:resource query))
+              :subject-type (:subject/type query)
+              :permission (:permission query)})
+            (schema-errors/validate-lookup-relationship!
+             schema :lookup-subjects query)))
         selected-opts
         (assoc opts
                :selected-schema-version schema-version
@@ -2177,25 +2485,52 @@
         (if decoded
           (cursor-anchor-stale! :lookup-subjects)
           (assoc empty-page :cached? false :cache-basis nil)))
-      (let [compute
+      (let [engine-query
+            (dissoc internal-query
+                    :subject/relationship :aggregate-limits)
+            compute
             #(with-result-schema
                result-context
                (fn []
                  (validate!)
-                 (impl/lookup-subjects
-                  db internal-query
-                  {:continuation-cache-fn
-                   (fn []
-                     (continuation-context
-                      selected-opts
-                      :lookup-subjects
-                      (list-query-identity :lookup-subjects query')
-                      result-context))})))
+                 (let [filtered
+                       (when (:subject/relationship query)
+                         (filtered-lookup-state
+                          selected-opts result-context
+                          :lookup-subjects query))
+                       lookup-options
+                       (cond->
+                        {:continuation-cache-fn
+                         (fn []
+                           (continuation-context
+                            selected-opts
+                            :lookup-subjects
+                            (list-query-identity :lookup-subjects query')
+                            result-context))}
+                         filtered
+                         (assoc :candidate-filter
+                                (:candidate-filter filtered)))
+                       run
+                       (fn []
+                         (impl/lookup-subjects
+                          db engine-query lookup-options))
+                       page
+                       (if filtered
+                         (binding [engine/*aggregate-work-stats*
+                                   (:work-stats filtered)]
+                           (run))
+                         (run))]
+                   (when filtered
+                     (batch/check-aggregate-limits!
+                      (get-in selected-opts
+                              [:execution-contract :aggregate-limits])
+                      ((:counters filtered) (count (:data page))) nil))
+                   page)))
             answer
             (cached-authorization-result
              selected-opts result-context :lookup-subjects
              (shared-cache/lookup-page-query-identity
-              query internal-query)
+              query engine-query)
              :lookup-page internal-page? internal-page-weight compute)
             selected-basis (:basis-t answer)
             internal-page (:result answer)
@@ -2209,22 +2544,22 @@
                             (:cache-scope answer)
                             cache-scope)]
         (with-cache-info
-         (coerce-lookup-page
-          selected-db selected-opts :lookup-subjects query-shape
-          selected-basis token-scope
+          (coerce-lookup-page
+           selected-db selected-opts :lookup-subjects query-shape
+           selected-basis token-scope
           ;; Historical when a cursor/exact request pinned an older basis, or
           ;; when a staleness mode selected an older cached answer to coerce
           ;; against. Only then is an unresolvable eid a snapshot-age question
           ;; rather than a live data-integrity fault.
-          (or (not same-basis?)
-              (= :at-exact-snapshot (:mode result-context)))
-          internal-page)
-         answer)))))
+           (or (not same-basis?)
+               (= :at-exact-snapshot (:mode result-context)))
+           internal-page)
+          answer)))))
 
 (defn spiceomic-count-subjects
   [conn
    {:as opts :keys [spice-object->internal]}
-  query]
+   query]
   (let [{:keys [db] :as result-context}
         (capture-basic-result-context
          conn opts (:consistency query))
@@ -2297,7 +2632,7 @@
     (execute-request
      opts :can? {:subject subject :permission permission :resource resource}
      #(spiceomic-can? conn % subject permission resource
-                     consistency/minimize-latency)))
+                      consistency/minimize-latency)))
 
   (can? [_ subject permission resource consistency]
     (execute-request
@@ -2312,8 +2647,8 @@
     (execute-request
      opts :can? request
      #(spiceomic-can? conn (request-cache-opts % cache?)
-                     subject permission resource
-                     consistency)))
+                      subject permission resource
+                      consistency)))
 
   (read-schema [_]
     (schema/read-schema (select-current-request-db conn opts)))
@@ -2432,7 +2767,26 @@
      #(spiceomic-check-permission
        conn (request-cache-opts % cache?)
        subject permission resource
-       (or consistency consistency/minimize-latency)))))
+       (or consistency consistency/minimize-latency))))
+
+  IBatchedAuthorization
+  (-check-permissions [_ request]
+    (let [request
+          (batch/validate-request! request (:aggregate-limits opts))]
+      (if (empty? (:checks request))
+        (do
+          (execution/normalize opts :check-permissions request)
+          [])
+        (batch/call-with-demand-error
+         0 batch/empty-aggregate-counters
+         (fn []
+           (execute-request
+            opts :check-permissions request
+            (fn [request-opts]
+              (spiceomic-check-permissions
+               conn
+               (request-cache-opts request-opts (:cache? request))
+               request)))))))))
 
 (defn expire-cache!
   "Rotates the complete local cache/token lifecycle for one Datomic client.
@@ -2498,6 +2852,7 @@
     :adapter-deterministic?
     :consistency-sync-timeout-ms
     :execution-timeout-ms
+    :aggregate-limits
     :cache-attempt
     :recursive-traversal-limits
     :permission-tree-limits
@@ -2772,6 +3127,8 @@
     Datomic revision. Defaults to 30000.
   - :execution-timeout-ms — finite end-to-end authorization timeout. Defaults
     to 30000; a positive request :timeout-ms overrides it.
+  - :aggregate-limits — finite ceilings for batched point checks and
+    authorization-filtered pages. Request overrides may only tighten them.
   - :cache-attempt — finite evaluation reserve and local CAS-publication
     attempt bound. Cache work may remove evaluator commands but
     cannot enlarge request demand. Remote provider/decode controls are not
@@ -2814,6 +3171,7 @@
            adapter-deterministic?
            consistency-sync-timeout-ms
            execution-timeout-ms
+           aggregate-limits
            cache-attempt
            recursive-traversal-limits
            permission-tree-limits
@@ -2822,9 +3180,9 @@
   (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
     (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
                          ". Known options: " (pr-str (vec (sort known-client-opt-keys))) ".")
-             {:type :eacl/invalid-config
-              :unknown-keys (vec unknown-keys)
-              :known-keys known-client-opt-keys})))
+                    {:type :eacl/invalid-config
+                     :unknown-keys (vec unknown-keys)
+                     :known-keys known-client-opt-keys})))
   (let [canonical-keys
         (filterv #(contains? config-opts %) canonical-security-opt-keys)
         alias-keys
@@ -2923,7 +3281,7 @@
        :maximum-timeout-ms execution/maximum-execution-timeout-ms})))
   (execution/normalize-cache-attempt cache-attempt)
   (let [timeout-ms (if (contains? config-opts
-                                   :consistency-sync-timeout-ms)
+                                  :consistency-sync-timeout-ms)
                      consistency-sync-timeout-ms
                      default-consistency-sync-timeout-ms)]
     (when-not (and (integer? timeout-ms) (pos? timeout-ms))
@@ -2940,10 +3298,10 @@
         (throw (ex-info (str "EACL Config Error: :recursive-traversal-limits must be a map of "
                              (pr-str (vec (sort known)))
                              " to positive integers.")
-                 {:type :eacl/invalid-config
-                  :key :recursive-traversal-limits
-                  :known-keys known
-                  :value recursive-traversal-limits})))))
+                        {:type :eacl/invalid-config
+                         :key :recursive-traversal-limits
+                         :known-keys known
+                         :value recursive-traversal-limits})))))
   ;; Refuse to run v7 code against unmigrated v6 relationship data — it would
   ;; silently answer every check with false/empty. Throws :eacl/storage-version
   ;; unless the DB is v7/fresh/stamped, or :auto-migrate-v6 opts into migration.
@@ -3058,6 +3416,8 @@
                             :execution-timeout-ms
                             (or execution-timeout-ms
                                 execution/default-execution-timeout-ms)
+                            :aggregate-limits
+                            (batch/normalize-client-limits aggregate-limits)
                             :cache-attempt
                             (execution/normalize-cache-attempt cache-attempt)
                             :diagnostic-schema-version
@@ -3069,7 +3429,7 @@
                             :backend-capabilities datomic-backend/capabilities
                             :backend-adapter-fn
                             (fn [db]
-                             (datomic-backend/snapshot-adapter
+                              (datomic-backend/snapshot-adapter
                                db
                                {:entid->object-id entid->object-id
                                 ;; The adapter's :object-id->internal must

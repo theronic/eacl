@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.adapter-certification :as certification]
+            [eacl.backend.v8 :as v8]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]))
@@ -35,11 +36,13 @@
 (deftest datascript-adapter-certification-test
   (doseq [fixture (certification/coherent-fixtures [820084])]
     (testing (str "seed " (:seed fixture))
-      (let [report
+      (let [adapter (seed-adapter fixture)
+            report
             (certification/certify
-             {:adapter (seed-adapter fixture)
+             {:adapter adapter
               :fixture fixture
               :runtime #?(:clj :clj :cljs :cljs)})]
+        (is (some? (v8/invoke adapter :schema-generation)))
         (is (:passed? report)
             (pr-str (:checks report)))))))
 

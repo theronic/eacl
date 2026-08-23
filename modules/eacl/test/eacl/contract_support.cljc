@@ -3,8 +3,12 @@
             [clojure.string :as str]
             [eacl.authorization-oracle :as oracle]
             [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.core :as eacl]
+            [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.engine.stable-route :as stable-route]
+            [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
 (def ->user (partial eacl/spice-object :user))
@@ -81,6 +85,341 @@
    (eacl/->Relationship (->platform "platform-1") :platform (->account "account-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-2"))])
+
+(def batch-property-seed
+  "Portable seed retained with the cross-runtime batch oracle fixture."
+  424242)
+
+(def ^:private batch-oracle-demands
+  [{:subject (->user "user-1")
+    :permission :reboot
+    :resource (->server "server-1")}
+   {:subject (->user "super-user")
+    :permission :reboot
+    :resource (->server "server-2")}
+   {:subject (->user "user-2")
+    :permission :reboot
+    :resource (->server "server-1")}
+   {:subject (->user "missing-user")
+    :permission :reboot
+    :resource (->server "server-1")}
+   {:subject (->user "user-1")
+    :permission :view
+    :resource (->account "account-1")}
+   {:subject (->user "user-2")
+    :permission :admin
+    :resource (->account "account-1")}
+   {:subject (->user "super-user")
+    :permission :admin
+    :resource (->account "account-1")}
+   {:subject (->user "user-1")
+    :permission :view
+    :resource (->server "missing-server")}])
+
+(defn- next-portable-seed
+  [seed]
+  ;; The product stays below 2^53, making this LCG identical on JVM longs and
+  ;; JavaScript numbers for every retained step.
+  (mod (* 48271 seed) 2147483647))
+
+(defn- seeded-batch-vectors
+  [seed case-count demands]
+  (loop [state seed
+         remaining case-count
+         batches []]
+    (if (zero? remaining)
+      batches
+      (let [state (next-portable-seed state)
+            size (mod state 13)
+            [state checks]
+            (loop [state state
+                   index 0
+                   checks []]
+              (if (= index size)
+                [state checks]
+                (let [state (next-portable-seed state)]
+                  (recur state
+                         (inc index)
+                         (conj checks
+                               (nth demands
+                                    (mod state (count demands))))))))]
+        (recur state (dec remaining) (conj batches checks))))))
+
+(defn- assert-one-batch-oracle-case!
+  [authorization checks evaluation]
+  (let [request {:checks checks
+                 :cache? false
+                 :evaluation evaluation}
+        oracle
+        (mapv
+         #(eacl/check-permission
+           authorization
+           (assoc % :cache? false :evaluation evaluation))
+         checks)
+        actual (eacl/check-permissions authorization request)]
+    (is (= oracle actual)
+        (str "seed=" batch-property-seed
+             " evaluation=" evaluation
+             " checks=" (pr-str checks)))))
+
+(defn assert-v8-batch-contract!
+  "Seeded ordered-scalar differential contract shared by every backend and
+  the CLJS runner. Snapshot-composable clients execute each generated case
+  against one retained view; Datomic's immutable current DB values use the
+  same unchanged native revision for the scalar and batch arms."
+  [client]
+  (testing (str "seeded batch scalar oracle, seed=" batch-property-seed)
+    (doseq [[index checks]
+            (map-indexed vector
+                         (seeded-batch-vectors
+                          batch-property-seed 24 batch-oracle-demands))]
+      (let [evaluation (if (even? index)
+                         :demand
+                         :complete-denotation)]
+        (if (satisfies? eacl/ISnapshotAuthorization client)
+          (eacl/with-snapshot
+           client
+           (fn [view]
+             (assert-one-batch-oracle-case!
+              view checks evaluation)))
+          (assert-one-batch-oracle-case!
+           client checks evaluation))))))
+
+(defn- walk-pages
+  [read-page query]
+  (loop [query query
+         pages []]
+    (let [page (read-page query)
+          pages (conj pages page)]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur (assoc query :after (get-in page [:page-info :end-cursor]))
+               pages)
+        pages))))
+
+(defn- relationship-resource-ids
+  [pages]
+  (mapv #(get-in % [:resource :id]) (into [] cat (map :data pages))))
+
+(defn- object-ids
+  [pages]
+  (mapv :id (into [] cat (map :data pages))))
+
+(defn assert-v8-aggregate-pagination-contract!
+  "Backend-neutral batch, scan, and enumerate-route conformance over the
+  shared smoke fixture. The page oracle is the stable physical stream filtered
+  by scalar authorization and direct relationship membership on one snapshot."
+  [client]
+  (let [subject (->user "user-1")
+        denied (->user "user-2")
+        account (->account "account-1")
+        missing-account (->account "missing-account")
+        scan-query
+        {:subject/type :account
+         :subject/id "account-1"
+         :resource/type :server
+         :resource/relation :account
+         :authorization {:subject subject
+                         :permission :view
+                         :on :resource}
+         :first 1
+         :aggregate-limits {:candidate-window 1}}
+        enumerate-query
+        {:subject subject
+         :permission :view
+         :resource/type :server
+         :resource/relationship {:relation :account :subject account}
+         :first 1
+         :aggregate-limits {:candidate-window 1}}
+        expected ["server-1" "server-2"]]
+    (testing "scan and enumerate routes refine the same filter-then-window oracle"
+      (let [scan-pages
+            (walk-pages #(eacl/read-relationships client %) scan-query)
+            enumerate-pages
+            (walk-pages #(eacl/lookup-resources client %) enumerate-query)]
+        (is (= expected (relationship-resource-ids scan-pages)))
+        (is (= expected (object-ids enumerate-pages)))
+        (is (= (set (relationship-resource-ids scan-pages))
+               (set (object-ids enumerate-pages))))
+        (is (= [true false]
+               (mapv #(get-in % [:page-info :bounded?]) scan-pages)))
+        (is (= [true false]
+               (mapv #(get-in % [:page-info :bounded?]) enumerate-pages)))))
+
+    (testing "all-rejected windows progress without converting work bounds to denial"
+      (let [scan-pages
+            (walk-pages
+             #(eacl/read-relationships client %)
+             (assoc-in scan-query [:authorization :subject] denied))
+            enumerate-pages
+            (walk-pages
+             #(eacl/lookup-resources client %)
+             (assoc-in enumerate-query
+                       [:resource/relationship :subject]
+                       missing-account))]
+        (is (empty? (relationship-resource-ids scan-pages)))
+        (is (empty? (object-ids enumerate-pages)))
+        (is (= [true false]
+               (mapv #(get-in % [:page-info :bounded?]) scan-pages)))
+        (is (= [true false]
+               (mapv #(get-in % [:page-info :bounded?]) enumerate-pages)))))
+
+    (testing "enumerate performs exactly one relationship probe per candidate"
+      (let [ledger (request-counters/make-ledger)
+            page
+            (binding [request-counters/*ledger* ledger]
+              (eacl/lookup-resources
+               client
+               (assoc enumerate-query
+                      :aggregate-limits {:candidate-window 3})))
+            counters (request-counters/snapshot ledger)]
+        (is (= ["server-1"] (mapv :id (:data page))))
+        (is (= 2 (:candidates-examined counters)))
+        (is (= (:candidates-examined counters) (:probes counters)))
+        (is (= 1 (:acquisitions counters)))
+        (is (= 1 (:context-constructions counters)))
+        (is (= 1 (:public-entries counters)))))
+
+    (testing "backward pages use the same sentinel, budget, and cursor scope"
+      (let [backward
+            (-> enumerate-query
+                (dissoc :first)
+                (assoc :last 1 :evaluation :complete-denotation))
+            page-2 (eacl/lookup-resources client backward)
+            page-1
+            (eacl/lookup-resources
+             client
+             (assoc backward
+                    :before (get-in page-2 [:page-info :start-cursor])))]
+        (is (= ["server-2"] (mapv :id (:data page-2))))
+        (is (= ["server-1"] (mapv :id (:data page-1))))))
+
+    (when (satisfies? eacl/ISnapshotAuthorization client)
+      (testing "a composed read-only snapshot view preserves every aggregate route"
+        (eacl/with-snapshot
+         client
+         (fn [view]
+           (is (= expected
+                  (relationship-resource-ids
+                   (walk-pages #(eacl/read-relationships view %)
+                               scan-query))))
+           (is (= expected
+                  (object-ids
+                   (walk-pages #(eacl/lookup-resources view %)
+                               enumerate-query))))
+           (let [checks [{:subject subject
+                          :permission :view
+                          :resource (->server "server-1")}
+                         {:subject denied
+                          :permission :view
+                          :resource (->server "server-1")}]]
+             (is (= (mapv #(eacl/check-permission
+                            view (assoc % :cache? false))
+                          checks)
+                    (eacl/check-permissions
+                     view {:checks checks :cache? false}))))))))))
+
+(def plan-invalidation-schema
+  "definition user {}
+
+   definition platform {
+     relation super_admin: user
+   }
+
+   definition account {
+     relation platform: platform
+     relation owner: user
+
+     permission admin = platform->super_admin
+     permission view = admin
+   }
+
+   definition server {
+     relation account: account
+
+     permission view = account->view
+     permission reboot = account->admin
+   }")
+
+(defn- definition-read-count
+  [stats]
+  (+ (get stats :permission-defs 0)
+     (get stats :relation-defs 0)))
+
+(defn- uncached-reboot-decision
+  [client]
+  (:allowed?
+   (eacl/check-permission
+    client
+    {:subject (->user "user-2")
+     :permission :reboot
+     :resource (->server "server-1")
+     :cache? false})))
+
+(defn assert-certified-generation-plan-reuse!
+  "Checks the real public path's plan reuse and schema invalidation contract.
+
+  `client` must be freshly seeded with `smoke-schema`, `smoke-objects`, and
+  `smoke-relationships`; no authorization read may have run yet."
+  [client]
+  (let [original-seal sealed-plan/seal-plan
+        original-check stable-route/check-eids
+        seals (atom 0)
+        evaluated-plans (atom [])
+        first-stats (atom {})
+        advanced-stats (atom {})
+        repeated-stats (atom {})
+        changed-stats (atom {})]
+    (with-redefs
+      [sealed-plan/seal-plan
+       (fn [& args]
+         (swap! seals inc)
+         (apply original-seal args))
+       stable-route/check-eids
+       (fn [options]
+         (swap! evaluated-plans conj (:plan options))
+         (original-check options))]
+      (is (false?
+           (binding [backend/*backend-op-stats* first-stats]
+             (uncached-reboot-decision client))))
+      (is (pos? (definition-read-count @first-stats)))
+      (is (= 1 @seals))
+
+      ;; This advances the native basis without changing the certified schema
+      ;; generation. The decision changes because relationship data changed,
+      ;; while the evaluator must receive the exact same immutable plan.
+      (eacl/create-relationship!
+       client (->user "user-2") :owner (->account "account-1"))
+      (is (true?
+           (binding [backend/*backend-op-stats* advanced-stats]
+             (uncached-reboot-decision client))))
+      (is (zero? (definition-read-count @advanced-stats)))
+      (is (= 1 @seals))
+      (is (identical? (nth @evaluated-plans 0)
+                      (nth @evaluated-plans 1))
+          "two native bases of one certified generation use one plan instance")
+
+      ;; A second identical request performs neither a definition read nor a
+      ;; seal, and reaches the same plan instance again.
+      (is (true?
+           (binding [backend/*backend-op-stats* repeated-stats]
+             (uncached-reboot-decision client))))
+      (is (zero? (definition-read-count @repeated-stats)))
+      (is (= 1 @seals))
+      (is (identical? (nth @evaluated-plans 1)
+                      (nth @evaluated-plans 2)))
+
+      ;; A managed schema write advances the certified generation. Reusing the
+      ;; old plan would incorrectly preserve the owner grant, so the denial
+      ;; also kills the stale-plan mutation.
+      (eacl/write-schema! client plan-invalidation-schema)
+      (is (false?
+           (binding [backend/*backend-op-stats* changed-stats]
+             (uncached-reboot-decision client))))
+      (is (pos? (definition-read-count @changed-stats)))
+      (is (= 2 @seals))
+      (is (not (identical? (nth @evaluated-plans 2)
+                           (nth @evaluated-plans 3)))
+          "a managed schema write installs a new plan instance"))))
 
 (def permission-tree-golden-schema
   "definition user {}
@@ -451,6 +790,9 @@
      {:objects smoke-objects
       :relationships smoke-relationships
       :rules oracle/smoke-rules}))
+
+  (assert-v8-batch-contract! client)
+  (assert-v8-aggregate-pagination-contract! client)
 
   (testing "schema round-trips through the logical representation"
     (let [{:keys [relations permissions]} (eacl/read-schema client)]
@@ -850,6 +1192,47 @@
            (eacl/spice-object :folder (str "folder-" (inc index)))))
         (range (dec recursive-connected-folder-count)))))
 
+(def recursive-batch-property-seed 7331)
+
+(defn- recursive-batch-demands
+  []
+  (let [subject (->user "recursive-user")
+        denied (->user "denied-user")
+        folder #(eacl/spice-object :folder (str "folder-" %))
+        last-folder (folder (dec recursive-connected-folder-count))]
+    [{:subject subject :permission :selfread :resource (folder 0)}
+     {:subject subject :permission :selfread :resource last-folder}
+     {:subject subject :permission :read :resource last-folder}
+     {:subject denied :permission :read :resource last-folder}
+     {:subject subject :permission :write :resource last-folder}
+     {:subject subject :permission :duplicate :resource last-folder}
+     {:subject denied :permission :duplicate :resource (folder 0)}
+     {:subject subject :permission :read
+      :resource (eacl/spice-object :folder "missing-folder")}]))
+
+(defn- assert-v8-recursive-batch-contract!
+  [client]
+  (testing (str "seeded recursive batch oracle, seed="
+                recursive-batch-property-seed)
+    (doseq [[index checks]
+            (map-indexed
+             vector
+             (seeded-batch-vectors
+              recursive-batch-property-seed
+              16
+              (recursive-batch-demands)))]
+      (let [evaluation (if (even? index)
+                         :demand
+                         :complete-denotation)]
+        (if (satisfies? eacl/ISnapshotAuthorization client)
+          (eacl/with-snapshot
+           client
+           (fn [view]
+             (assert-one-batch-oracle-case!
+              view checks evaluation)))
+          (assert-one-batch-oracle-case!
+           client checks evaluation))))))
+
 (defn- lookup-all-resource-pages
   [client query]
   (loop [pages []
@@ -874,6 +1257,8 @@
                :resource/type :folder
                :first 2}
         pages (lookup-all-resource-pages client query)]
+    (assert-v8-recursive-batch-contract! client)
+
     (testing "recursive results match an independent least-fixed-point oracle"
       (assert-authorization-oracle!
        client
@@ -1019,7 +1404,56 @@
     (is (= :eacl.recursive-traversal/limit-exceeded
            (:eacl/error data)))
     (is (#{:derived-grants :advanced-datoms :queued-work}
-         (:limit-kind data)))))
+         (:limit-kind data))))
+  (let [easy {:subject (->user "recursive-user")
+              :permission :selfread
+              :resource (eacl/spice-object :folder "folder-0")}
+        hard {:subject (->user "recursive-user")
+              :permission :read
+              :resource
+              (eacl/spice-object
+               :folder
+               (str "folder-" (dec recursive-connected-folder-count)))}
+        easy-result (eacl/check-permission
+                     client (assoc easy :cache? false))
+        hard-outcome
+        (try
+          {:value
+           (eacl/check-permission
+            client
+            (assoc hard
+                   :cache? false
+                   :evaluation :complete-denotation))}
+          (catch #?(:clj Exception :cljs :default) error
+            {:error (ex-data error)}))
+        batch-outcome
+        (try
+          {:value
+           (eacl/check-permissions
+            client
+            {:checks [easy hard]
+             :cache? false
+             :evaluation :complete-denotation})}
+          (catch #?(:clj Exception :cljs :default) error
+            {:error (ex-data error)}))]
+    (is (true? (:allowed? easy-result)))
+    (if-let [hard-error (:error hard-outcome)]
+      (if-let [batch-error (:error batch-outcome)]
+        (do
+          (is (= :eacl.recursive-traversal/limit-exceeded
+                 (:eacl/error batch-error)))
+          (is (= 1 (:demand-index batch-error))
+              "a failing scalar envelope names its batch position"))
+        (is (= [true true]
+               (mapv :allowed? (:value batch-outcome)))
+            (str "certified sharing may remove the scalar limit failure "
+                 (:limit-kind hard-error))))
+      (do
+        (is (nil? (:error batch-outcome))
+            "batch sharing never makes a successful scalar demand fail")
+        (is (= [(:allowed? easy-result)
+                (get-in hard-outcome [:value :allowed?])]
+               (mapv :allowed? (:value batch-outcome))))))))
 
 (defn assert-v8-cache-disabled!
   [client]

@@ -384,14 +384,16 @@
   cursors and tokens do not survive restarts and are not portable across
   peers or load-balanced nodes (page 2 on another node fails with a
   typed invalid-cursor error). Supply :security-key/:security-keyring
-  (portable clients) or :page-token-key/:page-token-keyring (Datomic)."
+  (portable clients) or :page-token-key/:page-token-keyring (Datomic),
+  and rotate an authenticated-encryption key before 2^32 cursor
+  encryptions."
   []
   (when (compare-and-set! warned-defaulted-token-key? false true)
     #?(:clj (binding [*out* *err*]
               (println
-               "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring)."))
+               "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring), and rotate each key before 2^32 cursor encryptions."))
        :cljs (js/console.warn
-              "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring)."))))
+              "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring), and rotate each key before 2^32 cursor encryptions."))))
 
 (defn normalize-key
   [key]

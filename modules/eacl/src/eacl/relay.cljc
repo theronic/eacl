@@ -7,6 +7,7 @@
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
+            [eacl.request.counters :as request-counters]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
@@ -121,7 +122,13 @@
   [query]
   (cond-> (normalized-cursor-query query)
     (:subject query) (update :subject plain-scope-object)
-    (:resource query) (update :resource plain-scope-object)))
+    (:resource query) (update :resource plain-scope-object)
+    (get-in query [:authorization :subject])
+    (update-in [:authorization :subject] plain-scope-object)
+    (get-in query [:resource/relationship :subject])
+    (update-in [:resource/relationship :subject] plain-scope-object)
+    (get-in query [:subject/relationship :resource])
+    (update-in [:subject/relationship :resource] plain-scope-object)))
 
 (defn- legacy-cursor-scope
   "Version-11 query scope retained so existing cursors continue while their
@@ -144,12 +151,30 @@
   changed current schema to reach proof comparison and exact fallback without
   weakening rejection of an actually changed query."
   [_adapter opts operation query]
-  (secure/canonical-digest
-   "eacl/cursor/query-scope/v8"
-   [cursor-emission-order-version
-    operation
-    {:recursive-traversal-limits (:recursive-traversal-limits opts)}
-    (scoped-query-form query)]))
+  (let [authorized-page?
+        (boolean
+         (or (:authorization query)
+             (:resource/relationship query)
+             (:subject/relationship query)))
+        execution-scope
+        (cond->
+         {:recursive-traversal-limits (:recursive-traversal-limits opts)}
+          authorized-page?
+          (assoc
+           :aggregate-limits
+           (get-in opts [:execution-contract :aggregate-limits])
+           :page-demand (select-keys query [:first :last])))
+        scope-input
+        [cursor-emission-order-version
+         operation
+         execution-scope
+         (scoped-query-form query)]]
+    (cursor/memoized-context!
+     (:cursor-codec-cache opts)
+     [:cursor-query-scope 8 scope-input]
+     #(secure/canonical-digest
+       "eacl/cursor/query-scope/v8"
+       scope-input))))
 
 (defn- navigation-boundary-scope
   "Boundary-alias scope for the client-private page-navigation cache.
@@ -331,50 +356,63 @@
    "eacl/cursor/dependency-scope/v4"
    {:mode :exact-snapshot}))
 
-(defn- dependency-stamp-digests
-  "Builds the dependency-scoped digest pair for one sorted relation-id vector.
+(defn- dependency-proof-descriptor
+  "Returns the complete proof descriptor for one sorted relation-id vector.
 
-  Returns nil when the schema stamp or any relation stamp is unreadable, so
-  the caller falls back to the exact-snapshot proof (never wrong, at most a
-  recovery instead of a continuation hit)."
+  Nil falls back to exact-snapshot proof (never wrong, at most recovery
+  instead of continuation reuse)."
   [request-proof-frame relation-ids]
   (let [relation-ids (vec relation-ids)
         proof (proof-frame/resolve! request-proof-frame relation-ids)
         descriptor (proof-frame/descriptor proof)]
-    (when descriptor
-      {:dependency-scope-digest
-       (secure/canonical-digest
-        "eacl/cursor/dependency-scope/v4"
-        {:mode :relation-dependencies
-         :relation-ids relation-ids})
-       :proof-digest
-       (secure/canonical-digest
-        "eacl/cursor/dependency-proof/v1"
-        descriptor)})))
+    descriptor))
 
 (defn- build-dependency-context
-  [adapter request-proof-frame relation-ids]
-  (let [native-revision (consistency/native-revision adapter)
-        base
-        {:source-scope (consistency/source-scope adapter)
-         :native-revision native-revision
-         :adapter-fingerprint (backend/fingerprint adapter)
-         :identity-contract (backend/identity-contract adapter)}
-        dependency-digests
-        (when (some? relation-ids)
-          (dependency-stamp-digests request-proof-frame relation-ids))]
-    (if dependency-digests
-      (merge base dependency-digests)
-      (assoc base
-             :dependency-scope-digest exact-snapshot-scope-digest
-             :proof-digest
-             (secure/canonical-digest
-              "eacl/cursor/exact-snapshot/v4"
-              {:snapshot-id
-               (if request-proof-frame
-                 (proof-frame/snapshot-id request-proof-frame)
-                 (backend/invoke adapter :snapshot-id))
-               :native-revision native-revision})))))
+  ([adapter request-proof-frame relation-ids]
+   (build-dependency-context
+    adapter request-proof-frame relation-ids nil))
+  ([adapter request-proof-frame relation-ids codec-cache]
+   (let [native-revision (consistency/native-revision adapter)
+         base
+         {:source-scope (consistency/source-scope adapter)
+          :native-revision native-revision
+          :adapter-fingerprint (backend/fingerprint adapter)
+          :identity-contract (backend/identity-contract adapter)}
+         relation-ids (some-> relation-ids vec)
+         descriptor
+         (when relation-ids
+           (dependency-proof-descriptor
+            request-proof-frame relation-ids))
+         snapshot-id
+         (when-not descriptor
+           (if request-proof-frame
+             (proof-frame/snapshot-id request-proof-frame)
+             (backend/invoke adapter :snapshot-id)))
+         context-key
+         [:cursor-dependency-context
+          1 base relation-ids descriptor snapshot-id]]
+     (cursor/memoized-context!
+      codec-cache
+      context-key
+      (fn []
+        (if descriptor
+          (assoc base
+                 :dependency-scope-digest
+                 (secure/canonical-digest
+                  "eacl/cursor/dependency-scope/v4"
+                  {:mode :relation-dependencies
+                   :relation-ids relation-ids})
+                 :proof-digest
+                 (secure/canonical-digest
+                  "eacl/cursor/dependency-proof/v1"
+                  descriptor))
+          (assoc base
+                 :dependency-scope-digest exact-snapshot-scope-digest
+                 :proof-digest
+                 (secure/canonical-digest
+                  "eacl/cursor/exact-snapshot/v4"
+                  {:snapshot-id snapshot-id
+                   :native-revision native-revision}))))))))
 
 (defn dependency-context
   "Builds bounded continuation metadata for one immutable snapshot.
@@ -410,8 +448,10 @@
                    (identical? adapter (:adapter candidate)))
             candidate
             (proof-frame/request-frame adapter))]
-      (build-dependency-context adapter frame relation-ids))
-    (dependency-context adapter)))
+      (build-dependency-context
+       adapter frame relation-ids (:cursor-codec-cache opts)))
+    (build-dependency-context
+     adapter nil nil (:cursor-codec-cache opts))))
 
 (defn- transform-edge-ids
   ;; :stable-edge edges carry only the boundary :result-eid; engine
@@ -427,12 +467,8 @@
     ;; rule ordinals with eids of several types (no single external
     ;; mapping applies), and the exact basis makes internal ids stable
     ;; for the cursor's whole lifetime (acyclic-keyset-pagination).
-    ;; NOTE the confidentiality consequence: the portable envelope is
-    ;; authenticated plaintext, so on clients without an encrypting
-    ;; token codec (DataScript/Datahike; Datomic's AES-GCM codec is
-    ;; unaffected) a token holder can read the raw internal eids of the
-    ;; boundary's whole derivation path — intermediates that never
-    ;; appear in any response.
+    ;; The portable cursor envelope is authenticated encryption, so these
+    ;; internal path coordinates remain confidential on every backend.
     :least-path-edge
     edge
 
@@ -446,6 +482,7 @@
 (defn- encode-page-edge
   [adapter opts scope context edge]
   (when edge
+    (request-counters/add! :cursor-builds)
     (execution/check! (:execution-contract opts) :cursor-encode)
     (let [token
           (cursor/cursor->token
@@ -453,7 +490,9 @@
             {:v 12
              :scope scope
              :edge (transform-edge-ids
-                    #(backend/invoke adapter :internal-id->object %)
+                    #(do
+                       (request-counters/add! :identity-conversions)
+                       (backend/invoke adapter :internal-id->object %))
                     edge)}
             context)
            opts)]
@@ -874,6 +913,7 @@
 
 (defn- cached-internal-id->object
   [adapter opts internal-id]
+  (request-counters/add! :identity-conversions)
   (execution/check! (:execution-contract opts) :render-identity)
   (let [resolved
         (subproblem/resolve-bound!
@@ -912,6 +952,7 @@
 
 (defn externalize-relationship-page
   [adapter opts operation query page]
+  (request-counters/add! :renderings)
   (externalize-page-cursors
    adapter opts operation query
    (update
@@ -920,14 +961,14 @@
     (fn [relationships]
       (mapv
        (fn [{:keys [subject relation resource]}]
-         (eacl/map->Relationship
-          {:subject
-           (update
-            subject :id
-            #(cached-internal-id->object adapter opts %))
-           :relation relation
-           :resource
-           (update
-            resource :id
-            #(cached-internal-id->object adapter opts %))}))
+         (eacl/->Relationship
+          (eacl/->SpiceObject
+           (:type subject)
+           (cached-internal-id->object adapter opts (:id subject))
+           (:relation subject))
+          relation
+          (eacl/->SpiceObject
+           (:type resource)
+           (cached-internal-id->object adapter opts (:id resource))
+           (:relation resource))))
        relationships)))))

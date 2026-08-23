@@ -1252,6 +1252,95 @@
        #"(?s)\(if \(= :page \(get-in state \[:render :kind\]\)\)\s+1\s+default-scan-batch-size\)"
        portable)))))
 
+(defn- aggregate-snapshot-mixing-killed?
+  []
+  (let [selected [:v1 :v1 :v1]
+        mutant [:v1 :v2 :v1]]
+    (and (apply = selected) (not (apply = mutant)))))
+
+(defn- aggregate-output-reordered-or-deduplicated-killed?
+  []
+  (let [ordered [:allow :deny :allow]
+        mutant (vec (set ordered))]
+    (and (= 3 (count ordered)) (not= ordered mutant))))
+
+(defn- batch-cross-demand-contamination-killed?
+  []
+  (let [decisions {[:alice :view :d1] true
+                   [:bob :view :d1] false}
+        correct (mapv decisions [[:alice :view :d1] [:bob :view :d1]])
+        mutant [(decisions [:alice :view :d1])
+                (decisions [:alice :view :d1])]]
+    (and (= [true false] correct) (not= correct mutant))))
+
+(defn- aggregate-deadline-renewal-killed?
+  []
+  (let [started 100
+        timeout 10
+        command-times [105 111]
+        absolute-starts (count (take-while #(< % (+ started timeout))
+                                           command-times))
+        renewed-starts (count command-times)]
+    (and (= 1 absolute-starts) (= 2 renewed-starts))))
+
+(defn- aggregate-counter-reset-killed?
+  []
+  (let [limit 5
+        windows [3 3]
+        cumulative (reduce + windows)
+        mutant-maximum (apply max windows)]
+    (and (> cumulative limit) (<= mutant-maximum limit))))
+
+(defn- candidate-failure-as-denial-killed?
+  []
+  (let [correct {:error :resource-limit}
+        mutant {:accepted? false}]
+    (and (contains? correct :error) (not= correct mutant))))
+
+(defn- authorized-cursor-proof-omission-killed?
+  []
+  (let [physical-proof {:candidate 7}
+        complete-before (assoc physical-proof :authorization 11)
+        complete-after (assoc physical-proof :authorization 12)
+        mutant-before physical-proof
+        mutant-after physical-proof]
+    (and (not= complete-before complete-after)
+         (= mutant-before mutant-after))))
+
+(defn- window-boundary-skip-or-duplicate-killed?
+  []
+  (let [stream [:a :sentinel :c]
+        page-1 [:a]
+        correct (into page-1 (subvec stream 1))
+        skip-mutant (into page-1 (subvec stream 2))
+        duplicate-mutant (into page-1 (subvec stream 0))]
+    (and (= stream correct)
+         (not= stream skip-mutant)
+         (not= stream duplicate-mutant))))
+
+(defn- per-candidate-plan-sealing-killed?
+  []
+  (let [candidates 11
+        correct-seals 1
+        mutant-seals candidates]
+    (and (= 1 correct-seals) (> mutant-seals correct-seals))))
+
+(defn- enumerate-permission-reevaluation-killed?
+  []
+  (let [candidates 6
+        correct {:direct-probes candidates :permission-evaluations 0}
+        mutant {:direct-probes candidates :permission-evaluations candidates}]
+    (and (= candidates (:direct-probes correct))
+         (zero? (:permission-evaluations correct))
+         (pos? (:permission-evaluations mutant)))))
+
+(defn- aggregate-release-imbalance-killed?
+  []
+  (let [correct {:acquired 1 :released 1}
+        mutant {:acquired 1 :released 0}]
+    (and (= (:acquired correct) (:released correct))
+         (not= (:acquired mutant) (:released mutant)))))
+
 (def detectors
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1427,7 +1516,23 @@
    :fuel-cut-wave-rolls-back-original-state
    fuel-cut-wave-rolls-back-original-state-killed?
    :page-scan-wave-is-host-selectable
-   page-scan-wave-is-host-selectable-killed?})
+   page-scan-wave-is-host-selectable-killed?
+   :aggregate-snapshot-mixing aggregate-snapshot-mixing-killed?
+   :aggregate-output-reordered-or-deduplicated
+   aggregate-output-reordered-or-deduplicated-killed?
+   :batch-cross-demand-contamination
+   batch-cross-demand-contamination-killed?
+   :aggregate-deadline-renewal aggregate-deadline-renewal-killed?
+   :aggregate-counter-reset aggregate-counter-reset-killed?
+   :candidate-failure-as-denial candidate-failure-as-denial-killed?
+   :authorized-cursor-proof-omission
+   authorized-cursor-proof-omission-killed?
+   :window-boundary-skip-or-duplicate
+   window-boundary-skip-or-duplicate-killed?
+   :per-candidate-plan-sealing per-candidate-plan-sealing-killed?
+   :enumerate-permission-reevaluation
+   enumerate-permission-reevaluation-killed?
+   :aggregate-release-imbalance aggregate-release-imbalance-killed?})
 
 (deftest every-registered-mutant-is-killed-test
   (let [{:keys [required-score mutants]} (registry)

@@ -336,7 +336,11 @@
     (with-redefs
       [impl/read-relationships
        (fn [& args]
-         (swap! internal-queries conj (second args))
+         ;; The public three-arity delegates to the new window-aware
+         ;; four-arity. Count the public engine invocation, not that local
+         ;; arity dispatch, as a second backend query.
+         (when (= 3 (count args))
+           (swap! internal-queries conj (second args)))
          (apply read-relationships args))]
       (let [page (eacl/read-relationships counting-client
                                           {:subject/type :user

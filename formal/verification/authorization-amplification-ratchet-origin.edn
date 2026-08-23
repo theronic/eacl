@@ -1,0 +1,192 @@
+{:format-version 1
+ :benchmark :authorization-request-amplification-phase-profile
+ :phase :ratchet-origin
+ :implementation-stage
+ :request-context-complete-before-scalar-fixed-cost-ratchets
+ :captured-at "2026-08-22T21:28:10.751484Z"
+ :repository
+ {:commit "0bb0845139af1acd4dc36fa5676e3cd68c6d7356"
+  :branch "feat/datalevin-backend"
+  :worktree-note
+  "The active OpenSpec implementation and benchmark profiler were present in the dirty worktree."
+  :datalevin-fork-commit "02c765c4fb107bce70fd0254d376c254ca6ede57"}
+ :environment
+ {:os "Mac OS X"
+  :os-version "26.4.1"
+  :architecture "aarch64"
+  :available-processors 14
+  :java-version "26.0.2"
+  :java-vendor "Eclipse Adoptium"
+  :jvm-name "OpenJDK 64-Bit Server VM"
+  :maximum-heap-bytes 9663676416
+  :datalevin-version "1.0.2"
+  :documents 256
+  :page-size 10}
+ :method
+ {:clock :system-nano-time
+  :allocation-source :current-thread-allocated-bytes
+  :attribution :exclusive-nested-spans
+  :warmups 25
+  :samples 51
+  :retention
+  "Checked-in p50/p95/p99 ratchet summaries; run-ratchet-origin! returns the raw samples and checksums."
+  :unattributed
+  "Lifecycle glue, boundary code without a named span, and the small profiling-instrumentation remainder."}
+ :series
+ {:cache-hit-check
+  {:total
+   {:latency-us {:p50 515.75 :p95 814.458 :p99 954.417}
+    :allocated-bytes {:p50 429040 :p95 429168 :p99 429248}}
+   :phases
+   {:contract-normalization
+    {:calls 1
+     :latency-us {:p50 4.875 :p95 8.958 :p99 10.542}
+     :allocated-bytes {:p50 1912 :p95 1912 :p99 1912}}
+    :selection
+    {:calls 1
+     :latency-us {:p50 309.959 :p95 530.25 :p99 730.625}
+     :allocated-bytes {:p50 289776 :p95 289832 :p99 290008}}
+    :identity-conversion
+    {:calls 2
+     :latency-us {:p50 5.708 :p95 19.791 :p99 32.542}
+     :allocated-bytes {:p50 4456 :p95 4456 :p99 4456}}
+    :proof-frame
+    {:calls 1
+     :latency-us {:p50 2.417 :p95 4.041 :p99 5.792}
+     :allocated-bytes {:p50 1160 :p95 1160 :p99 1160}}
+    :cache-key-and-lookup
+    {:calls 1
+     :latency-us {:p50 75.709 :p95 185.208 :p99 205.416}
+     :allocated-bytes {:p50 103568 :p95 103632 :p99 103704}}
+    :evaluation
+    {:calls 0
+     :latency-us {:p50 0.0 :p95 0.0 :p99 0.0}
+     :allocated-bytes {:p50 0 :p95 0 :p99 0}}
+    :rendering
+    {:calls 0
+     :latency-us {:p50 0.0 :p95 0.0 :p99 0.0}
+     :allocated-bytes {:p50 0 :p95 0 :p99 0}}
+    :cursor-minting
+    {:calls 0
+     :latency-us {:p50 0.0 :p95 0.0 :p99 0.0}
+     :allocated-bytes {:p50 0 :p95 0 :p99 0}}}
+   :unattributed
+   {:latency-us {:p50 80.999 :p95 148.126 :p99 201.666}
+    :allocated-bytes {:p50 28160 :p95 28160 :p99 28160}}}
+
+  :cache-bypass-check
+  {:total
+   {:latency-us {:p50 465.042 :p95 928.5 :p99 1178.042}
+    :allocated-bytes {:p50 363728 :p95 363808 :p99 365288}}
+   :phases
+   {:contract-normalization
+    {:calls 1
+     :latency-us {:p50 4.541 :p95 6.959 :p99 8.875}
+     :allocated-bytes {:p50 1912 :p95 1912 :p99 1912}}
+    :selection
+    {:calls 1
+     :latency-us {:p50 267.166 :p95 615.833 :p99 729.833}
+     :allocated-bytes {:p50 289752 :p95 289752 :p99 289808}}
+    :identity-conversion
+    {:calls 4
+     :latency-us {:p50 9.877 :p95 24.917 :p99 31.042}
+     :allocated-bytes {:p50 8024 :p95 8024 :p99 8024}}
+    :proof-frame
+    {:calls 1
+     :latency-us {:p50 2.0 :p95 3.625 :p99 4.5}
+     :allocated-bytes {:p50 1160 :p95 1160 :p99 1160}}
+    :cache-key-and-lookup
+    {:calls 1
+     :latency-us {:p50 32.208 :p95 81.833 :p99 100.124}
+     :allocated-bytes {:p50 12552 :p95 12552 :p99 12608}}
+    :evaluation
+    {:calls 1
+     :latency-us {:p50 82.041 :p95 137.959 :p99 184.834}
+     :allocated-bytes {:p50 21912 :p95 21912 :p99 21912}}
+    :rendering
+    {:calls 0
+     :latency-us {:p50 0.0 :p95 0.0 :p99 0.0}
+     :allocated-bytes {:p50 0 :p95 0 :p99 0}}
+    :cursor-minting
+    {:calls 0
+     :latency-us {:p50 0.0 :p95 0.0 :p99 0.0}
+     :allocated-bytes {:p50 0 :p95 0 :p99 0}}}
+   :unattributed
+   {:latency-us {:p50 61.916 :p95 118.331 :p99 132.334}
+    :allocated-bytes {:p50 28440 :p95 28440 :p99 28440}}}
+
+  :relationship-page-10
+  {:total
+   {:latency-us {:p50 846.125 :p95 1525.959 :p99 1604.791}
+    :allocated-bytes {:p50 774304 :p95 774384 :p99 774424}}
+   :phases
+   {:contract-normalization
+    {:calls 1
+     :latency-us {:p50 4.167 :p95 7.042 :p99 8.0}
+     :allocated-bytes {:p50 1912 :p95 1912 :p99 1912}}
+    :selection
+    {:calls 1
+     :latency-us {:p50 211.291 :p95 464.25 :p99 598.917}
+     :allocated-bytes {:p50 289560 :p95 289560 :p99 289616}}
+    :identity-conversion
+    {:calls 24
+     :latency-us {:p50 118.544 :p95 166.875 :p99 250.25}
+     :allocated-bytes {:p50 108480 :p95 108536 :p99 108672}}
+    :proof-frame
+    {:calls 1
+     :latency-us {:p50 2.0 :p95 3.25 :p99 4.209}
+     :allocated-bytes {:p50 1160 :p95 1160 :p99 1160}}
+    :cache-key-and-lookup
+    {:calls 1
+     :latency-us {:p50 27.625 :p95 62.0 :p99 77.666}
+     :allocated-bytes {:p50 13184 :p95 13208 :p99 13208}}
+    :evaluation
+    {:calls 1
+     :latency-us {:p50 145.625 :p95 281.625 :p99 335.5}
+     :allocated-bytes {:p50 112888 :p95 112888 :p99 112888}}
+    :rendering
+    {:calls 1
+     :latency-us {:p50 47.211 :p95 84.293 :p99 96.5}
+     :allocated-bytes {:p50 26600 :p95 26600 :p99 26600}}
+    :cursor-minting
+    {:calls 1
+     :latency-us {:p50 110.708 :p95 227.459 :p99 283.292}
+     :allocated-bytes {:p50 171560 :p95 171560 :p99 171560}}}
+   :unattributed
+   {:latency-us {:p50 98.209 :p95 264.708 :p99 536.749}
+    :allocated-bytes {:p50 48960 :p95 48960 :p99 48960}}}
+
+  :provider-acquisition
+  {:total
+   {:latency-us {:p50 126.75 :p95 150.167 :p99 184.416}
+    :allocated-bytes {:p50 215736 :p95 215736 :p99 215736}}
+   :phases
+   {:contract-normalization {:calls 0}
+    :selection
+    {:calls 1
+     :latency-us {:p50 124.666 :p95 147.709 :p99 182.5}
+     :allocated-bytes {:p50 214536 :p95 214536 :p99 214536}}
+    :identity-conversion {:calls 0}
+    :proof-frame {:calls 0}
+    :cache-key-and-lookup {:calls 0}
+    :evaluation {:calls 0}
+    :rendering {:calls 0}
+    :cursor-minting {:calls 0}}
+   :unattributed
+   {:latency-us {:p50 1.917 :p95 2.291 :p99 2.376}
+    :allocated-bytes {:p50 1200 :p95 1200 :p99 1200}}}}
+ :observations
+ {:cache-hit-versus-bypass
+  {:latency-ratio 1.109041755251569
+   :allocation-ratio 1.1795638460607655
+   :gate-passed? false}
+  :pre-change-acquisition-allocation-p50 226728
+  :acquisition-quarter-gate-bytes 56682
+  :ratchet-origin-acquisition-allocation-p50 215736
+  :acquisition-quarter-gate-passed? false
+  :largest-page-allocation-phases
+  [[:selection 289560]
+   [:cursor-minting 171560]
+   [:evaluation 112888]
+   [:identity-conversion 108480]]}
+ :active-readers-after {:active 0 :oldest-age-ms nil}}

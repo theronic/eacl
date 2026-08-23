@@ -149,6 +149,10 @@
   Omitted or nil consistency defaults to :minimize-latency."
   (-check-permission [this demand]))
 
+(defprotocol IBatchedAuthorization
+  "Authorization extension for ordered point checks over one snapshot."
+  (-check-permissions [this request]))
+
 (defprotocol ISnapshotAuthorization
   "Optional synchronous composition boundary for multiple read operations that
   must observe one selected immutable backend snapshot."
@@ -217,6 +221,24 @@
                       :permission permission
                       :resource resource
                       :consistency consistency})))
+
+(defn check-permissions
+  "Returns detailed authorization decisions for an ordered batch.
+
+  `request` is a closed envelope containing `:checks` and optional
+  request-wide `:consistency`, `:timeout-ms`, `:cancellation-token`, `:cache?`,
+  `:evaluation`, and `:aggregate-limits`. Implementations that cannot hold one
+  immutable snapshot across the complete batch fail with a typed unsupported
+  capability instead of looping over public scalar calls."
+  [authorization request]
+  (if (satisfies? IBatchedAuthorization authorization)
+    (-check-permissions authorization request)
+    (throw
+     (ex-info
+      "This authorization implementation has no batched point-check capability."
+      {:type :eacl/unsupported-capability
+       :eacl/error :eacl/unsupported-capability
+       :capability :check-permissions}))))
 
 ; Spice affordances from previous impl.
 (defrecord Relationship [subject relation resource])

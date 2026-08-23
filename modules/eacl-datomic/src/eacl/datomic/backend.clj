@@ -229,6 +229,12 @@
                :tx)])
     relation-ids)})
 
+(defn- certified-schema-generation
+  [db]
+  (when (d/entid db :eacl/schema-version)
+    (some-> (first (d/datoms db :avet :eacl/schema-version))
+            :tx)))
+
 (defn snapshot-adapter
   "Creates an adapter bound to one immutable Datomic db value. Proof and scan
   operations therefore cannot accidentally observe a different basis."
@@ -296,6 +302,10 @@
         :order-hint
         (fn []
           (db-revision db))
+
+        :schema-generation
+        (fn []
+          (certified-schema-generation db))
 
         :select-current
         (fn []

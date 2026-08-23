@@ -115,8 +115,12 @@
   (ddb/with-db snapshot-or-db #(impl/tx-delete-object % object-eid)))
 
 (defn- snapshot-read-relationships
-  [snapshot-or-db query kernel]
-  (ddb/with-db snapshot-or-db #(impl/read-relationships % query kernel)))
+  ([snapshot-or-db query kernel]
+   (snapshot-read-relationships snapshot-or-db query kernel nil))
+  ([snapshot-or-db query kernel window-options]
+   (ddb/with-db
+    snapshot-or-db
+    #(impl/read-relationships % query kernel window-options))))
 
 (def ^:private api
   {:backend-id :datalevin
