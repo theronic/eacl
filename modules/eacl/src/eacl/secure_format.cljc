@@ -110,28 +110,40 @@
                :cljs (.toString code 16))]
     (str (apply str (repeat (- 4 (count hex)) "0")) hex)))
 
+(defn- string-requires-escaping?
+  [value]
+  (loop [index 0]
+    (if (= index (count value))
+      false
+      (let [code (string-code-unit-at value index)]
+        (if (or (< code 32) (= code 34) (= code 92))
+          true
+          (recur (inc index)))))))
+
 (defn- render-string
   [value]
-  (str
-   "\""
-   (apply
-    str
-    (map
-     (fn [character]
-       (let [code (string-code-unit character)]
-         (case code
-           8 "\\b"
-           9 "\\t"
-           10 "\\n"
-           12 "\\f"
-           13 "\\r"
-           34 "\\\""
-           92 "\\\\"
-           (if (< code 32)
-             (str "\\u" (four-digit-hex code))
-             (str character)))))
-     value))
-   "\""))
+  (if-not (string-requires-escaping? value)
+    (str "\"" value "\"")
+    (str
+     "\""
+     (apply
+      str
+      (map
+       (fn [character]
+         (let [code (string-code-unit character)]
+           (case code
+             8 "\\b"
+             9 "\\t"
+             10 "\\n"
+             12 "\\f"
+             13 "\\r"
+             34 "\\\""
+             92 "\\\\"
+             (if (< code 32)
+               (str "\\u" (four-digit-hex code))
+               (str character)))))
+       value))
+     "\"")))
 
 (declare portable-render)
 
@@ -142,9 +154,10 @@
    (str/join
     ", "
     (map
-     (fn [[k v]]
-       (str (portable-render k) " " (portable-render v)))
-     (sort-by (comp portable-render key) value)))
+     (fn [[rendered-key v]]
+       (str rendered-key " " (portable-render v)))
+     (sort-by first
+              (map (fn [[k v]] [(portable-render k) v]) value))))
    "}"))
 
 (defn- portable-render
@@ -161,10 +174,22 @@
     (integer? value) (str value)
     (map? value) (render-map value)
     (set? value)
-    (str "#{" (str/join " " (map portable-render
-                                  (sort-by portable-render value))) "}")
+    (str "#{" (str/join " " (sort (map portable-render value))) "}")
     (sequential? value)
     (str "[" (str/join " " (map portable-render value)) "]")))
+
+(def ^:private ordinary-keyword-component
+  ;; A deliberately conservative EDN subset. Fast-path only spellings whose
+  ;; printed namespace/name split is self-evident; unusual legal keywords keep
+  ;; the exact reader round-trip below.
+  #"[A-Za-z_*!?$%&=<>.+-][A-Za-z0-9_*!?$%&=<>.+-]*")
+
+(defn- ordinary-keyword?
+  [value]
+  (let [keyword-namespace (namespace value)]
+    (and (re-matches ordinary-keyword-component (name value))
+         (or (nil? keyword-namespace)
+             (re-matches ordinary-keyword-component keyword-namespace)))))
 
 (defn- unambiguous-keyword?
   [value]
@@ -172,10 +197,12 @@
    (well-formed-unicode? (name value))
    (or (nil? (namespace value))
        (well-formed-unicode? (namespace value)))
-   (try
-     (= value (edn/read-string (portable-render value)))
-     (catch #?(:clj Exception :cljs :default) _
-       false))))
+   (or
+    (ordinary-keyword? value)
+    (try
+      (= value (edn/read-string (portable-render value)))
+      (catch #?(:clj Exception :cljs :default) _
+        false)))))
 
 (defn- canonical-comparator
   [left right]
@@ -430,19 +457,33 @@
 
 (defn hmac-sha-256
   [key message]
-  (let [key (normalize-key key)
-        message (if (string? message) (utf8-bytes message) (vec message))]
+  (let [key (normalize-key key)]
     #?(:clj
        (let [mac (Mac/getInstance "HmacSHA256")
              key-bytes (byte-array (map unchecked-byte key))
-             message-bytes (byte-array (map unchecked-byte message))]
+             message-bytes
+             (cond
+               (string? message)
+               (let [message ^String message]
+                 (when-not (well-formed-unicode? message)
+                   (format-error! :invalid-unicode {}))
+                 (.getBytes message StandardCharsets/UTF_8))
+
+               (bytes? message)
+               message
+
+               :else
+               (byte-array (map unchecked-byte message)))]
          (.init mac (SecretKeySpec. key-bytes "HmacSHA256"))
          (mapv #(bit-and (int %) 255) (.doFinal mac message-bytes)))
        :cljs
-       (vec
-        (.getHmac
-         (goog.crypt.Hmac. (goog.crypt.Sha256.) (clj->js key) 64)
-         (clj->js message))))))
+       (let [message (if (string? message)
+                       (utf8-bytes message)
+                       (vec message))]
+         (vec
+          (.getHmac
+           (goog.crypt.Hmac. (goog.crypt.Sha256.) (clj->js key) 64)
+           (clj->js message)))))))
 
 (defn derive-key
   "Derives a distinct 256-bit key for one authenticated format domain."
@@ -475,7 +516,9 @@
   #?(:clj
      (.encodeToString
       (.withoutPadding (Base64/getUrlEncoder))
-      (byte-array (map unchecked-byte bytes)))
+      (if (bytes? bytes)
+        bytes
+        (byte-array (map unchecked-byte bytes))))
      :cljs
      (let [binary (apply str (map #(js/String.fromCharCode %) bytes))
            encoded (.call (.-btoa js/globalThis) js/globalThis binary)]

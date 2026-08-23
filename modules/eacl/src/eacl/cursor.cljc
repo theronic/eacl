@@ -4,7 +4,10 @@
             [eacl.secure-format :as secure]
             #?@(:cljs [[goog.crypt.Aes]]))
   #?(:clj
-     (:import [javax.crypto Cipher]
+     (:import [java.nio.charset StandardCharsets]
+              [java.util.concurrent ConcurrentLinkedQueue]
+              [javax.crypto Cipher]
+              [javax.crypto Mac]
               [javax.crypto.spec IvParameterSpec SecretKeySpec])))
 
 (def cursor-version 5)
@@ -207,29 +210,38 @@
   [key nonce input]
   (when-not (= nonce-size (count nonce))
     (aead-error! :invalid-nonce {:nonce-size (count nonce)}))
-  (let [input (vec input)
-        block-count
-        (quot (+ (count input) (dec aes-block-size)) aes-block-size)]
-    (when (> block-count maximum-counter)
-      (aead-error! :too-large {:maximum-blocks maximum-counter}))
-    #?(:clj
+  #?(:clj
+     ;; Keep the JVM path in byte arrays from canonical UTF-8 through JCA and
+     ;; Base64. The portable format still operates on the same unsigned bytes;
+     ;; this only removes three whole-payload vector/array copies per cursor.
+     (let [input-length (if (bytes? input) (alength ^bytes input) (count input))
+           block-count
+           (quot (+ input-length (dec aes-block-size)) aes-block-size)]
+       (when (> block-count maximum-counter)
+         (aead-error! :too-large {:maximum-blocks maximum-counter}))
        ;; The portable format defines AES-CTR as nonce || uint32(counter), with
        ;; the first counter equal to one. JCA implements that exact big-endian
-       ;; counter progression in one native bulk operation. The former JVM
-       ;; path created one ECB `doFinal` call per 16-byte block; a normal page
-       ;; cursor therefore crossed the provider boundary over a hundred times.
+       ;; counter progression in one native bulk operation.
        (let [cipher (Cipher/getInstance "AES/CTR/NoPadding")
              key-bytes (byte-array (map unchecked-byte key))
              iv-bytes
              (byte-array
               (map unchecked-byte (into nonce (uint32-bytes 1))))
-             input-bytes (byte-array (map unchecked-byte input))]
+             input-bytes
+             (if (bytes? input)
+               input
+               (byte-array (map unchecked-byte input)))]
          (.init cipher
                 Cipher/ENCRYPT_MODE
                 (SecretKeySpec. key-bytes "AES")
                 (IvParameterSpec. iv-bytes))
-         (mapv #(bit-and (int %) 255) (.doFinal cipher input-bytes)))
-       :cljs
+         (.doFinal cipher ^bytes input-bytes)))
+     :cljs
+     (let [input (vec input)
+           block-count
+           (quot (+ (count input) (dec aes-block-size)) aes-block-size)]
+       (when (> block-count maximum-counter)
+         (aead-error! :too-large {:maximum-blocks maximum-counter}))
        (let [encrypt-block (aes-block-encrypter key)]
          (loop [offset 0
                 counter 1
@@ -261,6 +273,34 @@
    :authentication-key
    (secure/derive-key domain-key authentication-key-domain)})
 
+(defn- pooled-authenticator
+  "Builds a thread-safe HMAC function for one already-derived cursor key.
+
+  JCA `Mac` resets to its initialized state after `doFinal`. A small concurrent
+  pool therefore avoids provider lookup, key conversion, and initialization on
+  every cursor while still preventing one mutable `Mac` from being shared by
+  simultaneous requests. The pool is owned by the bounded key-context cache."
+  [authentication-key]
+  #?(:clj
+     (let [pool (ConcurrentLinkedQueue.)
+           key-spec
+           (SecretKeySpec.
+            (byte-array (map unchecked-byte authentication-key))
+            "HmacSHA256")]
+       (fn [^String message]
+         (let [^Mac mac
+               (or (.poll pool)
+                   (doto (Mac/getInstance "HmacSHA256")
+                     (.init key-spec)))
+               result
+               (.doFinal mac (.getBytes message StandardCharsets/UTF_8))]
+           ;; Return only a successfully reset instance to the pool.
+           (.offer pool mac)
+           (mapv #(bit-and (int %) 255) result))))
+     :cljs
+     (fn [message]
+       (secure/hmac-sha-256 authentication-key message))))
+
 (defn- authentication-input
   [kid-segment nonce-segment ciphertext-segment]
   (str cursor-domain "\n"
@@ -283,6 +323,7 @@
                 (secure/signing-context format-options cursor-domain)
                 {:keys [encryption-key authentication-key]}
                 (aead-keys domain-key)
+                authenticate (pooled-authenticator authentication-key)
                 kid-segment
                 (secure/b64url-encode
                  (secure/utf8-bytes
@@ -290,7 +331,7 @@
                    kid
                    (assoc format-options :maximum-size 1024))))]
             {:encryption-key encryption-key
-             :authentication-key authentication-key
+             :authenticate authenticate
              :kid-segment kid-segment}))]
     (if-let [cache (:cursor-codec-cache options)]
       (memoized-key-context!
@@ -303,11 +344,12 @@
         maximum-size
         (or (:maximum-size format-options)
             secure/default-maximum-size)
-        {:keys [encryption-key authentication-key kid-segment]}
+        {:keys [encryption-key authenticate kid-segment]}
         (encode-context options format-options)
+        encoded-payload (secure/encode-canonical payload format-options)
         payload-bytes
-        (secure/utf8-bytes
-         (secure/encode-canonical payload format-options))
+        #?(:clj (.getBytes ^String encoded-payload StandardCharsets/UTF_8)
+           :cljs (secure/utf8-bytes encoded-payload))
         nonce (secure/random-bytes nonce-size)
         ciphertext (ctr-transform encryption-key nonce payload-bytes)
         nonce-segment (secure/b64url-encode nonce)
@@ -315,8 +357,7 @@
         associated-input
         (authentication-input
          kid-segment nonce-segment ciphertext-segment)
-        tag
-        (secure/hmac-sha-256 authentication-key associated-input)
+        tag (authenticate associated-input)
         token
         (str cursor-prefix
              kid-segment "."
@@ -331,7 +372,8 @@
     (record-work! :encryption-passes 1)
     (record-work! :authentication-passes 1)
     (record-work! :authentication-input-bytes
-                  (count (secure/utf8-bytes associated-input)))
+                  ;; Every component is Base64URL or a fixed ASCII delimiter.
+                  (count associated-input))
     (record-work! :base64-encode-passes 4)
     token))
 
@@ -391,7 +433,8 @@
           (record-work! :decode-calls 1)
           (record-work! :authentication-passes 1)
           (record-work! :authentication-input-bytes
-                        (count (secure/utf8-bytes associated-input)))
+                        ;; Every component is Base64URL or a fixed ASCII delimiter.
+                        (count associated-input))
           (when-not (secure/secure-equal? expected supplied)
             (throw
              (ex-info "Encrypted cursor authentication failed."

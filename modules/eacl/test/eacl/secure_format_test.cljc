@@ -508,6 +508,25 @@
     (is (= 1 (:key-context-cache-hits @work))
         "the next distinct cursor reuses key derivation without reusing a token")))
 
+#?(:clj
+   (deftest encrypted-cursor-key-context-is-concurrency-safe-test
+     (let [codec-cache (cursor/codec-cache {:max-entries 128})
+           cached-options (assoc options :cursor-codec-cache codec-cache)
+           values (mapv (fn [n]
+                          {:v 12
+                           :scope [:concurrent n]
+                           :edge {:kind :lookup-eid :value n}})
+                        (range 64))
+           tokens (mapv deref
+                        (mapv #(future
+                                 (cursor/cursor->token % cached-options))
+                              values))]
+       (is (= 64 (count (set tokens))))
+       (is (= values
+              (mapv #(cursor/token->cursor
+                      % (dissoc cached-options :cursor-codec-cache))
+                    tokens))))))
+
 (deftest encrypted-cursor-operation-count-and-growth-test
   (let [small
         {:v 10

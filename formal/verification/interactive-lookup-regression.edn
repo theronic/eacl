@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :recorded-at "2026-08-23"
  :change :eliminate-authorization-request-amplification
  :runtime {:os :macos
@@ -46,12 +46,55 @@
  {:warm-cache-bypass-percent -21.1
   :warm-cache-hit-percent -21.5
   :post-eviction-miss-percent -71.2}
+ :cursor-and-population-follow-up
+ {:cache-disabled-semantics
+  {:completed-answer-cache :neither-read-nor-populated
+   :subproblem-cache :neither-read-nor-populated
+   :continuation-checkpoint-cache :neither-read-nor-populated
+   :page-navigation-cache :neither-read-nor-populated
+   :request-local-derived-memoization :retained
+   :persistent-derived-schema-registry :populated-on-generation-miss
+   :persistent-cursor-codec :populated-on-artifact-miss}
+  :persistent-publication-p50-us
+  {:derived-schema-registry-install 5.708
+   :cursor-construction-context 0.583
+   :cursor-key-context 0.5
+   :encrypted-token 2.375
+   :estimated-first-novel-page-total 12.707
+   :steady-state 0.0}
+  :population-decision
+  {:request-parameter :populate-cache?
+   :status :not-added
+   :reason
+   :persistent-publication-is-below-0.015-ms-p50-and-cross-request-reuse-avoids-millisecond-scale-recomputation}
+  :cursor-encryption-p50-us
+  {:before-per-cursor 433.042
+   :after-per-cursor 72.875
+   :change-percent -83.2
+   :after-forced-two-cursor-page 162.668
+   :after-cached-two-cursor-page 2.375}
+  :after-byte-path
+  {:warm-cache-bypass
+   {:samples 101 :eacl-p50-ms 1.70625 :http-wall-p50-ms 2.736}
+   :warm-cache-hit
+   {:samples 101 :eacl-p50-ms 0.501208 :http-wall-p50-ms 1.534}
+   :post-eviction-answer-miss
+   {:samples 101 :eacl-p50-ms 2.232667 :http-wall-p50-ms 3.152}}
+  :change-from-first-optimization-percent
+  {:warm-cache-bypass -27.4
+   :warm-cache-hit -18.1
+   :post-eviction-answer-miss -12.2}}
  :implementation
  [:single-validation-pass-before-canonical-rendering
   :single-jca-aes-ctr-operation-per-jvm-cursor
   :reused-secure-random-provider
   :bounded-client-private-key-context-reuse
-  :answer-cache-eviction-without-lifecycle-or-plan-rotation]
+  :answer-cache-eviction-without-lifecycle-or-plan-rotation
+  :single-render-per-canonical-map-key-and-set-element
+  :unescaped-string-fast-path
+  :ordinary-keyword-validation-fast-path
+  :jvm-byte-array-cursor-pipeline
+  :bounded-concurrency-safe-jca-hmac-reuse]
  :qualification
  :same-host-warmed-p50-observation-with-deterministic-work-counters-not-a-universal-latency-sla
  :status :passed}
