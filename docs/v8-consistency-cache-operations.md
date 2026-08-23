@@ -71,6 +71,7 @@ Disable caching:
 (datomic/make-client conn {:cache cache/no-cache})
 (datahike/make-client conn {:cache cache/no-cache})
 (datascript/make-client conn {:cache cache/no-cache})
+(datalevin/make-client conn {:cache cache/no-cache})
 ```
 
 Or pass `:cache? false` on one request. Pass `:populate-cache? false` to retain
@@ -124,21 +125,48 @@ and fingerprint.
 ## Cursors
 
 Cursors bind the normalized query, principal, permission, filters, operation,
-adapter/source lifecycle, ordering, native revision, and exact/proof identity.
-The same retained snapshot continues directly with zero acquisition. An `acl`
-uses source-owned exact reconstruction when necessary. A different retained
-snapshot continues only when its complete proof admits the cursor basis;
-otherwise EACL throws `:eacl.consistency/basis-conflict` with `:source :cursor`.
-It never drops a bound, silently restarts page one, or acquires through a
-retained snapshot.
+ordering and plan ABI, adapter/identity contracts, native revision and exact
+locator, boundary, and the canonical continuation triple
+`[lineage frame closure-digest]`. Lineage is source scope plus lifecycle. The
+frame is certified schema generation plus the scalar frontier of the complete
+relation closure. Cursor validation uses the same lazy request frame as answer
+and checkpoint lookup; a continued page performs at most one generation read
+for each relation in that closure.
 
-A contract-violating frame is never cursor equality evidence. It degrades to
-exact-snapshot context; continuation either reconstructs that authenticated
-exact value or returns the ordinary typed stale/basis-conflict outcome.
+A selected basis may consume the old boundary only when lineage, frame, and
+closure digest are equal. Unrelated transactions therefore continue on the
+new basis with an oracle-identical forward suffix or reverse prefix. A relevant
+relationship or schema mutation changes the frame and rejects current-basis
+continuation. A retained `Snapshot` cannot acquire another basis and reports
+`:eacl.consistency/basis-conflict` with `:source :cursor`; it never drops a
+bound or silently restarts page one.
+
+For an `acl`, a changed frame triggers exact selection only when the source
+advertises it and the request's freshness floor permits the cursor revision.
+The selected original basis is accepted by authenticated source scope,
+lifecycle, revision, and locator identity, without reading its historical
+frame. Datomic and qualifying Datahike configurations support this path.
+DataScript and Datalevin are current-only and return the typed stale-cursor
+outcome when their current frame changed.
+
+A contract-violating or unavailable frame is never cross-basis equality
+evidence. Its cursor context is tagged to the exact immutable basis;
+continuation either reconstructs that authenticated value or returns the
+ordinary typed stale/basis-conflict outcome.
 
 Continuation state is a private performance optimization. Eviction replays the
 authenticated prefix on the already selected snapshot and does not select a
-different lifecycle. DataScript has no arbitrary time-travel path.
+different lifecycle. `:populate-cache? false` leaves validation and page data
+unchanged while suppressing checkpoint and visited-page publication.
+
+Provider restart preserves cursors only when the source identity is durable.
+The same Datomic database, durable Datahike store, and Datalevin store retain
+lineage across a new connection/provider. A recreated DataScript connection,
+in-memory Datahike store, or independent Datomic memory database receives a
+fresh live-source id and rejects the old cursor with `:source-scope` before a
+generation read, even with identical data, shared keys, and the constant
+default lifecycle. Destructive history replacement requires explicit lifecycle
+rotation.
 
 Cursor expiry is disabled by default and cache retention never determines
 cursor lifetime. A positive `:cursor-ttl-seconds` adds an explicit application
@@ -152,9 +180,13 @@ check for each consumed object.
 ## Assurance boundary
 
 Dafny proves the finite cache decision distinguishes exact-basis and managed
-hit/miss actions; it also proves lifecycle isolation, proof
-completeness, and scalar-frontier preservation under globally ordered atomic
-relation stamps and deterministic complete dependencies. It does not prove
+hit/miss actions; it also proves lifecycle isolation, proof completeness,
+scalar-frontier preservation under globally ordered atomic relation stamps,
+and that an adaptive reducer restricted to the certified plan closure has the
+same transitions, emissions, order, and boundary positions at equal closure
+slices. Existing pagination leaves establish the corresponding forward suffix
+and reverse prefix. The production sealed-plan read-scope guard is mutation
+controlled. It does not prove
 Datomic I/O effects or future cancellation, Datahike history retention, or the
 truthfulness of a canonical cache key. Those are explicit adapter assumptions
 covered by deterministic effect tests and real-backend evidence. Database

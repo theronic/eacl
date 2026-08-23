@@ -383,11 +383,10 @@
 (defn- cursor-options
   "Request options for relay cursor handling.
 
-  One shared derived-schema-cache delay serves the engine evaluation, the
-  cursor scope's schema stamp, and the cursor dependency closure, so the
-  dependency-scoped cursor contexts add no schema-generation reads beyond the
-  request's own resolution. All three delays are forced only when a cursor
-  is actually minted or resumed."
+  The request context's proof frame serves engine evaluation, answer reuse,
+  checkpoint lookup, and cursor continuation, so one canonical dependency
+  closure is read at most once from the selected adapter. Derived schema state
+  and dependency discovery remain lazy until a cursor is minted or resumed."
   [request-context adapter opts selection resource-type permission
    relationship-dependency]
   (let [contract (:execution-contract opts)
@@ -465,9 +464,6 @@
                   (execution/remaining-millis contract))
              (:consistency-sync-timeout-ms opts))
            :request-schema-cache schema-cache
-           :cursor-schema-stamp
-           {:adapter adapter
-            :stamp (delay (:schema-version @schema-cache))}
            :cursor-dependency-relation-ids-fn
            ;; Cursor reuse uses the same compiled dependency closure as the
            ;; request proof frame. If proof is unavailable, the cursor remains
@@ -498,7 +494,8 @@
          adapter current-opts operation query)
         page-adapter
         (:adapter prepared)
-        page-selected-snapshot (:selected-snapshot prepared)]
+        page-selected-snapshot (:selected-snapshot prepared)
+        continuation-context (:continuation-context prepared)]
     (try
       (let [page-semantic-identity
             (if page-selected-snapshot
@@ -522,6 +519,7 @@
               selection
               resource-type permission relationship-dependency)
              :snapshot-semantic-identity page-semantic-identity
+             :cursor-dependency-context continuation-context
              :historical-basis? historical-basis?
              :completed-cache?
              (:completed-cache-request? opts))]

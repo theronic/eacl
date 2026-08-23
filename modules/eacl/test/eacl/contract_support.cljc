@@ -3,6 +3,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
             [clojure.string :as str]
             [eacl.authorization-oracle :as oracle]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.core :as eacl]
@@ -1426,6 +1427,165 @@
       (eacl/with-snapshot [snapshot (eacl/snapshot reader)]
         (supported? snapshot)))))
 
+(def cursor-continuation-expectations
+  "Backend-independent continuation outcomes. Exact fallback is selected only
+  by the source's advertised capability; backend names never affect the
+  expected result."
+  {:unrelated-write :current
+   :relevant-write {:exact-selection :original-basis
+                    :current-only :stale-cursor}
+   :non-durable-recreation :scope-mismatch
+   :durable-restart :same-lineage
+   :populate-cache-false :same-page})
+
+(declare continuation-outcome)
+
+(defn assert-cursor-source-transition!
+  "Checks one provider recreation/restart against the shared durability
+  matrix. The caller owns backend setup and supplies the pre-transition page,
+  the post-transition client, and the cache-free pre-transition oracle."
+  [{:keys [client query first-page oracle-stream durability]}]
+  (let [cursor (get-in first-page [:page-info :end-cursor])
+        expected
+        (get cursor-continuation-expectations
+             (case durability
+               :durable :durable-restart
+               :non-durable :non-durable-recreation))
+        outcome
+        (continuation-outcome
+         #(eacl/lookup-resources
+           client
+           (assoc query :after cursor :populate-cache? false)))]
+    (case expected
+      :same-lineage
+      (do
+        (is (nil? (:error outcome)))
+        (is (= oracle-stream
+               (into (:data first-page)
+                     (get-in outcome [:value :data])))))
+
+      :scope-mismatch
+      (do
+        (is (= :eacl.pagination/invalid-cursor
+               (get-in outcome [:error :type])))
+        (is (= :source-scope
+               (get-in outcome [:error :reason])))))))
+
+(defn- exact-selection-capable-reader?
+  [reader]
+  (when (eacl/acl? reader)
+    (let [basis-source (:source reader)]
+      (or (source/supports? basis-source :snapshots :historical)
+          (source/supports? basis-source :snapshots :exact)))))
+
+(defn- continuation-outcome
+  [f]
+  (try
+    {:value (f)}
+    (catch #?(:clj Exception :cljs :default) error
+      {:error (ex-data error)})))
+
+(defn- forward-continuation-data
+  [client query after request-options]
+  (loop [values []
+         after after]
+    (let [page
+          (eacl/lookup-resources
+           client (merge query request-options {:after after}))
+          values (into values (:data page))]
+      (if (get-in page [:page-info :has-next-page?])
+        (recur values (get-in page [:page-info :end-cursor]))
+        values))))
+
+(defn- reverse-continuation-data
+  [client query before request-options]
+  (loop [pages []
+         before before]
+    (let [page
+          (eacl/lookup-resources
+           client (merge query request-options {:before before}))
+          pages (conj pages (:data page))]
+      (if (get-in page [:page-info :has-previous-page?])
+        (recur pages (get-in page [:page-info :start-cursor]))
+        (into [] cat (reverse pages))))))
+
+(defn- assert-proof-equivalent-write-continuation!
+  [client query oracle-stream forward-page reverse-page]
+  (let [forward-cursor (get-in forward-page [:page-info :end-cursor])
+        reverse-cursor (get-in reverse-page [:page-info :start-cursor])
+        expected cursor-continuation-expectations
+        backend-work (atom {})
+        one-page
+        (binding [backend/*backend-op-stats* backend-work]
+          (eacl/lookup-resources
+           client (assoc query :after forward-cursor)))]
+    (testing "unrelated writes preserve forward and reverse oracle streams"
+      (is (= :current (:unrelated-write expected)))
+      (is (= (take (count (:data one-page))
+                   (drop (count (:data forward-page)) oracle-stream))
+             (:data one-page)))
+      (is (= (if (ordered-generation-proofs? client) 1 0)
+             (get @backend-work :proof-frame 0))
+          "cursor, answer, and checkpoint decisions share one request frame")
+      (is (<= (get @backend-work :schema-generation 0) 1))
+      (is (= oracle-stream
+             (into (:data forward-page)
+                   (forward-continuation-data
+                    client query forward-cursor {}))))
+      (is (= oracle-stream
+             (into
+              (reverse-continuation-data
+               client
+               (-> query
+                   (dissoc :first)
+                   (assoc :last 2 :evaluation :complete-denotation))
+               reverse-cursor {})
+              (:data reverse-page)))))
+    (testing "publication control cannot change continuation validity or data"
+      (is (= :same-page (:populate-cache-false expected)))
+      (is (= oracle-stream
+             (into (:data forward-page)
+                   (forward-continuation-data
+                    client query forward-cursor
+                    {:populate-cache? false})))))))
+
+(defn- assert-relevant-write-continuation!
+  [client query oracle-stream forward-page reverse-page]
+  (let [exact? (boolean (exact-selection-capable-reader? client))
+        expected
+        (get-in cursor-continuation-expectations
+                [:relevant-write
+                 (if exact? :exact-selection :current-only)])
+        forward-cursor (get-in forward-page [:page-info :end-cursor])
+        reverse-query
+        (-> query
+            (dissoc :first)
+            (assoc :last 2 :evaluation :complete-denotation))
+        reverse-cursor (get-in reverse-page [:page-info :start-cursor])
+        forward
+        (continuation-outcome
+         #(forward-continuation-data client query forward-cursor {}))
+        reverse
+        (continuation-outcome
+         #(reverse-continuation-data
+           client reverse-query reverse-cursor {}))]
+    (case expected
+      :original-basis
+      (do
+        (is (nil? (:error forward)))
+        (is (nil? (:error reverse)))
+        (is (= oracle-stream
+               (into (:data forward-page) (:value forward))))
+        (is (= oracle-stream
+               (into (:value reverse) (:data reverse-page)))))
+
+      :stale-cursor
+      (doseq [outcome [forward reverse]]
+        (is (= :eacl.pagination/stale-cursor
+               (get-in outcome [:error :type])))
+        (is (= :frame-changed
+               (get-in outcome [:error :reason])))))))
+
 (defn assert-v8-recursive-contracts!
   [client]
   (let [subject (->user "recursive-user")
@@ -1435,7 +1595,21 @@
                :permission :read
                :resource/type :folder
                :first 2}
-        pages (lookup-all-resource-pages client query)]
+        pages (lookup-all-resource-pages client query)
+        forward-page (first pages)
+        reverse-query
+        (-> query
+            (dissoc :first)
+            (assoc :last 2 :evaluation :complete-denotation))
+        reverse-page (eacl/lookup-resources client reverse-query)
+        oracle-stream
+        (:data
+         (eacl/lookup-resources
+          client
+          (assoc query
+                 :first 20
+                 :cache? false
+                 :populate-cache? false)))]
     (assert-v8-recursive-batch-contract! client)
 
     (testing "recursive results match an independent least-fixed-point oracle"
@@ -1502,30 +1676,17 @@
           (is (= (mapv folder (range recursive-connected-folder-count))
                  (:data after-unrelated-write))))
 
+        (assert-proof-equivalent-write-continuation!
+         client query oracle-stream forward-page reverse-page)
+
         (eacl/create-relationship!
          client
          (folder (dec recursive-connected-folder-count))
          :parent
          (folder recursive-connected-folder-count))
 
-        (let [stale-cursor
-              (get-in (last pages) [:page-info :end-cursor])
-              outcome
-              (try
-                {:page
-                 (eacl/lookup-resources
-                  client
-                  (assoc query :after stale-cursor))}
-                (catch #?(:clj Exception :cljs :default) thrown
-                  {:error (ex-data thrown)}))]
-          (if-let [error (:error outcome)]
-            (is (= :eacl.pagination/stale-cursor (:type error))
-                "a current-only backend rejects a cursor from an older basis")
-            (do
-              (is (empty? (get-in outcome [:page :data]))
-                  "an immutable time-travel backend may resume the exact old snapshot")
-              (is (nil? (get-in outcome
-                                [:page :page-info :cursor-recovery]))))))
+        (assert-relevant-write-continuation!
+         client query oracle-stream forward-page reverse-page)
 
         (let [after-write (eacl/lookup-resources client all-query)]
           (is (false? (:cached? after-write)))

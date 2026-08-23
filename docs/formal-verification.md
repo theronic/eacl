@@ -10,7 +10,7 @@ remains an explicit unmet release obligation. Two verified bodies now coexist.
 Enumeration, point checks, and counts run on the hand-written CLJC
 stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 `stable-page`, `stable-route`) on both targets; its evidence is the
-release-assurance tree under `formal/stable-discovery/` (46 Dafny leaves, two
+release-assurance tree under `formal/stable-discovery/` (47 Dafny leaves, two
 TLC families, executable refinement bridges, mutation controls; see
 [docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
 Dafny kernel remains the production authority for the pure decisions that
@@ -103,7 +103,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 
 | Source | Main responsibility |
 | --- | --- |
-| `formal/stable-discovery/*.dfy` (46 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 631 obligations) |
+| `formal/stable-discovery/*.dfy` (47 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check, and the adaptive reducer read-scope bridge; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 651 obligations) |
 | `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
 | `SnapshotOracle.dfy` | abstract immutable adapter contract |
 | `AcyclicEngine.dfy` | **retired engine model** (path compilation, direct checks, acyclic projections and counts); kept as a regression model until task 9.2's formal cut |

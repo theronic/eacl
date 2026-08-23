@@ -55,12 +55,29 @@
                 (datahike/make-client first-conn {:security-key key})]
             (eacl/write-schema! first-client contract/smoke-schema)
             (seed-objects! first-conn)
-            {:token
-             (:zed/token
-              (eacl/create-relationship!
-               first-client
-               (first contract/smoke-relationships)))
-             :scope (current-source-scope first-client)})
+            (let [token
+                  (:zed/token
+                   (eacl/create-relationship!
+                    first-client
+                    (first contract/smoke-relationships)))
+                  _ (eacl/create-relationships!
+                     first-client (rest contract/smoke-relationships))
+                  query {:subject (contract/->user "user-1")
+                         :permission :view
+                         :resource/type :server
+                         :first 1}]
+              {:token token
+               :query query
+               :first-page (eacl/lookup-resources first-client query)
+               :oracle-stream
+               (:data
+                (eacl/lookup-resources
+                 first-client
+                 (assoc query
+                        :first 10
+                        :cache? false
+                        :populate-cache? false)))
+               :scope (current-source-scope first-client)}))
           (finally
             (d/release first-conn)
             (d/delete-database first-config)))
@@ -75,6 +92,10 @@
                   (get-in first-result [:scope :source-id :store-id])))
         (is (not= (str fixed-id)
                   (get-in second-scope [:source-id :store-id])))
+        (eacl/write-schema! second-client contract/smoke-schema)
+        (seed-objects! second-conn)
+        (eacl/create-relationships!
+         second-client contract/smoke-relationships)
         (is (= :eacl.consistency/incomparable-scope
                (:type
                 (error-data
@@ -84,7 +105,13 @@
                    :admin
                    (contract/->account "account-1")
                    (consistency/at-least-as-fresh
-                    (:token first-result))))))))
+                    (:token first-result)))))))
+        (contract/assert-cursor-source-transition!
+         {:client second-client
+          :query (:query first-result)
+          :first-page (:first-page first-result)
+          :oracle-stream (:oracle-stream first-result)
+          :durability :non-durable}))
       (finally
         (let [second-config (:config (d/db second-conn))]
           (d/release second-conn)

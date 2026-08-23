@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated
   :source-files 80
   :public-roots 70
-  :reachable-definitions 1673
+  :reachable-definitions 1677
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -354,14 +354,32 @@
               :cursor-minting-does-no-relationship-content-scan
               :no-cache-cursor-minting-does-no-generation-scan
               :automatic-current-requests-use-ordered-generation-proofs
-              :current-continuation-requires-equal-proof
-              :exact-continuation-requires-authenticated-exact-proof
-              :changed-proof-never-continues-on-current
-              :changed-proof-without-exact-snapshot-is-rejected
-              :datascript-exact-proof-continues-only-at-current-basis
+              :current-continuation-requires-equal-lineage-frame-and-closure
+              :equal-scalar-frame-preserves-every-closure-slice
+              :sealed-plan-descriptors-stay-inside-certified-closure
+              :equal-closure-slices-preserve-adaptive-stream-and-boundaries
+              :least-path-resume-is-exact-suffix-or-reverse-prefix
+              :stable-boundary-resume-is-exact-residual
+              :exact-continuation-requires-authenticated-original-basis-identity
+              :changed-frame-never-continues-on-current
+              :changed-frame-without-exact-selection-is-rejected
+              :datascript-exact-frame-continues-only-at-current-basis
               :datascript-changed-basis-cannot-yield-cursor-page]
    :dafny ["formal/dafny/PageWindow.dfy"
-           "formal/dafny/TemporalSafety.dfy"]
+           "formal/dafny/TemporalSafety.dfy"
+           "formal/dafny/ScalarFrontierCoherence.dfy"
+           "formal/stable-discovery/ReducerReadScope.dfy"
+           "formal/stable-discovery/LeastPathResume.dfy"
+           "formal/stable-discovery/PaginationComposition.dfy"
+           "formal/stable-discovery/RuntimeCheckpointComposition.dfy"]
+   :premises
+   [:same-lineage
+    :equal-certified-schema-generation-and-scalar-frontier
+    :complete-canonical-relation-closure
+    :sealed-plan-read-scope-guard-passed
+    :immutable-snapshot
+    :deterministic-adapter-scan-order
+    :authenticated-order-boundary]
    :adapter-obligations
    [:immutable-snapshot
     :exact-selection
@@ -372,7 +390,8 @@
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
    {:continuation-decision :generated-production
-    :cursor-proof-strategy :proof-only-host-control-model-cross-checked}
+    :cursor-frame-strategy :proof-only-host-control-model-cross-checked
+    :plan-read-scope-guard :executed-production-mutation-controlled}
    :remaining
    [:mechanized-host-cursor-proof-strategy-source-refinement
     :backend-proof-construction-refinement

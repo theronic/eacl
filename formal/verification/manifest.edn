@@ -321,18 +321,18 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 36
-  :registered 36
+  :killed 37
+  :registered 37
   :retired-invalid-controls 74}
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :source-files 80
   :public-roots 70
-  :reachable-definitions 1673}
+  :reachable-definitions 1677}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
-  :dafny-leaves 46
-  :verified-obligations 631}
+  :dafny-leaves 47
+  :verified-obligations 651}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"

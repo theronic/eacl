@@ -757,7 +757,7 @@
         (is (some? error))
         (is (= :eacl.pagination/stale-cursor
                (:type (ex-data error))))
-        (is (= :dependency-proof-changed (:reason (ex-data error))))
+        (is (= :frame-changed (:reason (ex-data error))))
         (let [fresh-error
               (try
                 (eacl/lookup-resources client query)

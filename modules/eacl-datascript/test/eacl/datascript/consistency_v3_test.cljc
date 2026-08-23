@@ -4,6 +4,7 @@
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -60,20 +61,42 @@
   (let [first-conn (datascript/create-conn)
         first-client (managed-client first-conn {})
         _ (seed! first-conn first-client)
+        document-2 (eacl/spice-object :document "document-2")
+        relationship-2 (eacl/->Relationship user :reader document-2)
+        _ (ds/transact! first-conn [{:eacl/id "document-2"}])
         old-token
         (:zed/token
          (eacl/create-relationship! first-client relationship))
+        _ (eacl/create-relationship! first-client relationship-2)
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 1}
+        first-page (eacl/lookup-resources first-client query)
+        oracle-stream
+        (:data
+         (eacl/lookup-resources
+          first-client
+          (assoc query :first 10 :cache? false :populate-cache? false)))
         second-conn (datascript/create-conn)
         second-client (managed-client second-conn {})
         _ (seed! second-conn second-client)
-        _ (eacl/create-relationship! second-client relationship)]
+        _ (ds/transact! second-conn [{:eacl/id "document-2"}])
+        _ (eacl/create-relationships!
+           second-client [relationship relationship-2])]
     (is (= :eacl.consistency/incomparable-scope
            (:type
             (error-data
              #(eacl/can?
                second-client
                user :view document
-               (consistency/at-least-as-fresh old-token))))))))
+               (consistency/at-least-as-fresh old-token))))))
+    (contract/assert-cursor-source-transition!
+     {:client second-client
+      :query query
+      :first-page first-page
+      :oracle-stream oracle-stream
+      :durability :non-durable})))
 
 (deftest map-can-rejects-malformed-consistency-test
   (let [conn (datascript/create-conn)
@@ -226,7 +249,7 @@
       (let [data (error-data
                   #(eacl/lookup-resources authorization page-2-query))]
         (is (= :eacl.pagination/stale-cursor (:type data)))
-        (is (= :dependency-proof-changed (:reason data)))))))
+        (is (= :frame-changed (:reason data)))))))
 
 (deftest unrelated-write-preserves-authenticated-page-cache-identity-test
   (let [conn (datascript/create-conn)
@@ -610,7 +633,7 @@
                authorization
                (assoc query :after cursor)))]
         (is (= :eacl.pagination/stale-cursor (:type data)))
-        (is (= :dependency-proof-changed (:reason data)))))
+        (is (= :frame-changed (:reason data)))))
     (let [fresh-page-1
           (eacl/read-relationships authorization query)
           fresh-cursor
@@ -627,7 +650,7 @@
                  authorization
                  (assoc query :after fresh-cursor)))]
           (is (= :eacl.pagination/stale-cursor (:type data)))
-          (is (= :dependency-proof-changed (:reason data)))))
+          (is (= :frame-changed (:reason data)))))
       (testing "a changed consistency contract is a different query scope"
         (is (= :eacl.pagination/invalid-cursor
                (:type

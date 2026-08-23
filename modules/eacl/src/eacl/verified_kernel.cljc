@@ -1720,7 +1720,6 @@
     :invalid-authentication
     :scope-mismatch
     :expired
-    :conflict
     :snapshot-unavailable
     :history-divergence})
 

@@ -5,6 +5,7 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.core :as datahike]
@@ -55,6 +56,53 @@
     nil
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
+
+(deftest durable-file-provider-restart-preserves-cursor-lineage-test
+  (let [temp-dir
+        (Files/createTempDirectory
+         "eacl-datahike-cursor-restart-"
+         (make-array FileAttribute 0))
+        first-conn
+        (datahike/create-conn
+         nil
+         {:store {:backend :file :path (str temp-dir "/db")}
+          :keep-history? true})
+        config (:config (d/db first-conn))
+        first-client (client first-conn)
+        document-2 (eacl/spice-object :document "document-2")
+        relationship-2 (eacl/->Relationship user :reader document-2)
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 1}]
+    (try
+      (seed! first-conn first-client)
+      (d/transact first-conn [{:eacl/id "document-2"}])
+      (eacl/create-relationships!
+       first-client [relationship relationship-2])
+      (let [first-page (eacl/lookup-resources first-client query)
+            oracle-stream
+            (:data
+             (eacl/lookup-resources
+              first-client
+              (assoc query
+                     :first 10
+                     :cache? false
+                     :populate-cache? false)))]
+        (d/release first-conn)
+        (let [second-conn (d/connect config)]
+          (try
+            (contract/assert-cursor-source-transition!
+             {:client (client second-conn)
+              :query query
+              :first-page first-page
+              :oracle-stream oracle-stream
+              :durability :durable})
+            (finally
+              (d/release second-conn)))))
+      (finally
+        (try (d/release first-conn) (catch Throwable _))
+        (d/delete-database config)))))
 
 (deftest readable-as-of-db-lifts-from-a-newer-equal-proof-test
   (let [conn (datahike/create-conn nil {:commit-graph? false

@@ -328,7 +328,6 @@ Object.prototype.is_ContinuationNotComplete;
 Object.prototype.is_ContinuationNotForwardPage;
 Object.prototype.is_CountComplete;
 Object.prototype.is_CountReady;
-Object.prototype.is_CursorConflict;
 Object.prototype.is_CursorExpired;
 Object.prototype.is_CursorSkipped;
 Object.prototype.is_Decoded;

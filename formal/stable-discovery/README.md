@@ -16,9 +16,13 @@ Requires the pinned toolchain cache under `target/formal-tools/` (see
 `bin/bootstrap-formal-tools`). Budget: 10 s hard ceiling, ~8 s observed. The
 gate self-checks its model/config/bridge manifests, scans for Dafny escape
 hatches, pins the TLA+ assumption-boundary fingerprint, and enforces the
-exact aggregate obligation count (631).
+exact aggregate obligation count (651).
 
-Contents: 46 Dafny leaves (`MembershipProbeCheck.dfy`, added 2026-08-18,
+Contents: 47 Dafny leaves (`ReducerReadScope.dfy`, added 2026-08-23,
+proves that every plan-derived scan stays inside the certified relation
+closure and, including adaptive scheduling, equal closure slices preserve
+transitions, emissions, order, and boundary positions;
+`MembershipProbeCheck.dfy`, added 2026-08-18,
 proves the membership-probe point check equal to reverse-denotation
 membership; `BidirectionalArrowIntersection.dfy`, added 2026-08-20, proves
 two-layer arrow arms strategy-independent — either side of the
@@ -56,7 +60,8 @@ composition including the undelivered-lookahead segment
 checkpoint slot weighting, descriptor identity, count composition,
 bidirectional reachability, and the representation leaves
 (`RuntimeStackRefinement`, `ConcreteHistoryFreeRuntime`,
-`OwnedTransientSnapshot`).
+`OwnedTransientSnapshot`), plus the proof-equivalent continuation read-scope
+bridge (`ReducerReadScope`).
 
 **Parked with the future concurrency change** (archive only; their
 refinement obligations restart that change): `ReducerReadAhead.tla` (+5
