@@ -187,9 +187,18 @@
         (java.nio.file.Files/createTempFile
          "eacl-corrupt-manifest-"
          ".edn"
+         (make-array java.nio.file.attribute.FileAttribute 0))
+        dafny-report-file
+        (java.nio.file.Files/createTempFile
+         "eacl-test-dafny-verification-"
+         ".json"
          (make-array java.nio.file.attribute.FileAttribute 0))]
     (try
       (spit (.toFile temp-file) (pr-str candidate))
+      ;; Count-drift rejection does not depend on a completed Dafny build.
+      ;; Give the validator a parseable, hermetic report so this negative test
+      ;; executes identically in the ordinary, parity, and formal jobs.
+      (spit (.toFile dafny-report-file) "{}")
       (let [builder
             (ProcessBuilder.
              [(.getCanonicalPath
@@ -203,9 +212,7 @@
                     (str temp-file))
             _ (.put environment
                     "EACL_DAFNY_VERIFICATION_REPORT"
-                    (.getCanonicalPath
-                     (repo/file "target" "formal"
-                                "dafny-verification.json")))
+                    (str dafny-report-file))
             _ (.redirectErrorStream builder true)
             process (.start builder)
             output (slurp (.getInputStream process))
@@ -213,7 +220,8 @@
         (is (not= 0 exit))
         (is (str/includes? output ":mutation-control/registered") output))
       (finally
-        (java.nio.file.Files/deleteIfExists temp-file)))))
+        (java.nio.file.Files/deleteIfExists temp-file)
+        (java.nio.file.Files/deleteIfExists dafny-report-file)))))
 
 (deftest ledger-matches-registry-test
   (let [{:keys [mutants retired-mutant-groups]} (registry)
