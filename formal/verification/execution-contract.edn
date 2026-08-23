@@ -53,25 +53,33 @@
    eacl.engine.v8/generated-reverse-result]
   :stopping-reason eacl.engine.v8/generated-stopping-reason
   :request-entry
-  [eacl.client.orchestration/ensure-execution-contract
-   eacl.datomic.core/execute-request]
+  [eacl.core/check-permission
+   eacl.core/read-schema
+   eacl.core/read-relationships
+   eacl.core/lookup-resources
+   eacl.core/lookup-subjects
+   eacl.core/count-resources
+   eacl.core/count-subjects
+   eacl.core/expand-permission-tree
+   eacl.client.orchestration/Acl
+   eacl.client.orchestration/Snapshot
+   eacl.client.orchestration/call-with-transient-snapshot
+   eacl.client.orchestration/ensure-execution-contract
+   eacl.request.context/make-context]
   :limit-normalization
   [eacl.engine.v8/normalize-recursive-traversal-limits
-   eacl.client.orchestration/make-client
-   eacl.datomic.core/make-client]
+   eacl.client.orchestration/make-client]
   :limit-binding
   [eacl.client.orchestration/cached-engine-result
-   eacl.datomic.core/execute-request
    eacl.datomic.impl/with-request-engine
    eacl.datomic.impl.indexed/with-engine-bindings]
   :limit-cache-identity
   [eacl.client.orchestration/cached-engine-result
-   eacl.datomic.core/cached-authorization-result
+   eacl.cache/resolve!
    eacl.engine.v8/recursive-denotation-key]
   :limit-cursor-identity
   [eacl.relay/cursor-scope
-   eacl.client.orchestration/continuation-context
-   eacl.datomic.core/list-query-identity]
+   eacl.client.orchestration/continuation-context]
   :cache-attempt-normalization
   [eacl.execution/normalize-cache-attempt
    eacl.execution/cache-stage-available?]

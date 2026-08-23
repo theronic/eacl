@@ -872,8 +872,8 @@
       :exact-entry
       (js-invoke stages "create_ExactEntryStage")
 
-      :snapshot-exact-entry
-      (js-invoke stages "create_SnapshotExactEntryStage")
+      :exact-only-entry
+      (js-invoke stages "create_ExactOnlyEntryStage")
 
       :managed-entry
       (js-invoke stages "create_ManagedEntryStage"))))
@@ -893,9 +893,8 @@
       (.-is_UseExactEntry action) :use-exact-entry
       (.-is_ProbeManagedEntry action) :probe-managed-entry
       (.-is_UseManagedEntry action) :use-managed-entry
-      (.-is_UseSnapshotExactEntry action) :use-snapshot-exact-entry
-      (.-is_ComputeSnapshotExactValue action) :compute-snapshot-exact-value
-      :else :compute-current-value)))
+      (.-is_ComputeExactValue action) :compute-exact-value
+      :else :compute-selected-value)))
 
 (defn- ordered-merge-head
   [value]

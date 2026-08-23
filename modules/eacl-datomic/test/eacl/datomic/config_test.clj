@@ -9,6 +9,13 @@
             [eacl.datomic.fixtures :as fixtures :refer [->user ->server]]
             [eacl.datomic.datomic-helpers :as helpers :refer [with-mem-conn]]))
 
+(defn- runtime-options
+  [client]
+  (into {} (:runtime client)))
+
+(def ^:private test-security-key
+  "0123456789abcdef0123456789abcdef")
+
 (deftest eacl-config-tests
   (testing ""
     (with-mem-conn [conn schema/v7-schema]
@@ -63,31 +70,37 @@
         (is (= :eacl/invalid-config (:type data)) (pr-str value))
         (is (= :cursor-ttl-seconds (:key data)) (pr-str value))))))
 
-(deftest cursor-expiry-is-optional-and-independent-from-cache-ttl-test
+(deftest cursor-expiry-is-optional-and-independent-from-authorization-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:security-key "non-expiring-cursor"})
-          opts (:opts client)
-          token (core/page-token opts {:op :test})
-          decoded (core/token->page-bound opts token)]
-      (is (nil? (:page-token-ttl-seconds opts)))
-      (is (not (contains? decoded :exp))
-          "an omitted cursor TTL mints no age-expiry field"))
+    (let [client (core/make-client conn {:security-key test-security-key})
+          opts (runtime-options client)]
+      (is (nil? (:cursor-ttl-seconds opts))
+          "an omitted cursor TTL remains unconfigured"))
 
     (let [client (core/make-client
                   conn
-                  {:security-key "expiring-cursor"
+                  {:security-key test-security-key
                    :cursor-ttl-seconds 60})
-          opts (:opts client)
-          token (core/page-token opts {:op :test :ttl-seconds 60})]
-      (is (integer? (:exp (core/token->page-bound opts token)))
-          "an explicit positive cursor TTL remains authenticated and enforced"))
+          opts (runtime-options client)]
+      (is (= 60 (:cursor-ttl-seconds opts))
+          "an explicit positive cursor TTL is retained by the shared runtime"))
 
     (let [client (core/make-client
                   conn
                   {:cursor-ttl-seconds 1
-                   :cache {:ttl-ms 5000}})]
-      (is (= 5000 (get-in client [:opts :lookup-cache-ttl-ms]))
-          "cursor policy no longer caps an independently configured cache TTL"))))
+                   :cache {:max-entries 5000}})]
+      (is (= 1 (:cursor-ttl-seconds (runtime-options client))))
+      (is (some? (:basis-cache-store (runtime-options client)))
+          "cursor policy does not alter an independently bounded answer cache"))
+
+    (testing "wall-clock cache expiry is rejected"
+      (let [data (try
+                   (core/make-client conn {:cache {:ttl-ms 5000}})
+                   nil
+                   (catch clojure.lang.ExceptionInfo error
+                     (ex-data error)))]
+        (is (= :eacl/invalid-config (:type data)))
+        (is (= [:ttl-ms] (:unknown-keys data)))))))
 
 (deftest uniform-construction-option-family-test
   (with-mem-conn [conn schema/v7-schema]
@@ -95,26 +108,25 @@
           client (core/make-client
                   conn
                   {:object-id->lookup-ref lookup-ref
-                   :security-keyring {:shared "shared-secret"}
+                   :security-keyring {:shared test-security-key}
                    :security-kid :shared
                    :cursor-ttl-seconds 123})
-          opts (:opts client)]
-      (is (identical? lookup-ref (:object-id->ident opts)))
-      (is (= :shared (:page-token-current-kid opts)))
-      (is (= 123 (:page-token-ttl-seconds opts))))
+          opts (runtime-options client)]
+      (is (identical? lookup-ref (:object-id->lookup-ref opts)))
+      (is (= :shared (get-in opts [:format-options :current-kid])))
+      (is (= 123 (:cursor-ttl-seconds opts))))
 
-    (testing "canonical and legacy aliases cannot be mixed"
+    (testing "removed backend-specific cursor aliases are unknown"
       (let [data (try
                    (core/make-client
                     conn
                     {:security-key "canonical"
-                     :page-token-key "legacy"})
+                     :page-token-key "legacy00000000000000000000000000"})
                    nil
                    (catch clojure.lang.ExceptionInfo e
                      (ex-data e)))]
         (is (= :eacl/invalid-config (:type data)))
-        (is (= #{:security-key :page-token-key}
-               (set (:conflicting-keys data))))))
+        (is (= [:page-token-key] (:unknown-keys data)))))
 
     (testing "unknown-option ex-data matches the shared orchestrator"
       (let [data (try
@@ -138,12 +150,11 @@
           (eacl.datomic.core/make-client
            conn
            {:cache
-            {:remember-answers true
-             :subproblem-cache subproblem-config}})
-          current-store
-          (get-in client [:opts :current-cache-store])]
+            {:subproblem-cache subproblem-config}})
+          basis-store
+          (:basis-cache-store (runtime-options client))]
       (is (= subproblem-config
-             (:subproblem-options current-store))))
+             (:subproblem-options basis-store))))
     (doseq [subproblem-config
             [{:enabled? :yes}
              {:projection-max-weight 0}
@@ -180,8 +191,9 @@
            conn
            {:execution-timeout-ms 1234
             :cache-attempt {:evaluation-reserve-ms 7}})]
-      (is (= 1234 (get-in client [:opts :execution-timeout-ms])))
-      (is (= 7 (get-in client [:opts :cache-attempt :evaluation-reserve-ms]))))))
+      (is (= 1234 (:execution-timeout-ms (runtime-options client))))
+      (is (= 7 (get-in (runtime-options client)
+                       [:cache-attempt :evaluation-reserve-ms]))))))
 
 (deftest expand-permission-tree-uses-the-client-id-codec-test
   ;; The adapter's :object-id->internal must resolve external ids through the
@@ -240,7 +252,7 @@
     (testing "a configured bulkhead is installed and enumerations run through it"
       (let [client (core/make-client conn {:service-admission {:max-concurrent 8
                                                                :max-replays 4}})
-            admission (:service-admission (:opts client))]
+            admission (:service-admission (runtime-options client))]
         (is (= 8 (:max-concurrent @admission)))
         (is (= 4 (:max-replays @admission)))
         (is (= 2 (count (:data (eacl/lookup-resources client {:subject (->user "user-1")
@@ -249,4 +261,5 @@
         (is (true? (eacl/can? client (->user "user-1") :view (->server "account1-server1"))))
         (is (zero? (:active @admission)) "slots are released when the work returns")))
     (testing "the default client installs no bulkhead"
-      (is (nil? (:service-admission (:opts (core/make-client conn {}))))))))
+      (is (nil? (:service-admission
+                 (runtime-options (core/make-client conn {}))))))))

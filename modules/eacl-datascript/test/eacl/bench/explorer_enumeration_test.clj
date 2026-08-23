@@ -9,6 +9,7 @@
             [clojure.test :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.bench.explorer-fixture :as fixture]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine]))
@@ -218,7 +219,7 @@
           ;; values than the production guardrail defaults admit. The
           ;; benchmark opts into explicit limits the way deployments do, and
           ;; the recorded work envelopes below gate the actual consumption.
-          {:cache {:remember-answers false}
+          {:cache cache/no-cache
            :recursive-traversal-limits {:max-derived-grants 5000000
                                         :max-advanced-datoms 5000000
                                         :max-queued-work 1000000}})]

@@ -13,9 +13,11 @@ embedded Datalevin database. The initial contract is deliberately narrow:
 - revision-bound completed-answer and cursor reuse with no ordered-generation
   proofs, plus certified-generation reuse of schema-derived plans.
 
-Every request snapshot owns a public Datalevin read handle and closes it after
-the complete EACL response is realized. The module never treats Datalevin's
-ordinary live DB handle as an immutable snapshot.
+Every transient request snapshot owns a public Datalevin read handle and closes
+it after the complete EACL response is realized. A retained snapshot remains
+thread-affine until `eacl/release!`; `:maximum-snapshot-retention-ms` may bound
+its EACL lifetime and fail closed on the next access. The module never treats
+Datalevin's ordinary live DB handle as an immutable snapshot.
 
 Development uses the sibling maintained-fork checkout containing the public
 read-snapshot API. Publication is blocked until that fork is released as the
@@ -57,6 +59,7 @@ never used by this module:
     (fn [revision]
       (persist-watermark-durably! revision)
       (swap! watermark max revision))
+    :maximum-snapshot-retention-ms 30000
     :datalevin-topology
     datalevin-backend/certified-topology-declaration}))
 ```

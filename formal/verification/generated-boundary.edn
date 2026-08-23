@@ -347,7 +347,7 @@
     [:source-scope :snapshot-id :native-revision :exact-locator]
     :client-local-exact-locator-included true}
    :current-cache-generated-selection true
-   :snapshot-exact-generated-selection true
+   :exact-basis-generated-selection true
    :tests 7 :assertions 192 :status :passed}
   :cljs-public-state-trace
   {:namespace eacl.formal.production-kernel-test

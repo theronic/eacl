@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [clojure.walk]
             [datahike.api :as d]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.core :as eacl]
@@ -85,6 +86,65 @@
         (is (= (inc (:expirations before)) (:expirations after)))
         (is (= (inc (:misses before)) (:misses after)))
         (is (= (:exact-hits before) (:exact-hits after)))))))
+
+(deftest exact-commit-selection-performs-zero-branch-head-reads-test
+  (let [conn (datahike/create-conn)
+        authorization (client conn)]
+    (try
+      (seed! conn authorization)
+      (eacl/create-relationship! authorization relationship)
+      (let [token
+            (eacl/with-snapshot [snapshot (eacl/snapshot authorization)]
+              (eacl/basis-token snapshot))]
+        (d/transact conn [{:eacl/id "newer-unrelated-value"}])
+        (let [head-reads (atom 0)
+              original-db d/db]
+          (with-redefs [d/db (fn [connection]
+                               (swap! head-reads inc)
+                               (original-db connection))]
+            (eacl/with-snapshot
+              [snapshot
+               (eacl/snapshot
+                authorization
+                (consistency/at-exact-snapshot token))]
+              (is (true? (eacl/can? snapshot user :view document)))
+              (is (zero? @head-reads)
+                  "commit-locator selection and evaluation never read the branch head")))))
+      (finally
+        (d/release conn)))))
+
+(deftest tiered-store-identity-is-portable-and-bounded-test
+  (let [conn (datahike/create-conn)
+        store-id (java.util.UUID/randomUUID)
+        tiered-db
+        (assoc-in
+         (d/db conn)
+         [:config :store]
+         {:backend :tiered
+          :id store-id
+          :frontend-config
+          {:backend :lmdb :id store-id :path "/not-an-identity"}
+          :backend-config
+          {:backend :s3 :id store-id :bucket "not-an-identity"}})]
+    (try
+      (is (= {:source-id
+              {:store-backend :tiered :store-id (str store-id)}
+              :branch :db}
+             (datahike-backend/database-source-scope tiered-db)))
+      (let [adapter
+            (datahike-backend/basis-adapter
+             tiered-db
+             {:object-id->entid (fn [_ _] nil)
+              :entid->object-id (fn [_ _] nil)})]
+        (is (= {:backend :tiered :id (str store-id)}
+               (get-in (backend/invoke adapter :snapshot-id)
+                       [:database-id :store])))
+        (is (nil? (get-in (backend/invoke adapter :snapshot-id)
+                          [:database-id :store :frontend-config])))
+        (is (nil? (get-in (backend/invoke adapter :snapshot-id)
+                          [:database-id :store :backend-config]))))
+      (finally
+        (d/release conn)))))
 
 (deftest schema-no-op-keeps-completed-cache-hot-test
   (let [conn (datahike/create-conn)
@@ -207,7 +267,7 @@
                   :cache? false}
         resource-count (dissoc resources :first)
         subject-count (dissoc subjects :first)]
-    (with-redefs [cache/resolve-current!
+    (with-redefs [cache/resolve-basis!
                   (fn [& _]
                     (throw
                      (ex-info "cache resolution must be unreachable" {})))]
@@ -304,26 +364,28 @@
 (deftest configuration-specific-head-and-history-capabilities-test
   (let [conn (datahike/create-conn)
         authorization (client conn)
-        adapter
-        (datahike-backend/snapshot-adapter
-         (d/db conn)
-         (:opts authorization))]
-    (is (backend/supports?
-         adapter :consistency :fully-consistent))
-    (is (backend/supports?
-         adapter :consistency :at-exact-snapshot))
+        basis-source (:source authorization)]
+    (is (contains? (get (source/capabilities basis-source) :consistency)
+                   :fully-consistent))
+    (is (contains? (get (source/capabilities basis-source) :consistency)
+                   :at-exact-snapshot))
     (is (true? (get-in (d/db conn) [:config :keep-history?])))
-    (is (backend/supports? adapter :snapshots :durable-history))
-    (is (backend/supports? adapter :snapshots :conditional-exact))
+    (is (source/supports? basis-source :snapshots :durable-history))
+    (is (source/supports? basis-source :snapshots :conditional-exact))
     (let [streaming-db
           (assoc-in (d/db conn)
                     [:config :writer]
                     {:backend :stream})]
       (is (not
-           (backend/supports?
-            (datahike-backend/snapshot-adapter
-             streaming-db (:opts authorization))
-            :consistency :fully-consistent)))))
+           (contains?
+            (get
+             (source/capabilities
+              (datahike-backend/source
+               (reify clojure.lang.IDeref
+                 (deref [_] streaming-db))
+               (:runtime authorization)))
+             :consistency)
+            :fully-consistent)))))
   (let [conn
         (datahike/create-conn
          nil
@@ -331,35 +393,22 @@
           :keep-history? false})
         authorization (client conn)
         adapter
-        (datahike-backend/snapshot-adapter
+        (datahike-backend/basis-adapter
          (d/db conn)
-         (:opts authorization))]
+         (select-keys (:runtime authorization)
+                      datahike-backend/adapter-config-keys))
+        basis-source (:source authorization)]
     (is (not
-         (backend/supports?
-          adapter :consistency :at-exact-snapshot)))
+         (contains? (get (source/capabilities basis-source) :consistency)
+                    :at-exact-snapshot)))
     (is (not (backend/supports? adapter :snapshots :exact)))
-    (is (not (backend/supports? adapter :snapshots :durable-history)))
-    (is (not (backend/supports? adapter :snapshots :conditional-exact)))))
+    (is (not (source/supports? basis-source :snapshots :durable-history)))
+    (is (not (source/supports? basis-source :snapshots :conditional-exact)))))
 
-(deftest low-level-db-entry-point-bypasses-completed-cache-test
-  (let [conn (datahike/create-conn)
-        authorization (client conn)
-        _ (seed! conn authorization)
-        _ (eacl/create-relationship! authorization relationship)
-        before (datahike/cache-stats authorization)]
-    (is (true?
-         (datahike/datahike-can?
-          (d/db conn) (:opts authorization)
-          user :view document consistency/fully-consistent)))
-    (is (true?
-         (datahike/datahike-can?
-          (d/db conn) (:opts authorization)
-          user :view document consistency/fully-consistent)))
-    (let [after (datahike/cache-stats authorization)]
-      (is (= (+ 2 (:bypasses before))
-             (:bypasses after)))
-      (is (= (:exact-hits before)
-             (:exact-hits after))))))
+(deftest raw-db-entry-points-are-removed-test
+  (is (nil? (ns-resolve 'eacl.datahike.core 'datahike-can?)))
+  (is (nil? (ns-resolve 'eacl.datahike.core
+                        'datahike-read-relationships))))
 
 (deftest reader-branch-and-merge-metadata-test
   (let [writer-conn (datahike/create-conn)
@@ -396,9 +445,10 @@
        #{:feature}
        [{:db/id -1 :db/doc "unrelated merge metadata"}])
       (let [adapter
-            (datahike-backend/snapshot-adapter
+            (datahike-backend/basis-adapter
              (d/db writer-conn)
-             (:opts writer))]
+             (select-keys (:runtime writer)
+                          datahike-backend/adapter-config-keys))]
         (is (= [feature-commit]
                (:parent-commit-ids (backend/state adapter)))))
       (d/release feature-conn))
@@ -414,8 +464,10 @@
         _ (seed! conn authorization)
         _ (eacl/create-relationship! authorization relationship)
         before-adapter
-        (datahike-backend/snapshot-adapter
-         (d/db conn) (:opts authorization))
+        (datahike-backend/basis-adapter
+         (d/db conn)
+         (select-keys (:runtime authorization)
+                      datahike-backend/adapter-config-keys))
         relation-id
         (:relation-id
          (first
@@ -441,8 +493,10 @@
          (vec (:v reverse))]])
       (let [half-proof
             (backend/invoke
-             (datahike-backend/snapshot-adapter
-              (d/db conn) (:opts authorization))
+             (datahike-backend/basis-adapter
+              (d/db conn)
+              (select-keys (:runtime authorization)
+                           datahike-backend/adapter-config-keys))
              :proof-frame
              [relation-id])]
         (is (= before-proof half-proof)
@@ -455,8 +509,10 @@
         :resource document})
       (let [after-proof
             (backend/invoke
-             (datahike-backend/snapshot-adapter
-              (d/db conn) (:opts authorization))
+             (datahike-backend/basis-adapter
+              (d/db conn)
+              (select-keys (:runtime authorization)
+                           datahike-backend/adapter-config-keys))
              :proof-frame
              [relation-id])]
         (is (< (second (first (:relation-stamps before-proof)))
@@ -570,7 +626,7 @@
         page-1 (eacl/read-relationships authorization query)
         cursor (get-in page-1 [:page-info :end-cursor])
         cursor-data
-        (datahike/token->cursor cursor (:opts authorization))]
+        (datahike/token->cursor cursor (:runtime authorization))]
     (try
       (d/transact conn [{:eacl/id "unrelated-cursor-churn"}])
       (testing "an exact-proof relationship cursor falls back to its commit"
@@ -581,7 +637,7 @@
               exact-cursor-data
               (datahike/token->cursor
                (get-in page-2 [:page-info :end-cursor])
-               (:opts authorization))]
+               (:runtime authorization))]
           (is (= [(second relationships)] (:data page-2)))
           (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
           (is (= (get-in cursor-data [:graph-head :exact-locator])
@@ -631,25 +687,35 @@
         _ (eacl/create-relationship! authorization relationship)
         exact-revision (:max-tx (d/db conn))
         _ (eacl/delete-relationship! authorization relationship)
-        live (datahike-backend/snapshot-adapter (d/db conn) {:conn conn})
-        exact (backend/invoke live :select-exact
-                              {:revision exact-revision :exact-locator nil}
-                              1000)]
-    (is (some? exact) "history reconstructs the exact snapshot")
-    (is (not= (:basis-t (backend/invoke live :snapshot-id))
-              (:basis-t (backend/invoke exact :snapshot-id))))
-    (is (= (dissoc (backend/invoke live :snapshot-id) :basis-t)
-           (dissoc (backend/invoke exact :snapshot-id) :basis-t))
-        "the wrapper reports its origin's store identity and attribute representation")
-    (is (= (:consistency (backend/capabilities live))
-           (:consistency (backend/capabilities exact)))
-        "the wrapper advertises the same consistency capabilities")
-    (is (= (:source-scope (backend/invoke live :snapshot-id) :absent)
-           (:source-scope (backend/invoke exact :snapshot-id) :absent)))
-    (is (= [:backend :id] (sort (keys (get-in (backend/invoke exact :snapshot-id)
-                                              [:database-id :store]))))
-        "the store identity carries only backend and id, never connection configuration")
-    (d/release conn)))
+        basis-source (:source authorization)
+        live-basis (source/acquire! basis-source :current)
+        exact-basis (source/acquire!
+                     basis-source :exact
+                     {:revision exact-revision :exact-locator nil}
+                     1000)]
+    (try
+      (let [live (source/adapter live-basis)
+            exact (source/adapter exact-basis)]
+        (is (not= (:basis-t (backend/invoke live :snapshot-id))
+                  (:basis-t (backend/invoke exact :snapshot-id))))
+        (is (= (dissoc (backend/invoke live :snapshot-id) :basis-t)
+               (dissoc (backend/invoke exact :snapshot-id) :basis-t))
+            "the wrapper reports its origin's store identity and attribute representation")
+        (is (= (:consistency (backend/capabilities live))
+               (:consistency (backend/capabilities exact)))
+            "the wrapper advertises the same consistency capabilities")
+        (is (= (select-keys (source/semantic-identity live-basis)
+                            [:source-id :branch :source-lifecycle])
+               (select-keys (source/semantic-identity exact-basis)
+                            [:source-id :branch :source-lifecycle])))
+        (is (= [:backend :id]
+               (sort (keys (get-in (backend/invoke exact :snapshot-id)
+                                   [:database-id :store]))))
+            "the store identity carries only backend and id, never connection configuration"))
+      (finally
+        (source/release! exact-basis)
+        (source/release! live-basis)
+        (d/release conn)))))
 
 ;; --- 2026-08-16 exact-cache review ------------------------------------------
 
@@ -709,23 +775,28 @@
       (seed! conn authorization)
       (eacl/create-relationship! authorization relationship)
       (let [db (d/db conn)
-            adapter (datahike-backend/snapshot-adapter db {:conn conn})
+            basis-source (:source authorization)
             future-revision (+ 1000 (:max-tx db))
             started (System/nanoTime)
-            selected (backend/invoke
-                      adapter :select-exact
-                      {:revision future-revision :exact-locator nil}
-                      30000)
+            failure (error-data
+                     #(source/acquire!
+                       basis-source :exact
+                       {:revision future-revision :exact-locator nil}
+                       30000))
             elapsed-ms (quot (- (System/nanoTime) started) 1000000)]
-        (is (nil? selected)
+        (is (= :eacl.consistency/exact-snapshot-unavailable
+               (:eacl/error failure))
             "a revision the local value has not observed is unavailable")
         (is (< elapsed-ms 1000)
             "selection must not spend the caller's timeout waiting for it"))
       (testing "retained history at or below the local head still resolves"
         (let [db (d/db conn)
-              adapter (datahike-backend/snapshot-adapter db {:conn conn})]
-          (is (some? (backend/invoke
-                      adapter :select-exact
-                      {:revision (:max-tx db) :exact-locator nil}
-                      30000)))))
+              selected (source/acquire!
+                        (:source authorization) :exact
+                        {:revision (:max-tx db) :exact-locator nil}
+                        30000)]
+          (try
+            (is (some? (source/adapter selected)))
+            (finally
+              (source/release! selected)))))
       (finally (d/release conn)))))

@@ -364,8 +364,7 @@
         client
         (datomic/make-client
          connection
-         {:page-token-key "managed-proof-cost-page"
-          :zed-token-key "managed-proof-cost-zed"})]
+         {:security-key "managed-proof-cost-page000000000"})]
     {:label :datomic
      :client client
      :transact-var #'d/transact
@@ -373,8 +372,10 @@
      (fn [objects]
        @(d/transact connection
                     (mapv (fn [object] {:eacl/id (:id object)}) objects)))
-     :adapter #(datomic-backend/snapshot-adapter
-                (d/db connection) (:opts client))
+     :adapter #(datomic-backend/basis-adapter
+                (d/db connection)
+                (select-keys (:runtime client)
+                             datomic-backend/adapter-config-keys))
      :close! #(d/delete-database uri)}))
 
 (defn- datahike-fixture
@@ -391,8 +392,10 @@
      (fn [objects]
        (dh/transact connection
                     (mapv (fn [object] {:eacl/id (:id object)}) objects)))
-     :adapter #(datahike-backend/snapshot-adapter
-                (dh/db connection) (:opts client))
+     :adapter #(datahike-backend/basis-adapter
+                (dh/db connection)
+                (select-keys (:runtime client)
+                             datahike-backend/adapter-config-keys))
      :close! #(dh/release connection)}))
 
 (defn- datascript-fixture
@@ -409,8 +412,10 @@
      (fn [objects]
        (ds/transact! connection
                      (mapv (fn [object] {:eacl/id (:id object)}) objects)))
-     :adapter #(datascript-backend/snapshot-adapter
-                (ds/db connection) (:opts client))
+     :adapter #(datascript-backend/basis-adapter
+                (ds/db connection)
+                (select-keys (:runtime client)
+                             datascript-backend/adapter-config-keys))
      :close! (constantly nil)}))
 
 (defn- transact-concurrently!

@@ -11,7 +11,7 @@
   inside the classification boundary), or throws CANCELLED. Nil is never
   an outcome."
   (:require [clojure.string]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]))
 
@@ -127,19 +127,19 @@
   (when (some? options)
     (when-not (map? options)
       (throw (ex-info ":service-admission must be a map."
-                      {:type :eacl/invalid-config
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :key :service-admission
                        :value options})))
     (when-let [unknown (seq (remove service-admission-keys (keys options)))]
       (throw (ex-info "Unknown :service-admission option."
-                      {:type :eacl/invalid-config
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :key :service-admission
                        :unknown-keys (vec unknown)
                        :known-keys service-admission-keys})))
     (when-not (every? (fn [[_ value]] (and (integer? value) (pos? value)))
                       options)
       (throw (ex-info ":service-admission limits must be positive integers."
-                      {:type :eacl/invalid-config
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :key :service-admission
                        :value options})))
     options))
@@ -316,7 +316,7 @@
   "The closed capability record of one adapter's topology, derived from the
   execution profile the adapter declares (`eacl.backend.v8/traversal-execution`:
   immutable basis reads and the strict/unique/replayable/progress/atomic scan
-  contract), its snapshot capabilities (exact selection), and the engine's
+  contract), and the engine's
   read boundary, which classifies every adapter failure
   (`classified-fetch-fn`) so `:failure-classification?` holds for any adapter
   read through it. Semantic concurrent-read safety and physical
@@ -325,16 +325,16 @@
   [adapter]
   (declared-topology-capabilities
    (backend/traversal-execution adapter)
-   (backend/supports? adapter :snapshots :exact)))
+   false))
 
-(defn provider-topology-capabilities
-  "Derives stable-discovery qualifications from provider-static metadata.
+(defn source-topology-capabilities
+  "Derives stable-discovery qualifications from source-static metadata.
 
   This function never acquires or retains a request snapshot."
-  [provider]
+  [basis-source]
   (declared-topology-capabilities
-   (snapshot-provider/traversal-execution provider)
-   (snapshot-provider/supports? provider :snapshots :exact)))
+   (source/traversal-execution basis-source)
+   (source/supports? basis-source :snapshots :exact)))
 
 (defn require-qualified-topology!
   "Fails closed with `:eacl.topology/unqualified` when the adapter's derived
@@ -352,20 +352,20 @@
                        :capabilities capabilities})))
     capabilities))
 
-(defn require-qualified-provider-topology!
+(defn require-qualified-source-topology!
   "Provider-static counterpart of `require-qualified-topology!`.
 
   Client construction uses this boundary so topology validation cannot leak
   or accidentally pin a request snapshot."
-  [provider]
-  (let [capabilities (provider-topology-capabilities provider)]
+  [basis-source]
+  (let [capabilities (source-topology-capabilities basis-source)]
     (when-not (stable-discovery-qualified? capabilities)
       (throw
        (ex-info
-        "This backend topology is not qualified for stable-discovery enumeration: its provider does not declare the strict, unique, replayable, strict-progress, atomic scan contract over an immutable basis."
+        "This backend topology is not qualified for stable-discovery enumeration: its source does not declare the strict, unique, replayable, strict-progress, atomic scan contract over an immutable basis."
         {:type :eacl.topology/unqualified
          :eacl/error :eacl.topology/unqualified
-         :backend (snapshot-provider/backend-id provider)
+         :backend (source/backend-id basis-source)
          :capabilities capabilities})))
     capabilities))
 

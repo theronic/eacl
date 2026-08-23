@@ -87,7 +87,7 @@ ordinary relationship writes leave it intact.
 
 ## Exact-first lookup
 
-For an ordinary current completed operation EACL resolves:
+For a completed operation on an admitted basis EACL resolves:
 
 1. an exact answer for the selected immutable database value;
 2. a proof-backed answer when complete proof is available;
@@ -102,22 +102,21 @@ an unstamped database validates against a direct read). A proof-backed hit is
 promoted into the exact store for the selected value, so the next identical
 request on that value is exact.
 
-After successful authenticated `at-exact-snapshot` selection, EACL probes only
-the snapshot-exact completed-answer tier. Its composite identity includes the
-backend/source/branch and configured lifecycle, native revision and exact
-locator, ordinary exact-view kind, adapter fingerprint and identity contract,
-engine/order ABI, normalized semantic request, result kind, demand, and every
-answer-affecting limit. Equal numeric revisions alone are insufficient. A miss
-evaluates on the already selected immutable adapter and may publish only the
-completed answer; it never probes or publishes managed proof-backed entries or
-partial traversal state.
+Ordinary and authenticated historical selections share one bounded exact-basis
+tier. Its composite identity includes backend and source scope, configured
+lifecycle, native revision and exact locator, basis kind, adapter fingerprint
+and identity contract, engine/order ABI, normalized semantic request, result
+kind, demand, and every answer-affecting limit. Equal numeric revisions alone
+are insufficient. Each retained basis owns its exact answers and subproblem
+store. A historical miss evaluates on the already selected immutable adapter
+and never probes managed proof-backed entries. Public tokens, cursor envelopes,
+cache basis, external IDs, and selected-basis metadata are rebuilt on every hit.
 
-Current requests may seed the same tier only when their adapter certifies that
-the native locator is independently exact-selectable. Filtered, `since`,
-history, speculative, caller-constructed, and current-only DataScript values
-cannot acquire an ordinary snapshot-exact identity. Public tokens, cursor
-envelopes, cache basis, external IDs, and selected-snapshot metadata are rebuilt
-on every hit.
+Caller-constructed database values are not accepted as source bases and cannot
+enter the completed-answer cache. Basis admission requires the source adapter's
+complete semantic identity; a missing lifecycle, revision, locator, basis kind,
+adapter fingerprint, identity contract, or ABI component fails before lookup or
+publication.
 
 ## Automatic proof-backed coherence
 
@@ -347,8 +346,8 @@ also expose `:cached?` and `:cache-basis`; `can?` returns only a Boolean.
 
 The cache-free evaluator is the behavioral oracle. Differential and randomized
 tests compare cached and bypassed results across all bundled backends. Dafny
-proves the scalar-frontier theorem and distinguishes current-exact,
-snapshot-exact, and managed cache decisions under the documented adapter
+proves the scalar-frontier theorem and distinguishes exact-basis and managed
+cache decisions under the documented adapter
 obligations. Backend I/O effects, temporal-history retention, future
 cancellation, and canonical-key truthfulness are certified adapter assumptions,
 not kernel theorems. Backend certification and real-store regressions establish

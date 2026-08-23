@@ -434,9 +434,9 @@
   (when (compare-and-set! warned-defaulted-token-key? false true)
     #?(:clj (binding [*out* *err*]
               (println
-               "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring), and rotate each key before 2^32 cursor encryptions."))
+               "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key or :security-keyring, and rotate each key before 2^32 cursor encryptions."))
        :cljs (js/console.warn
-              "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key(ring) or :page-token-key(ring), and rotate each key before 2^32 cursor encryptions."))))
+              "EACL: no token key material configured; using a process-local random key. Cursors/tokens will not survive restarts or load balancing. Set :security-key or :security-keyring, and rotate each key before 2^32 cursor encryptions."))))
 
 (defn normalize-key
   [key]

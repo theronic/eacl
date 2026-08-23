@@ -1,7 +1,7 @@
 (ns eacl.datomic.consistency-v3-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.causal-token :as causal-token]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
@@ -28,7 +28,7 @@
   [conn]
   (datomic/make-client
    conn
-   {:zed-token-key security-key
+   {:security-key security-key
     :source-lifecycle source-lifecycle
     :consistency-sync-timeout-ms 5}))
 
@@ -49,7 +49,7 @@
 (defn- token-data
   [authorization token]
   (causal-token/token-data
-   (get-in authorization [:opts :format-options])
+   (get-in authorization [:runtime :format-options])
    token))
 
 (deftest map-can-rejects-malformed-consistency-test
@@ -87,7 +87,7 @@
       (doseq [[label operation] operations]
         (testing (name label)
           (let [calls (atom {})]
-            (binding [snapshot-provider/*provider-op-stats* calls]
+            (binding [source/*source-op-stats* calls]
               (is (some? (operation))))
             (is (= 1 (:acquire-current! @calls 0)))
             (is (= 1 (:release! @calls 0)))))))))
@@ -157,7 +157,6 @@
 (deftest lagging-real-peer-exact-selection-targets-token-basis-test
   (with-mem-conns [writer-conn reader-conn schema/v7-schema]
     (let [client-opts {:security-key security-key
-                       :zed-token-key security-key
                        :source-lifecycle source-lifecycle
                        :consistency-sync-timeout-ms 5000}
           writer (datomic/make-client writer-conn client-opts)
@@ -194,7 +193,6 @@
 (deftest lagging-real-peer-resumes-historical-cursor-test
   (with-mem-conns [writer-conn reader-conn schema/v7-schema]
     (let [client-opts {:security-key security-key
-                       :zed-token-key security-key
                        :source-lifecycle source-lifecycle
                        :consistency-sync-timeout-ms 5000}
           writer (datomic/make-client writer-conn client-opts)
@@ -281,8 +279,8 @@
     (let [authorization
           (datomic/make-client
            conn
-           {:zed-token-key security-key
-            :cache {:remember-answers true}})
+           {:security-key security-key
+            :cache {}})
           _ (seed! conn authorization)
           _ (eacl/create-relationship! authorization relationship)
           query {:subject user
@@ -329,10 +327,7 @@
                  :resource/type :document
                  :first 1}
           page-1 (eacl/lookup-resources authorization query)
-          cursor (get-in page-1 [:page-info :end-cursor])
-          cursor-data
-          (datomic/token->page-bound (:opts authorization) cursor)
-          cursor-basis (:basis-t cursor-data)]
+          cursor (get-in page-1 [:page-info :end-cursor])]
       @(d/transact
         conn
         [{:db/id (d/tempid :db.part/user)
@@ -342,14 +337,9 @@
         (let [page-2
               (eacl/lookup-resources
                authorization
-               (assoc query :after cursor))
-              continued
-              (datomic/token->page-bound
-               (:opts authorization)
-               (get-in page-2 [:page-info :end-cursor]))]
+               (assoc query :after cursor))]
           (is (= ["doc-b"] (mapv :id (:data page-2))))
-          (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
-          (is (not= cursor-basis (:basis-t continued)))))
+          (is (nil? (get-in page-2 [:page-info :cursor-recovery])))))
       (let [fresh-page-1
             (eacl/lookup-resources authorization query)
             fresh-cursor
@@ -379,45 +369,3 @@
                       :consistency
                       (consistency/at-least-as-fresh
                        delete-token))))))))))))
-
-(deftest exact-fallback-tolerates-unreadable-historical-stamps-test
-  ;; `:eacl/relation-version` is :db/noHistory, so an index job can make the
-  ;; historical stamp read on the exact `d/as-of` snapshot come back empty.
-  ;; The exact snapshot's proof is, by identity, the proof recorded at
-  ;; minting: an unreadable proof on the cursor's own native revision and
-  ;; execution identity must continue as :exact, while a readable proof that
-  ;; differs (rewritten history) or a different revision still diverges.
-  (let [decide #'datomic/exact-fallback-decision
-        identity-fields {:source-scope {:source-id {:database-id "db-1"} :branch nil}
-                         :adapter-fingerprint {:backend :datomic}
-                         :identity-contract :selected-internal/current-external-injective-v2}
-        proof-a {:dependency-scope-digest "scope-a" :proof-digest "proof-a"}
-        proof-b {:dependency-scope-digest "scope-a" :proof-digest "proof-b"}
-        exact-snapshot-proof {:dependency-scope-digest "exact-snapshot" :proof-digest "exact-snapshot-t10"}
-        cursor (merge identity-fields proof-a
-                      {:native-revision {:revision 10 :exact-locator 10}
-                       :cursor/authenticated? true
-                       :cursor/scope-matches? true
-                       :cursor/expired? false})
-        current (merge identity-fields proof-b
-                       {:native-revision {:revision 12 :exact-locator 12}})
-        exact-readable (merge identity-fields proof-a
-                              {:native-revision {:revision 10 :exact-locator 10}})
-        exact-unreadable (merge identity-fields exact-snapshot-proof
-                                {:native-revision {:revision 10 :exact-locator 10}})
-        exact-rewritten (merge identity-fields proof-b
-                               {:native-revision {:revision 10 :exact-locator 10}})
-        exact-other-revision (merge identity-fields exact-snapshot-proof
-                                    {:native-revision {:revision 11 :exact-locator 11}})
-        exact-other-source (merge identity-fields exact-snapshot-proof
-                                  {:native-revision {:revision 10 :exact-locator 10}
-                                   :source-scope {:source-id {:database-id "db-2"} :branch nil}})]
-    (testing "a readable equal proof is exact, as before"
-      (is (= :exact (decide nil current cursor exact-readable true))))
-    (testing "an unreadable proof on the cursor's own revision and source is exact by identity"
-      (is (= :exact (decide nil current cursor exact-unreadable false))))
-    (testing "a readable proof that differs at the same revision still diverges"
-      (is (= :history-divergence (decide nil current cursor exact-rewritten true))))
-    (testing "an unreadable proof never rescues another revision or another source"
-      (is (= :history-divergence (decide nil current cursor exact-other-revision false)))
-      (is (= :history-divergence (decide nil current cursor exact-other-source false))))))

@@ -18,18 +18,14 @@
   (let [fixture ((get capture/fixtures fixture-key))
         {:keys [conn]} (capture/seed-client! fixture)
         db (ds/db conn)
-        adapter (datascript-backend/snapshot-adapter
+        adapter (datascript-backend/basis-adapter
                  db
                  {:object-id->entid
                   (fn [snapshot object-id]
                     (ds/entid snapshot [:eacl/id object-id]))
                   :entid->object-id
                   (fn [snapshot internal-id]
-                    (:eacl/id (ds/entity snapshot internal-id)))
-                  :conn conn
-                  :source-lifecycle (str (gensym (str "point-check-"
-                                                      (name fixture-key)
-                                                      "-")))})]
+                    (:eacl/id (ds/entity snapshot internal-id)))})]
     {:fixture fixture :db db :adapter adapter
      :plan (sealed-plan/seal-plan adapter [(:resource-type fixture)
                                            (:permission fixture)])}))

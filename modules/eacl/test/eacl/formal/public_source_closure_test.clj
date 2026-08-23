@@ -103,7 +103,7 @@
           (is (empty?
                (set/difference
                  observed
-                 (set (keys backend/adapter-obligations))))))))))
+                 (set (keys backend/basis-adapter-obligations))))))))))
 
 (deftest external-certification-gate-names-every-open-refinement-test
   (let [root (repository-root)

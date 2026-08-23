@@ -1,6 +1,6 @@
 (ns eacl.relay
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
-  (:require [eacl.backend.snapshot-provider :as snapshot-provider]
+  (:require [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
@@ -20,6 +20,15 @@
                :has-next-page? false
                :has-previous-page? false}})
 
+(def ^:dynamic *acl-cursor-recovery-source*
+  "The source authority of the outer Acl read, scoped only around its
+  transient Snapshot delegation.
+
+  Public and directly constructed Snapshots never bind this value and cannot
+  acquire another basis. The ordinary target marker is checked as well so a
+  Snapshot evaluation nested in unrelated dynamic work still fails closed."
+  nil)
+
 (defrecord PageNavigationCache [state max-entries])
 
 (defn page-navigation-cache
@@ -37,7 +46,7 @@
      (throw
       (ex-info
        "Relay page-navigation cache :max-entries must be positive."
-       {:type :eacl/invalid-config
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
         :max-entries max-entries})))
    (->PageNavigationCache
     (atom {:order []
@@ -53,7 +62,7 @@
       (throw
        (ex-info
         "Expected an EACL Relay page-navigation cache."
-        {:type :eacl/invalid-config})))
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
     (reset! (:state cache)
             {:order []
              :entries {}
@@ -190,18 +199,46 @@
     operation
     (scoped-query-form query)]))
 
-(defn- page-generation
+(defn- local-basis-scope
+  "Fail-closed identity for a raw, unmanaged adapter.
+
+  Public Acl/Snapshot execution always supplies complete basis identity. A
+  low-level engine caller has no lineage authority, so its cursor scope is
+  pinned to this exact adapter value instead of consulting removed source
+  operations."
   [adapter]
   {:backend (backend/backend-id adapter)
-   :source-scope (consistency/source-scope adapter)
-   :native-revision (consistency/native-revision adapter)
-   :adapter-fingerprint (backend/fingerprint adapter)
-   :identity-contract (backend/identity-contract adapter)})
+   :source-id {:unmanaged-basis (backend/invoke adapter :snapshot-id)}
+   :branch nil
+   :source-lifecycle nil})
+
+(defn- page-generation
+  [adapter opts]
+  (let [basis (:snapshot-semantic-identity opts)]
+    {:backend (backend/backend-id adapter)
+     :source-scope
+     (if basis
+       (select-keys basis [:backend :source-id :branch :source-lifecycle])
+       (local-basis-scope adapter))
+     :native-revision
+     (if basis
+       (select-keys basis [:revision :exact-locator])
+       (consistency/native-revision adapter))
+     :adapter-fingerprint (backend/fingerprint adapter)
+     :identity-contract (backend/identity-contract adapter)}))
 
 (defn- page-request-key
   [generation operation query]
   [generation operation
-   (dissoc query :consistency :cancellation-token)])
+   (-> query
+       (dissoc :consistency :cancellation-token)
+       ;; Public pages contain cursors authenticated to the consistency mode.
+       ;; Reusing an already externalized page across modes would return a
+       ;; cursor that its receiving request must reject as a query mismatch.
+       (assoc :consistency
+              (select-keys
+               (public-consistency/descriptor (:consistency query))
+               [:mode])))])
 
 (defn- page-boundary-key
   [generation operation query token]
@@ -258,13 +295,13 @@
         (throw
          (ex-info
           "Expected an EACL Relay page-navigation cache."
-          {:type :eacl/invalid-config})))
+          {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
       (some->
        (get-in
         @(:state cache)
         [:entries
          (page-request-key
-          (page-generation adapter)
+          (page-generation adapter opts)
           operation
           query)])
        (assoc :cached? true)))))
@@ -279,8 +316,8 @@
         (throw
          (ex-info
           "Expected an EACL Relay page-navigation cache."
-          {:type :eacl/invalid-config})))
-      (let [generation (page-generation adapter)
+          {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
+      (let [generation (page-generation adapter opts)
             request-key
             (page-request-key generation operation query)
             scope-key
@@ -370,11 +407,18 @@
 (defn- build-dependency-context
   ([adapter request-proof-frame relation-ids]
    (build-dependency-context
-    adapter request-proof-frame relation-ids nil))
+    adapter request-proof-frame relation-ids nil nil))
   ([adapter request-proof-frame relation-ids codec-cache]
+   (build-dependency-context
+    adapter request-proof-frame relation-ids codec-cache nil))
+  ([adapter request-proof-frame relation-ids codec-cache basis-identity]
    (let [native-revision (consistency/native-revision adapter)
          base
-         {:source-scope (consistency/source-scope adapter)
+         {:source-scope
+          (if basis-identity
+            (select-keys basis-identity
+                         [:backend :source-id :branch :source-lifecycle])
+            (local-basis-scope adapter))
           :native-revision native-revision
           :adapter-fingerprint (backend/fingerprint adapter)
           :identity-contract (backend/identity-contract adapter)}
@@ -436,22 +480,29 @@
 (defn- request-relation-ids
   "The query's sorted relation-dependency vector, when the caller supplied
   one (directly or as a delay) for permission lookups."
-  [opts]
-  (some-> (:cursor-dependency-relation-ids opts) force))
+  [adapter opts]
+  (if-let [resolve-relation-ids
+           (:cursor-dependency-relation-ids-fn opts)]
+    (resolve-relation-ids adapter (:snapshot-semantic-identity opts))
+    (some-> (:cursor-dependency-relation-ids opts) force)))
 
 (defn- request-dependency-context
   [adapter opts]
-  (if-let [relation-ids (request-relation-ids opts)]
+  (if-let [relation-ids (request-relation-ids adapter opts)]
     (let [candidate (:request-proof-frame opts)
           frame
           (if (and candidate
                    (identical? adapter (:adapter candidate)))
             candidate
-            (proof-frame/request-frame adapter))]
+            (proof-frame/request-frame
+             adapter
+             {:basis-identity (:snapshot-semantic-identity opts)}))]
       (build-dependency-context
-       adapter frame relation-ids (:cursor-codec-cache opts)))
+       adapter frame relation-ids (:cursor-codec-cache opts)
+       (:snapshot-semantic-identity opts)))
     (build-dependency-context
-     adapter nil nil (:cursor-codec-cache opts))))
+     adapter nil nil (:cursor-codec-cache opts)
+     (:snapshot-semantic-identity opts))))
 
 (defn- transform-edge-ids
   ;; :stable-edge edges carry only the boundary :result-eid; engine
@@ -623,10 +674,19 @@
      :eacl/error :eacl.pagination/stale-cursor
      :reason reason})))
 
+(defn- snapshot-cursor-conflict!
+  []
+  (throw
+   (ex-info
+    "The cursor belongs to another authorization basis."
+    {:type :eacl.consistency/basis-conflict
+     :eacl/error :eacl.consistency/basis-conflict
+     :source :cursor})))
+
 (defn- history-capable?
-  [adapter]
-  (or (backend/supports? adapter :snapshots :historical)
-      (backend/supports? adapter :snapshots :exact)))
+  [basis-source]
+  (or (source/supports? basis-source :snapshots :historical)
+      (source/supports? basis-source :snapshots :exact)))
 
 (defn- ensure-cursor-satisfies-request!
   [opts envelope]
@@ -735,11 +795,17 @@
         :snapshot-unavailable
         (do
           (ensure-cursor-satisfies-request! opts envelope)
-          (when-not (history-capable? adapter)
+          ;; Target dispatch precedes backend capability dispatch. A Snapshot
+          ;; never owns selection authority, so a proof mismatch is a basis
+          ;; conflict even on a current-only backend.
+          (when-not (and (= :acl (:authorization-target-kind opts))
+                         *acl-cursor-recovery-source*)
+            (snapshot-cursor-conflict!))
+          (when-not (history-capable? *acl-cursor-recovery-source*)
             (stale-context!
              "The backend cannot reconstruct the cursor's changed proof."
              :dependency-proof-changed))
-          (let [provider (:snapshot-provider opts)
+          (let [source *acl-cursor-recovery-source*
                 revision
                 {:revision
                  (get-in envelope [:native-revision :revision])
@@ -749,15 +815,11 @@
                    (:execution-contract opts)
                    :cursor-exact-selection)
                 selected
-                (when provider
-                  (snapshot-provider/acquire!
-                   provider :exact revision (:timeout-ms opts)))]
+                (source/acquire!
+                 source :exact revision (:timeout-ms opts))]
             (try
               (let [exact
-                    (if selected
-                      (snapshot-provider/adapter selected)
-                      (backend/invoke
-                       adapter :select-exact revision (:timeout-ms opts)))
+                    (source/adapter selected)
                     _
                     (execution/check!
                      (:execution-contract opts)
@@ -770,8 +832,12 @@
                         {:type :eacl.consistency/snapshot-expired
                          :eacl/error
                          :eacl.consistency/snapshot-expired})))
+                    exact-opts
+                    (assoc opts
+                           :snapshot-semantic-identity
+                           (source/semantic-identity selected))
                     exact-context
-                    (request-dependency-context exact opts)
+                    (request-dependency-context exact exact-opts)
                     decision
                     (continuation-decision
                      opts current envelope exact-context)]
@@ -781,7 +847,7 @@
                  :selected-snapshot selected})
               (catch #?(:clj Throwable :cljs :default) error
                 (when selected
-                  (snapshot-provider/release! selected))
+                  (source/release! selected))
                 (throw error)))))
 
         (do
@@ -797,7 +863,7 @@
         context (select-envelope-context adapter opts envelope)]
     (if-let [selected (:selected-snapshot context)]
       (do
-        (snapshot-provider/release! selected)
+        (source/release! selected)
         (throw
          (ex-info
           "Provider-owned cursor recovery requires a resource-scoped page request."
@@ -874,7 +940,7 @@
          :query prepared-query})
       (catch #?(:clj Throwable :cljs :default) error
         (when selected
-          (snapshot-provider/release! selected))
+          (source/release! selected))
         (throw error)))))
 
 (defn- decode-page-edge
@@ -936,39 +1002,75 @@
       (subproblem/record-avoided-backend-operation!))
     (:value resolved)))
 
+(defn- resolve-external-identities!
+  [adapter opts operation internal-ids]
+  (let [resolved
+        (mapv
+         (fn [internal-id]
+           [internal-id
+            (cached-internal-id->object adapter opts internal-id)])
+         (distinct internal-ids))
+        missing
+        (into [] (keep (fn [[internal-id external-id]]
+                         (when (nil? external-id) internal-id)))
+              resolved)]
+    (when (seq missing)
+      (throw
+       (ex-info
+        (str
+         "Authorization results reference objects whose external identities "
+         "are absent. Diagnose the backend with dangling-relationship-report; "
+         "repair the relationships with delete-relationships!, and use "
+         "delete-object! for future object removal.")
+        {:type :eacl/unresolvable-object
+         :eacl/error :eacl/unresolvable-object
+         :operation operation
+         :backend (backend/backend-id adapter)
+         :historical? (= :as-of (backend/invoke adapter :basis-kind))
+         :entity-ids missing})))
+    (into {} resolved)))
+
 (defn externalize-page
   [adapter opts operation query page]
-  (externalize-page-cursors
-   adapter opts operation query
-   (update
-    page :data
-    (fn [objects]
+  (let [objects (:data page)
+        identities
+        (resolve-external-identities!
+         adapter opts operation (map :id objects))]
+    (externalize-page-cursors
+     adapter opts operation query
+     (assoc
+      page :data
       (mapv
        (fn [{:keys [type id]}]
-         (spice-object
-          type
-          (cached-internal-id->object adapter opts id)))
+         (spice-object type (get identities id)))
        objects)))))
 
 (defn externalize-relationship-page
   [adapter opts operation query page]
   (request-counters/add! :renderings)
-  (externalize-page-cursors
-   adapter opts operation query
-   (update
-    page
-    :data
-    (fn [relationships]
+  (let [relationships (:data page)
+        identities
+        (resolve-external-identities!
+         adapter opts operation
+         (mapcat
+          (fn [{:keys [subject resource]}]
+            [(:id subject) (:id resource)])
+          relationships))]
+    (externalize-page-cursors
+     adapter opts operation query
+     (assoc
+      page
+      :data
       (mapv
        (fn [{:keys [subject relation resource]}]
          (eacl/->Relationship
           (eacl/->SpiceObject
            (:type subject)
-           (cached-internal-id->object adapter opts (:id subject))
+           (get identities (:id subject))
            (:relation subject))
           relation
           (eacl/->SpiceObject
            (:type resource)
-           (cached-internal-id->object adapter opts (:id resource))
+           (get identities (:id resource))
            (:relation resource))))
        relationships)))))

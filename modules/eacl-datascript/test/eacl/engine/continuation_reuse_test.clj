@@ -10,6 +10,7 @@
   missed on every request in a real service."
   (:require [clojure.test :refer [deftest is testing]]
             [eacl.baseline.capture :as capture]
+            [eacl.backend.v8 :as backend]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
@@ -42,7 +43,7 @@
   ;; cursors that never touch the continuation store — see
   ;; acyclic-pagination-needs-no-checkpoints-test below).
   (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
-        store (get-in client [:opts :continuation-cache-store])
+        store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)
@@ -160,15 +161,16 @@
         "consumed projection values surface under the public limit kind")))
 
 (defn- adapter-opts
-  [conn extra]
-  (merge {:object-id->entid
-          (fn [snapshot object-id]
-            (ds/entid snapshot [:eacl/id object-id]))
-          :entid->object-id
-          (fn [snapshot internal-id]
-            (:eacl/id (ds/entity snapshot internal-id)))
-          :conn conn}
-         extra))
+  [_conn extra]
+  (select-keys
+   (merge {:object-id->entid
+           (fn [snapshot object-id]
+             (ds/entid snapshot [:eacl/id object-id]))
+           :entid->object-id
+           (fn [snapshot internal-id]
+             (:eacl/id (ds/entity snapshot internal-id)))}
+          extra)
+   datascript-backend/adapter-config-keys))
 
 (deftest generation-plan-registry-survives-snapshot-rewraps-test
   ;; Two adapter wraps of distinct bases in one certified schema generation
@@ -178,13 +180,27 @@
         opts (adapter-opts conn {:source-lifecycle "plan-rewrap-test"})
         stable-plan @#'v8/stable-plan
         registry (atom {})
-        adapter-1 (datascript-backend/snapshot-adapter (ds/db conn) opts)
-        cache-1 (v8/schema-cache-for! registry adapter-1)
+        adapter-1 (datascript-backend/basis-adapter (ds/db conn) opts)
+        identity-for
+        (fn [adapter]
+          (merge
+           {:backend :datascript
+            :source-id :plan-rewrap-test
+            :branch nil
+            :source-lifecycle "plan-rewrap-test"
+            :basis-kind (backend/invoke adapter :basis-kind)
+            :backend-snapshot-id (backend/invoke adapter :snapshot-id)}
+           (backend/invoke adapter :native-revision)))
+        generation-1 (backend/invoke adapter-1 :schema-generation)
+        cache-1 (v8/schema-cache-for!
+                 registry adapter-1 (identity-for adapter-1) generation-1)
         plan-1 (binding [v8/*schema-cache* cache-1]
                  (stable-plan adapter-1 [:server :view]))
         _ (ds/transact! conn [{:eacl/id "unrelated-new-basis"}])
-        adapter-2 (datascript-backend/snapshot-adapter (ds/db conn) opts)
-        cache-2 (v8/schema-cache-for! registry adapter-2)
+        adapter-2 (datascript-backend/basis-adapter (ds/db conn) opts)
+        generation-2 (backend/invoke adapter-2 :schema-generation)
+        cache-2 (v8/schema-cache-for!
+                 registry adapter-2 (identity-for adapter-2) generation-2)
         plan-2 (binding [v8/*schema-cache* cache-2]
                  (stable-plan adapter-2 [:server :view]))]
     (is (= (:schema-version cache-1) (:schema-version cache-2)))
@@ -193,21 +209,19 @@
     (is (identical? plan-1 plan-2)
         "re-wrapping the source at another basis must hit the plan registry")))
 
-(deftest fixture-stores-mint-distinct-lifecycles-test
-  ;; Distinct stores sharing one caller-fixed lifecycle violated the adapter
-  ;; source-identity contract and poisoned identity-keyed caches; the fixture
-  ;; harness must never reintroduce it.
+(deftest default-lifecycle-is-the-portable-cross-process-constant-test
   (let [{client-a :client} (capture/seed-client!
                             ((get capture/fixtures :explorer-acyclic)))
         {client-r :client} (capture/seed-client!
                             ((get capture/fixtures :explorer-recursive)))]
-    (is (not= (get-in client-a [:opts :source-lifecycle])
-              (get-in client-r [:opts :source-lifecycle])))))
+    (is (= "eacl/initial"
+           (get-in client-a [:runtime :source-lifecycle])
+           (get-in client-r [:runtime :source-lifecycle])))))
 
 (deftest checkpoint-store-adopts-client-context-test
   (let [{:keys [conn]} (capture/seed-client!
                         ((get capture/fixtures :explorer-acyclic)))
-        adapter (datascript-backend/snapshot-adapter
+        adapter (datascript-backend/basis-adapter
                  (ds/db conn) (adapter-opts conn {}))
         store (continuation/make-store {})
         context (continuation/private-context
@@ -235,7 +249,7 @@
   ;; The keyset regime: an acyclic root paginates statelessly — exact
   ;; pages, zero continuation-store traffic (acyclic-keyset-pagination).
   (let [{:keys [fixture client]} (seeded-caching-client :explorer-acyclic)
-        store (get-in client [:opts :continuation-cache-store])
+        store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :super-user])
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)

@@ -6,10 +6,10 @@ module CurrentCache {
   import CacheKernel
   import SnapshotOracle
 
-  datatype RequestClass =
-    | CurrentSnapshot
-    | ExactSnapshot
-    | ArbitraryDatabaseValue
+  datatype BasisClass =
+    | OrdinaryBasis
+    | HistoricalBasis
+    | InadmissibleBasis
 
   datatype EngineAuthority =
     | LegacyAuthority
@@ -18,7 +18,7 @@ module CurrentCache {
 
   function EvaluationAuthority(
     configured: EngineAuthority,
-    requestClass: RequestClass,
+    basisClass: BasisClass,
     completedAnswerCacheEnabled: bool
   ): EngineAuthority
   {
@@ -27,13 +27,13 @@ module CurrentCache {
 
   lemma CacheEligibilityDoesNotSelectEngineAuthority(
     configured: EngineAuthority,
-    requestClass: RequestClass,
+    basisClass: BasisClass,
     completedAnswerCacheEnabled: bool
   )
     ensures
       EvaluationAuthority(
         configured,
-        requestClass,
+        basisClass,
         completedAnswerCacheEnabled
       ) == configured
   {
@@ -43,7 +43,7 @@ module CurrentCache {
     | EligibilityStage
     | GenerationStage
     | ExactEntryStage
-    | SnapshotExactEntryStage
+    | ExactOnlyEntryStage
     | ManagedEntryStage
 
   datatype CurrentCacheAction =
@@ -52,9 +52,8 @@ module CurrentCache {
     | UseExactEntry
     | ProbeManagedEntry
     | UseManagedEntry
-    | ComputeCurrentValue
-    | UseSnapshotExactEntry
-    | ComputeSnapshotExactValue
+    | ComputeSelectedValue
+    | ComputeExactValue
 
   function DecideCurrentCache(
     stage: CurrentCacheStage,
@@ -67,10 +66,10 @@ module CurrentCache {
       if available then ProbeExactEntry else BypassCurrentCache
     case ExactEntryStage =>
       if available then UseExactEntry else ProbeManagedEntry
-    case SnapshotExactEntryStage =>
-      if available then UseSnapshotExactEntry else ComputeSnapshotExactValue
+    case ExactOnlyEntryStage =>
+      if available then UseExactEntry else ComputeExactValue
     case ManagedEntryStage =>
-      if available then UseManagedEntry else ComputeCurrentValue
+      if available then UseManagedEntry else ComputeSelectedValue
   }
 
   lemma CurrentCacheHitRequiresAvailableEntry(
@@ -78,11 +77,10 @@ module CurrentCache {
     available: bool
   )
     ensures DecideCurrentCache(stage, available).UseExactEntry? ==>
-              stage.ExactEntryStage? && available
+              (stage.ExactEntryStage? || stage.ExactOnlyEntryStage?) &&
+              available
     ensures DecideCurrentCache(stage, available).UseManagedEntry? ==>
               stage.ManagedEntryStage? && available
-    ensures DecideCurrentCache(stage, available).UseSnapshotExactEntry? ==>
-              stage.SnapshotExactEntryStage? && available
   {
   }
 
@@ -96,47 +94,44 @@ module CurrentCache {
   {
   }
 
-  lemma CurrentCacheComputationRequiresManagedMiss(
+  lemma CacheComputationRequiresASelectedBasisMiss(
     stage: CurrentCacheStage,
     available: bool
   )
-    ensures DecideCurrentCache(stage, available).ComputeCurrentValue? ==>
+    ensures DecideCurrentCache(stage, available).ComputeSelectedValue? ==>
               stage.ManagedEntryStage? && !available
-    ensures DecideCurrentCache(stage, available).ComputeSnapshotExactValue? ==>
-              stage.SnapshotExactEntryStage? && !available
+    ensures DecideCurrentCache(stage, available).ComputeExactValue? ==>
+              stage.ExactOnlyEntryStage? && !available
   {
   }
 
   datatype CurrentCacheDecision<T> =
-    | CurrentMiss
-    | ExactCurrentHit(value: T)
-    | ManagedCurrentHit(value: T)
+    | SelectedBasisMiss
+    | ExactBasisHit(value: T)
+    | ManagedLiftedHit(value: T)
 
-  predicate CompletedAnswerCacheable(
-    requestClass: RequestClass,
-    canonicalExactSnapshotSelected: bool
+  predicate ExactTierEligible(
+    basisClass: BasisClass,
+    completeBasisIdentity: bool
   ) {
-    requestClass.CurrentSnapshot? ||
-    (requestClass.ExactSnapshot? && canonicalExactSnapshotSelected)
+    completeBasisIdentity &&
+    (basisClass.OrdinaryBasis? || basisClass.HistoricalBasis?)
   }
 
-  lemma ArbitraryDatabaseValuesBypassCompletedAnswers(
-    canonicalExactSnapshotSelected: bool
+  lemma InadmissibleValuesBypassCompletedAnswers(
+    completeBasisIdentity: bool
   )
-    ensures !CompletedAnswerCacheable(
-              ArbitraryDatabaseValue,
-              canonicalExactSnapshotSelected
+    ensures !ExactTierEligible(
+              InadmissibleBasis,
+              completeBasisIdentity
             )
   {
   }
 
-  lemma ExactRequestsRequireCanonicalSnapshotIdentity(
-    canonicalExactSnapshotSelected: bool
+  lemma EveryAdmittedBasisRequiresCompleteIdentity(
+    basisClass: BasisClass
   )
-    ensures CompletedAnswerCacheable(
-              ExactSnapshot,
-              canonicalExactSnapshotSelected
-            ) == canonicalExactSnapshotSelected
+    ensures !ExactTierEligible(basisClass, false)
   {
   }
 
@@ -217,8 +212,8 @@ module CurrentCache {
   {
   }
 
-  datatype SnapshotExactIdentity =
-    | SnapshotExactIdentity(
+  datatype ExactBasisIdentity =
+    | ExactBasisIdentity(
         sourceScope: string,
         sourceLifecycle: string,
         nativeRevision: string,
@@ -229,34 +224,34 @@ module CurrentCache {
       )
 
   predicate ExactGenerationMatches(
-    selectedSnapshot: SnapshotExactIdentity,
-    generationSnapshot: SnapshotExactIdentity
+    selectedBasis: ExactBasisIdentity,
+    generationBasis: ExactBasisIdentity
   ) {
-    selectedSnapshot == generationSnapshot
+    selectedBasis == generationBasis
   }
 
-  lemma ExactGenerationHitIsSameSnapshot(
-    selectedSnapshot: SnapshotExactIdentity,
-    generationSnapshot: SnapshotExactIdentity
+  lemma ExactGenerationHitIsSameBasis(
+    selectedBasis: ExactBasisIdentity,
+    generationBasis: ExactBasisIdentity
   )
     requires ExactGenerationMatches(
-               selectedSnapshot,
-               generationSnapshot
+               selectedBasis,
+               generationBasis
              )
-    ensures selectedSnapshot == generationSnapshot
+    ensures selectedBasis == generationBasis
   {
   }
 
   lemma NumericRevisionAloneCannotEstablishExactIdentity(
-    selectedSnapshot: SnapshotExactIdentity,
-    generationSnapshot: SnapshotExactIdentity
+    selectedBasis: ExactBasisIdentity,
+    generationBasis: ExactBasisIdentity
   )
-    requires selectedSnapshot.nativeRevision ==
-             generationSnapshot.nativeRevision
-    requires selectedSnapshot != generationSnapshot
+    requires selectedBasis.nativeRevision ==
+             generationBasis.nativeRevision
+    requires selectedBasis != generationBasis
     ensures !ExactGenerationMatches(
-              selectedSnapshot,
-              generationSnapshot
+              selectedBasis,
+              generationBasis
             )
   {
   }

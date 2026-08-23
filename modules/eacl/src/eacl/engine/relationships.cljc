@@ -299,7 +299,7 @@
   (when-not (fn? accept?)
     (throw
      (ex-info "A filtered relationship window requires an accept predicate."
-              {:type :eacl/invalid-config})))
+              {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
   (let [{:keys [direction size]} (normalized-page decision-kernel query)
         bound (case direction
                 :asc (:after query)

@@ -49,11 +49,12 @@
 
 (defn- execution-binding
   "Everything the cursor binds besides the boundary itself."
-  [{:keys [adapter plan direction anchor subject-type page-size]}]
+  [{:keys [adapter basis-identity plan direction anchor subject-type
+           page-size]}]
   {:v token-version
    :order-abi order-abi
    :fingerprint (:fingerprint plan)
-   :lifecycle (backend/invoke adapter :source-lifecycle)
+   :lifecycle (:source-lifecycle basis-identity)
    :basis (backend/invoke adapter :native-revision)
    :direction direction
    :anchor anchor

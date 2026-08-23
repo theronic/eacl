@@ -485,7 +485,7 @@
                                                (seq (:permissions existing-schema))))
                                   (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                        " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                                  {:type :eacl.schema/empty-schema-guard
+                                                  {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
                                                    :existing {:relations (count (:relations existing-schema))
                                                               :permissions (count (:permissions existing-schema))}})))
            deltas                 (compare-schema existing-schema new-schema-map)

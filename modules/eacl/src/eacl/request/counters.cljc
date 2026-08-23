@@ -10,6 +10,8 @@
 (def counter-keys
   [:acquisitions
    :releases
+   :adapter-reads
+   :writer-submissions
    :public-entries
    :context-constructions
    :seals

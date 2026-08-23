@@ -116,7 +116,7 @@ no verified-release claim existed.
 - **Impact:** an internal current-generation cache could be deliberately
   supplied to two clients, violating the one-client/one-database ownership
   premise.
-- **Correction:** `current-cache-for-option` rejects an existing native cache
+- **Correction:** `basis-cache-for-option` rejects an existing native cache
   with `:reason :client-private-cache-reuse`; each normalization constructs a
   fresh object. A CLJ/CLJS regression fixes this boundary.
 

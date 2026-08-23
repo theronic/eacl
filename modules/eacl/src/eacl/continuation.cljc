@@ -31,13 +31,13 @@
      (throw
       (ex-info
        "Continuation :max-entries must be a positive integer."
-       {:type :eacl/invalid-config
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
         :max-entries max-entries})))
    (when-not (and (integer? max-weight) (pos? max-weight))
      (throw
       (ex-info
        "Continuation :max-weight must be a positive integer."
-       {:type :eacl/invalid-config
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
         :max-weight max-weight})))
    (when-not (and (integer? max-entry-weight)
                   (pos? max-entry-weight)
@@ -45,7 +45,7 @@
      (throw
       (ex-info
        "Continuation :max-entry-weight must be a positive integer no larger than :max-weight."
-       {:type :eacl/invalid-config
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
         :max-entry-weight max-entry-weight
         :max-weight max-weight})))
    (->BoundedContinuationStore
@@ -214,7 +214,7 @@
     (throw
      (ex-info
       "Continuation context does not satisfy the adapter-neutral contract."
-      {:type :eacl/internal-continuation-contract
+      {:type :eacl/internal-continuation-contract :eacl/error :eacl/internal-continuation-contract
        :context-keys (set (keys context))})))
   context)
 
@@ -229,17 +229,22 @@
   ([store adapter operation query-identity
     {:keys [snapshot-identity request-proof-frame]}]
    (when store
-     (let [scope
+     (let [basis-identity (:basis-identity request-proof-frame)
+           scope
           (secure/canonical-digest
            "eacl/client-private-continuation/v1"
            {:version context-version
             :backend (backend/backend-id adapter)
-            :source-scope (backend/invoke adapter :source-scope)
+            :source-scope
+            (some-> basis-identity
+                    (select-keys
+                     [:backend :source-id :branch :source-lifecycle]))
             ;; The store is cleared during explicit lifecycle rotation, but
             ;; an in-flight request may finish after that clear.  Including
             ;; the lifecycle in the address makes any such late publication
             ;; unreachable to requests in the replacement lifecycle.
-            :source-lifecycle (backend/invoke adapter :source-lifecycle)
+            :source-lifecycle
+            (:source-lifecycle basis-identity)
             :adapter-fingerprint (backend/fingerprint adapter)
             :identity-contract (backend/identity-contract adapter)
             :schema-generation

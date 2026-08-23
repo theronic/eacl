@@ -113,7 +113,7 @@ abstract snapshot-oracle contract:
 10. cursor decisions reject cross-query, cross-operation, cross-result, scope,
    tampering, expiry, and incompatible-history use before the cursor can
    influence authorization;
-11. exact/current cache admission, complete managed dependency frames,
+11. exact-basis cache admission, complete managed dependency frames,
     subproblem projection/denotation reuse, lifecycle isolation, and
     validation telemetry cannot turn a rejected or stale candidate into an
     authorization result;

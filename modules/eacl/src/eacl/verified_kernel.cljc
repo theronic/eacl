@@ -334,7 +334,7 @@
     input))
 
 (def ^:private current-cache-stages
-  #{:eligibility :generation :exact-entry :snapshot-exact-entry
+  #{:eligibility :generation :exact-entry :exact-only-entry
     :managed-entry})
 
 (def ^:private current-cache-actions
@@ -343,9 +343,8 @@
     :use-exact-entry
     :probe-managed-entry
     :use-managed-entry
-    :compute-current-value
-    :use-snapshot-exact-entry
-    :compute-snapshot-exact-value})
+    :compute-selected-value
+    :compute-exact-value})
 
 (defn- validate-current-cache-input!
   [input]
@@ -1887,15 +1886,15 @@
       :use-exact-entry
       :probe-managed-entry)
 
-    :snapshot-exact-entry
+    :exact-only-entry
     (if available?
-      :use-snapshot-exact-entry
-      :compute-snapshot-exact-value)
+      :use-exact-entry
+      :compute-exact-value)
 
     :managed-entry
     (if available?
       :use-managed-entry
-      :compute-current-value)))
+      :compute-selected-value)))
 
 (defn- expected-enumeration-route
   [{:keys [schema-identity certificate-schema-identity

@@ -166,9 +166,21 @@
                              :owner
                              (spice-object :account (str "a-" n))))
              (range relationship-count)))
-      (is (= (* 2 relationship-count)
-             (:retracted-datoms (eacl/delete-object! acl user)))
-          "the public count sums actual retractions from every batch")
+      (let [submitted-sizes (atom [])
+            native-transact d/transact
+            response
+            (with-redefs [d/transact
+                          (fn [candidate tx-data]
+                            (swap! submitted-sizes conj (count tx-data))
+                            (native-transact candidate tx-data))]
+              (eacl/delete-object! acl user))]
+        (is (= (* 2 relationship-count)
+               (:retracted-datoms response))
+            "the public count sums actual retractions from every batch")
+        (is (< 1 (count @submitted-sizes))
+            "guard overhead forces this raw stream into multiple commits")
+        (is (every? #(<= % 1000) @submitted-sizes)
+            "the declared limit applies to final submitted transactions, including schema and relation guards"))
       (is (zero? (forward-count
                   (d/db conn)
                   (d/entid (d/db conn) [:eacl/id "u"])))))))
@@ -330,7 +342,7 @@
   ;; this failure mode.
   (with-mem-conn [conn schema/v7-schema]
     (let [{:keys [u a]} (seed! conn)
-          acl (core/make-client conn {:object-id->ident identity
+          acl (core/make-client conn {:object-id->lookup-ref identity
                                       :entid->object-id (fn [_db eid] eid)})]
       (is (true? (eacl/can? acl (spice-object :user u) :admin (spice-object :account a))))
 

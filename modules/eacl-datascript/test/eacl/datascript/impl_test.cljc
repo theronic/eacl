@@ -252,8 +252,8 @@
                     (apply orig-calc args))]
       (let [subject (spice-object :user "user-1")
             resource (spice-object :server "server-1")]
-        (is (not= (:derived-schema-caches (:opts client-1))
-                  (:derived-schema-caches (:opts client-2))))
+        (is (not= (:derived-schema-caches (:runtime client-1))
+                  (:derived-schema-caches (:runtime client-2))))
         (eacl/can? client-1 subject :view resource)
         (eacl/can? client-2 subject :view resource)
         (is (= 2 @calc-calls))
@@ -321,7 +321,7 @@
   (let [{:keys [conn client]} (seed-bulk-read-db 100)
         externalizations (atom 0)
         default-entid->object-id
-        (:entid->object-id (:opts client))
+        (:entid->object-id (:runtime client))
         counting-client
         (datascript/make-client
          conn
@@ -362,7 +362,7 @@
         continuation-client
         (datascript/make-client
          conn
-         {:source-lifecycle (get-in client [:opts :source-lifecycle])})
+         {:source-lifecycle (get-in client [:runtime :source-lifecycle])})
         work (atom {})]
     (binding [cursor/*codec-work* work]
       (let [page (eacl/read-relationships continuation-client

@@ -37,15 +37,14 @@
   (let [{:keys [conn]} (capture/seed-client! fixture)
         db (ds/db conn)]
     {:db db
-     :adapter (datascript-backend/snapshot-adapter
+     :adapter (datascript-backend/basis-adapter
                db
                {:object-id->entid
                 (fn [snapshot object-id]
                   (ds/entid snapshot [:eacl/id object-id]))
                 :entid->object-id
                 (fn [snapshot internal-id]
-                  (:eacl/id (ds/entity snapshot internal-id)))
-                :conn conn})}))
+                  (:eacl/id (ds/entity snapshot internal-id)))})}))
 
 (defn- eid [db external-id] (ds/entid db [:eacl/id external-id]))
 (defn- external [db internal-id] (:eacl/id (ds/entity db internal-id)))

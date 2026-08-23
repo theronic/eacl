@@ -38,7 +38,7 @@
   #_{:clj-kondo/ignore [:unresolved-symbol]}
   (with-mem-conn [conn schema/v7-schema]
     (let [default-selection
-          (get-in (core/make-client conn {}) [:opts :decision-kernel])
+          (get-in (core/make-client conn {}) [:runtime :decision-kernel])
           error
           (try
             (core/make-client conn {:engine-selection :anything})

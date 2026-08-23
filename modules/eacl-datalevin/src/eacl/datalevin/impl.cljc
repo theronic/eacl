@@ -201,14 +201,17 @@
   passes unallocated numeric ids through unchanged). Throws :eacl/unknown-object
   otherwise: nil ids reaching tx-data raised raw transact errors, and silent
   no-ops hid typos (audit 11/12)."
-  [db {:keys [type id]}]
+  [db {:keys [type id] :as value}]
   (let [eid (internal-id db id)]
     (if (and eid (seq (ds/datoms db :eav eid)))
       eid
-      (throw (ex-info (str "Unknown object: " (pr-str type) " with id " (pr-str id) " does not exist.")
-               {:type :eacl/unknown-object
-                :eacl/error :eacl/unknown-object
-                :object {:type type :id id}})))))
+      (let [public-object (or (:eacl.relationship/public-object value)
+                              {:type type :id id})]
+        (throw (ex-info (str "Unknown object: " (pr-str (:type public-object))
+                             " with id " (pr-str (:id public-object)) " does not exist.")
+                        {:type :eacl/unknown-object
+                         :eacl/error :eacl/unknown-object
+                         :object public-object}))))))
 
 (defn- relation-id
   [resource-type relation-name subject-type]
@@ -229,7 +232,7 @@
       (throw
        (ex-info
         "A relationship endpoint has no commit-time identity guard."
-        {:type :eacl/endpoint-identity-unavailable
+        {:type :eacl/endpoint-identity-unavailable :eacl/error :eacl/endpoint-identity-unavailable
          :role role
          :endpoint-eid eid
          :object object})))
@@ -260,7 +263,7 @@
         (throw
          (ex-info
           "Relationship writes require a prepared EACL schema write fence."
-          {:type :eacl.cache/generation-unprepared
+          {:type :eacl.cache/generation-unprepared :eacl/error :eacl.cache/generation-unprepared
            :backend :datalevin})))
       (into
        [[:db.fn/cas schema-eid :eacl/schema-write-fence
@@ -395,7 +398,7 @@
      (ex-info
       (str (pr-str operation)
            " relationship update is not supported. Use :create, :touch or :delete.")
-      {:type :eacl/unsupported-operation
+      {:type :eacl/unsupported-operation :eacl/error :eacl/unsupported-operation
        :operation operation})))
   true)
 
@@ -458,208 +461,208 @@
   ([db filters decision-kernel window-options]
   ;; The unified filter contract shared by every backend
   ;; (backend-unification 9.1).
-  (relationship-filters/validate! filters)
-  (let [subject-id'  (when (contains? filters :subject/id)
-                       (internal-id db (:subject/id filters)))
-        resource-id' (when (contains? filters :resource/id)
-                       (internal-id db (:resource/id filters)))
-        filters'     (cond-> filters
-                       (contains? filters :subject/id) (assoc :subject/id subject-id')
-                       (contains? filters :resource/id) (assoc :resource/id resource-id'))]
-    (if (or (and (contains? filters :subject/id) (nil? subject-id'))
-            (and (contains? filters :resource/id) (nil? resource-id')))
-      {:data [] :cursor nil}
-      (letfn [(relationship-row [spec subject-id resource-id]
-                {:spec-idx    (:idx spec)
-                 :subject-id  subject-id
-                 :resource-id resource-id
-                 :relationship
-                 (eacl/->Relationship
-                  (spice-object (:subject-type spec) subject-id)
-                  (:relation-name spec)
-                  (spice-object (:resource-type spec) resource-id))})
-              (normalized-cursor [cursor]
-                (when cursor
-                  (cond->
-                   {:subject-id (or (:subject-id cursor)
-                                    (:subject cursor))
-                    :resource-id (or (:resource-id cursor)
-                                     (:resource cursor))}
-                    (:resume-inclusive? cursor)
-                    (assoc :resume-inclusive? true))))
-              (drop-until-beyond-cursor [spec cursor direction rows]
-                (drop-while
-                 #(not
-                   (relationship-engine/beyond-cursor?
-                    (:scan-kind spec)
-                    direction
-                    (normalized-cursor cursor)
-                    %))
-                 rows))
-              (native-page-limit [spec cursor]
-                (when-let [remaining (:physical-limit spec)]
+   (relationship-filters/validate! filters)
+   (let [subject-id'  (when (contains? filters :subject/id)
+                        (internal-id db (:subject/id filters)))
+         resource-id' (when (contains? filters :resource/id)
+                        (internal-id db (:resource/id filters)))
+         filters'     (cond-> filters
+                        (contains? filters :subject/id) (assoc :subject/id subject-id')
+                        (contains? filters :resource/id) (assoc :resource/id resource-id'))]
+     (if (or (and (contains? filters :subject/id) (nil? subject-id'))
+             (and (contains? filters :resource/id) (nil? resource-id')))
+       {:data [] :cursor nil}
+       (letfn [(relationship-row [spec subject-id resource-id]
+                 {:spec-idx    (:idx spec)
+                  :subject-id  subject-id
+                  :resource-id resource-id
+                  :relationship
+                  (eacl/->Relationship
+                   (spice-object (:subject-type spec) subject-id)
+                   (:relation-name spec)
+                   (spice-object (:resource-type spec) resource-id))})
+               (normalized-cursor [cursor]
+                 (when cursor
+                   (cond->
+                    {:subject-id (or (:subject-id cursor)
+                                     (:subject cursor))
+                     :resource-id (or (:resource-id cursor)
+                                      (:resource cursor))}
+                     (:resume-inclusive? cursor)
+                     (assoc :resume-inclusive? true))))
+               (drop-until-beyond-cursor [spec cursor direction rows]
+                 (drop-while
+                  #(not
+                    (relationship-engine/beyond-cursor?
+                     (:scan-kind spec)
+                     direction
+                     (normalized-cursor cursor)
+                     %))
+                  rows))
+               (native-page-limit [spec cursor]
+                 (when-let [remaining (:physical-limit spec)]
                   ;; Native seeks are inclusive. A continued page therefore
                   ;; needs one extra row for the authenticated boundary that
                   ;; `drop-until-beyond-cursor` removes.
-                  (+ remaining
-                     (if (and cursor (not (:resume-inclusive? cursor)))
-                       1
-                       0))))
-              (exact-match-row [spec cursor direction]
-                (let [row
-                      (when (and (:subject-id spec) (:resource-id spec))
-                        (when
-                         (direct-match?
-                          db
-                          (:subject-type spec)
+                   (+ remaining
+                      (if (and cursor (not (:resume-inclusive? cursor)))
+                        1
+                        0))))
+               (exact-match-row [spec cursor direction]
+                 (let [row
+                       (when (and (:subject-id spec) (:resource-id spec))
+                         (when
+                          (direct-match?
+                           db
+                           (:subject-type spec)
+                           (:subject-id spec)
+                           (:relation-id spec)
+                           (:resource-type spec)
+                           (:resource-id spec))
+                           (relationship-row
+                            spec (:subject-id spec) (:resource-id spec))))]
+                   (if row
+                     (drop-until-beyond-cursor
+                      spec cursor direction [row])
+                     [])))
+               (scan-forward-anchored [spec cursor direction]
+                 (if (:resource-id spec)
+                   (exact-match-row spec cursor direction)
+                   (let [args
+                         [db
                           (:subject-id spec)
-                          (:relation-id spec)
-                          (:resource-type spec)
-                          (:resource-id spec))
-                          (relationship-row
-                           spec (:subject-id spec) (:resource-id spec))))]
-                  (if row
-                    (drop-until-beyond-cursor
-                     spec cursor direction [row])
-                    [])))
-              (scan-forward-anchored [spec cursor direction]
-                (if (:resource-id spec)
-                  (exact-match-row spec cursor direction)
-                  (let [args
-                        [db
-                         (:subject-id spec)
-                         relationship-storage/forward-attribute
-                         [(:subject-type spec)
-                          (:relation-id spec)
-                          (:resource-type spec)]
-                         (or (:resource-id cursor)
-                             (:resource cursor))
-                         direction]
-                        rows
-                        (if-let [limit (native-page-limit spec cursor)]
-                          (apply ddb/eavt-endpoint-prefix
-                                 (conj args limit))
-                          (apply ddb/eavt-endpoint-prefix args))]
-                    (->> rows
-                       (map
-                        (fn [{:keys [v]}]
-                          (relationship-row
-                           spec (:subject-id spec) (nth v 3))))
-                       (drop-until-beyond-cursor
-                        spec cursor direction)))))
-              (scan-reverse-anchored [spec cursor direction]
-                (if (:subject-id spec)
-                  (exact-match-row spec cursor direction)
-                  (let [args
-                        [db
-                         (:resource-id spec)
-                         relationship-storage/reverse-attribute
-                         [(:resource-type spec)
-                          (:relation-id spec)
-                          (:subject-type spec)]
-                         (or (:subject-id cursor)
-                             (:subject cursor))
-                         direction]
-                        rows
-                        (if-let [limit (native-page-limit spec cursor)]
-                          (apply ddb/eavt-endpoint-prefix
-                                 (conj args limit))
-                          (apply ddb/eavt-endpoint-prefix args))]
-                    (->> rows
-                       (map
-                        (fn [{:keys [v]}]
-                          (relationship-row
-                           spec (nth v 3) (:resource-id spec))))
-                       (drop-until-beyond-cursor
-                        spec cursor direction)))))
-              (scan-forward-partial [spec cursor direction]
-                (let [args
-                      [db
-                       relationship-storage/forward-attribute
-                       [(:subject-type spec)
-                        (:relation-id spec)
-                        (:resource-type spec)]
-                       (or (:resource-id cursor)
-                           (:resource cursor))
-                       (or (:subject-id cursor)
-                           (:subject cursor))
-                       direction]
-                      rows
-                      (if-let [limit (native-page-limit spec cursor)]
-                        (apply ddb/avet-endpoint-prefix (conj args limit))
-                        (ddb/avet-endpoint-prefix
-                         db
-                         relationship-storage/forward-attribute
-                         [(:subject-type spec)
-                          (:relation-id spec)
-                          (:resource-type spec)]
-                         (or (:resource-id cursor)
-                             (:resource cursor))
-                         direction))]
-                  (->> rows
-                     (map
-                      (fn [{:keys [e v]}]
-                        (relationship-row spec e (nth v 3))))
-                     (drop-until-beyond-cursor
-                      spec cursor direction))))
-              (scan-reverse-partial [spec cursor direction]
-                (let [args
-                      [db
-                       relationship-storage/reverse-attribute
-                       [(:resource-type spec)
-                        (:relation-id spec)
-                        (:subject-type spec)]
-                       (or (:subject-id cursor)
-                           (:subject cursor))
-                       (or (:resource-id cursor)
-                           (:resource cursor))
-                       direction]
-                      rows
-                      (if-let [limit (native-page-limit spec cursor)]
-                        (apply ddb/avet-endpoint-prefix (conj args limit))
-                        (ddb/avet-endpoint-prefix
-                         db
-                         relationship-storage/reverse-attribute
-                         [(:resource-type spec)
-                          (:relation-id spec)
-                          (:subject-type spec)]
-                         (or (:subject-id cursor)
-                             (:subject cursor))
-                         direction))]
-                  (->> rows
-                     (map
-                      (fn [{:keys [e v]}]
-                        (relationship-row spec (nth v 3) e)))
-                     (drop-until-beyond-cursor
-                      spec cursor direction))))
-              (scan-spec
-                ([spec cursor]
-                 (scan-spec spec cursor :asc))
-                ([spec cursor direction]
-                (case (:scan-kind spec)
-                  :forward-anchored
-                  (scan-forward-anchored spec cursor direction)
+                          relationship-storage/forward-attribute
+                          [(:subject-type spec)
+                           (:relation-id spec)
+                           (:resource-type spec)]
+                          (or (:resource-id cursor)
+                              (:resource cursor))
+                          direction]
+                         rows
+                         (if-let [limit (native-page-limit spec cursor)]
+                           (apply ddb/eavt-endpoint-prefix
+                                  (conj args limit))
+                           (apply ddb/eavt-endpoint-prefix args))]
+                     (->> rows
+                          (map
+                           (fn [{:keys [v]}]
+                             (relationship-row
+                              spec (:subject-id spec) (nth v 3))))
+                          (drop-until-beyond-cursor
+                           spec cursor direction)))))
+               (scan-reverse-anchored [spec cursor direction]
+                 (if (:subject-id spec)
+                   (exact-match-row spec cursor direction)
+                   (let [args
+                         [db
+                          (:resource-id spec)
+                          relationship-storage/reverse-attribute
+                          [(:resource-type spec)
+                           (:relation-id spec)
+                           (:subject-type spec)]
+                          (or (:subject-id cursor)
+                              (:subject cursor))
+                          direction]
+                         rows
+                         (if-let [limit (native-page-limit spec cursor)]
+                           (apply ddb/eavt-endpoint-prefix
+                                  (conj args limit))
+                           (apply ddb/eavt-endpoint-prefix args))]
+                     (->> rows
+                          (map
+                           (fn [{:keys [v]}]
+                             (relationship-row
+                              spec (nth v 3) (:resource-id spec))))
+                          (drop-until-beyond-cursor
+                           spec cursor direction)))))
+               (scan-forward-partial [spec cursor direction]
+                 (let [args
+                       [db
+                        relationship-storage/forward-attribute
+                        [(:subject-type spec)
+                         (:relation-id spec)
+                         (:resource-type spec)]
+                        (or (:resource-id cursor)
+                            (:resource cursor))
+                        (or (:subject-id cursor)
+                            (:subject cursor))
+                        direction]
+                       rows
+                       (if-let [limit (native-page-limit spec cursor)]
+                         (apply ddb/avet-endpoint-prefix (conj args limit))
+                         (ddb/avet-endpoint-prefix
+                          db
+                          relationship-storage/forward-attribute
+                          [(:subject-type spec)
+                           (:relation-id spec)
+                           (:resource-type spec)]
+                          (or (:resource-id cursor)
+                              (:resource cursor))
+                          direction))]
+                   (->> rows
+                        (map
+                         (fn [{:keys [e v]}]
+                           (relationship-row spec e (nth v 3))))
+                        (drop-until-beyond-cursor
+                         spec cursor direction))))
+               (scan-reverse-partial [spec cursor direction]
+                 (let [args
+                       [db
+                        relationship-storage/reverse-attribute
+                        [(:resource-type spec)
+                         (:relation-id spec)
+                         (:subject-type spec)]
+                        (or (:subject-id cursor)
+                            (:subject cursor))
+                        (or (:resource-id cursor)
+                            (:resource cursor))
+                        direction]
+                       rows
+                       (if-let [limit (native-page-limit spec cursor)]
+                         (apply ddb/avet-endpoint-prefix (conj args limit))
+                         (ddb/avet-endpoint-prefix
+                          db
+                          relationship-storage/reverse-attribute
+                          [(:resource-type spec)
+                           (:relation-id spec)
+                           (:subject-type spec)]
+                          (or (:subject-id cursor)
+                              (:subject cursor))
+                          direction))]
+                   (->> rows
+                        (map
+                         (fn [{:keys [e v]}]
+                           (relationship-row spec (nth v 3) e)))
+                        (drop-until-beyond-cursor
+                         spec cursor direction))))
+               (scan-spec
+                 ([spec cursor]
+                  (scan-spec spec cursor :asc))
+                 ([spec cursor direction]
+                  (case (:scan-kind spec)
+                    :forward-anchored
+                    (scan-forward-anchored spec cursor direction)
 
-                  :reverse-anchored
-                  (scan-reverse-anchored spec cursor direction)
+                    :reverse-anchored
+                    (scan-reverse-anchored spec cursor direction)
 
-                  :forward-partial
-                  (scan-forward-partial spec cursor direction)
+                    :forward-partial
+                    (scan-forward-partial spec cursor direction)
 
-                  (scan-reverse-partial
-                   spec cursor direction))))]
-        (let [scan-specs
-              (relationship-engine/plan-scans
-               (matching-relation-defs db filters') filters')]
-          (if window-options
-            (relationship-engine/execute-filtered-window
-             scan-specs filters' decision-kernel scan-spec window-options)
-            (if-not (or (contains? filters' :limit)
-                        (contains? filters' :cursor))
-              (relationship-engine/execute-page
-               scan-specs filters' decision-kernel scan-spec)
-              (relationship-engine/execute-plan
-               scan-specs filters' scan-spec)))))))))
+                    (scan-reverse-partial
+                     spec cursor direction))))]
+         (let [scan-specs
+               (relationship-engine/plan-scans
+                (matching-relation-defs db filters') filters')]
+           (if window-options
+             (relationship-engine/execute-filtered-window
+              scan-specs filters' decision-kernel scan-spec window-options)
+             (if-not (or (contains? filters' :limit)
+                         (contains? filters' :cursor))
+               (relationship-engine/execute-page
+                scan-specs filters' decision-kernel scan-spec)
+               (relationship-engine/execute-plan
+                scan-specs filters' scan-spec)))))))))
 
 (defn- relation-triples
   [db]
@@ -713,53 +716,53 @@
   (let [triples (relation-triples db)]
     (->>
      (concat
-        (mapcat
-         (fn [{:keys [v]}]
-           (when-let [{:keys [subject-type relation-eid
-                             resource-type resource-eid]}
-                      (endpoint-pair/decode-forward object-eid v)]
-             (relationship-pair-retractions
-              subject-type object-eid relation-eid
-              resource-type resource-eid)))
-         (ddb/eavt-datoms
-          db object-eid relationship-storage/forward-attribute))
+      (mapcat
+       (fn [{:keys [v]}]
+         (when-let [{:keys [subject-type relation-eid
+                            resource-type resource-eid]}
+                    (endpoint-pair/decode-forward object-eid v)]
+           (relationship-pair-retractions
+            subject-type object-eid relation-eid
+            resource-type resource-eid)))
+       (ddb/eavt-datoms
+        db object-eid relationship-storage/forward-attribute))
 
-        (mapcat
-         (fn [{:keys [v]}]
-           (when-let [{:keys [subject-type subject-eid relation-eid
-                             resource-type]}
-                      (endpoint-pair/decode-reverse object-eid v)]
-             (relationship-pair-retractions
-              subject-type subject-eid relation-eid
-              resource-type object-eid)))
-         (ddb/eavt-datoms
-          db object-eid relationship-storage/reverse-attribute))
+      (mapcat
+       (fn [{:keys [v]}]
+         (when-let [{:keys [subject-type subject-eid relation-eid
+                            resource-type]}
+                    (endpoint-pair/decode-reverse object-eid v)]
+           (relationship-pair-retractions
+            subject-type subject-eid relation-eid
+            resource-type object-eid)))
+       (ddb/eavt-datoms
+        db object-eid relationship-storage/reverse-attribute))
 
-        (mapcat
-         (fn [[resource-type relation-id subject-type]]
-           (mapcat
-            (fn [{resource-id :e}]
-              (relationship-pair-retractions
-               subject-type object-eid relation-id
-               resource-type resource-id))
-            (ddb/avet-datoms
-             db relationship-storage/reverse-attribute
-             (endpoint-pair/reverse-value
-              resource-type relation-id subject-type object-eid))))
-         triples)
+      (mapcat
+       (fn [[resource-type relation-id subject-type]]
+         (mapcat
+          (fn [{resource-id :e}]
+            (relationship-pair-retractions
+             subject-type object-eid relation-id
+             resource-type resource-id))
+          (ddb/avet-datoms
+           db relationship-storage/reverse-attribute
+           (endpoint-pair/reverse-value
+            resource-type relation-id subject-type object-eid))))
+       triples)
 
-        (mapcat
-         (fn [[resource-type relation-id subject-type]]
-           (mapcat
-            (fn [{subject-id :e}]
-              (relationship-pair-retractions
-               subject-type subject-id relation-id
-               resource-type object-eid))
-            (ddb/avet-datoms
-             db relationship-storage/forward-attribute
-             (endpoint-pair/forward-value
-              subject-type relation-id resource-type object-eid))))
-         triples))
+      (mapcat
+       (fn [[resource-type relation-id subject-type]]
+         (mapcat
+          (fn [{subject-id :e}]
+            (relationship-pair-retractions
+             subject-type subject-id relation-id
+             resource-type object-eid))
+          (ddb/avet-datoms
+           db relationship-storage/forward-attribute
+           (endpoint-pair/forward-value
+            subject-type relation-id resource-type object-eid))))
+       triples))
      (remove nil?)
      distinct
      vec

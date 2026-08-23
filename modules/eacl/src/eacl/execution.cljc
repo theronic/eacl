@@ -64,7 +64,7 @@
     (throw
      (ex-info
       ":cancellation-token must implement CooperativeCancellation."
-      {:type :eacl/invalid-request
+      {:type :eacl.execution/invalid-contract
        :eacl/error :eacl.execution/invalid-contract
        :key :cancellation-token
        :value-type (some-> token type str)})))
@@ -84,7 +84,7 @@
   (throw
    (ex-info
     message
-    (merge {:type :eacl/invalid-request
+    (merge {:type :eacl.execution/invalid-contract
             :eacl/error :eacl.execution/invalid-contract}
            data))))
 
@@ -118,7 +118,7 @@
       (throw
        (ex-info
         ":cache-attempt must be a map."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :cache-attempt
          :value overrides})))
     (when-let [unknown (seq (remove positive-cache-attempt-keys
@@ -126,7 +126,7 @@
       (throw
        (ex-info
         "Unknown cache-attempt option."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :cache-attempt
          :unknown-keys (vec unknown)
          :known-keys positive-cache-attempt-keys})))
@@ -136,7 +136,7 @@
       (throw
        (ex-info
         "Cache-attempt limits must be positive integers."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :cache-attempt
          :value overrides})))
     (merge default-cache-attempt overrides)))

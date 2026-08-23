@@ -75,9 +75,10 @@
   (let [conn (datascript/create-conn)
         authorization (managed-client conn {})
         adapter
-        (datascript-backend/snapshot-adapter
+        (datascript-backend/basis-adapter
          (ds/db conn)
-         (dissoc (:opts authorization) :conn))]
+         (select-keys (:runtime authorization)
+                      datascript-backend/adapter-config-keys))]
     (is (not
          (backend/supports?
           adapter :consistency :fully-consistent)))))
@@ -260,7 +261,7 @@
                   :cache? false}
         resource-count (dissoc resources :first)
         subject-count (dissoc subjects :first)]
-    (with-redefs [cache/resolve-current!
+    (with-redefs [cache/resolve-basis!
                   (fn [& _]
                     (throw
                      (ex-info "cache resolution must be unreachable" {})))]
@@ -360,25 +361,11 @@
     (is (= before after)
         "unsupported exact selection must fail before cache access")))
 
-(deftest low-level-db-entry-point-bypasses-completed-cache-test
-  (let [conn (datascript/create-conn)
-        client (managed-client conn {})
-        _ (seed! conn client)
-        _ (eacl/create-relationship! client relationship)
-        before (datascript/cache-stats client)]
-    (is (true?
-         (datascript/datascript-can?
-          (ds/db conn) (:opts client)
-          user :view document consistency/fully-consistent)))
-    (is (true?
-         (datascript/datascript-can?
-          (ds/db conn) (:opts client)
-          user :view document consistency/fully-consistent)))
-    (let [after (datascript/cache-stats client)]
-      (is (= (+ 2 (:bypasses before))
-             (:bypasses after)))
-      (is (= (:exact-hits before)
-             (:exact-hits after))))))
+#?(:clj
+   (deftest raw-db-entry-points-are-removed-test
+     (is (nil? (ns-resolve 'eacl.datascript.core 'datascript-can?)))
+     (is (nil? (ns-resolve 'eacl.datascript.core
+                           'datascript-read-relationships)))))
 
 (deftest cloned-connections-are-distinct-sources-and-listener-independent-test
   (let [original-listen! ds/listen!
@@ -478,8 +465,10 @@
         _ (seed! conn authorization)
         _ (eacl/create-relationship! authorization relationship)
         before-adapter
-        (datascript-backend/snapshot-adapter
-         (ds/db conn) (:opts authorization))
+        (datascript-backend/basis-adapter
+         (ds/db conn)
+         (select-keys (:runtime authorization)
+                      datascript-backend/adapter-config-keys))
         relation-id
         (:relation-id
          (first
@@ -503,8 +492,10 @@
          relationship-storage/reverse-attribute
          (:v reverse-datom)]])
       (let [half-changed-adapter
-            (datascript-backend/snapshot-adapter
-             (ds/db conn) (:opts authorization))]
+            (datascript-backend/basis-adapter
+             (ds/db conn)
+             (select-keys (:runtime authorization)
+                          datascript-backend/adapter-config-keys))]
         (is (= before-proof
                (backend/invoke
                 half-changed-adapter :proof-frame [relation-id]))))
@@ -516,8 +507,10 @@
         :resource document})
       (let [after-proof
             (backend/invoke
-             (datascript-backend/snapshot-adapter
-              (ds/db conn) (:opts authorization))
+             (datascript-backend/basis-adapter
+              (ds/db conn)
+              (select-keys (:runtime authorization)
+                           datascript-backend/adapter-config-keys))
              :proof-frame [relation-id])]
         (is (< (second (first (:relation-stamps before-proof)))
                (second (first (:relation-stamps after-proof)))))))))

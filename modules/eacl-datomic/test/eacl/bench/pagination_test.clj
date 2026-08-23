@@ -12,6 +12,7 @@
             [eacl.cache :as shared-cache]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
+            [eacl.cursor :as cursor]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.db :as ddb]
@@ -88,14 +89,14 @@
 (defn seed-multipath!
   "Seeds a multi-path permission graph. Returns the acl client."
   [conn {:keys [num-accounts teams-per-acct vpcs-per-acct servers-per-acct]}]
-  ;; :remember-answers false so these benchmarks observe the TRAVERSAL layer.
-  ;; With answers remembered (the default), a repeated identical page is served
+  ;; Disable completed answers so these benchmarks observe the traversal layer.
+  ;; With the default cache, a repeated identical page is served
   ;; from the answer cache and the engine is never entered, so traversal-call
   ;; counts read as zero and prove nothing.
   @(d/transact conn (into schema/v7-schema basic-attrs))
   (let [acl (spiceomic/make-client
              conn
-             {:cache {:remember-answers false}})]
+             {:cache shared-cache/no-cache})]
     (eacl/write-schema! acl multipath-schema-dsl)
 
     ;; Platform + super-user + test user
@@ -179,7 +180,7 @@
     ;; proof cost explicitly.
     (spiceomic/make-client
      conn
-     {:cache {:remember-answers false}})))
+     {:cache shared-cache/no-cache})))
 
 (defn seed-recursive-chain!
   [conn {:keys [chain-length unrelated-count]}]
@@ -210,7 +211,7 @@
     ;; behavior rather than whole-graph content-proof hashing.
     (spiceomic/make-client
      conn
-     {:cache {:remember-answers false}})))
+     {:cache shared-cache/no-cache})))
 
 (deftest ^:benchmark benchmark-seeders-initialize-empty-database-test
   (testing "multi-path seeder initializes an empty database before constructing a client"
@@ -287,12 +288,12 @@
                {:chain-length chain-length
                 :unrelated-count 0})
             client-opts
-            {:page-token-key "recursive-cost-breakdown"
+            {:security-key "recursive-cost-breakdown00000000"
              ;; This breaks down the cost of the recursive PAGE path, where a
              ;; completed page is read back and nothing new is published.
              ;; Remembering answers adds its own publications on top and would
              ;; make the "no publications" assertion measure the wrong layer.
-             :cache {:remember-answers false}}
+             :cache shared-cache/no-cache}
             query {:subject (->user "user-1")
                    :permission :read
                    :resource/type :account
@@ -309,7 +310,7 @@
                'eacl.datomic.core
                'decrypt-authenticated-page-token)]
              [:token-encrypt
-              #'spiceomic/encrypt-page-token]
+              #'cursor/cursor->token]
              [:boundary-entity
               #'d/entity]
              [:boundary-coercion
@@ -353,22 +354,11 @@
 (deftest ^:benchmark cache-proof-strategy-churn-benchmark
   (testing "mutation/content proofs, global invalidation, and no-cache"
     (with-mem-conn [conn schema/v7-schema]
-      (let [common {:security-key "cache-proof-benchmark"
-                    :zed-token-key "cache-proof-benchmark-zed"}
-            managed
-            (fn [cache-option]
-              (spiceomic/make-client
-               conn
-               (assoc common
-                      :cache cache-option)))
-            mutation-client (managed {:remember-answers true})
-            writer mutation-client
-            content-client
-            (spiceomic/make-client
-             conn
-             (assoc common
-                    :cache {:remember-answers true}))
-            global-client (managed {:remember-answers true})
+      (let [common {:security-key "cache-proof-benchmark00000000000"}
+            managed #(spiceomic/make-client conn (assoc common :cache %))
+            proof-client (managed {})
+            writer proof-client
+            global-client (managed {})
             no-cache-client (managed shared-cache/no-cache)
             user (->user "benchmark-user")
             account (->account "benchmark-account")
@@ -378,8 +368,7 @@
                                  {:eacl/id "benchmark-account"}])
             _ (eacl/create-relationship! writer relationship)
             strategies
-            [[:mutation-proof mutation-client nil]
-             [:content-proof content-client nil]
+            [[:proof-reuse proof-client nil]
              [:global-invalidation global-client
               #(spiceomic/expire-cache! global-client)]
              [:no-cache no-cache-client nil]]

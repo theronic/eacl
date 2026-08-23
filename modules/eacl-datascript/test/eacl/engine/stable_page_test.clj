@@ -16,32 +16,46 @@
 
 (def ^:private security-key "stable-page-test-key-0123456789abcdef")
 
+(defn- basis-identity
+  [adapter source-id source-lifecycle]
+  (merge
+   {:backend :datascript
+    :source-id source-id
+    :branch nil
+    :source-lifecycle source-lifecycle
+    :basis-kind (backend/invoke adapter :basis-kind)
+    :backend-snapshot-id (backend/invoke adapter :snapshot-id)}
+   (backend/invoke adapter :native-revision)))
+
 (defn- seeded
   [fixture-key]
   (let [fixture ((get capture/fixtures fixture-key))
         {:keys [conn]} (capture/seed-client! fixture)
         db (ds/db conn)
-        adapter (datascript-backend/snapshot-adapter
+        source-id (str (random-uuid))
+        source-lifecycle (str (random-uuid))
+        adapter (datascript-backend/basis-adapter
                  db
                  {:object-id->entid
                   (fn [snapshot object-id]
                     (ds/entid snapshot [:eacl/id object-id]))
                   :entid->object-id
                   (fn [snapshot internal-id]
-                    (:eacl/id (ds/entity snapshot internal-id)))
-                  :conn conn
-                  ;; Unique per call: seeded stores are distinct sources, and
-                  ;; a shared lifecycle would alias plan-cache identities.
-                  :source-lifecycle (str (gensym (str "stable-page-test-"
-                                                      (name fixture-key)
-                                                      "-")))})]
-    {:fixture fixture :conn conn :db db :adapter adapter
+                    (:eacl/id (ds/entity snapshot internal-id)))})]
+    {:fixture fixture
+     :conn conn
+     :db db
+     :adapter adapter
+     :source-id source-id
+     :source-lifecycle source-lifecycle
+     :basis-identity (basis-identity adapter source-id source-lifecycle)
      :plan (sealed-plan/seal-plan adapter [(:resource-type fixture)
                                            (:permission fixture)])}))
 
 (defn- base-options
-  [{:keys [adapter plan fixture]} & [overrides]]
-  (merge {:adapter adapter :plan plan :direction :forward
+  [{:keys [adapter basis-identity plan fixture]} & [overrides]]
+  (merge {:adapter adapter :basis-identity basis-identity
+          :plan plan :direction :forward
           :anchor [:user (:id (val (first (:principals fixture))))]
           :subject-type :user :page-size 4
           :security-key security-key}
@@ -194,23 +208,28 @@
                               "another-key-entirely-0123456789abcdef")))))
     (testing "mutation control: a basis change rejects continuation typed"
       (ds/transact! (:conn env) [{:db/id -1 :eacl/id "basis-mover"}])
-      (let [moved (datascript-backend/snapshot-adapter
+      (let [moved (datascript-backend/basis-adapter
                    (ds/db (:conn env))
                    {:object-id->entid
                     (fn [snapshot object-id]
                       (ds/entid snapshot [:eacl/id object-id]))
                     :entid->object-id
                     (fn [snapshot internal-id]
-                      (:eacl/id (ds/entity snapshot internal-id)))
-                    :conn (:conn env)
-                    ;; The same source at a new basis: reuse the seeded
-                    ;; store's lifecycle so only the basis differs.
-                    :source-lifecycle (backend/invoke (:adapter env)
-                                                      :source-lifecycle)})]
+                      (:eacl/id (ds/entity snapshot internal-id)))})
+            moved-identity
+            (basis-identity moved
+                            (:source-id env)
+                            (:source-lifecycle env))]
         (is (= :eacl.page/stale-cursor
-               (error-of (assoc options :adapter moved :after cursor))))
+               (error-of (assoc options
+                                :adapter moved
+                                :basis-identity moved-identity
+                                :after cursor))))
         (is (= :eacl.page/cursor-consistency-conflict
-               (error-of (assoc options :adapter moved :after cursor
+               (error-of (assoc options
+                                :adapter moved
+                                :basis-identity moved-identity
+                                :after cursor
                                 :consistency :fully-consistent))))))))
 
 (deftest resource-exhaustion-is-distinct-test
@@ -254,18 +273,21 @@
                  (#'page/checkpoint-key
                   (#'page/execution-binding (assoc options :adapter adapter))))
         _ (ds/transact! (:conn env) [{:db/id -1 :eacl/id "basis-mover"}])
-        moved (datascript-backend/snapshot-adapter
+        moved (datascript-backend/basis-adapter
                (ds/db (:conn env))
                {:object-id->entid
                 (fn [snapshot object-id]
                   (ds/entid snapshot [:eacl/id object-id]))
                 :entid->object-id
                 (fn [snapshot internal-id]
-                  (:eacl/id (ds/entity snapshot internal-id)))
-                :conn (:conn env)
-                :source-lifecycle (backend/invoke (:adapter env)
-                                                  :source-lifecycle)})
-        moved-options (assoc options :adapter moved)
+                  (:eacl/id (ds/entity snapshot internal-id)))})
+        moved-options
+        (assoc options
+               :adapter moved
+               :basis-identity
+               (basis-identity moved
+                               (:source-id env)
+                               (:source-lifecycle env)))
         page-1-moved (page/page moved-options)]
     (testing "the same page-1 boundary at two bases has two checkpoint identities"
       (is (= (:data page-1) (:data page-1-moved)))

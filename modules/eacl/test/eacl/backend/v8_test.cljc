@@ -72,8 +72,7 @@
               (mapv (fn [relation-id]
                       [relation-id generation])
                     relation-ids)})
-           :schema-generation (constantly generation)
-           :source-scope (constantly {:source-id :one}))}))
+           :schema-generation (constantly generation))}))
 
 (defn- error-data [f]
   (try
@@ -81,6 +80,25 @@
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
+
+(deftest basis-adapter-configuration-is-closed-test
+  (is (= {:converter identity}
+         (backend/validate-adapter-config!
+          :test #{:converter} {:converter identity})))
+  (doseq [[config operation]
+          [[nil :configure]
+           [{:conn ::connection} :conn]
+           [{:source ::source} :source]
+           [{:writer ::writer} :writer]
+           [{:source-lifecycle "leaked"} :source-lifecycle]]]
+    (let [data
+          (error-data
+           #(backend/validate-adapter-config!
+             :test #{:converter} config))]
+      (is (= :eacl/invalid-backend-role (:type data)))
+      (is (= (:type data) (:eacl/error data)))
+      (is (= :adapter (:role data)))
+      (is (= operation (:operation data))))))
 
 (deftest descending-merge-retains-maximum-eid-test
   (let [maximum-eid #?(:clj Long/MAX_VALUE
@@ -152,7 +170,17 @@
     (doseq [generation (range 100)]
       (let [cache
             (engine/schema-cache-for!
-             registry (generation-adapter generation))]
+             registry
+             (generation-adapter generation)
+             {:backend :test
+              :source-id :one
+              :branch nil
+              :source-lifecycle "test/initial"
+              :basis-kind :ordinary
+              :revision generation
+              :exact-locator generation
+              :backend-snapshot-id {:generation generation}}
+             generation)]
         (is (= generation (:schema-version cache)))))
     (is (= 64 (count @registry)))
     (is (every? #(= :one (get-in % [3 :source-id]))
@@ -189,7 +217,7 @@
     (is (zero? (get @stats :proof-frame 0)))))
 
 (deftest invalid-v8-adapter-test
-  (is (= :eacl/invalid-backend-adapter
+  (is (= :eacl/invalid-backend-role
          (:type
           (error-data
            #(backend/make-adapter
@@ -323,10 +351,12 @@
                  [:order-hint
                   (fn [& _] (dec backend/minimum-exact-integer))
                   [] :exact-integer]
+                 [:basis-kind
+                  (fn [& _] :foreign-backend)
+                  [] :known-basis-kind]
                  [:schema-generation
                   (fn [& _] -1) [] :exact-natural-or-nil]
                  [:snapshot-id (fn [& _] :not-a-map) [] :map-shape]
-                 [:source-scope (fn [& _] nil) [] :map-shape]
                  [:native-revision (fn [& _] []) [] :map-shape]
                  [:relation-defs (fn [& _] [:not-a-map])
                   [:document :reader] :finite-definition-sequence]
@@ -335,15 +365,7 @@
                  [:all-permission-nodes (fn [& _] [])
                   [] :finite-node-set]
                  [:direct-match? (fn [& _] nil)
-                  [:user 1 2 :document 3] :boolean-result]
-                 [:select-current (fn [& _] {})
-                  [] :adapter-or-unavailable]
-                 [:select-authoritative (fn [& _] :snapshot)
-                  [100] :adapter-or-unavailable]
-                 [:select-at-least (fn [& _] false)
-                  [{} 100] :adapter-or-unavailable]
-                 [:select-exact (fn [& _] [])
-                  [{} 100] :adapter-or-unavailable]]]
+                  [:user 1 2 :document 3] :boolean-result]]]
           (is (= obligation
                  (:obligation
                   (violation operation implementation args)))
@@ -429,12 +451,6 @@
         (merge
          (operation-map)
          {:snapshot-id (fn [] {:database-id :test :basis-t 1})
-          ;; A real store mints one lifecycle per source; a constant here
-          ;; would alias every test adapter into one plan-cache identity.
-          :source-lifecycle
-          (let [lifecycle (str (gensym "compiled-once-store-"))]
-            (fn [] lifecycle))
-          :source-scope (fn [] {:source-id :test :branch nil})
           :proof-frame
           (fn [relation-ids]
             {:schema-stamp 1
@@ -523,12 +539,7 @@
                          :cache-proofs #{:ordered-generations
                                          :snapshot-bound}
                          :runtime #{#?(:clj :clj :cljs :cljs)}}
-                        :operations
-                        (assoc operations
-                               :source-lifecycle
-                               (let [lifecycle
-                                     (str (gensym "compiled-once-other-"))]
-                                 (fn [] lifecycle)))})]
+                        :operations operations})]
             (is (= []
                    (:data
                     (binding [engine/*schema-cache*
@@ -589,7 +600,7 @@
                        adapter :user 1 10 :document nil)))))
         (is (= 1 (:subject->resources-scans @work)))
         (is (= 0 (:fetched-projection-values
-                   (subproblem/stats store)))))
+                  (subproblem/stats store)))))
       (testing "a distinct consumer issues the same exact adapter request"
         (is (= (vec (range 1 21))
                (vec

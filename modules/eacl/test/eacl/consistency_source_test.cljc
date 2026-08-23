@@ -1,7 +1,7 @@
-(ns eacl.consistency-provider-test
+(ns eacl.consistency-source-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency]
@@ -48,9 +48,7 @@
      {:snapshot-id
       (constantly
        {:database-id source-id :basis-t revision})
-      :source-scope
-      (constantly {:source-id source-id :branch branch})
-      :source-lifecycle (constantly lifecycle)
+      :basis-kind (constantly :ordinary)
       :native-revision
       (constantly {:revision revision :exact-locator revision})
       :order-hint (constantly revision)
@@ -62,7 +60,7 @@
     (swap! !candidates #(vec (rest %)))
     candidate))
 
-(defn- provider
+(defn- test-source
   [{:keys [candidates release-calls acquire-calls modes source-id lifecycle]
     :or {release-calls (atom [])
          acquire-calls (atom [])
@@ -80,7 +78,7 @@
             {:adapter candidate
              :ownership :owned
              :release-token revision}))]
-    (snapshot-provider/make-provider
+    (source/make-source
      {:id :test
       :capabilities
       {:consistency modes
@@ -92,8 +90,8 @@
        :runtime #{#?(:clj :clj :cljs :cljs)}}
       :traversal-execution backend/strict-sequential-traversal-execution
       :topology {:deployment :embedded :writer :sole}
-      :execution-constraints snapshot-provider/default-execution-constraints
-      :snapshot-ownership :owned
+      :execution-constraints source/default-execution-constraints
+      :basis-ownership :owned
       :operations
       {:source-scope
        (constantly {:source-id source-id :branch nil})
@@ -119,7 +117,7 @@
     :revision revision
     :exact-locator revision}))
 
-(deftest provider-current-and-authoritative-selection-transfer-ownership-test
+(deftest source-current-and-authoritative-selection-transfer-ownership-test
   (doseq [[consistency-value expected-operation]
           [[public-consistency/minimize-latency :acquire-current!]
            [public-consistency/fully-consistent :acquire-authoritative!]]]
@@ -127,7 +125,7 @@
           acquire-calls (atom [])
           selected-adapter (adapter {:revision 11})
           source
-          (provider {:candidates (atom [selected-adapter])
+          (test-source {:candidates (atom [selected-adapter])
                      :release-calls release-calls
                      :acquire-calls acquire-calls})
           selection
@@ -138,17 +136,18 @@
             :timeout-ms 1000})
           selected (:selected-snapshot selection)]
       (is (identical? selected-adapter (:adapter selection)))
-      (is (snapshot-provider/selected-snapshot? selected))
+      (is (identical? (source/adapter selected) (:adapter selection)))
+      (is (source/selected-basis? selected))
       (is (= expected-operation (ffirst @acquire-calls)))
       (is (empty? @release-calls))
-      (is (true? (snapshot-provider/release! selected)))
+      (is (true? (source/release! selected)))
       (is (= [11] @release-calls)))))
 
-(deftest provider-at-least-closes-insufficient-candidates-test
+(deftest source-at-least-closes-insufficient-candidates-test
   (let [release-calls (atom [])
         acquire-calls (atom [])
         source
-        (provider
+        (test-source
          {:candidates
           (atom [(adapter {:revision 5})
                  (adapter {:revision 7})
@@ -169,10 +168,10 @@
     (is (= 3 (count @acquire-calls)))
     (is (every? pos? remaining-values))
     (is (apply >= remaining-values))
-    (is (true? (snapshot-provider/release! selected)))
+    (is (true? (source/release! selected)))
     (is (= [5 7 10] @release-calls))))
 
-(deftest provider-at-least-uses-captured-revision-without-a-late-observation-test
+(deftest source-at-least-uses-captured-revision-without-a-late-observation-test
   (let [native-revision-calls (atom 0)
         release-calls (atom [])
         candidate
@@ -185,12 +184,12 @@
                {:revision 10 :exact-locator 10}
                (throw (ex-info "late native observation"
                                {:type :test/late-observation}))))))
-        source (provider {:candidates (atom [])
+        source (test-source {:candidates (atom [])
                           :release-calls release-calls})
         source
         (assoc-in
          source
-         [::snapshot-provider/operations :acquire-at-least!]
+         [::source/operations :acquire-at-least!]
          (fn [_payload _remaining-ms]
            {:adapter candidate
             :ownership :owned
@@ -204,19 +203,19 @@
     (is (= 10 (get-in selection [:native-revision :revision])))
     (is (= 1 @native-revision-calls))
     (is (empty? @release-calls))
-    (is (true? (snapshot-provider/release! selected)))
+    (is (true? (source/release! selected)))
     (is (= [10] @release-calls))))
 
 #?(:clj
-   (deftest provider-at-least-rejects-candidate-returned-after-deadline-test
+   (deftest source-at-least-rejects-candidate-returned-after-deadline-test
      (let [release-calls (atom [])
            candidate (adapter {:revision 10})
-           source (provider {:candidates (atom [])
+           source (test-source {:candidates (atom [])
                              :release-calls release-calls})
            slow-source
            (assoc-in
             source
-            [::snapshot-provider/operations :acquire-at-least!]
+            [::source/operations :acquire-at-least!]
             (fn [_payload _remaining-ms]
               (Thread/sleep 15)
               {:adapter candidate
@@ -231,14 +230,14 @@
                   {:format-options format-options :timeout-ms 1})))))
        (is (= [10] @release-calls)))))
 
-(deftest provider-selection-releases-before-propagating-failure-test
-  (testing "scope mismatch closes the acquired candidate"
+(deftest source-selection-releases-before-propagating-failure-test
+  (testing "backend mismatch closes the acquired candidate"
     (let [release-calls (atom [])
           source
-          (provider
-           {:candidates (atom [(adapter {:source-id "other" :revision 2})])
+          (test-source
+           {:candidates (atom [(adapter {:backend-id :other :revision 2})])
             :release-calls release-calls})]
-      (is (= :eacl.consistency/incomparable-scope
+      (is (= :eacl/invalid-selected-basis
              (:type
               (error-data
                #(consistency/select
@@ -249,7 +248,7 @@
   (testing "cancellation after acquisition closes the candidate"
     (let [release-calls (atom [])
           source
-          (provider
+          (test-source
            {:candidates (atom [(adapter {:revision 3})])
             :release-calls release-calls})]
       (is (= :test/cancelled
@@ -269,15 +268,15 @@
 (deftest token-selection-fails-closed-across-a-concurrent-lifecycle-rotation-test
   (let [lifecycle (atom "life")
         release-calls (atom [])
-        source (provider {:candidates (atom [])
+        source (test-source {:candidates (atom [])
                           :release-calls release-calls})
         source
         (-> source
             (assoc-in
-             [::snapshot-provider/operations :source-lifecycle]
+             [::source/operations :source-lifecycle]
              #(deref lifecycle))
             (assoc-in
-             [::snapshot-provider/operations :acquire-at-least!]
+             [::source/operations :acquire-at-least!]
              (fn [_payload _remaining-ms]
                (reset! lifecycle "rotated-life")
                {:adapter (adapter {:revision 10
@@ -293,10 +292,10 @@
                {:format-options format-options :timeout-ms 1000})))))
     (is (= [10] @release-calls))))
 
-(deftest unsupported-provider-mode-does-not-acquire-test
+(deftest unsupported-source-mode-does-not-acquire-test
   (let [acquire-calls (atom [])
         source
-        (provider
+        (test-source
          {:candidates (atom [])
           :acquire-calls acquire-calls
           :modes #{:minimize-latency}})]

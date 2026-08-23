@@ -36,25 +36,26 @@
   ([adapter]
    (request-frame adapter {}))
   ([adapter {:keys [maximum-relation-count diagnostic-fn
-                    schema-generation-fn]
+                    schema-generation-fn basis-identity]
              :or {maximum-relation-count
                   default-maximum-relation-count}}]
    (when-not (backend/adapter? adapter)
      (throw
       (ex-info
        "A proof frame requires a selected backend adapter."
-       {:type :eacl/invalid-config})))
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
    (when (and (some? schema-generation-fn)
               (not (fn? schema-generation-fn)))
      (throw
       (ex-info
        "A proof frame schema-generation resolver must be a function."
-       {:type :eacl/invalid-config
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
         :key :schema-generation-fn})))
    {:adapter adapter
+    :basis-identity basis-identity
     :snapshot-id-delay (delay (backend/invoke adapter :snapshot-id))
     :source-lifecycle-delay
-    (delay (backend/invoke adapter :source-lifecycle))
+    (delay (:source-lifecycle basis-identity))
     :schema-generation-delay
     (delay
       (if schema-generation-fn

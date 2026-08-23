@@ -1,8 +1,7 @@
 (ns eacl.relay-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
-             :refer [deftest is testing]]
+            :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
-            [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.relay :as relay]
@@ -16,9 +15,7 @@
                 [operation (fn [& _] nil)]))
          backend/required-snapshot-operations)
    {:snapshot-id (constantly {:revision snapshot-id})
-    :source-scope
-    (constantly {:source-id "relay-source" :branch nil})
-    :source-lifecycle (constantly "relay-lifecycle")
+    :basis-kind (constantly :ordinary)
     :native-revision
     (constantly
      {:revision snapshot-id
@@ -37,27 +34,16 @@
     :deterministic? deterministic?
     :operations (operation-map snapshot-id proof)}))
 
-(defn- adapter-with-exact
-  [snapshot-id exact]
-  (backend/make-adapter
-   {:id :relay-test
-    :capabilities {:consistency #{:at-exact-snapshot}
-                   :snapshots #{:historical}}
-    :fingerprint {:adapter :relay-test}
-    :deterministic? true
-    :operations
-    (assoc
-     (operation-map snapshot-id nil)
-     :select-exact (fn [& _] exact))}))
-
-(deftest snapshot-exact-key-requires-certified-exact-selection-test
-  (let [current-only (adapter 1 nil true)
-        exact-capable (adapter-with-exact 1 current-only)]
-    (is (nil? (cache/snapshot-exact-key current-only))
-        "a current-only or arbitrary immutable view cannot infer exact identity from revision equality")
-    (is (= :ordinary-exact
-           (:view-kind (cache/snapshot-exact-key exact-capable))))
-    (is (= 1 (:exact-locator (cache/snapshot-exact-key exact-capable))))))
+(defn- basis-identity
+  [revision]
+  {:backend :relay-test
+   :source-id "relay-source"
+   :branch nil
+   :source-lifecycle "relay-lifecycle"
+   :basis-kind :ordinary
+   :revision revision
+   :exact-locator revision
+   :backend-snapshot-id {:revision revision}})
 
 (deftest cursor-proof-identity-test
   (testing "even equal dependency proofs cannot lift across revisions"
@@ -176,6 +162,29 @@
                  (:reason (ex-data error)))))
           (pr-str changed-query)))))
 
+(deftest completed-page-cache-is-partitioned-by-consistency-mode-test
+  (let [snapshot (adapter 1 nil true)
+        page-cache (relay/page-navigation-cache)
+        opts {:page-navigation-cache page-cache
+              :completed-cache? true
+              :snapshot-semantic-identity (basis-identity 1)}
+        at-least-query
+        (assoc lookup-query :consistency
+               {:consistency/mode :at-least-as-fresh
+                :zed/token "opaque-test-token"})
+        authoritative-query
+        (assoc lookup-query :consistency :fully-consistent)
+        public-page
+        (relay/externalize-page
+         snapshot opts :lookup-resources at-least-query lookup-page)]
+    (relay/remember-visited-page!
+     snapshot opts :lookup-resources at-least-query public-page)
+    (is (some? (relay/lookup-visited-page
+                snapshot opts :lookup-resources at-least-query)))
+    (is (nil? (relay/lookup-visited-page
+               snapshot opts :lookup-resources authoritative-query))
+        "a cached public cursor must never cross consistency query scope")))
+
 (deftest cursor-is-bound-to-normalized-traversal-limits-test
   (let [snapshot (adapter 1 nil true)
         original-limits {:max-derived-grants 100
@@ -201,27 +210,31 @@
              (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
                (:reason (ex-data error))))))))
 
-(deftest changed-proof-without-history-is-stale-test
+(deftest changed-proof-on-snapshot-is-a-basis-conflict-test
   (let [original (adapter 1 nil true)
         current (adapter 2 nil true)
         first-page
         (relay/externalize-page
-         original {} :lookup-resources lookup-query lookup-page)
+         original
+         {:snapshot-semantic-identity (basis-identity 1)}
+         :lookup-resources lookup-query lookup-page)
         token (get-in first-page [:page-info :end-cursor])
         data
         (try
           (relay/prepare-page-query
            current
-           {:cursor-consistency-mode :fully-consistent}
+           {:cursor-consistency-mode :fully-consistent
+            :authorization-target-kind :snapshot
+            :snapshot-semantic-identity (basis-identity 2)}
            :lookup-resources
            (assoc lookup-query :after token))
           nil
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
             (ex-data error)))]
-    (is (= :eacl.pagination/stale-cursor (:type data)))
-    (is (= :dependency-proof-changed (:reason data)))))
+    (is (= :eacl.consistency/basis-conflict (:type data)))
+    (is (= :cursor (:source data)))))
 
-(deftest recursive-continuation-does-not-rebase-after-graph-change-test
+(deftest recursive-snapshot-continuation-does-not-rebase-test
   (let [original (adapter 1 nil true)
         current (adapter 2 nil true)
         recursive-page
@@ -233,12 +246,16 @@
           :result-eid "document-1"})
         first-page
         (relay/externalize-page
-         original {} :lookup-resources lookup-query recursive-page)
+         original
+         {:snapshot-semantic-identity (basis-identity 1)}
+         :lookup-resources lookup-query recursive-page)
         data
         (try
           (relay/prepare-page-query
            current
-           {:cursor-consistency-mode :minimize-latency}
+           {:cursor-consistency-mode :minimize-latency
+            :authorization-target-kind :snapshot
+            :snapshot-semantic-identity (basis-identity 2)}
            :lookup-resources
            (assoc lookup-query
                   :after
@@ -246,8 +263,8 @@
           nil
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
             (ex-data error)))]
-    (is (= :eacl.pagination/stale-cursor (:type data)))
-    (is (= :dependency-proof-changed (:reason data)))))
+    (is (= :eacl.consistency/basis-conflict (:type data)))
+    (is (= :cursor (:source data)))))
 
 (deftest expired-cursor-reaches-the-kernel-decision-test
   ;; cursor-dependency-validity: the TTL check result is a computed input of
@@ -303,50 +320,6 @@
     (is (not (contains? (:cursor-context (:opts prepared)) :exp))
         "elapsed age far beyond five minutes is irrelevant without an explicit TTL")))
 
-(deftest exact-snapshot-continuation-never-rebases-test
-  (let [exact (adapter 1 nil true)
-        current (adapter-with-exact 2 exact)
-        exact-query
-        (assoc lookup-query
-               :consistency
-               {:consistency/mode :at-exact-snapshot
-                :zed/token "exact-token"})
-        page
-        (relay/externalize-page
-         exact {} :lookup-resources exact-query lookup-page)
-        prepared
-        (relay/prepare-page-query
-         current
-         {:cursor-consistency-mode :at-exact-snapshot
-          :cursor-request-token
-          {:revision 1
-           :exact-locator 1}}
-         :lookup-resources
-         (assoc exact-query
-                :after
-                (get-in page [:page-info :end-cursor])))]
-    (is (identical? exact (:adapter prepared)))
-    (is (not (contains? prepared :recovery)))))
-
-(deftest changed-current-schema-reaches-exact-cursor-fallback-test
-  (let [exact (adapter 1 nil true)
-        current (adapter-with-exact 2 exact)
-        page
-        (relay/externalize-page
-         exact
-         {:cursor-schema-stamp {:adapter exact :stamp (delay 10)}}
-         :lookup-resources lookup-query lookup-page)
-        prepared
-        (relay/prepare-page-query
-         current
-         {:cursor-consistency-mode :minimize-latency
-          :cursor-schema-stamp {:adapter current :stamp (delay 20)}}
-         :lookup-resources
-         (assoc lookup-query
-                :after (get-in page [:page-info :end-cursor])))]
-    (is (identical? exact (:adapter prepared))
-        "schema proof changes must not masquerade as query-scope changes")))
-
 (deftest one-page-builds-one-snapshot-context-test
   (let [native-revision-calls (atom 0)
         snapshot-id-calls (atom 0)
@@ -388,7 +361,9 @@
           :has-previous-page? false}}
         external
         (relay/externalize-relationship-page
-         test-adapter {} :read-relationships
+         test-adapter
+         {:snapshot-semantic-identity (basis-identity 1)}
+         :read-relationships
          {:subject/type :user :first 1}
          page)]
     (is (= 1 @native-revision-calls))

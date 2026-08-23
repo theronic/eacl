@@ -2,6 +2,7 @@
   (:require
    [clojure.edn :as edn]
    [clojure.test :refer [deftest is testing]]
+   [eacl.backend.source :as source]
    [eacl.backend.v8 :as backend]
    [eacl.consistency :as consistency]
    [eacl.core :refer [spice-object]]
@@ -143,7 +144,7 @@
 
 (defn- consistency-plan-adapter
   [mode capability-supported?]
-  (backend/make-adapter
+  (source/make-source
    {:id :generated-consistency-plan-test
     :capabilities
     {:consistency (if capability-supported? #{mode} #{})
@@ -154,22 +155,17 @@
      :transactions #{}
      :cache-proofs #{}
      :runtime #{:clj}}
+    :topology {}
+    :basis-ownership :borrowed
     :operations
-    (merge
-     (into
-      {}
-      (map
-       (fn [operation]
-         [operation (fn [& _] nil)]))
-      backend/required-snapshot-operations)
-     {:snapshot-id (constantly {:revision 1})
-      :source-scope
+    {:source-scope
       (constantly {:source-id "generated-plan" :branch nil})
       :source-lifecycle (constantly "generated-plan-lifecycle")
-      :native-revision
-      (constantly {:revision 1 :exact-locator 1})
-      :order-hint (constantly 1)
-      :exact-locator (constantly 1)})}))
+     :acquire-current! (fn [& _] nil)
+     :acquire-authoritative! (fn [& _] nil)
+     :acquire-at-least! (fn [& _] nil)
+     :acquire-exact! (fn [& _] nil)
+     :release! (fn [& _] nil)}}))
 
 (defn- observed-generated-plan
   [source mode]
@@ -489,8 +485,7 @@
     :capabilities
     {:consistency #{:minimize-latency}
      :snapshots #{:current :exact}
-     :source #{:stable-scope :source-lifecycle
-               :native-revision :order-hint :exact-locator}
+     :source #{}
      :cursor #{:forward :backward}
      :transactions #{}
      :cache-proofs #{:ordered-generations}
@@ -504,14 +499,11 @@
                   [operation (fn [& _] nil)]))
            backend/required-snapshot-operations)
      {:snapshot-id (constantly {:basis 1})
-      :source-scope
-      (constantly {:source-id "source" :branch nil})
-      :source-lifecycle (constantly "formal-production-lifecycle")
+      :basis-kind (constantly :ordinary)
       :native-revision
       (constantly {:revision 1 :exact-locator 1})
       :order-hint (constantly 1)
       :exact-locator (constantly 1)
-      :select-exact (fn [& _] nil)
       :object-id->internal
       #(case % "document-1" 1 "document-2" 2 nil)
       :internal-id->object
@@ -575,8 +567,7 @@
       :capabilities
       {:consistency #{:minimize-latency}
        :snapshots #{:current}
-       :source #{:stable-scope :source-lifecycle
-                 :native-revision :order-hint :exact-locator}
+       :source #{}
        :cursor #{:forward :backward}
        :transactions #{}
        :cache-proofs #{:ordered-generations}
@@ -590,10 +581,7 @@
              backend/required-snapshot-operations)
        {:snapshot-id
         (constantly {:database-id :formal :basis-t 1})
-        :source-scope
-        (constantly {:source-id :formal :branch nil})
-        :source-lifecycle
-        (constantly "formal-recursive-plan-lifecycle")
+        :basis-kind (constantly :ordinary)
         :native-revision
         (constantly {:revision 1 :exact-locator 1})
         :order-hint (constantly 1)
@@ -837,10 +825,10 @@
             :probe-exact-entry]
            [{:stage :exact-entry :available? false}
             :probe-managed-entry]
-           [{:stage :snapshot-exact-entry :available? true}
-            :use-snapshot-exact-entry]
-           [{:stage :snapshot-exact-entry :available? false}
-            :compute-snapshot-exact-value]
+           [{:stage :exact-only-entry :available? true}
+            :use-exact-entry]
+           [{:stage :exact-only-entry :available? false}
+            :compute-exact-value]
            [{:stage :managed-entry :available? true}
             :use-managed-entry]]]
     (is (= expected

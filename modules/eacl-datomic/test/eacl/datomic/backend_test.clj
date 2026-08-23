@@ -1,6 +1,7 @@
 (ns eacl.datomic.backend-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl]
             [eacl.datomic.backend :as datomic-backend]
@@ -15,7 +16,7 @@
      permission admin = owner
    }")
 
-(deftest immutable-snapshot-adapter-test
+(deftest immutable-basis-adapter-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {})]
       (eacl/write-schema! client test-schema)
@@ -29,13 +30,11 @@
         (eacl/spice-object :account "account-1")))
       (let [db (d/db conn)
             adapter
-            (datomic-backend/snapshot-adapter
+            (datomic-backend/basis-adapter
              db
              {:entid->object-id
               (fn [snapshot eid]
-                (:eacl/id (d/entity snapshot eid)))
-              :conn conn
-              })
+                (:eacl/id (d/entity snapshot eid)))})
             alice (backend/invoke
                    adapter :object-id->internal "alice")
             account (backend/invoke
@@ -82,9 +81,10 @@
           (is (integer? (:schema-stamp proof)))
           (is (= relation-id (ffirst (:relation-stamps proof))))
           (is (integer? (second (first (:relation-stamps proof))))))
-        (testing "the adapter advertises Datomic's existing guarantees"
+        (testing "the source advertises Datomic selection guarantees"
           (doseq [mode [:fully-consistent
                         :minimize-latency
                         :at-least-as-fresh
                         :at-exact-snapshot]]
-            (is (backend/supports? adapter :consistency mode))))))))
+            (is (source/supports? (:source client)
+                                  :consistency mode))))))))

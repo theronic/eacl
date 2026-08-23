@@ -196,7 +196,7 @@
         relation-eid (get relation-index [resource-type relation-name subject-type])]
     (when-not relation-eid
       (throw (ex-info "v6 relationship references a missing Relation."
-               {:type                :eacl.migration/missing-relation
+               {:type :eacl.migration/missing-relation :eacl/error :eacl.migration/missing-relation
                 :v6-relationship-eid v6-rel-eid
                 :resource-type       resource-type
                 :relation-name       relation-name
@@ -326,7 +326,7 @@
    (when-let [unknown-keys (seq (remove known-migrate-opt-keys (keys opts)))]
      (throw (ex-info (str "EACL Migration Error: unknown migrate! option(s) " (pr-str (vec unknown-keys))
                           ". Known options: " (pr-str (vec (sort known-migrate-opt-keys))) ".")
-              {:type         :eacl/invalid-config
+              {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                :unknown-keys (vec unknown-keys)
                :known-keys   known-migrate-opt-keys})))
    (ensure-v7-attributes! conn)
@@ -337,7 +337,7 @@
          verify-report (verify-backfill (d/db conn))]
      (when-not (:complete? verify-report)
        (throw (ex-info "EACL v6->v7 backfill incomplete: some v6 relationships are missing v7 tuples. Nothing was retracted; fix the sample rows and re-run migrate!."
-                {:type   :eacl.migration/incomplete
+                {:type :eacl.migration/incomplete :eacl/error :eacl.migration/incomplete
                  :report verify-report})))
      (let [retracted
            (retract-v6-relationship-entities! conn {:batch-size batch-size})]
@@ -376,7 +376,7 @@
           (str "EACL storage-version mismatch: this database is stamped with storage-version " stamp
                ", newer than the version this EACL build reads (" storage-version "). "
                "Upgrade EACL instead of running an older build against migrated-forward data.")
-          {:type             :eacl/storage-version
+          {:type :eacl/storage-version :eacl/error :eacl/storage-version
            :detected         (detect-storage-version db)
            :stamped-version  stamp
            :required-version storage-version}))
@@ -400,7 +400,7 @@
                "Run (eacl.migrations.v6-to-v7/migrate! conn {:schema <your schema string>}), or opt in "
                "at startup with (make-client conn {:auto-migrate-v6 {:schema <your schema string>}}). "
                "See docs/migration-v6-to-v7.md.")
-          {:type             :eacl/storage-version
+          {:type :eacl/storage-version :eacl/error :eacl/storage-version
            :detected         (detect-storage-version db)
            :stamped-version  stamp
            :required-version storage-version

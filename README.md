@@ -82,6 +82,7 @@ This README is too long & too technical, so I am working to simplify it and brea
     * [Checking Permissions](#checking-permissions)
     * [Lookups](#lookups)
     * [Counting](#counting)
+  * [Snapshots](#snapshots)
   * [The Benefits of Situated Authorization](#the-benefits-of-situated-authorization)
   * [ReBAC: Relationship-based Access Control](#rebac-relationship-based-access-control)
   * [Consistency Semantics](#consistency-semantics)
@@ -248,6 +249,72 @@ result set. Pass `:count-limit n` to bound work. The result then includes
 `:truncated?`; `true` means at least one additional result exists.
 
 Note: the default `:limit` will soon change to 50k instead of -1 (infinite), because high count-limits can exhaust Peers and trigger costly I/O from storage, esp. in recursive schemas.
+
+## Snapshots
+
+An EACL `acl` is a live source and, unless configured read-only, a writer. An
+EACL snapshot is a retained immutable authorization target. Every public read
+accepts either target; writes require a writable `acl`.
+
+Capture current once when several reads must share one basis:
+
+```clojure
+(eacl/with-snapshot [s (eacl/snapshot acl)]
+  [(eacl/can? s alice :view document)
+   (eacl/lookup-resources s
+     {:subject alice :permission :view :resource/type :document})])
+```
+
+Capture performs one source acquisition. Reads through `s` perform zero source
+acquisitions, and `with-snapshot` releases the basis in `finally`. Manual
+retention uses `eacl/release!`; release is idempotent, and any subsequent read
+fails with `:eacl/snapshot-released`. Datalevin snapshots hold native LMDB read
+transactions and are thread-affine, so keep them bounded and release them on
+the acquiring platform thread. Datalevin's optional
+`:maximum-snapshot-retention-ms` client setting fails closed on the next
+snapshot access, releases an owned reader, and reports
+`:eacl/snapshot-retention-exceeded`.
+
+Select through an `acl` with an explicit descriptor:
+
+```clojure
+(def s (eacl/snapshot acl (consistency/at-exact-snapshot token)))
+```
+
+On a retained snapshot, consistency is an assertion, never a request to find a
+different database value. `minimize-latency` evaluates immediately;
+`at-least-as-fresh` evaluates only when the snapshot satisfies the authenticated
+floor; `at-exact-snapshot` evaluates only when the token names that basis; and
+`fully-consistent` fails with `:eacl.consistency/selection-required`. Select a
+new snapshot through the `acl` when an assertion fails.
+
+If the application already owns an immutable database value, direct constructors
+perform no source acquisition:
+
+```clojure
+(datomic/snapshot acl datomic-db)
+(datahike/snapshot acl datahike-db)
+(datascript/snapshot acl datascript-db)
+(datalevin/snapshot acl open-read-snapshot)
+```
+
+Ordinary and as-of values are admissible basis kinds. Filtered, since, history,
+speculative, foreign-backend, and arbitrary Datalevin database values are
+refused with `:eacl/unsupported-database-value`. Use `eacl/basis` for public
+basis metadata and `eacl/basis-token` for an authenticated portable token.
+
+For reader-Peer session pinning, let the writer return a basis token with its
+mutation response, select that exact basis once on the reader, and retain the
+snapshot for the session. Subsequent authorization reads then make no current
+head request. Datomic, Datahike, and DataScript default to the portable source
+lifecycle `"eacl/initial"`; rotate it explicitly with `expire-cache!` after a
+restore, reset, force-move, or history replacement. Datalevin has no universal
+safe default and requires an externally persisted `:source-lifecycle` plus
+shared token key material at `make-client`.
+
+Construct a source-only deployment with `{:read-only? true}`. Reads and
+snapshot selection remain available; every mutation fails before planning or
+submission with `:eacl/unsupported-capability` and `:capability :write`.
 
 ## The Benefits of Situated Authorization
 
@@ -576,7 +643,7 @@ Java 26; source builds may target Java 8 through Java 26, subject to their
 backend and application dependencies. See [formal/README.md](formal/README.md)
 for tool versions and the full verification commands.
 
-For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup, mandatory topology/lifecycle/watermark inputs, and publication status are documented in the [`eacl-datalevin` module README](modules/eacl-datalevin/README.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md) and [snapshot-provider migration guide](docs/v8-snapshot-provider-migration.md).
+For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup, mandatory topology/lifecycle/watermark inputs, and publication status are documented in the [`eacl-datalevin` module README](modules/eacl-datalevin/README.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source migration guide](docs/v8-snapshot-provider-migration.md).
 
 ### Schema & Relationships
 
@@ -1235,7 +1302,7 @@ How the EACL cache works:
 
 1. Select snapshot _S_, with basis `B >= T`.
 2. Look for an answer computed on exactly `B`.
-3. On an exact-current cache miss, look for a proof-equivalent managed answer computed at another basis.
+3. On an exact-basis cache miss, look for a proof-equivalent managed answer computed at another ordinary basis.
 4. Otherwise, compute against `S`.
 
 Suppose:
@@ -1244,7 +1311,11 @@ Suppose:
 token floor T = 100
 selected basis B = 120
 ```
-The first lookup checks the active exact generation for basis `B=120`. This is the cheap path: same semantic query, same selected snapshot. A newer selected basis rotates that exact generation.
+The first lookup checks the exact generation for basis `B=120`. This is the
+cheap path: same semantic query, same complete selected-basis identity. The
+runtime retains a bounded LRU of basis generations (four by default), and each
+generation owns its exact answers and subproblem state; selecting a newer basis
+does not immediately destroy retained-snapshot locality.
 
 I suspect SpiceDB does not support counting for the same reason. EACL currently supports unbounded counts because queries run on the Peer, but typically you want to pass a `:count-limit`.
 

@@ -30,10 +30,42 @@
                                    :eacl/id id})
                                 contract/smoke-objects))))
 
+(deftest default-source-lifecycle-is-cross-client-constant-test
+  (let [conn (datahike/create-conn)
+        key "01234567890123456789012345678901"
+        client-a (datahike/make-client conn {:security-key key})
+        client-b (datahike/make-client conn {:security-key key})
+        snapshot-a (eacl/snapshot client-a)
+        snapshot-b (eacl/snapshot client-b)]
+    (try
+      (is (= "eacl/initial"
+             (get-in client-a [:runtime :source-lifecycle])
+             (get-in client-b [:runtime :source-lifecycle])
+             (:source-lifecycle (eacl/basis snapshot-a))
+             (:source-lifecycle (eacl/basis snapshot-b))))
+      (finally
+        (eacl/release! snapshot-a)
+        (eacl/release! snapshot-b)))
+    (try
+      (eacl/write-schema! client-a contract/smoke-schema)
+      (seed-objects! conn)
+      (let [token
+            (:zed/token
+             (eacl/create-relationship!
+              client-a (first contract/smoke-relationships)))]
+        (is (true?
+             (eacl/can?
+              client-b
+              (contract/->user "user-1") :admin
+              (contract/->account "account-1")
+              (consistency/at-least-as-fresh token)))))
+      (finally
+        (d/release conn)))))
+
 (deftest generated-authority-is-the-only-production-engine-test
   (let [conn (datahike/create-conn)
         default-selection
-        (get-in (datahike/make-client conn {}) [:opts :decision-kernel])
+        (get-in (datahike/make-client conn {}) [:runtime :decision-kernel])
         error
         (try
           (datahike/make-client conn {:engine-selection :anything})
@@ -69,6 +101,11 @@
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
     (contract/assert-v8-permission-tree-contract! client)
+    (contract/assert-authorization-target-matrix!
+     {:writable client
+      :read-only (datahike/make-client conn {:read-only? true})
+      :snapshot-db datahike/db
+      :direct-snapshot datahike/snapshot})
     (contract/assert-unified-filter-validation! client)
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
@@ -146,8 +183,8 @@
         (is (= (:tree-root first-response)
                (:tree-root exact-response)
                (:tree-root repeated-exact)))
-        (is (= (+ 2 (:snapshot-exact-hits before))
-               (:snapshot-exact-hits after))
+        (is (= (+ 2 (:exact-hits before))
+               (:exact-hits after))
             "tree roots are reusable, while expanded-at is rebuilt per exact request")))))
 
 (deftest datahike-permission-tree-schema-mutation-snapshot-test

@@ -99,7 +99,7 @@
   [option value]
   (when-not (and (integer? value) (pos? value))
     (throw (ex-info "Subproblem cache weights must be positive integers."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :option option
                      :value value})))
   value)
@@ -128,7 +128,7 @@
            (throw
             (ex-info
              "Unknown subproblem cache option."
-             {:type :eacl/invalid-config
+             {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
               :unknown-keys (vec unknown-keys)
               :known-keys (vec (sort option-keys))})))
          budgets
@@ -193,11 +193,11 @@
   [store tier]
   (when-not (store? store)
     (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :store store})))
   (when-not (contains? known-tiers tier)
     (throw (ex-info "Unknown EACL subproblem cache tier."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :tier tier
                      :known-tiers known-tiers}))))
 
@@ -205,7 +205,7 @@
   [store]
   (when-not (store? store)
     (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :store store})))
   (let [state @(:state store)]
     (assoc @(:metrics store)
@@ -224,7 +224,7 @@
   [store]
   (when-not (store? store)
     (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :store store})))
   (reset! (:state store)
           (assoc
@@ -379,7 +379,7 @@
      (throw
       (ex-info
        "Subproblem publication options are invalid."
-       {:type :eacl/invalid-config :tier tier})))
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config :tier tier})))
    (let [deadline-expired? (execution/expired?)
          valid-value?
          (try
@@ -609,7 +609,7 @@
   (validate-tier! store tier)
   (when-not (and (fn? valid?) (fn? weight-fn))
     (throw (ex-info "Subproblem lookup callbacks must be functions."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :tier tier})))
   (swap! (:metrics store) update :lookup-probes inc)
   (let [entry (get-in @(:state store) [tier :entries key])]
@@ -627,4 +627,3 @@
         {:value (:value entry)
          :cached? true
          :cache-tier (exact-cache-tier tier)}))))
-

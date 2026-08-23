@@ -280,7 +280,7 @@
          db relationship-storage/reverse-attribute
          [resource-type relation-eid subject-type]))))))
 
-(defn- current-schema-generation
+(defn current-schema-generation
   [db]
   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
     (some-> (ds/datoms db :eav schema-eid :eacl/schema-generation)
@@ -353,8 +353,11 @@
   {:allow-empty-schema? true} to wipe intentionally."
   ([conn schema-string]
    (write-schema! conn schema-string {}))
+  ([conn schema-string options]
+   (write-schema! conn schema-string options ::read-current-generation))
   ([conn schema-string
-    {:keys [allow-empty-schema?]}]
+    {:keys [allow-empty-schema?]}
+    known-schema-generation]
    (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
          _               (validate-schema-references new-schema-map)
          initial-db      (ds/db conn)
@@ -365,7 +368,7 @@
                                         (seq (:permissions initial-schema))))
                            (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                 " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard
+                                           {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
                                             :existing {:relations (count (:relations initial-schema))
                                                        :permissions (count (:permissions initial-schema))}})))
          db              (ensure-schema-coherence! conn)
@@ -376,7 +379,7 @@
                                         (seq (:permissions existing-schema))))
                            (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                 " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard
+                                           {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
                                             :existing {:relations (count (:relations existing-schema))
                                                        :permissions (count (:permissions existing-schema))}})))
          deltas          (compare-schema existing-schema new-schema-map)
@@ -396,7 +399,10 @@
            (mapv #(assoc % :eacl/relation-version :db/current-tx)
                  (:additions relations))
            schema-eid (ds/entid db [:eacl/id "schema-string"])
-           schema-generation (current-schema-generation db)
+           schema-generation
+           (if (= ::read-current-generation known-schema-generation)
+             (current-schema-generation db)
+             known-schema-generation)
            schema-write-fence (current-schema-write-fence db)
            relation-commit-guards
            (mapv
@@ -412,7 +418,7 @@
                   (throw
                    (ex-info
                     "Relation removal requires prepared native generations."
-                    {:type :eacl.cache/generation-unprepared
+                    {:type :eacl.cache/generation-unprepared :eacl/error :eacl.cache/generation-unprepared
                      :backend :datalevin
                      :relation-id (:eacl/id relation)})))
                 [:db.fn/cas relation-eid :eacl/relation-version

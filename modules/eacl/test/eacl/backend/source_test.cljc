@@ -1,7 +1,7 @@
-(ns eacl.backend.snapshot-provider-test
+(ns eacl.backend.source-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
-            [eacl.backend.snapshot-provider :as provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]))
 
 (defn- adapter
@@ -10,12 +10,13 @@
    (adapter backend-id traversal-execution {}))
   ([backend-id traversal-execution
     {:keys [source-id branch lifecycle revision exact-locator
-            snapshot-database-id]
+            snapshot-database-id basis-kind]
      :or {source-id ::source
           branch nil
           lifecycle ::lifecycle
           revision 1
-          exact-locator 1}}]
+          exact-locator 1
+          basis-kind :ordinary}}]
    (backend/make-adapter
     {:id backend-id
      :capabilities backend/empty-capabilities
@@ -30,23 +31,24 @@
        (constantly
         {:database-id (or snapshot-database-id backend-id)
          :basis-t revision})
-       :source-scope
-       (constantly {:source-id source-id :branch branch})
-       :source-lifecycle (constantly lifecycle)
+       :basis-kind (constantly basis-kind)
        :native-revision
        (constantly {:revision revision :exact-locator exact-locator})
        :order-hint (constantly revision)
        :exact-locator (constantly exact-locator)})})))
 
-(defn- snapshot-provider
+(defn- test-source
   [{:keys [candidate ownership-policy release-calls
            traversal-execution backend-id execution-constraints
-           acquire-calls]
+           acquire-calls source-id branch lifecycle]
     :or {candidate (adapter)
          ownership-policy :owned
          release-calls (atom [])
          traversal-execution backend/strict-sequential-traversal-execution
-         backend-id :test}}]
+         backend-id :test
+         source-id ::source
+         branch nil
+         lifecycle ::lifecycle}}]
   (let [acquire
         (fn [& _]
           (when acquire-calls
@@ -56,18 +58,18 @@
                         :borrowed
                         :owned)
            :release-token ::reader})]
-    (provider/make-provider
+    (source/make-source
      {:id backend-id
       :capabilities backend/empty-capabilities
       :traversal-execution traversal-execution
       :topology {:deployment :embedded}
       :execution-constraints
-      (or execution-constraints provider/default-execution-constraints)
-      :snapshot-ownership ownership-policy
+      (or execution-constraints source/default-execution-constraints)
+      :basis-ownership ownership-policy
       :operations
       {:source-scope
-       (constantly {:source-id ::source :branch nil})
-       :source-lifecycle (constantly ::lifecycle)
+       (constantly {:source-id source-id :branch branch})
+       :source-lifecycle (constantly lifecycle)
        :acquire-current! acquire
        :acquire-authoritative! acquire
        :acquire-at-least! acquire
@@ -82,42 +84,44 @@
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
 
-(deftest provider-contract-is-closed-test
-  (testing "unknown provider fields fail validation"
+(deftest source-contract-is-closed-test
+  (is (= source/required-source-operations
+         (set (keys source/source-obligations))))
+  (testing "unknown source fields fail validation"
     (is (= [:surprise]
            (:unknown-keys
             (error-data
-             #(provider/make-provider
+             #(source/make-source
                {:id :test
                 :capabilities backend/empty-capabilities
                 :traversal-execution
                 backend/strict-sequential-traversal-execution
                 :topology {}
                 :execution-constraints
-                provider/default-execution-constraints
-                :snapshot-ownership :borrowed
+                source/default-execution-constraints
+                :basis-ownership :borrowed
                 :operations {}
                 :surprise true}))))))
   (testing "every lifecycle operation is mandatory"
-    (is (= provider/required-provider-operations
+    (is (= source/required-source-operations
            (set
             (:missing-operations
              (error-data
-              #(provider/make-provider
+              #(source/make-source
                 {:id :test
                  :capabilities backend/empty-capabilities
                  :traversal-execution
                  backend/strict-sequential-traversal-execution
                  :topology {}
                  :execution-constraints
-                 provider/default-execution-constraints
-                 :snapshot-ownership :borrowed
+                 source/default-execution-constraints
+                 :basis-ownership :borrowed
                  :operations {}})))))))
   (testing "execution constraints are closed enums"
-    (is (= :eacl/invalid-snapshot-provider
+    (is (= :eacl/invalid-source
            (:type
             (error-data
-             #(provider/make-provider
+             #(source/make-source
                {:id :test
                 :capabilities backend/empty-capabilities
                 :traversal-execution
@@ -127,82 +131,85 @@
                 {:virtual-threads :sometimes
                  :snapshot-thread :any
                  :release-thread :any}
-                :snapshot-ownership :borrowed
+                :basis-ownership :borrowed
                 :operations
-                (zipmap provider/required-provider-operations
+                (zipmap source/required-source-operations
                         (repeat (fn [& _] nil)))})))))))
 
-(deftest provider-static-profile-does-not-acquire-test
+(deftest source-static-profile-does-not-acquire-test
   (let [calls (atom {})
-        source (snapshot-provider {})]
-    (binding [provider/*provider-op-stats* calls]
-      (is (= :test (:backend-id (provider/static-profile source))))
+        source (test-source {})]
+    (binding [source/*source-op-stats* calls]
+      (is (= :test (:backend-id (source/static-profile source))))
       (is (= {:source-id ::source :branch nil}
-             (provider/source-scope source)))
-      (is (= ::lifecycle (provider/source-lifecycle source))))
+             (source/source-scope source)))
+      (is (= ::lifecycle (source/source-lifecycle source))))
     (is (= {:source-scope 1 :source-lifecycle 1} @calls))
     (is (not-any? #(contains? @calls %)
-                  (vals provider/acquisition-operations)))))
+                  (vals source/acquisition-operations)))))
 
 (deftest selected-snapshot-owns-one-idempotent-release-test
   (let [release-calls (atom [])
-        source (snapshot-provider {:release-calls release-calls})
-        selected (provider/acquire! source :current)]
-    (is (provider/provider? source))
-    (is (provider/selected-snapshot? selected))
-    (is (= :owned (provider/ownership selected)))
-    (is (= :test (backend/backend-id (provider/adapter selected))))
+        source (test-source {:release-calls release-calls})
+        selected (source/acquire! source :current)]
+    (is (source/source? source))
+    (is (source/selected-basis? selected))
+    (is (= :owned (source/ownership selected)))
+    (is (= :test (backend/backend-id (source/adapter selected))))
     (is (= {:backend :test
             :source-id ::source
             :branch nil
             :source-lifecycle ::lifecycle
+            :basis-kind :ordinary
             :revision 1
             :exact-locator 1
             :backend-snapshot-id {:database-id :test :basis-t 1}}
-           (provider/semantic-identity selected)))
-    (is (false? (provider/released? selected)))
-    (is (true? (provider/release! selected)))
-    (is (true? (provider/released? selected)))
-    (is (false? (provider/release! selected)))
+           (source/semantic-identity selected)))
+    (is (false? (source/released? selected)))
+    (is (true? (source/release! selected)))
+    (is (true? (source/released? selected)))
+    (is (false? (source/release! selected)))
     (is (= [::reader] @release-calls))
     (is (= :eacl/snapshot-released
-           (:type (error-data #(provider/adapter selected)))))))
+           (:type (error-data #(source/adapter selected)))))))
 
 (deftest failed-release-is-classified-and-remains-retryable-test
   (let [attempts (atom 0)
-        source (snapshot-provider {})
+        source (test-source {})
         retryable
         (assoc-in
          source
-         [::provider/operations :release!]
+         [::source/operations :release!]
          (fn [_]
            (when (= 1 (swap! attempts inc))
              (throw (ex-info "injected release failure"
                              {:type :injected/release})))))
-        selected (provider/acquire! retryable :current)]
+        selected (source/acquire! retryable :current)]
     (is (= :eacl/snapshot-release-failed
-           (:type (error-data #(provider/release! selected)))))
-    (is (false? (provider/released? selected)))
-    (is (= :test (backend/backend-id (provider/adapter selected))))
-    (is (true? (provider/release! selected)))
-    (is (true? (provider/released? selected)))
+           (:type (error-data #(source/release! selected)))))
+    (is (false? (source/released? selected)))
+    (is (= :test (backend/backend-id (source/adapter selected))))
+    (is (true? (source/release! selected)))
+    (is (true? (source/released? selected)))
     (is (= 2 @attempts))
-    (is (false? (provider/release! selected)))))
+    (is (false? (source/release! selected)))))
 
 (deftest semantic-identity-covers-every-independent-state-dimension-test
   (let [identity
         (fn [overrides]
-          (let [source
-                (snapshot-provider
-                 {:candidate
+          (let [selected-source
+                (test-source
+                 (merge
+                  (select-keys overrides [:source-id :branch :lifecycle])
+                  {:candidate
                   (adapter
                    :test backend/strict-sequential-traversal-execution
-                   overrides)})
-                selected (provider/acquire! source :current)]
+                   overrides)}))
+                selected (source/acquire! selected-source :current)]
             (try
-              (provider/semantic-identity selected)
+              (source/semantic-identity selected)
               (finally
-                (provider/release! selected)))))
+                (source/release! selected)))))
         baseline (identity {})]
     (testing "separately acquired readers of the same semantic state compare equal"
       (is (= baseline (identity {}))))
@@ -211,50 +218,51 @@
              [:source {:source-id ::other-source}]
              [:branch {:branch "other-branch"}]
              [:lifecycle {:lifecycle ::other-lifecycle}]
+             [:basis-kind {:basis-kind :as-of}]
              [:revision {:revision 2 :exact-locator 2}]
              [:exact-locator {:exact-locator :other-locator}]]]
       (testing (name field)
         (is (not= baseline (identity overrides)))))))
 
-(deftest acquisition-validates-provider-boundaries-test
+(deftest acquisition-validates-source-boundaries-test
   (testing "backend identity cannot change during acquisition"
     (let [release-calls (atom [])
           source
-          (snapshot-provider
+          (test-source
            {:candidate (adapter :other
                                 backend/strict-sequential-traversal-execution)
             :release-calls release-calls})]
-      (is (= :eacl/invalid-selected-snapshot
-             (:type (error-data #(provider/acquire! source :current)))))
+      (is (= :eacl/invalid-selected-basis
+             (:type (error-data #(source/acquire! source :current)))))
       (is (= [::reader] @release-calls))))
-  (testing "the adapter must retain the provider-static traversal profile"
+  (testing "the adapter must retain the source-static traversal profile"
     (let [source
-          (snapshot-provider
+          (test-source
            {:candidate (adapter :test backend/default-traversal-execution)})]
-      (is (= :eacl/invalid-selected-snapshot
-             (:type (error-data #(provider/acquire! source :current)))))))
+      (is (= :eacl/invalid-selected-basis
+             (:type (error-data #(source/acquire! source :current)))))))
   (testing "ownership cannot contradict the static policy"
     (let [source
-          (snapshot-provider
+          (test-source
            {:candidate (adapter)
             :ownership-policy :owned})
           broken
           (assoc-in
            source
-           [::provider/operations :acquire-current!]
+           [::source/operations :acquire-current!]
            (fn []
              {:adapter (adapter)
               :ownership :borrowed
               :release-token nil}))]
-      (is (= :eacl/invalid-selected-snapshot
-             (:type (error-data #(provider/acquire! broken :current)))))))
+      (is (= :eacl/invalid-selected-basis
+             (:type (error-data #(source/acquire! broken :current)))))))
   (testing "acquisition result shape is closed"
     (let [release-calls (atom [])
-          source (snapshot-provider {:release-calls release-calls})
+          source (test-source {:release-calls release-calls})
           broken
           (assoc-in
            source
-           [::provider/operations :acquire-current!]
+           [::source/operations :acquire-current!]
            (fn []
              {:adapter (adapter)
               :ownership :owned
@@ -262,42 +270,42 @@
               :native-handle :escaped}))]
       (is (= #{:adapter :ownership :release-token :native-handle}
              (:actual-keys
-              (error-data #(provider/acquire! broken :current)))))
+              (error-data #(source/acquire! broken :current)))))
       (is (= [::reader] @release-calls))))
   (testing "a malformed acquisition missing its token still gets one cleanup attempt"
     (let [release-calls (atom [])
-          source (snapshot-provider {:release-calls release-calls})
+          source (test-source {:release-calls release-calls})
           broken
           (assoc-in
            source
-           [::provider/operations :acquire-current!]
+           [::source/operations :acquire-current!]
            (fn []
              {:adapter (adapter)
               :ownership :owned}))]
-      (is (= :eacl/invalid-selected-snapshot
-             (:type (error-data #(provider/acquire! broken :current)))))
+      (is (= :eacl/invalid-selected-basis
+             (:type (error-data #(source/acquire! broken :current)))))
       (is (= [nil] @release-calls)))))
 
 #?(:clj
    (deftest acquiring-thread-constraints-fail-before-access-or-release-test
      (let [release-calls (atom [])
            source
-           (snapshot-provider
+           (test-source
             {:release-calls release-calls
              :execution-constraints
              {:virtual-threads :supported
               :snapshot-thread :acquiring-thread
               :release-thread :acquiring-thread}})
-           selected (provider/acquire! source :current)
-           access-error @(future (error-data #(provider/adapter selected)))
-           release-error @(future (error-data #(provider/release! selected)))]
+           selected (source/acquire! source :current)
+           access-error @(future (error-data #(source/adapter selected)))
+           release-error @(future (error-data #(source/release! selected)))]
        (is (= :eacl/snapshot-thread-violation (:type access-error)))
        (is (= :snapshot-access (:phase access-error)))
        (is (= :eacl/snapshot-thread-violation (:type release-error)))
        (is (= :snapshot-release (:phase release-error)))
-       (is (false? (provider/released? selected)))
+       (is (false? (source/released? selected)))
        (is (empty? @release-calls))
-       (is (true? (provider/release! selected)))
+       (is (true? (source/release! selected)))
        (is (= [::reader] @release-calls)))))
 
 #?(:clj
@@ -306,19 +314,19 @@
            finish-release (promise)
            source
            (assoc-in
-            (snapshot-provider {})
-            [::provider/operations :release!]
+            (test-source {})
+            [::source/operations :release!]
             (fn [_]
               (deliver release-started true)
               @finish-release))
-           selected (provider/acquire! source :current)
-           release-result (future (provider/release! selected))]
+           selected (source/acquire! source :current)
+           release-result (future (source/release! selected))]
        @release-started
        (is (= :eacl/snapshot-release-in-progress
-              (:type (error-data #(provider/adapter selected)))))
+              (:type (error-data #(source/adapter selected)))))
        (deliver finish-release true)
        (is (true? @release-result))
-       (is (true? (provider/released? selected))))))
+       (is (true? (source/released? selected))))))
 
 #?(:clj
    (deftest rejected-virtual-thread-fails-before-native-acquisition-test
@@ -331,7 +339,7 @@
          (let [acquire-calls (atom 0)
                result (promise)
                source
-               (snapshot-provider
+               (test-source
                 {:acquire-calls acquire-calls
                  :execution-constraints
                  {:virtual-threads :rejected
@@ -342,7 +350,7 @@
                  (run [_]
                    (deliver
                     result
-                    (error-data #(provider/acquire! source :current)))))
+                    (error-data #(source/acquire! source :current)))))
                thread
                (clojure.lang.Reflector/invokeInstanceMethod
                 virtual-builder "start" (object-array [runnable]))]

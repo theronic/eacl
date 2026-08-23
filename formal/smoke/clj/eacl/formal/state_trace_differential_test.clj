@@ -14,7 +14,6 @@
    [eacl.datahike.core :as datahike]
    [eacl.datascript.backend :as datascript-backend]
    [eacl.datascript.core :as datascript]
-   [eacl.datomic.cache :as datomic-cache]
    [eacl.datomic.core :as datomic]
    [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
    [eacl.datomic.schema :as datomic-schema]
@@ -148,6 +147,17 @@
   [constructor connection options selection]
   (with-redefs [production/default-selection selection]
     (constructor connection options)))
+
+(defn- datascript-basis-adapter
+  [db]
+  (datascript-backend/basis-adapter
+   db
+   {:object-id->entid
+    (fn [selected-db object-id]
+      (ds/entid selected-db [:eacl/id object-id]))
+    :entid->object-id
+    (fn [selected-db internal-id]
+      (:eacl/id (ds/entity selected-db internal-id)))}))
 
 (defn- call-count
   [calls]
@@ -503,22 +513,20 @@
     (with-mem-conn [conn datomic-schema/v7-schema]
       (let [calls (atom {})
             common
-            {:page-token-key
-             "01234567890123456789012345678901"
-             :zed-token-key
-             "12345678901234567890123456789012"}
+            {:security-key
+             "01234567890123456789012345678901"}
             selection (counting-decision-kernel calls)
             cached
             (make-client-with-kernel
              datomic/make-client
              conn
-             (assoc common :cache {:remember-answers true})
+             (assoc common :cache {})
              selection)
             uncached
             (make-client-with-kernel
              datomic/make-client
              conn
-             (assoc common :cache datomic-cache/no-cache)
+             (assoc common :cache shared-cache/no-cache)
              selection)]
         (eacl/write-schema! cached authorization-schema)
         @(d/transact
@@ -899,11 +907,9 @@
   (testing "Datomic"
     (with-mem-conn [conn datomic-schema/v7-schema]
       (let [common
-            {:cache datomic-cache/no-cache
-             :page-token-key
-             "01234567890123456789012345678901"
-             :zed-token-key
-             "12345678901234567890123456789012"}
+            {:cache shared-cache/no-cache
+             :security-key
+             "01234567890123456789012345678901"}
             client (datomic/make-client conn common)
             limited-clients
             (into
@@ -955,16 +961,12 @@
       relationship-2
       recursive-parent-relationship])
     (let [adapter
-          (datascript-backend/snapshot-adapter
-           (ds/db conn)
-           (:opts client))
+          (datascript-basis-adapter (ds/db conn))
           page (engine/lookup-resources adapter query)
           bound (get-in page [:page-info :end-cursor])]
       (eacl/delete-relationships! client [relationship-1])
       (let [changed-adapter
-            (datascript-backend/snapshot-adapter
-             (ds/db conn)
-             (:opts client))
+            (datascript-basis-adapter (ds/db conn))
             resumed-error
             (try
               (engine/lookup-resources

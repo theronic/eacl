@@ -1,9 +1,10 @@
 # Backend adapter boundary
 
-`eacl.backend.v8` is the only production boundary between the shared
-authorization engine and Datomic, Datahike, DataScript, or Datalevin mechanics. Shared
-code invokes validated logical operations and never inspects backend database,
-datom, attribute-id, or tuple implementation types.
+The backend contract has three separately certified roles:
+`eacl.backend.v8` reads one immutable basis, `eacl.backend.source` selects and
+releases native bases, and `eacl.backend.writer` plans and submits mutations.
+Shared code invokes validated logical operations and never inspects backend
+database, datom, attribute-ID, or tuple implementation types.
 
 ## Ownership
 
@@ -11,7 +12,7 @@ datom, attribute-id, or tuple implementation types.
 | --- | --- |
 | Public request normalization, errors, traversal, recursion, de-duplication, batches, authorized candidate windows, Relay windowing, counts | Shared engine |
 | Consistency capability validation | Shared selection code |
-| Current, authoritative, causal-floor, and exact snapshot selection | Adapter |
+| Current, authoritative, causal-floor, and exact basis selection | Source |
 | Object ID internalization/externalization | Adapter, under a declared round-trip contract |
 | Relation and permission definition reads | Adapter returns normalized definitions |
 | Forward/reverse ordered adjacency scans, direct match | Adapter |
@@ -19,17 +20,16 @@ datom, attribute-id, or tuple implementation types.
 | Certified schema generation | Adapter operation, memoized once per selected adapter and independent of proof capability |
 | Complete relation-generation proof frame | Adapter evidence validated by shared proof code |
 | Exact/proof-backed completed answers and subproblem caching | Shared client-private cache |
-| Schema and relationship transaction planning/execution | Adapter |
-| Safe object relationship deletion | Adapter transaction mechanics with shared public semantics |
+| Schema and relationship transaction planning/execution | Writer |
+| Safe object relationship deletion | Writer transaction mechanics with shared public semantics |
 
 ## Immutable snapshot adapter
 
-An adapter is bound to one immutable backend value and provides:
+An adapter is constructed from one immutable backend value plus conversion
+configuration. It contains no connection, source, writer, or selection
+callback. It provides:
 
-- snapshot, stable source, lifecycle, native revision, order, and exact-locator
-  identity;
-- current, authoritative, at-least, and exact selection operations, with
-  unsupported modes rejected through capabilities;
+- snapshot ID, basis kind, native revision, order, and exact-locator identity;
 - external/internal object conversion;
 - normalized relation and permission definitions;
 - ordered forward/reverse adjacency, direct match, and permission-node
@@ -39,12 +39,12 @@ An adapter is bound to one immutable backend value and provides:
 - when advertised, one `:proof-frame` operation returning schema generation
   plus a complete canonical vector of requested relation generations.
 
-The capability map separately declares consistency, snapshot, source, cursor,
-transaction, cache-proof, and runtime guarantees. The adapter wrapper
-memoizes `:schema-generation`; its implementation may perform at most one
-index probe. A backend advertising
+The adapter capability map declares only facts the immutable value can
+establish. Source consistency and writer transaction capabilities live on
+their respective roles. The adapter wrapper memoizes `:schema-generation`;
+its implementation may perform at most one index probe. A backend advertising
 `:cache-proofs #{:ordered-generations}` must implement `:proof-frame`. An
-adapter without that capability is still a correct exact-current adapter and
+adapter without that capability is still a correct exact-basis adapter and
 may still certify schema generation for derived-plan reuse.
 
 `:direct-match?` is a certified semantic operation, not an optimization hint.
@@ -60,12 +60,36 @@ The runtime proof validator rejects missing, malformed, duplicate,
 non-canonical, oversized, or partial evidence. The adapter does not choose a
 coherence or proof mode.
 
-Snapshot acquisition and ownership are separate from the immutable adapter.
-`eacl.backend.snapshot-provider` selects borrowed or owned snapshots for the
-complete request lifetime. Owned providers must close rejected causal
-candidates and release on success, typed/foreign failure, timeout,
-cancellation, proof resolution, cache publication, and cursor/token
-construction. See [the provider migration guide](v8-snapshot-provider-migration.md).
+## Basis source
+
+A source is constructed from a connection or store plus configuration. Its
+static profile—capabilities, topology, ownership, execution constraints,
+scope, and lifecycle—must be readable without acquiring a basis. It implements
+current, authoritative, at-least, and exact-by-locator acquisition and returns
+exactly `{:adapter ... :ownership ... :release-token ...}`. Unsupported modes
+fail through the closed capability contract.
+
+Exact-by-locator acquisition must not acquire current first. Owned sources must
+close rejected causal candidates and release on success, typed or foreign
+failure, timeout, cancellation, proof resolution, cache publication, and
+cursor/token construction. Shared selected-basis state makes repeated release
+idempotent and enforces declared platform-thread constraints.
+
+## Writer
+
+A writer is the only role allowed to retain a connection or transaction
+service for mutation. It supplies transaction submission, schema submission,
+relationship and deletion planning, affected-relation derivation, retraction
+counting, and truthful contention classification. It declares positive
+`:max-attempts` and `:max-transaction-size` bounds. The shared write pipeline
+acquires one planning basis, plans, submits, derives the response token from the
+committed value, releases, and retries only writer-classified contention.
+Object deletion is split only at the writer's transaction-size bound.
+
+Construction validates every declared operation of each role. Missing
+operations fail at `make-client` with `:eacl/invalid-backend-role`, `:role`, and
+`:operation`; they cannot survive until a request as `AbstractMethodError` or a
+map lookup failure.
 
 ## Certified schema generation
 
@@ -76,7 +100,7 @@ and advances after a managed schema change. It must be bound to the selected
 immutable snapshot and must not derive identity from a physical-schema
 fingerprint.
 
-Shared code keys its bounded derived-state registry by the engine ABI,
+The runtime keys its bounded derived-state registry by the engine ABI,
 backend/adapter identity, source scope, lifecycle, and this generation. Parsed
 validation catalogs, permission paths, dependency closures, routing analysis,
 direct-grant relations, cycle guards, and sealed plans are owned by that
@@ -106,11 +130,12 @@ certification suites before advertising ordered generations.
 ## Capability policy
 
 Unsupported consistency guarantees fail with
-`:eacl/unsupported-capability` before authorization work. DataScript exposes a
-serialized current head and no arbitrary exact-history capability. Datomic
-supports authenticated exact reconstruction through `d/as-of`. Datahike
-advertises authoritative-head and exact-history selection only when its active
-writer and retained-history configuration can establish them.
+`:eacl/unsupported-capability` before authorization work or acquisition.
+DataScript's source exposes a serialized current head and no arbitrary
+exact-history capability. Datomic's source supports authenticated exact
+reconstruction through `d/as-of`. Datahike advertises authoritative-head and
+exact-history selection only when its active writer and retained-history
+configuration can establish them.
 
 Native revision tokens are independent of completed-answer caching. At-least
 selection establishes a native revision floor only inside the authenticated
@@ -122,7 +147,7 @@ Datalevin demonstrates the conservative capability policy: its persistent
 datoms do not expose the original transaction in a form certified for EACL's
 proof order. The adapter therefore omits `:ordered-generations` and the
 `:proof-frame` operation. It may reuse completed answers only for the same
-certified semantic snapshot identity and never interprets a datom `:tx` as a
+complete basis identity and never interprets a datom `:tx` as a
 relation generation. Independently, its one-probe `:schema-generation`
 operation lets schema-derived plans survive relationship-only revisions. Its
 owned-snapshot acquisition reads only the maintained fork's revision bounds;
@@ -130,6 +155,14 @@ it does not enumerate or fingerprint physical schema. Each reader is owned by
 the acquiring platform thread, cannot escape or cross threads, and is closed
 exactly once after the complete response (including cursor/cache publication)
 or after any failure. Datalevin makes no ordered-generation claim.
+
+## Assurance ownership
+
+`formal/verification/adapter-certification.edn` records separate runtime
+obligation maps. `SnapshotOracle.dfy` describes the immutable basis-adapter
+contract; `ConsistencyDecision.dfy` models source selection decisions; and the
+cache/scalar-frontier models state writer stamping assumptions. A proof of one
+role is not evidence for another role's native effects.
 
 ## Aggregate extension obligations
 

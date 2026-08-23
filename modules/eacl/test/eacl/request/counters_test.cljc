@@ -10,12 +10,16 @@
          ledger
          (fn []
            (counters/add! :acquisitions)
+           (counters/add! :adapter-reads 2)
+           (counters/add! :writer-submissions)
            (counters/add! :commands 3)
            :semantic-result))]
     (is (= :semantic-result result))
     (is (= (set counters/counter-keys)
            (set (keys (counters/snapshot ledger)))))
     (is (= 1 (:acquisitions (counters/snapshot ledger))))
+    (is (= 2 (:adapter-reads (counters/snapshot ledger))))
+    (is (= 1 (:writer-submissions (counters/snapshot ledger))))
     (is (= 3 (:commands (counters/snapshot ledger))))
     (is (zero? (:publications (counters/snapshot ledger))))))
 

@@ -8,7 +8,7 @@
             [eacl.core :as eacl]
             [eacl.engine.v8 :as engine]))
 
-(def certification-version "eacl.adapter-certification/v3")
+(def certification-version "eacl.adapter-certification/v4")
 
 (def certification-schema
   "definition user {}
@@ -461,8 +461,7 @@
 (defn- certify-snapshot!
   [adapter relations]
   (let [snapshot-id (backend/invoke adapter :snapshot-id)
-        source (backend/invoke adapter :source-scope)
-        lifecycle (backend/invoke adapter :source-lifecycle)
+        basis-kind (backend/invoke adapter :basis-kind)
         revision (backend/invoke adapter :native-revision)
         schema-generation (backend/invoke adapter :schema-generation)
         relation-ids (vec (sort (map :relation-id (vals relations))))
@@ -470,17 +469,14 @@
         (backend/supports? adapter :cache-proofs :ordered-generations)
         proof-frame
         (when ordered-generations?
-          (backend/invoke adapter :proof-frame relation-ids))
-        current (backend/invoke adapter :select-current)]
+          (backend/invoke adapter :proof-frame relation-ids))]
     (demand (= snapshot-id (backend/invoke adapter :snapshot-id))
             "Snapshot identity changed on an immutable adapter.")
-    (demand (= source (backend/invoke adapter :source-scope)
-               (backend/invoke current :source-scope))
-            "Current selection changed source identity.")
-    (demand (= lifecycle
-               (backend/invoke adapter :source-lifecycle)
-               (backend/invoke current :source-lifecycle))
-            "Current selection changed source lifecycle.")
+    (demand (keyword? basis-kind)
+            "Basis kind must be a keyword."
+            {:basis-kind basis-kind})
+    (demand (= basis-kind (backend/invoke adapter :basis-kind))
+            "Basis kind changed on an immutable adapter.")
     (demand (= revision (backend/invoke adapter :native-revision))
             "Native revision changed on an immutable adapter.")
     (demand (or (nil? schema-generation)
@@ -504,32 +500,11 @@
       (demand (= proof-frame
                  (backend/invoke adapter :proof-frame relation-ids))
               "Ordered-generation frame was unstable on an immutable adapter."))
-    (when (backend/supports?
-           adapter :consistency :at-exact-snapshot)
-      (let [exact
-            (backend/invoke adapter :select-exact revision 1000)]
-        (demand (backend/adapter? exact)
-                "Advertised exact selection returned no adapter."
-                {:native-revision revision})
-        (demand (= source (backend/invoke exact :source-scope))
-                "Exact selection changed source identity.")
-        (demand (= lifecycle (backend/invoke exact :source-lifecycle))
-                "Exact selection changed source lifecycle.")
-        (demand
-         (= (:exact-locator revision)
-            (backend/invoke exact :exact-locator))
-         "Exact selection returned a different locator.")
-        (demand (= revision (backend/invoke exact :native-revision))
-                "Exact selection returned a different native revision.")))
     {:snapshot-id snapshot-id
-     :source-scope source
-     :source-lifecycle lifecycle
+     :basis-kind basis-kind
      :native-revision revision
      :schema-generation schema-generation
-     :ordered-generation-proof? ordered-generations?
-     :exact-selection?
-     (backend/supports?
-      adapter :consistency :at-exact-snapshot)}))
+     :ordered-generation-proof? ordered-generations?}))
 
 (defn certify
   "Runs the portable static-snapshot obligations and returns a machine-readable
@@ -617,8 +592,8 @@
                   adapter (:objects fixture))))))
          (check
           :immutable-snapshot
-          :select-current
-          :identity-proof-and-exact-selection
+          :basis-adapter
+          :immutable-value-identity-and-proof
           (fn []
             (certify-snapshot!
              adapter

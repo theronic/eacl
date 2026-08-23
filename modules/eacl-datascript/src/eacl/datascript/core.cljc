@@ -37,8 +37,11 @@
    :db ds/db
    :entid ds/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (ds/entity db eid)))
-   :snapshot-adapter datascript-backend/snapshot-adapter
-   :snapshot-provider datascript-backend/provider
+   :basis-adapter datascript-backend/basis-adapter
+   :basis-adapter-config-keys datascript-backend/adapter-config-keys
+   :source datascript-backend/source
+   :basis-kind datascript-backend/basis-kind
+   :database-source-scope datascript-backend/database-source-scope
    :db-native-revision
    (fn [db]
      {:revision (:max-tx db)
@@ -50,6 +53,7 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :generation #'schema/current-schema-generation
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
@@ -60,48 +64,11 @@
           :read-relationships #'impl/read-relationships}
    :extra-client-opt-keys #{}})
 
-(defn datascript-read-relationships
-  [db opts filters]
-  (orchestration/read-relationships api db opts filters))
-
-(defn datascript-write-relationships!
-  [conn opts updates]
-  (orchestration/write-relationships! api conn opts updates))
-
-(defn datascript-delete-object!
-  [conn opts object]
-  (orchestration/delete-object! api conn opts object))
-
-(defn datascript-check-permission
-  [db opts subject permission resource consistency]
-  (orchestration/check-permission
-   api db opts subject permission resource consistency))
-
-(defn datascript-can?
-  [db opts subject permission resource consistency]
-  (orchestration/can? api db opts subject permission resource consistency))
-
-(defn datascript-lookup-resources
-  [db opts query]
-  (orchestration/lookup-resources api db opts query))
-
-(defn datascript-count-resources
-  [db opts query]
-  (orchestration/count-resources api db opts query))
-
-(defn datascript-lookup-subjects
-  [db opts query]
-  (orchestration/lookup-subjects api db opts query))
-
-(defn datascript-count-subjects
-  [db opts query]
-  (orchestration/count-subjects api db opts query))
-
 (defn- require-datascript-client!
   [client fn-name]
   (when-not (orchestration/client? client :datascript)
     (throw (ex-info (str fn-name " requires a DataScript EACL client.")
-                    {:type :eacl/invalid-client}))))
+                    {:type :eacl/invalid-client :eacl/error :eacl/invalid-client}))))
 
 (defn expire-cache!
   "Rotates one DataScript client's local cache/token lifecycle."
@@ -126,16 +93,17 @@
   (orchestration/cache-stats client))
 
 (defn make-client
-  "Builds an IAuthorization client over a DataScript conn.
+  "Builds an EACL acl over a DataScript conn.
 
   Options (unknown keys throw :eacl/invalid-config - a silently ignored key
   means silently wrong ID coercion, audit 5):
   - :entid->object-id  (fn [db eid] external-id) - canonical.
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
-  - :cache - omitted creates a bounded client-private current-generation
+  - :cache - omitted creates a bounded client-private basis
     cache; eacl.cache/no-cache disables it; a config map bounds it.
-    Exact hits are snapshot-local; complete native generation proofs let
-    unchanged answers survive unrelated forward transactions. Authorization
+    Exact hits require complete basis identity; complete native generation
+    proofs may lift unchanged answers between ordinary bases in the same
+    lifecycle in either revision direction. Authorization
     mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides.
@@ -144,6 +112,16 @@
   values and rejects :at-exact-snapshot before cache access."
   [conn config-opts]
   (orchestration/make-client api conn config-opts))
+
+(defn snapshot
+  "Constructs a public snapshot over an application-owned DataScript DB."
+  [acl db]
+  (orchestration/direct-snapshot acl :datascript db))
+
+(defn db
+  "Returns the immutable DataScript DB wrapped by `snapshot`."
+  [snapshot]
+  (orchestration/snapshot-db snapshot :datascript))
 
 (defn create-conn
   "A DataScript connection carrying EACL's schema. See

@@ -2,22 +2,24 @@
   "Owned explicit-snapshot storage operations for the EACL v8 engine."
   (:require [clojure.set :as set]
             [datalevin.core :as d]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.impl :as impl]))
 
-(def capabilities
+(def adapter-capabilities
+  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+   ;; Datalevin persistent datoms do not expose their original transaction.
+   ;; No ordered-generation proof is claimed by the initial adapter.
+   :cache-proofs #{:snapshot-bound :database-visible}
+   :runtime #{:clj}})
+
+(def source-capabilities
   {:consistency #{:minimize-latency
                   :fully-consistent
                   :at-least-as-fresh}
    :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
-   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
-   :transactions #{:schema :relationships :object-deletion}
-   ;; Datalevin persistent datoms do not expose their original transaction.
-   ;; No ordered-generation proof is claimed by the initial adapter.
-   :cache-proofs #{:snapshot-bound :database-visible}
    :runtime #{:clj}})
 
 (def execution-constraints
@@ -56,6 +58,24 @@
        :maximum backend/maximum-exact-integer})))
   value)
 
+(defn basis-kind
+  "Classifies the only Datalevin value admitted by the public constructor."
+  [value]
+  (if (d/read-snapshot? value) :ordinary :foreign-backend))
+
+(defn database-source-scope
+  "Reads the durable Datalevin source UUID from an open read snapshot."
+  [snapshot]
+  (when (= :ordinary (basis-kind snapshot))
+    (ddb/with-db
+      snapshot
+      (fn [db]
+        (when-let [source-id
+                   (:eacl.datalevin/source-id
+                    (d/entity db [:eacl/id "datalevin-metadata"]))]
+          {:source-id (str source-id)
+           :branch nil})))))
+
 (defn- normalized-permission
   [permission]
   {:permission-id (exact-natural! :permission-id (:db/id permission))
@@ -72,40 +92,26 @@
     (throw
      (ex-info
       "Datalevin EACL adapters require a public explicit read snapshot."
-      {:type :eacl/invalid-selected-snapshot
-       :eacl/error :eacl/invalid-selected-snapshot
+      {:type :eacl/invalid-selected-basis
+       :eacl/error :eacl/invalid-selected-basis
        :backend :datalevin})))
   (let [info (d/read-snapshot-revision-info snapshot)]
     (exact-natural! :revision (:max-tx info))
     (exact-natural! :max-eid (:max-eid info))
     info))
 
-(defn snapshot-adapter
+(def adapter-config-keys
+  #{:object-id->entid :entid->object-id
+    :adapter-fingerprint :adapter-deterministic? :identity-contract})
+
+(defn basis-adapter
   "Creates an immutable v8 adapter around one open Datalevin read snapshot.
   The provider retains ownership; every operation binds the snapshot's one
   explicit native reader and eagerly realizes its result before returning."
   [snapshot {:keys [object-id->entid entid->object-id] :as opts}]
+  (backend/validate-adapter-config! :datalevin adapter-config-keys opts)
   (let [info (snapshot-revision-info snapshot)
-        revision (:max-tx info)
-        source-lifecycle
-        (or (some-> (:source-lifecycle-state opts) deref)
-            (:source-lifecycle opts))
-        source-scope
-        (or (:source-scope opts)
-            {:source-id (:native-source-id opts)
-             :branch nil})
-        adapter-opts
-        (-> opts
-            (dissoc :source-lifecycle-state)
-            (assoc :source-lifecycle source-lifecycle
-                   :source-scope source-scope))]
-    (when-not (some? (:source-id source-scope))
-      (throw
-       (ex-info
-        "Datalevin requires a persisted stable source identity."
-        {:type :eacl/invalid-source-identity
-         :eacl/error :eacl/invalid-source-identity
-         :backend :datalevin})))
+        revision (:max-tx info)]
     (backend/make-adapter
      {:id :datalevin
       :traversal-execution backend/strict-sequential-traversal-execution
@@ -114,7 +120,7 @@
       :identity-contract
       (:identity-contract opts
                           :selected-internal/current-external-injective-v2)
-      :capabilities capabilities
+      :capabilities adapter-capabilities
       :runtime-guards? true
       :state {:db snapshot
               :revision revision
@@ -125,8 +131,8 @@
          {:database-id :datalevin
           :basis-t revision})
 
-       :source-scope (constantly source-scope)
-       :source-lifecycle (constantly source-lifecycle)
+       :basis-kind (fn [] (basis-kind snapshot))
+
        :native-revision
        (fn [] {:revision revision :exact-locator nil})
        :order-hint (constantly revision)
@@ -138,20 +144,7 @@
                             % :eacl/schema-generation))
                     :v)))
 
-       ;; These adapter-level operations exist for the closed v8 contract.
-       ;; Provider-based public orchestration owns cross-request acquisition.
-       :select-current
-       (fn [] (snapshot-adapter snapshot adapter-opts))
-       :select-authoritative
-       (fn [_timeout-ms] (snapshot-adapter snapshot adapter-opts))
-       :select-at-least
-       (fn [token-data _timeout-ms]
-         (if (>= revision (exact-natural! :token-revision
-                                          (:revision token-data)))
-           (snapshot-adapter snapshot adapter-opts)
-           nil))
        :exact-locator (constantly nil)
-       :select-exact (fn [_token-data _timeout-ms] nil)
 
        :object-id->internal
        (fn [object-id]
@@ -256,10 +249,10 @@
     (str source-id)))
 
 (defn- acquire-owned!
-  [conn opts]
+  [conn adapter-options]
   (let [snapshot (d/open-read-snapshot conn)]
     (try
-      {:adapter (snapshot-adapter snapshot opts)
+      {:adapter (basis-adapter snapshot adapter-options)
        :ownership :owned
        :release-token snapshot}
       (catch #?(:clj Throwable :cljs :default) error
@@ -316,24 +309,25 @@
              :unsafe-env-flags unsafe-flags})))]
     snapshot-capabilities))
 
-(defn provider
-  "Builds the owned, platform-thread-affine snapshot provider for one
+(defn source
+  "Builds the owned, platform-thread-affine basis source for one
   qualified local embedded Datalevin connection."
   [conn opts]
   (let [_ (validate-topology! conn opts)
         source-scope {:source-id (:native-source-id opts) :branch nil}
         opts (assoc opts :source-scope source-scope)
+        adapter-options (select-keys opts adapter-config-keys)
         source-lifecycle
         (fn []
           (or (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))]
-    (snapshot-provider/make-provider
+    (source/make-source
      {:id :datalevin
-      :capabilities capabilities
+      :capabilities source-capabilities
       :traversal-execution backend/strict-sequential-traversal-execution
       :topology topology
       :execution-constraints execution-constraints
-      :snapshot-ownership :owned
+      :basis-ownership :owned
       :fingerprint
       (or (:adapter-fingerprint opts)
           {:backend :datalevin
@@ -343,13 +337,14 @@
       :operations
       {:source-scope (constantly source-scope)
        :source-lifecycle source-lifecycle
-       :acquire-current! (fn [] (acquire-owned! conn opts))
+       :acquire-current! (fn [] (acquire-owned! conn adapter-options))
        :acquire-authoritative!
-       (fn [_timeout-ms] (acquire-owned! conn opts))
+       (fn [_timeout-ms] (acquire-owned! conn adapter-options))
        ;; Shared consistency orchestration compares the revision, closes an
        ;; insufficient candidate, preserves the original deadline, and retries.
        :acquire-at-least!
-       (fn [_token-data _remaining-ms] (acquire-owned! conn opts))
+       (fn [_token-data _remaining-ms]
+         (acquire-owned! conn adapter-options))
        :acquire-exact!
        (fn [_token-data _timeout-ms]
          (throw

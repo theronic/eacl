@@ -3,7 +3,7 @@
              :refer [deftest is testing]]
             [clojure.string :as str]
             [datascript.core :as ds]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.cache :as cache]
@@ -93,7 +93,7 @@
                               (when (identical? conn candidate)
                                 (swap! db-calls inc))
                               (original-db candidate))]
-          (binding [snapshot-provider/*provider-op-stats* provider-calls]
+          (binding [source/*source-op-stats* provider-calls]
             (f)))]
     {:value value
      :provider-calls @provider-calls
@@ -283,17 +283,15 @@
          (demand bob :view folder-2)
          (demand alice :view document)]
         result
-        (eacl/with-snapshot
-          client
-          (fn [view]
+        (eacl/with-snapshot [snapshot (eacl/snapshot client)]
             (let [oracle
                   (mapv #(eacl/check-permission
-                          view (assoc % :cache? false))
+                          snapshot (assoc % :cache? false))
                         checks)
                   actual
                   (eacl/check-permissions
-                   view {:checks checks :cache? false})]
-              {:oracle oracle :actual actual})))]
+                   snapshot {:checks checks :cache? false})]
+              {:oracle oracle :actual actual}))]
     (is (= (:oracle result) (:actual result)))
     (is (= [true true false false false true true]
            (mapv :allowed? (:actual result))))
@@ -323,13 +321,11 @@
           (binding [request-counters/*ledger* ledger]
             (observed-call
              conn
-             #(eacl/with-snapshot
-                client
-                (fn [view]
+             #(eacl/with-snapshot [snapshot (eacl/snapshot client)]
                   (eacl/check-permissions
-                   view
+                   snapshot
                    {:checks [(demand alice :view document)]
-                    :cache? false})))))
+                    :cache? false}))))
           counts (request-counters/snapshot ledger)]
       (is (true? (get-in observation [:value 0 :allowed?])))
       (is (= 1 (:acquire-current! (:provider-calls observation) 0)))

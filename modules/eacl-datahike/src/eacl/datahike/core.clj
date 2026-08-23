@@ -61,8 +61,11 @@
    :db d/db
    :entid ddb/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))
-   :snapshot-adapter datahike-backend/snapshot-adapter
-   :snapshot-provider datahike-backend/provider
+   :basis-adapter datahike-backend/basis-adapter
+   :basis-adapter-config-keys datahike-backend/adapter-config-keys
+   :source datahike-backend/source
+   :basis-kind datahike-backend/basis-kind
+   :database-source-scope datahike-backend/database-source-scope
    :db-native-revision
    (fn [db]
      {:revision (:max-tx db)
@@ -74,6 +77,7 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :generation #'schema/current-schema-generation
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
@@ -84,48 +88,11 @@
           :read-relationships #'impl/read-relationships}
    :extra-client-opt-keys #{}})
 
-(defn datahike-read-relationships
-  [db opts filters]
-  (orchestration/read-relationships api db opts filters))
-
-(defn datahike-write-relationships!
-  [conn opts updates]
-  (orchestration/write-relationships! api conn opts updates))
-
-(defn datahike-delete-object!
-  [conn opts object]
-  (orchestration/delete-object! api conn opts object))
-
-(defn datahike-check-permission
-  [db opts subject permission resource consistency]
-  (orchestration/check-permission
-   api db opts subject permission resource consistency))
-
-(defn datahike-can?
-  [db opts subject permission resource consistency]
-  (orchestration/can? api db opts subject permission resource consistency))
-
-(defn datahike-lookup-resources
-  [db opts query]
-  (orchestration/lookup-resources api db opts query))
-
-(defn datahike-count-resources
-  [db opts query]
-  (orchestration/count-resources api db opts query))
-
-(defn datahike-lookup-subjects
-  [db opts query]
-  (orchestration/lookup-subjects api db opts query))
-
-(defn datahike-count-subjects
-  [db opts query]
-  (orchestration/count-subjects api db opts query))
-
 (defn- require-datahike-client!
   [client fn-name]
   (when-not (orchestration/client? client :datahike)
     (throw (ex-info (str fn-name " requires a Datahike EACL client.")
-                    {:type :eacl/invalid-client}))))
+                    {:type :eacl/invalid-client :eacl/error :eacl/invalid-client}))))
 
 (defn expire-cache!
   "Rotates one Datahike client's local cache/token lifecycle."
@@ -150,21 +117,32 @@
   (orchestration/cache-stats client))
 
 (defn make-client
-  "Builds an IAuthorization client over a datahike conn.
+  "Builds an EACL acl over a datahike conn.
 
   Options (unknown keys throw :eacl/invalid-config - a silently ignored key
   means silently wrong ID coercion, audit 5):
   - :entid->object-id  (fn [db eid] external-id) - canonical.
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
-  - :cache - omitted creates a bounded client-private current-generation
+  - :cache - omitted creates a bounded client-private basis
     cache; eacl.cache/no-cache disables it; a config map bounds it.
-    Exact hits are snapshot-local; complete native generation proofs let
-    unchanged answers survive unrelated forward transactions. Authorization
+    Exact hits require complete basis identity; complete native generation
+    proofs may lift unchanged answers between ordinary bases in the same
+    lifecycle in either revision direction. Authorization
     mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn config-opts]
   (orchestration/make-client api conn config-opts))
+
+(defn snapshot
+  "Constructs a public snapshot over an application-owned Datahike DB."
+  [acl db]
+  (orchestration/direct-snapshot acl :datahike db))
+
+(defn db
+  "Returns the immutable Datahike DB wrapped by `snapshot`."
+  [snapshot]
+  (orchestration/snapshot-db snapshot :datahike))
 
 (defn create-conn
   "A datahike connection carrying EACL's schema. See

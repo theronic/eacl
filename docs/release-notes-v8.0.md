@@ -1,7 +1,7 @@
 # EACL 8.0.0 candidate release notes
 
 EACL v8 replaces the proof-per-hit cache candidate with a client-private
-current-generation cache, adds recoverable query-scoped cursors, and makes the
+basis cache, adds recoverable query-scoped cursors, and makes the
 current DB visible to the local backend the default consistency contract.
 Exact snapshot pinning remains available on history-capable backends; DataScript
 is deliberately current-only and rejects `at-exact-snapshot`. These are
@@ -183,22 +183,19 @@ permission check.
 ## Completed-answer cache
 
 Each Datomic, Datahike, DataScript, and Datalevin client owns a bounded native cache. It
-has three sound reuse rules:
+has two sound reuse rules:
 
-1. **Exact-current:** accept an entry only for the identical immutable selected
-   DB generation.
-2. **Managed-current:** under an explicit stamped-writer contract, accept an
+1. **Exact-basis:** accept an entry only for the identical complete immutable
+   basis identity. Ordinary and authenticated historical selections share this
+   bounded tier while retaining separate basis generations.
+2. **Managed lift:** under an explicit stamped-writer contract, accept an
    entry when its schema generation and relevant dependency stamp still match.
-3. **Snapshot-exact:** after authenticated exact selection, accept only the
-   complete answer with the identical source/lifecycle, native locator,
-   ordinary-view, adapter/identity, engine, request, result, demand, and limit
-   identity.
 
 The cache is an optimization over the cache-free evaluator. It does not define
-authorization; snapshot-exact retention accelerates, but never creates,
+authorization; exact-basis retention accelerates, but never creates,
 backend time travel.
 
-### Exact-current tier
+### Exact-basis tier
 
 - Datomic uses the selected current basis as its generation identity.
 - Datahike uses immutable DB object identity.
@@ -206,8 +203,9 @@ backend time travel.
   avoiding numeric `max-tx` collisions after reset.
 - Datalevin uses backend/source/lifecycle/revision identity and performs exact
   selected-revision reuse only. It does not fingerprint physical schema.
-- A transaction replaces the exact generation. No schema/relationship proof
-  calculation occurs on an exact hit.
+- A bounded LRU retains exact generations; each owns its answers and
+  subproblem/projection store. No schema or relationship proof calculation
+  occurs on an exact hit.
 - Publication captures the generation/lifecycle. A delayed computation cannot
   repopulate a newer or explicitly expired lifecycle.
 - Retained historical exact answers share one bounded weighted/LRU composite
@@ -246,7 +244,7 @@ projections) under one relation-stamp framing:
   reusable zero value.
 - All proof-capable backends read the current physical `:eacl/relation-version` assertion;
   a missing assertion is a fail-closed miss and has no fallback.
-- Custom object-ID codecs remain exact-current-only unless they supply the
+- Custom object-ID codecs remain exact-basis-only unless they supply the
   additional deterministic dependency contract.
 - Randomized cached-versus-cache-free differential oracles run with the
   managed tier active on the three ordered-proof backends, interleaving EACL-API writes
@@ -589,9 +587,9 @@ as replayed counterexamples against the stable engine.
 
 `formal/dafny/CurrentCache.dfy` proves:
 
-- arbitrary-DB completed-cache bypass and canonical exact-snapshot admission;
-- distinct current-exact, snapshot-exact, and managed hit/miss decisions;
-- snapshot-exact identity equality rather than numeric-revision equality;
+- inadmissible-basis completed-cache bypass and complete-identity admission;
+- distinct exact-basis and managed hit/miss decisions;
+- complete exact-basis identity equality rather than numeric-revision equality;
 - late publication cannot repopulate an expired lifecycle;
 - forward scalar-stamp invalidation;
 - relevant relationship projection framing for direct, self, arrow-relation,
@@ -658,7 +656,7 @@ coverage, explicit sequence accessors, and tree-shakeable exports.
 
 ## Performance evidence
 
-Earlier machine-local point measurements after the current-generation cache
+Earlier machine-local point measurements after the basis cache
 redesign:
 
 | Backend/path | Cached | Cache-disabled | Approximate speedup |

@@ -21,8 +21,7 @@
                    [operation (fn [& _] nil)]))
             backend/required-snapshot-operations)
        true
-       (assoc :snapshot-id (constantly {:basis 9})
-              :source-lifecycle (constantly "lifecycle-a"))
+       (assoc :snapshot-id (constantly {:basis 9}))
        (some? schema-generation)
        (assoc :schema-generation (constantly schema-generation))
        supported?
