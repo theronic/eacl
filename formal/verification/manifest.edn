@@ -160,7 +160,7 @@
  :datomic :certification-suite-passed
   :datascript :certification-suite-passed
   :datahike :certification-suite-passed
-  :datalevin :certification-suite-passed}
+  :datalevin :ordered-generation-certification-suite-passed}
  :runtime-targets
  {:clj-java
   {:boundary-smoke :passed
@@ -293,6 +293,10 @@
    :explorer-v8-release-report
    "formal/verification/explorer-v8-release.edn"
    :basis-first-cache-heavy-suite :passed
+   :datalevin-ordered-generations
+   {:status :passed
+    :report
+    "formal/verification/datalevin-ordered-generation-benchmark.edn"}
    :generated-authority-heavy-suite :passed
    :shared-subgraph-zero-final-hit :passed
    :completed-answer-hot-nonregression :passed
@@ -322,9 +326,9 @@
   :retired-invalid-controls 74}
  :source-closure
  {:report "formal/verification/public-source-closure.json"
-  :source-files 79
+  :source-files 80
   :public-roots 70
-  :reachable-definitions 1653}
+  :reachable-definitions 1673}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 46

@@ -9,7 +9,7 @@
 (def module-order
   [:eacl :eacl-datomic :eacl-datahike :eacl-datascript :eacl-datalevin])
 
-(def datalevin-fork-version "1.0.2-eacl.1")
+(def datalevin-fork-version "1.0.2-eacl.2")
 
 (def modules
   {:eacl

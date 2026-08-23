@@ -1,6 +1,8 @@
 (ns eacl.datalevin.schema
-  (:require [datalevin.core :as ds]
+  (:require [clojure.string :as str]
+            [datalevin.core :as ds]
             [eacl.datalevin.db :as ddb]
+            [eacl.datalevin.fork :as fork]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
@@ -9,9 +11,9 @@
   {:eacl/id {:db/valueType :db.type/string
              :db/unique :db.unique/identity}
    :eacl/schema-string {:db/valueType :db.type/string}
-   :eacl/schema-generation {:db/valueType :db.type/ref}
-   :eacl/schema-write-fence {:db/valueType :db.type/ref}
-   :eacl/relation-version {:db/valueType :db.type/ref}
+   :eacl.datalevin/schema-generation {:db/valueType :db.type/long}
+   :eacl.datalevin/schema-write-fence {:db/valueType :db.type/long}
+   :eacl.datalevin/relation-generation {:db/valueType :db.type/long}
    :eacl.datalevin/source-id {:db/valueType :db.type/uuid
                               :db/unique :db.unique/identity}
    :eacl.relation/resource-type {:db/valueType :db.type/keyword
@@ -69,19 +71,96 @@
   ([extra-schema]
    (merge datalevin-schema extra-schema)))
 
+(declare prepare-cache-coherence!)
+
+(defn- eacl-storage-attribute?
+  [attribute]
+  (let [attribute-namespace (some-> attribute namespace)]
+    (and (keyword? attribute)
+         (or (= "eacl" attribute-namespace)
+             (some-> attribute-namespace (str/starts-with? "eacl.")))
+         (not= :eacl/id attribute))))
+
+(defn- definition-attribute?
+  [attribute]
+  (or (= :eacl/schema-string attribute)
+      (contains? #{"eacl.relation" "eacl.permission"}
+                 (namespace attribute))))
+
+(defn- expected-write-policy
+  [conn]
+  (let [db (ds/db conn)
+        schema-eid (ds/entid db [:eacl/id "schema-string"])]
+    (when-not schema-eid
+      (throw
+       (ex-info
+        "Datalevin write-policy installation requires the schema singleton."
+        {:type :eacl.cache/generation-unprepared
+         :eacl/error :eacl.cache/generation-unprepared
+         :backend :datalevin
+         :missing :schema-singleton})))
+    (let [guarded (into #{} (filter eacl-storage-attribute?)
+                        (keys (ds/schema conn)))
+          definition-attributes (filter definition-attribute? guarded)]
+      {:guarded-attributes guarded
+       :frozen-attributes guarded
+       :commit-generation-attributes
+       #{:eacl.datalevin/schema-generation
+         :eacl.datalevin/schema-write-fence
+         :eacl.datalevin/relation-generation}
+       :stamp-rules
+       (into
+        [{:when-attribute relationship-storage/forward-attribute
+          :stamp-attribute :eacl.datalevin/relation-generation
+          :stamp-entity [:tuple-position 1]}
+         {:when-attribute relationship-storage/reverse-attribute
+          :stamp-attribute :eacl.datalevin/relation-generation
+          :stamp-entity [:tuple-position 1]}]
+        (map
+         (fn [attribute]
+           {:when-attribute attribute
+            :stamp-attribute :eacl.datalevin/schema-generation
+            :stamp-entity [:constant schema-eid]}))
+        definition-attributes)
+       :guarded-write-hint
+       "Protected EACL data requires the admitted writer; use delete-object! for permissioned-object relationship cleanup."})))
+
+(defn- generation-gaps
+  [db]
+  (let [schema-eid (ds/entid db [:eacl/id "schema-string"])
+        relations
+        (into [] (map :e)
+              (ddb/avet-datoms
+               db :eacl.relation/resource-type+relation-name+subject-type))]
+    (cond-> []
+      (nil? schema-eid)
+      (conj :schema-singleton)
+
+      (and schema-eid
+           (empty? (ds/datoms db :eav schema-eid
+                              :eacl.datalevin/schema-generation)))
+      (conj :eacl.datalevin/schema-generation)
+
+      (and schema-eid
+           (empty? (ds/datoms db :eav schema-eid
+                              :eacl.datalevin/schema-write-fence)))
+      (conj :eacl.datalevin/schema-write-fence)
+
+      true
+      (into
+       (for [relation-eid relations
+             :when (empty? (ds/datoms db :eav relation-eid
+                                      :eacl.datalevin/relation-generation))]
+         relation-eid)))))
+
 (defn create-conn
   ([] (create-conn nil nil nil))
   ([dir] (create-conn dir nil nil))
   ([dir extra-schema] (create-conn dir extra-schema nil))
   ([dir extra-schema store-options]
-   (let [conn (ds/get-conn dir (merge-schema extra-schema) store-options)]
-     (when-not
-      (ds/entid (ds/db conn) [:eacl/id "datalevin-metadata"])
-       (ds/transact!
-        conn
-        [{:eacl/id "datalevin-metadata"
-          :eacl.datalevin/source-id (random-uuid)}]))
-     conn)))
+   ;; Qualification and bootstrap belong to make-client. Merely opening a
+   ;; connection must not submit an unadmitted protected transaction.
+   (ds/get-conn dir (merge-schema extra-schema) store-options)))
 
 (def ^:private physical-schema-keys
   #{:db/valueType :db/cardinality :db/unique :db/index
@@ -100,9 +179,10 @@
 
 (defn ensure-physical-schema!
   "Installs missing EACL attributes on a quiesced embedded connection and
-  rejects any incompatible definition. Returns the persisted source UUID."
+  rejects any incompatible definition. Installs the storage write policy and
+  returns the persisted source UUID plus the per-open writer token."
   [conn]
-  (let [db (ds/db conn)
+  (let [existing-policy (fork/write-policy conn)
         actual (ds/schema conn)
         drift
         (into {}
@@ -131,23 +211,68 @@
     (let [db (ds/db conn)
           metadata (ds/entity db [:eacl/id "datalevin-metadata"])
           existing (:eacl.datalevin/source-id metadata)]
-      (cond
-        (uuid? existing) existing
-        (some? existing)
+      (when (and existing-policy (not (uuid? existing)))
         (throw
          (ex-info
-          "Datalevin source identity is not a UUID."
+          "A protected Datalevin store has no valid persisted source identity."
           {:type :eacl/invalid-source-identity
            :eacl/error :eacl/invalid-source-identity
            :backend :datalevin
-           :value existing}))
-        :else
-        (let [source-id (random-uuid)]
-          (ds/transact!
-           conn
-           [{:eacl/id "datalevin-metadata"
-             :eacl.datalevin/source-id source-id}])
-          source-id)))))
+           :value existing})))
+      (let [source-id
+            (cond
+              (uuid? existing) existing
+
+              (some? existing)
+              (throw
+               (ex-info
+                "Datalevin source identity is not a UUID."
+                {:type :eacl/invalid-source-identity
+                 :eacl/error :eacl/invalid-source-identity
+                 :backend :datalevin
+                 :value existing}))
+
+              :else
+              (let [source-id (random-uuid)]
+                (ds/transact!
+                 conn
+                 [{:eacl/id "datalevin-metadata"
+                   :eacl.datalevin/source-id source-id}])
+                source-id))]
+        ;; The constant schema stamp selector needs a durable eid, but the
+        ;; generation values themselves cannot use :db/current-tx until the
+        ;; policy declares them as commit-generation attributes.
+        (when-not existing-policy
+          (when-not (ds/entid (ds/db conn) [:eacl/id "schema-string"])
+            (ds/transact! conn [{:eacl/id "schema-string"}])))
+        (let [policy-result
+              (try
+                (fork/install-write-policy! conn (expected-write-policy conn))
+                (catch #?(:clj Throwable :cljs :default) error
+                  (throw
+                   (ex-info
+                    "Datalevin's persisted EACL write policy does not match the module contract."
+                    {:type :eacl.datalevin/write-policy-drift
+                     :eacl/error :eacl.datalevin/write-policy-drift
+                     :backend :datalevin}
+                    error))))
+              _ (when-not existing-policy
+                  (prepare-cache-coherence!
+                   conn (:write-token policy-result)))
+              gaps (generation-gaps (ds/db conn))]
+          (when (seq gaps)
+            (throw
+             (ex-info
+              "A protected Datalevin store has incomplete generation evidence."
+              {:type :eacl.cache/generation-unprepared
+               :eacl/error :eacl.cache/generation-unprepared
+               :backend :datalevin
+               :missing gaps})))
+          {:source-id source-id
+           :schema-eid (ds/entid (ds/db conn) [:eacl/id "schema-string"])
+           :write-token (:write-token policy-result)
+           :write-policy (:policy policy-result)
+           :fork-capabilities (:capabilities policy-result)})))))
 
 (def relation-pull
   [:eacl/id :eacl.relation/subject-type
@@ -191,12 +316,14 @@
 (defn prepare-cache-coherence!
   "Initializes missing physical schema/relation generations and the schema
   write fence additively."
-  [conn]
+  ([conn]
+   (prepare-cache-coherence! conn nil))
+  ([conn write-token]
   (let [db (ds/db conn)
         physical-schema (ds/schema conn)
-        _ (when-not (and (contains? physical-schema :eacl/schema-generation)
-                         (contains? physical-schema :eacl/schema-write-fence)
-                         (contains? physical-schema :eacl/relation-version))
+        _ (when-not (and (contains? physical-schema :eacl.datalevin/schema-generation)
+                         (contains? physical-schema :eacl.datalevin/schema-write-fence)
+                         (contains? physical-schema :eacl.datalevin/relation-generation))
             (throw
              (ex-info
               "Datalevin connection schema lacks native EACL generation attributes."
@@ -209,41 +336,53 @@
               (ddb/avet-datoms
                db :eacl.relation/resource-type+relation-name+subject-type))
         missing-schema?
-        (and schema-eid
-             (empty? (ds/datoms db :eav schema-eid
-                                :eacl/schema-generation)))
+        (or (nil? schema-eid)
+            (empty? (ds/datoms db :eav schema-eid
+                               :eacl.datalevin/schema-generation)))
         missing-schema-fence?
-        (and schema-eid
-             (empty? (ds/datoms db :eav schema-eid
-                                :eacl/schema-write-fence)))
+        (or (nil? schema-eid)
+            (empty? (ds/datoms db :eav schema-eid
+                               :eacl.datalevin/schema-write-fence)))
         missing-relations
         (filterv #(empty? (ds/datoms db :eav %
-                                    :eacl/relation-version))
+                                    :eacl.datalevin/relation-generation))
                  relation-eids)
         tx-data
-        (into (cond-> []
-                missing-schema?
-                (conj [:db/add schema-eid
-                       :eacl/schema-generation :db/current-tx])
+        (into (if (nil? schema-eid)
+                [(cond-> {:eacl/id "schema-string"}
+                   missing-schema?
+                   (assoc :eacl.datalevin/schema-generation :db/current-tx)
 
-                missing-schema-fence?
-                (conj [:db/add schema-eid
-                       :eacl/schema-write-fence :db/current-tx]))
-              (map #(vector :db/add % :eacl/relation-version :db/current-tx))
+                   missing-schema-fence?
+                   (assoc :eacl.datalevin/schema-write-fence :db/current-tx))]
+                (cond-> []
+                  missing-schema?
+                  (conj [:db/add schema-eid
+                         :eacl.datalevin/schema-generation :db/current-tx])
+
+                  missing-schema-fence?
+                  (conj [:db/add schema-eid
+                         :eacl.datalevin/schema-write-fence :db/current-tx])))
+              (map #(vector :db/add % :eacl.datalevin/relation-generation :db/current-tx))
               missing-relations)
-        report (when (seq tx-data) (ds/transact! conn tx-data))
+        report
+        (when (seq tx-data)
+          (ds/transact!
+           conn tx-data
+           (when write-token {:datalevin/write-token write-token})))
         db-after (if report (:db-after report) db)
+        schema-eid-after (ds/entid db-after [:eacl/id "schema-string"])
         schema-missing-after?
-        (and schema-eid
-             (empty? (ds/datoms db-after :eav schema-eid
-                                :eacl/schema-generation)))
+        (or (nil? schema-eid-after)
+            (empty? (ds/datoms db-after :eav schema-eid-after
+                               :eacl.datalevin/schema-generation)))
         schema-fence-missing-after?
-        (and schema-eid
-             (empty? (ds/datoms db-after :eav schema-eid
-                                :eacl/schema-write-fence)))
+        (or (nil? schema-eid-after)
+            (empty? (ds/datoms db-after :eav schema-eid-after
+                               :eacl.datalevin/schema-write-fence)))
         relation-missing-after
         (filterv #(empty? (ds/datoms db-after :eav %
-                                    :eacl/relation-version))
+                                    :eacl.datalevin/relation-generation))
                  relation-eids)]
     {:prepared? true
      :changed? (boolean report)
@@ -252,9 +391,9 @@
      :relation-generations-initialized (count missing-relations)
      :missing-after
      (cond-> relation-missing-after
-       schema-missing-after? (conj :eacl/schema-generation)
-       schema-fence-missing-after? (conj :eacl/schema-write-fence))
-     :db-after db-after}))
+       schema-missing-after? (conj :eacl.datalevin/schema-generation)
+       schema-fence-missing-after? (conj :eacl.datalevin/schema-write-fence))
+     :db-after db-after})))
 
 (def validate-schema-references model/validate-schema-references)
 (def compare-schema model/compare-schema)
@@ -283,39 +422,40 @@
 (defn current-schema-generation
   [db]
   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
-    (some-> (ds/datoms db :eav schema-eid :eacl/schema-generation)
+    (some-> (ds/datoms db :eav schema-eid :eacl.datalevin/schema-generation)
             first
             :v)))
 
 (defn- current-schema-write-fence
   [db]
   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
-    (some-> (ds/datoms db :eav schema-eid :eacl/schema-write-fence)
+    (some-> (ds/datoms db :eav schema-eid :eacl.datalevin/schema-write-fence)
             first
             :v)))
 
 (defn- ensure-schema-coherence!
-  "Bootstraps the schema singleton before its first guarded replacement.
-
-  Datalevin does not allow a tempid or :db/current-tx as a :db.fn/cas value,
-  so the first physical generation and fence must exist before the replacement
-  CAS. The parser, reference checks, and empty-schema guard run first."
+  "Bootstraps an unprotected store, but never repairs missing evidence after
+  write-policy installation. Protected stores fail closed."
   [conn]
   (loop []
     (let [db (ds/db conn)]
       (if (and (current-schema-generation db)
                (current-schema-write-fence db))
         db
-        (do
-          (ds/transact!
-           conn
-           [(cond-> {:eacl/id "schema-string"}
-              (nil? (current-schema-generation db))
-              (assoc :eacl/schema-generation :db/current-tx)
+        (throw
+         (ex-info
+          "Datalevin schema writes require prepared generation evidence."
+          {:type :eacl.cache/generation-unprepared
+           :eacl/error :eacl.cache/generation-unprepared
+           :backend :datalevin
+           :policy-installed? (boolean (fork/write-policy conn))
+           :missing
+           (cond-> []
+             (nil? (current-schema-generation db))
+             (conj :eacl.datalevin/schema-generation)
 
-              (nil? (current-schema-write-fence db))
-              (assoc :eacl/schema-write-fence :db/current-tx))])
-          (recur))))))
+             (nil? (current-schema-write-fence db))
+             (conj :eacl.datalevin/schema-write-fence))}))))))
 
 (defn- cas-failure-data
   [throwable]
@@ -327,22 +467,52 @@
           (recur #?(:clj (.getCause ^Throwable cause)
                     :cljs (ex-cause cause))))))))
 
+(defn- datalevin-failure-data
+  [throwable failure-type]
+  (loop [cause throwable]
+    (when cause
+      (let [data (ex-data cause)]
+        (if (= failure-type (:type data))
+          data
+          (recur #?(:clj (.getCause ^Throwable cause)
+                    :cljs (ex-cause cause))))))))
+
 (defn- transact-schema!
-  [conn tx-data expected-generation]
+  [conn tx-data expected-generation write-token]
   (try
-    (ds/transact! conn tx-data)
+    (ds/transact!
+     conn tx-data
+     (when write-token {:datalevin/write-token write-token}))
     (catch #?(:clj Throwable :cljs :default) throwable
-      (if-let [cause-data (cas-failure-data throwable)]
-        (throw
-         (ex-info
-          "The EACL schema changed concurrently; retry from the new database value."
-          {:type :eacl.schema/concurrent-write
-           :eacl/error :eacl.schema/concurrent-write
-           :expected-generation expected-generation
-           :actual-generation (current-schema-generation (ds/db conn))
-           :backend-error cause-data
-           :datalevin-error cause-data}
-          throwable))
+      (cond
+        (cas-failure-data throwable)
+        (let [cause-data (cas-failure-data throwable)]
+          (throw
+           (ex-info
+            "The EACL schema changed concurrently; retry from the new database value."
+            {:type :eacl.schema/concurrent-write
+             :eacl/error :eacl.schema/concurrent-write
+             :expected-generation expected-generation
+             :actual-generation (current-schema-generation (ds/db conn))
+             :backend-error cause-data
+             :datalevin-error cause-data}
+            throwable)))
+
+        (datalevin-failure-data throwable :datalevin/stale-generation)
+        (let [cause-data
+              (datalevin-failure-data throwable :datalevin/stale-generation)]
+          (fork/refresh-connection! conn)
+          (throw
+           (ex-info
+            "A shared Datalevin connection prepared the schema from a stale generation."
+            {:type :eacl.datalevin/stale-connection-generation
+             :eacl/error :eacl.datalevin/stale-connection-generation
+             :backend :datalevin
+             :expected-generation expected-generation
+             :datalevin-error cause-data}
+            throwable)))
+
+        :else
         (throw throwable)))))
 
 (defn write-schema!
@@ -358,6 +528,13 @@
   ([conn schema-string
     {:keys [allow-empty-schema?]}
     known-schema-generation]
+   (write-schema! conn schema-string
+                  {:allow-empty-schema? allow-empty-schema?}
+                  known-schema-generation nil))
+  ([conn schema-string
+    {:keys [allow-empty-schema?]}
+    known-schema-generation
+    write-token]
    (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
          _               (validate-schema-references new-schema-map)
          initial-db      (ds/db conn)
@@ -396,7 +573,7 @@
                             :relation rel
                             :count cnt})))))
      (let [relation-additions
-           (mapv #(assoc % :eacl/relation-version :db/current-tx)
+           (mapv #(assoc % :eacl.datalevin/relation-generation :db/current-tx)
                  (:additions relations))
            schema-eid (ds/entid db [:eacl/id "schema-string"])
            schema-generation
@@ -411,7 +588,7 @@
                     (ds/entid db [:eacl/id (:eacl/id relation)])
                     relation-generation
                     (some-> (ds/datoms db :eav relation-eid
-                                       :eacl/relation-version)
+                                       :eacl.datalevin/relation-generation)
                             first
                             :v)]
                 (when-not relation-generation
@@ -421,13 +598,13 @@
                     {:type :eacl.cache/generation-unprepared :eacl/error :eacl.cache/generation-unprepared
                      :backend :datalevin
                      :relation-id (:eacl/id relation)})))
-                [:db.fn/cas relation-eid :eacl/relation-version
+                [:db.fn/cas relation-eid :eacl.datalevin/relation-generation
                  relation-generation relation-generation]))
             relation-retractions)
            tx-data
            (vec
             (concat
-             [[:db.fn/cas schema-eid :eacl/schema-write-fence
+             [[:db.fn/cas schema-eid :eacl.datalevin/schema-write-fence
                schema-write-fence schema-write-fence]]
              relation-commit-guards
              relation-additions
@@ -443,9 +620,9 @@
              [{:db/id schema-eid
                :eacl/id "schema-string"
                :eacl/schema-string schema-string}
-              [:db/add schema-eid :eacl/schema-generation
+              [:db/add schema-eid :eacl.datalevin/schema-generation
                :db/current-tx]
-              [:db/add schema-eid :eacl/schema-write-fence
+              [:db/add schema-eid :eacl.datalevin/schema-write-fence
                :db/current-tx]]))
            stored-string
            (some-> (ds/entity db [:eacl/id "schema-string"])
@@ -459,7 +636,7 @@
                       (:retractions permissions)]))
            report
            (if changed?
-             (transact-schema! conn tx-data schema-generation)
+             (transact-schema! conn tx-data schema-generation write-token)
              {:db-before db
               :db-after db
               :tx-data []

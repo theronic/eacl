@@ -53,6 +53,15 @@
  {:every-invoke-operation-is-a-literal-keyword true
   :observed-equals-certified-snapshot-operations true
   :make-adapter-requires-callable-operation-implementations true}
+ :adapter-capability-coverage
+ {:datalevin
+  {:advertised-cache-proofs
+   #{:ordered-generations :snapshot-bound :database-visible}
+   :required-dispatch-operations #{:schema-generation :proof-frame}
+   :implementation
+   "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc"
+   :certification
+   "formal/verification/adapter-certification.edn"}}
  :remaining
  [:backend-operation-semantics-remain-basis-adapter-obligations
   :storage-engine-and-host-runtime-remain-trusted]}

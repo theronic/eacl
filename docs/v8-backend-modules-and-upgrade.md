@@ -12,7 +12,7 @@ depend on one adapter module; backend authors depend on core.
 | `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, targeted catch-up plus exact `d/as-of T` | certified generation reuse | authenticated; proof-equivalent current continuation or full-history exact reconstruction |
 | `eacl-datahike` | Clojure/JVM | current connection DB; durable temporal history when enabled, otherwise conditional retained-commit selection | certified generation reuse | authenticated; proof-equivalent current continuation or configuration-honest exact reconstruction |
 | `eacl-datascript` | Clojure and ClojureScript | current connection DB; no arbitrary exact selection | certified generation reuse | authenticated proof-equivalent current continuation |
-| `eacl-datalevin` | Clojure/JVM | fresh owned native read snapshot at the local embedded head; causal-floor polling; no historical exact selection | certified generation reuse | authenticated revision-bound continuation; no ordered-proof lifting |
+| `eacl-datalevin` | Clojure/JVM | fresh owned native read snapshot at the local embedded head; causal-floor polling; no historical exact selection | certified ordered-generation reuse | authenticated proof-equivalent current continuation |
 | `eacl` | Clojure and ClojureScript | supplied by an adapter | shared generation registry and request-local fallback | shared protocol, engine, proof, and cache implementation |
 
 Capabilities are configuration-specific and are validated before
@@ -32,7 +32,7 @@ public SCM revisions.
 | Datomic Pro | current Peer value | bounded `d/sync` then current | targeted catch-up | `d/as-of T` | yes | yes |
 | Datahike | current connection value | qualified writer head | revision/commit catch-up | durable with temporal history; otherwise retained-commit conditional | yes | yes |
 | DataScript | serialized current value | serialized current head | waits for connection revision | unsupported | yes | yes, in the in-process mutation topology |
-| Datalevin | fresh explicit native reader | same local sole-writer head guarantee | retries fresh readers to the authenticated revision floor | unsupported | yes, one snapshot-bound index probe | no; completed answers use exact selected-revision reuse only |
+| Datalevin | fresh explicit native reader | qualified local embedded head | retries fresh readers to the authenticated revision floor | unsupported | yes, one snapshot-bound index probe | yes; storage-enforced scalar commit generations |
 
 ## Aggregate capability matrix
 
@@ -53,11 +53,13 @@ candidate; it does not re-evaluate the permission. Every bundled adapter also
 implements the independent one-probe `:schema-generation` operation. This is a
 separate obligation from ordered-generation proof support.
 
-Datalevin's fully-consistent mode is not a replica barrier. The certified
-topology has one embedded connection and one direct synchronous writer, so a
-fresh read transaction is already the authoritative local head. Remote,
-replica, HA, WAL, multi-connection, multi-writer, and virtual-thread profiles
-are rejected during construction.
+Datalevin's fully-consistent mode is not a replica barrier. A fresh explicit
+reader on the qualified local embedded environment is the local-head
+linearization point. Remote, HA, WAL, virtual-thread, and unsafe LMDB profiles
+are rejected during construction. Multiple connection atoms in one process
+share the store and LMDB serializes commits. A writer from another process is
+detected by persisted `max-tx` continuity; the stale connection aborts and is
+write-unusable until reopened.
 
 All public list operations use Relay controls: `:first`/`:after` or
 `:last`/`:before`. Counts use optional `:count-limit`. `delete-object!` is
@@ -77,7 +79,7 @@ disabled:
 (datomic/make-client conn {:cache cache/no-cache})
 (datalevin/make-client conn {:cache cache/no-cache
                              ;; plus mandatory lifecycle, watermark,
-                             ;; signing, and topology options
+                             ;; and signing options
                              })
 ```
 
@@ -85,8 +87,9 @@ Every bundled adapter also certifies EACL's schema generation independently
 of ordered relationship-generation proofs. The selected adapter memoizes the
 one-probe read. A bounded generation registry reuses validation catalogs,
 permission paths, dependency closures, routing analysis, direct-grant
-relations, and sealed plans across relationship-only revisions. This applies
-to Datalevin even though its completed answers cannot lift across revisions.
+relations, and sealed plans across relationship-only revisions. Datalevin also
+lifts completed answers and managed subproblems when its complete scalar proof
+frame remains equal across revisions.
 An uncertified third-party adapter receives the same reuse within one request
 only; native revision is not used as a derived-state fallback.
 
@@ -107,11 +110,15 @@ hit.
 
 All authorization-relevant schema, relationship, identity/liveness, repair,
 and safe-deletion mutations must use EACL APIs or documented EACL transaction
-data/functions transacted intact. Unsupported raw mutation can leave stale
-proof-backed state. Recovery requires quiescing affected traffic, repairing
-data, expiring or recreating every affected client in every process, and then
-resuming. `prepare-cache-coherence!`, an identical `write-schema!`, and cache
-rotation are not data repair.
+data/functions transacted intact. Datalevin additionally enforces this at its
+datom transaction and administrative boundaries: unadmitted protected writes,
+missing or stale stamps, and frozen-schema mutation abort atomically. Direct KV
+writes, file modification, or opening the database with an upstream artifact
+remain outside that boundary and can leave stale proof-backed state. Recovery
+requires quiescing affected traffic, repairing data, expiring or recreating
+every affected client in every process, and then resuming.
+`prepare-cache-coherence!`, an identical `write-schema!`, and cache rotation
+are not data repair.
 
 The exact lifecycle functions are:
 
@@ -170,7 +177,7 @@ peer-only ghost; a missing lookup ref cannot recover the former eid.
 | DataScript direct in-process form | `eacl.datascript.safe-retraction/prepare!` |
 | Datahike function-safe named topology | `eacl.datahike.safe-retraction/install!` |
 | Datahike direct in-process topology | `eacl.datahike.safe-retraction/prepare!` |
-| Datalevin qualified embedded topology | `eacl.datalevin.safe-retraction/prepare!` |
+| Datalevin qualified embedded profile | call `eacl.datalevin.safe-retraction/prepare!`, then submit through `eacl.datalevin.safe-retraction/transact-retract-entity!` |
 | Function-unsafe remote topology | use `delete-object!`, then native entity deletion |
 
 Do not combine relationship additions involving a target with safe retraction

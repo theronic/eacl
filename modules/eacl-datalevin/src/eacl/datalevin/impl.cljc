@@ -241,7 +241,7 @@
 
 (defn tx-relation-version-stamp
   [relation-id]
-  [:db/add relation-id :eacl/relation-version :db/current-tx])
+  [:db/add relation-id :eacl.datalevin/relation-generation :db/current-tx])
 
 (defn- guard-schema-write-fence
   "Fences client-planned relationship data against concurrent schema writes.
@@ -256,7 +256,7 @@
           write-fence
           (when schema-eid
             (some-> (ds/datoms db :eav schema-eid
-                               :eacl/schema-write-fence)
+                               :eacl.datalevin/schema-write-fence)
                     first
                     :v))]
       (when-not write-fence
@@ -266,7 +266,7 @@
           {:type :eacl.cache/generation-unprepared :eacl/error :eacl.cache/generation-unprepared
            :backend :datalevin})))
       (into
-       [[:db.fn/cas schema-eid :eacl/schema-write-fence
+       [[:db.fn/cas schema-eid :eacl.datalevin/schema-write-fence
          write-fence write-fence]]
        tx-data))
     []))
@@ -703,7 +703,7 @@
                       (keep (fn [op]
                               (when (and (vector? op)
                                          (= :db/add (first op))
-                                         (= :eacl/relation-version
+                                         (= :eacl.datalevin/relation-generation
                                             (nth op 2 nil)))
                                 (nth op 1))))
                       ops)]

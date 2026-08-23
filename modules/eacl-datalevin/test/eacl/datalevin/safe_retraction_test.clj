@@ -31,9 +31,7 @@
              {:security-key test-key
               :source-lifecycle "safe-retraction-test"
               :revision-watermark watermark
-              :advance-revision-watermark! #(swap! watermark max %)
-              :datalevin-topology
-              backend/certified-topology-declaration})]
+              :advance-revision-watermark! #(swap! watermark max %)})]
         (eacl/write-schema! client logical-schema)
         (f conn client))
       (finally
@@ -44,6 +42,14 @@
   [db eid]
   {:forward (mapv :v (d/datoms db :eav eid storage/forward-attribute))
    :reverse (mapv :v (d/datoms db :eav eid storage/reverse-attribute))})
+
+(defn- error-type
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (:type (ex-data error)))))
 
 (deftest direct-safe-retraction-uses-the-transaction-database-schema-test
   (with-system
@@ -73,10 +79,19 @@
             unrelated (d/entid before [:eacl/id "other-folder"])]
         (is (seq (:reverse (halves before child))))
         (is (seq (:forward (halves before alice))))
-        (d/transact!
-         conn
-         (safe-retraction/direct-retract-entity-tx-data parent))
+        (is (= :datalevin/guarded-attribute-write
+               (error-type
+                #(d/transact!
+                  conn
+                  (safe-retraction/direct-retract-entity-tx-data parent)))))
+        (safe-retraction/transact-retract-entity! client parent)
         (let [after (d/db conn)]
+          (let [relation-id
+                (d/entid after
+                         [:eacl/id "eacl.relation::folder::viewer::user"])]
+            (is (= (:max-tx after)
+                   (:eacl.datalevin/relation-generation
+                    (d/entity after relation-id)))))
           (is (empty? (d/datoms after :eav parent)))
           (is (empty? (d/datoms after :eav child)))
           (is (empty? (:reverse (halves after child))))

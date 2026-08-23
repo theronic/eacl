@@ -31,7 +31,6 @@
                   :revision-watermark watermark
                   :advance-revision-watermark!
                   #(swap! watermark max %)
-                  :datalevin-topology backend/certified-topology-declaration
                   :security-key "01234567890123456789012345678901"})]
             (eacl/write-schema! client (:schema fixture))
             (d/transact!
@@ -45,33 +44,59 @@
                   selected (source/acquire! provider :current)]
               (try
                 (let [adapter (source/adapter selected)
+                      relation-ids
+                      (->> (:relations fixture)
+                           (mapcat
+                            (fn [{:keys [resource-type relation-name]}]
+                              (v8/invoke adapter :relation-defs
+                                         resource-type relation-name)))
+                           (mapv :relation-id)
+                           sort
+                           vec)
                       report
                       (certification/certify
-                      {:adapter adapter
+                       {:adapter adapter
                         :fixture fixture
                         :runtime :clj})]
                   (is (some? (v8/invoke adapter :schema-generation)))
                   (is (:passed? report) (pr-str (:checks report)))
-                  (is (= :not-claimed
-                         (:status
-                          (certification/certify-ordered-generation-transition!
-                           {:before-adapter adapter
-                            :after-adapter adapter
-                            :relation-ids []
-                            :affected-relation-ids []})))
-                      "the executable temporal gate records Datalevin's current conservative non-claim")
-                  (testing "persistent Datalevin transaction IDs are not exposed as proof generations"
-                    (is (= #{:snapshot-bound :database-visible}
+                  (testing "scalar generations are exposed as an ordered proof frame"
+                    (is (= #{:ordered-generations
+                             :snapshot-bound
+                             :database-visible}
                            (:cache-proofs (v8/capabilities adapter))))
-                    (is (not (v8/supports? adapter
-                                           :cache-proofs
-                                           :ordered-generations)))
-                    (is (= {:type :eacl/unsupported-capability
-                            :capability :operation
-                            :requested :proof-frame}
-                           (select-keys
-                            (error-data #(v8/operation adapter :proof-frame))
-                            [:type :capability :requested])))))
+                    (is (v8/supports? adapter
+                                      :cache-proofs
+                                      :ordered-generations))
+                    (is (= relation-ids
+                           (mapv first
+                                 (v8/invoke adapter :proof-frame
+                                            relation-ids)))))
+                  (let [relationship (first (:relationships fixture))
+                        affected-id
+                        (:relation-id
+                         (first
+                          (v8/invoke
+                           adapter :relation-defs
+                           (get-in relationship [:resource :type])
+                           (:relation relationship))))]
+                    (eacl/write-relationship!
+                     client
+                     {:operation :delete
+                      :subject (:subject relationship)
+                      :relation (:relation relationship)
+                      :resource (:resource relationship)})
+                    (let [after-selected (source/acquire! provider :current)]
+                      (try
+                        (is (= :certified
+                               (:status
+                                (certification/certify-ordered-generation-transition!
+                                 {:before-adapter adapter
+                                  :after-adapter (source/adapter after-selected)
+                                  :relation-ids relation-ids
+                                  :affected-relation-ids [affected-id]}))))
+                        (finally
+                          (source/release! after-selected))))))
                 (finally
                   (source/release! selected)))))
           (finally
@@ -81,12 +106,19 @@
 (deftest datalevin-durable-source-identity-certification-test
   (let [dir (u/tmp-dir (str "eacl-datalevin-source-cert-" (random-uuid)))
         first-conn (datalevin/create-conn dir)
+        watermark (atom 0)
+        opts {:source-lifecycle "durable-source-certification"
+              :revision-watermark watermark
+              :advance-revision-watermark! #(swap! watermark max %)
+              :security-key "01234567890123456789012345678901"}
+        _ (datalevin/make-client first-conn opts)
         first-scope
         {:source-id (backend/connection-source-id first-conn)
          :branch nil}]
     (d/close first-conn)
     (let [second-conn (datalevin/create-conn dir)]
       (try
+        (datalevin/make-client second-conn opts)
         (is (= :certified
                (:status
                 (certification/certify-live-source-identity!

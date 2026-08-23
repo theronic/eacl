@@ -5,13 +5,12 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datalevin.db :as ddb]
+            [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]))
 
 (def adapter-capabilities
   {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
-   ;; Datalevin persistent datoms do not expose their original transaction.
-   ;; No ordered-generation proof is claimed by the initial adapter.
-   :cache-proofs #{:snapshot-bound :database-visible}
+   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
 (def source-capabilities
@@ -27,20 +26,48 @@
    :snapshot-thread :acquiring-thread
    :release-thread :acquiring-thread})
 
-(def certified-topology-declaration
-  {:deployment :embedded
-   :jvms 1
-   :connections 1
-   :writers 1
-   :writer-ownership :application-exclusive
-   :commit-mode :direct-synchronous
-   :physical-schema :frozen
-   :request-threads :platform
-   :wal false})
-
 (def topology
-  (assoc certified-topology-declaration
-         :snapshot-values :owned-explicit))
+  {:deployment :embedded
+   :snapshot-values :owned-explicit
+   :writer-safety :storage-enforced})
+
+(def prepared-schema-eid-key
+  "Module-internal adapter option containing the frozen schema singleton eid."
+  ::prepared-schema-eid)
+
+(def required-write-policy-capabilities
+  {:version 1
+   :commit-generation-materialization true
+   :max-tx-continuity true
+   :post-expansion-enforcement true
+   :persisted-policy true
+   :per-open-admission-token true
+   :shared-store-stale-generation-recovery true})
+
+(defn validate-fork-capabilities!
+  "Requires executable fork support before module bootstrap may write."
+  [_conn]
+  (let [actual (fork/write-policy-capabilities)
+        missing-or-wrong
+        (into {}
+              (keep (fn [[capability required-value]]
+                      (when-not (= required-value (get actual capability))
+                        [capability
+                         {:required required-value
+                          :actual (get actual capability)}])))
+              required-write-policy-capabilities)]
+    (when (seq missing-or-wrong)
+      (throw
+       (ex-info
+        "The Datalevin artifact lacks required ordered-generation enforcement."
+        {:type :eacl/unsupported-capability
+         :eacl/error :eacl/unsupported-capability
+         :backend :datalevin
+         :capability :ordered-generations
+         :required required-write-policy-capabilities
+         :actual actual
+         :missing-or-wrong missing-or-wrong})))
+    actual))
 
 (defn exact-natural!
   [field value]
@@ -86,6 +113,22 @@
    :target-type (:eacl.permission/target-type permission)
    :target-name (:eacl.permission/target-name permission)})
 
+(defn- scalar-generation
+  [db entity-id attribute]
+  (some-> (first (d/datoms db :eav entity-id attribute)) :v))
+
+(defn- ordered-generation-frame
+  [snapshot relation-ids]
+  (ddb/with-db
+   snapshot
+   (fn [db]
+     (mapv
+      (fn [relation-id]
+        [relation-id
+         (scalar-generation
+          db relation-id :eacl.datalevin/relation-generation)])
+      relation-ids))))
+
 (defn- snapshot-revision-info
   [snapshot]
   (when-not (d/read-snapshot? snapshot)
@@ -102,7 +145,8 @@
 
 (def adapter-config-keys
   #{:object-id->entid :entid->object-id
-    :adapter-fingerprint :adapter-deterministic? :identity-contract})
+    :adapter-fingerprint :adapter-deterministic? :identity-contract
+    prepared-schema-eid-key})
 
 (defn basis-adapter
   "Creates an immutable v8 adapter around one open Datalevin read snapshot.
@@ -111,7 +155,10 @@
   [snapshot {:keys [object-id->entid entid->object-id] :as opts}]
   (backend/validate-adapter-config! :datalevin adapter-config-keys opts)
   (let [info (snapshot-revision-info snapshot)
-        revision (:max-tx info)]
+        revision (:max-tx info)
+        schema-eid
+        (exact-natural! :schema-entity-id
+                        (get opts prepared-schema-eid-key))]
     (backend/make-adapter
      {:id :datalevin
       :traversal-execution backend/strict-sequential-traversal-execution
@@ -139,10 +186,9 @@
        :schema-generation
        (fn []
          (ddb/with-db
-           snapshot
-           #(some-> (first (ddb/avet-datoms
-                            % :eacl/schema-generation))
-                    :v)))
+          snapshot
+          #(scalar-generation
+            % schema-eid :eacl.datalevin/schema-generation)))
 
        :exact-locator (constantly nil)
 
@@ -229,7 +275,11 @@
        (fn []
          (ddb/with-db
            snapshot
-           impl/all-permission-nodes))}})))
+           impl/all-permission-nodes))
+
+       :proof-frame
+       (fn [relation-ids]
+         (ordered-generation-frame snapshot relation-ids))}})))
 
 (defn connection-source-id
   "Reads the bounded source UUID installed in Datalevin module metadata.
@@ -260,9 +310,9 @@
         (throw error)))))
 
 (defn validate-topology!
-  "Rejects any connection/runtime/declaration outside the certified embedded
+  "Rejects any connection/runtime state outside the certified embedded
   Datalevin profile before module bootstrap is allowed to mutate the store."
-  [conn opts]
+  [conn _opts]
   (let [snapshot-capabilities (d/read-snapshot-capabilities conn)
         _
         (when-not (:supported? snapshot-capabilities)
@@ -273,17 +323,6 @@
              :eacl/error :eacl/unsupported-topology
              :backend :datalevin
              :reason (:reason snapshot-capabilities)})))
-        declared-topology (:datalevin-topology opts)
-        _
-        (when-not (= certified-topology-declaration declared-topology)
-          (throw
-           (ex-info
-            "Datalevin requires the exact certified sole-writer topology declaration."
-            {:type :eacl/unsupported-topology
-             :eacl/error :eacl/unsupported-topology
-             :backend :datalevin
-             :expected certified-topology-declaration
-             :actual declared-topology})))
         _
         (when (or (:wal? snapshot-capabilities)
                   (some? (:ha-mode snapshot-capabilities)))
@@ -296,7 +335,7 @@
              :wal? (:wal? snapshot-capabilities)
              :ha-mode (:ha-mode snapshot-capabilities)})))
         unsafe-flags
-        (set/intersection #{:nosync :nometasync :mapasync :writemap}
+        (set/intersection #{:nolock :nosync :nometasync :mapasync :writemap}
                           (:env-flags snapshot-capabilities))
         _
         (when (seq unsafe-flags)
