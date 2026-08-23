@@ -1046,9 +1046,11 @@
        conn
        (conj
         (mapv (fn [id] {:eacl/id id})
-              ["alice" "bob" "carol" "dave" "eve" "group-one"
-               "document-1" "document-2" "document-3"
-               "document-4" "document-5" "folder-1"])
+              (into
+               ["alice" "bob" "carol" "dave" "eve" "group-one"
+                "document-1" "document-2" "document-3"
+                "document-4" "document-5" "folder-1"]
+               (map #(str "adjacent-document-" %) (range 40))))
         {:db/id large-safe-id :eacl/id "document-large"}))
       (let [users (mapv #(eacl/spice-object :user %)
                         ["alice" "bob" "carol" "dave" "eve"])
@@ -1074,7 +1076,15 @@
              alice :viewer (eacl/spice-object :folder "folder-1"))
             (eacl/->Relationship
              (eacl/spice-object :group "group-one")
-             :reviewer document-1)])))
+             :reviewer document-1)]
+           ;; Force the forward viewer scan across the adaptive local-scan
+           ;; threshold. The fallback must still seek the exact viewer prefix
+           ;; rather than leak or omit these adjacent editor relationships.
+           (map
+            #(eacl/->Relationship
+              alice :editor
+              (eacl/spice-object :document (str "adjacent-document-" %)))
+            (range 40)))))
         ;; Reassertions exercise storage-level set semantics and adapter-level
         ;; duplicate suppression without creating another logical tuple.
         (dotimes [_ 2]
@@ -1086,6 +1096,8 @@
           (try
             (let [subject-id
                   (backend/invoke adapter :object-id->internal "alice")
+                  bob-id
+                  (backend/invoke adapter :object-id->internal "bob")
                   relation-id
                   (:relation-id
                    (first
@@ -1109,6 +1121,27 @@
                   scan (fn [operation prefix options]
                          (apply backend/invoke adapter operation
                                 (conj prefix options)))]
+              (testing "small endpoints avoid seek; large endpoints fall back"
+                (with-redefs [d/seek-datoms
+                              (fn [& _]
+                                (throw
+                                 (ex-info "Small endpoint opened a seek."
+                                          {:type :test/unexpected-seek})))]
+                  (is (= [document-id]
+                         (scan :subject->resources
+                               [:user bob-id relation-id :document]
+                               {:direction :asc}))))
+                (let [seek-calls (atom 0)
+                      original-seek d/seek-datoms]
+                  (with-redefs [d/seek-datoms
+                                (fn [& args]
+                                  (swap! seek-calls inc)
+                                  (apply original-seek args))]
+                    (is (= resource-ids
+                           (scan :subject->resources forward-prefix
+                                 {:direction :asc}))))
+                  (is (= 1 @seek-calls))))
+
               (testing "complete ordering, uniqueness, large safe IDs, and replay"
                 (doseq [[operation prefix expected]
                         [[:subject->resources forward-prefix resource-ids]

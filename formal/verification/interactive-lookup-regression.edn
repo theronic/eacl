@@ -1,4 +1,4 @@
-{:schema-version 2
+{:schema-version 3
  :recorded-at "2026-08-23"
  :change :eliminate-authorization-request-amplification
  :runtime {:os :macos
@@ -84,6 +84,60 @@
   {:warm-cache-bypass -27.4
    :warm-cache-hit -18.1
    :post-eviction-answer-miss -12.2}}
+ :adaptive-datalevin-follow-up
+ {:diagnosis
+  {:relationship-commands-per-user-page 14
+   :relationship-commands-per-super-user-page 18
+   :recursive-child-commands-per-page 10
+   :old-small-adjacency-operation
+   :open-bounded-native-seek-iterator-for-every-command
+   :small-adjacency-microbenchmark-p50-ms
+   {:bounded-seek 0.091542
+    :complete-eav-prefix 0.002584
+    :change-percent -97.2}}
+  :implementation
+  {:complete-endpoint-threshold 32
+   :completion-check :threshold-plus-one-sample
+   :small-endpoint-route :exact-eav-entity-attribute-prefix
+   :large-endpoint-route :existing-bounded-exact-prefix-seek
+   :ordering-and-cursor-semantics :unchanged
+   :deterministic-work-counters :unchanged}
+  :clean-jvm-core
+  {:warmup-pages-per-subject 2000
+   :user-1
+   {:before
+    {:warm-cache-bypass {:samples 201 :p50-ms 1.66925 :p95-ms 1.964041}
+     :forced-answer-miss {:samples 201 :p50-ms 1.960334 :p95-ms 2.155125}}
+    :after
+    {:warm-cache-bypass {:samples 501 :p50-ms 0.371042 :p95-ms 0.383958}
+     :forced-answer-miss {:samples 501 :p50-ms 0.5525 :p95-ms 0.595042}}
+    :p50-change-percent
+    {:warm-cache-bypass -77.8 :forced-answer-miss -71.8}}
+   :super-user
+   {:before
+    {:warm-cache-bypass {:samples 201 :p50-ms 2.060291 :p95-ms 2.219333}
+     :forced-answer-miss {:samples 201 :p50-ms 2.284 :p95-ms 2.765583}}
+    :after
+    {:warm-cache-bypass {:samples 501 :p50-ms 0.409541 :p95-ms 0.428333}
+     :forced-answer-miss {:samples 501 :p50-ms 0.595042 :p95-ms 0.694792}}
+    :p50-change-percent
+    {:warm-cache-bypass -80.1 :forced-answer-miss -73.9}}}
+  :loopback-http
+  {:user-1
+   {:warm-cache-bypass
+    {:samples 101 :eacl-p50-ms 0.998375 :http-wall-p50-ms 2.011}
+    :warm-cache-hit
+    {:samples 101 :eacl-p50-ms 0.441667 :http-wall-p50-ms 1.333}
+    :forced-answer-miss
+    {:samples 101 :eacl-p50-ms 1.394292 :http-wall-p50-ms 2.256}}
+   :super-user-forced-answer-miss
+   {:samples 101 :eacl-p50-ms 1.370459 :http-wall-p50-ms 2.146}}
+  :target
+  {:requested-core-p50-ms 2.0
+   :measured-user-core-p50-ms 0.5525
+   :measured-user-http-reported-eacl-p50-ms 1.394292
+   :status :passed
+   :scope :same-host-warmed-48-resource-fixture-not-a-portable-sla}}
  :implementation
  [:single-validation-pass-before-canonical-rendering
   :single-jca-aes-ctr-operation-per-jvm-cursor
@@ -94,7 +148,10 @@
   :unescaped-string-fast-path
   :ordinary-keyword-validation-fast-path
   :jvm-byte-array-cursor-pipeline
-  :bounded-concurrency-safe-jca-hmac-reuse]
+  :bounded-concurrency-safe-jca-hmac-reuse
+  :adaptive-small-endpoint-eav-prefix
+  :threshold-plus-one-completeness-guard
+  :bounded-seek-fallback-for-large-endpoints]
  :qualification
  :same-host-warmed-p50-observation-with-deterministic-work-counters-not-a-universal-latency-sla
  :status :passed}

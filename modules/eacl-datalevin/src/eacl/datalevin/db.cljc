@@ -12,6 +12,14 @@
 
 (def maximum-unpaged-scan-results 100000)
 
+(def ^:private small-endpoint-scan-threshold
+  "Maximum number of relationship datoms on one endpoint for the local scan
+  fast path. Datalevin's exact EAV prefix lookup is substantially cheaper than
+  opening a seek iterator for the small adjacency lists that dominate
+  interactive authorization. Larger endpoints retain the bounded exact-prefix
+  seek so unrelated relationships cannot amplify a requested scan."
+  32)
+
 (defn with-db
   "Runs `f` with a raw Datalevin DB. Public request paths pass an explicit
   read snapshot; raw compatibility helpers may pass a DB directly."
@@ -52,6 +60,36 @@
   [prefix {:keys [v]}]
   (endpoint-pair/value-prefix? v prefix))
 
+(defn- within-inclusive-cursor?
+  [direction cursor-eid {:keys [v]}]
+  (or (nil? cursor-eid)
+      (let [endpoint-eid (nth v 3)]
+        (if (= :desc direction)
+          (<= endpoint-eid cursor-eid)
+          (>= endpoint-eid cursor-eid)))))
+
+(defn- small-endpoint-prefix
+  "Returns an exact result for a small endpoint adjacency list, or nil when
+  the list crossed the threshold and the caller must use the bounded native
+  seek. The threshold+1 sample makes that choice without ever mistaking a
+  truncated sample for a complete adjacency list."
+  [db entity attr prefix cursor-eid direction native-limit]
+  (let [sample
+        (into []
+              (take (inc small-endpoint-scan-threshold))
+              (ds/datoms db :eav entity attr))]
+    (when (<= (count sample) small-endpoint-scan-threshold)
+      (let [matching
+            (into []
+                  (filter #(and (matches-prefix? prefix %)
+                                (within-inclusive-cursor?
+                                 direction cursor-eid %)))
+                  sample)
+            ordered (if (= :desc direction)
+                      (rseq matching)
+                      matching)]
+        (into [] (take native-limit) ordered)))))
+
 (defn eavt-endpoint-prefix
   "Endpoint datoms for an exact three-component value prefix.
 
@@ -69,19 +107,22 @@
                 (#{:asc :desc} direction)
                 (pos-int? native-limit))
      []
-     (let [tail  (or cursor-eid
-                     (if (= :desc direction) max-eid min-eid))
-           bound (conj prefix tail)
-           scan  (if (= :desc direction)
-                   (ds/rseek-datoms db :eav entity attr bound native-limit)
-                   (ds/seek-datoms db :eav entity attr bound native-limit))]
-       (into []
-             (take-while
-              (fn [{:keys [e a] :as datom}]
-                (and (= entity e)
-                     (= attr a)
-                     (matches-prefix? prefix datom))))
-             scan)))))
+     (or
+      (small-endpoint-prefix
+       db entity attr prefix cursor-eid direction native-limit)
+      (let [tail  (or cursor-eid
+                      (if (= :desc direction) max-eid min-eid))
+            bound (conj prefix tail)
+            scan  (if (= :desc direction)
+                    (ds/rseek-datoms db :eav entity attr bound native-limit)
+                    (ds/seek-datoms db :eav entity attr bound native-limit))]
+        (into []
+              (take-while
+               (fn [{:keys [e a] :as datom}]
+                 (and (= entity e)
+                      (= attr a)
+                      (matches-prefix? prefix datom))))
+              scan))))))
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
