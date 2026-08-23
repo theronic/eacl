@@ -6,6 +6,7 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-route :as stable-route]
@@ -1440,12 +1441,18 @@
 
 (declare continuation-outcome)
 
+(defn- continuation-stats
+  [client]
+  (some-> (get-in client [:runtime :continuation-cache-store])
+          continuation/stats))
+
 (defn assert-cursor-source-transition!
   "Checks one provider recreation/restart against the shared durability
   matrix. The caller owns backend setup and supplies the pre-transition page,
   the post-transition client, and the cache-free pre-transition oracle."
   [{:keys [client query first-page oracle-stream durability]}]
   (let [cursor (get-in first-page [:page-info :end-cursor])
+        before-stats (continuation-stats client)
         expected
         (get cursor-continuation-expectations
              (case durability
@@ -1455,21 +1462,30 @@
         (continuation-outcome
          #(eacl/lookup-resources
            client
-           (assoc query :after cursor :populate-cache? false)))]
+           (assoc query :after cursor :populate-cache? false)))
+        after-stats (continuation-stats client)]
     (case expected
       :same-lineage
       (do
         (is (nil? (:error outcome)))
         (is (= oracle-stream
                (into (:data first-page)
-                     (get-in outcome [:value :data])))))
+                     (get-in outcome [:value :data]))))
+        (when (and before-stats after-stats
+                   (ordered-generation-proofs? client))
+          (is (= (:hits before-stats) (:hits after-stats))
+              "a restarted client has no foreign private checkpoint")))
 
       :scope-mismatch
       (do
         (is (= :eacl.pagination/invalid-cursor
                (get-in outcome [:error :type])))
         (is (= :source-scope
-               (get-in outcome [:error :reason])))))))
+               (get-in outcome [:error :reason])))
+        (when (and before-stats after-stats)
+          (is (= (select-keys before-stats [:hits :misses])
+                 (select-keys after-stats [:hits :misses]))
+              "scope rejection precedes private checkpoint access"))))))
 
 (defn- exact-selection-capable-reader?
   [reader]
@@ -1515,10 +1531,12 @@
         reverse-cursor (get-in reverse-page [:page-info :start-cursor])
         expected cursor-continuation-expectations
         backend-work (atom {})
+        before-checkpoints (continuation-stats client)
         one-page
         (binding [backend/*backend-op-stats* backend-work]
           (eacl/lookup-resources
-           client (assoc query :after forward-cursor)))]
+           client (assoc query :after forward-cursor)))
+        after-checkpoints (continuation-stats client)]
     (testing "unrelated writes preserve forward and reverse oracle streams"
       (is (= :current (:unrelated-write expected)))
       (is (= (take (count (:data one-page))
@@ -1527,20 +1545,24 @@
       (is (= (if (ordered-generation-proofs? client) 1 0)
              (get @backend-work :proof-frame 0))
           "cursor, answer, and checkpoint decisions share one request frame")
+      (when (and before-checkpoints after-checkpoints
+                 (ordered-generation-proofs? client))
+        (is (> (:hits after-checkpoints) (:hits before-checkpoints))
+            "an equal-frame later basis resumes the private checkpoint"))
       (is (<= (get @backend-work :schema-generation 0) 1))
       (is (= oracle-stream
              (into (:data forward-page)
                    (forward-continuation-data
                     client query forward-cursor {}))))
-      (is (= oracle-stream
-             (into
-              (reverse-continuation-data
-               client
-               (-> query
-                   (dissoc :first)
-                   (assoc :last 2 :evaluation :complete-denotation))
-               reverse-cursor {})
-              (:data reverse-page)))))
+      (let [reverse-prefix
+            (reverse-continuation-data
+             client
+             (-> query
+                 (dissoc :first)
+                 (assoc :last 2 :evaluation :complete-denotation))
+             reverse-cursor {})]
+        (is (= oracle-stream
+               (into reverse-prefix (:data reverse-page))))))
     (testing "publication control cannot change continuation validity or data"
       (is (= :same-page (:populate-cache-false expected)))
       (is (= oracle-stream
@@ -1552,6 +1574,7 @@
 (defn- assert-relevant-write-continuation!
   [client query oracle-stream forward-page reverse-page]
   (let [exact? (boolean (exact-selection-capable-reader? client))
+        before-checkpoints (continuation-stats client)
         expected
         (get-in cursor-continuation-expectations
                 [:relevant-write
@@ -1568,7 +1591,11 @@
         reverse
         (continuation-outcome
          #(reverse-continuation-data
-           client reverse-query reverse-cursor {}))]
+           client reverse-query reverse-cursor {}))
+        after-checkpoints (continuation-stats client)]
+    (when (and before-checkpoints after-checkpoints)
+      (is (= (:hits before-checkpoints) (:hits after-checkpoints))
+          "a changed frame never resumes current private state"))
     (case expected
       :original-basis
       (do
@@ -1586,6 +1613,124 @@
         (is (= :frame-changed
                (get-in outcome [:error :reason])))))))
 
+(defn- assert-proof-equivalent-reverse-traversal!
+  [client folder denied]
+  ;; `lookup-subjects` drives the authorization engine in its reverse
+  ;; traversal direction. Unlike a descending `last`/`before` window, its
+  ;; `first`/`after` frontier advances monotonically and is checkpointable.
+  (eacl/create-relationship! client denied :reader (folder 0))
+  (let [query {:resource (folder (dec recursive-connected-folder-count))
+               :permission :selfread
+               :subject/type :user
+               :first 1}
+        oracle
+        (:data
+         (eacl/lookup-subjects
+          client
+          (assoc query
+                 :first 10
+                 :cache? false
+                 :populate-cache? false)))
+        first-page (eacl/lookup-subjects client query)
+        cursor (get-in first-page [:page-info :end-cursor])]
+    (is (true? (get-in first-page [:page-info :has-next-page?])))
+    (is (some? cursor))
+    ;; Auditor is outside the selfread proof closure, so ordered-generation
+    ;; backends retain an equal request frame across this write.
+    (eacl/create-relationship! client denied :auditor (folder 1))
+    (let [before-checkpoints (continuation-stats client)
+          backend-work (atom {})
+          second-page
+          (binding [backend/*backend-op-stats* backend-work]
+            (eacl/lookup-subjects client (assoc query :after cursor)))
+          after-checkpoints (continuation-stats client)]
+      (is (= oracle (into (:data first-page) (:data second-page))))
+      (is (= (if (ordered-generation-proofs? client) 1 0)
+             (get @backend-work :proof-frame 0))
+          "reverse cursor, answer, and checkpoint share one request frame")
+      (when (and before-checkpoints after-checkpoints
+                 (ordered-generation-proofs? client))
+        (is (> (:hits after-checkpoints) (:hits before-checkpoints))
+            "an equal-frame reverse traversal resumes its checkpoint")))))
+
+(defn- assert-retained-older-frame-checkpoint!
+  [client folder denied]
+  (let [older (eacl/snapshot client)
+        store (get-in client [:runtime :continuation-cache-store])
+        query {:resource (folder (dec recursive-connected-folder-count))
+               :permission :selfread
+               :subject/type :user
+               :first 1
+               :evaluation :complete-denotation}]
+    (try
+      (when store (continuation/clear! store))
+      (let [oracle
+            (:data
+             (eacl/lookup-subjects
+              older
+              (assoc query
+                     :first 10
+                     :cache? false
+                     :populate-cache? false)))]
+        ;; Advance the live source through a relation outside `selfread`, then
+        ;; publish page one from that newer, proof-equivalent basis.
+        (eacl/create-relationship! client denied :auditor (folder 2))
+        (let [first-page (eacl/lookup-subjects client query)
+              cursor (get-in first-page [:page-info :end-cursor])
+              before-checkpoints (continuation-stats client)
+              second-page
+              (eacl/lookup-subjects older (assoc query :after cursor))
+              after-checkpoints (continuation-stats client)]
+          (is (some? cursor))
+          (is (= oracle (into (:data first-page) (:data second-page))))
+          (when (and before-checkpoints after-checkpoints
+                     (ordered-generation-proofs? client))
+            (is (> (:hits after-checkpoints) (:hits before-checkpoints))
+                "an older retained equal-frame basis resumes newer state"))))
+      (finally
+        (eacl/release! older)))))
+
+(defn- assert-bounded-checkpoint-replay!
+  [client query oracle-stream]
+  (when (ordered-generation-proofs? client)
+    (testing "evicted checkpoints replay with a classified miss"
+      (let [store (continuation/make-store {:max-entries 1})
+            bounded-client
+            (assoc-in client [:runtime :continuation-cache-store] store)
+            query-a (assoc query :first 3
+                           :evaluation :complete-denotation)
+            query-b (assoc query :first 4
+                           :evaluation :complete-denotation)
+            first-page (eacl/lookup-resources bounded-client query-a)
+            cursor (get-in first-page [:page-info :end-cursor])
+            _ (eacl/lookup-resources bounded-client query-b)
+            before (continuation/stats store)
+            second-page
+            (eacl/lookup-resources
+             bounded-client (assoc query-a :after cursor))
+            after (continuation/stats store)]
+        (is (= (take 3 (drop 3 oracle-stream)) (:data second-page)))
+        (is (> (get-in after [:miss-reasons :evicted] 0)
+               (get-in before [:miss-reasons :evicted] 0)))))
+    (testing "overweight checkpoints replay with a classified miss"
+      (let [store
+            (continuation/make-store
+             {:max-weight 2048 :max-entry-weight 2048})
+            bounded-client
+            (assoc-in client [:runtime :continuation-cache-store] store)
+            page-query (assoc query :first 5
+                              :evaluation :complete-denotation)
+            first-page (eacl/lookup-resources bounded-client page-query)
+            cursor (get-in first-page [:page-info :end-cursor])
+            before (continuation/stats store)
+            second-page
+            (eacl/lookup-resources
+             bounded-client (assoc page-query :after cursor))
+            after (continuation/stats store)]
+        (is (= (take 5 (drop 5 oracle-stream)) (:data second-page)))
+        (is (> (get-in after [:miss-reasons :overweight] 0)
+               (get-in before [:miss-reasons :overweight] 0)))))))
+
 (defn assert-v8-recursive-contracts!
   [client]
   (let [subject (->user "recursive-user")
@@ -1595,13 +1740,13 @@
                :permission :read
                :resource/type :folder
                :first 2}
-        pages (lookup-all-resource-pages client query)
-        forward-page (first pages)
+        pages
+        (lookup-all-resource-pages
+         client (assoc query :populate-cache? false))
         reverse-query
         (-> query
             (dissoc :first)
             (assoc :last 2 :evaluation :complete-denotation))
-        reverse-page (eacl/lookup-resources client reverse-query)
         oracle-stream
         (:data
          (eacl/lookup-resources
@@ -1609,7 +1754,12 @@
           (assoc query
                  :first 20
                  :cache? false
-                 :populate-cache? false)))]
+                 :populate-cache? false)))
+        ;; The exhaustive fixture/oracle walks deliberately publish no
+        ;; checkpoints. These adjacent first pages establish the exact
+        ;; frontiers later used by the unrelated-write conformance case.
+        forward-page (eacl/lookup-resources client query)
+        reverse-page (eacl/lookup-resources client reverse-query)]
     (assert-v8-recursive-batch-contract! client)
 
     (testing "recursive results match an independent least-fixed-point oracle"
@@ -1709,7 +1859,19 @@
           (is (false? (:cached? after-relevant-schema-write)))
           (is (= (mapv folder
                        (range (inc recursive-connected-folder-count)))
-                 (:data after-relevant-schema-write)))))
+                 (:data after-relevant-schema-write))))
+
+        (testing "proof-equivalent writes resume reverse traversals"
+          (assert-proof-equivalent-reverse-traversal!
+           client folder denied))
+
+        (testing "newer checkpoints resume on retained older equal frames"
+          (assert-retained-older-frame-checkpoint!
+           client folder denied))
+
+        (assert-bounded-checkpoint-replay!
+         client query
+         (mapv folder (range (inc recursive-connected-folder-count)))))
 
       (eacl/delete-object! client (folder recursive-connected-folder-count))
       (let [after-delete

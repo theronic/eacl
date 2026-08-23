@@ -11,17 +11,29 @@
   - The interior-admission-key counterexample: entity-only grant keys would
     lose results on permission-alias chains."
   (:require [clojure.string :as string]
-            [clojure.test :refer [deftest is testing]]
+            [#?(:clj clojure.test :cljs cljs.test)
+             :refer [deftest is testing]]
             [datascript.core :as ds]
-            [eacl.baseline.capture :as capture]
+            #?(:clj [eacl.baseline.capture :as capture])
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
+            [eacl.engine.checkpoint-fixtures :as portable]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as reducer]))
 
+(defn- fixture-for
+  [fixture-key]
+  #?(:clj ((get capture/fixtures fixture-key))
+     :cljs (portable/fixture fixture-key)))
+
+(defn- seed-fixture-client!
+  [fixture]
+  #?(:clj (capture/seed-client! fixture)
+     :cljs (portable/seed-client! fixture)))
+
 (defn- seeded-adapter
   [fixture]
-  (let [{:keys [conn]} (capture/seed-client! fixture)
+  (let [{:keys [conn]} (seed-fixture-client! fixture)
         db (ds/db conn)]
     {:db db
      :adapter (datascript-backend/basis-adapter
@@ -62,41 +74,104 @@
                        options))]
     (mapv #(external db %) (:results result))))
 
-(deftest frozen-baseline-denotation-differential-test
-  (doseq [fixture-key (keys capture/fixtures)]
-    (testing (str fixture-key)
-      (let [fixture ((get capture/fixtures fixture-key))
-            snapshot (capture/read-snapshot fixture-key)
-            seeded (seeded-adapter fixture)
-            plan (sealed-plan/seal-plan
-                  (:adapter seeded)
-                  [(:resource-type fixture) (:permission fixture)])]
-        (testing "forward denotations equal the frozen current engines"
-          (doseq [[principal-key principal] (:principals fixture)]
-            (let [frozen (mapv strip-type
-                               (get-in snapshot
-                                       [:forward principal-key :denotation]))
-                  fresh (forward-ids seeded plan (:id principal) {})]
-              (is (= (vec (sort frozen)) (vec (sort (distinct fresh))))
-                  (str fixture-key " " principal-key))
-              (is (= (count fresh) (count (distinct fresh)))
-                  (str fixture-key " " principal-key " duplicate-free")))))
-        (testing "reverse denotations equal the frozen current engines"
-          (doseq [[label resource] (:reverse-resources fixture)]
-            (let [frozen-result (get-in snapshot [:reverse label])]
-              (when (= :ok (:outcome frozen-result))
-                (let [frozen (mapv strip-type (:denotation frozen-result))
-                      fresh (reverse-ids seeded plan (:id resource) {})]
-                  (is (= (vec (sort frozen)) (vec (sort (distinct fresh))))
-                      (str fixture-key " " label))
-                  (is (= (count fresh) (count (distinct fresh)))
-                      (str fixture-key " " label " duplicate-free")))))))))))
+(def ^:private semantic-state-keys
+  #{:stack :admitted :admissions :transitions :commands :fetched-values
+    :discovered :maximum-stack})
+
+(defn- closed-checkpoint-data?
+  [value]
+  (cond
+    (or (nil? value)
+        (boolean? value)
+        (number? value)
+        (string? value)
+        (keyword? value))
+    true
+
+    #?(:clj (instance? eacl.engine.stable_reducer.AdmissionKey value)
+       :cljs false)
+    true
+
+    (vector? value)
+    (every? closed-checkpoint-data? value)
+
+    (map? value)
+    (and (every? closed-checkpoint-data? (keys value))
+         (every? closed-checkpoint-data? (vals value)))
+
+    (set? value)
+    (every? closed-checkpoint-data? value)
+
+    :else false))
+
+(deftest history-free-state-is-closed-semantic-data-test
+  (let [fixture (fixture-for :group-star)
+        {:keys [db adapter] :as seeded} (seeded-adapter fixture)
+        plan (sealed-plan/seal-plan
+              adapter [(:resource-type fixture) (:permission fixture)])
+        principal (val (first (:principals fixture)))
+        finished
+        (reducer/run-forward
+         {:adapter adapter
+          :plan plan
+          :subject-type :user
+          :subject-eid (eid db (:id principal))
+          :target 4})
+        checkpoint (reducer/history-free finished)]
+    (is (= semantic-state-keys (set (keys checkpoint))))
+    (is (closed-checkpoint-data? checkpoint))
+    (is (not-any? #(contains? checkpoint %)
+                  [:fetch-fn :results :buffers :pending :adapter :db
+                   :reader :configuration]))
+    (is (not (fn? checkpoint)))
+    (is (not (seq? checkpoint)))
+    (is (seq (:admitted checkpoint)))
+    (is (every?
+         #?(:clj #(instance?
+                   eacl.engine.stable_reducer.AdmissionKey %)
+            :cljs vector?)
+         (:admitted checkpoint))
+        "AdmissionKey is closed and hash-stable on each runtime")
+    (is (= (mapv #(external db %) (:results finished))
+           (forward-ids seeded plan (:id principal) {:target 4})))))
+
+#?(:clj
+   (deftest frozen-baseline-denotation-differential-test
+     (doseq [fixture-key (keys capture/fixtures)]
+       (testing (str fixture-key)
+         (let [fixture ((get capture/fixtures fixture-key))
+               snapshot (capture/read-snapshot fixture-key)
+               seeded (seeded-adapter fixture)
+               plan (sealed-plan/seal-plan
+                     (:adapter seeded)
+                     [(:resource-type fixture) (:permission fixture)])]
+           (testing "forward denotations equal the frozen current engines"
+             (doseq [[principal-key principal] (:principals fixture)]
+               (let [frozen (mapv strip-type
+                                  (get-in snapshot
+                                          [:forward principal-key :denotation]))
+                     fresh (forward-ids seeded plan (:id principal) {})]
+                 (is (= (vec (sort frozen)) (vec (sort (distinct fresh))))
+                     (str fixture-key " " principal-key))
+                 (is (= (count fresh) (count (distinct fresh)))
+                     (str fixture-key " " principal-key " duplicate-free")))))
+           (testing "reverse denotations equal the frozen current engines"
+             (doseq [[label resource] (:reverse-resources fixture)]
+               (let [frozen-result (get-in snapshot [:reverse label])]
+                 (when (= :ok (:outcome frozen-result))
+                   (let [frozen (mapv strip-type (:denotation frozen-result))
+                         fresh (reverse-ids seeded plan (:id resource) {})]
+                     (is (= (vec (sort frozen))
+                            (vec (sort (distinct fresh))))
+                         (str fixture-key " " label))
+                     (is (= (count fresh) (count (distinct fresh)))
+                         (str fixture-key " " label " duplicate-free"))))))))))))
 
 (deftest physical-width-and-retention-invariance-test
   (doseq [fixture-key [:explorer-acyclic :group-star :mutual-mixed
                        :cyclic-data :broad-union]]
     (testing (str fixture-key)
-      (let [fixture ((get capture/fixtures fixture-key))
+      (let [fixture (fixture-for fixture-key)
             seeded (seeded-adapter fixture)
             plan (sealed-plan/seal-plan
                   (:adapter seeded)
@@ -113,14 +188,14 @@
               (str fixture-key " " options)))))))
 
 (deftest target-prefix-stability-test
-  (let [fixture ((get capture/fixtures :explorer-acyclic))
+  (let [fixture (fixture-for :explorer-acyclic)
         seeded (seeded-adapter fixture)
         plan (sealed-plan/seal-plan
               (:adapter seeded)
               [(:resource-type fixture) (:permission fixture)])
         principal (val (first (:principals fixture)))
         complete (forward-ids seeded plan (:id principal) {})]
-    (doseq [target [1 2 7 (count complete)]]
+    (doseq [target (range 1 (inc (count complete)))]
       (is (= (subvec complete 0 target)
              (forward-ids seeded plan (:id principal) {:target target}))
           (str "prefix at target " target)))))
@@ -160,7 +235,7 @@
   ;; equal successors admit once; `schedule` must refine that literally
   ;; (a batch-internal duplicate is one admission and one stack entry) and
   ;; must skip nil items without truncating the batch.
-  (let [schedule #'reducer/schedule
+  (let [schedule reducer/schedule
         state {:stack [] :admitted (transient #{}) :admissions 0
                :max-admissions 100 :max-stack 100 :maximum-stack 0}
         item {:kind :grant :rule {:node [:a :b]} :resource-eid 7}

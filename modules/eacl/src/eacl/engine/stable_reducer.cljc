@@ -119,7 +119,7 @@
                           :discovered (:discovered state)}
                          detail))))
 
-(defn- schedule
+(defn ^:no-doc schedule
   "Admits fresh work exactly once and pushes it after the residual: the
   residual is pushed first, then new work reversed onto the right edge, so
   successors run depth-first in canonical order before the residual resumes.

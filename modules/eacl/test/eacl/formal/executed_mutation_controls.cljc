@@ -6,6 +6,7 @@
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
             [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as request-context]
@@ -631,6 +632,86 @@
     (and (admitted? compiled)
          (false? (admitted? escaped)))))
 
+(defn checkpoint-native-revision-key-killed?
+  []
+  (let [lineage {:source-scope
+                 {:backend :mutation-control
+                  :source-id "checkpoint-source"
+                  :branch nil}
+                 :source-lifecycle "checkpoint-lifecycle"}
+        plan {:fingerprint "checkpoint-plan"
+              :rules [{:relation-eid 1}]}
+        key-at
+        (fn [revision]
+          (let [adapter
+                (ordered-generation-adapter
+                 revision (constantly [[1 4]]))
+                frame
+                (proof-frame/descriptor
+                 (proof-frame/resolve!
+                  (proof-frame/request-frame adapter) [1]))]
+            (binding [engine/*request-lineage* lineage
+                      engine/*request-frame* frame
+                      engine/*proof-frame*
+                      (proof-frame/request-frame adapter)]
+              (engine/checkpoint-key
+               plan :forward :user 10 20))))
+        gate #(= (key-at 5) (key-at 6))
+        original engine/checkpoint-key]
+    (and
+     (gate)
+     (false?
+      (with-redefs
+       [engine/checkpoint-key
+        (fn [& args]
+          (conj
+           (apply original args)
+           (backend/invoke
+            (:adapter engine/*proof-frame*) :native-revision)))]
+        (gate))))))
+
+(defn checkpoint-admissions-counter-drop-killed?
+  []
+  (let [finished
+        {:stack []
+         :admitted #{}
+         :admissions 9
+         :transitions 10
+         :commands 4
+         :fetched-values 7
+         :discovered 3
+         :maximum-stack 2}
+        next-work {:kind :grant
+                   :rule {:node 7}
+                   :resource-eid 19}
+        cumulative-limit-fails?
+        (fn []
+          (let [checkpoint (stable-reducer/history-free finished)
+                resumed
+                (merge
+                 {:stack []
+                  :admitted (transient #{})
+                  :admissions 0
+                  :max-admissions 9
+                  :max-stack 100
+                  :maximum-stack 0}
+                 checkpoint
+                 {:admitted (transient (:admitted checkpoint))})]
+            (try
+              (stable-reducer/schedule resumed nil [next-work])
+              false
+              (catch #?(:clj clojure.lang.ExceptionInfo
+                        :cljs cljs.core.ExceptionInfo) error
+                (= :max-admissions (:limit (ex-data error)))))))
+        gate cumulative-limit-fails?
+        original stable-reducer/history-free]
+    (and
+     (gate)
+     (false?
+      (with-redefs [stable-reducer/history-free
+                    #(dissoc (original %) :admissions)]
+        (gate))))))
+
 (defn aggregate-counter-reset-killed?
   []
   (let [args [{:advanced-datoms 0 :queued-work 0 :fetched-values 0}
@@ -714,6 +795,9 @@
    :non-durable-live-source-id-collision
    non-durable-live-source-id-collision-killed?
    :plan-read-scope-escape plan-read-scope-escape-killed?
+   :checkpoint-native-revision-key checkpoint-native-revision-key-killed?
+   :checkpoint-admissions-counter-drop
+   checkpoint-admissions-counter-drop-killed?
    :aggregate-counter-reset aggregate-counter-reset-killed?
    :batch-cross-demand-contamination batch-cross-demand-contamination-killed?
    :aggregate-deadline-renewal aggregate-deadline-renewal-killed?})

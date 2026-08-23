@@ -6,10 +6,9 @@
   authenticated lineage. Cache loss is always a performance miss: callers can
   deterministically replay the public boundary."
   (:require [eacl.backend.v8 :as backend]
-            [eacl.proof-frame :as proof-frame]
             [eacl.secure-format :as secure]))
 
-(def ^:private context-version 2)
+(def ^:private context-version 3)
 (def ^:private default-max-entries 2048)
 (def ^:private default-max-weight (* 128 1024 1024))
 
@@ -27,41 +26,47 @@
      :or {max-entries default-max-entries
           max-weight default-max-weight}}]
    (let [max-entry-weight (or max-entry-weight max-weight)]
-   (when-not (and (integer? max-entries) (pos? max-entries))
-     (throw
-      (ex-info
-       "Continuation :max-entries must be a positive integer."
-       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-        :max-entries max-entries})))
-   (when-not (and (integer? max-weight) (pos? max-weight))
-     (throw
-      (ex-info
-       "Continuation :max-weight must be a positive integer."
-       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-        :max-weight max-weight})))
-   (when-not (and (integer? max-entry-weight)
-                  (pos? max-entry-weight)
-                  (<= max-entry-weight max-weight))
-     (throw
-      (ex-info
-       "Continuation :max-entry-weight must be a positive integer no larger than :max-weight."
-       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-        :max-entry-weight max-entry-weight
-        :max-weight max-weight})))
-   (->BoundedContinuationStore
-    (atom {:entries {}
-           :order []
-           :weight 0})
-    (atom {:hits 0
-           :misses 0
-           :puts 0
-           :evictions 0
-           :rejections 0
-           :errors 0
-           :by-kind {}})
-    max-entries
-    max-weight
-    max-entry-weight))))
+     (when-not (and (integer? max-entries) (pos? max-entries))
+       (throw
+        (ex-info
+         "Continuation :max-entries must be a positive integer."
+         {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+          :max-entries max-entries})))
+     (when-not (and (integer? max-weight) (pos? max-weight))
+       (throw
+        (ex-info
+         "Continuation :max-weight must be a positive integer."
+         {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+          :max-weight max-weight})))
+     (when-not (and (integer? max-entry-weight)
+                    (pos? max-entry-weight)
+                    (<= max-entry-weight max-weight))
+       (throw
+        (ex-info
+         "Continuation :max-entry-weight must be a positive integer no larger than :max-weight."
+         {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+          :max-entry-weight max-entry-weight
+          :max-weight max-weight})))
+     (->BoundedContinuationStore
+      (atom {:entries {}
+             :order []
+             :weight 0
+             :families {}
+             :tombstones {}
+             :tombstone-order []})
+      (atom {:hits 0
+             :misses 0
+             :puts 0
+             :publications 0
+             :replacements 0
+             :evictions 0
+             :rejections 0
+             :errors 0
+             :miss-reasons {}
+             :by-kind {}})
+      max-entries
+      max-weight
+      max-entry-weight))))
 
 (defn- metric!
   [store kind metric]
@@ -80,14 +85,56 @@
   [order key]
   (conj (without-key order key) key))
 
+(defn- checkpoint-family-key
+  "Returns the exact checkpoint identity with only its plan fingerprint
+  removed. This makes `:plan-mismatch` classification constant-time."
+  [key]
+  (let [[scope kind checkpoint] key]
+    (when (and (vector? checkpoint) (= 7 (count checkpoint)))
+      [scope kind
+       [(nth checkpoint 0)
+        (nth checkpoint 1)
+        (nth checkpoint 3)
+        (nth checkpoint 4)
+        (nth checkpoint 5)
+        (nth checkpoint 6)]])))
+
+(defn- add-family
+  [current key]
+  (if-let [family (checkpoint-family-key key)]
+    (update-in current [:families family] (fnil inc 0))
+    current))
+
+(defn- remove-family
+  [current key]
+  (if-let [family (checkpoint-family-key key)]
+    (let [remaining (dec (get-in current [:families family] 0))]
+      (if (pos? remaining)
+        (assoc-in current [:families family] remaining)
+        (update current :families dissoc family)))
+    current))
+
+(defn- remember-tombstone
+  [current key reason limit]
+  (let [order (touch (:tombstone-order current) key)
+        tombstones (assoc (:tombstones current) key reason)
+        excess (max 0 (- (count order) limit))
+        expired (take excess order)]
+    (assoc current
+           :tombstones (apply dissoc tombstones expired)
+           :tombstone-order (subvec order excess))))
+
 (defn- evict-oldest
-  [{:keys [entries order weight] :as current}]
+  [{:keys [entries order weight] :as current} tombstone-limit]
   (if-let [oldest (first order)]
     (let [entry (get entries oldest)]
-      [(assoc current
-              :entries (dissoc entries oldest)
-              :order (subvec order 1)
-              :weight (- weight (:weight entry)))
+      [(remember-tombstone
+        (-> current
+            (assoc :entries (dissoc entries oldest)
+                   :order (subvec order 1)
+                   :weight (- weight (:weight entry)))
+            (remove-family oldest))
+        oldest :evicted tombstone-limit)
        true])
     [current false]))
 
@@ -97,11 +144,83 @@
          evictions 0]
     (if (or (> (count (:entries state)) max-entries)
             (> (:weight state) max-weight))
-      (let [[next-state evicted?] (evict-oldest state)]
+      (let [[next-state evicted?]
+            (evict-oldest state max-entries)]
         (if evicted?
           (recur next-state (inc evictions))
           [state evictions]))
       [state evictions])))
+
+(defn- plan-mismatch?
+  [families key]
+  (pos? (get families (checkpoint-family-key key) 0)))
+
+(defn- missing-reason
+  [{:keys [families tombstones]} key]
+  (or (get tombstones key)
+      (when (plan-mismatch? families key) :plan-mismatch)
+      :absent))
+
+(defn- miss!
+  [store kind reason]
+  (swap!
+   (:metrics store)
+   (fn [metrics]
+     (-> metrics
+         (update :misses (fnil inc 0))
+         (update-in [:miss-reasons reason] (fnil inc 0))
+         (update-in [:by-kind kind :misses] (fnil inc 0))
+         (update-in [:by-kind kind :miss-reasons reason]
+                    (fnil inc 0))))))
+
+(defn- lookup!
+  "Context lookup: absence is counted immediately; a present entry becomes a
+  hit only after stable-page validates its authenticated boundary."
+  [store kind key]
+  (try
+    (let [state @(:state store)
+          entry (get-in state [:entries key])]
+      (if (and entry (= kind (:kind entry)))
+        (:value entry)
+        (do
+          (miss! store kind (missing-reason state key))
+          nil)))
+    (catch #?(:clj Exception :cljs :default) _
+      (metric! store kind :errors)
+      nil)))
+
+(defn- peek-entry
+  [store kind key]
+  (let [entry (get-in @(:state store) [:entries key])]
+    (when (= kind (:kind entry))
+      (:value entry))))
+
+(defn- checkpoint-hit!
+  [store kind]
+  (metric! store kind :hits))
+
+(defn- checkpoint-miss!
+  [store kind reason]
+  (miss! store kind reason))
+
+(defn- discard-entry
+  [current key]
+  (if-let [entry (get-in current [:entries key])]
+    (-> current
+        (update :entries dissoc key)
+        (update :order without-key key)
+        (update :weight - (:weight entry))
+        (remove-family key))
+    current))
+
+(defn- mark-unavailable!
+  [store key reason]
+  (swap! (:state store)
+         (fn [current]
+           (remember-tombstone
+            (discard-entry current key)
+            key reason (:max-entries store))))
+  false)
 
 (defn get!
   [store kind key]
@@ -109,11 +228,10 @@
     (let [entry (get-in @(:state store) [:entries key])]
       (if (and entry (= kind (:kind entry)))
         (do
-          (swap! (:state store) update :order touch key)
           (metric! store kind :hits)
           (:value entry))
         (do
-          (metric! store kind :misses)
+          (miss! store kind (missing-reason @(:state store) key))
           nil)))
     (catch #?(:clj Exception :cljs :default) _
       (metric! store kind :errors)
@@ -126,29 +244,40 @@
                  (not (neg? entry-weight))
                  (<= entry-weight (:max-entry-weight store)))
       (do
+        (mark-unavailable! store key :overweight)
         (metric! store kind :rejections)
         false)
-      (let [eviction-count (atom 0)]
+      (let [eviction-count (atom 0)
+            replaced? (atom false)]
         (swap!
          (:state store)
          (fn [{:keys [entries order]
                current-weight :weight
                :as current}]
            (let [prior (get entries key)
+                 _ (reset! replaced? (some? prior))
                  current'
-                 (assoc
-                  current
-                  :entries
-                  (assoc
-                   entries
-                   key
-                   {:kind kind
-                    :value value
-                    :weight entry-weight})
-                  :order (touch order key)
-                  :weight
-                  (+ (- entry-weight (or (:weight prior) 0))
-                     current-weight))
+                 (cond->
+                  (-> current
+                      (assoc
+                       :entries
+                       (assoc
+                        entries
+                        key
+                        {:kind kind
+                         :value value
+                         :weight entry-weight})
+                       ;; Checkpoint hits normally publish greater progress
+                       ;; under the same key. Keeping an existing key in its
+                       ;; FIFO slot makes that hot path O(1); a genuinely new
+                       ;; key is appended and bounds remain exact.
+                       :order (if prior order (conj order key))
+                       :weight
+                       (+ (- entry-weight (or (:weight prior) 0))
+                          current-weight))
+                      (update :tombstones dissoc key)
+                      (update :tombstone-order without-key key))
+                   (nil? prior) (add-family key))
                  [bounded evictions]
                  (enforce-bounds
                   current'
@@ -159,34 +288,21 @@
         (dotimes [_ @eviction-count]
           (metric! store kind :evictions))
         (metric! store kind :puts)
-        (contains? (:entries @(:state store)) key)))
+        (let [published? (contains? (:entries @(:state store)) key)]
+          (when published?
+            (metric! store kind :publications)
+            (when @replaced?
+              (metric! store kind :replacements)))
+          published?)))
     (catch #?(:clj Exception :cljs :default) _
       (metric! store kind :errors)
       false)))
 
-(defn evict!
-  [store key]
-  (try
-    (let [removed? (atom false)]
-      (swap!
-       (:state store)
-       (fn [{:keys [entries order weight] :as current}]
-         (if-let [entry (get entries key)]
-           (do
-             (reset! removed? true)
-             (assoc current
-                    :entries (dissoc entries key)
-                    :order (without-key order key)
-                    :weight (- weight (:weight entry))))
-           current)))
-      @removed?)
-    (catch #?(:clj Exception :cljs :default) _
-      (swap! (:metrics store) update :errors (fnil inc 0))
-      false)))
-
 (defn clear!
   [store]
-  (reset! (:state store) {:entries {} :order [] :weight 0})
+  (reset! (:state store)
+          {:entries {} :order [] :weight 0 :families {}
+           :tombstones {} :tombstone-order []})
   nil)
 
 (defn stats
@@ -208,9 +324,7 @@
     (true? (:opaque-values? context))
     (every?
      #(fn? (get context %))
-     [:get :evict! :put!
-      :get-page :put-page!
-      :get-heads :put-heads!]))
+     [:peek :get :hit! :miss! :put!]))
     (throw
      (ex-info
       "Continuation context does not satisfy the adapter-neutral contract."
@@ -227,82 +341,63 @@
   ([store adapter operation query-identity]
    (private-context store adapter operation query-identity {}))
   ([store adapter operation query-identity
-    {:keys [snapshot-identity request-proof-frame populate-cache?]
+    {:keys [request-lineage request-proof-frame populate-cache?]
      :or {populate-cache? true}}]
    (when store
      (let [basis-identity (:basis-identity request-proof-frame)
+           derived-lineage
+           (when basis-identity
+             {:source-scope
+              (select-keys basis-identity [:backend :source-id :branch])
+              :source-lifecycle (:source-lifecycle basis-identity)})
+           _
+           (when (and request-lineage derived-lineage
+                      (not= (secure/canonicalize request-lineage)
+                            (secure/canonicalize derived-lineage)))
+             (throw
+              (ex-info
+               "Continuation lineage differs from its request proof frame."
+               {:type :eacl/internal-continuation-contract
+                :eacl/error :eacl/internal-continuation-contract
+                :request-lineage request-lineage
+                :derived-lineage derived-lineage})))
+           lineage (or request-lineage derived-lineage)
            scope
-          (secure/canonical-digest
-           "eacl/client-private-continuation/v1"
-           {:version context-version
-            :backend (backend/backend-id adapter)
-            :source-scope
-            (some-> basis-identity
-                    (select-keys
-                     [:backend :source-id :branch :source-lifecycle]))
-            ;; The store is cleared during explicit lifecycle rotation, but
-            ;; an in-flight request may finish after that clear.  Including
-            ;; the lifecycle in the address makes any such late publication
-            ;; unreachable to requests in the replacement lifecycle.
-            :source-lifecycle
-            (:source-lifecycle basis-identity)
-            :adapter-fingerprint (backend/fingerprint adapter)
-            :identity-contract (backend/identity-contract adapter)
-            :schema-generation
-            (let [frame
-                  (if (and request-proof-frame
-                           (identical?
-                            adapter (:adapter request-proof-frame)))
-                    request-proof-frame
-                    (proof-frame/request-frame adapter))
-                  proof
-                  (proof-frame/resolve!
-                   frame [])]
-              (when (proof-frame/complete? proof)
-                (:schema-generation proof)))
-            :snapshot-identity
-            (or snapshot-identity
-                {:kind :exact
-                 :snapshot-id (backend/invoke adapter :snapshot-id)})
-            :operation operation
-            :query query-identity})
+           (when lineage
+             (secure/canonical-digest
+              "eacl/client-private-continuation/v1"
+              {:version context-version
+               :backend (backend/backend-id adapter)
+               ;; The store is cleared during explicit lifecycle rotation,
+               ;; but a late publisher is also isolated by this lineage.
+               :lineage lineage
+               :adapter-fingerprint (backend/fingerprint adapter)
+               :identity-contract (backend/identity-contract adapter)
+               :operation operation
+               :query query-identity}))
           key-for (fn [kind key] [scope kind key])]
-       (validate-context!
-       {:required? false
-        :opaque-values? true
-        :get
-        #(get! store :recursive-continuation
-               (key-for :recursive-continuation %))
-        :evict!
-        (fn [edge]
-          (boolean
-           (or
-            (evict! store (key-for :recursive-continuation edge))
-            (evict! store (key-for :acyclic-continuation edge)))))
-        :put!
-        (fn [edge value weight]
-          (and populate-cache?
-               (put!
-                store :recursive-continuation
-                (key-for :recursive-continuation edge)
-                value weight)))
-        :get-page
-        #(get! store :recursive-page
-               (key-for :recursive-page %))
-        :put-page!
-        (fn [page-key value weight]
-          (and populate-cache?
-               (put!
-                store :recursive-page
-                (key-for :recursive-page page-key)
-                value weight)))
-        :get-heads
-        #(get! store :acyclic-continuation
-               (key-for :acyclic-continuation %))
-        :put-heads!
-        (fn [edge value weight]
-          (and populate-cache?
-               (put!
-                store :acyclic-continuation
-                (key-for :acyclic-continuation edge)
-                value weight)))})))))
+       (when scope
+         (validate-context!
+          {:required? false
+           :opaque-values? true
+           :peek
+           #(peek-entry store :recursive-continuation
+                        (key-for :recursive-continuation %))
+           :get
+           #(lookup! store :recursive-continuation
+                     (key-for :recursive-continuation %))
+           :hit!
+           (fn []
+             (checkpoint-hit! store :recursive-continuation))
+           :miss!
+           (fn [reason]
+             (checkpoint-miss!
+              store :recursive-continuation reason))
+           :put!
+           (fn [edge value weight]
+             (let [key (key-for :recursive-continuation edge)]
+               (if populate-cache?
+                 (put!
+                  store :recursive-continuation key value weight)
+                 (mark-unavailable!
+                  store key :population-disabled))))}))))))

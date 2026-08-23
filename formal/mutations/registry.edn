@@ -1,7 +1,7 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 111
- :historical-clojure-mutant-count 107
+ :historical-mutant-count 113
+ :historical-clojure-mutant-count 109
  :historical-model-mutant-count 4
  :mutants
  [{:id :wrong-arrow-direction
@@ -179,6 +179,20 @@
    :detector "plan-read-scope-escape-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by {:test :plan-read-scope-closure-control}}
+  {:id :checkpoint-native-revision-key
+   :mechanism :executed-production
+   :mutation :restore-native-revision-to-frame-checkpoint-key
+   :target-symbol "engine/checkpoint-key"
+   :detector "checkpoint-native-revision-key-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :checkpoint-unrelated-write-control}}
+  {:id :checkpoint-admissions-counter-drop
+   :mechanism :executed-production
+   :mutation :remove-accumulated-admissions-from-history-free-state
+   :target-symbol "stable-reducer/history-free"
+   :detector "checkpoint-admissions-counter-drop-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :checkpoint-cumulative-limit-control}}
   {:id :aggregate-counter-reset
    :mechanism :executed-production
    :mutation :reset-cumulative-work-at-each-window

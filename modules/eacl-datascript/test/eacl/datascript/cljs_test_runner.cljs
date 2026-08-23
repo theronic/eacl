@@ -28,6 +28,9 @@
             [eacl.datascript.cache-model-test]
             [eacl.datascript.consistency-v3-test]
             [eacl.datascript.contract-test]
+            [eacl.engine.continuation-reuse-test]
+            [eacl.engine.stable-page-test]
+            [eacl.engine.stable-reducer-test]
             [eacl.datascript.impl-test]
             [eacl.datascript.safe-retraction-test]
             [eacl.datascript.snapshot-lifecycle-test]
@@ -72,6 +75,9 @@
                'eacl.datascript.cache-model-test
                'eacl.datascript.consistency-v3-test
                'eacl.datascript.contract-test
+               'eacl.engine.continuation-reuse-test
+               'eacl.engine.stable-page-test
+               'eacl.engine.stable-reducer-test
                'eacl.datascript.impl-test
                'eacl.datascript.safe-retraction-test
                'eacl.datascript.snapshot-lifecycle-test
