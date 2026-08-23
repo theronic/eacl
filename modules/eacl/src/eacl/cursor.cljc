@@ -5,7 +5,7 @@
             #?@(:cljs [[goog.crypt.Aes]]))
   #?(:clj
      (:import [javax.crypto Cipher]
-              [javax.crypto.spec SecretKeySpec])))
+              [javax.crypto.spec IvParameterSpec SecretKeySpec])))
 
 (def cursor-version 5)
 (def cursor-prefix "eacl_c5_")
@@ -51,7 +51,9 @@
            :by-token {}
            :by-cursor {}
            :context-order []
-           :by-context {}})
+           :by-context {}
+           :key-context-order []
+           :by-key-context {}})
     max-entries)))
 
 (defn clear-codec-cache!
@@ -65,7 +67,9 @@
              :by-token {}
              :by-cursor {}
              :context-order []
-             :by-context {}}))
+             :by-context {}
+             :key-context-order []
+             :by-key-context {}}))
   nil)
 
 (defn memoized-context!
@@ -111,6 +115,41 @@
                             (apply dissoc by-context' evicted)
                             by-context'))))))
             (get-in @state [:by-context key])))))))
+
+(defn- memoized-key-context!
+  [cache key build]
+  (if-not cache
+    (build)
+    (do
+      (when-not (instance? CursorCodecCache cache)
+        (throw (ex-info "Expected an EACL cursor codec cache."
+                        {:type :eacl/invalid-config})))
+      (let [state (:state cache)]
+        (if (contains? (:by-key-context @state) key)
+          (do
+            (record-work! :key-context-cache-hits 1)
+            (get-in @state [:by-key-context key]))
+          (let [_ (record-work! :key-context-builds 1)
+                candidate (build)]
+            (swap!
+             state
+             (fn [{:keys [key-context-order by-key-context] :as current}]
+               (if (contains? by-key-context key)
+                 current
+                 (let [order' (conj key-context-order key)
+                       by-key-context' (assoc by-key-context key candidate)
+                       overflow (- (count order') (:max-entries cache))]
+                   (assoc current
+                          :key-context-order
+                          (if (pos? overflow)
+                            (vec (drop overflow order'))
+                            order')
+                          :by-key-context
+                          (if (pos? overflow)
+                            (apply dissoc by-key-context'
+                                   (take overflow order'))
+                            by-key-context'))))))
+            (get-in @state [:by-key-context key])))))))
 
 (defn- now-seconds
   [options]
@@ -173,29 +212,47 @@
         (quot (+ (count input) (dec aes-block-size)) aes-block-size)]
     (when (> block-count maximum-counter)
       (aead-error! :too-large {:maximum-blocks maximum-counter}))
-    (let [encrypt-block (aes-block-encrypter key)]
-      (loop [offset 0
-             counter 1
-             output (transient [])]
-        (if (= offset (count input))
-          (persistent! output)
-          (let [stream
-                (encrypt-block (into nonce (uint32-bytes counter)))
-                remaining (- (count input) offset)
-                length (min aes-block-size remaining)
-                output'
-                (loop [index 0
-                       result output]
-                  (if (= index length)
-                    result
-                    (recur
-                     (inc index)
-                     (conj!
-                      result
-                      (bit-xor
-                       (nth input (+ offset index))
-                       (nth stream index))))))]
-            (recur (+ offset length) (inc counter) output')))))))
+    #?(:clj
+       ;; The portable format defines AES-CTR as nonce || uint32(counter), with
+       ;; the first counter equal to one. JCA implements that exact big-endian
+       ;; counter progression in one native bulk operation. The former JVM
+       ;; path created one ECB `doFinal` call per 16-byte block; a normal page
+       ;; cursor therefore crossed the provider boundary over a hundred times.
+       (let [cipher (Cipher/getInstance "AES/CTR/NoPadding")
+             key-bytes (byte-array (map unchecked-byte key))
+             iv-bytes
+             (byte-array
+              (map unchecked-byte (into nonce (uint32-bytes 1))))
+             input-bytes (byte-array (map unchecked-byte input))]
+         (.init cipher
+                Cipher/ENCRYPT_MODE
+                (SecretKeySpec. key-bytes "AES")
+                (IvParameterSpec. iv-bytes))
+         (mapv #(bit-and (int %) 255) (.doFinal cipher input-bytes)))
+       :cljs
+       (let [encrypt-block (aes-block-encrypter key)]
+         (loop [offset 0
+                counter 1
+                output (transient [])]
+           (if (= offset (count input))
+             (persistent! output)
+             (let [stream
+                   (encrypt-block (into nonce (uint32-bytes counter)))
+                   remaining (- (count input) offset)
+                   length (min aes-block-size remaining)
+                   output'
+                   (loop [index 0
+                          result output]
+                     (if (= index length)
+                       result
+                       (recur
+                        (inc index)
+                        (conj!
+                         result
+                         (bit-xor
+                          (nth input (+ offset index))
+                          (nth stream index))))))]
+               (recur (+ offset length) (inc counter) output'))))))))
 
 (defn- aead-keys
   [domain-key]
@@ -209,27 +266,50 @@
   (str cursor-domain "\n"
        kid-segment "." nonce-segment "." ciphertext-segment))
 
+(defn- encode-context
+  "Resolves the stable key material and visible kid segment once per client.
+
+  These values depend only on the configured key identity. They contain no
+  nonce or payload state and remain inside the bounded client-private codec
+  cache, whose lifecycle is rotated with signing configuration changes."
+  [options format-options]
+  (let [kid (or (:current-kid format-options) :default)
+        keyring (or (:keyring format-options)
+                    {:default secure/default-root-key})
+        identity [kid (get keyring kid)]
+        build
+        (fn []
+          (let [{domain-key :key :keys [kid]}
+                (secure/signing-context format-options cursor-domain)
+                {:keys [encryption-key authentication-key]}
+                (aead-keys domain-key)
+                kid-segment
+                (secure/b64url-encode
+                 (secure/utf8-bytes
+                  (secure/encode-canonical
+                   kid
+                   (assoc format-options :maximum-size 1024))))]
+            {:encryption-key encryption-key
+             :authentication-key authentication-key
+             :kid-segment kid-segment}))]
+    (if-let [cache (:cursor-codec-cache options)]
+      (memoized-key-context!
+       cache [:cursor-aead-encode-context 1 identity] build)
+      (build))))
+
 (defn- encode-aead
   [options payload]
   (let [format-options (format-options options)
         maximum-size
         (or (:maximum-size format-options)
             secure/default-maximum-size)
-        {domain-key :key :keys [kid]}
-        (secure/signing-context format-options cursor-domain)
-        {:keys [encryption-key authentication-key]}
-        (aead-keys domain-key)
-        kid-bytes
-        (secure/utf8-bytes
-         (secure/encode-canonical
-          kid
-          (assoc format-options :maximum-size 1024)))
+        {:keys [encryption-key authentication-key kid-segment]}
+        (encode-context options format-options)
         payload-bytes
         (secure/utf8-bytes
          (secure/encode-canonical payload format-options))
         nonce (secure/random-bytes nonce-size)
         ciphertext (ctr-transform encryption-key nonce payload-bytes)
-        kid-segment (secure/b64url-encode kid-bytes)
         nonce-segment (secure/b64url-encode nonce)
         ciphertext-segment (secure/b64url-encode ciphertext)
         associated-input

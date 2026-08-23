@@ -2098,6 +2098,24 @@
     continuation/clear!)
    nil))
 
+(defn clear-answer-cache!
+  "Evicts completed authorization answers and resumable page state.
+
+  Unlike `expire-cache!`, this is not a source-lifecycle rotation: it retains
+  the client's certified schema-generation registry, sealed plans, signing
+  keys, and cursor codec artifacts. It is therefore suitable for operational
+  answer-cache testing and capacity management, but MUST NOT be used after a
+  restore, history replacement, or unsupported authorization mutation."
+  [client]
+  (when-let [store (get-in client [:opts :current-cache-store])]
+    (cache/expire-current! store))
+  (relay/clear-page-navigation-cache!
+   (get-in client [:opts :page-navigation-cache]))
+  (some->
+   (get-in client [:opts :continuation-cache-store])
+   continuation/clear!)
+  nil)
+
 (defn cache-stats
   "Returns private completed-cache counters for one EACL client."
   [client]

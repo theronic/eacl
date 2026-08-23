@@ -1482,6 +1482,34 @@
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
 
+(deftest answer-cache-clear-retains-certified-schema-plans-test
+  (with-system
+    (fn [{:keys [conn client]}]
+      (seed! conn client)
+      (let [alice (eacl/spice-object :user "alice")
+            document (eacl/spice-object :document "document-1")
+            demand {:subject alice
+                    :permission :view
+                    :resource document
+                    :cache? true}
+            original-seal sealed-plan/seal-plan
+            seals (atom 0)]
+        (eacl/create-relationship! client alice :viewer document)
+        (with-redefs [sealed-plan/seal-plan
+                      (fn [& args]
+                        (swap! seals inc)
+                        (apply original-seal args))]
+          (is (false? (:cached? (eacl/check-permission client demand))))
+          (is (true? (:cached? (eacl/check-permission client demand))))
+          (is (= 1 @seals))
+          (datalevin/clear-answer-cache! client)
+          (is (zero? (:exact-entries (datalevin/cache-stats client))))
+          (is (false? (:cached? (eacl/check-permission client demand))))
+          (is (= 1 @seals)
+              "operational answer eviction must not turn a miss into plan compilation"))
+        (is (= {:active 0 :oldest-age-ms nil}
+               (d/active-read-snapshot-info)))))))
+
 (deftest shared-v8-recursive-contract-test
   (with-connection
     (fn [conn]

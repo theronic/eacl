@@ -94,5 +94,11 @@ new matching watermark before readiness. `expire-cache!` deliberately rejects
 process-local lifecycle rotation. Persist the replacement lifecycle and
 watermark first, close the old client/connection, and construct a new client.
 
+For operational testing or capacity management, `clear-answer-cache!` evicts
+completed answers and resumable page state while retaining the certified
+schema-generation registry, sealed plans, signing configuration, and source
+lifecycle. It is not a recovery operation and must not be used after restore,
+rollback, or an unsupported authorization mutation.
+
 See [PORTING.md](PORTING.md) for the adapter boundary and unsupported
 configurations.

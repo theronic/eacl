@@ -88,3 +88,10 @@
 - [x] 12.4 Update backend capability tables and the backend-author guide: the `:schema-generation` obligation, direct-match certification reuse, Datalevin identical-basis caching, thread affinity, explicit lifecycle, and the absence of an ordered-generation claim.
 - [x] 12.5 Run the complete CLJ, CLJS, formal, mutation, isolated-module, build/JAR/POM, clean-consumer, source-closure, benchmark, allocation, retained-resource, and demo browser matrix and retain machine-readable evidence.
 - [x] 12.6 Run `openspec validate eliminate-authorization-request-amplification --strict`, resolve every warning, and review proposal, specs, design, tasks, code, tests, and evidence for traceable completion before archive.
+
+## 13. Interactive Lookup Regression
+
+- [x] 13.1 Reproduce the Datalevin demo's 48-server `lookup-resources` page and attribute cache-disabled, cold-miss, and warm-hit latency between HTTP, stable traversal, schema/plan derivation, rendering, and cursor encoding.
+- [x] 13.2 Remove redundant canonicalization work, reuse initialized cryptographic context, and use the JCA bulk CTR primitive on the JVM while preserving the portable cursor bytes, authenticated-encryption contract, CLJ/CLJS parity, size bounds, and deterministic codec counters.
+- [x] 13.3 Separate completed-answer eviction from source-lifecycle rotation so an operational cache miss retains the certified schema-generation registry and sealed plans, while restore and unsupported-mutation recovery remain fail-closed.
+- [x] 13.4 Re-run the focused core and loopback HTTP series, add regression coverage for the optimized primitives, and retain an honest before/after report for the interactive lookup path.

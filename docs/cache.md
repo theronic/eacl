@@ -326,6 +326,13 @@ do not limit cursor age; they only cause deterministic replay. An old cursor
 continues the original historical enumeration. Consumers that require current
 authorization at object-consumption time must make a separate current check.
 
+Datalevin also exposes `eacl.datalevin.core/clear-answer-cache!` for an
+operational answer-cache clear that preserves its persisted source lifecycle
+and certified schema-derived plans. This is useful for miss-path measurement
+and bounded-cache administration; it is deliberately weaker than lifecycle
+expiry and is not valid recovery after restore, rollback, or unsupported
+mutation.
+
 EACL does not promise proof-backed cache availability for `as-of`, `since`,
 filtered, speculative, or caller-constructed database values. Exact historical
 evaluation remains authoritative. Reusing older cache segments for arbitrary

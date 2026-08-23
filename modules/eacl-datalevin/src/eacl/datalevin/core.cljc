@@ -232,6 +232,17 @@
   is not a cache flush."
   schema/prepare-cache-coherence!)
 
+(defn clear-answer-cache!
+  "Evicts completed answers and resumable page state without rotating the
+  persisted Datalevin source lifecycle or discarding schema-derived plans.
+
+  This is an operational cache clear, not recovery from restore, rollback, or
+  unsupported mutation. Those events still require durable lifecycle and
+  watermark rotation followed by client recreation."
+  [client]
+  (require-datalevin-client! client "clear-answer-cache!")
+  (orchestration/clear-answer-cache! client))
+
 (defn cache-stats
   "Returns private completed-cache counters for one Datalevin EACL client."
   [client]

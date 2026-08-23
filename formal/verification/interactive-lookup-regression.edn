@@ -1,0 +1,57 @@
+{:schema-version 1
+ :recorded-at "2026-08-23"
+ :change :eliminate-authorization-request-amplification
+ :runtime {:os :macos
+           :arch :arm64
+           :jdk "26.0.2"
+           :clojure "1.12.4"
+           :transport :loopback-http}
+ :fixture {:backend :datalevin
+           :resource-type :server
+           :resources 48
+           :subject "user-1"
+           :permission :view
+           :page-size 10
+           :returned 10
+           :permission-expression
+           "admin + parent->view + account->view + team->view + vpc->view + shared_admin"
+           :deterministic-work {:snapshot-acquisitions 1
+                                :snapshot-releases 1
+                                :backend-commands 14
+                                :fetched-values 22
+                                :cursor-builds 2
+                                :identity-conversions 12}}
+ :attribution
+ {:reported-elapsed-ms
+  :server-side-eacl-call-including-result-transformation-but-excluding-http-json-transport
+  :finding
+  :recursive-stable-discovery-and-cursor-construction-not-the-global-row-count-dominate-the-miss
+  :http-overhead-p50-ms {:minimum 0.5 :maximum 0.9}
+  :old-demo-eviction
+  :recreated-the-complete-client-and-discarded-certified-schema-derived-plans
+  :corrected-demo-eviction
+  :evicts-completed-answers-and-resumable-page-state-while-retaining-lifecycle-plans-and-codec-context}
+ :before
+ {:warm-cache-bypass {:samples 25 :eacl-p50-ms 2.977208}
+  :warm-cache-hit {:samples 25 :eacl-p50-ms 0.779958}
+  :post-eviction-client-cold-miss {:samples 15 :eacl-p50-ms 8.836292}}
+ :after
+ {:warm-cache-bypass
+  {:samples 101 :eacl-p50-ms 2.349833 :http-wall-p50-ms 2.862}
+  :warm-cache-hit
+  {:samples 101 :eacl-p50-ms 0.612 :http-wall-p50-ms 1.480}
+  :post-eviction-answer-miss
+  {:samples 101 :eacl-p50-ms 2.543167 :http-wall-p50-ms 3.305}}
+ :p50-change
+ {:warm-cache-bypass-percent -21.1
+  :warm-cache-hit-percent -21.5
+  :post-eviction-miss-percent -71.2}
+ :implementation
+ [:single-validation-pass-before-canonical-rendering
+  :single-jca-aes-ctr-operation-per-jvm-cursor
+  :reused-secure-random-provider
+  :bounded-client-private-key-context-reuse
+  :answer-cache-eviction-without-lifecycle-or-plan-rotation]
+ :qualification
+ :same-host-warmed-p50-observation-with-deterministic-work-counters-not-a-universal-latency-sla
+ :status :passed}

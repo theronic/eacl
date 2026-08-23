@@ -284,9 +284,18 @@
   "Returns the canonical portable EDN representation after enforcing bounds."
   ([value]
    (encode-canonical value {}))
-  ([value {:keys [maximum-size] :as limits
+  ([value {:keys [maximum-size maximum-depth maximum-entries] :as limits
            :or {maximum-size default-maximum-size}}]
-   (let [encoded (portable-render (canonicalize value limits))]
+   ;; `portable-render` already imposes the canonical map/set order and renders
+   ;; every sequential value as a vector. Building a second recursively sorted
+   ;; copy first repeated every traversal (and repeatedly rendered comparator
+   ;; keys) without changing a byte of output. Validate once, then render the
+   ;; original value directly.
+   (validate-value value 0
+                   {:maximum-depth (or maximum-depth default-maximum-depth)
+                    :maximum-entries
+                    (or maximum-entries default-maximum-entries)})
+   (let [encoded (portable-render value)]
      (when (> (count encoded) maximum-size)
        (format-error! :too-large {:maximum-size maximum-size}))
      encoded)))
@@ -354,13 +363,20 @@
         (format-error! :malformed-utf8 {}))
       decoded)))
 
+#?(:clj
+   (defonce ^:private ^SecureRandom secure-random
+     ;; SecureRandom is thread-safe. Reusing the initialized provider avoids a
+     ;; provider lookup and reseed check for each boundary cursor while every
+     ;; call still draws fresh cryptographic randomness.
+     (SecureRandom.)))
+
 (defn random-bytes
   [n]
   (when-not (and (integer? n) (pos? n))
     (format-error! :invalid-random-size {:size n}))
   #?(:clj
      (let [bytes (byte-array n)]
-       (.nextBytes (SecureRandom.) bytes)
+       (.nextBytes secure-random bytes)
        (mapv #(bit-and (int %) 255) bytes))
      :cljs
      (let [crypto (or (.-crypto js/globalThis)
