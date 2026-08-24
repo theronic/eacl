@@ -3,12 +3,13 @@
 
   This is the sole production backend boundary for recursive traversal, Relay
   pagination, deletion, consistency selection, and ordered-generation proofs."
-  (:require [eacl.request.counters :as request-counters]
+  (:require [eacl.exact-integer :as exact-integer]
+            [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
 (def adapter-version 8)
-(def maximum-exact-integer 9007199254740991)
-(def minimum-exact-integer (- maximum-exact-integer))
+(def maximum-exact-integer exact-integer/maximum)
+(def minimum-exact-integer exact-integer/minimum)
 
 (def ^:dynamic *backend-op-stats*
   "Optional atom counting backend adapter invocations by operation keyword.

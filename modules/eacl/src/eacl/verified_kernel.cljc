@@ -5,7 +5,7 @@
   orchestration remains responsible for authenticated decoding, immutable
   snapshot selection, and backend calls, but it cannot use a cursor or cache
   candidate that an authoritative kernel rejected."
-  (:require [eacl.backend.v8 :as backend]))
+  (:require [eacl.exact-integer :as exact-integer]))
 
 (def ^:dynamic *kernel-crossing-stats*
   "Optional atom counting generated-kernel invocations by operation keyword.
@@ -118,9 +118,9 @@
    #?(:clj (integer? value)
       :cljs (and (number? value)
                  (js/Number.isSafeInteger value)))
-   (<= backend/minimum-exact-integer
+   (<= exact-integer/minimum
        value
-       backend/maximum-exact-integer)))
+       exact-integer/maximum)))
 
 (defn- safe-natural?
   [value]
