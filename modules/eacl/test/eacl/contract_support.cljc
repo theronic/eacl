@@ -1594,8 +1594,11 @@
            client reverse-query reverse-cursor {}))
         after-checkpoints (continuation-stats client)]
     (when (and before-checkpoints after-checkpoints)
-      (is (= (:hits before-checkpoints) (:hits after-checkpoints))
-          "a changed frame never resumes current private state"))
+      (if (and exact? (ordered-generation-proofs? client))
+        (is (> (:hits after-checkpoints) (:hits before-checkpoints))
+            "exact fallback resumes the original accepted basis's private checkpoint")
+        (is (= (:hits before-checkpoints) (:hits after-checkpoints))
+            "a changed current frame is never used for private resumption")))
     (case expected
       :original-basis
       (do
@@ -1829,14 +1832,24 @@
         (assert-proof-equivalent-write-continuation!
          client query oracle-stream forward-page reverse-page)
 
-        (eacl/create-relationship!
-         client
-         (folder (dec recursive-connected-folder-count))
-         :parent
-         (folder recursive-connected-folder-count))
+        ;; Re-establish adjacent frontiers at the current basis. The preceding
+        ;; full-stream checks intentionally advanced the latest-only store past
+        ;; the original page-1 boundaries, so those older checkpoints are no
+        ;; longer available to test exact-fallback resumption.
+        (let [relevant-query (assoc query :first 3)
+              relevant-forward-page
+              (eacl/lookup-resources client relevant-query)
+              relevant-reverse-page
+              (eacl/lookup-resources client reverse-query)]
+          (eacl/create-relationship!
+           client
+           (folder (dec recursive-connected-folder-count))
+           :parent
+           (folder recursive-connected-folder-count))
 
-        (assert-relevant-write-continuation!
-         client query oracle-stream forward-page reverse-page)
+          (assert-relevant-write-continuation!
+           client relevant-query oracle-stream
+           relevant-forward-page relevant-reverse-page))
 
         (let [after-write (eacl/lookup-resources client all-query)]
           (is (false? (:cached? after-write)))

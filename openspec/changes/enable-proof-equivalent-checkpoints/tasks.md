@@ -18,7 +18,7 @@
 
 ## 4. Conformance, Formal, and Documentation
 
-- [x] 4.1 Add the shared conformance cases: checkpoint hit after an unrelated write equals replay (forward and reverse, same and retained older bases); relevant write produces no hit; durable-source restart and non-durable-source recreation; eviction and over-weight drop replay correctly.
+- [x] 4.1 Add the shared conformance cases: checkpoint hit after an unrelated write equals replay (forward and reverse, same and retained older bases); after a relevant write an exact-capable source resumes the checkpoint on the accepted original basis while a current-only source produces no hit; durable-source restart and non-durable-source recreation; eviction and over-weight drop replay correctly.
 - [x] 4.2 Cite `ReducerCheckpoint.dfy`, `RuntimeCheckpointComposition.dfy`, `ReducerReadScope.dfy`, and the scalar-frontier theorem in the assurance matrix entry for frame-keyed checkpoints; add a mutation control that restores `native-revision` to the key and requires a conformance failure on the unrelated-write case.
 - [x] 4.3 Update `docs/stable-discovery-engine.md` and `docs/cache.md` (checkpoint row) for frame-keyed checkpoints, the visited-page exception, and `:populate-cache?`.
 - [x] 4.4 Regenerate `public-source-closure.json`, run the CI-equivalent battery with the CLJS build last, and `openspec validate --strict`.

@@ -66,6 +66,19 @@
     (is (= {:schema-generation 4 :dependency-stamp 0}
            (proof-frame/descriptor proof)))))
 
+(deftest descriptor-shape-is-closed-and-portable
+  (is (true?
+       (proof-frame/descriptor?
+        {:schema-generation 4 :dependency-stamp 9})))
+  (doseq [invalid
+          [nil
+           {}
+           {:schema-generation 4}
+           {:schema-generation 4 :dependency-stamp 9 :mode :exact-basis}
+           {:schema-generation -1 :dependency-stamp 9}
+           {:schema-generation 4 :dependency-stamp 1.5}]]
+    (is (false? (proof-frame/descriptor? invalid)) (pr-str invalid))))
+
 (deftest proof-frame-reads-schema-generation-only-through-certified-operation
   (let [schema-reads (atom 0)
         selected

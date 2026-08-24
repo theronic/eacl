@@ -511,6 +511,11 @@
                    :operation :cursor-recovery}))))
             historical-basis?
             (= :as-of (:basis-kind page-semantic-identity))
+            accepted-cursor-frame
+            (when (and page-selected-snapshot
+                       (proof-frame/descriptor?
+                        (:frame continuation-context)))
+              (:frame continuation-context))
             page-opts
             (assoc
              (cursor-options
@@ -521,7 +526,7 @@
               resource-type permission relationship-dependency)
              :snapshot-semantic-identity page-semantic-identity
              :cursor-dependency-context continuation-context
-             :cursor-exact-fallback? (some? page-selected-snapshot)
+             :accepted-cursor-frame accepted-cursor-frame
              :historical-basis? historical-basis?
              :completed-cache?
              (:completed-cache-request? opts))]
@@ -586,10 +591,11 @@
             (some-> (:cursor-dependency-relation-ids opts) force)))
         request-frame-descriptor
         (delay
-          (when-let [relation-ids @request-relation-ids]
-            (proof-frame/descriptor
-             (proof-frame/resolve!
-              request-proof-frame relation-ids))))
+          (or (:accepted-cursor-frame opts)
+              (when-let [relation-ids @request-relation-ids]
+                (proof-frame/descriptor
+                 (proof-frame/resolve!
+                  request-proof-frame relation-ids)))))
         evaluate
         #(do
            (execution/check! contract :schema-plan)
@@ -731,8 +737,7 @@
 
 (defn- continuation-context
   [adapter opts operation query]
-  (when-not (or (false? (:continuation-cache-request? opts))
-                (:cursor-exact-fallback? opts))
+  (when-not (false? (:continuation-cache-request? opts))
     (continuation/private-context
      (:continuation-cache-store opts)
      adapter
