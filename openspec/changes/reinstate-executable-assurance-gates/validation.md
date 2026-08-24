@@ -12,7 +12,7 @@ Validated on 2026-08-23 with the repository's locked formal toolchain and Clojur
 ## Formal corpus and generated boundary
 
 - `bin/formal format`: clean.
-- `bin/formal verify`: 30 Dafny modules, 8,792 proof efforts, zero verification errors. Removing the unused `CacheKernel.dfy` reduced the total by exactly its 17 proof efforts; the retained `CurrentCache.dfy` proof remains at 32 obligations.
+- `bin/formal verify`: 30 Dafny modules, 8,794 proof efforts, zero verification errors. Removing the unused `CacheKernel.dfy` reduced the upstream total by exactly its 17 proof efforts; the corrected `ConsistencyDecision.dfy` boundary contributes 20 obligations, and the retained `CurrentCache.dfy` proof remains at 32 obligations.
 - `sh formal/stable-discovery/verify-fast.sh`: 46 leaves and 631 verified obligations; all TLC and Dafny mutation groups passed in 7 seconds, below the 12-second bound.
 - `bin/formal build-java`, `bin/formal build-js`, and `bin/formal browser-bundle`: passed.
 - The artifact-size gate passed with locked Babashka 1.12.213: browser bundle 586,813/738,488 bytes, Java classes 1,875,003/2,377,367 bytes, Java source 2,115,033/2,670,869 bytes, and JavaScript 942,084/1,188,865 bytes. The host `bb` is 1.12.218 and was correctly rejected by the pinned-toolchain guard.

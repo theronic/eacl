@@ -230,7 +230,7 @@ The final pre-audit run on 2026-08-08 produced the following evidence:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 30 modules, 8,792 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
+| Dafny | 30 modules, 8,794 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
 | TLA+/Apalache | all five models type checked; bounded, inductive, mutation-control, and longer scheduled configurations reported `NoError` |
 | Generated Java runtime bridges | 51 tests, 16,176 assertions, 0 failures/errors |
 | Generated-authority-injected JVM public/backend suite | 523 tests, 39,462 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |
