@@ -39,7 +39,7 @@ and appearing twice in one walk.
 
 ### 2. Exact fallback by identity
 
-When the selected basis's frame differs (or cannot be read), the request's freshness floor permits the original basis, and the source supports exact selection, the relay acquires the cursor's original basis and continues **by identity**: equal source scope, lifecycle, revision, and locator. No frame is read at the original basis. This generalizes the Datomic-only `exact-fallback-decision` (needed because `:db/noHistory` stamps are unreadable through `as-of`) and removes a second `DecideContinuation` call whose only honest answer at the original basis is identity.
+When the selected basis's frame differs (or cannot be read), the request's freshness floor permits the original basis, and the source supports exact selection, the relay acquires the cursor's original basis and continues **by identity**: equal source scope, lifecycle, revision, and locator. No frame is read at the original basis. This generalizes the Datomic-only `exact-fallback-decision` and removes a second `DecideContinuation` call that cannot strengthen the immutable original-basis identity and would make fallback depend unnecessarily on proof-provider availability.
 
 ### 3. The read-scope bridge
 

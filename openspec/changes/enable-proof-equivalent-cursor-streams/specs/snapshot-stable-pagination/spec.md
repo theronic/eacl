@@ -51,7 +51,7 @@ When the selected basis's frame differs from or is unavailable relative to the c
 
 #### Scenario: Datomic exact fallback after arbitrary forward history
 - **WHEN** a cursor's frame changed and its original basis belongs to the same lineage
-- **THEN** EACL catches the Peer up when necessary and continues on the verified `d/as-of` value by identity, even though the `noHistory` stamps are unreadable there
+- **THEN** EACL catches the Peer up when necessary and continues on the verified `d/as-of` value by the cursor's original source scope, lifecycle, revision, and locator identity, without requiring a redundant proof-frame read at that same immutable basis
 
 #### Scenario: Datahike temporal-history fallback
 - **WHEN** a cursor's frame changed and the Datahike source has `:keep-history? true`
