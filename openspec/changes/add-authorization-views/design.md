@@ -182,8 +182,8 @@ flowchart LR
     MG["managed tier — lifecycle × schema generation × dependency frontier"]
     PL["plan cache · schema registry — scope × lifecycle × schema generation"]
   end
-  MG -- "entries with order ≤ 1041 and equal proof" --> G1
-  MG -- "entries with order ≤ 1040 and equal proof" --> G2
+  MG -- "equal complete proof · order is diagnostic only" --> G1
+  MG -- "equal complete proof · order is diagnostic only" --> G2
   MG -. "never — exact tier only" .-> G3
   PL --> G1
   PL --> G2
