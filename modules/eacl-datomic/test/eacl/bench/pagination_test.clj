@@ -10,7 +10,6 @@
             [clojure.set :as set]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
-            [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.datomic.cache :as cache]
@@ -19,6 +18,7 @@
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.stable-page :as stable-page]
             [eacl.engine.v8 :as engine]
             [eacl.relay :as relay]
             [eacl.secure-format :as secure]
@@ -306,10 +306,10 @@
             targets
             [[:recursive-engine
               #'engine/lookup-resources]
-             [:continuation-entry-lookup
-              #'continuation/get!]
-             [:continuation-entry-store
-              #'continuation/put!]
+             [:checkpoint-lookup
+              (ns-resolve 'eacl.engine.stable-page 'checkpoint-hit)]
+             [:checkpoint-store
+              #'stable-page/checkpoint-put!]
              [:token-decode
               #'cursor/token->authenticated-cursor]
              [:token-encrypt
@@ -351,8 +351,8 @@
         (is (every?
              #(zero? (get-in hot-breakdown [% :calls]))
              [:recursive-engine
-              :continuation-entry-lookup
-              :continuation-entry-store
+              :checkpoint-lookup
+              :checkpoint-store
               :token-encrypt
               :boundary-entity
               :boundary-render])
