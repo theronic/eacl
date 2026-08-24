@@ -92,7 +92,7 @@
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
   {:status :passed
-   :verified-obligations 18
+   :verified-obligations 20
    :source "formal/dafny/ConsistencyDecision.dfy"
    :report "formal/verification/consistency-decision.edn"
    :integration-status
@@ -155,7 +155,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8809
+   :verified-obligations 8811
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed

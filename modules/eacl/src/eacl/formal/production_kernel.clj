@@ -4,9 +4,10 @@
             [eacl.verified-kernel :as verified])
   (:import
    (ConsistencyDecision
-    ConsistencyError
-    SelectionKind
-    SnapshotConsistencyMode
+   ConsistencyError
+   SelectionKind
+   SelectionWork
+   SnapshotConsistencyMode
     SuccessfulSelectionPath)
    (CurrentCache CurrentCacheStage)
    (dafny DafnySequence Tuple2 TypeDescriptor)
@@ -760,13 +761,46 @@
       :accept
       (consistency-error (.dtor_error outcome)))))
 
+(defn- consistency-work-map
+  [^SelectionWork work]
+  {:capability-observations
+   (.longValueExact (.dtor_capabilityObservations work))
+   :plan-decisions
+   (.longValueExact (.dtor_planDecisions work))
+   :authentication-attempts
+   (.longValueExact (.dtor_authenticationAttempts work))
+   :backend-selection-calls
+   (.longValueExact (.dtor_backendSelectionCalls work))
+   :validation-decisions
+   (.longValueExact (.dtor_validationDecisions work))
+   :source-scope-reads
+   (.longValueExact (.dtor_sourceScopeReads work))
+   :revision-validation-calls
+   (.longValueExact (.dtor_revisionValidationCalls work))
+   :native-revision-reads
+   (.longValueExact (.dtor_nativeRevisionReads work))
+   :order-hint-reads
+   (.longValueExact (.dtor_orderHintReads work))
+   :exact-locator-reads
+   (.longValueExact (.dtor_exactLocatorReads work))
+   :source-lifecycle-reads
+   (.longValueExact (.dtor_sourceLifecycleReads work))
+   :snapshot-id-reads
+   (.longValueExact (.dtor_snapshotIdReads work))
+   :basis-kind-reads
+   (.longValueExact (.dtor_basisKindReads work))})
+
+(defn consistency-plan-work
+  "Returns the generated Dafny logical-work vector for planning only."
+  []
+  (consistency-work-map
+   (ConsistencyDecision.__default/SelectionPlanWork)))
+
 (defn consistency-selection-work
   "Returns the generated Dafny logical-work vector for one successful path."
   [path issue-response-token?]
   (let [formal-path
         (case path
-          :captured-current
-          (SuccessfulSelectionPath/create_CapturedCurrentPath)
           :selected-current
           (SuccessfulSelectionPath/create_SelectedCurrentPath)
           :authoritative
@@ -779,26 +813,7 @@
         (ConsistencyDecision.__default/SuccessfulSelectionWork
          formal-path
          issue-response-token?)]
-    {:capability-observations
-     (.longValueExact (.dtor_capabilityObservations work))
-     :plan-decisions
-     (.longValueExact (.dtor_planDecisions work))
-     :authentication-attempts
-     (.longValueExact (.dtor_authenticationAttempts work))
-     :backend-selection-calls
-     (.longValueExact (.dtor_backendSelectionCalls work))
-     :validation-decisions
-     (.longValueExact (.dtor_validationDecisions work))
-     :source-scope-reads
-     (.longValueExact (.dtor_sourceScopeReads work))
-     :revision-validation-calls
-     (.longValueExact (.dtor_revisionValidationCalls work))
-     :native-revision-reads
-     (.longValueExact (.dtor_nativeRevisionReads work))
-     :order-hint-reads
-     (.longValueExact (.dtor_orderHintReads work))
-     :exact-locator-reads
-     (.longValueExact (.dtor_exactLocatorReads work))}))
+    (consistency-work-map work)))
 
 (defn- candidate-state
   [candidate]

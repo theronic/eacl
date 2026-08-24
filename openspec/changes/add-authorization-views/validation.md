@@ -4,13 +4,13 @@ Validated on 2026-08-23 from branch `agent/add-authorization-views`.
 
 ## Behaviour and conformance
 
-- The aggregate JVM suite passed with 696 tests and 24,869 assertions.
+- The aggregate JVM suite passed with 697 tests and 24,917 assertions.
 - The shared five-target authorization matrix passed on Datomic, Datahike,
   DataScript, and Datalevin with 4 tests and 960 assertions per backend. The
   targets are writable `Acl`, read-only `Acl`, captured `Snapshot`, selected
   `Snapshot`, and direct `Snapshot`.
 - The isolated module suites passed:
-  - `eacl`: 215 tests, 4,441 assertions.
+  - `eacl`: 216 tests, 4,489 assertions.
   - `eacl-datomic`: 484 tests, 16,220 assertions.
   - `eacl-datahike`: 262 tests, 7,002 assertions.
   - `eacl-datascript` on the JVM: 369 tests, 10,619 assertions.
@@ -21,8 +21,8 @@ Validated on 2026-08-23 from branch `agent/add-authorization-views`.
   assertions passed.
 - DataScript ClojureScript was run last. It passed 267 tests and 8,131
   assertions under Node with zero failures or errors.
-- The generated Clojure/JVM formal boundary passed 48 tests and 15,626
-  assertions. The generated JavaScript/oracle suite passed 44 tests and 9,972
+- The generated Clojure/JVM formal boundary passed 49 tests and 15,625
+  assertions. The generated JavaScript/oracle suite passed 45 tests and 9,971
   assertions.
 - Reader-only and writer-only remote-style protocol implementations passed,
   demonstrating that the public API does not require a local database, basis
@@ -53,12 +53,12 @@ and cache-class sharing all have adversarial regression coverage.
 
 ## Formal and static gates
 
-- `bin/formal verify`: 31 Dafny modules, 8,809 proof efforts, zero verification
+- `bin/formal verify`: 31 Dafny modules, 8,811 proof efforts, zero verification
   errors. The largest single proof effort was 24,106,086 for
   `IndexedReverseCompleteness.ReverseResponseWorkCoversSourceFact`.
 - `bin/formal format`: passed.
-- Public source closure: 70 roots and 1,639 definitions; SHA-256
-  `5d2f89f29b81b423eef933127caf40873d62da570d251d507ec41f352a587685`.
+- Public source closure: 70 roots and 1,641 definitions; SHA-256
+  `cfe2b6cdfda024adb3adcf14bbc9b381c153bbd7baa0e6459c4e6b95ae02a3df`.
 - Source-closure, counterexample-replay, and stable-discovery gates: 60 tests
   and 3,559 assertions passed.
 - Production clj-kondo: zero errors; 37 existing warnings.

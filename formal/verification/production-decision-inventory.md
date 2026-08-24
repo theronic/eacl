@@ -17,7 +17,7 @@ reused.
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
 | Relationship and authorized pagination | `eacl.engine.relationships` physical keyset pages and bounded authorization windows; `eacl.engine.v8/execute-filtered-lookup-window` over stable discovery; route orchestration in `eacl.client.orchestration` and the Datomic historical facade | relationship pages, authorization scan pages, enumerate-route pages, progress anchors, `:bounded?`, and exact lookahead |
 | Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
-| Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `captured-current-selection`, `select` | snapshot chosen for every Datomic, Datahike, and DataScript authorization request |
+| Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `select-from-source`, `select` | snapshot chosen for every Datomic, Datahike, DataScript, and Datalevin authorization request through an `Acl`; retained snapshots use the separate assertion boundary and perform no source selection |
 | Semantic cache key and entry eligibility | complete basis identity plus generated exact-only and managed entry decisions and completed typed artifact validation | `can?`, lookup, count, relationship-read, and permission-tree cache-enabled responses; eligibility has zero backend-command authority |
 | Cache miss ownership and publication | `eacl.subproblem-cache/resolve-independent!`, generation-qualified bounded `publish!` | misses compute independently; compatible winners are retained and losing/late candidates are discarded without changing authorization |
 | Local cache failure and invalid-entry handling | `eacl.cache` exact-basis/managed decisions plus `eacl.subproblem-cache` lookup/validation/publication | whether a client-private cached authorization result may be returned |
@@ -47,11 +47,13 @@ differential campaign.
 history, a present malformed adapter, cross-source selection, and failed
 native-revision/exact-locator postconditions. The
 16 plan states and 48 well-formed validation states are exhaustively compared
-through generated Java and JavaScript. Datomic, Datahike, and DataScript pass
-their configured engine selection into this boundary. The zero-coordination
-captured-current path makes one plan decision and returns the identical
-already-captured immutable adapter; scope equality is reflexive and therefore
-does not justify a second FFI call or backend scope read.
+through generated Java and JavaScript. Datomic, Datahike, DataScript, and
+Datalevin pass their configured engine selection into this boundary. The
+plan-only cost vector covers the minimize-latency decision before source
+acquisition. Every successful `Acl` selection then acquires and validates one
+selected basis. A retained snapshot does not call this source-selection
+boundary: its descriptor is asserted against its already closed basis identity
+before evaluation and without a source operation.
 
 This verifies the finite decision over observed facts. It does not prove that
 an adapter's source scope, native revision, exact reconstruction, or

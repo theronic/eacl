@@ -114,9 +114,8 @@
               input))))))
 
 (defn- expected-consistency-work
-  [path issue-response-token?]
-  (let [response-scope (if issue-response-token? 1 0)
-        common
+  [path _issue-response-token?]
+  (let [common
         {:capability-observations 1
          :plan-decisions 1
          :authentication-attempts 0
@@ -125,42 +124,51 @@
          :revision-validation-calls 0
          :native-revision-reads 1
          :order-hint-reads 1
-         :exact-locator-reads 1}]
+         :exact-locator-reads 1
+         :source-lifecycle-reads 2
+         :snapshot-id-reads 1
+         :basis-kind-reads 1}]
     (case path
-      :captured-current
-      {:capability-observations 1
-       :plan-decisions 1
-       :authentication-attempts 0
-       :backend-selection-calls 0
-       :validation-decisions 0
-       :source-scope-reads 0
-       :revision-validation-calls 0
-       :native-revision-reads 0
-       :order-hint-reads 0
-       :exact-locator-reads 0}
       (:selected-current :authoritative)
-      (assoc common :source-scope-reads (+ 2 response-scope))
+      (assoc common :source-scope-reads 2)
       :at-least
       (assoc common
              :authentication-attempts 1
-             :source-scope-reads (+ 3 response-scope)
+             :source-scope-reads 2
              :revision-validation-calls 1
-             :native-revision-reads 2
-             :order-hint-reads 2
-             :exact-locator-reads 2)
+             :native-revision-reads 1
+             :order-hint-reads 1
+             :exact-locator-reads 1)
       :exact
       (assoc common
              :authentication-attempts 1
-             :source-scope-reads (+ 3 response-scope)
+             :source-scope-reads 2
              :revision-validation-calls 1
-             :native-revision-reads 2
-             :order-hint-reads 2
-             :exact-locator-reads 2))))
+             :native-revision-reads 1
+             :order-hint-reads 1
+             :exact-locator-reads 1))))
+
+(def plan-only-work
+  {:capability-observations 1
+   :plan-decisions 1
+   :authentication-attempts 0
+   :backend-selection-calls 0
+   :validation-decisions 0
+   :source-scope-reads 0
+   :revision-validation-calls 0
+   :native-revision-reads 0
+   :order-hint-reads 0
+   :exact-locator-reads 0
+   :source-lifecycle-reads 0
+   :snapshot-id-reads 0
+   :basis-kind-reads 0})
+
+(deftest generated-javascript-consistency-plan-work-is-dimensionally-exact
+  (is (= plan-only-work (production/consistency-plan-work))))
 
 (deftest generated-javascript-consistency-work-is-dimensionally-exact
   (doseq [path
-          [:captured-current :selected-current :authoritative
-           :at-least :exact]
+          [:selected-current :authoritative :at-least :exact]
           issue-response-token? [false true]]
     (is (= (expected-consistency-work path issue-response-token?)
            (production/consistency-selection-work

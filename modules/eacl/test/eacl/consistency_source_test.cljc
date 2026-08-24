@@ -5,7 +5,8 @@
             [eacl.backend.v8 :as backend]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency]
-            [eacl.spicedb.consistency :as public-consistency]))
+            [eacl.spicedb.consistency :as public-consistency]
+            [eacl.verified-kernel :as verified]))
 
 (def format-options
   {:current-kid :test
@@ -142,6 +143,62 @@
       (is (empty? @release-calls))
       (is (true? (source/release! selected)))
       (is (= [11] @release-calls)))))
+
+(deftest successful-selection-logical-work-matches-formal-path-counts
+  (doseq [[consistency-value acquisition-operation]
+          [[public-consistency/minimize-latency :acquire-current!]
+           [public-consistency/fully-consistent :acquire-authoritative!]
+           [(public-consistency/at-least-as-fresh (token 11))
+            :acquire-at-least!]
+           [(public-consistency/at-exact-snapshot (token 11))
+            :acquire-exact!]]
+          issue-token? [false true]]
+    (let [selected-adapter (adapter {:revision 11})
+          basis-source
+          (reduce
+           (fn [candidate operation-key]
+             (assoc-in
+              candidate
+              [::source/operations operation-key]
+              (fn [& _]
+                {:adapter selected-adapter
+                 :ownership :owned
+                 :release-token 11})))
+           (test-source {:candidates (atom [])})
+           [:acquire-current! :acquire-authoritative!
+            :acquire-at-least! :acquire-exact!])
+          source-operations (atom {})
+          adapter-operations (atom {})
+          kernel-crossings (atom {})
+          selection
+          (binding [source/*source-op-stats* source-operations
+                    backend/*backend-op-stats* adapter-operations
+                    verified/*kernel-crossing-stats* kernel-crossings]
+            (consistency/select
+             basis-source
+             consistency-value
+             {:format-options format-options
+              :timeout-ms 1000
+              :issue-token? issue-token?}))
+          token-mode?
+          (contains? #{:acquire-at-least! :acquire-exact!}
+                     acquisition-operation)]
+      (is (= {:consistency-plan 1 :consistency-validation 1}
+             @kernel-crossings))
+      (is (= {acquisition-operation 1
+              :source-scope 2
+              :source-lifecycle 2}
+             @source-operations))
+      (is (= (if token-mode? 1 0)
+             (if (:request-token selection) 1 0)))
+      (is (= {:snapshot-id 1
+              :basis-kind 1
+              :native-revision 1
+              :order-hint 1
+              :exact-locator 1}
+             @adapter-operations))
+      (is (= issue-token? (some? (:response-token selection))))
+      (is (true? (source/release! (:selected-snapshot selection)))))))
 
 (deftest source-at-least-closes-insufficient-candidates-test
   (let [release-calls (atom [])

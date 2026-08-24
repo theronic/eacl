@@ -318,14 +318,15 @@
   {:operation :snapshot-consistency-selection
    :entry-points
    ['eacl.consistency/selection-plan
-    'eacl.consistency/captured-current-selection
+    'eacl.consistency/select-from-source
     'eacl.consistency/select]
    :theorems
    [:unsupported-exact-plan-is-exact-snapshot-unavailable
     :at-least-acceptance-requires-ancestor
     :exact-acceptance-requires-pinned-graph
     :present-malformed-selection-is-not-snapshot-absence
-    :captured-current-needs-no-post-selection-decision
+    :selection-plan-needs-no-acquisition-or-validation
+    :response-token-uses-closed-selected-identity
     :selected-current-has-one-selection-and-validation
     :successful-selection-logical-work-is-constant-bounded]
    :dafny ["formal/dafny/ConsistencyDecision.dfy"

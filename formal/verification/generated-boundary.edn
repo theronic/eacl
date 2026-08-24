@@ -145,7 +145,8 @@
   :backend-capability-regression :EACL-FORMAL-054
   :plan-cases 16
   :well-formed-post-selection-cases 48
-  :generated-logical-work-paths 5
+  :generated-logical-work-paths 4
+  :generated-plan-only-work-vector true
   :generated-logical-work-response-token-states 2
   :generated-java-exhaustive true
   :generated-javascript-exhaustive true
@@ -159,20 +160,23 @@
    :selection-shapes
    [:absent :malformed :identical :same-scope-revision-pass
     :same-scope-revision-fail :different-scope]}
-  :production-callers [:datomic :datahike :datascript]
-  :captured-current-specialization
+  :production-callers [:datomic :datahike :datascript :datalevin]
+  :minimize-latency-plan-only-vector
   {:generated-plan-decisions 1
    :generated-post-selection-decisions 0
-   :backend-selection-calls 0
-   :same-source-scope :identity-reflexivity}
+   :backend-selection-calls 0}
   :direct-selected-current-path
   {:generated-plan-decisions 1
    :generated-post-selection-decisions 1
    :backend-selection-calls 1
-   :source-scope-reads-at-most 3
+   :source-scope-reads 2
    :native-revision-reads 1
    :order-hint-reads 1
-   :exact-locator-reads 1}
+   :exact-locator-reads 1
+   :source-lifecycle-reads 2
+   :snapshot-id-reads 1
+   :basis-kind-reads 1}
+  :response-token-additional-source-or-adapter-reads 0
   :logical-work-report
   "formal/verification/consistency-decision.edn"
   :performance-report "formal/verification/performance-gates.edn"
