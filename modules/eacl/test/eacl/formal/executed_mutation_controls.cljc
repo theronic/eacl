@@ -212,7 +212,7 @@
    :cache-basis revision
    :managed-subproblem-scope audit-source-scope
    :managed-key-fn
-   (constantly {:schema-stamp 10 :dependency-stamp 20})})
+   (constantly {:schema-generation 10 :dependency-stamp 20})})
 
 (defn numeric-ancestry-killed?
   "Kills the obsolete order-as-ancestry rule against the replacement contract:
