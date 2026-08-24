@@ -426,6 +426,11 @@ constant lifecycle, and shared token keys. Restore, reset, purge, excision, or
 branch replacement requires lifecycle rotation.
 
 Cursors carry no expiry unless a positive `:cursor-ttl-seconds` is configured.
+The bounded client-private codec cache reuses an identical self-minted token
+only while its authenticated expiry remains in the future. A cache hit still
+checks the clock, the exact expiry instant is rejected, and the next encode
+mints a fresh token. Tokens not minted by that cache always traverse the full
+authenticated decoder.
 Cache TTL, answer eviction, page-navigation eviction, and checkpoint eviction
 do not limit cursor age; they only cause deterministic replay. An old cursor
 continues the original historical enumeration. Consumers that require current

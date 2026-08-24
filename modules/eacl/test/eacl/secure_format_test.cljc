@@ -463,6 +463,69 @@
                  (tamper-compact-authenticator encoded)
                  cached-options))))))))
 
+(deftest private-cursor-codec-cache-retains-exact-ttl-semantics-test
+  (let [value {:v 12
+               :scope [:lookup {:subject/id "ttl-user"}]
+               :edge {:kind :stable-edge :position [1 "document-1"]}}
+        codec-cache (cursor/codec-cache {:max-entries 2})
+        cached-options
+        (assoc options
+               :cursor-codec-cache codec-cache
+               :cursor-ttl-seconds 10)
+        encode-work (atom {})
+        token-1
+        (binding [cursor/*codec-work* encode-work]
+          (let [minted
+                (cursor/cursor->token
+                 value (assoc cached-options :now-seconds 100))
+                reused
+                (cursor/cursor->token
+                 value (assoc cached-options :now-seconds 109))]
+            (is (= minted reused)
+                "an identical payload reuses its still-valid authenticated token")
+            (is (= 1 (:encode-calls @encode-work)))
+            minted))]
+    (testing "a cached decode still enforces the protected expiry"
+      (let [decode-work (atom {})
+            authenticated
+            (binding [cursor/*codec-work* decode-work]
+              (cursor/token->authenticated-cursor
+               token-1 (assoc cached-options :now-seconds 110)))]
+        (is (true? (:authenticated? authenticated)))
+        (is (true? (:expired? authenticated)))
+        (is (= 110 (:expired-at authenticated)))
+        (is (empty? @decode-work)
+            "self-minted tokens need neither decryption nor re-authentication"))
+      (is (= :expired
+             (:reason
+              (error-data
+               #(cursor/token->cursor
+                 token-1 (assoc cached-options :now-seconds 110)))))))
+    (testing "expiry remints without corrupting the newer reverse mapping"
+      (let [token-2
+            (cursor/cursor->token
+             value (assoc cached-options :now-seconds 110))
+            other-token
+            (cursor/cursor->token
+             {:v 12 :scope :other}
+             (assoc cached-options :now-seconds 110))]
+        (is (not= token-1 token-2))
+        ;; max-entries=2 evicts token-1 here. Its eviction must not delete the
+        ;; token-2 reverse lookup for the same cursor.
+        (is (string? other-token))
+        (is (= token-2
+               (cursor/cursor->token
+                value (assoc cached-options :now-seconds 111))))))
+    (testing "issuance policies never share an encode lookup"
+      (is (not=
+           (cursor/cursor->token
+            value (assoc cached-options :now-seconds 111))
+           (cursor/cursor->token
+            value
+            (assoc cached-options
+                   :cursor-ttl-seconds 20
+                   :now-seconds 111)))))))
+
 (deftest private-cursor-construction-context-cache-is-bounded-test
   (let [codec-cache (cursor/codec-cache {:max-entries 2})
         builds (atom {})
