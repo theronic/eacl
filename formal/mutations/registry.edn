@@ -4,7 +4,49 @@
  :historical-clojure-mutant-count 103
  :historical-model-mutant-count 4
  :mutants
- [{:id :wrong-frontier
+ [{:id :wrong-arrow-direction
+   :mechanism :executed-production
+   :mutation :swap-arrow-resource-and-subject
+   :target-symbol "portable/decide"
+   :detector "wrong-arrow-direction-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :wrong-arrow-direction-control}}
+  {:id :premature-cycle-cut
+   :mechanism :executed-production
+   :mutation :treat-recursive-node-visit-as-complete
+   :target-symbol "portable/decide"
+   :detector "premature-cycle-cut-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :premature-cycle-cut-control}}
+  {:id :missing-de-duplication
+   :mechanism :executed-production
+   :mutation :emit-every-semantic-path
+   :target-symbol "portable/decide"
+   :detector "missing-de-duplication-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :missing-de-duplication-control}}
+  {:id :incomplete-dependency
+   :mechanism :executed-production
+   :mutation :omit-reachable-relation-from-proof-scope
+   :target-symbol "portable/decide"
+   :detector "incomplete-dependency-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :incomplete-dependency-control}}
+  {:id :numeric-ancestry
+   :mechanism :executed-production
+   :mutation :reject-lower-order-equal-frame-as-not-an-ancestor
+   :target-symbol "cache/resolve-basis!"
+   :detector "numeric-ancestry-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :managed-lifting-is-revision-direction-agnostic}}
+  {:id :continuation-race
+   :mechanism :executed-production
+   :mutation :retain-publication-after-ticket-replacement
+   :target-symbol "portable/decide"
+   :detector "continuation-race-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :continuation-race-control}}
+  {:id :wrong-frontier
    :mechanism :executed-production
    :mutation :resume-from-inclusive-after-bound
    :target-symbol "portable/decide"
@@ -248,13 +290,7 @@
    :disposition
    "Removed from the scored registry instead of preserving a literal-only or decision-by-source-text false kill. Reintroduction requires a named target and an executed detector."
    :ids
-   [:wrong-arrow-direction
-    :premature-cycle-cut
-    :missing-de-duplication
-    :set-equality-as-sequence-equality
-    :incomplete-dependency
-    :numeric-ancestry
-    :continuation-race
+   [:set-equality-as-sequence-equality
     :immediate-reverse-consumer-registration
     :leapfrog-equal-head-skipped
     :leapfrog-reseek-target-excluded

@@ -43,6 +43,19 @@
 (def allowed-mechanisms
   #{:executed-production :executed-generated :executed-model :source-text})
 
+(def required-executable-bug-classes
+  "Normative examples from the assurance spec. These ids may not be made to
+  disappear from the score by moving them into a retirement bucket."
+  #{:wrong-arrow-direction
+    :premature-cycle-cut
+    :missing-de-duplication
+    :wrong-frontier
+    :incomplete-dependency
+    :numeric-ancestry
+    :cursor-scope
+    :cache-fail-open
+    :continuation-race})
+
 (defn- executed-entry-problems
   [forms {:keys [id target-symbol detector control]}]
   (cond-> []
@@ -130,6 +143,11 @@
     (testing "every active entry uses one closed execution mechanism"
       (is (every? allowed-mechanisms (map :mechanism mutants)))
       (is (every? (comp keyword? :mutation) mutants))
+      (is (every? (set active-ids) required-executable-bug-classes)
+          "normative mutation examples must remain executable and scored")
+      (is (empty? (filter (set retired-ids)
+                          required-executable-bug-classes))
+          "normative mutation examples may not be retired")
       (is (empty? (mapcat #(executed-entry-problems forms %) production)))
       (is (empty? (mapcat source-entry-problems source-text))))
     (testing "executed production controls mutate the named Var"

@@ -4,10 +4,10 @@ Validated on 2026-08-23 with the repository's locked formal toolchain and Clojur
 
 ## Executable assurance controls
 
-- `EACL_NREPL_PORT=52308 bin/formal mutation-control`: 4 tests, 75 assertions, zero failures and zero errors. All 23 active Clojure controls were killed: 18 executed production controls and 5 narrowly structural source-text controls. The registry also proves the complete historical split: 103 Clojure controls equal 23 active plus 80 explicitly retired controls, and 4 model controls remain active.
-- `bin/formal apalache-mutation-control`: all four active temporal model mutants were rejected. Combined with the Clojure controls, all 27 active controls were killed. The remaining 80 historical literal-only controls are explicitly retired with a reason; active plus retired remains the 107-entry historical corpus.
+- `EACL_NREPL_PORT=52991 bin/formal mutation-control`: 4 tests, 83 assertions, zero failures and zero errors. All 29 active Clojure controls were killed: 24 executed production controls and 5 narrowly structural source-text controls. The registry also proves the complete historical split: 103 Clojure controls equal 29 active plus 74 explicitly retired controls, and 4 model controls remain active. The normative wrong-direction, premature-cycle-cut, de-duplication, frontier, incomplete-dependency, direction-agnostic proof-reuse, cursor-scope, fail-closed, and publication-race variants are executable and cannot be moved into a retirement bucket without failing the registry gate.
+- `bin/formal apalache-mutation-control`: all four active temporal model mutants were rejected. Combined with the Clojure controls, all 33 active controls were killed. The remaining 74 historical literal-only controls are explicitly retired with a reason; active plus retired remains the 107-entry historical corpus.
 - The manifest validator's corrupt-count subprocess control passed with the dedicated invalid-evidence exit status `2`, proving a registry/ledger/manifest count disagreement cannot masquerade as expected assurance withholding.
-- DataScript CLJS: 268 tests, 8,149 assertions, zero failures and zero errors. This includes the 18 portable executed-production controls in `eacl.formal.executed-mutation-controls`.
+- DataScript CLJS: 268 tests, 8,149 assertions, zero failures and zero errors in the original validation run. The six restored CLJ/CLJS production controls are covered by the final post-audit CLJS validation recorded on the stack head.
 
 ## Formal corpus and generated boundary
 

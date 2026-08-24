@@ -317,9 +317,9 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 27
-  :registered 27
-  :retired-invalid-controls 80}
+  :killed 33
+  :registered 33
+  :retired-invalid-controls 74}
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :source-files 79

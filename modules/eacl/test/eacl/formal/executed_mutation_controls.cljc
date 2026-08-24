@@ -30,6 +30,227 @@
               _
          true)))))
 
+(def arrow-authorization-input
+  {:objects [{:type "user" :id "u1"}
+             {:type "folder" :id "f0"}
+             {:type "folder" :id "f1"}]
+   :schema
+   {:relations [{:resource-type "folder"
+                 :relation "reader"
+                 :subject-type "user"}
+                {:resource-type "folder"
+                 :relation "parent"
+                 :subject-type "folder"}]
+    :permissions [{:resource-type "folder" :permission "read"}]
+    :definitions [{:kind :direct-relation
+                   :resource-type "folder"
+                   :permission "read"
+                   :relation "reader"
+                   :subject-type "user"}
+                  {:kind :arrow-permission
+                   :resource-type "folder"
+                   :permission "read"
+                   :via-relation "parent"
+                   :target-permission "read"}]}
+   :relationships
+   [{:resource {:type "folder" :id "f0"}
+     :relation "reader"
+     :subject {:type "user" :id "u1"}}
+    {:resource {:type "folder" :id "f1"}
+     :relation "parent"
+     :subject {:type "folder" :id "f0"}}]
+   :request {:operation :can?
+             :subject {:type "user" :id "u1"}
+             :permission "read"
+             :resource {:type "folder" :id "f1"}}
+   :limits {:max-derived-grants 100
+            :max-advanced-datoms 100
+            :max-queued-work 100}})
+
+(defn wrong-arrow-direction-killed?
+  []
+  (let [expected {:status :complete
+                  :operation :can?
+                  :allowed? true
+                  :counters {:derived-grants 2
+                             :advanced-datoms 2
+                             :queued-work 1}}]
+    (portable-mutation-killed?
+     portable/decide
+     :authorization-evaluation
+     arrow-authorization-input
+     expected
+     (assoc expected :allowed? false))))
+
+(defn premature-cycle-cut-killed?
+  []
+  (let [input
+        (update
+         arrow-authorization-input
+         :relationships
+         conj
+         {:resource {:type "folder" :id "f0"}
+          :relation "parent"
+          :subject {:type "folder" :id "f1"}})
+        expected {:status :complete
+                  :operation :can?
+                  :allowed? true
+                  :counters {:derived-grants 2
+                             :advanced-datoms 3
+                             :queued-work 1}}]
+    (portable-mutation-killed?
+     portable/decide
+     :authorization-evaluation
+     input
+     expected
+     (assoc expected :allowed? false))))
+
+(defn missing-de-duplication-killed?
+  []
+  (let [input
+        (-> arrow-authorization-input
+            (assoc :request {:operation :lookup-resources
+                             :subject {:type "user" :id "u1"}
+                             :permission "read"
+                             :resource-type "folder"})
+            (update-in [:schema :definitions]
+                       #(conj % (first %))))
+        expected {:status :complete
+                  :operation :lookup-resources
+                  :items [{:type "folder" :id "f0"}
+                          {:type "folder" :id "f1"}]
+                  :counters {:derived-grants 2
+                             :advanced-datoms 2
+                             :queued-work 1}}]
+    (portable-mutation-killed?
+     portable/decide
+     :authorization-evaluation
+     input
+     expected
+     (update expected :items conj {:type "folder" :id "f1"}))))
+
+(def incomplete-indexed-plan-input
+  {:relations
+   [{:resource-type "folder" :relation "reader" :subject-type "user"}
+    {:resource-type "folder" :relation "parent" :subject-type "folder"}]
+   :permissions [{:resource-type "folder" :permission "read"}]
+   :definitions
+   [{:kind :direct-relation
+     :resource-type "folder" :permission "read"
+     :relation "reader" :subject-type "user"}
+    {:kind :arrow-permission
+     :resource-type "folder" :permission "read"
+     :via-relation "parent" :target-permission "read"}]
+   :relation-bindings
+   [{:eid 1
+     :relation {:resource-type "folder"
+                :relation "reader" :subject-type "user"}}
+    {:eid 2
+     :relation {:resource-type "folder"
+                :relation "parent" :subject-type "folder"}}]
+   ;; The arrow rule is deliberately omitted from the candidate proof scope.
+   :indexed-rules
+   [{:kind :relation
+     :head {:resource-type "folder" :permission "read"}
+     :relation-eid 1
+     :subject-type "user"}]})
+
+(defn incomplete-dependency-killed?
+  []
+  (portable-mutation-killed?
+   portable/decide
+   :indexed-plan-certification
+   incomplete-indexed-plan-input
+   {:status :rejected :reason :compiled-rule-mismatch}
+   {:status :certified}))
+
+(defn continuation-race-killed?
+  []
+  (portable-mutation-killed?
+   portable/decide
+   :subproblem-cache-decision
+   {:decision :publication
+    :ticket-current? false
+    :complete? true
+    :valid? true
+    :weight 1
+    :budget 10}
+   :drop-publication
+   :retain-publication))
+
+(defn- audit-snapshot-object
+  []
+  #?(:clj (Object.)
+     :cljs (js-obj)))
+
+(def audit-source-scope
+  {:backend :mutation-control
+   :source-id :source
+   :branch nil
+   :source-lifecycle :lifecycle})
+
+(defn- audit-basis-key
+  [revision]
+  {:key-version 2
+   :backend :mutation-control
+   :basis-identity
+   (assoc audit-source-scope
+          :basis-kind :ordinary
+          :revision revision
+          :exact-locator revision
+          :backend-snapshot-id revision)
+   :adapter-fingerprint :mutation-control
+   :identity-contract :mutation-control/v1})
+
+(defn- audit-basis-context
+  [revision]
+  {:snapshot (audit-snapshot-object)
+   :snapshot-order revision
+   :exact-basis-key (audit-basis-key revision)
+   :cache-basis revision
+   :managed-subproblem-scope audit-source-scope
+   :managed-key-fn
+   (constantly {:schema-stamp 10 :dependency-stamp 20})})
+
+(defn numeric-ancestry-killed?
+  "Kills the obsolete order-as-ancestry rule against the replacement contract:
+  equal complete frames permit reuse in either revision direction."
+  []
+  (let [run
+        (fn []
+          (let [store (cache/basis-cache)
+                computations (atom 0)
+                resolve
+                (fn [revision value]
+                  (cache/resolve-basis!
+                   store (audit-basis-context revision)
+                   :same-query :decision boolean?
+                   (fn []
+                     (swap! computations inc)
+                     value)))
+                _ (resolve 2 true)
+                older (resolve 1 false)]
+            {:older-value (:value older)
+             :older-tier (:cache-tier older)
+             :computations @computations}))
+        expected {:older-value true
+                  :older-tier :managed-current
+                  :computations 1}
+        original cache/resolve-basis!]
+    (and
+     (= expected (run))
+     (not=
+      expected
+      (with-redefs [cache/resolve-basis!
+                    (fn [store context semantic-key kind valid-value? compute]
+                      (original
+                       store
+                       (if (= 1 (:snapshot-order context))
+                         (dissoc context :managed-key-fn)
+                         context)
+                       semantic-key kind valid-value? compute))]
+        (run))))))
+
 (defn wrong-frontier-killed?
   []
   (let [input {:length 4
@@ -322,7 +543,13 @@
         (gate))))))
 
 (def controls
-  {:wrong-frontier wrong-frontier-killed?
+  {:wrong-arrow-direction wrong-arrow-direction-killed?
+   :premature-cycle-cut premature-cycle-cut-killed?
+   :missing-de-duplication missing-de-duplication-killed?
+   :incomplete-dependency incomplete-dependency-killed?
+   :numeric-ancestry numeric-ancestry-killed?
+   :continuation-race continuation-race-killed?
+   :wrong-frontier wrong-frontier-killed?
    :cursor-scope cursor-scope-killed?
    :cache-fail-open cache-fail-open-killed?
    :current-cache-missing-entry-hit current-cache-missing-entry-hit-killed?
