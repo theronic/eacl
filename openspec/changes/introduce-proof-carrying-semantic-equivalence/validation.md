@@ -44,20 +44,21 @@ All Clojure test execution ran through nREPL with changed namespaces reloaded.
 
 ## Proof, mutation, and source-closure evidence
 
-- `bin/formal verify`: 30 Dafny modules, 8,792 proof efforts, zero verification
+- `bin/formal verify`: 30 Dafny modules, 8,794 proof efforts, zero verification
   errors. `ScalarFrontierCoherence.dfy` retains the proved
   `EqualScalarProofAlsoPreservesAnOlderSelectedSnapshot` corollary, and the
   assurance matrix now cites it for direction-agnostic retained-basis reuse.
 - `bin/formal format`: clean.
-- `EACL_NREPL_PORT=52308 bin/formal mutation-control`: 4 tests and 78
-  assertions, zero failures and zero errors. All 30 active controls were
-  killed, including 21 executed-production controls and the new adapter domain,
-  ceiling, and live-source identity mutations.
-- Public source closure: 78 source files, 70 roots, and 1,651 reachable
+- `EACL_NREPL_PORT=52308 bin/formal mutation-control`: 4 tests and 86
+  assertions, zero failures and zero errors. All 36 active controls were
+  killed: 27 executed-production controls, five structural source controls,
+  and four Apalache controls. This includes the new adapter domain, ceiling,
+  and live-source identity mutations.
+- Public source closure: 78 source files, 70 roots, and 1,653 reachable
   definitions; SHA-256
-  `224ff0932355d2d10dd0c1966ad411ccad5bdd85fff149afce08d522ff4a2b5e`.
+  `91e41b6d394d181e090f063d84d11a538828d5eb1a24b5e5c290dfafe212a012`.
 - `bin/formal manifest` reconciled 303 source files, 55 reports, 67
-  counterexamples, all 30 mutation controls, the v4 adapter certification, and
+  counterexamples, all 36 mutation controls, the v4 adapter certification, and
   all four generated artifact digests. It intentionally withholds unqualified
   verified status only for the repository's five already-declared external
   release obligations; it reported no theorem, count, digest, certification,
