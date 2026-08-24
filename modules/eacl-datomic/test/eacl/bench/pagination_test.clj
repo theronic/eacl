@@ -20,6 +20,7 @@
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.schema :as schema]
             [eacl.engine.v8 :as engine]
+            [eacl.relay :as relay]
             [eacl.secure-format :as secure]
             [eacl.verified-kernel :as verified]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -262,7 +263,13 @@
       (nth sorted mid)
       (/ (+ (nth sorted (dec mid)) (nth sorted mid)) 2.0))))
 (defn- profile-var
-  [target-var iterations f]
+  [target-label target-var iterations f]
+  (when-not (var? target-var)
+    (throw
+     (ex-info
+      "Benchmark target does not resolve to a Var."
+      {:target target-label
+       :value target-var})))
   (let [original @target-var
         calls (atom 0)
         elapsed-ns (atom 0)
@@ -280,7 +287,7 @@
      :ns-per-call (/ (double @elapsed-ns) (max 1 @calls))
      :ns-per-operation (/ (double @elapsed-ns) iterations)}))
 (deftest ^:benchmark recursive-cache-cost-breakdown-benchmark
-  (testing "Recursive timing separates traversal, cache I/O, tokens, and boundary coercion"
+  (testing "Recursive timing separates traversal, cache I/O, tokens, and boundary rendering"
     (with-mem-conn [conn []]
       (let [chain-length 1000
             _ (seed-recursive-chain!
@@ -289,32 +296,28 @@
                 :unrelated-count 0})
             client-opts
             {:security-key "recursive-cost-breakdown00000000"
-             ;; This breaks down the cost of the recursive PAGE path, where a
-             ;; completed page is read back and nothing new is published.
-             ;; Remembering answers adds its own publications on top and would
-             ;; make the "no publications" assertion measure the wrong layer.
-             :cache shared-cache/no-cache}
+             ;; Managed caching is required to exercise both the cold
+             ;; continuation-store path and the completed-page read path.
+             :cache {}}
             query {:subject (->user "user-1")
                    :permission :read
                    :resource/type :account
                    :first 25}
             targets
             [[:recursive-engine
-              #'impl/lookup-resources]
+              #'engine/lookup-resources]
              [:continuation-entry-lookup
               #'continuation/get!]
              [:continuation-entry-store
               #'continuation/put!]
-             [:token-decrypt
-              (ns-resolve
-               'eacl.datomic.core
-               'decrypt-authenticated-page-token)]
+             [:token-decode
+              #'cursor/token->authenticated-cursor]
              [:token-encrypt
               #'cursor/cursor->token]
              [:boundary-entity
               #'d/entity]
-             [:boundary-coercion
-              (ns-resolve 'eacl.datomic.core 'coerce-lookup-page)]]
+             [:boundary-render
+              #'relay/externalize-page]]
             continuation-breakdown
             (into {}
                   (map
@@ -322,6 +325,7 @@
                      (let [client (spiceomic/make-client conn client-opts)]
                        [label
                         (profile-var
+                         label
                          target-var
                          1
                          #(recursive-walk client query))])))
@@ -334,6 +338,7 @@
                        (recursive-walk client query)
                        [label
                         (profile-var
+                         label
                          target-var
                          1
                          #(recursive-walk client query))])))
@@ -341,9 +346,17 @@
         (println "Recursive continuation breakdown:" continuation-breakdown)
         (println "Recursive completed-page breakdown:" hot-breakdown)
         (is (every? (comp pos? :calls val) continuation-breakdown))
-        (is (zero? (get-in hot-breakdown
-                           [:continuation-entry-store :calls]))
-            "completed recursive pages need lookups but no publications")))))
+        (is (pos? (get-in hot-breakdown [:token-decode :calls]))
+            "completed-page reads still authenticate every incoming cursor")
+        (is (every?
+             #(zero? (get-in hot-breakdown [% :calls]))
+             [:recursive-engine
+              :continuation-entry-lookup
+              :continuation-entry-store
+              :token-encrypt
+              :boundary-entity
+              :boundary-render])
+            "completed pages bypass traversal, checkpoint I/O, and rendering")))))
 (def ^:private cache-proof-benchmark-schema
   "definition user {}
    definition account {
@@ -352,7 +365,7 @@
    }")
 
 (deftest ^:benchmark cache-proof-strategy-churn-benchmark
-  (testing "mutation/content proofs, global invalidation, and no-cache"
+  (testing "managed proof reuse, global invalidation, and no-cache"
     (with-mem-conn [conn schema/v7-schema]
       (let [common {:security-key "cache-proof-benchmark00000000000"}
             managed #(spiceomic/make-client conn (assoc common :cache %))
@@ -420,8 +433,7 @@
               :unrelated-churn unrelated
               :relevant-churn relevant})
         (is (= (set (keys unrelated))
-               #{:mutation-proof
-                 :content-proof
+               #{:proof-reuse
                  :global-invalidation
                  :no-cache}))
         (is (= (set (keys relevant))
