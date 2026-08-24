@@ -470,8 +470,9 @@
            ;; bound to exact immutable snapshot identity. Datomic/Datahike may
            ;; select that exact snapshot on resume; current-only DataScript
            ;; fails closed after a relevant basis change.
-           (when (or (and resource-type permission)
-                     relationship-dependency)
+           (when (and (:proof-equivalent-cursors? opts)
+                      (or (and resource-type permission)
+                          relationship-dependency))
              dependency-relation-ids))))
 
 (defn- page-context
@@ -1723,6 +1724,7 @@
     :spice-object->internal :internal-cursor->spice
     :spice-cursor->internal :format-options :cursor-ttl-seconds
     :token-ttl-seconds :managed-cache-enabled?
+    :proof-equivalent-cursors? :identity-contract
     :proof-contract-reporter
     :recursive-traversal-limits :permission-tree-limits
     :execution-timeout-ms :consistency-sync-timeout-ms
@@ -2663,6 +2665,7 @@
     :source-lifecycle
     :adapter-fingerprint
     :adapter-deterministic?
+    :identity-immutable?
     :consistency-sync-timeout-ms
     :execution-timeout-ms
     :aggregate-limits
@@ -2772,6 +2775,7 @@
            source-lifecycle
            adapter-fingerprint
            adapter-deterministic?
+           identity-immutable?
            consistency-sync-timeout-ms
            execution-timeout-ms
            aggregate-limits
@@ -2795,6 +2799,14 @@
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :adapter-deterministic?
                      :value adapter-deterministic?})))
+  (when (and (contains? config-opts :identity-immutable?)
+             (not (boolean? identity-immutable?)))
+    (throw
+     (ex-info
+      "EACL Config Error: :identity-immutable? must be boolean."
+      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+       :key :identity-immutable?
+       :value identity-immutable?})))
   (when-not (or (nil? proof-contract-reporter)
                 (fn? proof-contract-reporter))
     (throw
@@ -2899,6 +2911,12 @@
         (or (not custom-codec?)
             (and (some? adapter-fingerprint)
                  (true? adapter-deterministic?)))
+        immutable-identity-contract?
+        (if (contains? config-opts :identity-immutable?)
+          (true? identity-immutable?)
+          (not custom-codec?))
+        proof-equivalent-cursors?
+        (and managed-cache-eligible? immutable-identity-contract?)
         basis-cache-store
         (cache/basis-cache-for-option
          cache {:proof-contract-reporter proof-contract-reporter})
@@ -2935,11 +2953,17 @@
                :codec
                (if custom-codec?
                  [:custom-unfingerprinted codec-instance-id]
-                 :eacl-id-immutable-v1)})
+                 (if immutable-identity-contract?
+                   :eacl-id-immutable-v1
+                   :eacl-id-current-v2))})
           :adapter-deterministic?
           (if custom-codec?
             (true? adapter-deterministic?)
             true)
+          :identity-contract
+          (if immutable-identity-contract?
+            :selected-internal/immutable-external-injective-v3
+            :selected-internal/current-external-injective-v2)
           :entid->object-id entid->object-id
           :object-id->entid object-id->entid
           :cursor-ttl-seconds cursor-ttl-seconds
@@ -2975,6 +2999,7 @@
           :page-navigation-cache
           page-navigation-cache
           :managed-cache-enabled? managed-cache-eligible?
+          :proof-equivalent-cursors? proof-equivalent-cursors?
           :recursive-traversal-limits
           (engine/normalize-recursive-traversal-limits
            recursive-traversal-limits)

@@ -15,6 +15,29 @@ Cursor continuation identity SHALL be the request frame — certified schema gen
 - **WHEN** a continued page validates its cursor, looks up a completed answer, and looks up a checkpoint
 - **THEN** the adapter reads each relation generation at most once for that request
 
+### Requirement: Cross-basis cursors require immutable public identity
+Proof-equivalent cursor continuation SHALL require a versioned identity
+contract under which one internal object's public identity is immutable for
+the source lineage. A custom identity codec SHALL remain exact-basis-bound
+unless it has a portable deterministic fingerprint and the application
+explicitly certifies immutability. Completed-answer eligibility alone MUST NOT
+enable proof-equivalent cursors. The built-in `:eacl/id` contract SHALL state
+immutability as a supported-writer premise and SHALL provide a configuration
+switch that disables cross-basis cursor reuse when the application permits
+identity mutation.
+
+#### Scenario: Mutable identity is declared
+- **WHEN** `:identity-immutable? false` is configured and any transaction advances the native revision
+- **THEN** a cursor from the prior basis is rejected or exactly reconstructed; equal authorization relation frames do not permit current-basis continuation
+
+#### Scenario: Custom deterministic codec lacks immutability
+- **WHEN** a custom codec has a portable fingerprint and `:adapter-deterministic? true` but does not explicitly certify immutable identity
+- **THEN** completed answers may use proof-backed reuse while cursors remain exact-basis-bound
+
+#### Scenario: Identity is reassigned between pages
+- **WHEN** a public ID delivered on an earlier page is reassigned to an internal entity that would appear on a future page
+- **THEN** EACL MUST NOT accept a proof-equivalent continuation under a mutable identity contract and therefore cannot return the reassigned ID twice in one accepted current-basis walk
+
 ### Requirement: Unconditional schema-generation validation
 Cursor acceptance SHALL compare the cursor's schema generation with the certified `:schema-generation` of the selected basis on every resumption, as part of frame equality. The schema generation SHALL be the actual schema mutation identity from the certified operation, not a proxy derived from `basis-t` or inferred from the dependency frontier.
 

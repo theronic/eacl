@@ -247,7 +247,7 @@ two violations as proof equality.
 Built-in `:eacl/id` conversion is deterministic and proof-eligible. A custom
 `:entid->object-id`/`:object-id->lookup-ref` codec receives an opaque
 client-local fingerprint and exact caching by default. It gains cross-snapshot
-proof-backed reuse only when the client supplies both:
+proof-backed completed-answer reuse only when the client supplies both:
 
 ```clojure
 {:adapter-fingerprint [:my-app/id-codec 1]
@@ -255,10 +255,20 @@ proof-backed reuse only when the client supplies both:
 ```
 
 The application must certify that the codec is deterministic, injective, and
-round-trips every permissioned identity. Processes that exchange cursors must
-use the same portable fingerprint and codec. Without the explicit contract,
-another client rejects the cursor even when token keys and source lifecycle
-match.
+round-trips every permissioned identity. Proof-equivalent cursor continuation
+has the stronger requirement that one internal object's public identity never
+changes within a source lineage; custom codecs must additionally set
+`:identity-immutable? true`. Without that explicit immutability contract,
+cursors remain exact-basis-bound even when managed completed answers are
+enabled. Processes that exchange cursors must use the same portable
+fingerprint, codec, and identity contract.
+
+The built-in codec defaults to `:identity-immutable? true`. This is a supported
+writer premise, not a property enforced by Datomic, Datahike, or DataScript's
+physical schema: applications MUST treat `:eacl/id` as immutable for an
+entity's lifetime. Set `:identity-immutable? false` when that premise does not
+hold; EACL then rejects cross-basis cursors instead of risking a hybrid public
+stream after an ID reassignment.
 
 ## Capacity, concurrency, and configuration
 

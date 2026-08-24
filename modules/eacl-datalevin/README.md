@@ -88,6 +88,13 @@ reused by the enumerate route as exactly one snapshot-bound relationship probe
 per candidate. The adapter has no backend-private aggregate loop, makes no
 backend-private proof rule, and never moves an owned reader to another thread.
 
+The built-in `:eacl/id` codec treats public IDs as immutable for an entity's
+lifetime. This is a supported-writer premise because application identity is
+deliberately outside the Datalevin write policy. Set `:identity-immutable?
+false` if IDs may be reassigned; cursors then remain exact-basis-bound rather
+than using an authorization-only frame across revisions. Custom codecs require
+an explicit immutable-identity certification for proof-equivalent cursors.
+
 At bootstrap the module installs one normalized persisted write policy. Every
 physical `eacl`/`eacl.*` attribute except `:eacl/id` is guarded and frozen; the
 three Datalevin generation attributes are commit-generation longs. The fork

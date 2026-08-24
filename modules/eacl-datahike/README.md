@@ -26,6 +26,9 @@ quiesce callers, repair the data, and call
 Expiry never repairs ghost tuples. Custom identity codecs are exact-only and
 client-local unless configured with a portable `:adapter-fingerprint`,
 `:adapter-deterministic? true`, and a certified injective round trip.
+Proof-equivalent cursors additionally require `:identity-immutable? true`;
+otherwise they remain exact-basis-bound. The built-in `:eacl/id` codec assumes
+IDs never change for an entity; configure `false` if reassignment is allowed.
 
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:

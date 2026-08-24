@@ -28,6 +28,15 @@ The ordered stream for one plan and one basis is already proved deterministic: l
 
 The `:scope` digest continues to exclude the schema generation so that a schema change reaches frame comparison and exact fallback rather than failing as a scope mismatch.
 
+The proof covers the internal ordered stream, not mutable external identity.
+Proof-equivalent continuation therefore also requires an immutable external
+identity contract. The built-in `:eacl/id` codec declares that supported-writer
+premise; a custom codec must opt in with `:identity-immutable? true` in addition
+to its portable deterministic fingerprint. Without it, the cursor carries the
+exact-basis frame and cannot cross a native revision. This prevents a public ID
+delivered on an earlier page from being reassigned to a future internal entity
+and appearing twice in one walk.
+
 ### 2. Exact fallback by identity
 
 When the selected basis's frame differs (or cannot be read), the request's freshness floor permits the original basis, and the source supports exact selection, the relay acquires the cursor's original basis and continues **by identity**: equal source scope, lifecycle, revision, and locator. No frame is read at the original basis. This generalizes the Datomic-only `exact-fallback-decision` (needed because `:db/noHistory` stamps are unreadable through `as-of`) and removes a second `DecideContinuation` call whose only honest answer at the original basis is identity.
@@ -54,5 +63,6 @@ Envelope version 11 decoding, `legacy-cursor-scope`, the `:conflict` decision br
 ## Risks / Trade-offs
 
 - **[Closure digest becomes vestigial]** → kept as a regression guard with a one-line justification; it costs one digest per cursor mint.
+- **[The physical schemas do not enforce `:eacl/id` immutability]** → immutability is an explicit supported-writer premise and a configurable cursor eligibility gate; deployments that permit identity mutation set `:identity-immutable? false` and retain exact-basis cursor semantics.
 - **[Exact fallback by identity skips frame reads at the original basis]** → the original basis is the cursor's own immutable value; identity is the strongest possible evidence there.
 - **[Dafny leaf adds verification time]** → the bridge is small and joins the ten-second stable-discovery gate; its obligation count is pinned.

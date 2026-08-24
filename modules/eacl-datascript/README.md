@@ -26,6 +26,9 @@ callers, repair the data, and call
 Expiry never repairs ghost vectors. Custom identity codecs are exact-only and
 client-local unless configured with a portable `:adapter-fingerprint`,
 `:adapter-deterministic? true`, and a certified injective round trip.
+Proof-equivalent cursors additionally require `:identity-immutable? true`;
+otherwise they remain exact-basis-bound. The built-in `:eacl/id` codec assumes
+IDs never change for an entity; configure `false` if reassignment is allowed.
 
 DataScript supports serialized connection-head `:fully-consistent`, local
 `:minimize-latency`, and connection-lifecycle causal at-least selection. It intentionally

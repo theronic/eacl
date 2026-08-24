@@ -32,7 +32,10 @@ second argument. Expiry never repairs ghost tuples.
 
 Custom object-ID codecs are exact-only and client-local unless configured with
 a portable `:adapter-fingerprint`, `:adapter-deterministic? true`, and an
-application-certified injective round trip.
+application-certified injective round trip. Proof-equivalent cursors further
+require `:identity-immutable? true`; without it they remain exact-basis-bound.
+The built-in `:eacl/id` codec assumes IDs never change for an entity. Set
+`:identity-immutable? false` if the application permits reassignment.
 
 `expand-permission-tree` routes Datomic's selected immutable DB through the
 same portable shallow-expansion kernel used by DataScript and Datahike. The

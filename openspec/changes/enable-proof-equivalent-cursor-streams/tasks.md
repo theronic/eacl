@@ -3,6 +3,7 @@
 - [x] 1.1 Store `:lineage`, `:frame`, and `:closure-digest` in the cursor dependency context from the request context; delete the second-level `continuation-proof` digest; increment the envelope version and remove version 11 handling and `legacy-cursor-scope`.
 - [x] 1.2 Feed `DecideContinuation` the canonical encoding of `[lineage frame closure-digest]` as its proof inputs; keep the kernel signature and re-pin the generated-decision inventory.
 - [x] 1.3 Use the request context's memoized frame so a continued page performs one relation-generation read per closure for cursor validation, answer lookup, and checkpoint lookup together.
+- [x] 1.4 Require an immutable external-identity contract for proof-equivalent cursor frames; keep mutable or uncertified custom identity codecs exact-basis-bound and reject non-boolean configuration.
 
 ## 2. Exact Fallback and Cleanup
 

@@ -130,6 +130,10 @@
     lifecycle in either revision direction. Authorization
     mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
+  - :identity-immutable? - whether one internal object's public identity is
+    immutable for this source lifecycle. The built-in :eacl/id codec defaults
+    true; set false when IDs may be reassigned so cursors stay exact-basis-bound.
+    Custom codecs must set true explicitly to enable proof-equivalent cursors.
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn config-opts]
   (orchestration/make-client api conn config-opts))

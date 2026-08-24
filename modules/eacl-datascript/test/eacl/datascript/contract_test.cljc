@@ -234,8 +234,16 @@
 (deftest one-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
         default-client (datascript/make-client conn {})
+        mutable-identity-client
+        (datascript/make-client conn {:identity-immutable? false})
         default-selection
         (get-in default-client [:runtime :decision-kernel])
+        identity-option-error
+        (try
+          (datascript/make-client conn {:identity-immutable? :assumed})
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
+            (ex-data exception)))
         error
         (try
           (datascript/make-client conn {:engine-selection :anything})
@@ -244,6 +252,14 @@
             (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
     (is (true? (get-in default-client [:runtime :managed-cache-enabled?])))
+    (is (true? (get-in default-client
+                       [:runtime :proof-equivalent-cursors?])))
+    (is (= :selected-internal/immutable-external-injective-v3
+           (get-in default-client [:runtime :identity-contract])))
+    (is (false? (get-in mutable-identity-client
+                        [:runtime :proof-equivalent-cursors?])))
+    (is (= :eacl/invalid-config (:type identity-option-error)))
+    (is (= :identity-immutable? (:key identity-option-error)))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
@@ -433,7 +449,8 @@
              (custom-codec-options
               stable-observations
               {:adapter-fingerprint {:codec :eacl-id :version 1}
-               :adapter-deterministic? true}))
+               :adapter-deterministic? true
+               :identity-immutable? true}))
             query {:subject user
                    :permission :view
                    :resource/type :document
@@ -441,6 +458,8 @@
             first-page (eacl/lookup-resources stable-client query)
             before (datascript/cache-stats stable-client)]
         (is (true? (get-in stable-client [:runtime :managed-cache-enabled?])))
+        (is (true? (get-in stable-client
+                           [:runtime :proof-equivalent-cursors?])))
         (is (= #{"codec-document-1" "codec-document-2"}
                (set (map :id (:data first-page)))))
         (ds/transact! conn [{:application/unrelated :two}])

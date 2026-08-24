@@ -117,10 +117,14 @@ under one unchanged lifecycle.
 ## Custom identity
 
 Custom ID codecs are client-local and exact-only by default. Cross-snapshot
-reuse and cross-client cursors require a portable `:adapter-fingerprint`,
+completed-answer reuse requires a portable `:adapter-fingerprint`,
 `:adapter-deterministic? true`, and an application-certified deterministic,
-injective round trip. Every process exchanging cursors must use the same codec
-and fingerprint.
+injective round trip. Proof-equivalent and cross-client cursors additionally
+require `:identity-immutable? true`: public identity must remain stable for one
+internal object throughout the source lineage. Every process exchanging
+cursors must use the same codec, fingerprint, and identity contract. The
+built-in `:eacl/id` codec assumes immutability; set `:identity-immutable? false`
+to keep cursors exact-basis-bound when the application permits ID mutation.
 
 ## Cursors
 

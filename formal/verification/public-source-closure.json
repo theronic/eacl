@@ -17,7 +17,7 @@
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/core.clj",
-      "sha256": "cc74d2963416809d089517ee7294e1f7526d0b83fcc0a88a4d4d698b86a1120b"
+      "sha256": "6e7a144ae46795d7f9084b00cf7bd12daa17b771cdf4227f0acc51d300d3263c"
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/db.clj",
@@ -45,7 +45,7 @@
     },
     {
       "path": "modules/eacl-datalevin/src/eacl/datalevin/core.cljc",
-      "sha256": "758b293399122e583ee52a25f56c3bd2ef46048b2241ca18e4d3f67ec0f094fd"
+      "sha256": "73499ac430dc7db0c1fe23912238590383706fba5a577307ae5a3f1368ec8941"
     },
     {
       "path": "modules/eacl-datalevin/src/eacl/datalevin/db.cljc",
@@ -77,7 +77,7 @@
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/core.cljc",
-      "sha256": "935852d87c20d3819362986145ef0020436bbb78d28fa3de5cf0a00938419d06"
+      "sha256": "51b1ad21763fdf87b8495f2825c4f768f49fd8685130d9c2bfe9ed36df9fd22b"
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/db.cljc",
@@ -185,7 +185,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/client/orchestration.cljc",
-      "sha256": "7bf3868ff151c7d40d32511d1fda526bc2a47f9b656778d53d1af617aad7ce65"
+      "sha256": "9609d6f2fbc5351fc24abf1d6e7ab64d173c910cd06acdf027e3536a20c34c92"
     },
     {
       "path": "modules/eacl/src/eacl/consistency.cljc",
@@ -408,7 +408,7 @@
     "rootCount": 70,
     "unionInternalDefinitionCount": 1677,
     "unionInternalDefinitionIdsSha256": "4e00290b2d539dc94b46a09c8c9f7a3eceab640858c9abcce9bd20f879e6ae3b",
-    "unionDefinitionLocationsSha256": "ae5568cefda4565d193d4d7aae334b7f57cc701b1d92054d692ce9826a8df04d",
+    "unionDefinitionLocationsSha256": "26cd0ab38e2e8b6d6d5c8d2c5ddb9afb700d708fd3f7b772e05fa84c800dbf69",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 25,
