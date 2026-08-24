@@ -257,7 +257,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/formal/production_kernel.clj",
-      "sha256": "d5c9ce2af23db46a639bd6bbd46a1180d8b37f45fae290c0eec36dc801374e06"
+      "sha256": "8c47d4bfa41b1d2313173b69c1bb255e788da4fcb8626a04fbde43c58868fa0e"
     },
     {
       "path": "modules/eacl/src/eacl/formal/production_kernel_cljs.cljs",
@@ -408,7 +408,7 @@
     "rootCount": 70,
     "unionInternalDefinitionCount": 1673,
     "unionInternalDefinitionIdsSha256": "8663cf72e8d8091edc54c3efc816d1aae18844ea1f976474e27e0f1c1f44aa8d",
-    "unionDefinitionLocationsSha256": "f6b129cb227cbaa11367daa10b2f5ccf21ec9676915b80122a829f7d0eb5eed9",
+    "unionDefinitionLocationsSha256": "86a56bab53655a0769b359ada8847e2ea01d1ff944821aabe88ddbd2d7185dc6",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 25,
