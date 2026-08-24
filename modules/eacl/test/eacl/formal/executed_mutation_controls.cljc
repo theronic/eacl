@@ -188,7 +188,10 @@
 (def audit-source-scope
   {:backend :mutation-control
    :source-id :source
-   :branch nil
+   :branch nil})
+
+(def audit-lineage
+  {:source-scope audit-source-scope
    :source-lifecycle :lifecycle})
 
 (defn- audit-basis-key
@@ -197,6 +200,7 @@
    :backend :mutation-control
    :basis-identity
    (assoc audit-source-scope
+          :source-lifecycle :lifecycle
           :basis-kind :ordinary
           :revision revision
           :exact-locator revision
@@ -210,7 +214,7 @@
    :snapshot-order revision
    :exact-basis-key (audit-basis-key revision)
    :cache-basis revision
-   :managed-subproblem-scope audit-source-scope
+   :managed-subproblem-scope audit-lineage
    :managed-key-fn
    (constantly {:schema-generation 10 :dependency-stamp 20})})
 
