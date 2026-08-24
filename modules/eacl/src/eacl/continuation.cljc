@@ -395,9 +395,8 @@
               store :recursive-continuation reason))
            :put!
            (fn [edge value weight]
-             (let [key (key-for :recursive-continuation edge)]
-               (if populate-cache?
-                 (put!
-                  store :recursive-continuation key value weight)
-                 (mark-unavailable!
-                  store key :population-disabled))))}))))))
+             (and populate-cache?
+                  (put!
+                   store :recursive-continuation
+                   (key-for :recursive-continuation edge)
+                   value weight)))}))))))

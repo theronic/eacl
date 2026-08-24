@@ -328,7 +328,7 @@
  {:report "formal/verification/public-source-closure.json"
   :source-files 80
   :public-roots 70
-  :reachable-definitions 1691}
+  :reachable-definitions 1692}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 47

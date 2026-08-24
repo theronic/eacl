@@ -394,14 +394,16 @@
     (is (= #{:required? :opaque-values? :peek :get :hit! :miss! :put!}
            (set (keys writable)))
         "the private context exposes only checkpoint operations")
-    (is (false? ((:put! read-only) :edge :suppressed 1)))
-    (is (nil? ((:get read-only) :edge)))
     (is (true? ((:put! writable) :edge :stored 1)))
+    (let [state-before @(:state store)]
+      (is (false? ((:put! read-only) :edge :suppressed 1)))
+      (is (= state-before @(:state store))
+          "suppressed publication must not delete or replace retained state"))
     (is (= :stored ((:get read-only) :edge)))
     (is (= 1 (:puts (continuation/stats store)))
         "only the writable context publishes")))
 
-(deftest population-disabled-suppresses-checkpoint-and-next-page-replays-test
+(deftest population-disabled-leaves-no-tombstone-and-next-page-replays-test
   (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
         store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
@@ -423,9 +425,13 @@
     (is (= (take 3 oracle) (mapv :id (:data page-1))))
     (is (= (take 3 (drop 3 oracle)) (mapv :id (:data page-2)))
         "the next page replays from the authenticated boundary")
-    (is (> (get-in after-second
-                   [:miss-reasons :population-disabled] 0)
-           (get-in before [:miss-reasons :population-disabled] 0)))))
+    (is (= (get-in before [:miss-reasons :population-disabled] 0)
+           (get-in after-second
+                   [:miss-reasons :population-disabled] 0))
+        "suppressed publication is not a destructive cache event")
+    (is (> (get-in after-second [:miss-reasons :absent] 0)
+           (get-in before [:miss-reasons :absent] 0))
+        "the uncached next page observes an ordinary absence")))
 
 (deftest checkpoint-miss-reason-telemetry-test
   (let [{:keys [conn]} (seed-fixture-client!
@@ -492,13 +498,18 @@
             writable (make-context store)
             disabled (make-context store {:populate-cache? false})]
         (page/checkpoint-put! writable key-a checkpoint)
-        (page/checkpoint-put!
-         disabled key-a (assoc-in checkpoint [:state :transitions] 11))
-        (is (nil? (page/checkpoint-hit disabled key-a 2 42)))
-        (is (= 1 (get-in (continuation/stats store)
-                         [:miss-reasons :population-disabled])))
-        (is (= 0 (:entries (continuation/stats store)))
-            "a suppressed replacement cannot expose stale progress")))
+        (let [state-before @(:state store)]
+          (page/checkpoint-put!
+           disabled key-a (assoc-in checkpoint [:state :transitions] 11))
+          (is (= state-before @(:state store))
+              "a suppressed replacement performs no cache mutation"))
+        (is (= checkpoint (page/checkpoint-hit disabled key-a 2 42))
+            "a read-only request can still reuse retained progress")
+        (let [stats (continuation/stats store)]
+          (is (zero? (get-in stats [:miss-reasons :population-disabled] 0)))
+          (is (= 1 (:publications stats)))
+          (is (zero? (:replacements stats)))
+          (is (= 1 (:entries stats))))))
     (testing "publication and replacement occupancy"
       (let [store (continuation/make-store {})
             context (make-context store)]
