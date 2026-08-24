@@ -63,15 +63,19 @@
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)
                :first 3}
+        all-ids (mapv :id (:data (eacl/lookup-resources
+                                  client (assoc query :first 1000))))
         page-1 (eacl/lookup-resources client query)
-        first-eid (ds/entid (ds/db conn) [:eacl/id "f-01"])
-        future-eid (ds/entid (ds/db conn) [:eacl/id "f-10"])
+        delivered-id (first all-ids)
+        future-id (peek all-ids)
+        first-eid (ds/entid (ds/db conn) [:eacl/id delivered-id])
+        future-eid (ds/entid (ds/db conn) [:eacl/id future-id])
         _ (ds/transact!
            conn
-           [[:db/retract first-eid :eacl/id "f-01"]
-            [:db/retract future-eid :eacl/id "f-10"]
-            [:db/add first-eid :eacl/id "f-10"]
-            [:db/add future-eid :eacl/id "f-01"]])
+           [[:db/retract first-eid :eacl/id delivered-id]
+            [:db/retract future-eid :eacl/id future-id]
+            [:db/add first-eid :eacl/id future-id]
+            [:db/add future-eid :eacl/id delivered-id]])
         outcome
         (try
           {:value
@@ -80,6 +84,9 @@
             (assoc query :after (get-in page-1 [:page-info :end-cursor])))}
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
             {:error (ex-data error)}))]
+    (is (> (count all-ids) 3)
+        "the chosen future identity is outside the delivered first page")
+    (is (= delivered-id (get-in page-1 [:data 0 :id])))
     (is (false? (get-in client [:runtime :proof-equivalent-cursors?])))
     (is (= :selected-internal/current-external-injective-v2
            (get-in client [:runtime :identity-contract])))
