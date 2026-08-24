@@ -480,19 +480,26 @@
             "eviction removes the constant-time plan-family index")))
     (testing "overweight"
       (let [store (continuation/make-store
-                   {:max-weight 4096 :max-entry-weight 2048})
+                   {:max-weight 8192 :max-entry-weight 3000})
             context (make-context store)
             heavy (-> checkpoint
                       (assoc-in [:state :transitions] 11)
                       (assoc-in [:state :admitted]
                                 (set (range 20))))]
         (page/checkpoint-put! context key-a checkpoint)
-        (page/checkpoint-put! context key-a heavy)
-        (is (nil? (page/checkpoint-hit context key-a 2 42)))
-        (is (= 1 (get-in (continuation/stats store)
-                         [:miss-reasons :overweight])))
-        (is (= 0 (:entries (continuation/stats store)))
-            "an overweight replacement cannot leave older progress live")))
+        (let [state-before @(:state store)]
+          (page/checkpoint-put! context key-a heavy)
+          (is (= state-before @(:state store))
+              "an overweight replacement preserves older valid progress"))
+        (is (= checkpoint (page/checkpoint-hit context key-a 2 42)))
+        (page/checkpoint-put! context key-b heavy)
+        (is (nil? (page/checkpoint-hit context key-b 2 42)))
+        (let [stats (continuation/stats store)]
+          (is (= 1 (get-in stats [:miss-reasons :overweight])))
+          (is (= 2 (:rejections stats)))
+          (is (= 1 (:publications stats)))
+          (is (zero? (:replacements stats)))
+          (is (= 1 (:entries stats))))))
     (testing "population disabled"
       (let [store (continuation/make-store {})
             writable (make-context store)

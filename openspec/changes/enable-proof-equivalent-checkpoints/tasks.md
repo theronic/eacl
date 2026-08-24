@@ -13,7 +13,7 @@
 ## 3. Pipeline, Telemetry, and Parity
 
 - [x] 3.1 Assert in tests that an invalid, stale, wrong-lineage, or changed-frame cursor performs no checkpoint store access, and that a valid cursor with a missing checkpoint replays from the boundary without restarting.
-- [x] 3.2 Add miss-reason telemetry (`:absent :evicted :boundary-mismatch :overweight :plan-mismatch :population-disabled`) to `cache-stats` alongside hits, publications, and replacements.
+- [x] 3.2 Add miss-reason telemetry (`:absent :evicted :boundary-mismatch :overweight :plan-mismatch`) to `cache-stats` alongside hits, publications, and replacements; publication-disabled requests perform no retained-state or tombstone mutation.
 - [x] 3.3 Port `continuation_reuse_test`, `stable_page_test`, and `stable_reducer_test` to CLJC and add them to the CLJS test runner; confirm `AdmissionKey` parity through publication and resume.
 
 ## 4. Conformance, Formal, and Documentation

@@ -203,23 +203,19 @@
   [store kind reason]
   (miss! store kind reason))
 
-(defn- discard-entry
-  [current key]
-  (if-let [entry (get-in current [:entries key])]
-    (-> current
-        (update :entries dissoc key)
-        (update :order without-key key)
-        (update :weight - (:weight entry))
-        (remove-family key))
-    current))
+(defn- mark-unavailable-if-absent!
+  "Records why a new key was rejected without destroying older valid state.
 
-(defn- mark-unavailable!
+  A later, overweight checkpoint commonly shares the latest-only key with an
+  earlier frontier. Dropping the attempted value must not turn admission
+  rejection into eviction of that independently reusable frontier."
   [store key reason]
   (swap! (:state store)
          (fn [current]
-           (remember-tombstone
-            (discard-entry current key)
-            key reason (:max-entries store))))
+           (if (contains? (:entries current) key)
+             current
+             (remember-tombstone
+              current key reason (:max-entries store)))))
   false)
 
 (defn get!
@@ -244,7 +240,7 @@
                  (not (neg? entry-weight))
                  (<= entry-weight (:max-entry-weight store)))
       (do
-        (mark-unavailable! store key :overweight)
+        (mark-unavailable-if-absent! store key :overweight)
         (metric! store kind :rejections)
         false)
       (let [eviction-count (atom 0)

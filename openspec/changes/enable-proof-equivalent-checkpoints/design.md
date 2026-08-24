@@ -56,7 +56,7 @@ The visited-page cache stores externalized pages, whose public ids are rendered 
 
 ### 6. Publication controls and telemetry
 
-Publication happens only after a fully realized successful page at its committed boundary, as today; `:populate-cache? false` suppresses it. `checkpoint-put!`/`checkpoint-hit` report hits, misses by reason (`:absent :evicted :boundary-mismatch :overweight :plan-mismatch :population-disabled`), publications, and replacements. The unused `:evict! :get-page :put-page! :get-heads :put-heads!` functions are removed from the private context.
+Publication happens only after a fully realized successful page at its committed boundary, as today; `:populate-cache? false` suppresses it without mutating retained state. `checkpoint-put!`/`checkpoint-hit` report hits, misses by reason (`:absent :evicted :boundary-mismatch :overweight :plan-mismatch`), publications, and replacements. An overweight replacement is dropped without deleting an older valid frontier under the same latest-only key. The unused `:evict! :get-page :put-page! :get-heads :put-heads!` functions are removed from the private context.
 
 ## Rejected alternatives
 
