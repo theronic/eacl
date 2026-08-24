@@ -322,9 +322,9 @@
   :retired-invalid-controls 80}
  :source-closure
  {:report "formal/verification/public-source-closure.json"
-  :source-files 78
+  :source-files 79
   :public-roots 70
-  :reachable-definitions 1639}
+  :reachable-definitions 1641}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 46

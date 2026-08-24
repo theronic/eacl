@@ -9,6 +9,7 @@
 
 - [x] 2.1 Make the manifest generator write the mutation row, the closure row, and the stable-discovery leaf/obligation counts from `registry.edn`, `mutation-control.edn`, `public-source-closure.json`, and `verify-fast.sh`; make the validator fail on disagreement with the claim, recorded, and actual values.
 - [x] 2.2 Correct `manifest.edn` (96 → current), `assurance-matrix.edn` (58/63/1404 → current), `formal/README.md`, and `docs/formal-verification.md` (42/528 → current) through the generator, and add a negative control that corrupts one count and requires validation to fail.
+- [x] 2.3 Give invalid certification evidence and expected declared-obligation withholding distinct validator exit statuses; make CI accept only the latter and pin the corrupted-count control to the invalid-evidence status.
 
 ## 3. Corpus Hygiene
 

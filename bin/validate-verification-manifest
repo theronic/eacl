@@ -47,12 +47,17 @@
     :indexed-recursive-public-engine
     :complete-public-engine})
 
+(def invalid-evidence-exit 2)
+(def assurance-withheld-exit 3)
+
 (defn fail!
-  [message data]
-  (binding [*out* *err*]
-    (println message)
-    (prn data))
-  (System/exit 1))
+  ([message data]
+   (fail! invalid-evidence-exit message data))
+  ([exit-code message data]
+   (binding [*out* *err*]
+     (println message)
+     (prn data))
+   (System/exit exit-code)))
 
 (defn count-mismatch
   [claim recorded actual source]
@@ -337,6 +342,7 @@
      {:adapter-certification (:adapters report)}))
   (when (seq unmet)
     (fail!
+     assurance-withheld-exit
      "Verification status is withheld: required obligations are unmet."
      {:assurance-status (:assurance-status manifest)
       :verified-status-allowed? allowed?

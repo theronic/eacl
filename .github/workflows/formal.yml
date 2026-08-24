@@ -433,8 +433,12 @@ jobs:
 
       - name: Assert verified status remains withheld while gates are unmet
         run: |
-          if bin/formal manifest; then
-            echo "manifest unexpectedly allowed verified status" >&2
+          set +e
+          bin/formal manifest
+          manifest_status="$?"
+          set -e
+          if [ "$manifest_status" -ne 3 ]; then
+            echo "expected declared-obligation withholding status 3; got $manifest_status" >&2
             exit 1
           fi
 

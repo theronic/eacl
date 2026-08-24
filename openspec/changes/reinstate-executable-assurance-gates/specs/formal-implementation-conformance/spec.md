@@ -15,6 +15,11 @@ The certification gate SHALL compare modeled and production fields, branches, er
 - **WHEN** the manifest's mutation row or the assurance matrix's closure row differs from the mutation ledger or the committed source-closure ledger
 - **THEN** manifest validation fails with the claim, recorded count, and actual count
 
+#### Scenario: Invalid evidence is not expected withholding
+- **WHEN** manifest validation finds ledger drift, missing evidence, an inconsistent assurance state, or another invalid certification input
+- **THEN** it exits with the invalid-evidence status and the CI withholding gate fails
+- **AND** only a structurally valid manifest whose declared required obligations remain open exits with the distinct expected-withholding status
+
 #### Scenario: Production/model mutation control
 - **WHEN** a controlled mutation removes or reverses one production or model decision
 - **THEN** at least one required refinement, trace, property, or manifest gate fails for the intended reason

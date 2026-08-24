@@ -217,7 +217,8 @@
             process (.start builder)
             output (slurp (.getInputStream process))
             exit (.waitFor process)]
-        (is (not= 0 exit))
+        (is (= 2 exit)
+            "invalid evidence must not masquerade as expected assurance withholding")
         (is (str/includes? output ":mutation-control/registered") output))
       (finally
         (java.nio.file.Files/deleteIfExists temp-file)
