@@ -46,6 +46,7 @@
            :permission-defs (fn [resource-type permission]
                               (get permissions
                                    [resource-type permission] []))
+           :permission-expression (fn [& _] nil)
            :subject->resources (fn [& _] [])
            :resource->subjects
            (fn [resource-type resource-id relation-id subject-type _]

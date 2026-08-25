@@ -44,6 +44,9 @@
               :fixture fixture
               :runtime :clj})]
         (is (some? (v8/invoke adapter :schema-generation)))
+        (is (= v8/direct-membership-batch-capability
+               (get-in (v8/operator-capability-identity adapter)
+                       [:direct-membership :mode])))
         (is (:passed? report)
             (pr-str (:checks report)))))))
 

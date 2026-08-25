@@ -2,6 +2,7 @@
   (:require [cljs.nodejs :as nodejs]
             [cljs.test :as t]
             [eacl.backend.v8-test]
+            [eacl.backend.direct-membership-test]
             [eacl.authorization.batch-test]
             [eacl.cache-test]
             [eacl.core-test]
@@ -56,6 +57,7 @@
 
 (defn -main []
   (t/run-tests 'eacl.backend.v8-test
+               'eacl.backend.direct-membership-test
                'eacl.authorization.batch-test
                'eacl.cache-test
                'eacl.core-test

@@ -44,17 +44,17 @@
 - [x] 4.3 Remove flat permission persistence for every permission, verify that schema writes emit only canonical expressions, and compile union-compatible expressions into the unchanged union-only sealed-plan domain.
 - [x] 4.4 Read valid expression-only snapshots; fail closed on flat-only, mixed, corrupt, conflicting, duplicated, or unsupported-format storage.
 - [ ] 4.5 Add explicit storage tests proving the unreleased v8 path performs no legacy synthesis, migration, dual write, old-reader rollout, or binary-downgrade preparation.
-- [ ] 4.6 Extend adapter construction with a required expression capability and optional bounded batched-direct-membership capability; validate capability/operation pairing and include it in operator compatibility.
-- [ ] 4.7 Define the immutable-basis, normalized-descriptor, distinct-typed-input, aligned-Boolean, maximum-width, cancellation, and atomic-failure contract for batched direct membership.
-- [ ] 4.8 Differentially certify scalar fallback and native batches in forward/reverse direction for present/missing values, identifier extrema, batch boundaries, concurrent head advancement, and malformed provider responses.
+- [x] 4.6 Extend adapter construction with a required expression capability and optional bounded batched-direct-membership capability; validate capability/operation pairing and include it in operator compatibility.
+- [x] 4.7 Define the immutable-basis, normalized-descriptor, distinct-typed-input, aligned-Boolean, maximum-width, cancellation, and atomic-failure contract for batched direct membership.
+- [x] 4.8 Differentially certify scalar fallback and native batches in forward/reverse direction for present/missing values, identifier extrema, batch boundaries, concurrent head advancement, and malformed provider responses.
 
 ## 5. Implement locality-aware physical leaf kernels
 
-- [ ] 5.1 Add the backend-neutral batch dispatcher that removes proof-compatible cache hits, groups remaining candidates by descriptor, sorts/deduplicates for I/O, and scatters aligned results back to generator order.
-- [ ] 5.2 Implement Datahike dense prefix merge for checked `span <= 4 × candidate-count`, stopping at the last candidate and charging every realized tuple.
-- [ ] 5.3 Implement Datahike sparse exact/galloping membership without scanning the min-to-max range, selecting a fresh `d/db`, re-reading schema, or crossing descriptor endpoint/type/relation guards.
-- [ ] 5.4 Add forward/reverse Datahike differential tests over dense, sparse, empty, all-present, all-absent, mixed, overflow, numeric-extreme, cancelled, and temporal/unsupported wrapper cases.
-- [ ] 5.5 Implement or explicitly select certified scalar fallback for Datomic, DataScript, and Datalevin; add native batching only where it beats scalar work without widening demand.
+- [x] 5.1 Add the backend-neutral batch dispatcher that removes proof-compatible cache hits, groups remaining candidates by descriptor, sorts/deduplicates for I/O, and scatters aligned results back to generator order.
+- [x] 5.2 Implement Datahike dense prefix merge for checked `span <= 4 × candidate-count`, stopping at the last candidate and charging every realized tuple.
+- [x] 5.3 Implement Datahike sparse exact/galloping membership without scanning the min-to-max range, selecting a fresh `d/db`, re-reading schema, or crossing descriptor endpoint/type/relation guards.
+- [x] 5.4 Add forward/reverse Datahike differential tests over dense, sparse, empty, all-present, all-absent, mixed, overflow, numeric-extreme, cancelled, and temporal/unsupported wrapper cases.
+- [x] 5.5 Implement or explicitly select certified scalar fallback for Datomic, DataScript, and Datalevin; add native batching only where it beats scalar work without widening demand.
 - [ ] 5.6 Add dimensional telemetry for scalar-equivalent predicates, physical subgroups, exact seeks, galloping reseeks, prefix values, cache hits, adapter commands, fetched values, and batch overread.
 - [ ] 5.7 Benchmark multiplier values around the proved bound, retain `4` only if Datahike memory/file/MinIO gates support it, and seal the accepted physical-policy identity into compatibility data.
 

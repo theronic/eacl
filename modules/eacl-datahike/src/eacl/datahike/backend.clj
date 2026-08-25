@@ -4,6 +4,7 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.direct-membership :as direct-membership]
             [eacl.datahike.impl :as impl]
             [eacl.datahike.schema :as schema]
             [eacl.schema.expression-persistence :as expression-persistence])
@@ -13,6 +14,7 @@
 (def adapter-capabilities
   {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
+   :direct-membership-batch #{backend/direct-membership-batch-capability}
    :runtime #{:clj}})
 
 (def source-capabilities
@@ -196,6 +198,12 @@
    (:db/id permission)
    (expression-persistence/decode-entity permission)))
 
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (impl/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
+
 (defn- ordered-generation-frame
   [db relation-ids]
   (mapv
@@ -223,6 +231,15 @@
               selected-order-hint selected-exact-locator]
        :as opts}]
   (backend/validate-adapter-config! :datahike adapter-config-keys opts)
+  (let [kind (basis-kind db)]
+    (when-not (contains? #{:ordinary :as-of} kind)
+      (throw
+       (ex-info
+        "Datahike EACL adapters require an ordinary or as-of database value."
+        {:type :eacl/unsupported-topology
+         :eacl/error :eacl/unsupported-topology
+         :backend :datahike
+         :basis-kind kind}))))
   (backend/make-adapter
      {:id :datahike
       :traversal-execution backend/strict-sequential-traversal-execution
@@ -286,6 +303,10 @@
                       (impl/find-permission-defs
                        db resource-type permission-name))))
 
+       :permission-expression
+       (fn [resource-type permission-name]
+         (permission-expression db resource-type permission-name))
+
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
          (impl/subject->resources
@@ -301,6 +322,10 @@
          (impl/direct-match?
           db subject-type subject-id relation-id
           resource-type resource-id))
+
+       :direct-match-many?
+       (fn [request]
+         (direct-membership/direct-match-many? db request))
 
        :all-permission-nodes
        (fn []
