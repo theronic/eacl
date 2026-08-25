@@ -55,7 +55,7 @@
 - [x] 5.3 Implement Datahike sparse exact/galloping membership without scanning the min-to-max range, selecting a fresh `d/db`, re-reading schema, or crossing descriptor endpoint/type/relation guards.
 - [x] 5.4 Add forward/reverse Datahike differential tests over dense, sparse, empty, all-present, all-absent, mixed, overflow, numeric-extreme, cancelled, and temporal/unsupported wrapper cases.
 - [x] 5.5 Implement or explicitly select certified scalar fallback for Datomic, DataScript, and Datalevin; add native batching only where it beats scalar work without widening demand.
-- [ ] 5.6 Add dimensional telemetry for scalar-equivalent predicates, physical subgroups, exact seeks, galloping reseeks, prefix values, cache hits, adapter commands, fetched values, and batch overread.
+- [x] 5.6 Add dimensional telemetry for scalar-equivalent predicates, physical subgroups, exact seeks, galloping reseeks, prefix values, cache hits, adapter commands, fetched values, and batch overread.
 - [ ] 5.7 Benchmark multiplier values around the proved bound, retain `4` only if Datahike memory/file/MinIO gates support it, and seal the accepted physical-policy identity into compatibility data.
 
 ## 6. Compile canonical operator plans
@@ -71,10 +71,10 @@
 
 ## 7. Implement acyclic checks, vector predicates, and bounded lookup
 
-- [ ] 7.1 Implement stack-safe point expression evaluation with sealed child order, completed-value short-circuiting, per-request memoization, exact exclusion, and fail-fast selected-branch errors.
-- [ ] 7.2 Implement bounded portable candidate vectors and known-true/known-false/unresolved/failed bit masks, with primitive CLJ specialization and 32-bit portable/CLJS representation.
-- [ ] 7.3 Apply generator witness masks before cache/backend work and evaluate each demanded DAG node at most once per candidate.
-- [ ] 7.4 Implement the demand-sized initial batch and deterministic doubling schedule up to 256 and the remaining candidate window; charge all physical work while advancing only logical progress.
+- [x] 7.1 Implement stack-safe point expression evaluation with sealed child order, completed-value short-circuiting, per-request memoization, exact exclusion, and fail-fast selected-branch errors.
+- [x] 7.2 Implement bounded portable candidate vectors and known-true/known-false/unresolved/failed bit masks, with primitive CLJ specialization and 32-bit portable/CLJS representation.
+- [x] 7.3 Apply generator witness masks before cache/backend work and evaluate each demanded DAG node at most once per candidate.
+- [x] 7.4 Implement the demand-sized initial batch and deterministic doubling schedule up to 256 and the remaining candidate window; charge all physical work while advancing only logical progress.
 - [ ] 7.5 Implement recursively exact least-path generators and local cover filters for forward and reverse lookup, filters, bounded counts, exact counts, candidate-window continuation, deadlines, cancellation, and dimensional limits.
 - [ ] 7.6 Implement seekable direct-leaf intersection and monotone exclusion anti-join behind certified eligibility, inclusive reseek, and exact sequence/boundary differential tests.
 - [ ] 7.7 Extend the authenticated semantic scope of the current v8 cursor envelope with expression, signed certificate, cover, anchors, witness, physical-policy, order, snapshot/proof, direction, and logical coordinate identity; do not bump the envelope version or add old-version migration/rejection branches.

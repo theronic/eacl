@@ -6,10 +6,20 @@
   vector against the adapter's already selected immutable basis."
   (:require [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
-            [eacl.exact-integer :as exact-integer]))
+            [eacl.exact-integer :as exact-integer]
+            [eacl.request.counters :as request-counters]))
 
 (def request-version 1)
 (def cache-miss ::cache-miss)
+
+(def ^:dynamic *physical-stats*
+  "Optional observation-only atom for backend-neutral dispatcher telemetry."
+  nil)
+
+(defn- add-stat! [counter amount]
+  (when *physical-stats*
+    (swap! *physical-stats* update counter (fnil + 0) amount))
+  nil)
 
 (def ^:private request-keys #{:descriptor :candidates :direction})
 (def ^:private forward-descriptor-keys
@@ -152,6 +162,18 @@
                            (conj! result
                                   (scalar-match adapter request
                                                 (nth candidates index))))))))]
+        (add-stat! :scalar-equivalent-predicates (count candidates))
+        (add-stat! :physical-subgroups 1)
+        (add-stat! :adapter-commands (if native? 1 (count candidates)))
+        (add-stat! :exact-seeks (if native? 0 (count candidates)))
+        (add-stat! :galloping-reseeks 0)
+        (add-stat! :prefix-values 0)
+        (add-stat! :batch-overread 0)
+        (when-not native?
+          (request-counters/add! :commands (count candidates))
+          (request-counters/add! :probes (count candidates))
+          (request-counters/add! :fetched-values (count (filter true? result)))
+          (add-stat! :adapter-fetched-values (count (filter true? result))))
         (execution/check!
          execution/*contract*
          :direct-membership-batch/after
@@ -191,9 +213,9 @@
      (invalid-request! "Direct-membership cache lookup must be callable."
                        {:value-type (some-> cache-lookup type str)}))
    (let [initial (vec (repeat (count probes) ::unresolved))
-         {:keys [results misses]}
+         {:keys [results misses cache-hits]}
          (reduce-kv
-          (fn [{:keys [results misses]} index probe]
+          (fn [{:keys [results misses cache-hits]} index probe]
             (when-not (and (map? probe)
                            (= probe-keys (set (keys probe))))
               (invalid-request!
@@ -210,17 +232,18 @@
             (let [cached (cache-lookup probe)]
               (cond
                 (boolean? cached)
-                {:results (assoc results index cached) :misses misses}
+                {:results (assoc results index cached)
+                 :misses misses :cache-hits (inc cache-hits)}
 
                 (= cache-miss cached)
-                {:results results
+                {:results results :cache-hits cache-hits
                  :misses (conj misses (assoc probe :index index))}
 
                 :else
                 (invalid-request!
                  "Direct-membership cache lookup returned an invalid value."
                  {:index index :value cached}))))
-          {:results initial :misses []}
+          {:results initial :misses [] :cache-hits 0}
           probes)
          groups (group-by (juxt :direction :descriptor) misses)
          ordered-groups (sort-by (comp group-order-key key) groups)
@@ -255,6 +278,7 @@
                               candidates))))
           results
           ordered-groups)]
+     (add-stat! :cache-hits cache-hits)
      (when (some #{::unresolved} completed)
        (contract-violation! adapter :complete-scatter :redacted))
      completed)))

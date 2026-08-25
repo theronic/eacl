@@ -198,6 +198,7 @@
 
 (deftest dispatcher-elides-cache-hits-groups-deduplicates-and-scatters-test
   (let [requests (atom [])
+        stats (atom {})
         native
         (adapter
          (constantly false)
@@ -217,17 +218,24 @@
                 {:direction :reverse :descriptor reverse
                  :candidate [:user 2]}]
         result
-        (direct/dispatch
-         native probes
-         (fn [probe]
-           (if (= [:user 3] (:candidate probe))
-             true
-             direct/cache-miss)))]
+        (binding [direct/*physical-stats* stats]
+          (direct/dispatch
+           native probes
+           (fn [probe]
+             (if (= [:user 3] (:candidate probe))
+               true
+               direct/cache-miss))))]
     (is (= [true true true true true] result))
     (is (= 2 (count @requests)))
     (is (= [[:document 2] [:document 4]]
            (:candidates (first @requests))))
-    (is (= [[:user 2]] (:candidates (second @requests))))))
+    (is (= [[:user 2]] (:candidates (second @requests))))
+    (is (= 1 (:cache-hits @stats)))
+    (is (= 2 (:physical-subgroups @stats)))
+    (is (= 3 (:scalar-equivalent-predicates @stats)))
+    (is (= 2 (:adapter-commands @stats)))
+    (is (= 0 (:galloping-reseeks @stats)))
+    (is (= 0 (:batch-overread @stats)))))
 
 (deftest dispatcher-chunks-at-the-certified-width-test
   (let [widths (atom [])

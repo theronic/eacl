@@ -169,7 +169,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/backend/direct_membership.cljc",
-      "sha256": "f8c6cedde68284feba4f0c11cf32a91f16609c91df2a1fc394f970c79639e766"
+      "sha256": "f50973d04d99b13581b3279781b50a29f6179d98629a1d68ca424ab2bf34b60d"
     },
     {
       "path": "modules/eacl/src/eacl/backend/source.cljc",
@@ -272,8 +272,24 @@
       "sha256": "410f605fc912c384bfc1f8ffeec3757f9ffe42554654afa3e3b6bc60df062495"
     },
     {
+      "path": "modules/eacl/src/eacl/operator/batch_schedule.cljc",
+      "sha256": "3a89d3a7f78be9f15dcba94aed249a613ef16ed7e08b786b26d7206a22f0597f"
+    },
+    {
+      "path": "modules/eacl/src/eacl/operator/bitmask.cljc",
+      "sha256": "bd786a1febfb0e8486e554932e83e6ce4ab0a47275b64f9ab9e0a98db294e824"
+    },
+    {
+      "path": "modules/eacl/src/eacl/operator/evaluator.cljc",
+      "sha256": "38bab2caa5080144843486caf17a27b780a0c8ecde1e73601642accc627998e2"
+    },
+    {
       "path": "modules/eacl/src/eacl/operator/plan.cljc",
       "sha256": "f3396632778d01be19d697a82b361623a3b983e6b2cd896dd0617243d1901bd3"
+    },
+    {
+      "path": "modules/eacl/src/eacl/operator/vector_evaluator.cljc",
+      "sha256": "47bdb21465a9621c0f98047e0c97a70b8c219147d37d6573c0bace254ac208a3"
     },
     {
       "path": "modules/eacl/src/eacl/permission_tree.cljc",

@@ -13,6 +13,10 @@
             [eacl.proof-frame-test]
             [eacl.permission-tree-test]
             [eacl.operator.plan-test]
+            [eacl.operator.evaluator-test]
+            [eacl.operator.bitmask-test]
+            [eacl.operator.vector-evaluator-test]
+            [eacl.operator.batch-schedule-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
             [eacl.request.context-test]
@@ -69,6 +73,10 @@
                'eacl.proof-frame-test
                'eacl.permission-tree-test
                'eacl.operator.plan-test
+               'eacl.operator.evaluator-test
+               'eacl.operator.bitmask-test
+               'eacl.operator.vector-evaluator-test
+               'eacl.operator.batch-schedule-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
                'eacl.request.context-test
