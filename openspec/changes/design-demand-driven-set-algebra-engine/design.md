@@ -382,13 +382,13 @@ Every allocation reserves its logical weight before mutation. Every backend subg
 
 1. Keep all work on `agent/design-operator-engine-performance` in `core2`; freeze the committed v8 semantic/order/performance baselines and retain the REPL experiment seeds/results in the design evidence.
 2. Build independent finite-set and naive-stratified-fixed-point oracles plus raw SpiceDB fixtures. They remain test/exploration code and cannot route production requests.
-3. Complete proof phase A: all abstract semantic, algorithm, cache, progress, and bounded-state models; generated abstract decisions; mutation controls; locked obligation pins; independent proof review. Do not edit production parser/storage/sealer/evaluator/routing before this gate is green.
+3. Complete proof phase A: all abstract semantic, algorithm, cache, progress, and bounded-state models; generated abstract decisions; mutation controls; locked obligation pins; and explicit project-operator authorization. Do not edit production parser/storage/sealer/evaluator/routing before this gate is green. Record independent review as an assurance qualification when it has not been performed; do not fabricate it as a prerequisite.
 4. Add the closed expression codec, parser/validator, signed dependency compiler, limits, and single expression storage representation with public operator writes still disabled.
 5. Extend the adapter capability boundary and certify scalar/batched operations on every built-in backend. Datahike receives the density-bounded batch; no backend receives compound permission semantics.
 6. Compile source expressions to semantic DAGs, candidate covers, witnesses, predicates, routing certificates, and versioned fingerprints. Preserve union-only sealing byte-for-byte where required.
 7. Implement point/vector acyclic evaluation, direct specializations, filtered cover pagination/counts, and cursor validation behind test-only routing.
 8. Implement generated anchor-gated recursive conjunction, strict lower-stratum exclusion, bounded checkpoint state, and dimensional telemetry behind test-only routing.
-9. Complete proof phase B: generated CLJ/CLJS bridges, source-digested specialization refinements, backend certifications, production mutation controls, source-closure manifests, and independent review.
+9. Complete proof phase B: generated CLJ/CLJS bridges, source-digested specialization refinements, backend certifications, production mutation controls, source-closure manifests, and a recorded assurance audit. Preserve any absence of independent review as an explicit qualification.
 10. Pass independent-oracle, cross-runtime, cross-backend, cache, failure, pagination, recursion, and `eacl-spicedb` suites. Persist every minimized counterexample.
 11. Run union-only matched-host gates and operator strategy/resource benchmarks. Run Datahike/MinIO cold/warm/eviction/exact-count qualification and check in fixed accepted ceilings and raw summaries.
 12. Recreate clean backend fixtures with the expression schema and verify source-level union compatibility, expression replacement, failure atomicity, export/import, and backup/restore.

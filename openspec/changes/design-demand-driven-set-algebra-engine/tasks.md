@@ -25,7 +25,7 @@
 - [x] 2.13 Add temporal models and killed mutants for vector subgroup cancellation, atomic publication, cursor progress under physical overread, checkpoint/resume, cache lifecycle expiry, and no partial negative authorization.
 - [x] 2.14 Export the smallest abstract operator decisions through generated Java and JavaScript; add CLJ/CLJS round-trip vectors, exact dimensional counters, and fixed-seed randomized differential replay against the independent oracles.
 - [x] 2.15 Update formal manifests, assurance matrix, model inventory, trusted-boundary text, source-closure ledgers, locked reports, theorem/obligation pins, and mutation registrations; run all abstract formal gates from a clean generated target.
-- [ ] 2.16 Obtain independent proof/design review and check in a proof-phase-A attestation that tasks 2.1–2.15 are green and no production parser, storage, sealer, evaluator, or routing namespace accepts/operators yet. Do not begin section 3 without this attestation.
+- [x] 2.16 Record project-operator authorization to proceed after confirming tasks 2.1–2.15 are green and no production parser, storage, sealer, evaluator, or routing namespace accepts operators yet; preserve the absence of independent review as an explicit assurance qualification.
 
 ## 3. Parse, validate, and encode permission expressions
 
@@ -111,7 +111,7 @@
 - [ ] 10.5 Certify each backend's expression reads, ordered scans, inclusive reseeks, scalar/batch membership, basis stability, cancellation, and error classification premises.
 - [ ] 10.6 Add and kill production mutations for wrong precedence, swapped exclusion, unsigned dependency, missing join slot, duplicate satisfaction count, partial negative, vector misalignment, overread cursor advance, any-child allocation, and cache-selected generator.
 - [ ] 10.7 Regenerate Java/JavaScript/browser artifacts and update size bounds, source closures, theorem pins, manifests, model inventory, trusted assumptions, and public decision inventory from a clean checkout.
-- [ ] 10.8 Obtain independent source-refinement and assurance review; keep public operator routing and schema writes disabled until every section-10 gate is green.
+- [ ] 10.8 Complete the source-refinement and assurance audit; keep public operator routing and schema writes disabled until every section-10 gate is green, with any unperformed independent review recorded as an explicit assurance qualification.
 
 ## 11. Establish semantic and storage conformance
 
@@ -139,7 +139,7 @@
 - [ ] 13.1 Add separate disabled gates for expression schema writes and public operator routing; verify union-only behavior while each gate combination is off.
 - [ ] 13.2 Recreate clean development databases with expression-capable adapters before enabling writes; prove flat-only and mixed pre-release storage fail closed without compatibility interpretation.
 - [ ] 13.3 Run all module tests, CLJS builds, lint/source-closure checks, abstract and concrete formal gates, mutation controls, backend certifications, conformance lanes, storage tests, and performance gates from reproducible clean commands.
-- [ ] 13.4 Enable test operator routing, then operator schema writes, only after signed proof-phase-A, refinement, conformance, storage, and performance attestations are present and valid.
+- [ ] 13.4 Enable test operator routing, then operator schema writes, only after proof-phase-A authorization and recorded refinement, conformance, storage, and performance evidence are present and valid.
 - [ ] 13.5 Update README and API/backend/formal documentation only with implemented syntax, precedence, strict stratification, order, limits, cursor/cache behavior, measured performance envelopes, and the unchanged unsupported boundary.
 - [ ] 13.6 Document the unreleased-v8 reset contract: source-control rollback requires recreation of disposable development databases, and no older-binary, persisted-cursor, migration, or dual-write compatibility is claimed.
 - [ ] 13.7 Run `openspec validate --strict`, record final branch/base/diff and all evidence digests, and leave the change ready for review and merge into main without modifications to the original `core` worktree.

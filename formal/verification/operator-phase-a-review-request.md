@@ -1,4 +1,4 @@
-# Independent review request: abstract operator Phase A
+# Optional independent review packet: abstract operator Phase A
 
 ## Review boundary
 
@@ -108,10 +108,11 @@ openspec validate design-demand-driven-set-algebra-engine --strict --no-interact
 pre-existing complete-engine release gate is intentionally withheld. Any exit
 2 is invalid evidence.
 
-## Attestation gate
+## Optional attestation
 
-The reviewer must check in a separate attestation containing their identity,
-review date, reviewed commit, evidence-bundle SHA-256, reproduced commands and
-results, findings and dispositions, and an explicit statement that production
-operator acceptance remains absent. Until that signed-off artifact exists,
-task 2.16 remains open and section 3 must not begin.
+An independent reviewer may check in a separate attestation containing their
+identity, review date, reviewed commit, evidence-bundle SHA-256, reproduced
+commands and results, findings and dispositions, and the reviewed production
+boundary. Project-operator authorization, rather than this optional review,
+opens Phase B. If no review is performed, assurance artifacts must continue to
+say so and must not claim external certification.

@@ -15,7 +15,7 @@ Every parser normalization, signed-graph decision, plan selection, candidate tra
 - **THEN** the complete-public-engine assurance claim remains incomplete and production routing stays disabled
 
 ### Requirement: Proof artifacts and generated runtimes are reproducible
-The release gate SHALL pin formal sources, tool versions, obligation counts, generated Java and JavaScript digests, CLJ/CLJS bridge vectors, specialization source closures, adapter assumptions, mutation controls, and independent review evidence for operator support.
+The release gate SHALL pin formal sources, tool versions, obligation counts, generated Java and JavaScript digests, CLJ/CLJS bridge vectors, specialization source closures, adapter assumptions, mutation controls, and the project-operator authorization and assurance evidence for operator support. If independent review has not been performed, that absence SHALL remain an explicit qualification and MUST NOT be represented as completed review.
 
 #### Scenario: Generated source changes
 - **WHEN** an operator model edit changes generated output or theorem obligations
@@ -27,4 +27,3 @@ Finite-set, naive Kleene, materializing lookup, and SpiceDB differential oracles
 #### Scenario: Optimized and oracle results diverge
 - **WHEN** randomized differential execution finds a result, order, boundary, or failure mismatch
 - **THEN** the seed is retained and operator release remains blocked
-

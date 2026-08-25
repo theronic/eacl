@@ -128,7 +128,8 @@
    :no-mechanical-clojure-extraction-adapter-codec-clock-token-and-host-runtime-remain-trusted-boundaries}
   :abstract-operator-engine-phase-a
   {:status :passed
-   :review-status :pending-independent-review
+   :authorization-status :project-operator-authorized
+   :review-status :not-performed
    :verified-obligations 525
    :generated-boundary-new-obligations 6
    :whole-tree-obligation-delta 531
@@ -151,11 +152,11 @@
     "formal/dafny/OperatorProofKernel.dfy"]
    :boundary-source "formal/dafny/EaclKernel.dfy"
    :report "formal/verification/operator-phase-a.edn"
-   :integration-status :abstract-only-production-disabled
+   :integration-status :abstract-phase-complete-production-refinement-pending
    :claim
    :conditional-finite-stratified-set-algebra-cover-predicate-batching-pagination-recursion-and-cache-refinement
    :qualification
-   :no-production-parser-storage-sealer-evaluator-backend-or-routing-refinement-claimed}
+   :no-production-parser-storage-sealer-evaluator-backend-or-routing-refinement-claimed-and-no-independent-proof-review-performed}
   :indexed-recursive-public-engine
   {:status :passed
    :verified-obligations 7985

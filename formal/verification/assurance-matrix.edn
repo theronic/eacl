@@ -644,7 +644,7 @@
         :recursive-contract
         :heavy-pagination]}
   {:operation :abstract-operator-engine-phase-a
-   :status :passed-pending-independent-review
+   :status :passed-operator-authorized
    :entry-points
    ["EaclKernel.__default/DecideOperatorBatch"
     "EaclKernel.__default/DecideOperatorSignedGraph"
@@ -693,12 +693,12 @@
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative false
    :remaining
-   [:independent-proof-design-review
-    :production-per-node-lower-stratum-fact-context-stability-refinement
+   [:production-per-node-lower-stratum-fact-context-stability-refinement
     :production-expression-to-recursive-join-rule-refinement
     :production-parser-codec-and-storage-refinement
     :production-plan-evaluator-cache-and-backend-refinement
     :production-performance-acceptance]
+   :assurance-qualification :independent-proof-review-not-performed
    :ci
    [:locked-dafny-verification
     :operator-temporal-mutation-control

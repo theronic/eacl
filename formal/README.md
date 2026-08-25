@@ -113,8 +113,9 @@ The original Phase A proof passed its solver while leaving six blocking
 semantic connections assumed. The adversarial audit remains recorded in the
 evidence bundle; all six findings and the resolved second-pass loopholes have
 explicit dispositions. Two additional source-refinement gaps are
-explicitly deferred to section 10 and keep production authority absent. Status is only
-`passed-pending-independent-review`. This phase is abstract: no production
+explicitly deferred to section 10 and keep production authority absent. Phase B
+implementation is project-operator-authorized, with independent proof review
+explicitly recorded as not performed. This phase is abstract: no production
 parser, storage representation, sealed plan, evaluator, backend operation,
 cache path, or routing decision consumes these models. The exact claim,
 limitations, counts, and digests are recorded in

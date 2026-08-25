@@ -90,8 +90,10 @@ section-10 source-refinement obligation.
 
 `formal/verification/operator-phase-a.edn` records the exact proof counts,
 source digests, temporal bounds, mutations, and cross-runtime vectors. Its
-status remains `:passed-pending-independent-review`, and its Phase B gate is
-false until a separate proof/design attestation is checked in.
+status is `:passed-operator-authorized`: the project operator explicitly
+authorized Phase B after the abstract gates passed. No independent proof
+review has been performed, and the evidence records that absence as an
+assurance qualification rather than claiming external certification.
 
 ### Portable ClojureScript authority boundary
 
