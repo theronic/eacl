@@ -12,6 +12,7 @@
             [eacl.execution-test]
             [eacl.proof-frame-test]
             [eacl.permission-tree-test]
+            [eacl.operator.plan-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
             [eacl.request.context-test]
@@ -67,6 +68,7 @@
                'eacl.execution-test
                'eacl.proof-frame-test
                'eacl.permission-tree-test
+               'eacl.operator.plan-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
                'eacl.request.context-test

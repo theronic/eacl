@@ -272,6 +272,10 @@
       "sha256": "410f605fc912c384bfc1f8ffeec3757f9ffe42554654afa3e3b6bc60df062495"
     },
     {
+      "path": "modules/eacl/src/eacl/operator/plan.cljc",
+      "sha256": "f3396632778d01be19d697a82b361623a3b983e6b2cd896dd0617243d1901bd3"
+    },
+    {
       "path": "modules/eacl/src/eacl/permission_tree.cljc",
       "sha256": "09f8604f5b99bb1090c1920af10f1fd8d9742410a5dddb2396e7c9c5ca49f569"
     },

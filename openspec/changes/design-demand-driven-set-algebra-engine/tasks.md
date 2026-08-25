@@ -60,14 +60,14 @@
 
 ## 6. Compile canonical operator plans
 
-- [ ] 6.1 Compile source trees to bounded canonical semantic DAGs with associative flattening, commutative sorting/deduplication, structural interning with equality checks, and ordered binary exclusion.
-- [ ] 6.2 Compute complete signed relation closures, positive SCCs, strata, child-consumer indexes, leaf descriptors, direct-order compatibility, and deterministic structural cost tuples.
-- [ ] 6.3 Compile the recursive raw-cover and exact-generator graph, ensure local predicates complete before child semantic witnesses are issued, and select one deterministic intersection anchor per acyclic node without semantic pilots, cache observations, or host-order dependencies.
-- [ ] 6.4 Compile bounded witness projection rules and exact scalar/vector predicate programs, including typed entity identity and leaf descriptor grouping metadata.
-- [ ] 6.5 Seal direct intersection/anti-join eligibility only when sequence, direction, bounds, types, and generic-cover order are compatible.
-- [ ] 6.6 Include expression format/digest, normalized DAG, signed certificate, strata, cover, anchors, witness/predicate versions, physical-policy version, capability identity, limits, and order ABI in operator fingerprints.
-- [ ] 6.7 Preserve the existing union-only sealed-plan domain, fingerprint, least-path/recursive routing, cursor identity, counters, and cache keys without constructing operator state.
-- [ ] 6.8 Add cross-runtime and cross-backend plan/fingerprint differentials, commutative operand equivalence tests, ordered exclusion inequality tests, and missing/stale/malformed certificate rejection.
+- [x] 6.1 Compile source trees to bounded canonical semantic DAGs with associative flattening, commutative sorting/deduplication, structural interning with equality checks, and ordered binary exclusion.
+- [x] 6.2 Compute complete signed relation closures, positive SCCs, strata, child-consumer indexes, leaf descriptors, direct-order compatibility, and deterministic structural cost tuples.
+- [x] 6.3 Compile the recursive raw-cover and exact-generator graph, ensure local predicates complete before child semantic witnesses are issued, and select one deterministic intersection anchor per acyclic node without semantic pilots, cache observations, or host-order dependencies.
+- [x] 6.4 Compile bounded witness projection rules and exact scalar/vector predicate programs, including typed entity identity and leaf descriptor grouping metadata.
+- [x] 6.5 Seal direct intersection/anti-join eligibility only when sequence, direction, bounds, types, and generic-cover order are compatible.
+- [x] 6.6 Include expression format/digest, normalized DAG, signed certificate, strata, cover, anchors, witness/predicate versions, physical-policy version, capability identity, limits, and order ABI in operator fingerprints.
+- [x] 6.7 Preserve the existing union-only sealed-plan domain, fingerprint, least-path/recursive routing, cursor identity, counters, and cache keys without constructing operator state.
+- [x] 6.8 Add cross-runtime and cross-backend plan/fingerprint differentials, commutative operand equivalence tests, ordered exclusion inequality tests, and missing/stale/malformed certificate rejection.
 
 ## 7. Implement acyclic checks, vector predicates, and bounded lookup
 
