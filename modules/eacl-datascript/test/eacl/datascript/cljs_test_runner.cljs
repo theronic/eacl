@@ -16,6 +16,11 @@
             [eacl.request.context-test]
             [eacl.request.counters-test]
             [eacl.secure-format-test]
+            [eacl.schema.expression-test]
+            [eacl.schema.expression-limits-test]
+            [eacl.schema.expression-resolver-test]
+            [eacl.schema.expression-graph-test]
+            [eacl.schema.expression-fuzz-test]
             [eacl.spicedb.parser-portability-test]
             [eacl.subproblem-cache-test]
             [eacl.verified-kernel-test]
@@ -63,6 +68,11 @@
                'eacl.request.context-test
                'eacl.request.counters-test
                'eacl.secure-format-test
+               'eacl.schema.expression-test
+               'eacl.schema.expression-limits-test
+               'eacl.schema.expression-resolver-test
+               'eacl.schema.expression-graph-test
+               'eacl.schema.expression-fuzz-test
                'eacl.spicedb.parser-portability-test
                'eacl.subproblem-cache-test
                'eacl.verified-kernel-test

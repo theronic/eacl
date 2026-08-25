@@ -34,7 +34,7 @@
 - [x] 3.3 Recursively resolve relation types, named permissions, and every one-hop arrow partition across all source-relation subject types; report deterministic missing, ambiguous, and type-invalid references.
 - [x] 3.4 Implement source byte/node/depth/direct-fan-in checks before allocation and normalized DAG node/child-slot/word/checkpoint-weight checks after canonicalization.
 - [x] 3.5 Build signed expression dependencies, compute SCCs and strata, reject negative cycles with reproducible typed paths, and verify positive recursive components remain accepted.
-- [ ] 3.6 Add CLJ/CLJS parser, codec, canonicalization, corruption, exact-boundary, fuzz, and atomic-validation tests against the independent syntax/denotation oracle.
+- [x] 3.6 Add CLJ/CLJS parser, codec, canonicalization, corruption, exact-boundary, fuzz, and atomic-validation tests against the independent syntax/denotation oracle.
 - [ ] 3.7 Calibrate and check in per-permission and aggregate expression/normalized-state limit defaults from reproducible codec and allocation measurements; include every default in the expression/plan version.
 
 ## 4. Persist expressions and evolve backend capabilities
