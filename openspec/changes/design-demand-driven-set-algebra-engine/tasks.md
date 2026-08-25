@@ -30,7 +30,7 @@
 ## 3. Parse, validate, and encode permission expressions
 
 - [x] 3.1 Change the grammar to union-before-intersection-before-exclusion precedence, left-fold repeated exclusion, and preserve explicit grouping in the source AST; retain every existing unsupported construct rejection.
-- [ ] 3.2 Add closed data constructors and a versioned canonical codec for relation, permission, one-hop arrow, union, intersection, and exclusion nodes with unknown-tag/version/field rejection.
+- [x] 3.2 Add closed data constructors and a versioned canonical codec for relation, permission, one-hop arrow, union, intersection, and exclusion nodes with unknown-tag/version/field rejection.
 - [ ] 3.3 Recursively resolve relation types, named permissions, and every one-hop arrow partition across all source-relation subject types; report deterministic missing, ambiguous, and type-invalid references.
 - [ ] 3.4 Implement source byte/node/depth/direct-fan-in checks before allocation and normalized DAG node/child-slot/word/checkpoint-weight checks after canonicalization.
 - [ ] 3.5 Build signed expression dependencies, compute SCCs and strata, reject negative cycles with reproducible typed paths, and verify positive recursive components remain accepted.

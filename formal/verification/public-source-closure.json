@@ -308,6 +308,10 @@
       "sha256": "d1b1a2c1968f9eb4b7038cae25081df8998985c3569295f166d73a8db8c4ba20"
     },
     {
+      "path": "modules/eacl/src/eacl/schema/expression.cljc",
+      "sha256": "8f28cb92e415bf91ff78cc9bbd6f5232fa26b712289a7b20bdf2fcbfa6abaa78"
+    },
+    {
       "path": "modules/eacl/src/eacl/schema/model.cljc",
       "sha256": "c054a7b28adc66bd17f979232cd0a8b57018ce54010b6dedab7fe32c92f7196a"
     },
