@@ -2,8 +2,9 @@
   (:require [datahike.api :as d]
             [eacl.datahike.db :as ddb]
             [eacl.relationships.storage :as relationship-storage]
-            [eacl.schema.model :as model]
-            [eacl.spicedb.parser :as parser]))
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-resolver :as expression-resolver]
+            [eacl.schema.model :as model]))
 
 (def relation-key-attr
   :eacl.relation/resource-type+relation-name+subject-type)
@@ -68,6 +69,46 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
+   {:db/ident       :eacl.permission/expression-format
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.permission/expression-payload
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/expression-digest
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.permission/expression-policy-digest
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+   {:db/ident       :eacl.permission/source-node-count
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/source-maximum-depth
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/source-direct-fan-in
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/encoded-byte-size
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/normalized-node-count
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/normalized-child-slot-count
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/normalized-word-count
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+   {:db/ident       :eacl.permission/normalized-checkpoint-weight
+    :db/valueType   :db.type/long
+    :db/cardinality :db.cardinality/one}
+
    ])
 
 (def ^:private tuple-schema
@@ -85,19 +126,10 @@
 
    {:db/ident       :eacl.permission/resource-type+permission-name
     :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
+   :db/tupleAttrs  [:eacl.permission/resource-type
                      :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
     :db/index       true}
-   {:db/ident       :eacl.permission/full-key
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/source-relation-name
-                     :eacl.permission/target-type
-                     :eacl.permission/target-name
-                     :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
 
    {:db/ident       relationship-storage/forward-attribute
     :db/valueType   :db.type/tuple
@@ -181,7 +213,19 @@
     :eacl.permission/permission-name
     :eacl.permission/source-relation-name
     :eacl.permission/target-type
-    :eacl.permission/target-name])
+    :eacl.permission/target-name
+    :eacl.permission/expression-format
+    :eacl.permission/expression-payload
+    :eacl.permission/expression-digest
+    :eacl.permission/expression-policy-digest
+    :eacl.permission/source-node-count
+    :eacl.permission/source-maximum-depth
+    :eacl.permission/source-direct-fan-in
+    :eacl.permission/encoded-byte-size
+    :eacl.permission/normalized-node-count
+    :eacl.permission/normalized-child-slot-count
+    :eacl.permission/normalized-word-count
+    :eacl.permission/normalized-checkpoint-weight])
 
 (defn read-relations
   "Every relation definition. Enumerated from the relation key index rather than
@@ -198,8 +242,10 @@
 
 (defn read-schema
   [db & [_format]]
-  {:relations   (read-relations db)
-   :permissions (read-permissions db)})
+  (let [permissions (read-permissions db)]
+    (expression-persistence/validate-entities permissions)
+    {:relations   (read-relations db)
+     :permissions permissions}))
 
 (defn prepare-cache-coherence!
   "Initializes missing native schema/relation generations and the schema
@@ -364,8 +410,8 @@
   ([conn schema-string
     {:keys [allow-empty-schema?]}
     known-schema-generation]
-   (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
-         _               (validate-schema-references new-schema-map)
+   (let [new-schema-map  (expression-persistence/candidate-schema
+                           (expression-resolver/validate-schema schema-string))
          initial-db      (d/db conn)
          initial-schema  (read-schema initial-db)
          _               (when (and (empty? (:definitions new-schema-map))
@@ -391,7 +437,8 @@
          deltas          (compare-schema existing-schema new-schema-map)
          {:keys [relations permissions]} deltas
          relation-retractions   (:retractions relations)
-         permission-retractions (:retractions permissions)]
+         permission-retractions
+         (expression-persistence/entity-deletions permissions)]
      (doseq [rel relation-retractions]
        (let [cnt (count-relationships-using-relation db rel)]
          (when (pos? cnt)

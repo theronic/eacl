@@ -837,7 +837,7 @@
   (testing "schema round-trips through the logical representation"
     (let [{:keys [relations permissions]} (eacl/read-schema client)]
       (is (= 4 (count relations)))
-      (is (= 5 (count permissions)))))
+      (is (= 4 (count permissions)))))
 
   (testing "permission checks traverse direct and arrow relations"
     (is (true? (eacl/can? client (->user "user-1") :reboot (->server "server-1"))))
@@ -968,7 +968,7 @@
   (testing "schema round-trips through the logical representation"
     (let [{:keys [relations permissions]} (eacl/read-schema client)]
       (is (= 4 (count relations)))
-      (is (= 5 (count permissions)))))
+      (is (= 4 (count permissions)))))
 
   (testing "permission checks traverse direct and arrow relations"
     (is (true? (eacl/can? client (->user "user-1") :reboot (->server "server-1"))))

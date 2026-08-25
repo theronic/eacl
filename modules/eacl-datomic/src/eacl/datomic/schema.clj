@@ -3,8 +3,9 @@
             [datomic.api :as d]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.relationships.storage :as relationship-storage]
-            [eacl.schema.model :as model]
-            [eacl.spicedb.parser :as parser]))
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-resolver :as expression-resolver]
+            [eacl.schema.model :as model]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -218,6 +219,46 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
+   {:db/ident       :eacl.permission/expression-format
+    :db/doc         "EACL canonical permission expression format."
+    :db/valueType   :db.type/keyword
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident       :eacl.permission/expression-payload
+    :db/doc         "EACL canonical permission expression payload."
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one}
+
+   {:db/ident       :eacl.permission/expression-digest
+    :db/doc         "Digest of the canonical permission expression."
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident       :eacl.permission/expression-policy-digest
+    :db/doc         "Digest of the expression compatibility policy."
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one
+    :db/index       true}
+
+   {:db/ident :eacl.permission/source-node-count
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.permission/source-maximum-depth
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.permission/source-direct-fan-in
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.permission/encoded-byte-size
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.permission/normalized-node-count
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.permission/normalized-child-slot-count
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.permission/normalized-word-count
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+   {:db/ident :eacl.permission/normalized-checkpoint-weight
+    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
+
    ; Permission Indices
    {:db/ident       :eacl.permission/resource-type+permission-name
     :db/doc         "EACL Permission: Index for finding all permissions on a resource type"
@@ -226,39 +267,6 @@
                      :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
     :db/index       true}
-
-   ;; Added: Enumeration indices for efficient arrow permission lookup
-   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+permission-name
-    :db/doc         "EACL Permission: Index for enumerating permission-type arrows"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/source-relation-name
-                     :eacl.permission/target-type
-                     :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name
-    :db/doc         "EACL Permission: Index for enumerating relation-type arrows"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/source-relation-name
-                     :eacl.permission/target-type
-                     :eacl.permission/target-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
-    :db/doc         "EACL Permission: Full unique identity tuple to prevent duplicate permissions."
-    ; I suspect the tuple order can be improved for faster permission enumeration.
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/source-relation-name
-                     :eacl.permission/target-type
-                     :eacl.permission/target-name
-                     :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
 
    ;; v7 Relationships: forward and reverse tuple indexes only.
    {:db/ident       relationship-storage/forward-attribute
@@ -318,7 +326,19 @@
                              :eacl.permission/permission-name
                              :eacl.permission/source-relation-name
                              :eacl.permission/target-type
-                             :eacl.permission/target-name]) ...]
+                             :eacl.permission/target-name
+                             :eacl.permission/expression-format
+                             :eacl.permission/expression-payload
+                             :eacl.permission/expression-digest
+                             :eacl.permission/expression-policy-digest
+                             :eacl.permission/source-node-count
+                             :eacl.permission/source-maximum-depth
+                             :eacl.permission/source-direct-fan-in
+                             :eacl.permission/encoded-byte-size
+                             :eacl.permission/normalized-node-count
+                             :eacl.permission/normalized-child-slot-count
+                             :eacl.permission/normalized-word-count
+                             :eacl.permission/normalized-checkpoint-weight]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
        db))
@@ -327,8 +347,10 @@
   "Enumerates all EACL permission schema entities in DB and returns maps."
   ; todo: unparse into SpiceDB string schema if desired.
   [db & [_format]]
-  {:relations   (read-relations db)
-   :permissions (read-permissions db)})
+  (let [permissions (read-permissions db)]
+    (expression-persistence/validate-entities permissions)
+    {:relations   (read-relations db)
+     :permissions permissions}))
 
 (defn prepare-cache-coherence!
   "Initializes missing physical relation generations in an upgraded database.
@@ -477,11 +499,9 @@
   ([conn schema-string
     {:keys [allow-empty-schema?]}
     known-schema-version]
-   (let [new-schema-map (parser/->eacl-schema
-                         (parser/parse-schema schema-string))
-         ;; ADR 012 says an invalid schema makes NO database changes. This must
-         ;; therefore precede even the compatibility installation below.
-         _ (validate-schema-references new-schema-map)]
+   (let [new-schema-map
+         (expression-persistence/candidate-schema
+          (expression-resolver/validate-schema schema-string))]
      ;; Fresh/partially installed v7 databases may not have the stamp
      ;; attributes yet. This is schema installation, not a v6 compatibility
      ;; path. :eacl/relation-version is installed the same way so a database
@@ -511,7 +531,8 @@
            deltas                 (compare-schema existing-schema new-schema-map)
            {:keys [relations permissions]} deltas
            relation-retractions   (:retractions relations)
-           permission-retractions (:retractions permissions)]
+           permission-retractions
+           (expression-persistence/entity-deletions permissions)]
 
        ;; Check for orphaned relationships.
        (doseq [rel relation-retractions]

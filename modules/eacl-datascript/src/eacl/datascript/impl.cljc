@@ -17,11 +17,24 @@
 
 (def permission-def-pull
   '[:db/id
+    :eacl/id
     :eacl.permission/resource-type
     :eacl.permission/permission-name
     :eacl.permission/source-relation-name
     :eacl.permission/target-type
-    :eacl.permission/target-name])
+    :eacl.permission/target-name
+    :eacl.permission/expression-format
+    :eacl.permission/expression-payload
+    :eacl.permission/expression-digest
+    :eacl.permission/expression-policy-digest
+    :eacl.permission/source-node-count
+    :eacl.permission/source-maximum-depth
+    :eacl.permission/source-direct-fan-in
+    :eacl.permission/encoded-byte-size
+    :eacl.permission/normalized-node-count
+    :eacl.permission/normalized-child-slot-count
+    :eacl.permission/normalized-word-count
+    :eacl.permission/normalized-checkpoint-weight])
 
 (defn relation-datoms
   "Returns relation datoms for the exact resource/relation name pair, for ANY

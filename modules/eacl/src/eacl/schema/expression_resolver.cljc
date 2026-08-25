@@ -9,6 +9,7 @@
             [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-limits :as expression-limits]
             [eacl.schema.expression-policy :as expression-policy]
+            [eacl.schema.model :as model]
             [eacl.spicedb.parser :as parser]))
 
 (defn- catalog
@@ -300,6 +301,15 @@
   ([parse-tree limits]
    (let [transformed (parser/transform-schema parse-tree)
          _ (parser/validate-eacl-restrictions parse-tree transformed)
+         relations
+         (vec
+           (for [[resource-type {:keys [relations]}]
+                 (sort-by key (:definitions transformed))
+                 [relation-name type-refs] (sort-by key relations)
+                 {:keys [type]} (sort-by :type type-refs)]
+             (model/Relation (keyword resource-type)
+                             (keyword relation-name)
+                             (keyword type))))
          {:keys [expressions metadata aggregate-metrics]}
          (resolve-definitions-with-metadata (:definitions transformed) limits)
          dependency-certificate
@@ -307,6 +317,7 @@
      {:definitions (mapv (comp keyword key)
                          (sort-by key (:definitions transformed)))
       :expressions expressions
+      :relations relations
       :expression-metadata metadata
       :aggregate-expression-metrics aggregate-metrics
       :dependency-certificate dependency-certificate})))

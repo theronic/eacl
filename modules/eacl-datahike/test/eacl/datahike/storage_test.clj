@@ -6,7 +6,9 @@
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
             [eacl.datahike.integrity :as integrity]
+            [eacl.datahike.schema :as schema]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.model :as model]))
 
 (def ^:private relationship-schema
@@ -21,9 +23,144 @@
      relation peer: node
    }")
 
+(def ^:private operator-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = base & reader - banned
+   }")
+
+(def ^:private replacement-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = reader - banned
+   }")
+
+(def ^:private no-permission-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+   }")
+
+(def ^:private invalid-negative-cycle-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     permission a = reader - b
+     permission b = a
+   }")
+
 (def ^:private modes
   {"attributes as keywords" false
    "attributes as numeric refs" true})
+
+(defn- exception-data [thunk]
+  (try
+    (thunk)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(deftest permission-storage-is-expression-only-and-replaceable-test
+  (doseq [[label attribute-refs?] modes]
+    (testing label
+      (let [conn (datahike/create-conn nil
+                                       {:attribute-refs? attribute-refs?})]
+        (try
+          (schema/write-schema! conn operator-storage-schema)
+          (let [before-db (d/db conn)
+                before (schema/read-permissions before-db)
+                view-id
+                (expression-persistence/->expression-id :document :view)
+                view-eid (ddb/entid before-db [:eacl/id view-id])
+                before-digest
+                (:eacl.permission/expression-digest
+                 (first (filter #(= view-id (:eacl/id %)) before)))]
+            (is (= 2 (count before)))
+            (is (every? #(not-any? (fn [attribute]
+                                     (contains? % attribute))
+                                   expression-persistence/legacy-flat-attributes)
+                        before))
+            (is (nil? (ddb/entid before-db :eacl.permission/full-key)))
+            (schema/write-schema! conn replacement-storage-schema)
+            (let [after-db (d/db conn)
+                  after (schema/read-permissions after-db)
+                  view (first (filter #(= view-id (:eacl/id %)) after))]
+              (is (= view-eid (ddb/entid after-db [:eacl/id view-id])))
+              (is (= 2 (count after)))
+              (is (not= before-digest
+                        (:eacl.permission/expression-digest view)))
+              (is (= :exclusion
+                     (:op (:root
+                           (expression-persistence/decode-entity view))))))
+            (let [stable-db (d/db conn)
+                  stable-schema (schema/read-schema stable-db)
+                  stable-generation
+                  (schema/current-schema-generation stable-db)
+                  data
+                  (exception-data
+                   #(schema/write-schema! conn
+                                          invalid-negative-cycle-schema))
+                  after-failure (d/db conn)]
+              (is (= :eacl.schema/unstratified-exclusion (:type data)))
+              (is (= stable-generation
+                     (schema/current-schema-generation after-failure)))
+              (is (= stable-schema (schema/read-schema after-failure))))
+            (schema/write-schema! conn no-permission-storage-schema)
+            (is (empty? (schema/read-permissions (d/db conn))))
+            (is (= 2 (count (schema/read-permissions before-db)))))
+          (finally
+            (d/release conn)))))))
+
+(deftest permission-storage-rejects-flat-mixed-and-duplicate-rows-test
+  (testing "flat-only"
+    (let [conn (datahike/create-conn)]
+      (try
+        (d/transact
+         conn
+         [{:eacl/id "flat"
+           :eacl.permission/resource-type :document
+           :eacl.permission/permission-name :view
+           :eacl.permission/source-relation-name :self
+           :eacl.permission/target-type :relation
+           :eacl.permission/target-name :reader}])
+        (is (= :flat-only-representation
+               (:reason
+                (exception-data #(schema/read-schema (d/db conn))))))
+        (finally
+          (d/release conn)))))
+  (testing "mixed"
+    (let [conn (datahike/create-conn)]
+      (try
+        (schema/write-schema! conn relationship-schema)
+        (let [permission (first (schema/read-permissions (d/db conn)))]
+          (d/transact conn [[:db/add [:eacl/id (:eacl/id permission)]
+                             :eacl.permission/target-type :relation]])
+          (is (= :mixed-flat-and-expression
+                 (:reason
+                  (exception-data #(schema/read-schema (d/db conn)))))))
+        (finally
+          (d/release conn)))))
+  (testing "duplicate"
+    (let [conn (datahike/create-conn)]
+      (try
+        (schema/write-schema! conn relationship-schema)
+        (let [permission (first (schema/read-permissions (d/db conn)))]
+          (d/transact conn [(assoc permission :eacl/id "duplicate")])
+          (is (= :duplicate-expression
+                 (:reason
+                  (exception-data #(schema/read-schema (d/db conn)))))))
+        (finally
+          (d/release conn))))))
 
 (defn- walk-relationship-pages
   [client query]

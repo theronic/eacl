@@ -56,7 +56,7 @@
             op (:op node)
             children
             (case op
-              (:identifier :arrow) []
+              (:identifier :relation :permission :arrow) []
               (:union :intersection) (:children node)
               :exclusion [(:left node) (:right node)]
               (throw (ex-info "Unknown source expression node."

@@ -5,7 +5,8 @@
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.schema :as schema])
+            [eacl.datahike.schema :as schema]
+            [eacl.schema.expression-persistence :as expression-persistence])
   (:import [datahike.db AsOfDB DB FilteredDB HistoricalDB SinceDB]
            [java.util UUID]))
 
@@ -189,15 +190,11 @@
             (Thread/sleep 2)
             (recur)))))))
 
-(defn- normalized-permission
+(defn- normalized-permissions
   [permission]
-  {:permission-id (:db/id permission)
-   :resource-type (:eacl.permission/resource-type permission)
-   :permission-name (:eacl.permission/permission-name permission)
-   :source-relation-name
-   (:eacl.permission/source-relation-name permission)
-   :target-type (:eacl.permission/target-type permission)
-   :target-name (:eacl.permission/target-name permission)})
+  (expression-persistence/union-compatible-definitions
+   (:db/id permission)
+   (expression-persistence/decode-entity permission)))
 
 (defn- ordered-generation-frame
   [db relation-ids]
@@ -285,9 +282,9 @@
 
        :permission-defs
        (fn [resource-type permission-name]
-         (mapv normalized-permission
-               (impl/find-permission-defs
-                db resource-type permission-name)))
+         (vec (mapcat normalized-permissions
+                      (impl/find-permission-defs
+                       db resource-type permission-name))))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]

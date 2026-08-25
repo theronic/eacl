@@ -39,10 +39,10 @@
 
 ## 4. Persist expressions and evolve backend capabilities
 
-- [ ] 4.1 Add expression payload, digest, format, and limit-metadata attributes/indexes directly to the unreleased v8 Datomic, DataScript, Datahike, and Datalevin schemas; keep clean installation idempotent.
+- [x] 4.1 Add expression payload, digest, format, and limit-metadata attributes/indexes directly to the unreleased v8 Datomic, DataScript, Datahike, and Datalevin schemas; keep clean installation idempotent.
 - [ ] 4.2 Implement atomic expression replacement, schema deletion, snapshot reads, export/import, backup/restore, and failed-replacement atomicity tests on every built-in backend.
-- [ ] 4.3 Remove flat permission persistence for every permission, verify that schema writes emit only canonical expressions, and compile union-compatible expressions into the unchanged union-only sealed-plan domain.
-- [ ] 4.4 Read valid expression-only snapshots; fail closed on flat-only, mixed, corrupt, conflicting, duplicated, or unsupported-format storage.
+- [x] 4.3 Remove flat permission persistence for every permission, verify that schema writes emit only canonical expressions, and compile union-compatible expressions into the unchanged union-only sealed-plan domain.
+- [x] 4.4 Read valid expression-only snapshots; fail closed on flat-only, mixed, corrupt, conflicting, duplicated, or unsupported-format storage.
 - [ ] 4.5 Add explicit storage tests proving the unreleased v8 path performs no legacy synthesis, migration, dual write, old-reader rollout, or binary-downgrade preparation.
 - [ ] 4.6 Extend adapter construction with a required expression capability and optional bounded batched-direct-membership capability; validate capability/operation pairing and include it in operator compatibility.
 - [ ] 4.7 Define the immutable-basis, normalized-descriptor, distinct-typed-input, aligned-Boolean, maximum-width, cancellation, and atomic-failure contract for batched direct membership.
