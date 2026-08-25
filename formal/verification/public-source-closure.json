@@ -309,7 +309,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/schema/expression.cljc",
-      "sha256": "8f28cb92e415bf91ff78cc9bbd6f5232fa26b712289a7b20bdf2fcbfa6abaa78"
+      "sha256": "d057bf710db23ef080aa062188d023717053bb4537c503031caa9d251a5592a9"
     },
     {
       "path": "modules/eacl/src/eacl/schema/expression_graph.cljc",
@@ -317,11 +317,15 @@
     },
     {
       "path": "modules/eacl/src/eacl/schema/expression_limits.cljc",
-      "sha256": "e944da9f27829fb5d55c8208184739f28d052d5a7c6728ddc6aa6afb47cfd081"
+      "sha256": "711ff51834c5b9aae9194ab8cc641d8303d32bcb4fdc7157a30c85b53e0a1468"
+    },
+    {
+      "path": "modules/eacl/src/eacl/schema/expression_policy.cljc",
+      "sha256": "15d9d494e27173aa1660d5e971c7d45bb8e2376024f47e053f9f39523506dccd"
     },
     {
       "path": "modules/eacl/src/eacl/schema/expression_resolver.cljc",
-      "sha256": "b25c963512d974623b7182fef6e5e41c4c814d6ebdd28637c5a81359d10d407b"
+      "sha256": "26e2c62f176ecff017f389338672edb27160b0d04ac014f469329d330fbcd630"
     },
     {
       "path": "modules/eacl/src/eacl/schema/model.cljc",
@@ -329,7 +333,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/secure_format.cljc",
-      "sha256": "82770b5a4a36c04b81675cff018f0d397aba5ac8d85f3b6eed8c0500417505b8"
+      "sha256": "b04245235cd0ce632ea772855961404eaebe627beae4942182ab3f0f2c65d3ea"
     },
     {
       "path": "modules/eacl/src/eacl/spicedb/consistency.cljc",
@@ -337,7 +341,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/spicedb/parser.cljc",
-      "sha256": "283ec7a56475420d07c5442ae8e71eef659f195a27aebc422c42db56d7046d29"
+      "sha256": "beb9391f657cc46c9ce8bbfe9a6c74a468a400b2cbe2aa74521e7e02f4a1c62b"
     },
     {
       "path": "modules/eacl/src/eacl/subproblem_cache.cljc",
@@ -424,7 +428,7 @@
     "rootCount": 70,
     "unionInternalDefinitionCount": 1695,
     "unionInternalDefinitionIdsSha256": "bfeaa8f61f82a1dac125311905e645a070f8deaabf441366180008afd8c5502c",
-    "unionDefinitionLocationsSha256": "a7c9ba5e914802197f5e45dd11ac2b9180d67e22e2f9aa3542fd40e3da14c414",
+    "unionDefinitionLocationsSha256": "c1f219f548717196baef8acecbbd5ab02e374f24ad16a7f3076886ac8c394f52",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 25,

@@ -8,6 +8,7 @@
   (:require [eacl.schema.expression :as expression]
             [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-limits :as expression-limits]
+            [eacl.schema.expression-policy :as expression-policy]
             [eacl.spicedb.parser :as parser]))
 
 (defn- catalog
@@ -46,9 +47,14 @@
 (declare resolve-node)
 
 (defn- validate-relation-types!
-  [definitions catalog issues]
+  [definitions catalog issues limits]
   (doseq [[resource-type {:keys [relations]}] (sort-by key definitions)
           [relation-name type-refs] (sort-by key relations)
+          :let [_ (expression-limits/check-dimension!
+                    :type-partition-count
+                    :maximum-type-partitions
+                    (count type-refs)
+                    limits)]
           {:keys [type]} (sort-by :type type-refs)
           :let [resource-type (keyword resource-type)
                 relation-name (keyword relation-name)
@@ -230,7 +236,7 @@
   ([definitions limits]
   (let [catalog (catalog definitions)
         issues (atom [])
-        _ (validate-relation-types! definitions catalog issues)
+        _ (validate-relation-types! definitions catalog issues limits)
         resolved
         (reduce
           (fn [result [resource-type permission-name parsed-expression]]
@@ -244,12 +250,16 @@
                 result
                 (let [resolved-expression
                       (expression/expression resource-type permission-name root)
+                      {:keys [encoded-byte-size]}
+                      (expression-limits/check-expression-bytes!
+                        resolved-expression limits)
                       {:keys [dag metrics]}
                       (expression-limits/check-normalized!
                         resolved-expression limits)]
                   (conj result
                         {:expression resolved-expression
                          :source-metrics source-metrics
+                         :encoded-byte-size encoded-byte-size
                          :normalized-dag dag
                          :normalized-metrics metrics})))))
           []
@@ -267,8 +277,11 @@
                        :eacl/error :eacl.schema/expression-resolution-failed
                        :errors errors
                        :error-count (count errors)})))
-    {:expressions (mapv :expression resolved)
-     :metadata (mapv #(dissoc % :expression) resolved)})))
+    (let [metadata (mapv #(dissoc % :expression) resolved)]
+      {:expressions (mapv :expression resolved)
+       :metadata metadata
+       :aggregate-metrics
+       (expression-limits/check-aggregate! metadata limits)}))))
 
 (defn resolve-definitions
   "Resolves every permission and returns canonical expressions sorted by
@@ -287,7 +300,7 @@
   ([parse-tree limits]
    (let [transformed (parser/transform-schema parse-tree)
          _ (parser/validate-eacl-restrictions parse-tree transformed)
-         {:keys [expressions metadata]}
+         {:keys [expressions metadata aggregate-metrics]}
          (resolve-definitions-with-metadata (:definitions transformed) limits)
          dependency-certificate
          (expression-graph/build-certificate expressions)]
@@ -295,4 +308,26 @@
                          (sort-by key (:definitions transformed)))
       :expressions expressions
       :expression-metadata metadata
+      :aggregate-expression-metrics aggregate-metrics
       :dependency-certificate dependency-certificate})))
+
+(defn validate-schema
+  "Parses and validates one complete schema under the checked-in expression
+   admission policy. The returned compatibility value/digest must be included
+   by expression storage and operator plan fingerprints."
+  ([schema-source]
+   (validate-schema schema-source expression-policy/compatibility-value))
+  ([schema-source policy]
+   (when-not (= expression-policy/compatibility-value policy)
+     (throw (ex-info "Unsupported permission-expression policy."
+              {:type :eacl.schema/unsupported-expression-policy
+               :eacl/error :eacl.schema/unsupported-expression-policy
+               :expected expression-policy/compatibility-value
+               :actual policy})))
+   (assoc
+     (resolve-parse-tree
+       (parser/parse-schema schema-source (:schema-limits policy))
+       (merge (:per-permission-limits policy)
+              (:aggregate-limits policy)))
+     :expression-policy policy
+     :expression-policy-digest expression-policy/compatibility-digest)))

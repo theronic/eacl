@@ -139,8 +139,8 @@
            :maximum-source-depth 3
            :maximum-direct-fan-in 2
            :maximum-normalized-nodes 5
-           :maximum-child-slots 4
-           :maximum-words 3
+           :maximum-child-slots 7
+           :maximum-words 8
            :maximum-checkpoint-weight 4096})
         exact
         (into {}

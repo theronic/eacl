@@ -21,6 +21,7 @@
             [eacl.schema.expression-resolver-test]
             [eacl.schema.expression-graph-test]
             [eacl.schema.expression-fuzz-test]
+            [eacl.schema.expression-policy-test]
             [eacl.spicedb.parser-portability-test]
             [eacl.subproblem-cache-test]
             [eacl.verified-kernel-test]
@@ -73,6 +74,7 @@
                'eacl.schema.expression-resolver-test
                'eacl.schema.expression-graph-test
                'eacl.schema.expression-fuzz-test
+               'eacl.schema.expression-policy-test
                'eacl.spicedb.parser-portability-test
                'eacl.subproblem-cache-test
                'eacl.verified-kernel-test

@@ -47,7 +47,8 @@
     (is (= :eacl.permission-expression-dag/v1 (:format dag)))
     (is (= 3 (:node-count metrics))
         "duplicate/group-only nodes collapse before interning")
-    (is (= 2 (:child-slot-count metrics)))
+    (is (= 3 (:child-slot-count metrics))
+        "typed leaf partitions are budgeted as retained slots")
     (is (pos? (:word-count metrics)))
     (is (= metrics
            (:metrics
@@ -69,15 +70,37 @@
                     value
                     {limit (dec (get metrics dimension))}))))))))
 
+(deftest normalized-dag-order-and-grouping-laws-test
+  (let [a (expression/relation :a [:user])
+        b (expression/relation :b [:user])
+        c (expression/relation :c [:user])
+        left
+        (expression/expression
+          :document :view
+          (expression/intersection
+            [a (expression/intersection [b c] true)]))
+        right
+        (expression/expression
+          :document :view
+          (expression/intersection [c a b]))
+        forward
+        (expression/expression :document :view (expression/exclusion a b))
+        reversed
+        (expression/expression :document :view (expression/exclusion b a))]
+    (is (= (limits/normalized-dag left)
+           (limits/normalized-dag right)))
+    (is (not= (limits/normalized-dag forward)
+              (limits/normalized-dag reversed)))))
+
 (deftest source-byte-limit-precedes-parse-tree-allocation-test
   (let [schema "definition user {}"]
     (is (vector? (parser/parse-schema schema
-                   {:maximum-source-bytes (count schema)})))
+                   {:maximum-schema-source-bytes (count schema)})))
     (is (= :source-bytes
            (:dimension
              (error-data
                #(parser/parse-schema schema
-                  {:maximum-source-bytes (dec (count schema))}))))))
+                  {:maximum-schema-source-bytes (dec (count schema))}))))))
   (testing "UTF-8 bytes, not host character count, define the boundary"
     (let [schema "definition usér {}"
           bytes (count (secure/utf8-bytes schema))]
@@ -85,4 +108,4 @@
              (:dimension
                (error-data
                  #(parser/parse-schema schema
-                    {:maximum-source-bytes (dec bytes)}))))))))
+                    {:maximum-schema-source-bytes (dec bytes)}))))))))

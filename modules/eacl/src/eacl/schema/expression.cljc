@@ -9,8 +9,27 @@
 (def format-version :eacl.permission-expression/v1)
 (def digest-domain "eacl/permission-expression/v1")
 
+;; Hard codec ceilings are deliberately above the calibrated admission policy.
+;; They exist so a value at an exact supported expression boundary remains
+;; encodable while malformed direct codec use is still bounded.
+(def codec-limits
+  {:maximum-size 1048576
+   :maximum-depth 256
+   :maximum-entries 262144})
+
 (def ^:private expression-keys
   #{:format :resource-type :permission-name :root})
+
+(defn- bounded-codec-options [options]
+  (reduce-kv
+    (fn [result key hard-maximum]
+      (let [requested (get result key hard-maximum)]
+        (assoc result key
+               (if (and (integer? requested) (not (neg? requested)))
+                 (min requested hard-maximum)
+                 requested))))
+    options
+    codec-limits))
 
 (declare canonical-node)
 
@@ -214,7 +233,8 @@
   ([value]
    (encode value {}))
   ([value options]
-   (secure/encode-canonical (canonicalize value) options)))
+   (secure/encode-canonical (canonicalize value)
+                            (bounded-codec-options options))))
 
 (defn decode
   "Decodes only canonical v1 values. Noncanonical spelling, unknown fields,
@@ -223,7 +243,8 @@
    (decode encoded {}))
   ([encoded options]
    (try
-     (let [decoded (secure/decode-canonical
+     (let [options (bounded-codec-options options)
+           decoded (secure/decode-canonical
                      encoded
                      (assoc options :allowed-keys expression-keys))
            value (canonicalize decoded)
@@ -241,4 +262,4 @@
 (defn digest
   "Returns the portable domain-separated digest of the canonical expression."
   [value]
-  (secure/canonical-digest digest-domain (canonicalize value)))
+  (secure/canonical-digest digest-domain (canonicalize value) codec-limits))
