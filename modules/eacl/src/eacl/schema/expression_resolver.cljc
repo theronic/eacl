@@ -6,6 +6,7 @@
   expands each one-hop arrow into one typed target partition per source
   relation subject type."
   (:require [eacl.schema.expression :as expression]
+            [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-limits :as expression-limits]
             [eacl.spicedb.parser :as parser]))
 
@@ -287,8 +288,11 @@
    (let [transformed (parser/transform-schema parse-tree)
          _ (parser/validate-eacl-restrictions parse-tree transformed)
          {:keys [expressions metadata]}
-         (resolve-definitions-with-metadata (:definitions transformed) limits)]
+         (resolve-definitions-with-metadata (:definitions transformed) limits)
+         dependency-certificate
+         (expression-graph/build-certificate expressions)]
      {:definitions (mapv (comp keyword key)
                          (sort-by key (:definitions transformed)))
       :expressions expressions
-      :expression-metadata metadata})))
+      :expression-metadata metadata
+      :dependency-certificate dependency-certificate})))

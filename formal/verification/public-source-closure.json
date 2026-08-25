@@ -312,12 +312,16 @@
       "sha256": "8f28cb92e415bf91ff78cc9bbd6f5232fa26b712289a7b20bdf2fcbfa6abaa78"
     },
     {
+      "path": "modules/eacl/src/eacl/schema/expression_graph.cljc",
+      "sha256": "4466904b5372691039c7599037086a5a6a978886e38f649dc0f9862e814f242f"
+    },
+    {
       "path": "modules/eacl/src/eacl/schema/expression_limits.cljc",
       "sha256": "e944da9f27829fb5d55c8208184739f28d052d5a7c6728ddc6aa6afb47cfd081"
     },
     {
       "path": "modules/eacl/src/eacl/schema/expression_resolver.cljc",
-      "sha256": "40c98da2f654d3493df3d3b23173c40d10faaba09a016d7dcd3e14276a5c1834"
+      "sha256": "b25c963512d974623b7182fef6e5e41c4c814d6ebdd28637c5a81359d10d407b"
     },
     {
       "path": "modules/eacl/src/eacl/schema/model.cljc",
