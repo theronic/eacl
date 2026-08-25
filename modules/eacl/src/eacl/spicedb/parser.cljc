@@ -3,7 +3,8 @@
   (:require [instaparse.core :as insta]
             [clojure.string :as str]
             [clojure.walk :as walk]
-            [eacl.schema.model :as model]))
+            [eacl.schema.model :as model]
+            [eacl.secure-format :as secure]))
 
 ;      primary-expr = identifier | <'('> permission-expr <')'>
 ;; SpiceDB declarations are line-oriented: a relation or permission must end
@@ -86,8 +87,44 @@
 
 ;; Example SpiceDB schema
 ;; Parse the schema
-(defn parse-schema [schema-str]
-  (spicedb-parser schema-str))
+(defn parse-schema
+  "Parses one schema. When :maximum-source-bytes is supplied, rejects the
+   source before Instaparse allocates a parse tree."
+  ([schema-str]
+   (parse-schema schema-str {}))
+  ([schema-str {:keys [maximum-source-bytes]}]
+   (when-not (string? schema-str)
+     (throw (ex-info "Schema source must be a string."
+              {:type :eacl.schema/parse-error
+               :eacl/error :eacl.schema/parse-error})))
+   (when maximum-source-bytes
+     (when-not (and (integer? maximum-source-bytes)
+                    (not (neg? maximum-source-bytes)))
+       (throw (ex-info "Invalid schema source-byte limit."
+                {:type :eacl.schema/invalid-expression-limit
+                 :eacl/error :eacl.schema/invalid-expression-limit
+                 :limit :maximum-source-bytes
+                 :value maximum-source-bytes})))
+     ;; UTF-16 code units are a cheap lower bound for UTF-8 bytes. Rejecting on
+     ;; that bound avoids allocating a byte vector for obviously oversized
+     ;; sources; the exact portable byte count is evaluated only inside it.
+     (let [lower-bound (count schema-str)]
+       (when (> lower-bound maximum-source-bytes)
+         (throw (ex-info "Schema source exceeds its byte limit."
+                  {:type :eacl.schema/expression-limit
+                   :eacl/error :eacl.schema/expression-limit
+                   :dimension :source-bytes
+                   :maximum maximum-source-bytes
+                   :actual-at-least lower-bound})))
+       (let [actual (count (secure/utf8-bytes schema-str))]
+         (when (> actual maximum-source-bytes)
+           (throw (ex-info "Schema source exceeds its byte limit."
+                    {:type :eacl.schema/expression-limit
+                     :eacl/error :eacl.schema/expression-limit
+                     :dimension :source-bytes
+                     :maximum maximum-source-bytes
+                     :actual actual}))))))
+   (spicedb-parser schema-str)))
 
 ;; Pretty print parse tree
 ;; ============================================================================

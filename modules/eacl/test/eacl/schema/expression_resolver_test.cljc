@@ -128,3 +128,44 @@
                         errors)]
     (is ambiguous)
     (is (= [:permission :relation] (:kinds ambiguous)))))
+
+(deftest resolution-enforces-source-and-normalized-limits-test
+  (let [parse-tree (parser/parse-schema resolved-schema)
+        {:keys [expressions expression-metadata]}
+        (resolver/resolve-parse-tree parse-tree)
+        bounded
+        (resolver/resolve-parse-tree parse-tree
+          {:maximum-source-nodes 5
+           :maximum-source-depth 3
+           :maximum-direct-fan-in 2
+           :maximum-normalized-nodes 5
+           :maximum-child-slots 4
+           :maximum-words 3
+           :maximum-checkpoint-weight 4096})
+        exact
+        (into {}
+              (map (fn [resolved metadata]
+                     [[(:resource-type resolved) (:permission-name resolved)]
+                      {:source (:source-metrics metadata)
+                       :normalized (:normalized-metrics metadata)}])
+                   expressions expression-metadata))
+        view (get exact [:document :view])]
+    (is (map? view))
+    (is (= 5 (get-in view [:source :node-count])))
+    (is (= 5 (get-in view [:normalized :node-count])))
+    (is (= exact
+           (into {}
+                 (map (fn [resolved metadata]
+                        [[(:resource-type resolved) (:permission-name resolved)]
+                         {:source (:source-metrics metadata)
+                          :normalized (:normalized-metrics metadata)}])
+                      (:expressions bounded)
+                      (:expression-metadata bounded)))))
+    (is (= :node-count
+           (:dimension
+             (try
+               (resolver/resolve-parse-tree parse-tree
+                 {:maximum-source-nodes 4})
+               nil
+               (catch #?(:clj Exception :cljs :default) error
+                 (ex-data error))))))))

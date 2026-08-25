@@ -6,6 +6,7 @@
   expands each one-hop arrow into one typed target partition per source
   relation subject type."
   (:require [eacl.schema.expression :as expression]
+            [eacl.schema.expression-limits :as expression-limits]
             [eacl.spicedb.parser :as parser]))
 
 (defn- catalog
@@ -214,29 +215,47 @@
                        {:node node
                         :message "Parser produced an unknown permission-expression node."}))))
 
-(defn resolve-definitions
-  "Resolves every permission from parser/transform-schema definitions.
+(defn resolve-definitions-with-metadata
+  "Resolves and bounds every permission from parser/transform-schema
+   definitions. Source-tree limits are checked before recursive resolved-node
+   construction. Normalized DAG limits are checked immediately after the
+   canonical expression is available.
 
-   Returns a vector sorted by [resource-type permission-name]. Any missing,
-   ambiguous, or type-invalid reference rejects the complete candidate schema
-   with a deterministically sorted :errors vector."
-  [definitions]
+   Returns expressions and aligned metadata vectors sorted by
+   [resource-type permission-name]. Any reference failure rejects the complete
+   candidate schema with a deterministically sorted :errors vector."
+  ([definitions]
+   (resolve-definitions-with-metadata definitions {}))
+  ([definitions limits]
   (let [catalog (catalog definitions)
         issues (atom [])
         _ (validate-relation-types! definitions catalog issues)
         resolved
-        (for [[resource-type {:keys [permissions]}]
-              (sort-by key definitions)
-              {:keys [name expression]}
-              (sort-by :name permissions)
-              :let [resource-type (keyword resource-type)
-                    permission-name (keyword name)
-                    source (parser/permission-expression->source-ast expression)
-                    root (resolve-node catalog resource-type permission-name
-                                       [:root] source issues)]
-              :when root]
-          (expression/expression resource-type permission-name root))
-        resolved (vec resolved)
+        (reduce
+          (fn [result [resource-type permission-name parsed-expression]]
+            (let [source (parser/permission-expression->source-ast
+                           parsed-expression)
+                  source-metrics (expression-limits/check-source!
+                                   source limits)
+                  root (resolve-node catalog resource-type permission-name
+                                     [:root] source issues)]
+              (if-not root
+                result
+                (let [resolved-expression
+                      (expression/expression resource-type permission-name root)
+                      {:keys [dag metrics]}
+                      (expression-limits/check-normalized!
+                        resolved-expression limits)]
+                  (conj result
+                        {:expression resolved-expression
+                         :source-metrics source-metrics
+                         :normalized-dag dag
+                         :normalized-metrics metrics})))))
+          []
+          (for [[resource-type {:keys [permissions]}]
+                (sort-by key definitions)
+                {:keys [name expression]} (sort-by :name permissions)]
+            [(keyword resource-type) (keyword name) expression]))
         errors (->> @issues
                     distinct
                     (sort-by issue-sort-key)
@@ -247,14 +266,29 @@
                        :eacl/error :eacl.schema/expression-resolution-failed
                        :errors errors
                        :error-count (count errors)})))
-    resolved))
+    {:expressions (mapv :expression resolved)
+     :metadata (mapv #(dissoc % :expression) resolved)})))
+
+(defn resolve-definitions
+  "Resolves every permission and returns canonical expressions sorted by
+   [resource-type permission-name]. The optional limits map accepts the source
+   and normalized dimensions from eacl.schema.expression-limits."
+  ([definitions]
+   (resolve-definitions definitions {}))
+  ([definitions limits]
+   (:expressions (resolve-definitions-with-metadata definitions limits))))
 
 (defn resolve-parse-tree
   "Validates parser-level restrictions and resolves every expression in one
    parsed candidate schema without invoking flat permission storage."
-  [parse-tree]
-  (let [transformed (parser/transform-schema parse-tree)]
-    (parser/validate-eacl-restrictions parse-tree transformed)
-    {:definitions (mapv (comp keyword key)
-                        (sort-by key (:definitions transformed)))
-     :expressions (resolve-definitions (:definitions transformed))}))
+  ([parse-tree]
+   (resolve-parse-tree parse-tree {}))
+  ([parse-tree limits]
+   (let [transformed (parser/transform-schema parse-tree)
+         _ (parser/validate-eacl-restrictions parse-tree transformed)
+         {:keys [expressions metadata]}
+         (resolve-definitions-with-metadata (:definitions transformed) limits)]
+     {:definitions (mapv (comp keyword key)
+                         (sort-by key (:definitions transformed)))
+      :expressions expressions
+      :expression-metadata metadata})))
