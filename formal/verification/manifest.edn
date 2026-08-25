@@ -129,9 +129,9 @@
   :abstract-operator-engine-phase-a
   {:status :passed
    :review-status :pending-independent-review
-   :verified-obligations 492
+   :verified-obligations 525
    :generated-boundary-new-obligations 6
-   :whole-tree-obligation-delta 498
+   :whole-tree-obligation-delta 531
    :sources
    ["formal/dafny/PermissionSetAlgebra.dfy"
     "formal/dafny/SignedDependencyStratification.dfy"
@@ -177,7 +177,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9292
+   :verified-obligations 9325
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed

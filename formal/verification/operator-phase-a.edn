@@ -10,17 +10,17 @@
  {:command "bin/formal format && bin/formal verify"
   :status :passed
   :modules 46
-  :whole-tree-obligations 9292
+  :whole-tree-obligations 9325
   :pre-change-whole-tree-obligations 8794
-  :phase-a-new-obligations 498
-  :new-proof-leaf-obligations 492
+  :phase-a-new-obligations 531
+  :new-proof-leaf-obligations 525
   :generated-boundary-new-obligations 6
   :maximum-proof-effort
-  {:source "IndexedReverseCompleteness.dfy"
+  {:source "SeekableSetKernels.dfy"
    :display-name
-   "IndexedReverseCompleteness.ReverseResponseWorkCoversSourceFact (correctness)"
-   :resource-count 24106086
-   :solver-seconds 3.2850035
+   "SeekableSetKernels.KWayLeapfrogMembership (correctness)"
+   :resource-count 30143484
+   :solver-seconds 5.636047
    :random-seed 0}
   :operator-leaves
   {"PermissionSetAlgebra.dfy" 40
@@ -30,7 +30,7 @@
    "VectorPredicate.dfy" 60
    "AdaptiveBatching.dfy" 26
    "OperatorLeastPath.dfy" 40
-   "SeekableSetKernels.dfy" 58
+   "SeekableSetKernels.dfy" 91
    "DensityBoundedBatch.dfy" 16
    "AnchorGatedConjunction.dfy" 35
    "StratifiedExclusion.dfy" 9
@@ -70,7 +70,7 @@
  {:status :passed
   :scope :pre-production-oracles-and-algorithm-experiments
   :clojure
-  {:tests 18 :assertions 77 :failures 0 :errors 0
+  {:tests 18 :assertions 82 :failures 0 :errors 0
    :namespaces
    [eacl.operator-engine.oracle-test
     eacl.operator-engine.counterexamples-test
@@ -80,13 +80,24 @@
   {:seed 342183966
    :random-trials 1000
    :random-result-failures 0
+   :random-bound-failures 0
+   :zero-demand-anchor-rounds 0
+   :zero-demand-seeks 0
+   :early-exhaustion-anchor-rounds 1
+   :early-exhaustion-operand-seeks 1
+   :early-exhaustion-unopened-operands 1
    :adversarial-driver-cardinality 100000
    :adversarial-operand-cardinalities [100000 100]
    :result-cardinality 100
    :equal-results true
    :sequential-binary-head-comparisons 100199
    :max-head-k-way-anchor-rounds 199
-   :max-head-k-way-binary-search-comparisons 5744}
+   :max-head-k-way-binary-search-comparisons 5744
+   :bounded-demand 21
+   :bounded-anchor-rounds 41
+   :bounded-operand-seeks 82
+   :bounded-driver-seeks 20
+   :bounded-result-cardinality 21}
   :recursive-anchor-worklist
   {:trials 5000
    :result-failures 0
@@ -205,7 +216,7 @@
    "formal/dafny/OperatorLeastPath.dfy"
    "84e00434409ddb9faec151d646f021eb1470b699361229c9bb6b0dce49ed7e72"
    "formal/dafny/SeekableSetKernels.dfy"
-   "c147875e1e124a0d180efd8268cbe34232a98dac235e3530175a28425ead83d2"
+   "667895969e970ce577e2d568ea79a92a1b25e7a3e5336e23dc336920b944346b"
    "formal/dafny/DensityBoundedBatch.dfy"
    "0b92f8a91cc11c9f48018eb18c4bb49a73838d940cd0a73ca51eadb7f33aa50b"
    "formal/dafny/AnchorGatedConjunction.dfy"
@@ -240,6 +251,7 @@
    :non-circular-vector-mask-and-dag-evaluation
    :scalar-vector-denotation-equivalence
    :anchor-preserving-max-head-k-way-seekable-sequence-refinement
+   :demand-stopping-k-way-prefix-and-dimensional-seek-bounds
    :density-bounded-prefix-cardinality
    :recursive-operational-anchor-gated-least-fixed-point-refinement
    :completed-lower-stratum-exclusion
@@ -335,7 +347,12 @@
    :severity :temporal-invariant
    :finding :the-operator-inductive-invariant-constrained-only-cache-hits-and-therefore-admitted-a-stale-present-entry-that-the-lookup-transition-could-turn-into-an-unsafe-hit
    :status :resolved
-   :disposition :safety-now-explicitly-requires-every-present-entry-to-belong-to-the-current-lifecycle-and-initiation-consecution-implication-bounded-safety-and-the-stale-lifecycle-mutant-all-pass-their-required-outcomes}]
+   :disposition :safety-now-explicitly-requires-every-present-entry-to-belong-to-the-current-lifecycle-and-initiation-consecution-implication-bounded-safety-and-the-stale-lifecycle-mutant-all-pass-their-required-outcomes}
+  {:id :OPERATOR-PHASE-A-017
+   :severity :performance-model
+   :finding :the-first-k-way-logical-boundary-proof-truncated-a-fully-materialized-result-and-did-not-model-demand-stopping-execution-or-count-anchor-rounds-operand-seeks-and-driver-seeks
+   :status :resolved
+   :disposition :one-demand-stopping-result-function-now-returns-output-and-an-exact-per-round-operand-seek-trace-together-proves-zero-demand-does-no-work-stops-opening-operands-after-first-exhaustion-proves-exact-generic-prefix-output-and-proves-round-and-seek-bounds-with-fixed-seed-repl-differential-evidence}]
  :phase-b-gate
  {:production-work-authorized false
   :review-request

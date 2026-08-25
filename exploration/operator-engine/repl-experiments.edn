@@ -63,6 +63,19 @@
  {:seed 342183966
   :random-trials 1000
   :random-result-failures 0
+  :random-bound-failures 0
+  :zero-demand
+  {:anchor-rounds 0
+   :driver-lower-bound-seeks 0
+   :operand-lower-bound-seeks 0
+   :lower-bound-comparisons 0
+   :accepted 0}
+  :early-exhaustion
+  {:anchor-rounds 1
+   :driver-lower-bound-seeks 0
+   :operand-lower-bound-seeks 1
+   :lower-bound-comparisons 1
+   :accepted 0}
   :adversarial
   {:driver-cardinality 100000
    :operand-cardinalities [100000 100]
@@ -78,7 +91,17 @@
     :driver-lower-bound-seeks 99
     :operand-lower-bound-seeks 398
     :lower-bound-comparisons 5744
-    :accepted 100}}}
+    :accepted 100}
+   :bounded-k-way
+   {:anchor-rounds 41
+    :driver-lower-bound-seeks 20
+    :operand-lower-bound-seeks 82
+    :lower-bound-comparisons 1299
+    :demand 21
+    :accepted 21
+    :results
+    [0 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000 11000
+     12000 13000 14000 15000 16000 17000 18000 19000 20000]}}}
  :memoization
  {:candidates 10000
   :naive-leaf-probes 60000

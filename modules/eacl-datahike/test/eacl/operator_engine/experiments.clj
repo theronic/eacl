@@ -232,7 +232,7 @@
    operands))
 
 (defn- k-way-leapfrog
-  [driver operands]
+  [driver operands demand]
   (let [counters (atom {:anchor-rounds 0
                         :driver-lower-bound-seeks 0
                         :operand-lower-bound-seeks 0
@@ -241,7 +241,8 @@
     (loop [driver-index 0
            operand-indexes (vec (repeat operand-count 0))
            results []]
-      (if (or (= driver-index (count driver))
+      (if (or (= (count results) demand)
+              (= driver-index (count driver))
               (some true?
                     (map-indexed
                      (fn [index operand]
@@ -249,30 +250,35 @@
                      operands)))
         {:results results :counters @counters}
         (if (zero? operand-count)
-          {:results (into results (subvec driver driver-index))
+          {:results (into results
+                          (take (- demand (count results))
+                                (subvec driver driver-index)))
            :counters @counters}
           (let [anchor (nth driver driver-index)
-                positioned
-                (mapv
-                 (fn [operand index]
-                   (let [seek-counters
-                         (atom {:lower-bound-seeks 0
-                                :lower-bound-comparisons 0})
-                         positioned-index
-                         (lower-bound operand index anchor seek-counters)]
-                     (swap! counters update :operand-lower-bound-seeks
-                            + (:lower-bound-seeks @seek-counters))
-                     (swap! counters update :lower-bound-comparisons
-                            + (:lower-bound-comparisons @seek-counters))
-                     positioned-index))
-                 operands
-                 operand-indexes)]
+                positioning
+                (loop [operand-number 0 positioned []]
+                  (if (= operand-number operand-count)
+                    {:positioned positioned :exhausted? false}
+                    (let [operand (nth operands operand-number)
+                          index (nth operand-indexes operand-number)
+                          seek-counters
+                          (atom {:lower-bound-seeks 0
+                                 :lower-bound-comparisons 0})
+                          positioned-index
+                          (lower-bound operand index anchor seek-counters)]
+                      (swap! counters update :operand-lower-bound-seeks
+                             + (:lower-bound-seeks @seek-counters))
+                      (swap! counters update :lower-bound-comparisons
+                             + (:lower-bound-comparisons @seek-counters))
+                      (let [next-positioned
+                            (conj positioned positioned-index)]
+                        (if (= positioned-index (count operand))
+                          {:positioned next-positioned :exhausted? true}
+                          (recur (inc operand-number)
+                                 next-positioned))))))
+                positioned (:positioned positioning)]
             (swap! counters update :anchor-rounds inc)
-            (if (some true?
-                      (map-indexed
-                       (fn [index operand]
-                         (= (nth positioned index) (count operand)))
-                       operands))
+            (if (:exhausted? positioning)
               {:results results :counters @counters}
               (let [heads
                     (mapv
@@ -309,37 +315,68 @@
          sparse (vec (range 0 100000 1000))
          operands [dense sparse]
          sequential (sequential-binary-intersection dense operands)
-         k-way (k-way-leapfrog dense operands)
+         k-way (k-way-leapfrog dense operands Long/MAX_VALUE)
+         bounded-demand 21
+         bounded-k-way (k-way-leapfrog dense operands bounded-demand)
+         zero-demand-k-way (k-way-leapfrog dense operands 0)
+         early-exhaustion-k-way
+         (k-way-leapfrog [1 2 3] [[0] (vec (range 100000))] 1)
          random (Random. (bit-xor experiment-seed 0x4b574159))
-         failures
-         (loop [trial 0 failures 0]
+         differential
+         (loop [trial 0 result-failures 0 bound-failures 0]
            (if (= trial trials)
-             failures
+             {:result-failures result-failures
+              :bound-failures bound-failures}
              (let [driver (random-increasing-vector random)
                    random-operands
                    (vec (repeatedly (.nextInt random 5)
                                     #(random-increasing-vector random)))
+                   demand (.nextInt random 17)
                    expected
-                   (vec
-                    (sort
-                     (reduce set/intersection
-                             (set driver)
-                             (map set random-operands))))
+                   (into []
+                         (take demand)
+                         (sort
+                          (reduce set/intersection
+                                  (set driver)
+                                  (map set random-operands))))
                    sequential-result
-                   (:results
-                    (sequential-binary-intersection
-                     driver random-operands))
+                   (into []
+                         (take demand)
+                         (:results
+                          (sequential-binary-intersection
+                           driver random-operands)))
                    k-way-result
-                   (:results (k-way-leapfrog driver random-operands))]
+                   (k-way-leapfrog driver random-operands demand)
+                   {:keys [anchor-rounds
+                           driver-lower-bound-seeks
+                           operand-lower-bound-seeks]}
+                   (:counters k-way-result)
+                   operand-count (count random-operands)
+                   bounds-hold?
+                   (and (<= anchor-rounds (count driver))
+                        (<= operand-lower-bound-seeks
+                            (* operand-count anchor-rounds))
+                        (<= driver-lower-bound-seeks anchor-rounds)
+                        (<= (+ operand-lower-bound-seeks
+                               driver-lower-bound-seeks)
+                            (* (inc operand-count) (count driver)))
+                        (<= (count (:results k-way-result)) demand))]
                (recur
                 (inc trial)
-                (+ failures
-                   (if (= expected sequential-result k-way-result)
-                     0
-                     1))))))]
+                (+ result-failures
+                   (if (= expected sequential-result
+                          (:results k-way-result)) 0 1))
+                (+ bound-failures (if bounds-hold? 0 1))))))]
      {:seed (bit-xor experiment-seed 0x4b574159)
       :random-trials trials
-      :random-result-failures failures
+      :random-result-failures (:result-failures differential)
+      :random-bound-failures (:bound-failures differential)
+      :zero-demand
+      (assoc (:counters zero-demand-k-way)
+             :accepted (count (:results zero-demand-k-way)))
+      :early-exhaustion
+      (assoc (:counters early-exhaustion-k-way)
+             :accepted (count (:results early-exhaustion-k-way)))
       :adversarial
       {:driver-cardinality (count dense)
        :operand-cardinalities (mapv count operands)
@@ -351,7 +388,12 @@
               :accepted (count (:results sequential)))
        :k-way
        (assoc (:counters k-way)
-              :accepted (count (:results k-way)))}})))
+              :accepted (count (:results k-way)))
+       :bounded-k-way
+       (assoc (:counters bounded-k-way)
+              :demand bounded-demand
+              :accepted (count (:results bounded-k-way))
+              :results (:results bounded-k-way))}})))
 
 (defn memoization-experiment
   []

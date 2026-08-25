@@ -94,8 +94,8 @@ The abstract operator Phase A consists of
 `StratifiedExclusion.dfy`, `OperatorCacheRefinement.dfy`,
 `ExpressionPlanRefinement.dfy`, `OperatorGeneratedPolicy.dfy`,
 `OperatorGeneratedPolicyRefinement.dfy`, and `OperatorProofKernel.dfy`.
-Together they add 492 proof-leaf obligations plus six obligations at the
-generated `EaclKernel` boundary; the locked whole-tree run verifies 9,292
+Together they add 525 proof-leaf obligations plus six obligations at the
+generated `EaclKernel` boundary; the locked whole-tree run verifies 9,325
 obligations. The generated `DecideOperatorBatch` and
 `DecideOperatorSignedGraph` boundaries are each exercised by Java and
 JavaScript against fixed and 1,000-case randomized independent host oracles,
@@ -103,7 +103,11 @@ for 2,016 operator assertions per runtime. The proof-only aggregate is kept out
 of generated runtime artifacts and is mechanically connected to the small
 generated policy through `OperatorGeneratedPolicyRefinement.dfy`. The direct
 n-ary intersection proof is an anchor-preserving max-head k-way leapfrog; it
-does not use repeated binary filtering.
+does not use repeated binary filtering. Its demand-stopping result/work model
+proves zero-demand silence, exact generic-prefix output, and dimensional
+anchor-round, operand-seek, driver-seek, and combined-seek bounds. Its exact
+per-round operand-seek trace stops at the first exhausted child rather than
+opening later operands unnecessarily.
 
 The original Phase A proof passed its solver while leaving six blocking
 semantic connections assumed. The adversarial audit remains recorded in the

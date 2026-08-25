@@ -51,6 +51,16 @@ The evaluator SHALL begin with a bounded demand-sized batch, grow deterministica
 ### Requirement: Direct ordered specializations refine the generic plan
 Any replacement of generic witness-aware filtering with seekable leapfrog/galloping intersection or monotone anti-join SHALL occur only when the selected operands have certified compatible order and bounds, and the specialization produces exactly the generic plan's decisions, result sequence, progress boundary, typed failures, and work-limit interpretation. Direct n-ary intersection SHALL position every operand at or above the current anchor and jump the driver to the maximum operand head; it MUST NOT be implemented as repeated binary filtering.
 
+For direct n-ary intersection, zero result demand SHALL perform zero anchor rounds and zero operand or driver reseeks. For positive demand, the specialization SHALL return exactly the demand-bounded prefix of the generic sequence, execute at most one anchor round per initial driver value, execute at most one operand reseek per operand per anchor round, execute at most one driver reseek per anchor round, and therefore execute at most `(operand-count + 1) * initial-driver-cardinality` combined reseeks. Operand positioning SHALL stop after the first exhausted child without opening later children in that round.
+
+#### Scenario: Demand stops k-way execution
+- **WHEN** a seekable n-ary intersection has produced the requested number of results
+- **THEN** it returns that exact generic prefix without positioning another operand or reseeking the driver
+
+#### Scenario: Exhausted child stops later operand opens
+- **WHEN** positioning an operand proves that the intersection has no remaining result
+- **THEN** the specialization returns without opening any later operand in the sealed order for that round
+
 #### Scenario: Sparse ordered intersection
 - **WHEN** compatible direct operand streams have a large gap between successive common values
 - **THEN** the specialization may inclusively reseek to the opposing head without linearly consuming the gap

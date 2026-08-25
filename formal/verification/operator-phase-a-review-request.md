@@ -9,8 +9,8 @@ Production implementation is deliberately out of scope and must remain
 disabled.
 
 The machine-readable evidence bundle is
-`formal/verification/operator-phase-a.edn`. It records the 492 new proof-leaf
-obligations, six generated-boundary obligations, the 9,292-obligation
+`formal/verification/operator-phase-a.edn`. It records the 525 new proof-leaf
+obligations, six generated-boundary obligations, the 9,325-obligation
 whole-tree result, source digests, temporal mutations, generated-runtime
 vectors, artifact sizes, and the explicitly closed Phase B gate.
 
@@ -45,9 +45,14 @@ The reviewer must independently determine whether:
    sparse fallback remains exact; binary and n-ary seekable kernels preserve
    exact generic anchor-filter order, uniqueness, and logical boundaries under
    only the stated strict-order and inclusive-reseek premises; in particular,
-   n-ary intersection positions every operand at the anchor and jumps the
-   driver to the maximum child head instead of repeatedly applying a binary
-   filter;
+   n-ary intersection positions operands in sealed order until exhaustion and
+   otherwise considers every head before jumping the driver to the maximum
+   child head instead of repeatedly applying a binary filter; its
+   demand-stopping execution must issue no work at zero demand,
+   return exactly the demanded generic prefix, and establish the claimed
+   anchor-round, operand-seek, driver-seek, and combined-seek bounds from the
+   same result/work function; its exact per-round operand-seek trace must stop
+   at the first exhausted child without opening later operands in that round;
 8. anchor-gated recursive conjunction's event delta, normalized retained state,
    duplicate handling, and iterative operational worklist are connected to the
    recursive least fixed point for every fact-arrival order; typed identities

@@ -34,6 +34,20 @@
            (get-in summary [:leapfrog :leapfrog :results])))
     (is (zero? (get-in summary
                        [:k-way-leapfrog :random-result-failures])))
+    (is (zero? (get-in summary
+                       [:k-way-leapfrog :random-bound-failures])))
+    (is (= {:anchor-rounds 0
+            :driver-lower-bound-seeks 0
+            :operand-lower-bound-seeks 0
+            :lower-bound-comparisons 0
+            :accepted 0}
+           (get-in summary [:k-way-leapfrog :zero-demand])))
+    (is (= {:anchor-rounds 1
+            :driver-lower-bound-seeks 0
+            :operand-lower-bound-seeks 1
+            :lower-bound-comparisons 1
+            :accepted 0}
+           (get-in summary [:k-way-leapfrog :early-exhaustion])))
     (is (true? (get-in summary
                        [:k-way-leapfrog :adversarial :equal-results?])))
     (is (< (get-in summary
@@ -42,4 +56,11 @@
            (get-in summary
                    [:k-way-leapfrog :adversarial :sequential-binary
                     :head-comparisons])))
+    (is (= 21 (get-in summary
+                      [:k-way-leapfrog :adversarial :bounded-k-way
+                       :accepted])))
+    (is (= (range 0 21000 1000)
+           (get-in summary
+                   [:k-way-leapfrog :adversarial :bounded-k-way
+                    :results])))
     (is (= 20000 (get-in summary [:memoization :saved-leaf-probes])))))

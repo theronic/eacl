@@ -660,6 +660,7 @@
     :bounded-adaptive-batching
     :logical-cursor-suffix-equivalence
     :anchor-preserving-max-head-k-way-seekable-sequence-refinement
+    :demand-stopping-k-way-prefix-and-dimensional-seek-bounds
     :density-bounded-prefix-selection
     :arrival-independent-operational-anchor-gated-recursive-conjunction
     :completed-lower-stratum-exclusion
