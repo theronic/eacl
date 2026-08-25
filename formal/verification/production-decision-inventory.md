@@ -7,6 +7,16 @@ authorization result. Pure encoding, I/O, and backend implementation details
 are included only where they can cause a decision to be accepted, resumed, or
 reused.
 
+The abstract operator Phase A adds no production decision. In particular,
+`EaclKernel.__default/DecideOperatorBatch` and
+`EaclKernel.__default/DecideOperatorSignedGraph` are reachable only from formal
+smoke tests. No production parser, storage representation, sealer, evaluator,
+backend protocol, cache path, or routing branch accepts intersection or
+exclusion. The abstract proof inventory is recorded separately in
+`formal/verification/operator-phase-a.edn` and the assurance-matrix operation
+`:abstract-operator-engine-phase-a` is explicitly non-authoritative for
+production.
+
 | Decision area | Production source | Decision consumed by |
 | --- | --- | --- |
 | Sealed plan compilation and rank certification | `eacl.engine.sealed-plan/seal-plan` (four-kind rules from adapter definitions, dense canonical ordinals, 0/1 read-rank certificate checked by `valid-certificate?`, composite fingerprint), cached per source/basis/root by `eacl.engine.v8/stable-plan` | every `can?`, lookup, and count; cursor fingerprint validation |

@@ -81,6 +81,7 @@ jobs:
           sh bin/ci-nrepl-eval 7788 \
             "(do
                (require 'eacl.formal.java-round-trip-test :reload)
+               (require 'eacl.formal.operator-decision-test :reload)
                (require 'eacl.formal.wire-format-bridge-test :reload)
                (require 'eacl.formal.semantics-bridge-test :reload)
                (require 'eacl.formal.page-window-bridge-test :reload)
@@ -90,6 +91,7 @@ jobs:
                (let [result
                      (clojure.test/run-tests
                       'eacl.formal.java-round-trip-test
+                      'eacl.formal.operator-decision-test
                       'eacl.formal.wire-format-bridge-test
                       'eacl.formal.semantics-bridge-test
                       'eacl.formal.page-window-bridge-test

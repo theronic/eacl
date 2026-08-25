@@ -58,7 +58,58 @@
    :consumer ["formal/verification/performance-gates.edn"]}
   {:source "formal/dafny/EaclKernel.dfy"
    :class :formal-smoke-only
-   :consumer ["formal/smoke/js/round_trip.mjs"]}
+   :consumer ["formal/smoke/js/round_trip.mjs"
+              "formal/smoke/clj/eacl/formal/java_operator_decision.clj"
+              "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]}
+  {:source "formal/dafny/PermissionSetAlgebra.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/SignedDependencyStratification.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/CandidateCover.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/WitnessPredicate.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/VectorPredicate.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/AdaptiveBatching.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorLeastPath.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/SeekableSetKernels.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/DensityBoundedBatch.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/AnchorGatedConjunction.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/StratifiedExclusion.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorCacheRefinement.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/ExpressionPlanRefinement.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorGeneratedPolicy.dfy"
+   :class :abstract-operator-phase-a-generated-smoke
+   :consumer ["formal/dafny/EaclKernel.dfy"
+              "formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorProofKernel.dfy"
+   :class :abstract-operator-phase-a-proof-aggregate
+   :consumer ["formal/verification/operator-phase-a.edn"]}
   {:source "formal/dafny/IndexedTraversal.dfy"
    :class :generated-production
    :consumer ['eacl.engine.v8/run-generated-traversal]}
@@ -592,6 +643,66 @@
         :generated-indexed-scan-rejection
         :recursive-contract
         :heavy-pagination]}
+  {:operation :abstract-operator-engine-phase-a
+   :status :passed-pending-independent-review
+   :entry-points
+   ["EaclKernel.__default/DecideOperatorBatch"
+    "EaclKernel.__default/DecideOperatorSignedGraph"
+    "formal/smoke/clj/eacl/formal/java_operator_decision.clj"
+    "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]
+   :theorems
+   [:finite-typed-stratified-expression-semantics
+    :exact-expression-table-to-plan-denotation
+    :executable-exact-scc-certificate-and-canonical-negative-cycle-rejection
+    :recursive-candidate-cover-containment-and-exact-emission
+    :exact-derivation-scoped-witness-predicates
+    :aligned-atomic-mask-schedule-and-vector-refinement
+    :bounded-adaptive-batching
+    :logical-cursor-suffix-equivalence
+    :anchor-preserving-max-head-k-way-seekable-sequence-refinement
+    :density-bounded-prefix-selection
+    :arrival-independent-operational-anchor-gated-recursive-conjunction
+    :completed-lower-stratum-exclusion
+    :complete-signed-snapshot-projection-generation-cache-refinement
+    :generated-policy-refinement]
+   :dafny
+   ["formal/dafny/PermissionSetAlgebra.dfy"
+    "formal/dafny/SignedDependencyStratification.dfy"
+    "formal/dafny/CandidateCover.dfy"
+    "formal/dafny/WitnessPredicate.dfy"
+    "formal/dafny/VectorPredicate.dfy"
+    "formal/dafny/AdaptiveBatching.dfy"
+    "formal/dafny/OperatorLeastPath.dfy"
+    "formal/dafny/SeekableSetKernels.dfy"
+    "formal/dafny/DensityBoundedBatch.dfy"
+    "formal/dafny/AnchorGatedConjunction.dfy"
+    "formal/dafny/StratifiedExclusion.dfy"
+    "formal/dafny/OperatorCacheRefinement.dfy"
+    "formal/dafny/ExpressionPlanRefinement.dfy"
+    "formal/dafny/OperatorGeneratedPolicy.dfy"
+    "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+    "formal/dafny/OperatorProofKernel.dfy"]
+   :adapter-obligations
+   [:immutable-snapshot
+    :strictly-ordered-unique-eid-scans
+    :inclusive-reseek
+    :complete-signed-dependency-generations
+    :atomic-vector-response-or-failure
+    :truthful-dimensional-work-counters]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative false
+   :remaining
+   [:independent-proof-design-review
+    :production-per-node-lower-stratum-fact-context-stability-refinement
+    :production-expression-to-recursive-join-rule-refinement
+    :production-parser-codec-and-storage-refinement
+    :production-plan-evaluator-cache-and-backend-refinement
+    :production-performance-acceptance]
+   :ci
+   [:locked-dafny-verification
+    :operator-temporal-mutation-control
+    :abstract-operator-cross-runtime-vectors]
+   :report "formal/verification/operator-phase-a.edn"}
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]

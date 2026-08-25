@@ -1,0 +1,345 @@
+{:schema-version 2
+ :change :design-demand-driven-set-algebra-engine
+ :phase :abstract-proof-gate
+ :status :passed-pending-independent-review
+ :captured-at "2026-08-25"
+ :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+ :branch "agent/design-operator-engine-performance"
+ :toolchain-lock "formal/toolchain.lock.json"
+ :dafny
+ {:command "bin/formal format && bin/formal verify"
+  :status :passed
+  :modules 46
+  :whole-tree-obligations 9292
+  :pre-change-whole-tree-obligations 8794
+  :phase-a-new-obligations 498
+  :new-proof-leaf-obligations 492
+  :generated-boundary-new-obligations 6
+  :maximum-proof-effort
+  {:source "IndexedReverseCompleteness.dfy"
+   :display-name
+   "IndexedReverseCompleteness.ReverseResponseWorkCoversSourceFact (correctness)"
+   :resource-count 24106086
+   :solver-seconds 3.2850035
+   :random-seed 0}
+  :operator-leaves
+  {"PermissionSetAlgebra.dfy" 40
+   "SignedDependencyStratification.dfy" 89
+   "CandidateCover.dfy" 34
+   "WitnessPredicate.dfy" 15
+   "VectorPredicate.dfy" 60
+   "AdaptiveBatching.dfy" 26
+   "OperatorLeastPath.dfy" 40
+   "SeekableSetKernels.dfy" 58
+   "DensityBoundedBatch.dfy" 16
+   "AnchorGatedConjunction.dfy" 35
+   "StratifiedExclusion.dfy" 9
+   "OperatorCacheRefinement.dfy" 17
+   "ExpressionPlanRefinement.dfy" 42
+   "OperatorGeneratedPolicy.dfy" 6
+   "OperatorGeneratedPolicyRefinement.dfy" 4
+   "OperatorProofKernel.dfy" 1}}
+ :temporal
+ {:model "formal/tla/EaclOperatorSafety.tla"
+  :baseline-config "formal/tla/EaclOperatorSafety.cfg"
+  :bounded-length 8
+  :baseline-status :passed
+  :inductive-invariant-status :passed
+  :typecheck-status :passed
+  :mutants-registered 6
+  :mutants-killed 6
+  :combined-existing-and-operator-mutants-killed 10
+  :mutants
+  [:operator-vector-cancellation-publication
+   :operator-partial-vector-publication
+   :operator-physical-overread-cursor
+   :operator-wrong-checkpoint-resume
+   :operator-stale-cache-lifecycle
+   :operator-partial-negative-authorization]}
+ :mutation-ledger
+ {:status :passed
+  :registered 45
+  :killed 45
+  :survived 0
+  :clojure 35
+  :clojure-tests 4
+  :clojure-assertions 125
+  :apalache 10
+  :historical-total 119}
+ :executable-exploration
+ {:status :passed
+  :scope :pre-production-oracles-and-algorithm-experiments
+  :clojure
+  {:tests 18 :assertions 77 :failures 0 :errors 0
+   :namespaces
+   [eacl.operator-engine.oracle-test
+    eacl.operator-engine.counterexamples-test
+    eacl.operator-engine.union-only-baseline-test
+    eacl.operator-engine.experiments-test]}
+  :k-way-leapfrog
+  {:seed 342183966
+   :random-trials 1000
+   :random-result-failures 0
+   :adversarial-driver-cardinality 100000
+   :adversarial-operand-cardinalities [100000 100]
+   :result-cardinality 100
+   :equal-results true
+   :sequential-binary-head-comparisons 100199
+   :max-head-k-way-anchor-rounds 199
+   :max-head-k-way-binary-search-comparisons 5744}
+  :recursive-anchor-worklist
+  {:trials 5000
+   :result-failures 0
+   :arrival-order-failures 0
+   :retained-state-failures 0
+   :anchor-parent-slots 445115
+   :any-child-parent-slots 679789}
+  :datahike-minio
+  {:report "exploration/operator-engine/minio-early-baseline.edn"
+   :dense-exact-gets 2
+   :dense-prefix-gets 3
+   :sparse-exact-gets 4
+   :sparse-prefix-gets 5
+   :adaptive-demand-gets 1
+   :fixed-width-demand-gets 2
+   :warm-query-gets 0
+   :qualification :early-local-baseline-not-production-acceptance-ceiling}
+  :datomic-million
+  {:report "exploration/operator-engine/datomic-million-early-baseline.edn"
+   :resources 1000000
+   :forward-tuple-datoms 1250000
+   :reverse-tuple-datoms 1250000
+   :default-exact-count-limit-kind :advanced-datoms
+   :default-exact-count-limit 100000
+   :raised-limit-exact-count 1000000
+   :raised-limit-exact-count-seconds 3.361867
+   :qualification :early-local-baseline-not-production-acceptance-ceiling}
+  :spicedb
+  {:report "exploration/operator-engine/spicedb-oracle.edn"
+   :version "1.56.0"
+   :digest
+   "sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c"
+   :tests 1 :assertions 21 :failures 0 :errors 0
+   :return-order :ignored}}
+ :manifest-validation
+ {:command "bin/formal manifest"
+  :evidence-status :valid
+  :release-status :withheld-as-designed
+  :exit-code 3
+  :reason
+  :pre-existing-whole-engine-release-obligations-and-independent-review-remain}
+ :generated-boundary
+ {:methods
+  ["EaclKernel.__default/DecideOperatorBatch"
+   "EaclKernel.__default/DecideOperatorSignedGraph"]
+  :policy-module "formal/dafny/OperatorGeneratedPolicy.dfy"
+  :proof-refinement
+  "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+  :batch-decisions
+  [:density-strategy
+   :checked-inclusive-span
+   :initial-batch-width
+   :grown-batch-width
+   :logical-candidates
+   :physical-candidates
+   :physical-overread]
+  :signed-graph-decisions
+  [:canonical-edge-sequence
+   :exact-component-certificate
+   :negative-cycle-status
+   :canonical-first-negative-edge]
+  :java
+  {:tests 4
+   :batch-fixed-vectors 9
+   :batch-random-vectors 1000
+   :signed-graph-fixed-vectors 7
+   :signed-graph-random-vectors 1000
+   :assertions 2016
+   :status :passed}
+  :javascript
+  {:batch-fixed-vectors 9
+   :batch-random-vectors 1000
+   :signed-graph-fixed-vectors 7
+   :signed-graph-random-vectors 1000
+   :operator-assertions 2016
+   :full-suite-tests 49
+   :full-suite-assertions 11987
+   :status :passed}
+  :oracle :independent-host-implementation
+  :batch-random-seed 8675309
+  :signed-graph-random-seed 2718281}
+ :generated-artifact-size
+ {:command "bin/formal artifact-size"
+  :gate-runtime {:tool :babashka :version "1.12.213"}
+  :status :passed
+  :proof-packaging
+  :proof-only-operator-aggregate-excluded-from-generated-kernel
+  :artifacts
+  {:java-source {:actual-bytes 2211848 :maximum-bytes 2670869}
+   :java-classes-with-runtime
+   {:actual-bytes 1963051 :maximum-bytes 2377367}
+   :javascript-with-runtime
+   {:actual-bytes 988889 :maximum-bytes 1188865}
+   :browser-iife {:actual-bytes 611164 :maximum-bytes 738488}}}
+ :source-closure
+ {:status :passed
+  :command-status :passed
+  :public-roots 70
+  :reachable-definitions 1691
+  :production-routing-source-changed false
+  :production-operator-parser-storage-evaluator-routing-enabled false
+  :public-source-closure-command "bin/formal source-closure"
+  :abstract-source-digests
+  {"formal/dafny/PermissionSetAlgebra.dfy"
+   "d83e47f5651199d23389bfc5182d40b1c26678c1ba2880b234e8da8978733804"
+   "formal/dafny/SignedDependencyStratification.dfy"
+   "4452060050e90b558a20bb9b2ed4f5f7c36968e4ecc8a069a4e05fb86c5de3d9"
+   "formal/dafny/CandidateCover.dfy"
+   "35ff30319f3a80fbd70d7c06474cbe436351585387517ad3bc4511761c26bd58"
+   "formal/dafny/WitnessPredicate.dfy"
+   "2339315917331dc164f4161332446de23e7b3199db47102c273cb6cfe9a63651"
+   "formal/dafny/VectorPredicate.dfy"
+   "45c3335b28a96e669e627bef3d164aca4cd99710d5cb2ac57678d57e7294829b"
+   "formal/dafny/AdaptiveBatching.dfy"
+   "8bd5c9c54c42374b9ac327fdf3c81e8fbad017adacf0af1895cfcedfff6404db"
+   "formal/dafny/OperatorLeastPath.dfy"
+   "84e00434409ddb9faec151d646f021eb1470b699361229c9bb6b0dce49ed7e72"
+   "formal/dafny/SeekableSetKernels.dfy"
+   "c147875e1e124a0d180efd8268cbe34232a98dac235e3530175a28425ead83d2"
+   "formal/dafny/DensityBoundedBatch.dfy"
+   "0b92f8a91cc11c9f48018eb18c4bb49a73838d940cd0a73ca51eadb7f33aa50b"
+   "formal/dafny/AnchorGatedConjunction.dfy"
+   "a41a8b5360027b8e7fba112ecb45765c687dc1697f5748aa620e258f99f3535c"
+   "formal/dafny/StratifiedExclusion.dfy"
+   "4575da815828a1ed2882ef17f64b09437302dff79cce212a1a6871de7fe0d78a"
+   "formal/dafny/OperatorCacheRefinement.dfy"
+   "1af2d44b679fc90a6276d6faff1050d5e62dd2196edf21b28c5eaeed5bcb6319"
+   "formal/dafny/ExpressionPlanRefinement.dfy"
+   "942b65794e35b30a60ff4577de21d0a7c8e0017bad13a3825615d7cb2ce3be3e"
+   "formal/dafny/OperatorGeneratedPolicy.dfy"
+   "80950fcdcefb6d36b98853721488a3cd937e202b9c30837cf33c87ac8207edad"
+   "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+   "83e78a843cbeda48903a1d96863a39cbc52b18f0dc70f81466b6ba7abccf851e"
+   "formal/dafny/OperatorProofKernel.dfy"
+   "7abdfc785d024a82a5942f4581e5d0b39021f467064b71bb7d646f6f2eff2bee"
+   "formal/dafny/EaclKernel.dfy"
+   "38ff6d8084b90bc08a9e3e8a1b01ab5da9851db04bd617a62df0d8af61f05601"
+   "formal/tla/EaclOperatorSafety.tla"
+   "46a2cc7578b46af4b9c2d875e53623d49d49405166d06d63cdd83c1d543add63"
+   "formal/cross-runtime/operator-vectors.edn"
+   "33fb285f607192f4e1df18bc012725548895aaf8b3929eb2cf4a5de0c7ddcbc6"}}
+ :claim
+ {:established
+  [:mechanical-verification-of-the-current-abstract-functions
+   :finite-typed-complete-expression-input-semantics
+   :expression-table-to-plan-denotation-refinement
+   :executable-exact-scc-certificate-validation
+   :canonical-signed-diagnostic-order
+   :complete-finite-path-negative-cycle-rejection
+   :recursive-candidate-cover-and-witness-exactness
+   :non-circular-vector-mask-and-dag-evaluation
+   :scalar-vector-denotation-equivalence
+   :anchor-preserving-max-head-k-way-seekable-sequence-refinement
+   :density-bounded-prefix-cardinality
+   :recursive-operational-anchor-gated-least-fixed-point-refinement
+   :completed-lower-stratum-exclusion
+   :snapshot-projection-generation-cache-refinement
+   :temporal-mutants-detected]
+  :not-established
+  [:production-clojure-source-refinement
+   :production-per-node-lower-stratum-fact-context-stability
+   :production-expression-to-recursive-join-rule-refinement
+   :backend-expression-storage-correctness
+   :backend-batched-membership-correctness
+   :production-parser-codec-plan-and-evaluator-correctness
+   :production-cache-and-cursor-correctness
+   :production-performance-acceptance
+   :independent-proof-review]}
+ :self-review-findings
+ [{:id :OPERATOR-PHASE-A-001
+   :severity :blocking
+   :finding :typed-predicates-and-complete-arrow-object-catalog-are-not-required
+   :status :resolved
+   :disposition :typed-catalog-and-exact-arrow-enumeration-are-now-preconditions}
+  {:id :OPERATOR-PHASE-A-002
+   :severity :blocking
+   :finding :candidate-and-predicate-denotation-map-is-not-refined-from-expression-semantics
+   :status :resolved
+   :disposition :expression-table-builder-and-plan-denotation-are-structurally-refined}
+  {:id :OPERATOR-PHASE-A-003
+   :severity :blocking
+   :finding :signed-graph-validator-trusts-an-unchecked-scc-certificate-and-arbitrary-edge-order
+   :status :resolved
+   :disposition :certificate-exactness-and-canonical-first-diagnostic-are-executable-and-proved}
+  {:id :OPERATOR-PHASE-A-004
+   :severity :blocking
+   :finding :dag-sharing-and-mask-correctness-are-assumed-or-tautological
+   :status :resolved
+   :disposition :mask-schedule-execution-and-scalar-vector-composition-are-explicit}
+  {:id :OPERATOR-PHASE-A-005
+   :severity :blocking
+   :finding :anchor-gated-model-does-not-model-recursive-rule-propagation
+   :status :resolved
+   :disposition :retained-state-worklist-iteration-is-proved-equal-to-the-recursive-least-fixed-point}
+  {:id :OPERATOR-PHASE-A-006
+   :severity :blocking
+   :finding :cache-hit-refinement-assumes-equality-and-write-invalidation-is-sign-sensitive
+   :status :resolved
+   :disposition :snapshot-projection-generation-equality-and-complete-signed-closure-invalidation-are-proved}
+  {:id :OPERATOR-PHASE-A-007
+   :severity :blocking
+   :finding :recursive-anchor-arrival-proof-could-be-disconnected-from-operational-retained-state
+   :status :resolved
+   :disposition :event-delta-normalization-idempotence-and-operational-iteration-now-consume-the-same-retained-state}
+  {:id :OPERATOR-PHASE-A-008
+   :severity :blocking
+   :finding :expression-plan-refinement-could-assume-leaf-table-preservation
+   :status :resolved
+   :disposition :leaf-denotation-preservation-is-now-proved-through-the-table-builder}
+  {:id :OPERATOR-PHASE-A-009
+   :severity :blocking
+   :finding :binary-seekable-correctness-could-be-generalized-to-nary-without-a-direct-proof
+   :status :resolved
+   :disposition :nary-anchor-filter-composition-proves-set-order-uniqueness-and-logical-boundary}
+  {:id :OPERATOR-PHASE-A-010
+   :severity :build
+   :finding :compiling-the-proof-aggregate-into-the-runtime-kernel-exceeded-the-locked-javascript-size-ceiling
+   :status :resolved
+   :disposition :the-proof-only-aggregate-is-separated-from-the-small-refined-generated-policy-without-relaxing-size-bounds}
+  {:id :OPERATOR-PHASE-A-011
+   :severity :source-refinement
+   :finding :one-abstract-denotation-table-does-not-prove-a-future-evaluator-selects-the-correct-completed-fact-context-for-every-negative-node
+   :status :deferred-by-phase-boundary
+   :disposition :section-10-must-bind-each-concrete-node-to-its-certified-stratum-and-completed-lower-context-before-routing}
+  {:id :OPERATOR-PHASE-A-012
+   :severity :source-refinement
+   :finding :well-formed-recursive-conjunction-rules-do-not-by-themselves-prove-that-a-future-expression-compiler-emits-the-right-head-slots-premises-and-anchor
+   :status :deferred-by-phase-boundary
+   :disposition :section-10-must-refine-expression-and-plan-compilation-to-the-proved-recursive-rule-input-before-routing}
+  {:id :OPERATOR-PHASE-A-013
+   :severity :design-contract
+   :finding :the-prose-initial-width-formula-issued-one-candidate-when-logical-demand-was-zero-but-the-model-correctly-issued-none
+   :status :resolved
+   :disposition :the-design-now-stops-at-zero-demand-and-otherwise-uses-the-exact-generated-minimum-formula}
+  {:id :OPERATOR-PHASE-A-014
+   :severity :boundary-coverage
+   :finding :the-randomized-generated-policy-corpus-excluded-zero-cap-zero-window-zero-density-and-zero-maximum-span-inputs
+   :status :resolved
+   :disposition :four-fixed-cross-runtime-vectors-now-cover-each-zero-boundary-and-both-runtimes-pass-2016-operator-assertions}
+  {:id :OPERATOR-PHASE-A-015
+   :severity :performance-model
+   :finding :the-first-nary-seekable-kernel-repeated-binary-filtering-and-could-scan-a-nonselective-intermediate-driver-before-considering-a-selective-later-operand
+   :status :resolved
+   :disposition :the-kernel-now-positions-all-operands-at-the-anchor-and-jumps-the-driver-to-the-maximum-head-with-sequence-equivalence-proved-and-fixed-seed-repl-differential-evidence}
+  {:id :OPERATOR-PHASE-A-016
+   :severity :temporal-invariant
+   :finding :the-operator-inductive-invariant-constrained-only-cache-hits-and-therefore-admitted-a-stale-present-entry-that-the-lookup-transition-could-turn-into-an-unsafe-hit
+   :status :resolved
+   :disposition :safety-now-explicitly-requires-every-present-entry-to-belong-to-the-current-lifecycle-and-initiation-consecution-implication-bounded-safety-and-the-stale-lifecycle-mutant-all-pass-their-required-outcomes}]
+ :phase-b-gate
+ {:production-work-authorized false
+  :review-request
+  "formal/verification/operator-phase-a-review-request.md"
+  :remaining
+  [:independent-proof-design-review
+   :proof-phase-a-attestation]}}

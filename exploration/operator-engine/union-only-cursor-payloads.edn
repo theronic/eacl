@@ -1,0 +1,163 @@
+;; Exact decoded cursor-payload baseline. Opaque ciphertext is intentionally
+;; excluded because each encryption uses a fresh nonce.
+{:format-version 1
+ :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+ :fixtures
+ {:explorer-acyclic
+  {:forward
+   {:data ["server:server-0001-00001" "server:server-0001-00002"]
+    :page-info {:has-next-page? true :has-previous-page? false}
+    :cursor-common
+    {:adapter-fingerprint
+     {:adapter-version 8
+      :backend :datascript
+      :codec :eacl-id-immutable-v1
+      :recursive-traversal-limits nil}
+     :closure-digest "ZCHBJRO35D25DLXi2ge9zplZznjWQ3TtBKFqhbjT-t4"
+     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :identity-contract :selected-internal/immutable-external-injective-v3
+     :lineage
+     {:source-lifecycle "operator-engine-union-baseline"
+      :source-scope
+      {:backend :datascript
+       :branch nil
+       :source-id
+       {:connection-id "operator-engine-baseline/explorer-acyclic"}}}
+     :native-revision {:exact-locator nil :revision 536870917}
+     :scope "_YbxlteTDlNzplNTVu44TFmAkFuXV7joeprvTMCIAvM"
+     :v 13}
+    :start-edge
+    {:anchor :progress
+     :coords [1 9 4 5 35 36 38 47]
+     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :kind :least-path-edge
+     :order-abi 2
+     :traversal :forward
+     :version 2}
+    :end-edge
+    {:anchor :progress
+     :coords [1 9 4 5 35 36 38 48]
+     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :kind :least-path-edge
+     :order-abi 2
+     :traversal :forward
+     :version 2}}
+   :reverse
+   {:data ["user:super-user" "user:user-1"]
+    :page-info {:has-next-page? true :has-previous-page? false}
+    :cursor-common
+    {:adapter-fingerprint
+     {:adapter-version 8
+      :backend :datascript
+      :codec :eacl-id-immutable-v1
+      :recursive-traversal-limits nil}
+     :closure-digest "ZCHBJRO35D25DLXi2ge9zplZznjWQ3TtBKFqhbjT-t4"
+     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :identity-contract :selected-internal/immutable-external-injective-v3
+     :lineage
+     {:source-lifecycle "operator-engine-union-baseline"
+      :source-scope
+      {:backend :datascript
+       :branch nil
+       :source-id
+       {:connection-id "operator-engine-baseline/explorer-acyclic"}}}
+     :native-revision {:exact-locator nil :revision 536870917}
+     :scope "bGQvpxjWlEVFIhh7lnrAvRRygPQZ9fxZ752rSEY5QcE"
+     :v 13}
+    :start-edge
+    {:anchor :progress
+     :coords [1 38 9 4 36 5 35 33]
+     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :kind :least-path-edge
+     :order-abi 2
+     :traversal :reverse
+     :version 2}
+    :end-edge
+    {:anchor :progress
+     :coords [1 38 9 8 34]
+     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :kind :least-path-edge
+     :order-abi 2
+     :traversal :reverse
+     :version 2}}}
+  :explorer-recursive
+  {:forward
+   {:data ["server:server-0001-00001" "server:server-0001-00002"]
+    :page-info {:has-next-page? true :has-previous-page? false}
+    :cursor-common
+    {:adapter-fingerprint
+     {:adapter-version 8
+      :backend :datascript
+      :codec :eacl-id-immutable-v1
+      :recursive-traversal-limits nil}
+     :closure-digest "RKkEkYxSNAtRwfHN7XfLWPt4pG0aDHcFrudIngfKop8"
+     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :identity-contract :selected-internal/immutable-external-injective-v3
+     :lineage
+     {:source-lifecycle "operator-engine-union-baseline"
+      :source-scope
+      {:backend :datascript
+       :branch nil
+       :source-id
+       {:connection-id "operator-engine-baseline/explorer-recursive"}}}
+     :native-revision {:exact-locator nil :revision 536870917}
+     :scope "_YbxlteTDlNzplNTVu44TFmAkFuXV7joeprvTMCIAvM"
+     :v 13}
+    :start-edge
+    {:anchor :progress
+     :fingerprint "qmuINOol64NHVX0yMV10hrjzh2MmkwKY_1HlPCYnWMs"
+     :kind :stable-edge
+     :order-abi 2
+     :ordinal 1
+     :result-eid "server-0001-00001"
+     :traversal :forward
+     :version 2}
+    :end-edge
+    {:anchor :progress
+     :fingerprint "qmuINOol64NHVX0yMV10hrjzh2MmkwKY_1HlPCYnWMs"
+     :kind :stable-edge
+     :order-abi 2
+     :ordinal 2
+     :result-eid "server-0001-00002"
+     :traversal :forward
+     :version 2}}
+   :reverse
+   {:data ["user:super-user" "user:user-1"]
+    :page-info {:has-next-page? true :has-previous-page? false}
+    :cursor-common
+    {:adapter-fingerprint
+     {:adapter-version 8
+      :backend :datascript
+      :codec :eacl-id-immutable-v1
+      :recursive-traversal-limits nil}
+     :closure-digest "RKkEkYxSNAtRwfHN7XfLWPt4pG0aDHcFrudIngfKop8"
+     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :identity-contract :selected-internal/immutable-external-injective-v3
+     :lineage
+     {:source-lifecycle "operator-engine-union-baseline"
+      :source-scope
+      {:backend :datascript
+       :branch nil
+       :source-id
+       {:connection-id "operator-engine-baseline/explorer-recursive"}}}
+     :native-revision {:exact-locator nil :revision 536870917}
+     :scope "bGQvpxjWlEVFIhh7lnrAvRRygPQZ9fxZ752rSEY5QcE"
+     :v 13}
+    :start-edge
+    {:anchor :progress
+     :fingerprint "qmuINOol64NHVX0yMV10hrjzh2MmkwKY_1HlPCYnWMs"
+     :kind :stable-edge
+     :order-abi 2
+     :ordinal 1
+     :result-eid "super-user"
+     :traversal :reverse
+     :version 2}
+    :end-edge
+    {:anchor :progress
+     :fingerprint "qmuINOol64NHVX0yMV10hrjzh2MmkwKY_1HlPCYnWMs"
+     :kind :stable-edge
+     :order-abi 2
+     :ordinal 2
+     :result-eid "user-1"
+     :traversal :reverse
+     :version 2}}}}}

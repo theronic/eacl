@@ -1,8 +1,8 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 113
+ :historical-mutant-count 119
  :historical-clojure-mutant-count 109
- :historical-model-mutant-count 4
+ :historical-model-mutant-count 10
  :mutants
  [{:id :wrong-arrow-direction
    :mechanism :executed-production
@@ -325,6 +325,54 @@
              :model "formal/tla/EaclManagedProjectionCache.tla"
              :config "formal/tla/mutations/EaclManagedProofBypass.cfg"
              :length 4}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-vector-cancellation-publication
+   :mechanism :executed-model
+   :mutation :publish-vector-after-subgroup-cancellation
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorVectorCancellation.cfg"
+             :length 3}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-partial-vector-publication
+   :mechanism :executed-model
+   :mutation :publish-before-all-physical-subgroups-complete
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPartialVector.cfg"
+             :length 3}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-physical-overread-cursor
+   :mechanism :executed-model
+   :mutation :checkpoint-physical-instead-of-logical-boundary
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPhysicalCursor.cfg"
+             :length 2}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-wrong-checkpoint-resume
+   :mechanism :executed-model
+   :mutation :resume-before-authenticated-logical-checkpoint
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorWrongResume.cfg"
+             :length 3}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-stale-cache-lifecycle
+   :mechanism :executed-model
+   :mutation :retain-cache-entry-across-lifecycle-expiry
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorStaleLifecycle.cfg"
+             :length 4}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-partial-negative-authorization
+   :mechanism :executed-model
+   :mutation :authorize-before-negative-subproblem-completes
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPartialNegative.cfg"
+             :length 2}
    :killed-by {:test :apalache-counterexample}}]
 
  :retired-mutant-groups

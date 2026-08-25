@@ -1,9 +1,9 @@
 {:schema-version 3
  :registry "formal/mutations/registry.edn"
- :historical-mutants 113
+ :historical-mutants 119
  :retired-invalid-controls 74
- :mutants 39
- :killed 39
+ :mutants 45
+ :killed 45
  :survived 0
  :score 1.0
  :status :passed
@@ -13,8 +13,8 @@
    :executed-production 30
    :source-text 5
    :tests 4
-           :assertions 89
+   :assertions 125
    :command "EACL_NREPL_PORT=<dev-port> bin/formal mutation-control"}
   :apalache
-  {:mutants 4
+  {:mutants 10
    :command "bin/formal apalache-mutation-control"}}}

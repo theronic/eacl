@@ -1,0 +1,66 @@
+{:format-version 1
+ :change :design-demand-driven-set-algebra-engine
+ :captured-at "2026-08-25T13:19:53Z"
+ :source
+ {:worktree "core2"
+  :branch "agent/design-operator-engine-performance"
+  :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+  :base-commit-time "2026-08-24T05:23:13+02:00"
+  :base-subject "chore: refresh cursor token source closure"
+  :production-source-edits-before-baseline false
+  :planning-change-root
+  "openspec/changes/design-demand-driven-set-algebra-engine"}
+ :host
+ {:os "Mac OS X"
+  :os-version "26.4.1"
+  :architecture "aarch64"
+  :available-processors 14
+  :java-version "26.0.2"
+  :java-vendor "Eclipse Adoptium"
+  :node-version "25.9.0"
+  :clojure-cli-version "1.12.5.1645"
+  :clojure-runtime-version "1.11.4"}
+ :dependencies
+ {:deps-edn-sha256
+  "1f145657d793a685cba52a3b848be3a58de3a63e4eb6fc756b28fcbbc50b08bd"
+  :clojure "1.11.4"
+  :datomic-peer "1.0.7705"
+  :datascript "1.7.8"
+  :datahike "0.8.1759"
+  :instaparse "1.5.0"
+  :clojurescript "1.12.42"
+  :test-runner {:tag "v0.5.1" :sha "dfb30dd"}}
+ :formal-toolchain
+ {:lock "formal/toolchain.lock.json"
+  :lock-sha256
+  "eaf43c394eea2b44e61da58c128e542591ffe90d3968eac470d07eacba836dad"
+  :dafny "4.11.0"
+  :apalache "0.58.3"
+  :tla2tools "1.7.4"
+  :clj-kondo "2025.02.20"
+  :dafny-assertion-batch-time-limit-seconds 60
+  :dafny-proof-effort-resource-limit 50000000}
+ :nrepl
+ {:discover "clj-nrepl-eval --discover-ports"
+  :start
+  "clojure -M:dev:test:cljs-test:nrepl --port 7788"
+  :require-reload-policy
+  "Use :reload for every namespace required after source changes."}
+ :clean-union-only-commands
+ {:jvm-modules
+  "clj-nrepl-eval -p 7788 \"(do (require '[cognitect.test-runner.api :as runner] :reload) (runner/test {:dirs [\\\"modules/eacl/test\\\" \\\"modules/eacl-datomic/test\\\" \\\"modules/eacl-datascript/test\\\" \\\"modules/eacl-datahike/test\\\" \\\"src-build\\\"] :excludes [:benchmark :formal-artifact]}))\""
+  :frozen-public-baselines
+  "clj-nrepl-eval -p 7788 \"(do (require 'eacl.baseline.baseline-test :reload) (clojure.test/run-tests 'eacl.baseline.baseline-test))\""
+  :cljs-compile
+  "clj-nrepl-eval -p 7788 \"(do (require '[cljs.main :as cljs-main] :reload) (cljs-main/-main \\\"-t\\\" \\\"node\\\" \\\"-O\\\" \\\"none\\\" \\\"-o\\\" \\\"target/datascript-cljs-test.js\\\" \\\"-c\\\" \\\"eacl.datascript.cljs-test-runner\\\"))\""
+  :cljs-run "node target/datascript-cljs-test.js"
+  :formal "bin/formal all"
+  :source-closure "bin/formal source-closure"
+  :strict-openspec
+  "openspec validate design-demand-driven-set-algebra-engine --strict"}
+ :baseline-artifacts
+ {:semantic-and-order "exploration/baselines/*.edn"
+  :baseline-documentation "exploration/baselines/README.md"
+  :formal-performance-gates "formal/verification/performance-gates.edn"
+  :formal-baseline "formal/verification/baseline-2026-08-02.md"
+  :formal-manifest "formal/verification/manifest.edn"}}

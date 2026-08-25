@@ -1,0 +1,42 @@
+{:format-version 1
+ :captured-at "2026-08-25"
+ :oracle
+ {:repository "/Users/petrus/code/eacl/eacl-spicedb-operator-engine"
+  :branch "agent/operator-engine-oracle"
+  :base-commit "370723a9f3af5ea9132935a3bf1ab5f533eabdc6"
+  :candidate-commit "17d8e9830af2a36b0d98870c4be2b567c77e82b7"
+  :original-worktree-preserved
+  "/Users/petrus/code/eacl/eacl-spicedb"}
+ :spicedb
+ {:version "1.56.0"
+  :image
+  "ghcr.io/authzed/spicedb@sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c"
+  :image-index-digest
+  "sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c"}
+ :command "bin/run-live-tests operator-oracle"
+ :comparison
+ {:checks :exact
+  :lookup-resources :set-and-cardinality
+  :lookup-subjects :set-and-cardinality
+  :return-order :ignored}
+ :coverage
+ [:union-before-intersection-before-exclusion
+  :nested-intersection-and-exclusion
+  :positive-recursive-conjunction
+  :negative-recursion]
+ :result
+ {:tests 1 :assertions 21 :failures 0 :errors 0
+  :negative-recursion
+  {:schema-write :accepted
+   :check-grpc-code :failed-precondition
+   :reason :maximum-depth-exceeded
+   :eacl-expected-schema-error :eacl/unstratified-exclusion}}
+ :source-sha256
+ {:fixture
+  "519844995906d68f1a5f53cf700f8a5838b545884a13b24b835df3cbc84d83bf"
+  :test
+  "de202ee80da03379c7606995250fa784b6f6afb8e30070a6aa8ecbfdbb4a0566"
+  :deps
+  "9f7ca57e49bba81b06814ecd41f50800808d81c6f45eb3e855f9768acb540ceb"
+  :runner
+  "76cb8a11395674d0e3581429e6e4972d801b7f569b86c8f657f76c78fd4ea3cd"}}

@@ -1,0 +1,125 @@
+{:format-version 2
+ :captured-at "2026-08-25"
+ :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+ :command
+ "clj-nrepl-eval -p 7788 --timeout 900000 \"(do (require 'eacl.operator-engine.experiments :reload) (eacl.operator-engine.experiments/run-all))\""
+ :environment
+ {:java-version "26.0.2"
+  :clojure-version "1.11.4"
+  :os "Mac OS X 26.4.1"
+  :architecture "aarch64"
+  :processors 14}
+ :timing-policy
+ {:classification :host-specific-observation
+  :deterministic-fields
+  [:results :result-failures :duplicate-failures :candidates :probes
+   :batches :seeks :comparisons :states :values-scanned]}
+ :seed 1597116743
+ :cover
+ {:seed 1597116743
+  :trials 100000
+  :maximum-depth 5
+  :result-failures 0
+  :duplicate-failures 0
+  :passed? true}
+ :adaptive-batching
+ {:page-demand-including-sentinel 21
+  :physical-cap 256
+  :all-accepted
+  {:adaptive
+   {:accepted 21
+    :logical-candidates 21
+    :physical-candidates 21
+    :batches 1
+    :bounded? true}
+   :fixed-width
+   {:accepted 21
+    :logical-candidates 21
+    :physical-candidates 256
+    :batches 1}}
+  :one-in-one-thousand
+  {:accepted 10
+   :logical-candidates 10000
+   :physical-candidates 10000
+   :batches 43
+   :bounded? true}}
+ :leapfrog
+ {:dense-cardinality 100000
+  :sparse-cardinality 100
+  :eager-values 100100
+  :demand 21
+  :dense-driver {:logical-candidates 20001 :accepted 21}
+  :sparse-driver
+  {:logical-candidates 21 :membership-probes 21 :accepted 21}
+  :leapfrog
+  {:head-comparisons 41
+   :lower-bound-seeks 20
+   :lower-bound-comparisons 328
+   :accepted 21
+   :results
+   [0 1000 2000 3000 4000 5000 6000 7000 8000 9000 10000 11000
+    12000 13000 14000 15000 16000 17000 18000 19000 20000]}}
+ :k-way-leapfrog
+ {:seed 342183966
+  :random-trials 1000
+  :random-result-failures 0
+  :adversarial
+  {:driver-cardinality 100000
+   :operand-cardinalities [100000 100]
+   :expected-cardinality 100
+   :equal-results? true
+   :sequential-binary
+   {:head-comparisons 100199
+    :lower-bound-seeks 99
+    :lower-bound-comparisons 1518
+    :accepted 100}
+   :k-way
+   {:anchor-rounds 199
+    :driver-lower-bound-seeks 99
+    :operand-lower-bound-seeks 398
+    :lower-bound-comparisons 5744
+    :accepted 100}}}
+ :memoization
+ {:candidates 10000
+  :naive-leaf-probes 60000
+  :memoized-leaf-probes 40000
+  :saved-leaf-probes 20000
+  :equal-results? true}
+ :anchor-gated
+ {:seed 1597116743
+  :trials 25000
+  :result-failures 0
+  :any-child-states 4798525
+  :anchor-gated-states 499797
+  :saved-states 4298728
+  :strictly-smaller-trials 25000}
+ :recursive-anchor-gated
+ {:seed 1597116743
+  :trials 5000
+  :result-failures 0
+  :arrival-order-failures 0
+  :retained-state-failures 0
+  :anchor-parent-slots 445115
+  :any-child-parent-slots 679789
+  :saved-parent-slots 234674}
+ :datahike-density
+ {:datahike-version "0.8.1759"
+  :store-backend :memory
+  :resource-count 20000
+  :seed-nanos 1183616750
+  :dense
+  {:candidate-count 256
+   :span 256
+   :equal-decisions? true
+   :accepted 256
+   :prefix-values 256
+   :exact-median-nanos 279833
+   :prefix-median-nanos 72250}
+  :sparse
+  {:candidate-count 256
+   :span 20000
+   :equal-decisions? true
+   :accepted 256
+   :prefix-values 20000
+   :exact-median-nanos 322750
+   :prefix-median-nanos 5582541}}}

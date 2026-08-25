@@ -20,7 +20,9 @@ the generated release manifest.
   `openspec/changes/adopt-stable-discovery-enumeration/tasks.md`.
 - `tla/` contains bounded temporal models used to discover hostile cache,
   cursor, snapshot, continuation, subproblem-publication, proof-frame, and
-  source-switch histories.
+  source-switch histories. `EaclOperatorSafety.tla` adds the abstract operator
+  publication, logical-cursor, checkpoint, cache-lifecycle, and completed
+  negative-premise histories.
 - `counterexamples/` retains minimized witnesses and their bug ledger.
 - `verification/` records the decision inventory, trusted boundary, assurance
   matrix, tool-selection research, baselines, and release-manifest inputs.
@@ -83,6 +85,36 @@ in `formal/fixtures/permission-tree/`. Immutable/complete adapter reads,
 identity conversion, selected-snapshot token authentication, monotonic clocks,
 host integer/runtime semantics, and general Clojure source refinement remain
 explicit trusted or empirically checked boundaries.
+
+The abstract operator Phase A consists of
+`PermissionSetAlgebra.dfy`, `SignedDependencyStratification.dfy`,
+`CandidateCover.dfy`, `WitnessPredicate.dfy`, `VectorPredicate.dfy`,
+`AdaptiveBatching.dfy`, `OperatorLeastPath.dfy`, `SeekableSetKernels.dfy`,
+`DensityBoundedBatch.dfy`, `AnchorGatedConjunction.dfy`,
+`StratifiedExclusion.dfy`, `OperatorCacheRefinement.dfy`,
+`ExpressionPlanRefinement.dfy`, `OperatorGeneratedPolicy.dfy`,
+`OperatorGeneratedPolicyRefinement.dfy`, and `OperatorProofKernel.dfy`.
+Together they add 492 proof-leaf obligations plus six obligations at the
+generated `EaclKernel` boundary; the locked whole-tree run verifies 9,292
+obligations. The generated `DecideOperatorBatch` and
+`DecideOperatorSignedGraph` boundaries are each exercised by Java and
+JavaScript against fixed and 1,000-case randomized independent host oracles,
+for 2,016 operator assertions per runtime. The proof-only aggregate is kept out
+of generated runtime artifacts and is mechanically connected to the small
+generated policy through `OperatorGeneratedPolicyRefinement.dfy`. The direct
+n-ary intersection proof is an anchor-preserving max-head k-way leapfrog; it
+does not use repeated binary filtering.
+
+The original Phase A proof passed its solver while leaving six blocking
+semantic connections assumed. The adversarial audit remains recorded in the
+evidence bundle; all six findings and the resolved second-pass loopholes have
+explicit dispositions. Two additional source-refinement gaps are
+explicitly deferred to section 10 and keep production authority absent. Status is only
+`passed-pending-independent-review`. This phase is abstract: no production
+parser, storage representation, sealed plan, evaluator, backend operation,
+cache path, or routing decision consumes these models. The exact claim,
+limitations, counts, and digests are recorded in
+`verification/operator-phase-a.edn`.
 
 The operational guide, theorem navigation, adapter certification,
 counterexample workflow, generated-engine cutover policy, and assurance wording are in

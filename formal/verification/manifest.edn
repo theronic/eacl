@@ -126,6 +126,36 @@
    :conditional-mathematical-shallow-tree-topology-cycle-and-limit-model
    :qualification
    :no-mechanical-clojure-extraction-adapter-codec-clock-token-and-host-runtime-remain-trusted-boundaries}
+  :abstract-operator-engine-phase-a
+  {:status :passed
+   :review-status :pending-independent-review
+   :verified-obligations 492
+   :generated-boundary-new-obligations 6
+   :whole-tree-obligation-delta 498
+   :sources
+   ["formal/dafny/PermissionSetAlgebra.dfy"
+    "formal/dafny/SignedDependencyStratification.dfy"
+    "formal/dafny/CandidateCover.dfy"
+    "formal/dafny/WitnessPredicate.dfy"
+    "formal/dafny/VectorPredicate.dfy"
+    "formal/dafny/AdaptiveBatching.dfy"
+    "formal/dafny/OperatorLeastPath.dfy"
+    "formal/dafny/SeekableSetKernels.dfy"
+    "formal/dafny/DensityBoundedBatch.dfy"
+    "formal/dafny/AnchorGatedConjunction.dfy"
+    "formal/dafny/StratifiedExclusion.dfy"
+    "formal/dafny/OperatorCacheRefinement.dfy"
+    "formal/dafny/ExpressionPlanRefinement.dfy"
+    "formal/dafny/OperatorGeneratedPolicy.dfy"
+    "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+    "formal/dafny/OperatorProofKernel.dfy"]
+   :boundary-source "formal/dafny/EaclKernel.dfy"
+   :report "formal/verification/operator-phase-a.edn"
+   :integration-status :abstract-only-production-disabled
+   :claim
+   :conditional-finite-stratified-set-algebra-cover-predicate-batching-pagination-recursion-and-cache-refinement
+   :qualification
+   :no-production-parser-storage-sealer-evaluator-backend-or-routing-refinement-claimed}
   :indexed-recursive-public-engine
   {:status :passed
    :verified-obligations 7985
@@ -147,14 +177,16 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8794
+   :verified-obligations 9292
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
    :claim
    :conditional-composition-of-generated-recursive-authority-acyclic-decisions-and-source-specializations-under-documented-tcb
    :qualification
-   :clj-cljs-orchestration-adapters-cryptography-and-host-runtime-remain-trusted-boundaries}}
+   :clj-cljs-orchestration-adapters-cryptography-and-host-runtime-remain-trusted-boundaries
+   :excluded-from-production-composition
+   [:abstract-operator-engine-phase-a]}}
  :adapter-certification
  {:report "formal/verification/adapter-certification.edn"
  :datomic :certification-suite-passed
@@ -166,13 +198,15 @@
   {:boundary-smoke :passed
    :semantic-fixtures :passed
    :persistent-collection-boundary :passed
-   :cross-runtime-vectors :passed}
+   :cross-runtime-vectors :passed
+   :abstract-operator-decision-vectors :passed}
   :cljs-javascript
   {:node-smoke :passed
    :browser-esbuild-smoke :passed
    :persistent-collection-and-sequence-boundary :passed
    :indexed-traversal-linear-scaling-gate :passed
-   :cross-runtime-vectors :passed}}
+   :cross-runtime-vectors :passed
+   :abstract-operator-decision-vectors :passed}}
  :cross-runtime-parity
  {:status :passed
   :report "formal/verification/cross-runtime-parity.edn"}
@@ -321,8 +355,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 39
-  :registered 39
+  :killed 45
+  :registered 45
   :retired-invalid-controls 74}
  :source-closure
  {:report "formal/verification/public-source-closure.json"

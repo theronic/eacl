@@ -58,6 +58,41 @@ Handwritten CLJ/CLJS conversion code must:
 
 These obligations are tested and runtime-guarded, not proved as Clojure facts.
 
+### Abstract operator Phase A boundary
+
+The Phase A set-algebra models prove properties of finite typed expressions,
+strictly stratified negation, candidate covers, scalar and aligned vector
+predicates, bounded batching, least-path pagination, seekable set kernels,
+anchor-gated recursive conjunction, and signed cache invalidation. The two
+generated callable boundaries are `EaclKernel.__default/DecideOperatorBatch`
+and `EaclKernel.__default/DecideOperatorSignedGraph`. They are pure abstract
+policy and signed-graph validation decisions exercised only by formal smoke
+tests; neither is called by production. The proof-heavy aggregate remains in
+`OperatorProofKernel.dfy`, while the small generated policy is refined to the
+abstract batching and density models by
+`OperatorGeneratedPolicyRefinement.dfy`. This separation keeps proof-only
+ghost structure out of runtime artifacts without weakening the locked artifact
+size ceilings.
+
+These proofs do not establish Clojure or ClojureScript parser, codec, storage,
+plan, evaluator, cursor, cache, adapter, or routing correctness, and they make
+no production latency, allocation, remote-I/O, or asymptotic backend claim.
+The dense-prefix argument assumes a checked, finite EID span and strict,
+duplicate-free adapter order. Seekable kernels assume inclusive monotone
+reseek. Vector publication assumes aligned responses and atomic failure.
+Cache refinement assumes a complete signed dependency closure, truthful
+generation stamps, selected-snapshot identity, and completed lower-stratum
+negative results. Those premises require concrete source refinement and
+backend certification before operator routing may be enabled. In particular,
+the abstract per-stratum theorem does not prove that production holds a stable,
+complete lower-stratum fact context at each concrete evaluator node; that is a
+section-10 source-refinement obligation.
+
+`formal/verification/operator-phase-a.edn` records the exact proof counts,
+source digests, temporal bounds, mutations, and cross-runtime vectors. Its
+status remains `:passed-pending-independent-review`, and its Phase B gate is
+false until a separate proof/design attestation is checked in.
+
 ### Portable ClojureScript authority boundary
 
 `eacl.engine.portable-decisions` implements the production CLJS decision
