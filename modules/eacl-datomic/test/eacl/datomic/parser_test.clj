@@ -42,18 +42,24 @@
       [:relation-type-expr [:relation-type-ref [:type-path [:identifier "user"]]]]]
      [:permission [:identifier "admin"]
       [:permission-expr
-       [:union-expr
-        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "owner"]]]]]]
-        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "platform"]] [:base-expr [:identifier "super_admin"]]]]]]]]]
+       [:exclusion-expr
+        [:intersect-expr
+         [:union-expr
+          [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "owner"]]]]
+          [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "platform"]] [:base-expr [:identifier "super_admin"]]]]]]]]]
      [:permission [:identifier "view"]
       [:permission-expr
-       [:union-expr
-        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "owner"]]]]]]
-        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "admin"]]]]]]]]]
+       [:exclusion-expr
+        [:intersect-expr
+         [:union-expr
+          [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "owner"]]]]
+          [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "admin"]]]]]]]]]
      [:permission [:identifier "update"]
       [:permission-expr
-       [:union-expr
-        [:intersect-expr [:exclusion-expr [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "admin"]]]]]]]]]]]])
+       [:exclusion-expr
+        [:intersect-expr
+         [:union-expr
+          [:arrow-expr [:simple-arrow-expr [:base-expr [:identifier "admin"]]]]]]]]]]]])
 
 (deftest spicedb-schema-parsing-tests
 
@@ -65,9 +71,9 @@
   ;; Permission expressions have new structure with union/intersect/exclusion/arrow hierarchy
   (testing "we can parse permission expressions with union"
     (let [parsed (parser/parse-permission-expression "owner + admin")]
-      ;; Just verify it parses and has the expected shape
       (is (= :permission-expr (first parsed)))
-      (is (= :union-expr (first (second parsed))))))
+      (is (= :exclusion-expr (first (second parsed))))
+      (is (some #(= :union-expr (first %)) (tree-seq vector? rest parsed)))))
 
   (testing "we can parse arrow permissions with one level of nesting"
     (let [parsed (parser/parse-permission-expression "owner + account->admin")]
@@ -101,26 +107,27 @@
 
   (testing "ensure we warn against unsupported Spice schema like exclusion permissions"))
 
-(deftest unsupported-features-tests
-  (testing "exclusion operator (-) is rejected during validation"
+(deftest operator-storage-boundary-tests
+  (testing "exclusion syntax is accepted but cannot silently enter flat storage"
     (let [schema "definition user {}
                   definition account {
                     relation owner: user
                     relation guest: user
                     permission admin = owner - guest
                   }"]
-      ;; Grammar now parses it, but validation rejects it
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported operator: Exclusion"
-            (parser/->eacl-schema (parser/parse-schema schema))))))
+      (is (= :eacl.schema/operator-storage-disabled
+             (ex-type #(parser/->eacl-schema (parser/parse-schema schema)))))))
 
-  (testing "intersection operator (&) is rejected during validation"
+  (testing "intersection syntax is accepted but cannot silently enter flat storage"
     (let [schema "definition a {
                     relation b: user
                     relation c: user  
                     permission p = b & c
                   }"]
-      (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unsupported operator: Intersection"
-            (parser/->eacl-schema (parser/parse-schema schema))))))
+      (is (= :eacl.schema/operator-storage-disabled
+             (ex-type #(parser/->eacl-schema (parser/parse-schema schema))))))))
+
+(deftest unsupported-features-tests
 
   (testing "multi-level arrow is rejected during validation"
     ;; Grammar now parses multi-arrows, but validation rejects them
