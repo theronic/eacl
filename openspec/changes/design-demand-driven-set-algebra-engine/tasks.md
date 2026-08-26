@@ -142,4 +142,4 @@
 - [x] 13.4 Enable test operator routing, then operator schema writes, only after proof-phase-A authorization and recorded refinement, conformance, storage, and performance evidence are present and valid.
 - [x] 13.5 Update README and API/backend/formal documentation only with implemented syntax, precedence, strict stratification, order, limits, cursor/cache behavior, measured performance envelopes, and the unchanged unsupported boundary.
 - [x] 13.6 Document the unreleased-v8 reset contract: source-control rollback requires recreation of disposable development databases, and no older-binary, persisted-cursor, migration, or dual-write compatibility is claimed.
-- [ ] 13.7 Run `openspec validate --strict`, record final branch/base/diff and all evidence digests, and leave the change ready for review and merge into main without modifications to the original `core` worktree.
+- [x] 13.7 Run `openspec validate --strict`, record final branch/base/diff and all evidence digests, and leave the change ready for review and merge into main without modifications to the original `core` worktree.
