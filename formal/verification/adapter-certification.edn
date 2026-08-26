@@ -190,6 +190,37 @@
    {:status :passed
     :report
     "formal/verification/datalevin-ordered-generation-benchmark.edn"}}}
+ :committed-basis-admission
+ {:status :passed
+  :requirement
+  "Public snapshot constructors admit only database values whose committedness the source can witness. Ordinary and as-of values from the acl's own source are admitted; filtered, since, history, and speculative (d/with, db-with) values are refused with :eacl/unsupported-database-value before any basis identity, cache entry, or proof frame exists."
+  :witness-operation :witness-committed-basis!
+  :matrix
+  {:namespace eacl.datomic.speculative-admission-test
+   :tests 6
+   :assertions 66
+   :failures 0
+   :errors 0
+   :coverage
+   [:speculative-refusal-and-committed-answer-integrity
+    :ordinary-admission
+    :as-of-admission
+    :filtered-since-history-refusal
+    :as-of-over-speculative-refusal]}
+  :witnesses
+  {:datomic
+   {:mechanism :committed-log-transaction-instant
+    :notes "d/basis-t reports the underlying basis through an as-of window; re-applying d/as-of at that basis replaces the window, so the value's latest claimed transaction is compared against the committed head's :db/txInstant."}
+   :datahike
+   {:mechanism :committed-max-tx-transaction-instant
+    :notes "AsOfDB is witnessed through the :origin-db it carries whole; the origin's :max-tx transaction instant must match the committed head."}
+   :datascript
+   {:mechanism :connection-committed-value-registry
+    :notes "No transaction metadata exists, so committedness is decided by identity against the connection's current value or its listener-recorded committed states (bounded, newest-first by :max-tx)."
+    :additional-refusal-suite eacl.datascript.snapshot-lifecycle-test}
+   :datalevin
+   {:mechanism :read-snapshot-gate
+    :notes "A Datalevin read snapshot is an open LMDB read transaction over committed store state; no speculative-transaction value satisfies read-snapshot?, so the value itself is the witness. The pre-existing basis-kind gate already refused every other shape."}}}
  :runtime-guards
  {:status :passed
   :namespace eacl.backend.v8-test

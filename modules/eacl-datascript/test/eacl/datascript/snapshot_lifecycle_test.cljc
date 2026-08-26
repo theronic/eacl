@@ -247,7 +247,8 @@
     (is (zero? db-calls))
     (is (zero? (:acquisitions counts)))
     (is (= 1 (:context-constructions counts)))
-    (is (= {:source-scope 1} provider-calls))))
+    (is (= {:source-scope 1 :witness-committed-basis! 1} provider-calls)
+        "admission witnesses committedness once, without reading the head")))
 
 (deftest direct-snapshot-refuses-inadmissible-and-foreign-values-first-test
   (let [{:keys [conn client]} (fixture)
@@ -256,7 +257,11 @@
         [[:filtered
           (ds/filter (ds/db conn) (fn [_ _] true))]
          [:foreign-source (ds/db other-conn)]
-         [:foreign-backend {}]]]
+         [:foreign-backend {}]
+         ;; A speculative product is structurally ordinary and scoped to this
+         ;; source; only the committedness witness can refuse it.
+         [:speculative
+          (ds/db-with (ds/db conn) [{:eacl/id "speculative-marker"}])]]]
     (doseq [[expected-kind value] cases]
       (let [ledger (request-counters/make-ledger)
             data

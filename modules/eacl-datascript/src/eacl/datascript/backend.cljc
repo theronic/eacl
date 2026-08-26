@@ -23,12 +23,74 @@
                      (str (random-uuid))))))))))
 
 (defn basis-kind
-  "Classifies one DataScript database value without touching an EACL runtime."
+  "Classifies one DataScript database value without touching an EACL runtime.
+
+  This is structural classification only. A speculative `db-with` product is
+  an unfiltered database value, so admissible-looking kinds must additionally
+  be witnessed against the connection's committed-value registry before a
+  public constructor may admit them."
   [db]
   (cond
     (not (dsdb/db? db)) :foreign-backend
     (identical? db (dsdb/unfiltered-db db)) :ordinary
     :else :filtered))
+
+(def ^:private committed-basis-registry-key
+  :eacl.datascript/committed-basis-registry)
+
+(def ^:private committed-basis-retention
+  "How many committed database values the witness registry retains, newest
+  first by `:max-tx`. DataScript keeps no durable history, so an
+  application-captured value can only be proven committed by having been
+  observed as a committed state of this connection. Retained values share
+  structure with the live database; the bound caps how many superseded
+  generations stay reachable."
+  32)
+
+(defn- record-committed-basis!
+  [registry db]
+  (swap! registry
+         (fn [entries]
+           (let [entries (assoc entries (:max-tx db) db)]
+             (if (<= (count entries) committed-basis-retention)
+               entries
+               (dissoc entries (reduce min (keys entries))))))))
+
+(defn committed-basis-registry
+  "Returns the connection's shared committed-value registry, installing it
+  and its transaction listener on first use.
+
+  The registry records every `:db-after` this connection commits. It lives in
+  the connection's metadata so concurrently constructed clients share one
+  registry and one listener, exactly like `connection-source-id`."
+  [conn]
+  (or (committed-basis-registry-key (meta conn))
+      (let [installed
+            (committed-basis-registry-key
+             (alter-meta!
+              conn
+              (fn [metadata]
+                (if (committed-basis-registry-key metadata)
+                  metadata
+                  (assoc metadata committed-basis-registry-key (atom {}))))))]
+        (ds/listen! conn ::committed-basis-witness
+                    (fn [report]
+                      (record-committed-basis! installed (:db-after report))))
+        installed)))
+
+(defn witness-committed-basis
+  "Proves that one admissible-looking DataScript value is a committed state
+  of `conn`.
+
+  A `db-with` product carries the next commit's `:max-tx` while no metadata
+  distinguishes it from a committed value, so committedness is decided by
+  identity: the value must be the connection's current database or a
+  registry-recorded committed state at its claimed revision. The registry is
+  consulted first so the common capture-then-admit case never reads the
+  connection head."
+  [conn registry db]
+  (or (identical? db (get @registry (:max-tx db)))
+      (identical? db (ds/db conn))))
 
 (defn database-source-scope
   "Returns the source identity materialized by `eacl.datascript/create-conn`."
@@ -224,7 +286,8 @@
 (defn source
   "Builds the borrowed immutable-basis source for one DataScript conn."
   [conn opts]
-  (let [source-scope
+  (let [committed-registry (committed-basis-registry conn)
+        source-scope
         {:source-id {:connection-id (:native-source-id opts)}
          :branch nil}
         source-lifecycle
@@ -258,6 +321,9 @@
       :operations
       {:source-scope (constantly source-scope)
        :source-lifecycle source-lifecycle
+       :witness-committed-basis!
+       (fn [db _kind]
+         (witness-committed-basis conn committed-registry db))
        :acquire-current! #(borrowed (ds/db conn))
        :acquire-authoritative! (fn [_timeout-ms]
                                  (borrowed (ds/db conn)))

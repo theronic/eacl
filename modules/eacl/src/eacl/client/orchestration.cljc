@@ -2658,6 +2658,20 @@
             :expected-source expected-scope
             :actual-source actual-scope}
            nil))
+        ;; Structural classification cannot distinguish a speculative
+        ;; transaction product from a committed value: it carries the same
+        ;; database identity and the next commit's revision. The source must
+        ;; witness committedness, or the value is refused before it can mint
+        ;; a basis identity or publish into shared cache tiers.
+        (let [witnessed (source/witness-committed-basis! source db kind)]
+          (when-not (true? witnessed)
+            (unsupported-database-value!
+             backend-id :speculative
+             {:classified-kind kind
+              :reason (if (nil? witnessed)
+                        :no-committedness-witness
+                        :committedness-not-witnessed)}
+             nil)))
         (let [runtime (:runtime acl)
               opts
               (assoc (runtime-options runtime)
