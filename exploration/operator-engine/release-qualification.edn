@@ -8,6 +8,9 @@
   :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
   :implementation-commit "b3ebaa32c8158901820167af08d7cb8416b5b6ff"
   :diff {:files 195 :insertions 37724 :deletions 919}
+  :recorded-release-tree-commit
+  "4c8263085cb649ffc2939226d848c2e848b2bec7"
+  :recorded-release-diff {:files 196 :insertions 37860 :deletions 919}
   :original-core-worktree
   {:path "/Users/petrus/code/eacl/core"
    :head "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
