@@ -28,6 +28,7 @@ module.exports = {
   IndexedRefinement,
   IndexedTraversal,
   OrderedMerge,
+  OperatorRecursiveGeneratedPolicy,
   PageWindow,
   RecursiveEngine,
   RoutingCertificate,

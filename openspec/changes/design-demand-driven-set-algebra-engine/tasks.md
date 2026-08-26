@@ -83,7 +83,7 @@
 
 ## 8. Implement recursive conjunction and stratified exclusion
 
-- [ ] 8.1 Extend the generated recursive command/state model with typed expression facts, positive consumer edges, deterministic intersection anchors, strata, and exact lower-stratum questions.
+- [x] 8.1 Extend the generated recursive command/state model with typed expression facts, positive consumer edges, deterministic intersection anchors, strata, and exact lower-stratum questions.
 - [x] 8.2 Retain complete child fact sets and allocate parent join state only on anchor admission; initialize late anchors from existing facts and update only anchored entities on later non-anchor facts.
 - [x] 8.3 Represent join slots as portable 32-bit word vectors plus satisfied counts, make duplicate facts idempotent, and admit each completed parent fact exactly once.
 - [x] 8.4 Evaluate strict strata bottom-up within anchored demand and allow exclusion to consume only completed exact lower-stratum Boolean/denotation results.

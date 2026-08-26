@@ -1,6 +1,7 @@
 include "Semantics.dfy"
 include "SignedDependencyStratification.dfy"
 include "OperatorGeneratedPolicy.dfy"
+include "OperatorRecursiveGeneratedPolicy.dfy"
 include "AcyclicEngine.dfy"
 include "ConsistencyDecision.dfy"
 include "CurrentCache.dfy"
@@ -25,6 +26,7 @@ module EaclKernel {
   import TemporalSafety
   import WireFormat
   import OperatorGeneratedPolicy
+  import OperatorRecursiveGeneratedPolicy
   import opened Signed = SignedDependencyStratification
 
   const WireVersion: string := "eacl.round-trip/v1"
@@ -311,5 +313,35 @@ module EaclKernel {
     if decision.OperatorNegativeCycle? {
       ToSignedEdgesPreservesEveryIndexedEdge(edges, decision.edgeIndex);
     }
+  }
+
+  method DecideOperatorRecursiveCommand(
+    state: OperatorRecursiveGeneratedPolicy.RecursiveState,
+    positiveRules: seq<OperatorRecursiveGeneratedPolicy.PositiveRule>,
+    positiveEdges: seq<OperatorRecursiveGeneratedPolicy.PositiveConsumerEdge>,
+    strata: seq<OperatorRecursiveGeneratedPolicy.ExpressionStratum>,
+    exclusions: seq<OperatorRecursiveGeneratedPolicy.ExclusionRule>,
+    command: OperatorRecursiveGeneratedPolicy.RecursiveCommand
+  ) returns (
+      transition: OperatorRecursiveGeneratedPolicy.RecursiveTransition
+    )
+    ensures transition ==
+            OperatorRecursiveGeneratedPolicy.ApplyCommand(
+              state,
+              positiveRules,
+              positiveEdges,
+              strata,
+              exclusions,
+              command
+            )
+  {
+    transition := OperatorRecursiveGeneratedPolicy.ApplyCommand(
+      state,
+      positiveRules,
+      positiveEdges,
+      strata,
+      exclusions,
+      command
+    );
   }
 }

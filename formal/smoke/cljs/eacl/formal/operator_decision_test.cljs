@@ -110,6 +110,46 @@
       :else
       (throw (js/Error. "Unknown generated signed-graph decision.")))))
 
+(def recursive-generated
+  (.-OperatorRecursiveGeneratedPolicy generated))
+
+(defn- recursive-fact [expression entity-type entity-eid]
+  (js-invoke
+   (.-TypedExpressionFact recursive-generated)
+   "create_TypedExpressionFact"
+   (big-number expression) (big-number entity-type) (big-number entity-eid)))
+
+(defn- recursive-rule [parent width intersection? anchor-slot]
+  (js-invoke
+   (.-PositiveRule recursive-generated)
+   "create_PositiveRule"
+   (big-number parent) (big-number width) intersection?
+   (big-number anchor-slot)))
+
+(defn- recursive-edge [child parent slot]
+  (js-invoke
+   (.-PositiveConsumerEdge recursive-generated)
+   "create_PositiveConsumerEdge"
+   (big-number child) (big-number parent) (big-number slot)))
+
+(defn- recursive-state [facts completed pending]
+  (js-invoke
+   (.-RecursiveState recursive-generated)
+   "create_RecursiveState"
+   (dafny-sequence facts) (dafny-sequence [])
+   (dafny-sequence (mapv big-number completed)) (dafny-sequence pending)))
+
+(defn- admit-command [fact]
+  (js-invoke (.-RecursiveCommand recursive-generated)
+             "create_AdmitTypedFact" fact))
+
+(defn- recursive-step [state rules edges command]
+  (js-invoke
+   (.-__default (.-EaclKernel generated))
+   "DecideOperatorRecursiveCommand"
+   state (dafny-sequence rules) (dafny-sequence edges)
+   (dafny-sequence []) (dafny-sequence []) command))
+
 (defn- prefix-for-demand
   [decisions demand]
   (loop [remaining decisions demand demand consumed 0]
@@ -352,3 +392,23 @@
           (is (= (signed-graph-oracle input)
                  (generated-signed-graph-decision input))
               (pr-str {:case case-index :input input})))))))
+
+(deftest generated-javascript-recursive-anchor-state
+  (let [rules [(recursive-rule 30 2 true 0)]
+        edges [(recursive-edge 10 30 0) (recursive-edge 20 30 1)]
+        first-transition
+        (recursive-step
+         (recursive-state [] [] []) rules edges
+         (admit-command (recursive-fact 20 7 42)))
+        second-transition
+        (recursive-step
+         (.-dtor_state first-transition) rules edges
+         (admit-command (recursive-fact 10 7 42)))
+        anchor (first (.-dtor_anchorStates (.-dtor_state second-transition)))
+        action (first (.-dtor_actions second-transition))]
+    (is (.-is_RecursiveTransitionAccepted first-transition))
+    (is (empty? (.-dtor_anchorStates (.-dtor_state first-transition))))
+    (is (= [true true] (vec (.-dtor_satisfiedSlots anchor))))
+    (is (= 2 (.toNumber (.-dtor_satisfiedCount anchor))))
+    (is (.-is_ScheduleTypedFact action))
+    (is (= 30 (.toNumber (.-dtor_expression (.-dtor_fact action)))))))
