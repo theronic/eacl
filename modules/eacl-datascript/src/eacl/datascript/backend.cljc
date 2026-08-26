@@ -47,7 +47,27 @@
   generations stay reachable."
   32)
 
-(defn- record-committed-basis!
+(defn committed-basis-registry
+  "Returns the connection's shared committed-value registry, installing an
+  empty one on first use.
+
+  It lives in the connection's metadata so concurrently constructed clients
+  share one registry, exactly like `connection-source-id`. The registry is
+  populated by the EACL writer's own transactions and by admission-time
+  observations of the current value; no DataScript listener is ever
+  installed, because v3 consistency is listener-free by design and cloned
+  connections must stay callback-independent."
+  [conn]
+  (or (committed-basis-registry-key (meta conn))
+      (committed-basis-registry-key
+       (alter-meta!
+        conn
+        (fn [metadata]
+          (if (committed-basis-registry-key metadata)
+            metadata
+            (assoc metadata committed-basis-registry-key (atom {}))))))))
+
+(defn- record-into-registry!
   [registry db]
   (swap! registry
          (fn [entries]
@@ -56,27 +76,13 @@
                entries
                (dissoc entries (reduce min (keys entries))))))))
 
-(defn committed-basis-registry
-  "Returns the connection's shared committed-value registry, installing it
-  and its transaction listener on first use.
-
-  The registry records every `:db-after` this connection commits. It lives in
-  the connection's metadata so concurrently constructed clients share one
-  registry and one listener, exactly like `connection-source-id`."
-  [conn]
-  (or (committed-basis-registry-key (meta conn))
-      (let [installed
-            (committed-basis-registry-key
-             (alter-meta!
-              conn
-              (fn [metadata]
-                (if (committed-basis-registry-key metadata)
-                  metadata
-                  (assoc metadata committed-basis-registry-key (atom {}))))))]
-        (ds/listen! conn ::committed-basis-witness
-                    (fn [report]
-                      (record-committed-basis! installed (:db-after report))))
-        installed)))
+(defn record-committed-basis!
+  "Records one committed `:db-after` for `conn`'s committedness witness.
+  Called by the EACL writer after each of its own transactions."
+  [conn db]
+  (when db
+    (record-into-registry! (committed-basis-registry conn) db))
+  nil)
 
 (defn witness-committed-basis
   "Proves that one admissible-looking DataScript value is a committed state
@@ -87,10 +93,13 @@
   identity: the value must be the connection's current database or a
   registry-recorded committed state at its claimed revision. The registry is
   consulted first so the common capture-then-admit case never reads the
-  connection head."
+  connection head, and a successful head comparison records the value so it
+  stays witnessable after later writes."
   [conn registry db]
   (or (identical? db (get @registry (:max-tx db)))
-      (identical? db (ds/db conn))))
+      (when (identical? db (ds/db conn))
+        (record-into-registry! registry db)
+        true)))
 
 (defn database-source-scope
   "Returns the source identity materialized by `eacl.datascript/create-conn`."

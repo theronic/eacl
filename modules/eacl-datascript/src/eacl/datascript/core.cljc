@@ -30,7 +30,12 @@
 
 (defn- transact-native!
   [conn {:keys [tx-data]}]
-  (ds/transact! conn (vec tx-data)))
+  (let [report (ds/transact! conn (vec tx-data))]
+    ;; Every committed value the writer produces feeds the committedness
+    ;; witness, so previously captured heads stay admissible after later
+    ;; writes without any connection listener.
+    (datascript-backend/record-committed-basis! conn (:db-after report))
+    report))
 
 (def ^:private api
   {:backend-id :datascript
