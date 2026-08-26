@@ -9,7 +9,10 @@
             [eacl.datahike.schema :as schema]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
-            [eacl.schema.model :as model]))
+            [eacl.schema.model :as model])
+  (:import [java.nio.file CopyOption FileVisitOption Files Path
+            StandardCopyOption]
+           [java.nio.file.attribute FileAttribute]))
 
 (def ^:private relationship-schema
   "definition user {}
@@ -69,6 +72,33 @@
     nil
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
+
+(defn- copy-tree! [^Path source ^Path target]
+  (with-open [paths (Files/walk source (make-array FileVisitOption 0))]
+    (doseq [^Path path (iterator-seq (.iterator paths))]
+      (let [destination (.resolve target (.relativize source path))]
+        (if (Files/isDirectory path (make-array java.nio.file.LinkOption 0))
+          (Files/createDirectories destination (make-array FileAttribute 0))
+          (Files/copy
+           path destination
+           (into-array
+            CopyOption
+            [StandardCopyOption/REPLACE_EXISTING
+             StandardCopyOption/COPY_ATTRIBUTES])))))))
+
+(defn- delete-tree! [^Path root]
+  (when (Files/exists root (make-array java.nio.file.LinkOption 0))
+    (with-open [paths (Files/walk root (make-array FileVisitOption 0))]
+      (doseq [^Path path (reverse (vec (iterator-seq (.iterator paths))))]
+        (Files/deleteIfExists path)))))
+
+(defn- expression-storage-projection [db]
+  {:schema (schema/read-schema db)
+   :permissions
+   (->> (schema/read-permissions db)
+        (map #(select-keys % expression-persistence/expression-attributes))
+        (sort-by :eacl/id)
+        vec)})
 
 (deftest permission-storage-is-expression-only-and-replaceable-test
   (doseq [[label attribute-refs?] modes]
@@ -161,6 +191,69 @@
                   (exception-data #(schema/read-schema (d/db conn)))))))
         (finally
           (d/release conn))))))
+
+(deftest expression-storage-export-import-and-file-backup-restore-test
+  (doseq [[label attribute-refs?] modes]
+    (testing label
+      (let [source-root
+            (Files/createTempDirectory
+             "eacl-datahike-expression-source-"
+             (make-array FileAttribute 0))
+            backup-root
+            (Files/createTempDirectory
+             "eacl-datahike-expression-backup-"
+             (make-array FileAttribute 0))
+            restore-root
+            (Files/createTempDirectory
+             "eacl-datahike-expression-restore-"
+             (make-array FileAttribute 0))
+            source-path (.resolve source-root "db")
+            backup-path (.resolve backup-root "db")
+            restore-path (.resolve restore-root "db")
+            source
+            (datahike/create-conn
+             nil {:store {:backend :file :path (str source-path)}
+                  :attribute-refs? attribute-refs?})
+            source-config (atom nil)
+            restored (atom nil)]
+        (try
+          (schema/write-schema! source operator-storage-schema)
+          (let [source-db (d/db source)
+                expected (expression-storage-projection source-db)
+                exported-source
+                (:eacl/schema-string
+                 (d/entity source-db [:eacl/id "schema-string"]))
+                imported
+                (datahike/create-conn
+                 nil {:attribute-refs? attribute-refs?})]
+            (try
+              (schema/write-schema! imported exported-source)
+              (is (= expected
+                     (expression-storage-projection (d/db imported)))
+                  "source export/import preserves canonical expressions")
+              (finally
+                (let [config (:config (d/db imported))]
+                  (d/release imported)
+                  (d/delete-database config))))
+            (reset! source-config (:config source-db))
+            (d/release source)
+            (copy-tree! source-path backup-path)
+            (copy-tree! backup-path restore-path)
+            (let [restored-config
+                  (assoc-in @source-config [:store :path] (str restore-path))
+                  restore-conn (d/connect restored-config)]
+              (reset! restored restore-conn)
+              (is (= expected
+                     (expression-storage-projection (d/db restore-conn)))
+                  "closed file-store backup/restore preserves expression rows")))
+          (finally
+            (when-let [restore-conn @restored]
+              (d/release restore-conn))
+            (try
+              (d/release source)
+              (catch Exception _))
+            (doseq [root [source-root backup-root restore-root]]
+              (delete-tree! root))))))))
 
 (defn- walk-relationship-pages
   [client query]

@@ -1,0 +1,76 @@
+{:schema-version 1
+ :change :design-demand-driven-set-algebra-engine
+ :captured-at "2026-08-26"
+ :status :passed
+ :representation
+ {:permission-storage :canonical-expression-only
+  :union-only-storage :canonical-expression
+  :union-only-execution-domain :unchanged-sealed-union-plan
+  :legacy-flat-projection-written false
+  :dual-write false
+  :ordinary-v8-flat-reader false
+  :flat-only-result :rejected
+  :mixed-result :rejected
+  :duplicate-result :rejected
+  :conflicting-or-corrupt-result :rejected}
+ :lifecycle
+ [{:backend :datascript
+   :modes [:clj :cljs]
+   :export-import :datascript-serializable-round-trip
+   :backup-restore :datascript-serializable-round-trip
+   :assertion :exact-schema-and-expression-row-projection}
+  {:backend :datahike
+   :modes [{:attribute-refs false} {:attribute-refs true}]
+   :export-import :stored-source-revalidation-to-clean-store
+   :backup-restore :closed-file-konserve-store-copy
+   :assertion :exact-schema-and-expression-row-projection}
+  {:backend :datomic-peer
+   :test-storage :mem
+   :export-import :stored-source-revalidation-to-clean-database
+   :backup-restore :logical-relation-and-expression-entity-backup
+   :assertion :exact-schema-and-expression-row-projection
+   :qualification
+   :datomic-official-storage-backup-does-not-support-the-mem-protocol}
+  {:backend :datalevin
+   :export-import :stored-source-revalidation-to-clean-store
+   :backup-restore :datalevin-copy
+   :assertion :exact-schema-and-expression-row-projection}]
+ :atomicity
+ {:valid-replacement :same-logical-expression-identity-new-digest
+  :invalid-replacement :prior-schema-and-generation-unchanged
+  :permission-removal :new-snapshot-empty-old-snapshot-retained}
+ :migration-audit
+ {:unreleased-v8-flat-to-expression-migration false
+  :ordinary-v8-read-synthesis false
+  :ordinary-v8-write-path
+  eacl.schema.expression-persistence/candidate-schema
+  :existing-released-migration
+  {:entry-point eacl.datomic.schema/migrate-v6-schema!
+   :scope :explicit-v6-to-v7-maintenance-only
+   :ordinary-read-path false
+   :automatic-without-opt-in false
+   :operator-expression-dual-write false}}
+ :execution
+ {:primary-storage-namespaces
+  {:namespaces
+   [eacl.datascript.storage-test
+    eacl.datahike.storage-test
+    eacl.datomic.schema-test]
+   :tests 38 :assertions 529 :failures 0 :errors 0}
+  :datalevin-storage-namespace
+  {:namespace eacl.datalevin.expression-storage-test
+   :tests 3 :assertions 18 :failures 0 :errors 0}
+  :full-cljs
+  {:runner eacl.datascript.cljs-test-runner
+   :tests 426 :assertions 9276 :failures 0 :errors 0}}
+ :source-sha256
+ {"modules/eacl/src/eacl/schema/expression_persistence.cljc"
+  "c7b69d2d0606e964febbfe73aa97c0e4de36a4739635024dd195d01ed6d41e8f"
+  "modules/eacl-datascript/src/eacl/datascript/schema.cljc"
+  "9436f19662b05ec4622774af8228c244876996132b1226ad7f24097be8a5584c"
+  "modules/eacl-datahike/src/eacl/datahike/schema.clj"
+  "3f4729ab4b508b013ccb762bf875fac08429dcbf9985d076018752f74737866b"
+  "modules/eacl-datomic/src/eacl/datomic/schema.clj"
+  "50af769a8a51e82c108a76e5889bac775e38e2fe3c52bf107035a2e8b876463a"
+  "modules/eacl-datalevin/src/eacl/datalevin/schema.cljc"
+  "cb79b91eb6bce91d2c26682861b8de40f6a6acc39196afe30128e3c31d1dcf2f"}}

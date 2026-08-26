@@ -739,7 +739,9 @@
    :assurance-qualification :independent-proof-review-not-performed
    :report "formal/verification/operator-phase-b.edn"
    :eacl-conformance-report
-   "formal/verification/operator-eacl-conformance.edn"}
+   "formal/verification/operator-eacl-conformance.edn"
+   :expression-storage-report
+   "formal/verification/operator-expression-storage.edn"}
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]

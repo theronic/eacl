@@ -31,6 +31,14 @@
        (map (juxt :source-relation-name :target-type :target-name))
        set))
 
+(defn- expression-storage-projection [db]
+  {:schema (schema/read-schema db)
+   :permissions
+   (->> (schema/read-permissions db)
+        (map #(select-keys % expression-persistence/expression-attributes))
+        (sort-by :eacl/id)
+        vec)})
+
 (def example-schema-string
   "definition user {}
 
@@ -173,6 +181,35 @@
                  (:reason
                   (exception-data
                    #(schema/read-schema (d/db conn)))))))))))
+
+(deftest expression-storage-export-import-and-logical-backup-restore-test
+  (with-mem-conn [source schema/v7-schema]
+    (schema/write-schema! source operator-storage-schema)
+    (let [source-db (d/db source)
+          expected (expression-storage-projection source-db)
+          exported-source
+          (:eacl/schema-string
+           (d/entity source-db [:eacl/id "schema-string"]))
+          backup
+          {:schema-string exported-source
+           :relations (:relations (schema/read-schema source-db))
+           :permissions (:permissions (schema/read-schema source-db))}]
+      (with-mem-conn [imported schema/v7-schema]
+        (schema/write-schema! imported exported-source)
+        (is (= expected
+               (expression-storage-projection (d/db imported)))
+            "source export/import preserves canonical expressions"))
+      (with-mem-conn [restored schema/v7-schema]
+        @(d/transact
+          restored
+          (concat
+           (:relations backup)
+           (:permissions backup)
+           [{:eacl/id "schema-string"
+             :eacl/schema-string (:schema-string backup)}]))
+        (is (= expected
+               (expression-storage-projection (d/db restored)))
+            "logical entity backup/restore preserves expression rows")))))
 
 (deftest eacl-schema-stable-ident-tests
   (with-mem-conn [conn schema/v7-schema]

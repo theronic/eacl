@@ -64,6 +64,14 @@
               :cljs cljs.core.ExceptionInfo) error
       (ex-data error))))
 
+(defn- expression-storage-projection [db]
+  {:schema (schema/read-schema db)
+   :permissions
+   (->> (schema/read-permissions db)
+        (map #(select-keys % expression-persistence/expression-attributes))
+        (sort-by :eacl/id)
+        vec)})
+
 (deftest permission-storage-is-expression-only-and-replacement-is-atomic-test
   (let [conn (datascript/create-conn)
         _ (schema/write-schema! conn operator-storage-schema)
@@ -104,8 +112,9 @@
       (is (= stable-schema (schema/read-schema after-failure))))
     (let [exported (ds/serializable before-db)
           restored (ds/from-serializable exported)]
-      (is (= (schema/read-schema before-db)
-             (schema/read-schema restored))))
+      (is (= (expression-storage-projection before-db)
+             (expression-storage-projection restored))
+          "DataScript export/import backup preserves expression rows"))
     (schema/write-schema! conn no-permission-storage-schema)
     (is (empty? (schema/read-permissions (ds/db conn))))
     (is (= 2 (count (schema/read-permissions before-db))))))

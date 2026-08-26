@@ -81,6 +81,14 @@
         (d/close conn)
         (u/delete-files dir)))))
 
+(defn- expression-storage-projection [db]
+  {:schema (schema/read-schema db)
+   :permissions
+   (->> (schema/read-permissions db)
+        (map #(select-keys % expression-persistence/expression-attributes))
+        (sort-by :eacl/id)
+        vec)})
+
 (deftest expression-replacement-and-failed-write-are-atomic-test
   (with-store
     (fn [conn]
@@ -167,3 +175,43 @@
                    (:reason
                     (exception-data
                      #(schema/read-schema (d/db conn))))))))))))
+
+(deftest expression-storage-export-import-and-backup-restore-test
+  (let [source-dir
+        (u/tmp-dir (str "eacl-expression-source-" (random-uuid)))
+        import-dir
+        (u/tmp-dir (str "eacl-expression-import-" (random-uuid)))
+        backup-dir
+        (u/tmp-dir (str "eacl-expression-backup-" (random-uuid)))
+        source (datalevin/create-conn source-dir)
+        imported (atom nil)
+        restored (atom nil)]
+    (try
+      (let [source-client (datalevin/make-client source (options))]
+        (write-operator-schema! source-client operator-schema)
+        (let [source-db (d/db source)
+              expected (expression-storage-projection source-db)
+              exported-source
+              (:eacl/schema-string
+               (d/entity source-db [:eacl/id "schema-string"]))
+              import-conn (datalevin/create-conn import-dir)]
+          (reset! imported import-conn)
+          (write-operator-schema!
+           (datalevin/make-client import-conn (options)) exported-source)
+          (is (= expected
+                 (expression-storage-projection (d/db import-conn)))
+              "source export/import preserves canonical expressions")
+          (d/copy source-db backup-dir true)
+          (let [restore-conn (datalevin/create-conn backup-dir)]
+            (reset! restored restore-conn)
+            (is (= expected
+                   (expression-storage-projection (d/db restore-conn)))
+                "Datalevin copy backup/restore preserves expression rows"))))
+      (finally
+        (when-let [conn @restored]
+          (d/close conn))
+        (when-let [conn @imported]
+          (d/close conn))
+        (d/close source)
+        (doseq [dir [source-dir import-dir backup-dir]]
+          (u/delete-files dir))))))
