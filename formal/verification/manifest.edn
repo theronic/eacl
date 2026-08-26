@@ -157,6 +157,23 @@
    :conditional-finite-stratified-set-algebra-cover-predicate-batching-pagination-recursion-and-cache-refinement
    :qualification
    :no-production-parser-storage-sealer-evaluator-backend-or-routing-refinement-claimed-and-no-independent-proof-review-performed}
+  :operator-engine-phase-b
+  {:status :passed
+   :whole-tree-obligation-delta-since-phase-a 36
+   :whole-tree-obligations 9361
+   :generated-policy-leaf-obligations 20
+   :proof-refinement-leaf-obligations 15
+   :sources
+   ["formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+    "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"]
+   :boundary-source "formal/dafny/EaclKernel.dfy"
+   :report "formal/verification/operator-phase-b.edn"
+   :integration-status
+   :concrete-production-refinement-passed-routing-withheld-for-performance
+   :claim
+   :conditional-generated-recursive-command-and-executable-production-refinement
+   :qualification
+   :independent-proof-review-not-performed-and-public-routing-disabled}
   :indexed-recursive-public-engine
   {:status :passed
    :verified-obligations 7985
@@ -178,7 +195,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9325
+   :verified-obligations 9361
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed

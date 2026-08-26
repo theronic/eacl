@@ -21,7 +21,11 @@
   "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
   :generated-vectors "formal/cross-runtime/operator-vectors.edn"}
  :proof-runs
- [{:scope :recursive-generated-policy-refinement
+ [{:scope :recursive-generated-policy
+   :command
+   "dafny verify --verification-time-limit 30 --resource-limit 40000000 formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+   :verified 20 :errors 0 :status :passed}
+  {:scope :recursive-generated-policy-refinement
    :command
    "dafny verify --verification-time-limit 30 --resource-limit 40000000 formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
    :verified 15 :errors 0 :status :passed}
@@ -29,6 +33,31 @@
    :command
    "dafny verify --verification-time-limit 30 --resource-limit 40000000 formal/dafny/OperatorProofKernel.dfy"
    :verified 1 :errors 0 :status :passed}]
+ :whole-tree
+ {:command "bin/formal format && bin/formal verify"
+  :modules 48 :verified-obligations 9361 :errors 0 :status :passed
+  :maximum-proof-effort
+  {:source "SeekableSetKernels.dfy"
+   :display-name "SeekableSetKernels.KWayLeapfrogMembership (correctness)"
+   :resource-count 30143484
+   :solver-seconds 4.0266425
+   :random-seed 0}}
+ :generated-artifacts
+ {:commands ["bin/formal build-java" "bin/formal build-js"
+             "bin/formal browser-bundle"]
+  :status :passed
+  :size-gate :passed-under-existing-reviewed-maxima
+  :measurement-runtime
+  {:tool :babashka :local-version "1.12.218"
+   :ci-pinned-version "1.12.213"
+   :artifact-byte-count-independent-of-gate-runtime true}
+  :measurements
+  {:java-source {:actual-bytes 2294075 :maximum-bytes 2670869}
+   :java-classes-with-runtime
+   {:actual-bytes 2041834 :maximum-bytes 2377367}
+   :javascript-with-runtime
+   {:actual-bytes 1030862 :maximum-bytes 1188865}
+   :browser-iife {:actual-bytes 632867 :maximum-bytes 738488}}}
  :executable-runs
  [{:scope :parser-codec-signed-graph-plan-evaluation-recursion
    :runtime :clj

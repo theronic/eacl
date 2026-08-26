@@ -7,15 +7,17 @@ authorization result. Pure encoding, I/O, and backend implementation details
 are included only where they can cause a decision to be accepted, resumed, or
 reused.
 
-The abstract operator Phase A adds no production decision. In particular,
-`EaclKernel.__default/DecideOperatorBatch` and
-`EaclKernel.__default/DecideOperatorSignedGraph` are reachable only from formal
-smoke tests. No production parser, storage representation, sealer, evaluator,
-backend protocol, cache path, or routing branch accepts intersection or
-exclusion. The abstract proof inventory is recorded separately in
-`formal/verification/operator-phase-a.edn` and the assurance-matrix operation
-`:abstract-operator-engine-phase-a` is explicitly non-authoritative for
-production.
+The three generated operator entry points
+`EaclKernel.__default/DecideOperatorBatch`,
+`EaclKernel.__default/DecideOperatorSignedGraph`, and
+`EaclKernel.__default/DecideOperatorRecursiveCommand` remain formal boundary
+oracles and are not called directly by production. The unreleased v8
+production parser, expression storage, planner, acyclic evaluator, recursive
+evaluator, cursor scope, cache path, and backend capability protocol do accept
+intersection and exclusion. Public operator routing remains behind its
+feature gate until the recorded performance and release gates pass. Concrete
+refinement evidence is recorded in
+`formal/verification/operator-phase-b.edn`.
 
 | Decision area | Production source | Decision consumed by |
 | --- | --- | --- |
@@ -32,6 +34,11 @@ production.
 | Cache miss ownership and publication | `eacl.subproblem-cache/resolve-independent!`, generation-qualified bounded `publish!` | misses compute independently; compatible winners are retained and losing/late candidates are discarded without changing authorization |
 | Local cache failure and invalid-entry handling | `eacl.cache` exact-basis/managed decisions plus `eacl.subproblem-cache` lookup/validation/publication | whether a client-private cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
+| Operator parsing, resolution, signed dependencies, and strict strata | `eacl.spicedb.parser`, `eacl.schema.expression`, `eacl.schema.expression-resolver`, `eacl.schema.expression-graph` | expression storage, plan compilation, negative-cycle rejection, and deterministic schema errors |
+| Operator plan, generator, anchor, witness, and fingerprint selection | `eacl.operator.plan`, `eacl.operator.cover-plan`, `eacl.operator.cursor-scope` | every intersection/exclusion check, lookup, count, cursor, and cache identity when operator routing is enabled |
+| Acyclic scalar/vector set-algebra decisions and bounded progress | `eacl.operator.evaluator`, `eacl.operator.vector-evaluator`, `eacl.operator.batch-schedule`, `eacl.operator.lookup`, `eacl.operator.seekable` | exact point membership, aligned batches, forward/reverse pages, bounded/exact counts, and logical resume coordinates |
+| Recursive typed facts, anchor joins, strata, and exclusion absence | `eacl.operator.recursive` | positive recursive conjunction, strict lower-stratum exclusion, checkpoint/replay, and recursive limits |
+| Operator direct-membership locality and aligned scatter | `eacl.backend.direct-membership` and the built-in backend implementations | proof-compatible leaf-cache hits, scalar fallback, Datahike dense/sparse batching, aligned Boolean results, and physical work counters |
 
 ### Retired-engine boundaries (historical, pending the task 9.2 formal cut)
 

@@ -95,6 +95,28 @@ authorized Phase B after the abstract gates passed. No independent proof
 review has been performed, and the evidence records that absence as an
 assurance qualification rather than claiming external certification.
 
+### Concrete operator Phase B boundary
+
+The Phase B command model adds
+`EaclKernel.__default/DecideOperatorRecursiveCommand` for typed fact
+admission, anchor-slot scheduling, completed-stratum state, and exact
+lower-stratum exclusion questions. It is generated for Java and JavaScript
+and refined in `OperatorRecursiveGeneratedPolicyRefinement.dfy` to the Phase A
+anchor-gated conjunction and strict-exclusion models. Like the two Phase A
+entry points, production does not call this generated function directly.
+
+`formal/verification/operator-phase-b.edn` binds the digest-closed production
+parser, codec, signed graph, plan, scalar/vector evaluator, adaptive batching,
+seekable specializations, cursor progress, recursive state, cache boundary,
+and four backend implementations to those decisions through fixed and random
+differentials, CLJ/CLJS parity, counterexample replay, adapter certification,
+and ten executed production mutants. This is executable source-refinement
+evidence, not a formal semantics of Clojure or the storage engines. The
+remaining release conditions at this point are measured production
+performance and explicit route/write gate enablement. The absence of an
+independent review remains recorded as a qualification and is not an operator
+action or execution prerequisite.
+
 ### Portable ClojureScript authority boundary
 
 `eacl.engine.portable-decisions` implements the production CLJS decision

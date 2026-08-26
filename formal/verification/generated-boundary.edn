@@ -390,6 +390,30 @@
   :jvm-public-client-root-lookups-per-call 1
   :clj-cljs-result-suites :passed
   :status :passed}
+ :operator-phase-b
+ {:generated-entry-point
+  "EaclKernel.__default/DecideOperatorRecursiveCommand"
+  :generated-policy
+  "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+  :proof-refinement
+  "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+  :production-refinement
+  "formal/verification/operator-phase-b.edn"
+  :java {:tests 3 :assertions 20 :status :passed}
+  :javascript
+  {:full-suite-tests 50 :full-suite-assertions 11993 :status :passed}
+  :whole-tree {:modules 48 :verified-obligations 9361 :status :passed}
+  :artifact-size
+  {:java-source 2294075
+   :java-classes-with-runtime 2041834
+   :javascript-with-runtime 1030862
+   :browser-iife 632867
+   :status :passed-under-existing-reviewed-maxima}
+  :production-direct-call false
+  :binding
+  :digest-closed-executable-differential-and-production-mutation-refinement
+  :public-routing :disabled-pending-performance-and-release-gates
+  :status :passed}
  :remaining
  [:production-adapter-trace-refinement
   :acyclic-optimized-ordered-merge-clojure-language-refinement-and-independent-review

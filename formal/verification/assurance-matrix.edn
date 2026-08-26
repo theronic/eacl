@@ -4,9 +4,9 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 80
+  :source-files 98
   :public-roots 70
-  :reachable-definitions 1691
+  :reachable-definitions 2049
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -114,10 +114,6 @@
   {:source "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
    :class :operator-phase-b-proof-only-refinement
    :consumer ["formal/dafny/OperatorProofKernel.dfy"]}
-  {:source "formal/verification/operator-phase-b.edn"
-   :class :operator-phase-b-production-refinement-evidence
-   :consumer
-   ["modules/eacl/test/eacl/formal/operator_phase_b_test.clj"]}
   {:source "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
    :class :abstract-operator-phase-a-proof-only
    :consumer ["formal/verification/operator-phase-a.edn"]}
@@ -718,6 +714,30 @@
     :operator-temporal-mutation-control
     :abstract-operator-cross-runtime-vectors]
    :report "formal/verification/operator-phase-a.edn"}
+  {:operation :operator-engine-phase-b
+   :status :passed-concrete-routing-withheld
+   :entry-points
+   ["EaclKernel.__default/DecideOperatorRecursiveCommand"
+    "eacl.operator.plan/seal-plan"
+    "eacl.operator.evaluator/check-eids"
+    "eacl.operator.vector-evaluator/check-cached-many-eids"
+    "eacl.operator.lookup/lookup-page"
+    "eacl.operator.recursive/evaluate-cached-many"]
+   :theorems
+   [:generated-typed-fact-command-authority
+    :generated-intersection-slot-to-anchor-model-refinement
+    :generated-completed-negative-to-stratified-exclusion-refinement
+    :generated-incomplete-negative-fails-closed
+    :typed-fact-identity-separation]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :backend-certification [:datomic :datascript :datahike :datalevin]
+   :production-mutations {:registered 10 :killed 10 :survived 0}
+   :source-closure
+   {:source-files 98 :public-roots 70 :reachable-definitions 2049}
+   :production-authoritative :behind-disabled-route-gate
+   :remaining [:production-performance-acceptance :release-gate-enablement]
+   :assurance-qualification :independent-proof-review-not-performed
+   :report "formal/verification/operator-phase-b.edn"}
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]
