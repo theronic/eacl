@@ -57,9 +57,9 @@ Ordered by severity. Sections 1 and 2 are merge blockers.
 
 ## 8. Coverage gaps
 
-- [ ] 8.1 Add an operator pagination test that replays a resume cursor after a write inside the dependency closure, asserting the typed `:frame-changed` stale-cursor outcome (behaviour already verified by probe).
-- [ ] 8.2 Extend the randomized generator so `:intersection`/`:exclusion` are valid variants, and include operator schemas in the scheduled 200-seed campaign.
-- [ ] 8.3 Promote the exclusion, intersection, and recursive-chain invalidation probes from this review into the in-tree suite.
+- [x] 8.1 Add an operator pagination test that replays a resume cursor after a write inside the dependency closure, asserting the typed `:frame-changed` stale-cursor outcome (behaviour already verified by probe).
+- [x] 8.2 Extend the randomized generator so `:intersection`/`:exclusion` are valid variants, and include operator schemas in the scheduled 200-seed campaign.
+- [x] 8.3 Promote the exclusion, intersection, and recursive-chain invalidation probes from this review into the in-tree suite.
 
 ## 9. Recorded but unscheduled (decide before merge)
 
