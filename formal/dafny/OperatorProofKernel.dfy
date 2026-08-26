@@ -12,6 +12,7 @@ include "StratifiedExclusion.dfy"
 include "OperatorCacheRefinement.dfy"
 include "ExpressionPlanRefinement.dfy"
 include "OperatorGeneratedPolicyRefinement.dfy"
+include "OperatorRecursiveGeneratedPolicyRefinement.dfy"
 
 // Aggregate include boundary for abstract operator verification.  It is
 // intentionally separate from EaclKernel so proof-only executable functions
@@ -32,6 +33,7 @@ module OperatorProofKernel {
   import ExpressionPlanRefinement
   import OperatorGeneratedPolicy
   import OperatorGeneratedPolicyRefinement
+  import OperatorRecursiveGeneratedPolicyRefinement
 
   lemma GeneratedBatchPolicyIsInsideTheAbstractProofClosure(
     demand: nat,

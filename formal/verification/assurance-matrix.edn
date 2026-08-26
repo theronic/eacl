@@ -108,8 +108,12 @@
   {:source "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
    :class :operator-phase-b-generated-command-state
    :consumer ["formal/dafny/EaclKernel.dfy"
+              "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
               "formal/smoke/clj/eacl/formal/java_operator_recursive.clj"
               "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]}
+  {:source "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+   :class :operator-phase-b-proof-only-refinement
+   :consumer ["formal/dafny/OperatorProofKernel.dfy"]}
   {:source "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
    :class :abstract-operator-phase-a-proof-only
    :consumer ["formal/verification/operator-phase-a.edn"]}
