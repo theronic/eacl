@@ -717,7 +717,10 @@
         (add-counter! counters :late-anchor-initialized-slots prior))
       (assoc-in state [:join-states (:key rule)] join))))
 
-(defn- update-join [state rule slot]
+(defn update-join
+  "Admits one distinct satisfied child slot into an allocated join state.
+  Repeated admission of the same slot is idempotent."
+  [state rule slot]
   (let [join (get-in state [:join-states (:key rule)])]
     (if (or (nil? join) (word-bit-set? (:words join) slot))
       state
@@ -726,9 +729,29 @@
                     (update :words set-word-bit slot)
                     (update :satisfied inc))))))
 
-(defn- join-complete? [state rule]
+(defn join-complete?
+  "True only when every sealed child slot has been satisfied."
+  [state rule]
   (let [join (get-in state [:join-states (:key rule)])]
     (and join (= (:width join) (:satisfied join)))))
+
+(defn join-transition-action
+  "Returns the only permitted state transition for an arriving intersection
+  fact. Non-anchor facts cannot allocate retained parent state."
+  [state rule slot]
+  (cond
+    (contains? (:join-states state) (:key rule)) :update
+    (= slot (:anchor-slot rule)) :reserve
+    :else :ignore))
+
+(defn exclusion-decision
+  "Classifies strict exclusion from completed-component state and exact facts.
+  Absence in an unfinished negative component is never authorization."
+  [completed right-component facts left right]
+  (cond
+    (not (contains? completed right-component)) :incomplete
+    (and (contains? facts left) (not (contains? facts right))) :authorize
+    :else :deny))
 
 (defn- component-consumers [nodes component-of component]
   (let [component-set (set component)]
@@ -797,16 +820,19 @@
 
          :exclusion
          (let [[left right] dependencies
-               right-component (component-of (:key right))]
-           (when-not (contains? completed right-component)
+               right-component (component-of (:key right))
+               decision
+               (exclusion-decision completed right-component (:facts state)
+                                   (:key left) (:key right))]
+           (case decision
+             :incomplete
              (invalid! :incomplete-negative-component
                        "Exclusion attempted to consume an incomplete dependency."
                        {:head head :right (:key right)
-                        :right-component right-component}))
-           (if (and (contains? (:facts state) (:key left))
-                    (not (contains? (:facts state) (:key right))))
-             (enqueue-fact! state head limits counters)
-             state))
+                        :right-component right-component})
+
+             :authorize (enqueue-fact! state head limits counters)
+             :deny state))
 
          state)))
    state (sorted-questions component)))
@@ -845,14 +871,10 @@
                      :intersection
                      (let [{:keys [anchor-slot] :as rule} (get nodes head)
                            state
-                           (cond
-                             (contains? (:join-states state) head)
-                             (update-join state rule slot)
-
-                             (= slot anchor-slot)
-                             (reserve-join! state rule limits counters)
-
-                             :else state)]
+                           (case (join-transition-action state rule slot)
+                             :update (update-join state rule slot)
+                             :reserve (reserve-join! state rule limits counters)
+                             :ignore state)]
                        (if (join-complete? state rule)
                          (enqueue-fact! state head limits counters)
                          state))

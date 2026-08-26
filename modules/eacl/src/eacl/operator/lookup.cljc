@@ -187,6 +187,14 @@
                            [:commands :fetched-values :stream-opens
                             :emissions])))
 
+(defn resume-coordinate
+  "Returns the logical continuation coordinate. A physically evaluated
+  sentinel or overread suffix never advances the public cursor."
+  [sentinel? selected last-examined]
+  (if sentinel?
+    (some-> selected peek :coords)
+    last-examined))
+
 (defn lookup-page
   "Returns one filtered operator page in generator direction.
 
@@ -241,9 +249,7 @@
       (if (batch-schedule/done? schedule)
         (let [sentinel? (> (count accepted) page-size)
               selected (vec (take page-size accepted))
-              resume (if sentinel?
-                       (some-> selected peek :coords)
-                       last-examined)
+              resume (resume-coordinate sentinel? selected last-examined)
               bounded? (and (not sentinel?)
                             (zero? (:remaining-window schedule)))]
           (observe-page! (:examined schedule) (count selected) widths 0)
@@ -301,7 +307,8 @@
                    :has-more? true :bounded? false :exhausted? false
                    ;; Resume after the last PUBLIC result, so a sentinel and
                    ;; every physically overread candidate remain replayable.
-                   :resume-coords (some-> selected peek :coords)
+                   :resume-coords
+                   (resume-coordinate true selected last-consumed)
                    :last-examined-coords last-consumed
                    :physical-overread overread
                    :counters counters})

@@ -296,12 +296,21 @@
    (sorted-map)
    nodes))
 
+(defn select-intersection-anchor
+  "Selects the deterministic generator anchor from sealed structural costs.
+
+  This decision is deliberately pure: request state, cache contents, observed
+  selectivity, and backend timing are not inputs and therefore cannot change
+  plan identity or result order."
+  [children costs]
+  (first (sort-by #(get-in costs [% :tuple]) children)))
+
 (defn- compile-node-programs [nodes costs]
   (reduce
    (fn [result {:keys [id op record descriptor target-node]}]
      (let [children (record-children record)
            anchor (when (= :intersection op)
-                    (first (sort-by #(get-in costs [% :tuple]) children)))
+                    (select-intersection-anchor children costs))
            left (when (= :exclusion op) (second record))
            right (when (= :exclusion op) (nth record 2))
            cover

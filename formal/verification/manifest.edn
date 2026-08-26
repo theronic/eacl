@@ -356,8 +356,8 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 45
-  :registered 45
+  :killed 55
+  :registered 55
   :retired-invalid-controls 74}
  :source-closure
  {:report "formal/verification/public-source-closure.json"

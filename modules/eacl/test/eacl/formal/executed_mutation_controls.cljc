@@ -2,14 +2,21 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
+            [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
+            [eacl.operator.lookup :as operator-lookup]
+            [eacl.operator.plan :as operator-plan]
+            [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as request-context]
+            [eacl.schema.expression :as expression]
+            [eacl.schema.expression-graph :as expression-graph]
+            [eacl.spicedb.parser :as parser]
             [eacl.verified-kernel :as verified]))
 
 (defn- production-decision
@@ -763,6 +770,232 @@
                       (dissoc (original candidate) :deadline-nanos))]
         (gate))))))
 
+(defn operator-wrong-precedence-killed?
+  []
+  (let [parse
+        #(parser/permission-expression->source-ast
+          (parser/parse-permission-expression "a + b & c - d"))
+        expected
+        {:op :exclusion
+         :left {:op :intersection
+                :children
+                [{:op :union
+                  :children [{:op :identifier :name "a"}
+                             {:op :identifier :name "b"}]}
+                 {:op :identifier :name "c"}]}
+         :right {:op :identifier :name "d"}}
+        original parser/permission-expression->source-ast]
+    (and
+     (= expected (parse))
+     (not=
+      expected
+      (with-redefs
+       [parser/permission-expression->source-ast
+        (fn [tree]
+          (let [correct (original tree)]
+            {:op :union
+             :children
+             [(:left correct)
+              {:op :exclusion
+               :left {:op :identifier :name "c"}
+               :right (:right correct)}]}))]
+       (parse))))))
+
+(defn operator-swapped-exclusion-killed?
+  []
+  (let [parse
+        #(parser/permission-expression->source-ast
+          (parser/parse-permission-expression "reader - banned"))
+        expected
+        {:op :exclusion
+         :left {:op :identifier :name "reader"}
+         :right {:op :identifier :name "banned"}}
+        original parser/permission-expression->source-ast]
+    (and
+     (= expected (parse))
+     (not=
+      expected
+      (with-redefs
+       [parser/permission-expression->source-ast
+        (fn [tree]
+          (let [{:keys [left right] :as correct} (original tree)]
+            (assoc correct :left right :right left)))]
+       (parse))))))
+
+(defn operator-unsigned-dependency-killed?
+  []
+  (let [expressions
+        [(expression/expression
+          :document :view
+          (expression/exclusion
+           (expression/relation :reader [:user])
+           (expression/permission :blocked)))
+         (expression/expression
+          :document :blocked
+          (expression/relation :banned [:user]))]
+        negative?
+        #(= :negative
+            (->> (expression-graph/build-certificate expressions)
+                 :edges
+                 (filter (fn [edge]
+                           (= [[:document :view] [:document :blocked]]
+                              [(:from edge) (:to edge)])))
+                 first
+                 :sign))
+        original expression-graph/signed-dependencies]
+    (and
+     (negative?)
+     (false?
+      (with-redefs
+       [expression-graph/signed-dependencies
+        (fn [candidate-expressions]
+          (mapv #(assoc % :sign :positive)
+                (original candidate-expressions)))]
+       (negative?))))))
+
+(defn operator-missing-join-slot-killed?
+  []
+  (let [rule {:key :parent :anchor-slot 0}
+        initial
+        {:join-states
+         {:parent {:width 2 :words [0] :satisfied 0}}}
+        complete?
+        #(operator-recursive/join-complete?
+          (-> initial
+              (operator-recursive/update-join rule 0)
+              (operator-recursive/update-join rule 1))
+          rule)
+        original operator-recursive/update-join]
+    (and
+     (complete?)
+     (false?
+      (with-redefs
+       [operator-recursive/update-join
+        (fn [state candidate-rule slot]
+          (if (= 1 slot) state (original state candidate-rule slot)))]
+       (complete?))))))
+
+(defn operator-duplicate-satisfaction-count-killed?
+  []
+  (let [rule {:key :parent :anchor-slot 0}
+        initial
+        {:join-states
+         {:parent {:width 2 :words [0] :satisfied 0}}}
+        satisfied
+        #(get-in
+          (-> initial
+              (operator-recursive/update-join rule 0)
+              (operator-recursive/update-join rule 0))
+          [:join-states :parent :satisfied])
+        original operator-recursive/update-join]
+    (and
+     (= 1 (satisfied))
+     (not=
+      1
+      (with-redefs
+       [operator-recursive/update-join
+        (fn [state candidate-rule slot]
+          (update-in (original state candidate-rule slot)
+                     [:join-states (:key candidate-rule) :satisfied]
+                     inc))]
+       (satisfied))))))
+
+(defn operator-partial-negative-killed?
+  []
+  (let [decision
+        #(operator-recursive/exclusion-decision
+          #{} :negative-component #{:left} :left :right)]
+    (and
+     (= :incomplete (decision))
+     (not=
+      :incomplete
+      (with-redefs
+       [operator-recursive/exclusion-decision
+        (fn [& _] :authorize)]
+       (decision))))))
+
+(defn- operator-direct-adapter []
+  (backend/make-adapter
+   {:id :operator-mutation-control
+    :capabilities backend/empty-capabilities
+    :operations
+    (merge
+     (operation-map)
+     {:direct-match?
+      (fn [_subject-type _subject-eid _relation-eid
+           _resource-type resource-eid]
+        (= 10 resource-eid))})}))
+
+(defn operator-vector-misalignment-killed?
+  []
+  (let [adapter (operator-direct-adapter)
+        probes
+        [{:direction :forward
+          :descriptor {:subject-type :user :subject-eid 1
+                       :relation-eid 2 :resource-type :document}
+          :candidate [:document 20]}
+         {:direction :forward
+          :descriptor {:subject-type :user :subject-eid 1
+                       :relation-eid 2 :resource-type :document}
+          :candidate [:document 10]}]
+        evaluate #(direct/dispatch adapter probes)
+        original direct/direct-match-many?]
+    (and
+     (= [false true] (evaluate))
+     (not=
+      [false true]
+      (with-redefs
+       [direct/direct-match-many?
+        (fn [candidate-adapter request]
+          (vec (reverse (original candidate-adapter request))))]
+       (evaluate))))))
+
+(defn operator-overread-cursor-advance-killed?
+  []
+  (let [selected [{:coords [3 0] :value 30}]
+        logical #(operator-lookup/resume-coordinate true selected [9 0])]
+    (and
+     (= [3 0] (logical))
+     (not=
+      [3 0]
+      (with-redefs
+       [operator-lookup/resume-coordinate
+        (fn [_sentinel? _selected last-examined] last-examined)]
+       (logical))))))
+
+(defn operator-any-child-allocation-killed?
+  []
+  (let [state {:join-states {}}
+        rule {:key :parent :anchor-slot 0}
+        action #(operator-recursive/join-transition-action state rule 1)]
+    (and
+     (= :ignore (action))
+     (not=
+      :ignore
+      (with-redefs
+       [operator-recursive/join-transition-action
+        (fn [& _] :reserve)]
+       (action))))))
+
+(defn operator-cache-selected-generator-killed?
+  []
+  (let [children [7 8]
+        costs {7 {:tuple [0 0 1 3 7]}
+               8 {:tuple [1 1 2 4 8]}}
+        select #(operator-plan/select-intersection-anchor children costs)
+        observed-cache (atom false)]
+    (and
+     (= [7 7] [(select) (select)])
+     (not=
+      [7 7]
+      (with-redefs
+       [operator-plan/select-intersection-anchor
+        (fn [candidate-children _candidate-costs]
+          (if (swap! observed-cache not)
+            (first candidate-children)
+            (second candidate-children)))]
+       [(select) (select)])))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -800,7 +1033,19 @@
    checkpoint-admissions-counter-drop-killed?
    :aggregate-counter-reset aggregate-counter-reset-killed?
    :batch-cross-demand-contamination batch-cross-demand-contamination-killed?
-   :aggregate-deadline-renewal aggregate-deadline-renewal-killed?})
+   :aggregate-deadline-renewal aggregate-deadline-renewal-killed?
+   :operator-wrong-precedence operator-wrong-precedence-killed?
+   :operator-swapped-exclusion operator-swapped-exclusion-killed?
+   :operator-unsigned-dependency operator-unsigned-dependency-killed?
+   :operator-missing-join-slot operator-missing-join-slot-killed?
+   :operator-duplicate-satisfaction-count
+   operator-duplicate-satisfaction-count-killed?
+   :operator-partial-negative operator-partial-negative-killed?
+   :operator-vector-misalignment operator-vector-misalignment-killed?
+   :operator-overread-cursor-advance operator-overread-cursor-advance-killed?
+   :operator-any-child-allocation operator-any-child-allocation-killed?
+   :operator-cache-selected-generator
+   operator-cache-selected-generator-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

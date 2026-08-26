@@ -109,7 +109,7 @@
 - [ ] 10.3 Bind scalar/vector evaluation, adaptive batching, direct specializations, progress/cursor state, and typed failures to the abstract complete-case partitions and dimensional traces.
 - [ ] 10.4 Bind anchor-gated recursive state, strata, checkpoint/replay, limits, and scheduling to generated authority and replay every phase-A counterexample.
 - [ ] 10.5 Certify each backend's expression reads, ordered scans, inclusive reseeks, scalar/batch membership, basis stability, cancellation, and error classification premises.
-- [ ] 10.6 Add and kill production mutations for wrong precedence, swapped exclusion, unsigned dependency, missing join slot, duplicate satisfaction count, partial negative, vector misalignment, overread cursor advance, any-child allocation, and cache-selected generator.
+- [x] 10.6 Add and kill production mutations for wrong precedence, swapped exclusion, unsigned dependency, missing join slot, duplicate satisfaction count, partial negative, vector misalignment, overread cursor advance, any-child allocation, and cache-selected generator.
 - [ ] 10.7 Regenerate Java/JavaScript/browser artifacts and update size bounds, source closures, theorem pins, manifests, model inventory, trusted assumptions, and public decision inventory from a clean checkout.
 - [ ] 10.8 Complete the source-refinement and assurance audit; keep public operator routing and schema writes disabled until every section-10 gate is green, with any unperformed independent review recorded as an explicit assurance qualification.
 
