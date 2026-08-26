@@ -27,10 +27,9 @@
   :demand)
 
 (def ^:dynamic *operator-routing-enabled?*
-  "Pre-release test gate for public intersection/exclusion routing. It is
-  false by default until the concrete refinement, conformance, storage, and
-  performance gates authorize enablement. Union-only plans never consult it."
-  false)
+  "Public intersection/exclusion routing gate. Union-only plans never consult
+  it. Dynamic binding remains available for release-gate regression tests."
+  true)
 
 (def ^:dynamic *proof-frame*
   "The request-scoped ordered-generation frame, or nil for raw evaluation."

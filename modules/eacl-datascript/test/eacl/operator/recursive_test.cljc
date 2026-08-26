@@ -718,21 +718,22 @@
 (defn- page-ids [page]
   (mapv :id (:data page)))
 
-(deftest public-recursive-operator-routing-is-disabled-by-default-test
+(deftest public-recursive-operator-routing-can-be-disabled-test
   (let [{:keys [public-adapter]} (chain-fixture)
         alice (public-object :user "alice")
         f0 (public-object :folder "f0")]
-    (is (= :eacl.operator/routing-disabled
-           (:type
-            (error-data
-             #(engine/can? public-adapter alice :allowed f0)))))
-    (is (= :eacl.operator/routing-disabled
-           (:type
-            (error-data
-             #(engine/lookup-resources
-               public-adapter
-               {:subject alice :permission :allowed
-                :resource/type :folder :first 1})))))))
+    (binding [engine/*operator-routing-enabled?* false]
+      (is (= :eacl.operator/routing-disabled
+             (:type
+              (error-data
+               #(engine/can? public-adapter alice :allowed f0)))))
+      (is (= :eacl.operator/routing-disabled
+             (:type
+              (error-data
+               #(engine/lookup-resources
+                 public-adapter
+                 {:subject alice :permission :allowed
+                  :resource/type :folder :first 1}))))))))
 
 (deftest public-recursive-operator-operation-matrix-is-exact-test
   (let [{:keys [public-adapter alice bob f0 f1 f2 eid]} (chain-fixture)

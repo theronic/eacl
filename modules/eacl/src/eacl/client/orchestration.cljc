@@ -73,11 +73,10 @@
          validate-permission-root!)
 
 (def ^:dynamic *operator-expression-writes-enabled?*
-  "Pre-release gate for public schema writes containing intersection or
-  exclusion. Union-only schemas never consult this value. The gate is
-  independent of eacl.engine.v8/*operator-routing-enabled?* so storage and
-  query rollout can be verified separately."
-  false)
+  "Public schema-write gate for intersection or exclusion expressions.
+  Union-only schemas never consult this value. Dynamic binding remains
+  available for release-gate regression tests."
+  true)
 
 (defn- operator-expression-node?
   "Recognizes an actual intersection/exclusion operation in an Instaparse

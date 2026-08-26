@@ -135,6 +135,53 @@
      :exact-values 256 :prefix-values 256 :equal-decisions true}
   8 {:selected :sparse-exact :exact-gets 3 :prefix-gets 4
      :exact-values 256 :prefix-values 512 :equal-decisions true}}
+ :reverification
+ {:captured-at "2026-08-26"
+  :command
+  "clj-nrepl-eval -p 7801 --timeout 900000 \"(do (require '[eacl.operator-engine.s3-experiments :as s3] :reload) (s3/run!))\""
+  :source-sha256
+  "5a970e29f2ac03ef70d94b9b74a1b44eb77c70efbdbecbab29737b08e90fea69"
+  :store-id "cea2effa-720c-4303-b6e9-61922bbbd92e"
+  :store-deleted true
+  :bucket-empty-after-run true
+  :elapsed-ms 3929.819833
+  :observed
+  {:intersection
+   {:cold {:gets 9 :bytes 73402 :allocated-bytes 53432120
+           :latency-nanos 75294292}
+    :warm {:gets 0 :allocated-bytes 32149504
+           :latency-nanos 11739417}
+    :adjacent {:gets 2 :allocated-bytes 36839096
+               :latency-nanos 21134292}}
+   :dense-exclusion
+   {:cold {:gets 10 :bytes 80111 :allocated-bytes 50302088
+           :latency-nanos 37975667}
+    :warm {:gets 0 :allocated-bytes 31874616
+           :latency-nanos 11290000}
+    :adjacent {:gets 2 :allocated-bytes 36483504
+               :latency-nanos 20169250}}
+   :sparse-exclusion
+   {:cold {:gets 7 :bytes 57111 :allocated-bytes 47649752
+           :latency-nanos 33164750}
+    :warm {:gets 0 :allocated-bytes 31892936
+           :latency-nanos 11537291}
+    :adjacent {:gets 0 :allocated-bytes 34917664
+               :latency-nanos 11829500}}
+   :arrow
+   {:cold {:gets 8 :bytes 67041 :allocated-bytes 59574064
+           :latency-nanos 46527875}
+    :warm {:gets 0 :allocated-bytes 40352288
+           :latency-nanos 16505333}
+    :adjacent {:gets 1 :allocated-bytes 44465680
+               :latency-nanos 21182459}}
+   :bounded-count
+   {:count 20 :limit 20 :truncated true :gets 6 :bytes 49855
+    :allocated-bytes 16134696 :latency-nanos 24806917}
+   :exact-count
+   {:count 1024 :gets 26 :bytes 183475
+    :allocated-bytes 51125640 :latency-nanos 81527667}}
+  :ceiling-checks 17
+  :all-ceilings-passed true}
  :conclusion
  {:high-get-amplification false
   :bounded-pages-remain-lazy true

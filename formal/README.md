@@ -79,7 +79,8 @@ the aggregate report is `target/formal/dafny-verification.json`.
 This model is not mechanically extracted into production. The corresponding
 handwritten source is `modules/eacl/src/eacl/permission_tree.cljc`; bounded
 reference/property tests are in
-`modules/eacl/test/eacl/permission_tree_test.cljc`, backend contracts in
+`modules/eacl/test/eacl/permission_tree_test.cljc` and
+`modules/eacl-datascript/test/eacl/permission_tree_operator_test.cljc`, backend contracts in
 `modules/eacl/test/eacl/contract_support.cljc`, and the pinned upstream fixture
 in `formal/fixtures/permission-tree/`. Immutable/complete adapter reads,
 identity conversion, selected-snapshot token authentication, monotonic clocks,
@@ -109,17 +110,20 @@ anchor-round, operand-seek, driver-seek, and combined-seek bounds. Its exact
 per-round operand-seek trace stops at the first exhausted child rather than
 opening later operands unnecessarily.
 
-The original Phase A proof passed its solver while leaving six blocking
-semantic connections assumed. The adversarial audit remains recorded in the
-evidence bundle; all six findings and the resolved second-pass loopholes have
-explicit dispositions. Two additional source-refinement gaps are
-explicitly deferred to section 10 and keep production authority absent. Phase B
-implementation is project-operator-authorized, with independent proof review
-explicitly recorded as not performed. This phase is abstract: no production
-parser, storage representation, sealed plan, evaluator, backend operation,
-cache path, or routing decision consumes these models. The exact claim,
-limitations, counts, and digests are recorded in
-`verification/operator-phase-a.edn`.
+Phase A is abstract: production does not call its two generated decision
+functions directly. Its exact claim, limitations, counts, and digests are
+recorded in `verification/operator-phase-a.edn`.
+
+Phase B adds the generated recursive command boundary and binds the handwritten
+CLJ/CLJS parser, canonical expression storage, signed graph, plan, scalar and
+vector evaluators, direct specializations, cursor progress, recursive state,
+cache seam, and all four adapters through digest closure, independent-oracle
+differentials, counterexample replay, backend certification, and killed
+production mutants. The locked whole-tree run verifies 9,361 obligations.
+Public intersection/exclusion schema writes and routing are enabled after the
+recorded conformance, storage, performance, remote-I/O, and release gates
+passed. The executable refinement claim and its host-language boundary are
+recorded in `verification/operator-phase-b.edn`.
 
 The operational guide, theorem navigation, adapter certification,
 counterexample workflow, generated-engine cutover policy, and assurance wording are in

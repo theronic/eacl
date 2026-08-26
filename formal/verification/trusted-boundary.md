@@ -112,9 +112,9 @@ and four backend implementations to those decisions through fixed and random
 differentials, CLJ/CLJS parity, counterexample replay, adapter certification,
 and ten executed production mutants. This is executable source-refinement
 evidence, not a formal semantics of Clojure or the storage engines. The
-remaining release conditions at this point are measured production
-performance and explicit route/write gate enablement. Public expression writes
-and public routing are withheld by separate default-disabled gates; the four
+measured production performance and the explicit route/write enablement gates
+have passed. Public expression writes and public routing are enabled by
+default; explicit dynamic bindings exercise both disabled paths, and the four
 gate combinations preserve union-only public behavior. The absence of an
 independent review remains recorded as a qualification and is not an operator
 action or execution prerequisite.

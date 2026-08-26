@@ -432,21 +432,22 @@
 (defn- public-page-ids [page]
   (mapv :id (:data page)))
 
-(deftest public-acyclic-operator-routing-is-disabled-by-default-test
+(deftest public-acyclic-operator-routing-can-be-disabled-test
   (let [{:keys [public-adapter]} (fixture)
         query {:subject (public-id :user 0)
                :permission :view
                :resource/type :document
                :first 1}]
-    (is (= :eacl.operator/routing-disabled
-           (:type (error-data #(engine/lookup-resources
-                                public-adapter query)))))
-    (is (= :eacl.operator/routing-disabled
-           (:type (error-data #(engine/can?
-                                public-adapter
-                                (public-id :user 0)
-                                :view
-                                (public-id :document 2))))))))
+    (binding [engine/*operator-routing-enabled?* false]
+      (is (= :eacl.operator/routing-disabled
+             (:type (error-data #(engine/lookup-resources
+                                  public-adapter query)))))
+      (is (= :eacl.operator/routing-disabled
+             (:type (error-data #(engine/can?
+                                  public-adapter
+                                  (public-id :user 0)
+                                  :view
+                                  (public-id :document 2)))))))))
 
 (deftest public-acyclic-operator-operation-matrix-is-exact-test
   (let [{:keys [public-adapter users documents eid]} (fixture)

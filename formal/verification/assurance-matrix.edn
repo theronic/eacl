@@ -715,7 +715,7 @@
     :abstract-operator-cross-runtime-vectors]
    :report "formal/verification/operator-phase-a.edn"}
   {:operation :operator-engine-phase-b
-   :status :passed-concrete-routing-and-writes-withheld
+   :status :passed-concrete-routing-and-writes-enabled
    :entry-points
    ["EaclKernel.__default/DecideOperatorRecursiveCommand"
     "eacl.operator.plan/seal-plan"
@@ -733,9 +733,10 @@
    :backend-certification [:datomic :datascript :datahike :datalevin]
    :production-mutations {:registered 10 :killed 10 :survived 0}
    :source-closure
-   {:source-files 98 :public-roots 70 :reachable-definitions 2053}
-   :production-authoritative :behind-independent-disabled-route-and-write-gates
-   :remaining [:production-performance-acceptance :release-gate-enablement]
+   {:source-files 98 :public-roots 70 :reachable-definitions 2056}
+   :production-authoritative
+   :enabled-after-conformance-storage-and-performance-qualification
+   :remaining []
    :assurance-qualification :independent-proof-review-not-performed
    :report "formal/verification/operator-phase-b.edn"
    :eacl-conformance-report

@@ -61,20 +61,25 @@
         client (datascript/make-client conn {})
         alice (object :user "alice")
         document (object :document "d0")]
-    (is (= :eacl.schema/operator-expression-writes-disabled
-           (:type (error-data #(eacl/write-schema! client operator-schema)))))
-    (binding [orchestration/*operator-expression-writes-enabled?* true]
-      (eacl/write-schema! client operator-schema))
+    (binding [orchestration/*operator-expression-writes-enabled?* false]
+      (is (= :eacl.schema/operator-expression-writes-disabled
+             (:type
+              (error-data #(eacl/write-schema! client operator-schema))))))
+    (eacl/write-schema! client operator-schema)
     (seed-objects! conn)
     (eacl/create-relationships!
      client [(eacl/->Relationship alice :reader document)
              (eacl/->Relationship alice :writer document)])
-    (is (= :eacl.operator/routing-disabled
-           (:type
-            (error-data
-             #(eacl/can? client {:subject alice
-                                 :permission :view
-                                 :resource document})))))
+    (binding [engine/*operator-routing-enabled?* false]
+      (is (= :eacl.operator/routing-disabled
+             (:type
+              (error-data
+               #(eacl/can? client {:subject alice
+                                   :permission :view
+                                   :resource document}))))))
+    (is (true? (eacl/can? client {:subject alice
+                                  :permission :view
+                                  :resource document})))
     (binding [engine/*operator-routing-enabled?* true]
       (is (true? (eacl/can? client {:subject alice
                                     :permission :view

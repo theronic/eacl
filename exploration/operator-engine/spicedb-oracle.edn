@@ -4,7 +4,7 @@
  {:repository "/Users/petrus/code/eacl/eacl-spicedb-operator-engine"
   :branch "agent/operator-engine-oracle"
   :base-commit "370723a9f3af5ea9132935a3bf1ab5f533eabdc6"
-  :candidate-commit "e0f8994a987e506405a086ee4c076c5b2acbac55"
+  :candidate-commit "c5a6335e84b825b149088578714ee1f85155e462"
   :original-worktree-preserved
   "/Users/petrus/code/eacl/eacl-spicedb"}
  :spicedb
@@ -26,7 +26,7 @@
   :deterministic-randomized-shared-subset
   :negative-recursion]
  :result
- {:tests 2 :assertions 678 :failures 0 :errors 0
+ {:tests 2 :assertions 680 :failures 0 :errors 0
   :randomized
   {:seeds [104729 130363 155921 196613
            262147 327673 393241 458789]
@@ -43,12 +43,14 @@
   {:schema-write :accepted
    :check-grpc-code :failed-precondition
    :reason :maximum-depth-exceeded
-   :eacl-expected-schema-error :eacl/unstratified-exclusion}}
+   :eacl-api :public-schema-write
+   :eacl-expected-schema-error :eacl.schema/unstratified-exclusion
+   :eacl-actual-schema-error :eacl.schema/unstratified-exclusion}}
  :source-sha256
  {:fixture
-  "a7d35e5bc13f959e4df21280f1ece1bf07bfed53ac53467e317321a61d255541"
+  "30ab10827ce23bb1f2b2160deedfd9dcf37f8968a8de3bdd3651fe08c7f09083"
   :test
-  "9560e658ba1b25256e17ed5b1e95c21220253ac19f278714ecb99b1a493d06d9"
+  "21b88bdcd937f6db26d02c5c3944bd195e38c762a68bdcddbf2ff5a11005515a"
   :deps
   "051301e302c162b33a1c4dbe8f1008b4c8b211c3672da17ff5db7d17240a7f1c"
   :runner

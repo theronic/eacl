@@ -2,7 +2,7 @@
   "Disposable million-resource local-transactor qualification probe.
 
   This namespace is exploration code. It creates a uniquely named Datomic
-  `:dev` database, installs current EACL v7 storage, writes actual forward and
+  `:dev` database, installs current EACL v8 storage, writes actual forward and
   reverse relationship tuples in bounded transactions, reconnects for reads,
   and deletes only that unique database in `finally`."
   (:refer-clojure :exclude [run!])
@@ -195,6 +195,12 @@
             forward-query
             {:subject user :permission :candidate_view
              :resource/type :resource :first 20 :cache? false}
+            intersection-query
+            {:subject user :permission :intersection_view
+             :resource/type :resource :first 20 :cache? false}
+            exclusion-query
+            {:subject user :permission :exclusion_view
+             :resource/type :resource :first 20 :cache? false}
             first-page (eacl/lookup-resources client forward-query)
             second-page
             (eacl/lookup-resources
@@ -209,12 +215,31 @@
                                            missing-resource))
             first-page-sample
             (sample-nanos 3 11 #(eacl/lookup-resources client forward-query))
+            intersection-page-sample
+            (sample-nanos
+             3 11 #(eacl/lookup-resources client intersection-query))
+            exclusion-page-sample
+            (sample-nanos 3 11 #(eacl/lookup-resources client exclusion-query))
             bounded-count
             (sample-nanos
              1 5
              #(eacl/count-resources
                client
                {:subject user :permission :candidate_view
+                :resource/type :resource :count-limit 1000 :cache? false}))
+            intersection-bounded-count
+            (sample-nanos
+             1 5
+             #(eacl/count-resources
+               client
+               {:subject user :permission :intersection_view
+                :resource/type :resource :count-limit 1000 :cache? false}))
+            exclusion-bounded-count
+            (sample-nanos
+             1 5
+             #(eacl/count-resources
+               client
+               {:subject user :permission :exclusion_view
                 :resource/type :resource :count-limit 1000 :cache? false}))
             default-exact-count-started (System/nanoTime)
             default-exact-count
@@ -239,6 +264,22 @@
               :resource/type :resource :cache? false})
             exhaustive-count-nanos
             (- (System/nanoTime) exhaustive-count-started)
+            intersection-exhaustive-count-started (System/nanoTime)
+            intersection-exhaustive-count
+            (eacl/count-resources
+             exhaustive-client
+             {:subject user :permission :intersection_view
+              :resource/type :resource :cache? false})
+            intersection-exhaustive-count-nanos
+            (- (System/nanoTime) intersection-exhaustive-count-started)
+            exclusion-exhaustive-count-started (System/nanoTime)
+            exclusion-exhaustive-count
+            (eacl/count-resources
+             exhaustive-client
+             {:subject user :permission :exclusion_view
+              :resource/type :resource :cache? false})
+            exclusion-exhaustive-count-nanos
+            (- (System/nanoTime) exclusion-exhaustive-count-started)
             dense
             (->> (ddb/subject->resources
                   db :user (:subject-eid fixture)
@@ -291,6 +332,16 @@
           :first-page
           (assoc (select-keys first-page-sample [:median-nanos :p95-nanos])
                  :items (count (:data (:last-result first-page-sample))))
+          :intersection-first-page
+          (assoc
+           (select-keys intersection-page-sample [:median-nanos :p95-nanos])
+           :items (count (:data (:last-result intersection-page-sample)))
+           :ids (mapv :id (:data (:last-result intersection-page-sample))))
+          :exclusion-first-page
+          (assoc
+           (select-keys exclusion-page-sample [:median-nanos :p95-nanos])
+           :items (count (:data (:last-result exclusion-page-sample)))
+           :ids (mapv :id (:data (:last-result exclusion-page-sample))))
           :adjacent-pages
           {:first-items (count (:data first-page))
            :second-items (count (:data second-page))
@@ -300,6 +351,14 @@
           :bounded-count
           (assoc (select-keys bounded-count [:median-nanos :p95-nanos])
                  :result (:last-result bounded-count))
+          :intersection-bounded-count
+          (assoc
+           (select-keys intersection-bounded-count [:median-nanos :p95-nanos])
+           :result (:last-result intersection-bounded-count))
+          :exclusion-bounded-count
+          (assoc
+           (select-keys exclusion-bounded-count [:median-nanos :p95-nanos])
+           :result (:last-result exclusion-bounded-count))
           :default-exact-count
           {:nanos default-exact-count-nanos
            :outcome default-exact-count}
@@ -309,6 +368,12 @@
                     :max-advanced-datoms 2000000
                     :max-queued-work 2000000}
            :result exhaustive-count}
+          :intersection-exhaustive-count
+          {:nanos intersection-exhaustive-count-nanos
+           :result intersection-exhaustive-count}
+          :exclusion-exhaustive-count
+          {:nanos exclusion-exhaustive-count-nanos
+           :result exclusion-exhaustive-count}
           :first-resource-allowed?
           (eacl/can? client user :candidate_view first-resource)}
          :prototype
@@ -331,6 +396,87 @@
          :total-elapsed-ms (elapsed-ms started)})
       (finally
         (d/release conn)))))
+
+(defn- expected-selective-count [resource-count]
+  (quot (+ resource-count 3) 4))
+
+(defn- expected-first-ids [resource-count select?]
+  (->> (range resource-count)
+       (filter select?)
+       (take 20)
+       (mapv #(format "r-%07d" %))))
+
+(defn- qualification-errors [result]
+  (let [resource-count (:resource-count result)
+        selective-count (expected-selective-count resource-count)
+        public (:public result)
+        prototype (:prototype result)]
+    (cond-> []
+      (not= (+ resource-count selective-count)
+            (:forward-tuple-datoms result))
+      (conj {:invariant :forward-tuple-count
+             :expected (+ resource-count selective-count)
+             :actual (:forward-tuple-datoms result)})
+
+      (not= (:forward-tuple-datoms result)
+            (:reverse-tuple-datoms result))
+      (conj {:invariant :forward-reverse-tuple-duality
+             :forward (:forward-tuple-datoms result)
+             :reverse (:reverse-tuple-datoms result)})
+
+      (not= (expected-first-ids resource-count
+                                #(zero? (mod % 4)))
+            (get-in public [:intersection-first-page :ids]))
+      (conj {:invariant :intersection-first-page
+             :actual (get-in public [:intersection-first-page :ids])})
+
+      (not= (expected-first-ids resource-count
+                                #(not (zero? (mod % 4))))
+            (get-in public [:exclusion-first-page :ids]))
+      (conj {:invariant :exclusion-first-page
+             :actual (get-in public [:exclusion-first-page :ids])})
+
+      (not= {:count 1000 :limit 1000 :truncated? true
+             :cached? false :cache-basis nil}
+            (get-in public [:intersection-bounded-count :result]))
+      (conj {:invariant :intersection-bounded-count
+             :actual (get-in public [:intersection-bounded-count :result])})
+
+      (not= {:count 1000 :limit 1000 :truncated? true
+             :cached? false :cache-basis nil}
+            (get-in public [:exclusion-bounded-count :result]))
+      (conj {:invariant :exclusion-bounded-count
+             :actual (get-in public [:exclusion-bounded-count :result])})
+
+      (not= resource-count
+            (get-in public [:exhaustive-count :result :count]))
+      (conj {:invariant :union-exact-count
+             :expected resource-count
+             :actual (get-in public [:exhaustive-count :result :count])})
+
+      (not= selective-count
+            (get-in public [:intersection-exhaustive-count :result :count]))
+      (conj {:invariant :intersection-exact-count
+             :expected selective-count
+             :actual
+             (get-in public [:intersection-exhaustive-count :result :count])})
+
+      (not= (- resource-count selective-count)
+            (get-in public [:exclusion-exhaustive-count :result :count]))
+      (conj {:invariant :exclusion-exact-count
+             :expected (- resource-count selective-count)
+             :actual
+             (get-in public [:exclusion-exhaustive-count :result :count])})
+
+      (not= 0 (get-in public [:adjacent-pages :overlap]))
+      (conj {:invariant :adjacent-page-disjointness
+             :actual (get-in public [:adjacent-pages :overlap])})
+
+      (not (true? (get-in prototype [:dense :equal-decisions])))
+      (conj {:invariant :dense-scalar-prefix-equivalence})
+
+      (not (true? (get-in prototype [:sparse :equal-decisions])))
+      (conj {:invariant :sparse-scalar-prefix-equivalence}))))
 
 (defn run!
   ([] (run! {}))
@@ -366,6 +512,8 @@
                        "  relation selective: user\n"
                        "  permission candidate_view = candidate\n"
                        "  permission selective_view = selective\n"
+                       "  permission intersection_view = candidate & selective\n"
+                       "  permission exclusion_view = candidate - selective\n"
                        "}"))
                  @(d/transact conn [{:eacl/id "probe-user"}])
                  (seed-million! conn resource-count batch-size started))
@@ -379,9 +527,24 @@
          (reset! !progress (assoc @!progress :status :qualifying
                                   :final-basis final-basis))
          (let [result
-               (read-qualification uri final-basis resource-count seeded started)]
-           (reset! !progress {:status :complete :result result})
-           result))
+               (read-qualification uri final-basis resource-count seeded started)
+               errors (qualification-errors result)]
+           (when (seq errors)
+             (throw
+              (ex-info "Datomic million-resource qualification failed."
+                       {:type :eacl.operator-engine/datomic-qualification-failed
+                        :errors errors})))
+           (let [qualified-result
+                 (assoc result :qualification
+                        {:status :passed
+                         :checked-invariants 12
+                         :intersection-count
+                         (expected-selective-count resource-count)
+                         :exclusion-count
+                         (- resource-count
+                            (expected-selective-count resource-count))})]
+             (reset! !progress {:status :complete :result qualified-result})
+             qualified-result)))
        (catch Throwable error
          (let [last-progress @!progress]
            (reset! !progress

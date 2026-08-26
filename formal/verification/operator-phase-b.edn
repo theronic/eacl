@@ -79,7 +79,7 @@
     eacl.operator.recursive-test]}
   {:scope :portable-production-and-operator-mutation-parity
    :runtime :cljs
-   :tests 426 :assertions 9276 :failures 0 :errors 0 :status :passed
+   :tests 428 :assertions 9282 :failures 0 :errors 0 :status :passed
    :runner eacl.datascript.cljs-test-runner}
   {:scope :generated-recursive-command-boundary
    :runtime :clj-java
@@ -113,7 +113,7 @@
    :status :passed}
   {:scope :independent-operator-write-and-route-gates
    :runtime :clj
-   :tests 2 :assertions 7 :failures 0 :errors 0 :status :passed
+   :tests 2 :assertions 8 :failures 0 :errors 0 :status :passed
    :namespace eacl.operator.feature-gate-test
    :union-only-gate-combinations
    [{:operator-expression-writes false :operator-routing false}
@@ -123,7 +123,7 @@
   {:scope :operator-permission-tree-source-rendering
    :runtime :clj
    :tests 20 :assertions 184 :failures 0 :errors 0 :status :passed
-   :namespace eacl.permission-tree-test
+   :namespaces [eacl.permission-tree-test eacl.permission-tree-operator-test]
    :cljs-included-in :portable-production-and-operator-mutation-parity}]
  :bindings
  {:parser-codec-signed-graph
@@ -184,7 +184,7 @@
    :controls
    [:operator-expression-write-gate :operator-public-routing-gate]
    :default-state
-   {:operator-expression-writes false :operator-routing false}
+   {:operator-expression-writes true :operator-routing true}
    :union-only-independent true}
   :permission-tree
   {:production ["modules/eacl/src/eacl/permission_tree.cljc"]
@@ -244,15 +244,15 @@
   "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc"
   "317eb0525cfdfd02dfd9b090cf44c596812a79f7aad898380c5ecfe31e0ccdd3"
   "modules/eacl/src/eacl/client/orchestration.cljc"
-  "7438873e92f8544a18833e4524f7e8dd10bf5f154b1ef3a3c8f932d83c028c7d"
+  "60feab771bfe5dc3b39e0ea7779c1764117c9ccefdd9d18684f535e6818f8169"
   "modules/eacl/src/eacl/engine/v8.cljc"
-  "7d5e82d47879db407ab549550502c6fb5862ba0641a76a11029620aefa9c02b6"
+  "5cb78c8ae92e2733e273e9cf92e5f9e84eccf1784a2040321edc227916050990"
   "modules/eacl/src/eacl/permission_tree.cljc"
   "9c763c6b7b8fedf3fdcd23a4eb4fa99257bfff022a674060a66d0cc443833b39"}
  :assurance
  {:production-source-refinement
   :executable-differential-mutation-and-digest-closed
-  :public-operator-routing :withheld-until-performance-and-release-gates
+  :public-operator-routing :enabled-after-performance-and-release-gates-passed
   :public-operator-expression-writes
-  :withheld-until-performance-and-release-gates
+  :enabled-after-performance-and-release-gates-passed
   :independent-review :not-performed-not-required-for-execution}}

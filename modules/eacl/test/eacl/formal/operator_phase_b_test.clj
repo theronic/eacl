@@ -37,9 +37,9 @@
            (set (keys bindings))))
     (is (= :executable-differential-mutation-and-digest-closed
            (:production-source-refinement assurance)))
-    (is (= :withheld-until-performance-and-release-gates
+    (is (= :enabled-after-performance-and-release-gates-passed
            (:public-operator-routing assurance)))
-    (is (= :withheld-until-performance-and-release-gates
+    (is (= :enabled-after-performance-and-release-gates-passed
            (:public-operator-expression-writes assurance)))))
 
 (deftest production-refinement-source-digests-are-current-test

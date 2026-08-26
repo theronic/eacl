@@ -356,7 +356,6 @@ As long as the DB basis is recent enough for our consistency demands, we can avo
 
 Note that EACL has [Limitations](#limitations-deficiencies--gotchas) compared to SpiceDB, mainly:
 - No [Caveats](https://authzed.com/docs/spicedb/concepts/caveats) yet (needed for ABAC),
-- No `Negation` or `Intersection` operators yet,
 - and a few other minor differences.
 
 ## ReBAC: Relationship-based Access Control
@@ -643,7 +642,16 @@ Java 26; source builds may target Java 8 through Java 26, subject to their
 backend and application dependencies. See [formal/README.md](formal/README.md)
 for tool versions and the full verification commands.
 
-For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup, mandatory lifecycle/watermark inputs, write-policy boundary, and publication status are documented in the [`eacl-datalevin` module README](modules/eacl-datalevin/README.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source migration guide](docs/v8-snapshot-provider-migration.md).
+For permission operators, precedence, stratification, limits, ordering, cursors,
+cache behavior, and measured performance, see the [permission set-algebra
+guide](docs/permission-set-algebra.md). For module selection, current
+capability differences, cache mutation rules, and recursive controls, see the
+[backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup,
+mandatory lifecycle/watermark inputs, write-policy boundary, and publication
+status are documented in the [`eacl-datalevin` module
+README](modules/eacl-datalevin/README.md). Backend authors should also read the
+[adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source
+migration guide](docs/v8-snapshot-provider-migration.md).
 
 ### Schema & Relationships
 
@@ -656,23 +664,30 @@ To create a Relationship, first define your schema using `eacl/write-schema!`:
    definition account {
      relation owner: user
      relation viewer: user
+     relation active: user
+     relation banned: user
 
-     permission admin = owner
+     permission admin = owner - banned
+     permission view = (owner + viewer) & active
    }
 
    definition product {
      relation account: account
 
      permission edit = account->admin
-     permission view = account->admin + account->viewer
+     permission view = account->view
    }")
 ```
 
 This schema defines:
-- An `account`, which can have an `owner` and `viewer` users, with `admin` permission granted to owners.
-- A `product` belongs to an `account`, with `edit` permission for account admins and `view` permission for account admins and viewers
+- An `account`, which can have owner, viewer, active, and banned users, with
+  `admin` permission granted to non-banned owners.
+- A `product` belongs to an `account`, with `edit` permission for account
+  admins and `view` permission for active account owners or viewers.
 
-In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support exclusion (`-`) or intersection (`&`) yet.
+In the schema DSL, `+` is union, `&` is intersection, and `-` is directed set
+exclusion. Parentheses are supported. `+` binds more tightly than `&`, which
+binds more tightly than `-`; repeated exclusion associates from the left.
 
 ### Relationship Maintenance
 
@@ -1655,16 +1670,10 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   replacement require quiescing affected traffic, completing the operation,
   rotating the shared source lifecycle and affected clients/caches, and then
   resuming with deliberate token/cursor key-version policy.
-- *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
-  - `permission admin = owner + shared_admin` is valid,
-  - but `permission admin = owner - banned_member` is not.
-- Arrow syntax is limited to one level of nesting, e.g.
-  - `permission arrow = relation->via-permission` is supported,
-  - but `permission arrow = relation->subrelation->permission` is not. The target permission may itself contain an arrow, so longer graph traversals can be modelled through named permissions.
 - SpiceDB `subject#relation` subject sets are not supported. Model group membership with explicit group Relationships and arrow permissions when that expresses the required semantics.
 - *Expansion is structural, not a membership proof:* permission trees preserve
-  relation, permission, union, and arrow boundaries. Use `can?` for an
-  authorization decision.
+  relation, permission, union, intersection, directed exclusion, and arrow
+  boundaries. Use `can?` for an authorization decision.
 - *Cache coherence requires EACL authorization writers:* Bypassing EACL for
   schema, relationship, secured identity, or deletion mutations can
   leave cached answers stale. Stop affected traffic, repair the data, and
@@ -1706,9 +1715,9 @@ but it is not a byte-for-byte or operational clone:
   Datomic commits high-degree deletion in batches of 1,000; Datahike and
   DataScript use one atomic transaction. These do not have direct SpiceDB API
   equivalents.
-- EACL currently supports a smaller schema subset: unions and its documented
-  arrow forms, but not caveats, wildcard subjects, expiration, intersections,
-  exclusions, or subject relations.
+- EACL currently supports a smaller schema subset: unions, intersections,
+  exclusions, and its documented arrow forms, but not caveats, wildcard
+  subjects, expiration, or subject relations.
 - EACL evaluates relationship cycles as a fixed point and has no separate
   dispatch-depth limit for checks, lookups, and counts. These operations remain
   subject to configured traversal work limits. SpiceDB uses a configurable
