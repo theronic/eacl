@@ -245,6 +245,7 @@
       :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
       :deterministic? (:adapter-deterministic? opts)
+      :operator-physical-policy direct-membership/physical-policy-identity
       :identity-contract
       (:identity-contract opts
                           :selected-internal/current-external-injective-v2)

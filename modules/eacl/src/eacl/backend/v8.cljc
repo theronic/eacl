@@ -151,8 +151,10 @@
    :cursor #{}
    :transactions #{}
    :cache-proofs #{}
-   :runtime #{}
-   :direct-membership-batch #{}})
+   :runtime #{}})
+
+(def ^:private known-capability-groups
+  (conj (set (keys empty-capabilities)) :direct-membership-batch))
 
 (def ^:private scan-contract-keys
   #{:strict-order? :unique? :replayable? :strict-progress? :atomic-chunk?})
@@ -269,13 +271,13 @@
                       {:backend backend-id
                        :capabilities capabilities}))
   (let [normalized (merge empty-capabilities capabilities)
-        unknown-keys (seq (remove (set (keys empty-capabilities))
+        unknown-keys (seq (remove known-capability-groups
                                   (keys normalized)))]
     (when unknown-keys
       (invalid-adapter! "Backend declares unknown capability groups."
                         {:backend backend-id
                          :unknown-capabilities (vec unknown-keys)
-                         :known-capabilities (set (keys empty-capabilities))}))
+                         :known-capabilities known-capability-groups}))
     (doseq [[capability values] normalized]
       (when-not (set? values)
         (invalid-adapter! "Backend capability groups must contain sets."
@@ -360,7 +362,8 @@
 
 (defn make-adapter
   [{:keys [id capabilities operations state fingerprint deterministic?
-           identity-contract runtime-guards? traversal-execution]
+           identity-contract runtime-guards? traversal-execution
+           operator-physical-policy]
     :or {deterministic? true
          identity-contract :selected-internal/current-external-injective-v2}}]
   (when-not (keyword? id)
@@ -386,16 +389,28 @@
        :backend id
        :operation (first forbidden)
        :forbidden-operations (vec forbidden)})))
-  (doseq [operation-key optional-snapshot-operations
-          :when (and (contains? operations operation-key)
-                     (not (fn? (get operations operation-key))))]
+  (when (and (contains? operations :schema-generation)
+             (not (fn? (:schema-generation operations))))
     (invalid-adapter!
      "Optional backend operations must be functions when supplied."
      {:backend id
-      :operation operation-key
-      :value (get operations operation-key)}))
-  (let [missing (seq (remove #(ifn? (get operations %))
-                             required-snapshot-operations))]
+      :operation :schema-generation
+      :value (:schema-generation operations)}))
+  (when (and (contains? operations :direct-match-many?)
+             (not (fn? (:direct-match-many? operations))))
+    (invalid-adapter!
+     "Optional backend operations must be functions when supplied."
+     {:backend id
+      :operation :direct-match-many?
+      :value (:direct-match-many? operations)}))
+  (let [missing
+        (reduce
+         (fn [result operation]
+           (if (ifn? (get operations operation))
+             result
+             (conj result operation)))
+         nil
+         required-snapshot-operations)]
     (when missing
       (throw
        (ex-info
@@ -435,20 +450,39 @@
           :capability direct-membership-batch-capability
           :capability-present? batch-capability?
           :operation :direct-match-many?
-          :operation-present? batch-operation?})))
-  {::adapter true
-   ::version adapter-version
-   ::id id
-   ::capabilities normalized
-   ::traversal-execution traversal-execution
-   ::operations operations
-   ::fingerprint
-   (or fingerprint
-       {:backend id :adapter-version adapter-version})
-   ::deterministic? (boolean deterministic?)
-   ::identity-contract identity-contract
-   ::runtime-guards? (boolean runtime-guards?)
-   ::state state}))
+          :operation-present? batch-operation?}))
+      (when-not (= batch-capability? (some? operator-physical-policy))
+        (invalid-adapter!
+         "Native batched membership requires one sealed physical policy identity."
+         {:backend id
+          :capability direct-membership-batch-capability
+          :capability-present? batch-capability?
+          :physical-policy operator-physical-policy}))
+      (when (and operator-physical-policy
+                 (not (and (map? operator-physical-policy)
+                           (= #{:id :parameters}
+                              (set (keys operator-physical-policy)))
+                           (keyword? (:id operator-physical-policy))
+                           (map? (:parameters operator-physical-policy)))))
+        (invalid-adapter!
+         "Operator physical policy identity must be a closed versioned value."
+         {:backend id :physical-policy operator-physical-policy})))
+  (cond->
+   {::adapter true
+    ::version adapter-version
+    ::id id
+    ::capabilities normalized
+    ::traversal-execution traversal-execution
+    ::operations operations
+    ::fingerprint
+    (or fingerprint
+        {:backend id :adapter-version adapter-version})
+    ::deterministic? (boolean deterministic?)
+    ::identity-contract identity-contract
+    ::runtime-guards? (boolean runtime-guards?)
+    ::state state}
+    operator-physical-policy
+    (assoc ::operator-physical-policy operator-physical-policy))))
 
 (defn adapter?
   [candidate]
@@ -535,7 +569,10 @@
                  direct-membership-batch-capability)
               direct-membership-batch-capability
               :certified-scalar-fallback-v1)
-      :maximum-width maximum-direct-membership-batch-width}}
+      :maximum-width maximum-direct-membership-batch-width
+      :physical-policy
+      (or (::operator-physical-policy adapter)
+          {:id :certified-scalar-fallback-v1 :parameters {}})}}
     (invalid-adapter! "Value is not a v8 backend adapter."
                       {:value adapter})))
 

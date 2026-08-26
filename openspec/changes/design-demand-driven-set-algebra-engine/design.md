@@ -248,13 +248,13 @@ Datahike stores forward and reverse relationship tuples on endpoint-local EAVT a
 k    = candidate count
 span = checked(last-eid - first-eid + 1)
 
-if span <= 4 * k:
+if span <= 2 * k:
     bounded tuple-prefix merge from first through last
 else:
     sorted exact probes with inclusive/galloping seek reuse
 ```
 
-The `4` multiplier is versioned and must pass the pinned Datahike/MinIO gate before enablement. The safety argument does not depend on observed density: a unique integer-EID range contains at most `span` distinct relationship values, so range mode realizes at most four times the candidate count. Overflow or a non-portable identifier rejects range mode.
+The production `2` multiplier is versioned and selected by the pinned Datahike memory/file/MinIO gate. The safety argument does not depend on observed density: a unique integer-EID range contains at most `span` distinct relationship values, so range mode realizes at most twice the candidate count. The proved `4k` bound remains a conservative upper bound, not the selected production threshold. Overflow or a non-portable identifier rejects range mode.
 
 Prefix mode merges the sorted candidates against the endpoint/relation/type tuple prefix and stops after the last candidate. Sparse mode performs exact full-tuple probes or reuses an inclusive prefix cursor to gallop, whichever the adapter certification shows has fewer node accesses without widening the semantic demand. Both use the same borrowed immutable DB captured by the adapter. Neither calls `d/db`, schema lookup, or branch selection per candidate/batch.
 
@@ -366,7 +366,7 @@ Every allocation reserves its logical weight before mutation. Every backend subg
 
 - **[A sealed general anchor can be badly skewed]** -> Direct compatible intersections use anchor-independent leapfrog; general plans use bounded candidate-window continuation and honest telemetry. A statistics-driven generator is deferred because it would change order/cursor identity and needs its own validity model.
 - **[Low-selectivity pages may still issue many S3 GETs]** -> Adaptive batching bounds demand; Datahike groups by descriptor and selects compact range or sparse seeks; node and exact-scan caches elide repeats; MinIO gates measure misses rather than inferring them from logical probes.
-- **[Density by numeric EID span can miss a cheap range opportunity]** -> It is deliberately conservative: false negatives lose an optimization, while the `span <= 4k` rule gives a hard realized-value bound. The multiplier is versioned and benchmark-gated.
+- **[Density by numeric EID span can miss a cheap range opportunity]** -> It is deliberately conservative: false negatives lose an optimization, while the selected `span <= 2k` rule stays inside the proved hard realized-value bound. The multiplier is versioned and benchmark-gated.
 - **[Batch vectorization can violate scalar short-circuit error behavior]** -> Per-candidate masks issue only demanded leaves; any demanded subgroup failure atomically fails the vector; the scalar/vector formal differential includes failure partitions.
 - **[A batch can fail on work physically after the eventual page sentinel]** -> Issued vectors are explicit atomic semantic demand units and publish no partial prefix. Start at remaining accepted demand, preserve logical cursor progress, model this rule formally, and test failure placement before, at, and after the eventual sentinel.
 - **[Physical overread can corrupt pagination]** -> Separate physical probe accounting from logical candidate consumption; cursor proofs and mutation controls reject advancement past the logical sentinel/boundary.

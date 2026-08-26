@@ -10,7 +10,14 @@
             [eacl.request.counters :as request-counters]))
 
 (def physical-policy-version :datahike-density-bounded-v1)
-(def density-multiplier 4)
+(def density-multiplier 2)
+(def physical-policy-identity
+  {:id physical-policy-version
+   :parameters
+   {:density-multiplier density-multiplier
+    :maximum-width 256
+    :dense-kernel :endpoint-local-bounded-prefix-v1
+    :sparse-kernel :sorted-exact-seek-v1}})
 
 (def ^:dynamic *physical-stats*
   "Optional observation-only atom for dimensional batch telemetry."

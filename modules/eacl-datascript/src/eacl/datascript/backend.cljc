@@ -232,11 +232,19 @@
           (or (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))
         adapter-options (select-keys opts adapter-config-keys)
+        adapter-cache (volatile! nil)
         borrowed
         (fn [db]
-          {:adapter (basis-adapter db adapter-options)
-           :ownership :borrowed
-           :release-token nil})]
+          (let [{cached-db :db cached-adapter :adapter} @adapter-cache
+                adapter
+                (if (identical? cached-db db)
+                  cached-adapter
+                  (let [created (basis-adapter db adapter-options)]
+                    (vreset! adapter-cache {:db db :adapter created})
+                    created))]
+            {:adapter adapter
+             :ownership :borrowed
+             :release-token nil}))]
     (source/make-source
      {:id :datascript
       :capabilities source-capabilities

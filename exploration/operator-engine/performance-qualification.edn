@@ -1,0 +1,215 @@
+{:format-version 1
+ :captured-at "2026-08-26"
+ :status :accepted
+ :branch "agent/design-operator-engine-performance"
+ :frozen-base "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+ :current-pre-evidence-head "3292bc531df75935ae86a8cb8186dc72db251aea"
+ :environment
+ {:java "26.0.2"
+  :clojure "1.11.4"
+  :clojure-cli "1.12.5.1645"
+  :node "25.9.0"
+  :os "macOS 26.4.1"
+  :architecture "aarch64"
+  :processors 14}
+
+ :union-only
+ {:historical-baseline-qualification
+  {:path "exploration/baselines/perf-clj-datascript.edn"
+   :status :not-used-for-source-to-source-gate
+   :reason :records-the-removed-routed-acyclic-engine
+   :replacement :actual-frozen-base-commit}
+  :harness
+  {:path "modules/eacl-datascript/test/eacl/operator_engine/union_performance.clj"
+   :sha256
+   "4c4492f4a0fce28082f76c4ed76a59b3b98f0363ef024da221c5b3d38d85f9fe"
+   :command
+   "clojure -M:dev -e '(load-file \"/Users/petrus/code/eacl/core2/modules/eacl-datascript/test/eacl/operator_engine/union_performance.clj\") (prn (eacl.operator-engine.union-performance/run!))'"
+   :campaigns 3
+   :campaign-order [:current-1 :frozen-1 :current-2 :frozen-2
+                    :current-3 :frozen-3]
+   :samples-per-campaign 31
+   :warmups-per-operation 50
+   :fast-repetitions-per-sample 20
+   :slow-repetitions-per-sample 3
+   :explicit-gc-before-each-operation true}
+  :acceptance
+  {:deterministic-work :exact-equality-required
+   :maximum-latency-regression-percent 5.0
+   :maximum-allocation-regression-percent 5.0
+   :all-work-counters-equal true
+   :all-latency-gates-pass true
+   :all-allocation-gates-pass true
+   :operations-faster 15
+   :operations-within-envelope-but-not-faster 1}
+  :median-of-campaign-medians
+  {[:acyclic :owner-first-page-20]
+   {:frozen-ms 0.468143 :current-ms 0.448462 :latency-delta-percent -4.20
+    :frozen-bytes 1146259 :current-bytes 1166500
+    :allocation-delta-percent 1.77}
+   [:acyclic :point-check]
+   {:frozen-ms 0.082000 :current-ms 0.071516 :latency-delta-percent -12.79
+    :frozen-bytes 133956 :current-bytes 124404
+    :allocation-delta-percent -7.13}
+   [:acyclic :reverse-first-page-20]
+   {:frozen-ms 0.641468 :current-ms 0.633314 :latency-delta-percent -1.27
+    :frozen-bytes 1769044 :current-bytes 1786547
+    :allocation-delta-percent 0.99}
+   [:acyclic :stranger-empty-page]
+   {:frozen-ms 0.125579 :current-ms 0.042783 :latency-delta-percent -65.93
+    :frozen-bytes 213398 :current-bytes 77140
+    :allocation-delta-percent -63.85}
+   [:acyclic :super-user-count]
+   {:frozen-ms 15.115847 :current-ms 14.472722
+    :latency-delta-percent -4.25
+    :frozen-bytes 67061370 :current-bytes 67784890
+    :allocation-delta-percent 1.08}
+   [:acyclic :super-user-first-page-20]
+   {:frozen-ms 0.744135 :current-ms 0.641664
+    :latency-delta-percent -13.77
+    :frozen-bytes 1224781 :current-bytes 1246426
+    :allocation-delta-percent 1.77}
+   [:acyclic :user-1-first-page-20]
+   {:frozen-ms 0.605350 :current-ms 0.551466 :latency-delta-percent -8.90
+    :frozen-bytes 1148572 :current-bytes 1187087
+    :allocation-delta-percent 3.35}
+   [:acyclic :user-1-full-enumeration-100]
+   {:frozen-ms 61.691583 :current-ms 60.300500
+    :latency-delta-percent -2.25
+    :frozen-bytes 189359904 :current-bytes 195113562
+    :allocation-delta-percent 3.04}
+   [:recursive :owner-first-page-20]
+   {:frozen-ms 0.376270 :current-ms 0.378806 :latency-delta-percent 0.67
+    :frozen-bytes 1225810 :current-bytes 1260170
+    :allocation-delta-percent 2.80}
+   [:recursive :point-check]
+   {:frozen-ms 0.064793 :current-ms 0.061768 :latency-delta-percent -4.67
+    :frozen-bytes 142636 :current-bytes 132324
+    :allocation-delta-percent -7.23}
+   [:recursive :reverse-first-page-20]
+   {:frozen-ms 0.293818 :current-ms 0.236922
+    :latency-delta-percent -19.36
+    :frozen-bytes 753727 :current-bytes 780407
+    :allocation-delta-percent 3.54}
+   [:recursive :stranger-empty-page]
+   {:frozen-ms 0.091645 :current-ms 0.033754
+    :latency-delta-percent -63.17
+    :frozen-bytes 228252 :current-bytes 76796
+    :allocation-delta-percent -66.35}
+   [:recursive :super-user-count]
+   {:frozen-ms 5.576708 :current-ms 5.076125 :latency-delta-percent -8.98
+    :frozen-bytes 19617114 :current-bytes 19740130
+    :allocation-delta-percent 0.63}
+   [:recursive :super-user-first-page-20]
+   {:frozen-ms 0.438147 :current-ms 0.403352 :latency-delta-percent -7.94
+    :frozen-bytes 1294965 :current-bytes 1329640
+    :allocation-delta-percent 2.68}
+   [:recursive :user-1-first-page-20]
+   {:frozen-ms 0.417622 :current-ms 0.358620
+    :latency-delta-percent -14.13
+    :frozen-bytes 1242021 :current-bytes 1279042
+    :allocation-delta-percent 2.98}
+   [:recursive :user-1-full-enumeration-100]
+   {:frozen-ms 6.880208 :current-ms 6.817486 :latency-delta-percent -0.91
+    :frozen-bytes 25585088 :current-bytes 26563589
+    :allocation-delta-percent 3.82}}
+  :deterministic-work
+  {:operations 16
+   :campaigns-stable true
+   :current-equals-frozen true
+   :coverage [:point :forward-page :reverse-page :empty-page :bounded-page
+              :exact-count :full-enumeration :recursive]}}
+
+ :strategy-matrix
+ {:source "modules/eacl-datahike/test/eacl/operator_engine/experiments.clj"
+  :sha256
+  "563a9ad2e58f0088209e7927420d0739d82d489a00ac95eac09262398908c92d"
+  :seed 1597116743
+  :intersection-cases 108
+  :exclusion-cases 12
+  :dimensions
+  {:operands [2 3 5]
+   :selectivity [1 1/4 1/64 1/1024]
+   :page-demand [1 21 101]
+   :cache-state [:cold :half-warm :warm]
+   :strategies [:eager-collection :linear-merge :bad-scalar-driver
+                :good-scalar-driver :adaptive-vector
+                :leapfrog-galloping :anti-join]}
+  :acceptance
+  {:no-eager-selection true
+   :all-adaptive-bounded true
+   :warm-physical-predicates-zero true}
+  :adversarial-k-way
+  {:driver-cardinality 100000
+   :sparse-cardinality 100
+   :sequential-binary-head-comparisons 100199
+   :k-way-anchor-rounds 199
+   :bounded-demand 21
+   :bounded-anchor-rounds 41
+   :equal-results true}}
+
+ :recursive-state
+ {:seed 1597116743
+  :anchor-gated
+  {:trials 25000 :result-failures 0
+   :any-child-states 4798525 :anchor-gated-states 499797
+   :saved-states 4298728 :strictly-smaller-trials 25000}
+  :recursive-mixed
+  {:trials 5000 :result-failures 0 :arrival-order-failures 0
+   :retained-state-failures 0
+   :anchor-parent-slots 445115 :any-child-parent-slots 679789
+   :saved-parent-slots 234674}}
+
+ :datahike-physical-policy
+ {:accepted-identity
+  {:id :datahike-density-bounded-v1
+   :parameters
+   {:density-multiplier 2
+    :maximum-width 256
+    :dense-kernel :endpoint-local-bounded-prefix-v1
+    :sparse-kernel :sorted-exact-seek-v1}}
+  :source
+  {:path "modules/eacl-datahike/src/eacl/datahike/direct_membership.clj"
+   :sha256
+   "6a1513844f279aa6820c7661f8f4aadacd74825f862456e6553ad98bff060b5b"}
+  :memory-median-nanos
+  {1 {:exact 270459 :prefix 52834}
+   2 {:exact 240792 :prefix 103625}
+   4 {:exact 256750 :prefix 212375}
+   8 {:exact 278208 :prefix 409583}}
+  :file-median-nanos
+  {1 {:exact 383500 :prefix 60042}
+   2 {:exact 357834 :prefix 110209}
+   4 {:exact 386584 :prefix 225917}
+   8 {:exact 392791 :prefix 423375}}
+  :selection
+  {:multiplier-4 :rejected-by-minio
+   :multiplier-2 :accepted
+   :reason :avoids-extra-get-when-prefix-realization-reaches-exact-work}}
+
+ :adversarial-gates
+ {:tiny-result-over-huge-operands :passed
+  :empty-and-late-result :passed
+  :dense-exclusion :passed
+  :duplicate-heavy-union :passed
+  :deep-supported-arrows :passed
+  :batch-word-boundaries :passed
+  :candidate-window-continuation :passed
+  :bounded-memory :passed
+  :evidence
+  [:strategy-matrix
+   :k-way-100000-by-100
+   :minio-4096-resource-pages
+   :operator-plan-commutative-deduplication-tests
+   :least-path-deep-arrow-tests
+   :primitive-and-recursive-word-boundary-tests
+   :public-empty-bounded-progress-tests]}
+
+ :limit-calibration
+ {:expression-limits :retained
+  :vector-width 256
+  :join-state-limits :retained
+  :checkpoint-limits :retained
+  :candidate-window :retained
+  :remote-read-ceilings :see-minio-qualification
+  :changed-policy [:datahike-density-multiplier-4-to-2]}}

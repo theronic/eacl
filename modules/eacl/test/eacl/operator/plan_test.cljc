@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
             [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.operator.cover-plan :as cover-plan]
             [eacl.operator.plan :as plan]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]))
@@ -141,6 +142,10 @@
          native-batch?
          (assoc :direct-membership-batch
                 #{backend/direct-membership-batch-capability}))
+       :operator-physical-policy
+       (when native-batch?
+         {:id :fake-native-policy-v1
+          :parameters {:maximum-width 256}})
        :operations operations}))))
 
 (deftest union-only-plan-remains-byte-identical-test
@@ -162,7 +167,7 @@
     (is (= (:anchors left) (:anchors right)))
     (is (= (:witness-programs left) (:witness-programs right)))
     (is (= plan/order-contract (:order-contract left)))
-    (is (= "gCcjhCBQyQ1ZiFJUusBK9YCyVErlUJVFnWVPK1u_n3s"
+    (is (= "qbgt_ARJfd9I6hMnpX1PzI5of7_Nvh7UmYgThMfPBDc"
            (:fingerprint left))
         "the canonical plan fingerprint is identical in CLJ and CLJS")))
 
@@ -236,6 +241,14 @@
            (get-in native [:capability-identity
                            :direct-membership :mode])))
     (is (not= (:fingerprint scalar) (:fingerprint native)))))
+
+(deftest native-policy-identity-survives-cover-adapter-test
+  (let [basis (adapter direct-operator-schema :native-cover true)
+        operator-plan (plan/seal-plan basis [:document :view])
+        cover (cover-plan/seal-plan basis operator-plan)]
+    (is (string? (:fingerprint cover)))
+    (is (= [[:document :view] (:root (first (:expressions operator-plan)))]
+           (:operator-root-semantic cover)))))
 
 (deftest validation-rejects-missing-malformed-and-stale-evidence-test
   (let [basis-adapter (adapter direct-operator-schema :validation)

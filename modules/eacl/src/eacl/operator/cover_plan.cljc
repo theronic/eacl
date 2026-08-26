@@ -158,16 +158,23 @@
           (assoc :direct-match-many?
                  (forwarding-operation adapter :direct-match-many?)))]
     (backend/make-adapter
-     {:id (backend/backend-id adapter)
-      :capabilities (backend/capabilities adapter)
-      :traversal-execution (backend/traversal-execution adapter)
-      :fingerprint {:base (backend/fingerprint adapter)
-                    :operator-cover (:fingerprint operator-plan)}
-      :deterministic? (backend/deterministic? adapter)
-      :identity-contract (backend/identity-contract adapter)
-      :runtime-guards? (backend/runtime-guards? adapter)
-      :state (backend/state adapter)
-      :operations operations})))
+     (cond->
+      {:id (backend/backend-id adapter)
+       :capabilities (backend/capabilities adapter)
+       :traversal-execution (backend/traversal-execution adapter)
+       :fingerprint {:base (backend/fingerprint adapter)
+                     :operator-cover (:fingerprint operator-plan)}
+       :deterministic? (backend/deterministic? adapter)
+       :identity-contract (backend/identity-contract adapter)
+       :runtime-guards? (backend/runtime-guards? adapter)
+       :state (backend/state adapter)
+       :operations operations}
+       (backend/supports?
+        adapter :direct-membership-batch
+        backend/direct-membership-batch-capability)
+       (assoc :operator-physical-policy
+              (get-in (backend/operator-capability-identity adapter)
+                      [:direct-membership :physical-policy]))))))
 
 (defn seal-plan
   ([adapter plan]

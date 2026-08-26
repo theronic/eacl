@@ -41,6 +41,8 @@
      :capabilities
      {:direct-membership-batch
       #{backend/direct-membership-batch-capability}}
+     :operator-physical-policy
+     {:id :native-test-policy-v1 :parameters {:maximum-width 256}}
      :runtime-guards? true
      :operations (assoc (required-operations direct-match)
                         :direct-match-many? batch)})))

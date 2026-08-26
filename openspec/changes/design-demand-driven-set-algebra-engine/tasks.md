@@ -56,7 +56,7 @@
 - [x] 5.4 Add forward/reverse Datahike differential tests over dense, sparse, empty, all-present, all-absent, mixed, overflow, numeric-extreme, cancelled, and temporal/unsupported wrapper cases.
 - [x] 5.5 Implement or explicitly select certified scalar fallback for Datomic, DataScript, and Datalevin; add native batching only where it beats scalar work without widening demand.
 - [x] 5.6 Add dimensional telemetry for scalar-equivalent predicates, physical subgroups, exact seeks, galloping reseeks, prefix values, cache hits, adapter commands, fetched values, and batch overread.
-- [ ] 5.7 Benchmark multiplier values around the proved bound, retain `4` only if Datahike memory/file/MinIO gates support it, and seal the accepted physical-policy identity into compatibility data.
+- [x] 5.7 Benchmark multiplier values around the proved bound, retain `4` only if Datahike memory/file/MinIO gates support it, and seal the accepted physical-policy identity into compatibility data.
 
 ## 6. Compile canonical operator plans
 
@@ -124,15 +124,15 @@
 
 ## 12. Gate CPU, allocation, recursion, and remote I/O performance
 
-- [ ] 12.1 Add strategy microbenchmarks for eager collection, linear merge, bad/good scalar driver, adaptive vector predicate, leapfrog/galloping, anti-join, dense prefix, and sparse exact probes across selectivity, skew, operands, page sizes, and cache states.
-- [ ] 12.2 Require union-only point/page/reverse/count/recursive deterministic work to remain unchanged and matched-host median latency/allocation to remain within five percent of the frozen baseline.
-- [ ] 12.3 Add adversarial operator gates for tiny result over huge operands, empty/late result, dense exclusion, duplicate-heavy union, deep supported arrows, batch word boundaries, and candidate-window continuation with bounded memory.
-- [ ] 12.4 Measure anchor versus any-child reference state on recursive stars/chains/mixed graphs; require exact denotation and parent-state cardinality no greater than typed anchor facts.
-- [ ] 12.5 Extend the Datahike demo's loopback MinIO harness to isolate basis/branch metadata GETs, Datahike `:reads`, index-node misses, physical keys/bytes, EACL candidates/probes/batches, cache occupancy, allocation, and latency.
-- [ ] 12.6 Measure Datahike cold first page, immediate warm repeat, adjacent pages, sparse/dense batches, high/low overlap, dense/sparse exclusion, arrows, cache eviction, candidate-window progress, and exact count with fixed seeds and store/node-cache configuration.
-- [ ] 12.7 Check in separate accepted numeric ceilings for cold bounded pages, warm index GETs, continuation, bounded progress, and exhaustive count; require zero immediate warm index GETs only when the measured working set remains resident.
-- [ ] 12.8 Run bounded pages/counts separately from full enumeration/exact count and block any report or release gate that blends their latency, GETs, or logical work.
-- [ ] 12.9 Recalibrate expression, vector, join-state, checkpoint, batch, candidate, and remote-read defaults from accepted evidence; version any changed policy and rerun formal/cursor/cache compatibility gates.
+- [x] 12.1 Add strategy microbenchmarks for eager collection, linear merge, bad/good scalar driver, adaptive vector predicate, leapfrog/galloping, anti-join, dense prefix, and sparse exact probes across selectivity, skew, operands, page sizes, and cache states.
+- [x] 12.2 Require union-only point/page/reverse/count/recursive deterministic work to remain unchanged and matched-host median latency/allocation to remain within five percent of the frozen baseline.
+- [x] 12.3 Add adversarial operator gates for tiny result over huge operands, empty/late result, dense exclusion, duplicate-heavy union, deep supported arrows, batch word boundaries, and candidate-window continuation with bounded memory.
+- [x] 12.4 Measure anchor versus any-child reference state on recursive stars/chains/mixed graphs; require exact denotation and parent-state cardinality no greater than typed anchor facts.
+- [x] 12.5 Extend the Datahike demo's loopback MinIO harness to isolate basis/branch metadata GETs, Datahike `:reads`, index-node misses, physical keys/bytes, EACL candidates/probes/batches, cache occupancy, allocation, and latency.
+- [x] 12.6 Measure Datahike cold first page, immediate warm repeat, adjacent pages, sparse/dense batches, high/low overlap, dense/sparse exclusion, arrows, cache eviction, candidate-window progress, and exact count with fixed seeds and store/node-cache configuration.
+- [x] 12.7 Check in separate accepted numeric ceilings for cold bounded pages, warm index GETs, continuation, bounded progress, and exhaustive count; require zero immediate warm index GETs only when the measured working set remains resident.
+- [x] 12.8 Run bounded pages/counts separately from full enumeration/exact count and block any report or release gate that blends their latency, GETs, or logical work.
+- [x] 12.9 Recalibrate expression, vector, join-state, checkpoint, batch, candidate, and remote-read defaults from accepted evidence; version any changed policy and rerun formal/cursor/cache compatibility gates.
 
 ## 13. Release gating and documentation
 

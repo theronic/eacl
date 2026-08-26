@@ -294,6 +294,8 @@
                  :capabilities
                  {:direct-membership-batch
                   #{backend/direct-membership-batch-capability}}
+                 :operator-physical-policy
+                 {:id :test-batch-policy-v1 :parameters {}}
                  :operations
                  (assoc (operation-map)
                         :direct-match-many? (constantly []))})]
@@ -302,11 +304,16 @@
             :direct-membership
             {:mode :certified-scalar-fallback-v1
              :maximum-width
-             backend/maximum-direct-membership-batch-width}}
+             backend/maximum-direct-membership-batch-width
+             :physical-policy
+             {:id :certified-scalar-fallback-v1 :parameters {}}}}
            (backend/operator-capability-identity scalar)))
     (is (= backend/direct-membership-batch-capability
            (get-in (backend/operator-capability-identity native)
-                   [:direct-membership :mode])))))
+                   [:direct-membership :mode])))
+    (is (= {:id :test-batch-policy-v1 :parameters {}}
+           (get-in (backend/operator-capability-identity native)
+                   [:direct-membership :physical-policy])))))
 
 (deftest schema-generation-is-optional-independent-and-memoized-test
   (let [reads (atom 0)

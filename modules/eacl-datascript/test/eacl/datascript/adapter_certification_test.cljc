@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.adapter-certification :as certification]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as v8]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
@@ -140,3 +141,25 @@
           "a committed transaction must replace the immutable DB object")
       (is (identical? after-1 after-2)
           "the replacement remains stable until the next commit"))))
+
+(deftest live-source-reuses-only-the-identical-immutable-basis-adapter-test
+  (let [conn (datascript/create-conn)
+        live-source
+        (datascript-backend/source
+         conn
+         {:native-source-id :adapter-reuse-test
+          :source-lifecycle :adapter-reuse-test})
+        first-selected (source/acquire! live-source :current)
+        first-adapter (source/adapter first-selected)
+        _ (source/release! first-selected)
+        second-selected (source/acquire! live-source :current)
+        second-adapter (source/adapter second-selected)
+        _ (source/release! second-selected)
+        _ (ds/transact! conn [{:eacl/id "rotated-basis"}])
+        third-selected (source/acquire! live-source :current)
+        third-adapter (source/adapter third-selected)]
+    (try
+      (is (identical? first-adapter second-adapter))
+      (is (not (identical? second-adapter third-adapter)))
+      (finally
+        (source/release! third-selected)))))

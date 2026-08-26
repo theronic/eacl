@@ -13,7 +13,8 @@
             [eacl.datahike.impl :as datahike-impl]
             [eacl.datahike.schema :as datahike-schema]
             [eacl.relationships.storage :as relationship-storage])
-  (:import (java.util ArrayList Collections Random)))
+  (:import (java.nio.file Files)
+           (java.util ArrayList Collections Random)))
 
 (def experiment-seed 1597116743)
 (def physical-batch-cap 256)
@@ -665,31 +666,51 @@
               (range 256))]
     {:dense dense :sparse sparse}))
 
-(defn- datahike-case
-  [db subject-eid relation-eid candidates]
-  (let [exact (exact-decisions db subject-eid relation-eid candidates)
-        prefix (prefix-decisions db subject-eid relation-eid candidates)]
-    {:candidate-count (count candidates)
-     :span (inc (- (peek candidates) (first candidates)))
-     :equal-decisions? (= exact (:decisions prefix))
-     :accepted (count (filter true? exact))
-     :prefix-values (:values-scanned prefix)
-     :exact-median-nanos
-     (benchmark-nanos
-      #(exact-decisions db subject-eid relation-eid candidates))
-     :prefix-median-nanos
-     (benchmark-nanos
-      #(prefix-decisions db subject-eid relation-eid candidates))}))
+(defn- span-candidates
+  "Returns 256 distinct ordered candidates spread across an exact EID-index
+  span. The relationship fixture uses every resource, so realized prefix work
+  is equal to the selected span apart from a possible endpoint overread."
+  [resource-eids start-index span]
+  (let [candidate-count 256
+        last-offset (dec span)]
+    (mapv (fn [candidate-index]
+            (nth resource-eids
+                 (+ start-index
+                    (quot (* candidate-index last-offset)
+                          (dec candidate-count)))))
+          (range candidate-count))))
 
-(defn datahike-density-experiment
-  []
-  (let [conn (datahike/create-conn)
+(declare datahike-case)
+
+(defn- multiplier-cases
+  [db subject-eid relation-eid resource-eids]
+  (into
+   (sorted-map)
+   (for [span-factor [1 2 4 8]
+         :let [candidates
+               (span-candidates resource-eids 1000 (* 256 span-factor))
+               result (datahike-case db subject-eid relation-eid candidates)]]
+     [span-factor
+      (assoc result
+             :span-factor span-factor
+             :selected-strategies
+             (into (sorted-map)
+                   (for [multiplier [1 2 4 8]]
+                     [multiplier
+                      (if (<= (:span result)
+                              (* multiplier (:candidate-count result)))
+                        :bounded-prefix
+                        :sparse-exact)])))])))
+
+(defn- datahike-density-run
+  [config store-backend]
+  (let [conn (datahike/create-conn nil config)
         config (ddb/db-config (d/db conn))
         client (datahike/make-client
                 conn
                 {:cache cache/no-cache
                  :security-key "operator-engine-datahike-experiment"})
-        resource-count 20000
+        resource-count 4096
         user (eacl/spice-object :user "probe-user")
         resources
         (mapv #(eacl/spice-object :resource (format "r-%05d" %))
@@ -729,16 +750,174 @@
                  vec)
             candidates (candidate-vectors resource-eids)]
         {:datahike-version "0.8.1759"
-         :store-backend :memory
+         :store-backend store-backend
          :resource-count resource-count
          :seed-nanos (- (System/nanoTime) start)
          :dense
          (datahike-case db subject-eid relation-eid (:dense candidates))
          :sparse
-         (datahike-case db subject-eid relation-eid (:sparse candidates))})
+         (datahike-case db subject-eid relation-eid (:sparse candidates))
+         :multipliers
+         (multiplier-cases db subject-eid relation-eid resource-eids)})
       (finally
         (d/release conn)
         (d/delete-database config)))))
+
+(defn- datahike-case
+  [db subject-eid relation-eid candidates]
+  (let [exact (exact-decisions db subject-eid relation-eid candidates)
+        prefix (prefix-decisions db subject-eid relation-eid candidates)]
+    {:candidate-count (count candidates)
+     :span (inc (- (peek candidates) (first candidates)))
+     :equal-decisions? (= exact (:decisions prefix))
+     :accepted (count (filter true? exact))
+     :prefix-values (:values-scanned prefix)
+     :exact-median-nanos
+     (benchmark-nanos
+      #(exact-decisions db subject-eid relation-eid candidates))
+     :prefix-median-nanos
+     (benchmark-nanos
+      #(prefix-decisions db subject-eid relation-eid candidates))}))
+
+(defn datahike-density-experiment
+  []
+  (datahike-density-run {} :memory))
+
+(defn datahike-multiplier-experiment
+  "Benchmarks the proved multiplier neighborhood on warm memory and file
+  stores. MinIO is deliberately a separate harness because its cold-node and
+  physical-GET accounting must not be blended with these warmed timings."
+  []
+  (let [temp-dir (Files/createTempDirectory
+                  "eacl-operator-density-"
+                  (make-array java.nio.file.attribute.FileAttribute 0))]
+    (try
+      {:accepted-multiplier 2
+       :memory (:multipliers (datahike-density-run {} :memory))
+       :file
+       (:multipliers
+        (datahike-density-run
+         {:store {:backend :file :path (str temp-dir "/db")}}
+         :file))}
+      (finally
+        (Files/deleteIfExists temp-dir)))))
+
+(defn- scalar-driver-work
+  [driver accepted? unresolved-operands demand cache-fraction]
+  (loop [remaining driver candidates 0 accepted 0]
+    (if (or (= accepted demand) (empty? remaining))
+      {:candidates candidates
+       :logical-predicates (* candidates unresolved-operands)
+       :physical-predicates
+       (long (Math/ceil (* candidates unresolved-operands cache-fraction)))
+       :accepted accepted}
+      (let [candidate (first remaining)]
+        (recur (rest remaining)
+               (inc candidates)
+               (+ accepted (if (accepted? candidate) 1 0)))))))
+
+(defn- intersection-strategy-case
+  [universe-size operand-count step demand cache-state]
+  (let [driver (vec (range universe-size))
+        selective (vec (range 0 universe-size step))
+        operands (into [driver] (repeat (dec operand-count) selective))
+        operand-sets (mapv set operands)
+        accepted? #(every? (fn [values] (contains? values %))
+                           (rest operand-sets))
+        cache-fraction (case cache-state :cold 1.0 :half-warm 0.5 :warm 0.0)
+        bad-driver
+        (scalar-driver-work driver accepted? (dec operand-count)
+                            demand cache-fraction)
+        good-driver
+        (scalar-driver-work selective (constantly true) (dec operand-count)
+                            demand cache-fraction)
+        adaptive
+        (adaptive-batches accepted? demand (count driver))
+        linear (sequential-binary-intersection driver (rest operands))
+        seekable (k-way-leapfrog driver (rest operands) demand)]
+    {:dimensions {:universe universe-size
+                  :operands operand-count
+                  :selectivity (/ 1 step)
+                  :page-demand demand
+                  :cache-state cache-state}
+     :eager {:collected-values (reduce + (map count operands))}
+     :linear-merge
+     {:head-comparisons (get-in linear [:counters :head-comparisons])
+      :accepted (count (:results linear))}
+     :bad-scalar-driver bad-driver
+     :good-scalar-driver good-driver
+     :adaptive-vector
+     (select-keys adaptive
+                  [:accepted :logical-candidates :physical-candidates
+                   :batches :bounded?])
+     :leapfrog-galloping
+     (assoc (:counters seekable) :accepted (count (:results seekable)))}))
+
+(defn- anti-join
+  [left right demand]
+  (loop [left-index 0 right-index 0 results [] comparisons 0]
+    (if (or (= (count results) demand) (= left-index (count left)))
+      {:accepted (count results)
+       :left-candidates left-index
+       :right-advances right-index
+       :comparisons comparisons}
+      (let [left-value (nth left left-index)]
+        (if (= right-index (count right))
+          (recur (inc left-index) right-index
+                 (conj results left-value) comparisons)
+          (let [right-value (nth right right-index)]
+            (cond
+              (< right-value left-value)
+              (recur left-index (inc right-index) results (inc comparisons))
+
+              (= right-value left-value)
+              (recur (inc left-index) (inc right-index)
+                     results (inc comparisons))
+
+              :else
+              (recur (inc left-index) right-index
+                     (conj results left-value) (inc comparisons)))))))))
+
+(defn strategy-matrix-experiment
+  "Deterministic dimensional strategy matrix. Timings are intentionally kept
+  out of the acceptance predicate; exact work counters make the comparison
+  reproducible across hosts."
+  []
+  (let [universe-size 4096
+        intersections
+        (vec
+         (for [operand-count [2 3 5]
+               step [1 4 64 1024]
+               demand [1 21 101]
+               cache-state [:cold :half-warm :warm]]
+           (intersection-strategy-case universe-size operand-count step
+                                       demand cache-state)))
+        left (vec (range universe-size))
+        exclusions
+        (vec
+         (for [right-step [1 2 4 64]
+               demand [1 21 101]
+               :let [right (vec (range 0 universe-size right-step))]]
+           {:dimensions {:left-cardinality (count left)
+                         :right-cardinality (count right)
+                         :page-demand demand}
+            :eager-right-values (count right)
+            :anti-join (anti-join left right demand)}))]
+    {:format-version 1
+     :intersection-cases (count intersections)
+     :exclusion-cases (count exclusions)
+     :intersections intersections
+     :exclusions exclusions
+     :acceptance
+     {:no-eager-selection true
+      :all-adaptive-bounded?
+      (every? #(true? (get-in % [:adaptive-vector :bounded?]))
+              intersections)
+      :warm-physical-predicates-zero?
+      (every? #(zero? (get-in % [:bad-scalar-driver
+                                  :physical-predicates]))
+              (filter #(= :warm (get-in % [:dimensions :cache-state]))
+                      intersections))}}))
 
 (defn run-deterministic
   ([] (run-deterministic {}))
@@ -752,6 +931,7 @@
     :adaptive-batching (adaptive-batch-experiment)
     :leapfrog (leapfrog-experiment)
     :k-way-leapfrog (k-way-leapfrog-experiment)
+    :strategy-matrix (strategy-matrix-experiment)
     :memoization (memoization-experiment)
     :anchor-gated
     (anchor-gated-experiment {:trials anchor-trials})
