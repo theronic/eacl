@@ -120,7 +120,7 @@
 - [x] 11.3 Run the digest-pinned `eacl-spicedb` corpus and randomized shared-subset comparisons through public APIs; compare sets/cardinality, record intentional boundary cases, and never require SpiceDB return order.
 - [x] 11.4 Verify permission-tree operator rendering, non-semantic union/intersection child order, directed exclusion children, snapshot selection, limits, cancellation, and no relationship enumeration during schema expansion.
 - [x] 11.5 Exercise clean expression-only install, flat-only/mixed/conflicting storage rejection, union-only plan compatibility, expression replacement, failed-write atomicity, export/import, and backup/restore on every backend; verify no migration or dual-write path exists.
-- [ ] 11.6 Re-run the complete pre-operator union-only corpus and require identical values, order, cursors, fingerprints where promised, deterministic counters, cache behavior, and recursive traces.
+- [x] 11.6 Re-run the complete pre-operator union-only corpus and require identical values, order, cursors, fingerprints where promised, deterministic counters, cache behavior, and recursive traces.
 
 ## 12. Gate CPU, allocation, recursion, and remote I/O performance
 

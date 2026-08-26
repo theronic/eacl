@@ -18,11 +18,12 @@
     ;; revisions to proof-equivalent authorization frames, removing three
     ;; request-path revision observations without changing the closed operation
     ;; set.
-    ;; 49 -> 60 (2026-08-26): expression-native planning added the literal
+    ;; 49 -> 61 (2026-08-26): expression-native planning and permission-tree
+    ;; rendering added literal
     ;; :permission-expression read and demand-driven membership batching added
     ;; :direct-match-many?. Both are closed adapter capabilities and appear in
     ;; the CLJ and CLJS reader passes.
-    :invoke-call-count 60
+    :invoke-call-count 61
    :operations
    #{:snapshot-id
      :basis-kind
@@ -42,7 +43,7 @@
      :schema-generation
      :proof-frame}}
   :cljs
-  {:invoke-call-count 60
+  {:invoke-call-count 61
    :operations
    #{:snapshot-id
      :basis-kind
