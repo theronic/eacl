@@ -66,7 +66,8 @@
         (if (and (int? limit) (pos? limit))
           (into [] (take limit) values)
           (vec values))]
-    (metrics/record-scan! descriptor result)
+    (when metrics/*store*
+      (metrics/record-scan! descriptor result))
     result))
 
 (defn classified-fetch-fn

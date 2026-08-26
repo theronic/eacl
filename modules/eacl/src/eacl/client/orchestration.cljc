@@ -391,7 +391,11 @@
               expression-persistence/*expression-limits*
               (:expression-limits opts)
               metrics/*store* (:relationship-observations opts)
-              metrics/*context* (metric-observation-context opts)
+              metrics/*context*
+              ;; Context construction is part of recording work: skip it
+              ;; entirely when observations are disabled.
+              (when (:relationship-observations opts)
+                (metric-observation-context opts))
               engine/*proof-frame* (:request-proof-frame opts)]
       (f))
     (f)))
@@ -674,7 +678,8 @@
                            metrics/*store*
                            (:relationship-observations opts)
                            metrics/*context*
-                           (metric-observation-context opts)
+                           (when (:relationship-observations opts)
+                             (metric-observation-context opts))
                            engine/*proof-frame* request-proof-frame
                            engine/*request-lineage*
                            (:request-lineage opts)
@@ -1591,10 +1596,11 @@
                       (validate!)
                       (let [result (engine/count-resources
                                     adapter internal-query)]
-                        (metrics/record-count!
-                         (assoc (dissoc internal-query :count-limit)
-                                :operation :count-resources)
-                         :forward result)
+                        (when metrics/*store*
+                          (metrics/record-count!
+                           (assoc (dissoc internal-query :count-limit)
+                                  :operation :count-resources)
+                           :forward result))
                         result)))]
               (with-cache-info (:value answer) answer))))))))
 
@@ -1766,10 +1772,11 @@
                       (validate!)
                       (let [result (engine/count-subjects
                                     adapter internal-query)]
-                        (metrics/record-count!
-                         (assoc (dissoc internal-query :count-limit)
-                                :operation :count-subjects)
-                         :reverse result)
+                        (when metrics/*store*
+                          (metrics/record-count!
+                           (assoc (dissoc internal-query :count-limit)
+                                  :operation :count-subjects)
+                           :reverse result))
                         result)))]
               (with-cache-info (:value answer) answer))))))))
 
@@ -2898,6 +2905,7 @@
     :aggregate-limits
     :cache-attempt
     :service-admission
+    :relationship-observations?
     :read-only?})
 
 (defn- valid-security-kid?
@@ -3180,7 +3188,13 @@
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
           :derived-schema-caches (atom {})
-          :relationship-observations (metrics/make-store)
+          ;; Non-authoritative optimization observations have no production
+          ;; consumer yet, and their keys embed the basis high-watermark, so
+          ;; on a write-active source every request would mint unreusable
+          ;; entries. Recording is opt-in until a consumer lands.
+          :relationship-observations
+          (when (true? (:relationship-observations? config-opts))
+            (metrics/make-store))
           :adapter-fingerprint
           (or adapter-fingerprint
               {:backend (:backend-id api)

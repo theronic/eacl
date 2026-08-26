@@ -58,9 +58,12 @@
 
 (deftest cache-only-metrics-refresh-preserves-results-and-cursors-test
   (let [conn (datascript/create-conn)
+        ;; Relationship observations are opt-in; this contract exercises the
+        ;; recording and refresh machinery, so it is the consumer.
         client (datascript/make-client
                 conn {:security-key
-                      "metrics-refresh00000000000000000"})
+                      "metrics-refresh00000000000000000"
+                      :relationship-observations? true})
         alice (eacl/spice-object :user "metrics-alice")
         documents (mapv #(eacl/spice-object
                           :document (str "metrics-d" %))
