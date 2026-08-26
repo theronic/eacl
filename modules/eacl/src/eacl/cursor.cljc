@@ -170,9 +170,20 @@
                           :reason reason}
                          data))))
 
+(def ^:private format-option-keys
+  "The only top-level cursor options consumed by the secure-format codec.
+  Request execution, schema, proof, cache, and adapter state must not be
+  copied into this hot-path options map."
+  [:current-kid
+   :keyring
+   :maximum-size
+   :maximum-depth
+   :maximum-entries])
+
 (defn- format-options
   [options]
-  (merge options (:format-options options)))
+  (merge (select-keys options format-option-keys)
+         (:format-options options)))
 
 (defn- aead-error!
   [reason data]
@@ -334,7 +345,8 @@
             {:encryption-key encryption-key
              :authenticate authenticate
              :kid-segment kid-segment}))]
-    (if-let [cache (:cursor-codec-cache options)]
+    (if-let [cache (or (:cursor-codec-cache options)
+                       (:cursor-construction-cache options))]
       (memoized-key-context!
        cache [:cursor-aead-encode-context 1 identity] build)
       (build))))

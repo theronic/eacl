@@ -121,6 +121,43 @@
   []
   (edn/read-string (slurp (io/file baseline-index-file))))
 
+(defn- remove-basis-local-coordinates
+  [snapshot]
+  (update snapshot :fixtures
+          (fn [fixtures]
+            (into
+             (sorted-map)
+             (map
+              (fn [[fixture-key directions]]
+                [fixture-key
+                 (into
+                  {}
+                  (map
+                   (fn [[direction payload]]
+                     [direction
+                      (-> payload
+                          (update :start-edge dissoc :coords)
+                          (update :end-edge dissoc :coords))]))
+                  directions)]))
+             fixtures))))
+
+(defn- coordinate-shapes
+  [snapshot]
+  (into
+   (sorted-map)
+   (for [[fixture-key directions] (:fixtures snapshot)]
+     [fixture-key
+      (into
+       {}
+       (for [[direction payload] directions]
+         [direction
+          (mapv
+           (fn [edge-key]
+             (when-let [coords (get-in payload [edge-key :coords])]
+               {:count (count coords)
+                :integers? (every? integer? coords)}))
+           [:start-edge :end-edge])]))])))
+
 (defn- sha256-file
   [path]
   (let [digest
@@ -139,9 +176,13 @@
                 digest-domain
                 (baseline/capture-fixture fixture-key))))))))
 
-(deftest decoded-union-only-cursor-payloads-test
-  (is (= (read-cursor-snapshot)
-         (capture-cursor-payloads))))
+(deftest decoded-union-only-cursor-semantics-test
+  (let [expected (read-cursor-snapshot)
+        actual (capture-cursor-payloads)]
+    (is (= (remove-basis-local-coordinates expected)
+           (remove-basis-local-coordinates actual)))
+    (is (= (coordinate-shapes expected)
+           (coordinate-shapes actual)))))
 
 (deftest matched-host-performance-and-cursor-artifacts-are-frozen-test
   (let [index (read-baseline-index)]

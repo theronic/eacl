@@ -8,11 +8,47 @@
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
+            [eacl.datascript.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
+
+(deftest missing-anchor-validation-reuses-derived-schema-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        missing-user (contract/->user "missing")
+        missing-server (contract/->server "missing")
+        reads (atom 0)
+        original-read-schema schema/read-schema]
+    (eacl/write-schema! client contract/smoke-schema)
+    (with-redefs [schema/read-schema
+                  (fn [db]
+                    (swap! reads inc)
+                    (original-read-schema db))]
+      (is (= []
+             (:data
+              (eacl/lookup-resources
+               client {:subject missing-user
+                       :permission :view
+                       :resource/type :server
+                       :first 20
+                       :cache? false}))))
+      (is (= 0
+             (:count
+              (eacl/count-resources
+               client {:subject missing-user
+                       :permission :view
+                       :resource/type :server
+                       :cache? false}))))
+      (is (false?
+           (eacl/can? client {:subject missing-user
+                              :permission :view
+                              :resource missing-server
+                              :cache? false})))
+      (is (= 1 @reads)
+          "missing-anchor validation decodes one immutable schema generation"))))
 
 (def ^:private permission-tree-schema
   "definition user {}

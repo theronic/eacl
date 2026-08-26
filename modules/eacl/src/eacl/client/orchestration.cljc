@@ -332,6 +332,18 @@
            :request-proof-frame (request-context/proof-frame context)
            :request-schema-cache (delay (request-context/derived context)))))
 
+(defn- call-with-request-schema-cache
+  "Runs selected-snapshot schema work against the request's proof-keyed
+  derived generation.  This is schema decoding reuse, not authorization
+  answer caching, and therefore remains active when `:cache? false` bypasses
+  all result and subproblem caches."
+  [opts f]
+  (if-let [schema-cache (:request-schema-cache opts)]
+    (binding [engine/*schema-cache* @schema-cache
+              engine/*proof-frame* (:request-proof-frame opts)]
+      (f))
+    (f)))
+
 (defn- permission-dependencies
   [adapter resource-type permission]
   (let [relation-ids
@@ -910,7 +922,7 @@
               (if (or (and subject-id (nil? subject-eid))
                       (and resource-id (nil? resource-eid)))
                 (do
-                  (validate!)
+                  (call-with-request-schema-cache cursor-opts validate!)
                   (if (cursor-request? filters)
                     (stale-cursor-anchor! :read-relationships)
                     (cond->
@@ -1092,7 +1104,7 @@
         (spice-object->internal selected-db resource)]
     (if-not (and (:id internal-subject) (:id internal-resource))
       (do
-        (validate!)
+        (call-with-request-schema-cache opts validate!)
         {:allowed? false
          :cached? false
          :cache-basis nil
@@ -1376,7 +1388,7 @@
                   (spice-object->internal selected-db subject)]
               (if (nil? (:id internal-subject))
                 (do
-                  (validate!)
+                  (call-with-request-schema-cache cursor-opts validate!)
                   (if (cursor-request? query)
                     (stale-cursor-anchor! :lookup-resources)
                     (assoc relay/empty-page
@@ -1480,7 +1492,7 @@
               (spice-object->internal selected-db subject)]
           (if-not (:id internal-subject)
             (do
-              (validate!)
+              (call-with-request-schema-cache opts validate!)
               (assoc
                (cond-> {:count 0 :limit (or (:count-limit query) -1)}
                  (contains? query :count-limit)
@@ -1545,7 +1557,7 @@
                   (spice-object->internal selected-db (:resource query))]
               (if-not (:id internal-resource)
                 (do
-                  (validate!)
+                  (call-with-request-schema-cache cursor-opts validate!)
                   (if (cursor-request? query)
                     (stale-cursor-anchor! :lookup-subjects)
                     (assoc relay/empty-page
@@ -1649,7 +1661,7 @@
               (spice-object->internal selected-db (:resource query))]
           (if-not (:id internal-resource)
             (do
-              (validate!)
+              (call-with-request-schema-cache opts validate!)
               (assoc
                (cond-> {:count 0 :limit (or (:count-limit query) -1)}
                  (contains? query :count-limit)
@@ -1737,7 +1749,8 @@
 (def ^:private runtime-option-keys
   #{:adapter-fingerprint :adapter-deterministic? :aggregate-limits
     :cache-attempt :continuation-cache-store :basis-cache-store
-    :cursor-codec-cache :page-navigation-cache :decision-kernel
+    :cursor-codec-cache :cursor-construction-cache
+    :page-navigation-cache :decision-kernel
     :derived-schema-caches :entid->object-id :object-id->entid
     :object-id->lookup-ref :object->entid :internal-object->spice
     :spice-object->internal :internal-cursor->spice
@@ -2630,6 +2643,9 @@
        (cache/expire-basis-cache! store))
      (some-> (:derived-schema-caches opts) (reset! {}))
      (cursor/clear-codec-cache! (:cursor-codec-cache opts))
+     (when-not (identical? (:cursor-codec-cache opts)
+                           (:cursor-construction-cache opts))
+       (cursor/clear-codec-cache! (:cursor-construction-cache opts)))
      (relay/clear-page-navigation-cache! (:page-navigation-cache opts))
      (some-> (:continuation-cache-store opts) continuation/clear!))
    nil))
@@ -2947,6 +2963,14 @@
                      (integer? (:max-entries cache)))
               (:max-entries cache)
               2048)}))
+        cursor-construction-cache
+        (or cursor-codec-cache
+            (cursor/codec-cache
+             {:max-entries
+              (if (and (map? cache)
+                       (integer? (:max-entries cache)))
+                (:max-entries cache)
+                2048)}))
         page-navigation-cache
         (when basis-cache-store
           (relay/page-navigation-cache
@@ -3015,6 +3039,7 @@
                 (:max-entries cache)
                 2048)}))
           :cursor-codec-cache cursor-codec-cache
+          :cursor-construction-cache cursor-construction-cache
           :page-navigation-cache
           page-navigation-cache
           :managed-cache-enabled? managed-cache-eligible?

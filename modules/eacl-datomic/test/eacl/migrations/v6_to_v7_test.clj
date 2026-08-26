@@ -105,11 +105,13 @@
         (is (= 0 (:normalized-schema-entity-ids report)))
         (is (= 2 (:v6-entities-retracted report)))
         (is (true? (get-in report [:verify :complete?])))
-        (testing "re-asserting an unchanged schema is a zero-delta no-op"
+        (testing "logical relations retain identity while flat permissions are replaced"
           (is (empty? (get-in report [:schema-deltas :relations :additions])))
           (is (empty? (get-in report [:schema-deltas :relations :retractions])))
-          (is (empty? (get-in report [:schema-deltas :permissions :additions])))
-          (is (empty? (get-in report [:schema-deltas :permissions :retractions]))))))
+          (is (= 3 (count (get-in report
+                                  [:schema-deltas :permissions :additions]))))
+          (is (= 3 (count (get-in report
+                                  [:schema-deltas :permissions :retractions])))))))
 
     (testing "migration converges to tuple-only storage and stamps it"
       (is (= :v7 (mig/detect-storage-version (d/db conn))))

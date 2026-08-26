@@ -201,7 +201,8 @@
         ; def *client REPL testing convenience and fewer parens.
         (def *client client)))
 
-    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    (fixtures/install-expression-schema! conn)
+    @(d/transact conn fixtures/entity-fixtures)
     @(d/transact conn (fixtures/relationship-fixtures (d/db conn))) ; temp until write-relationships
 
     ;(is (= [] (eacl/read-relationships *client {:resource/type :vpc})))

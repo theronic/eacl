@@ -262,4 +262,7 @@
 (defn digest
   "Returns the portable domain-separated digest of the canonical expression."
   [value]
-  (secure/canonical-digest digest-domain (canonicalize value) codec-limits))
+  (secure/b64url-encode
+   (secure/sha-256
+    (str digest-domain "\n"
+         (secure/encode-canonical (canonicalize value) codec-limits)))))

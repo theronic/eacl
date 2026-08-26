@@ -14,7 +14,9 @@
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.integrity :as integrity]
             [eacl.datomic.schema :as schema]
-            [eacl.engine.v8 :as engine]))
+            [eacl.engine.v8 :as engine]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-resolver :as expression-resolver]))
 
 (def ^:private schema-v1
   "definition user {}
@@ -35,6 +37,12 @@
                         relation viewer: user
                         permission admin = viewer
    }")
+
+(defn- expression-permissions
+  [schema-source]
+  (:permissions
+   (expression-persistence/candidate-schema
+    (expression-resolver/validate-schema schema-source))))
 
 (defn- seed-owner!
   [conn]
@@ -147,7 +155,15 @@
 
       (testing "a speculative addition can be evaluated explicitly but cannot publish into the client"
         (let [speculative (:db-after
-                           (d/with db [(Permission :account :view {:relation :owner})]))]
+                           (d/with
+                            db
+                            (expression-permissions
+                             "definition user {}
+                              definition account {
+                                relation owner: user
+                                permission admin = owner
+                                permission view = owner
+                              }")))]
           (is (true? (idx/can? speculative internal-u :view internal-a)))
           (let [error
                 (try
@@ -187,7 +203,7 @@
         (is (= :eacl/unknown-relation-or-permission (:type error)))
         (is (= :admin (:permission error))))
 
-      @(d/transact conn [(Permission :account :admin {:relation :owner})])
+      @(d/transact conn (expression-permissions schema-v1))
       (is (true? (eacl/can? acl u :admin a))
           "without a stamp, paths are recomputed rather than latched")
 
@@ -198,8 +214,8 @@
 
 (deftest unstamped-client-does-not-cache-lookup-results-test
   (with-mem-conn [conn schema/v7-schema]
-    @(d/transact conn [(Relation :account :owner :user)
-                       (Permission :account :admin {:relation :owner})])
+    @(d/transact conn (into [(Relation :account :owner :user)]
+                            (expression-permissions schema-v1)))
     (seed-owner! conn)
     (let [acl (core/make-client
                conn

@@ -20,7 +20,9 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as schema]
-            [eacl.engine.v8 :as engine]))
+            [eacl.engine.v8 :as engine]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-resolver :as expression-resolver]))
 
 (def ^:private stamped-schema
   "definition user {}
@@ -34,6 +36,13 @@ definition doc {
   permission view = owner + org->view
 }")
 
+(defn- permission-entity
+  [schema-source]
+  (-> (expression-resolver/validate-schema schema-source)
+      expression-persistence/candidate-schema
+      :permissions
+      first))
+
 (deftest filtered-view-never-shares-plans-with-the-plain-database-test
   ;; A filter that hides the owner permission arm changes the sealed plan
   ;; but not the schema stamp, the database id, or the basis. Whichever
@@ -46,21 +55,15 @@ definition doc {
              acl (->Relationship (spice-object :user "alice")
                                  :owner (spice-object :doc "doc1")))
           db (d/db conn)
-          owner-arm-eids
+          view-expression-eids
           (into #{}
-                (comp (map :e)
-                      (filter (fn [eid]
-                                (= :owner
-                                   (:eacl.permission/target-name
-                                    (d/pull db
-                                            [:eacl.permission/target-name]
-                                            eid))))))
+                (map :e)
                 (d/datoms db :avet
                           :eacl.permission/resource-type+permission-name
                           [:doc :view]))
-          _ (is (= 1 (count owner-arm-eids)))
+          _ (is (= 1 (count view-expression-eids)))
           filtered (d/filter db (fn [_ datom]
-                                  (not (contains? owner-arm-eids
+                                  (not (contains? view-expression-eids
                                                   (:e datom)))))
           alice (spice-object :user "alice")
           doc (spice-object :doc "doc1")]
@@ -80,14 +83,28 @@ definition doc {
   ;; with the NEXT committed transaction. A speculative extra permission
   ;; arm must not answer for the committed database at the same basis.
   (with-mem-conn [conn schema/v7-schema]
-    (let [_ @(d/transact conn [(base/Relation :doc :owner :user)
+    (let [owner-schema
+          "definition user {}
+           definition doc {
+             relation owner: user
+             relation editor: user
+             permission view = owner
+           }"
+          owner+editor-schema
+          "definition user {}
+           definition doc {
+             relation owner: user
+             relation editor: user
+             permission view = owner + editor
+           }"
+          _ @(d/transact conn [(base/Relation :doc :owner :user)
                                (base/Relation :doc :editor :user)
-                               (base/Permission :doc :view {:relation :owner})])
+                               (permission-entity owner-schema)])
           _ @(d/transact conn [{:eacl/id "alice"} {:eacl/id "doc1"}])
           db0 (d/db conn)
           speculative
           (:db-after
-           (d/with db0 [(base/Permission :doc :view {:relation :editor})
+           (d/with db0 [(permission-entity owner+editor-schema)
                         [:db/add [:eacl/id "alice"]
                          :eacl.v7.relationship/subject-type+relation+resource-type+resource
                          [:user (d/entid db0 [:eacl/id

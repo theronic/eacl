@@ -563,14 +563,12 @@
 
 (defn canonical-digest
   "Domain-separated digest of bounded canonical portable data."
-  ([domain value]
-   (canonical-digest domain value {}))
-  ([domain value options]
-   (when-not (and (string? domain) (not-empty domain))
-     (format-error! :invalid-domain {:domain domain}))
-   (b64url-encode
-    (sha-256
-     (str domain "\n" (encode-canonical value options))))))
+  [domain value]
+  (when-not (and (string? domain) (not-empty domain))
+    (format-error! :invalid-domain {:domain domain}))
+  (b64url-encode
+   (sha-256
+    (str domain "\n" (encode-canonical value)))))
 
 (defn canonical-records-digest
   "Domain-separated digest of an ordered, potentially large record sequence.
