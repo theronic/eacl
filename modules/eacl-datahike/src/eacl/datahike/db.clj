@@ -60,10 +60,14 @@
     (entid db attr)
     attr))
 
-(defn- direct-db?
+(defn direct-db?
   "Whether `db` is a concrete Datahike DB rather than a temporal/filter wrapper.
    Concrete and retained-commit DB records carry their config as a field.
-   Wrappers delegate `IDB/-config` but deliberately do not expose that field."
+   Wrappers delegate `IDB/-config` but deliberately do not expose that field.
+
+   Public because physical kernel selection is basis-dependent: only a direct
+   DB can honor a seek bound, so density-bounded batch kernels must not be
+   selected for temporal or filter wrappers."
   [db]
   (some? (:config db)))
 

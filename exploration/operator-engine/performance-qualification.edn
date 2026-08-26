@@ -162,16 +162,17 @@
 
  :datahike-physical-policy
  {:accepted-identity
-  {:id :datahike-density-bounded-v1
+  {:id :datahike-density-bounded-v2
    :parameters
    {:density-multiplier 2
     :maximum-width 256
     :dense-kernel :endpoint-local-bounded-prefix-v1
+    :dense-kernel-bases :direct-database-values
     :sparse-kernel :sorted-exact-seek-v1}}
   :source
   {:path "modules/eacl-datahike/src/eacl/datahike/direct_membership.clj"
    :sha256
-   "6a1513844f279aa6820c7661f8f4aadacd74825f862456e6553ad98bff060b5b"}
+   "e5a08f45ff3d1dba4f496f93cfb3012fbf91615c65a60b8d2fe0b67dde14b2f0"}
   :memory-median-nanos
   {1 {:exact 270459 :prefix 52834}
    2 {:exact 240792 :prefix 103625}
@@ -185,7 +186,11 @@
   :selection
   {:multiplier-4 :rejected-by-minio
    :multiplier-2 :accepted
-   :reason :avoids-extra-get-when-prefix-realization-reaches-exact-work}}
+   :reason :avoids-extra-get-when-prefix-realization-reaches-exact-work
+   :dense-kernel-bases
+   {:decision :direct-database-values-only
+    :reason :temporal-and-filter-wrappers-cannot-honor-the-seek-bound-and-would-realize-and-sort-the-whole-endpoint-prefix
+    :evidence :eacl.datahike.direct-membership-test/as-of-batch-holds-the-realization-bound-test}}}
 
  :adversarial-gates
  {:tiny-result-over-huge-operands :passed
