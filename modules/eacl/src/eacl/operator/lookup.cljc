@@ -56,7 +56,7 @@
    :true-nodes true-nodes})
 
 (defn- local-node-acceptor
-  [{:keys [adapter plan cache-lookup vector-limits]} cover-plan]
+  [{:keys [adapter plan cache-lookup vector-limits scope-identity]} cover-plan]
   (let [root-semantic (:operator-root-semantic cover-plan)
         node-map (:operator-synthetic->semantic cover-plan)]
     (fn [{:keys [node direction subject-type subject-eid resource-eid]}]
@@ -73,14 +73,15 @@
                 (= :direct-membership (:instruction predicate)))
           true
           (first
-           (vector-evaluator/check-many-eids
+           (vector-evaluator/check-cached-many-eids
             (cond->
              {:adapter adapter :plan plan
               :permission permission :node-id node-id
               :candidates
               [(semantic-candidate permission direction
                                    subject-type subject-eid resource-eid #{})]
-              :limits vector-limits}
+              :limits vector-limits
+              :scope-identity scope-identity}
               cache-lookup (assoc :cache-lookup cache-lookup)))))))))
 
 (defn- raw-options
@@ -154,7 +155,7 @@
 (defn- evaluate-emissions
   [{:keys [adapter plan traversal subject-type anchor-eid
            cache-lookup vector-limits permission specialization-node
-           accept-result?]}
+           accept-result? scope-identity]}
    cover-plan emissions]
   (let [permission (or permission (:root plan))
         node-id (get (expression-roots plan) permission)
@@ -165,10 +166,10 @@
                                      anchor-eid %1 %2)
                          witnesses emissions)
         decisions
-        (vector-evaluator/check-many-eids
+        (vector-evaluator/check-cached-many-eids
          (cond-> {:adapter adapter :plan plan :permission permission
                   :node-id node-id :candidates candidates
-                  :limits vector-limits}
+                  :limits vector-limits :scope-identity scope-identity}
            cache-lookup (assoc :cache-lookup cache-lookup)))]
     (mapv (fn [emission witness decision]
             (assoc emission

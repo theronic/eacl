@@ -9,7 +9,8 @@
             [eacl.datascript.schema :as datascript-schema]
             [eacl.operator.evaluator :as scalar]
             [eacl.operator.plan :as plan]
-            [eacl.operator.vector-evaluator :as vector-evaluator]))
+            [eacl.operator.vector-evaluator :as vector-evaluator]
+            [eacl.subproblem-cache :as subproblem]))
 
 (def schema
   "definition user {}
@@ -126,3 +127,141 @@
              #(vector-evaluator/check-many-eids
                {:adapter adapter :plan operator-plan
                 :candidates (vec (repeat 257 candidate))})))))))
+
+(deftest completed-acyclic-vector-decisions-reuse-only-compatible-proofs-test
+  (let [{:keys [adapter user documents eid]} (fixture)
+        operator-plan (plan/seal-plan adapter [:document :view])
+        candidates
+        (mapv (fn [document]
+                {:direction :forward
+                 :subject-type :user :subject-eid (eid user)
+                 :resource-type :document :resource-eid (eid document)})
+              (take 16 documents))
+        store (subproblem/store)
+        run
+        (fn [scope stats]
+          (binding [subproblem/*store* store
+                    vector-evaluator/*vector-stats* stats]
+            (vector-evaluator/check-cached-many-eids
+             {:adapter adapter :plan operator-plan
+              :candidates candidates :scope-identity scope})))
+        first-stats (atom {})
+        first-result (run :proof-a first-stats)
+        second-stats (atom {})
+        second-result (run :proof-a second-stats)
+        changed-stats (atom {})
+        changed-result (run :proof-b changed-stats)]
+    (is (= first-result second-result changed-result))
+    (is (= 16 (:point-cache-hits @second-stats)))
+    (is (zero? (:point-cache-misses @second-stats)))
+    (is (nil? (:candidate-count @second-stats))
+        "a complete point hit never enters vector evaluation")
+    (is (zero? (:point-cache-hits @changed-stats)))
+    (is (= 16 (:point-cache-misses @changed-stats)))
+    (is (pos? (:projection-hits (subproblem/stats store)))
+        "a changed point proof may still reuse exact-basis leaf decisions")))
+
+(deftest failed-acyclic-vector-publishes-neither-leaves-nor-points-test
+  (let [{:keys [adapter user documents eid]} (fixture)
+        operator-plan (plan/seal-plan adapter [:document :view])
+        candidate {:direction :forward
+                   :subject-type :user :subject-eid (eid user)
+                   :resource-type :document
+                   :resource-eid (eid (first documents))}
+        store (subproblem/store)
+        failing
+        (assoc-in
+         adapter [:eacl.backend.v8/operations :direct-match?]
+         (fn [& _]
+           (throw (ex-info "Injected vector provider failure."
+                           {:type :eacl.test/injected-provider-failure}))))
+        error
+        (binding [subproblem/*store* store]
+          (error-data
+           #(vector-evaluator/check-cached-many-eids
+             {:adapter failing :plan operator-plan
+              :candidates [candidate] :scope-identity :failure})))
+        stats (subproblem/stats store)]
+    (is (= :eacl.test/injected-provider-failure (:type error)))
+    (is (zero? (get-in stats [:tiers :projection :entries])))
+    (is (zero? (get-in stats [:tiers :denotation :entries])))))
+
+(deftest acyclic-point-cache-eviction-never-changes-denotation-test
+  (let [{:keys [adapter user documents eid]} (fixture)
+        operator-plan (plan/seal-plan adapter [:document :view])
+        candidates
+        (mapv (fn [document]
+                {:direction :forward
+                 :subject-type :user :subject-eid (eid user)
+                 :resource-type :document :resource-eid (eid document)})
+              (take 16 documents))
+        store (subproblem/store {:denotation-max-weight 640})
+        options {:adapter adapter :plan operator-plan
+                 :candidates candidates :scope-identity :eviction}
+        first-result
+        (binding [subproblem/*store* store]
+          (vector-evaluator/check-cached-many-eids options))
+        after-first (subproblem/stats store)
+        second-result
+        (binding [subproblem/*store* store]
+          (vector-evaluator/check-cached-many-eids options))]
+    (is (= first-result second-result))
+    (is (<= (get-in after-first [:tiers :denotation :weight]) 640))
+    (is (pos? (:evictions after-first)))))
+
+#?(:clj
+   (deftest concurrent-acyclic-misses-compute-independently-and-publish-safely-test
+     (let [{:keys [adapter user documents eid]} (fixture)
+           operator-plan (plan/seal-plan adapter [:document :view])
+           candidate
+           (fn [document]
+             {:direction :forward
+              :subject-type :user :subject-eid (eid user)
+              :resource-type :document :resource-eid (eid document)})
+           run-pair
+           (fn [left right]
+             (let [entered (java.util.concurrent.CountDownLatch. 2)
+                   release (java.util.concurrent.CountDownLatch. 1)
+                   calls (atom 0)
+                   original
+                   (get-in adapter
+                           [:eacl.backend.v8/operations :direct-match?])
+                   concurrent-adapter
+                   (assoc-in
+                    adapter [:eacl.backend.v8/operations :direct-match?]
+                    (fn [& arguments]
+                      (swap! calls inc)
+                      (.countDown entered)
+                      (when (.await entered 5
+                                    java.util.concurrent.TimeUnit/SECONDS)
+                        (.countDown release))
+                      (.await release 5
+                              java.util.concurrent.TimeUnit/SECONDS)
+                      (apply original arguments)))
+                   store (subproblem/store)
+                   evaluate
+                   (fn [value]
+                     (binding [subproblem/*store* store]
+                       (first
+                        (vector-evaluator/check-cached-many-eids
+                         {:adapter concurrent-adapter :plan operator-plan
+                          :candidates [value]
+                          :scope-identity :concurrent})) ))
+                   left-result (future (evaluate left))
+                   right-result (future (evaluate right))]
+               {:results [@left-result @right-result]
+                :calls @calls
+                :stats (subproblem/stats store)}))
+           identical
+           (run-pair (candidate (nth documents 2))
+                     (candidate (nth documents 2)))
+           different
+           (run-pair (candidate (nth documents 2))
+                     (candidate (nth documents 6)))]
+       (is (= [true true] (:results identical)))
+       (is (= [true true] (:results different)))
+       (is (>= (:calls identical) 2)
+           "identical misses do not wait on a cache flight")
+       (is (>= (:calls different) 2))
+       (is (zero? (:failures (:stats identical) 0)))
+       (is (zero? (:failures (:stats different) 0))))))

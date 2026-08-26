@@ -40,6 +40,34 @@
      permission allowed = view - banned
    }")
 
+(def recursive-mutual-conjunction-schema
+  "definition user {}
+   definition folder {
+     relation seed_a: user
+     relation seed_b: user
+     relation gate_a: user
+     relation gate_b: user
+     relation banned: user
+     relation parent: folder
+     permission a = seed_a + (parent->b & gate_a)
+     permission b = seed_b + (parent->a & gate_b)
+     permission view = a
+     permission allowed = a - banned
+   }")
+
+(def recursive-typed-collision-schema
+  "definition user {}
+   definition service {}
+   definition folder {
+     relation user_direct: user
+     relation service_direct: service
+     relation parent: folder
+     permission user_view = user_direct + parent->user_view
+     permission service_view = service_direct + parent->service_view
+     permission view = user_view
+     permission allowed = user_view - service_view
+   }")
+
 (defn- object [type id]
   (eacl/spice-object type [:eacl/id id]))
 
@@ -207,6 +235,110 @@
     (is (pos? (get-in result [:counters :duplicate-facts])))
     (is (every? #(= 2 (get-in % [1 :width]))
                 (get-in result [:checkpoint :anchor-states])))))
+
+(deftest recursive-conjunction-star-propagates-from-one-anchor-test
+  (let [alice (object :user "alice")
+        f0 (object :folder "f0")
+        f1 (object :folder "f1")
+        f2 (object :folder "f2")
+        relationships
+        [(eacl/->Relationship alice :direct f0)
+         (eacl/->Relationship f0 :parent f1)
+         (eacl/->Relationship f0 :parent f2)
+         (eacl/->Relationship alice :eligible f1)
+         (eacl/->Relationship alice :eligible f2)]
+        {:keys [adapter view-plan eid]}
+        (seed relationships)
+        result
+        (recursive/evaluate-many
+         {:adapter adapter :plan view-plan
+          :candidates
+          (mapv (fn [resource]
+                  {:direction :forward :subject-type :user
+                   :subject-eid (eid alice) :resource-eid (eid resource)})
+                [f0 f1 f2])
+          :scope-identity :recursive-star})]
+    (is (= [true true true] (:decisions result)))
+    (is (<= (get-in result [:counters :anchor-states])
+            (get-in result [:counters :facts])))))
+
+(deftest mutual-recursive-conjunction-agrees-with-naive-stratified-oracle-test
+  (let [alice (object :user "alice")
+        f0 (object :folder "f0")
+        f1 (object :folder "f1")
+        f2 (object :folder "f2")
+        relationships
+        [(eacl/->Relationship alice :seed_a f0)
+         (eacl/->Relationship f0 :parent f1)
+         (eacl/->Relationship alice :gate_b f1)
+         (eacl/->Relationship f1 :parent f2)
+         (eacl/->Relationship alice :gate_a f2)]
+        {:keys [adapter plan eid]}
+        (seed-schema recursive-mutual-conjunction-schema relationships)
+        points
+        (mapv (fn [resource]
+                {:direction :forward :subject-type :user
+                 :subject-eid (eid alice) :resource-eid (eid resource)})
+              [f0 f1 f2])
+        snapshot
+        {:objects (set (map oracle-entity [alice f0 f1 f2]))
+         :relation-target-types {[:folder :parent] #{:folder}}
+         :relationships
+         (into #{}
+               (map (fn [{:keys [subject relation resource]}]
+                      {:subject (oracle-entity subject)
+                       :relation relation
+                       :resource (oracle-entity resource)}))
+               relationships)
+         :permissions
+         {[:folder :a]
+          [:union [:relation :seed_a]
+           [:intersection [:arrow :parent :b] [:relation :gate_a]]]
+          [:folder :b]
+          [:union [:relation :seed_b]
+           [:intersection [:arrow :parent :a] [:relation :gate_b]]]
+          [:folder :allowed]
+          [:exclusion [:permission :a] [:relation :banned]]}}
+        evaluated (oracle/evaluate-stratified snapshot)
+        expected
+        (mapv #(oracle/evaluated-check?
+                evaluated (oracle-entity alice) :allowed (oracle-entity %))
+              [f0 f1 f2])
+        actual
+        (:decisions
+         (recursive/evaluate-many
+          {:adapter adapter :plan plan :candidates points
+           :scope-identity :mutual-conjunction}))]
+    (is (= [true false true] expected))
+    (is (= expected actual))))
+
+(deftest recursive-facts-keep-equal-eids-separated-by-subject-type-test
+  (let [user-alice (object :user "alice")
+        service-alice (object :service "alice")
+        f0 (object :folder "f0")
+        f1 (object :folder "f1")
+        relationships
+        [(eacl/->Relationship user-alice :user_direct f0)
+         (eacl/->Relationship service-alice :service_direct f0)
+         (eacl/->Relationship f0 :parent f1)]
+        {:keys [adapter plan eid]}
+        (seed-schema recursive-typed-collision-schema relationships)
+        shared-eid (eid user-alice)
+        resource-eids (mapv eid [f0 f1])
+        run
+        (fn [subject-type]
+          (:decisions
+           (recursive/evaluate-many
+            {:adapter adapter :plan plan
+             :candidates
+             (mapv (fn [resource-eid]
+                     {:direction :forward :subject-type subject-type
+                      :subject-eid shared-eid :resource-eid resource-eid})
+                   resource-eids)
+             :scope-identity [:typed-collision subject-type]})))]
+    (is (= shared-eid (eid service-alice)))
+    (is (= [true true] (run :user)))
+    (is (= [false false] (run :service)))))
 
 (deftest recursive-relation-arrow-target-is-exact-in-both-directions-test
   (let [alice (object :user "alice")
@@ -469,6 +601,35 @@
                #(binding [execution/*contract* contract]
                   (recursive/evaluate-many options)))))))))
 
+(deftest recursive-provider-failure-publishes-no-point-or-leaf-decisions-test
+  (let [{:keys [adapter plan] :as fixture} (chain-fixture)
+        store (subproblem/store)
+        failing-adapter
+        (assoc-in
+         adapter
+         [:eacl.backend.v8/operations :direct-match?]
+         (fn [& _]
+           (throw (ex-info "Injected direct-membership failure."
+                           {:type :eacl.test/injected-provider-failure}))))
+        error
+        (binding [subproblem/*store* store]
+          (error-data
+           #(recursive/evaluate-cached-many
+             {:adapter failing-adapter :plan plan
+              :candidates (candidates fixture)
+              :scope-identity :provider-failure})))
+        stats (subproblem/stats store)
+        recovery
+        (binding [subproblem/*store* store]
+          (recursive/evaluate-many
+           {:adapter adapter :plan plan
+            :candidates (candidates fixture)
+            :scope-identity :provider-failure}))]
+    (is (= :eacl.test/injected-provider-failure (:type error)))
+    (is (zero? (get-in stats [:tiers :denotation :entries])))
+    (is (pos? (get-in recovery [:counters :direct-adapter-commands]))
+        "the failed aligned leaf vector published no individual decisions")))
+
 (defn- public-object [type id]
   (eacl/spice-object type id))
 
@@ -569,7 +730,20 @@
         (let [after-relevant (eacl/check-permission client f2-query)]
           (is (true? (:allowed? after-relevant)))
           (is (false? (:cached? after-relevant))
-              "a new negative-absence result must not reuse the excluded answer"))))))
+              "a new negative-absence result must not reuse the excluded answer"))
+
+        (let [before-bypass (datascript/cache-stats client)
+              bypass
+              (eacl/check-permission
+               client (assoc f0-query :cache? false :populate-cache? true))
+              after-bypass (datascript/cache-stats client)]
+          (is (true? (:allowed? bypass)))
+          (is (false? (:cached? bypass)))
+          (is (= (dissoc before-bypass :bypasses)
+                 (dissoc after-bypass :bypasses))
+              "operator bypass performs no lookup, lifting, or publication")
+          (is (= (inc (:bypasses before-bypass))
+                 (:bypasses after-bypass))))))))
 
 (deftest recursive-operator-pages-compose-and-cursors-bind-scope-test
   (let [{:keys [public-adapter f0 f1 eid]} (chain-fixture)

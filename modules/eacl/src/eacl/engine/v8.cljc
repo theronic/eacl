@@ -11,10 +11,10 @@
             [eacl.operator.batch-schedule :as operator-batch-schedule]
             [eacl.operator.cover-plan :as operator-cover-plan]
             [eacl.operator.cursor-scope :as operator-cursor-scope]
-            [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
+            [eacl.operator.vector-evaluator :as operator-vector]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.subproblem-cache :as subproblem]
@@ -1727,6 +1727,8 @@
                          :candidate-window candidate-window
                          :order-direction direction
                          :boundary (:coords bound)
+                         :scope-identity
+                         (operator-snapshot-proof-identity db)
                          :accept-result?
                          (when accept?
                            (fn [eid]
@@ -2162,10 +2164,19 @@
                                 (operator-snapshot-proof-identity db)
                                 :limits (recursive-operator-limits))
                          base-options)]
-                   ((if recursive?
-                      operator-recursive/check-cached-eids
-                      operator-evaluator/check-eids)
-                    options)))))
+                   (if recursive?
+                     (operator-recursive/check-cached-eids options)
+                     (first
+                      (operator-vector/check-cached-many-eids
+                       {:adapter db :plan plan
+                        :scope-identity
+                        (operator-snapshot-proof-identity db)
+                        :candidates
+                        [{:direction :forward
+                          :subject-type subject-type
+                          :subject-eid subject-eid
+                          :resource-type resource-type
+                          :resource-eid resource-eid}]})))))))
           (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
                 allowed?
                 (with-public-limit-errors
@@ -2309,6 +2320,8 @@
                         {:adapter db :plan plan :traversal :forward
                          :subject-type (:type subject)
                          :anchor-eid subject-eid :count-limit limit
+                         :scope-identity
+                         (operator-snapshot-proof-identity db)
                          :cut-point! (stable-cut-point)
                          :traversal-limits (stable-limits)}))))
                 [:count :truncated?]))
@@ -2359,6 +2372,8 @@
                         {:adapter db :plan plan :traversal :reverse
                          :subject-type (:subject/type query)
                          :anchor-eid resource-eid :count-limit limit
+                         :scope-identity
+                         (operator-snapshot-proof-identity db)
                          :cut-point! (stable-cut-point)
                          :traversal-limits (stable-limits)}))))
                 [:count :truncated?]))

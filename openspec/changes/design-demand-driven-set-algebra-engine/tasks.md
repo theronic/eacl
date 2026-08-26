@@ -90,17 +90,17 @@
 - [ ] 8.5 Extend deterministic recursive scheduling/order for operator roots while preserving byte-for-byte union-only recursive traces and checkpoint identities.
 - [x] 8.6 Extend checkpoint/replay with facts, anchor states, satisfied counts, completed strata, pending negative questions, command identity, and undelivered boundaries without backend handles or mutable cache state.
 - [x] 8.7 Add pre-allocation limits and dimensional counters for facts, anchor states, join words/slots, strata, commands, values, transitions, queue, checkpoint weight, deadline, and cancellation.
-- [ ] 8.8 Differentially test positive self/mutual conjunction, stars, chains, arrows, late anchors, duplicate derivations, typed-ID collisions, unseeded cycles, multiple strata, and failure injection against the naive oracle.
+- [x] 8.8 Differentially test positive self/mutual conjunction, stars, chains, arrows, late anchors, duplicate derivations, typed-ID collisions, unseeded cycles, multiple strata, and failure injection against the naive oracle.
 
 ## 9. Integrate proof-compatible cache reuse
 
-- [ ] 9.1 Extend top-level, point-subproblem, and continuation keys with operator expression, signed certificate, cover/anchor, witness/predicate, physical-policy, capability, limits, order, direction, and snapshot/proof inputs as applicable.
-- [ ] 9.2 Add request-local complete Boolean/mask memoization keyed by expression node and complete typed context; keep in-progress, witness-only, join, anti-join, and unfinished-stratum state private.
-- [ ] 9.3 Publish individual completed point/vector decisions only after the whole demanded vector succeeds and under complete positive/negative dependency proofs.
-- [ ] 9.4 Integrate eligible exact scan-response prefixes at the existing fetch seam without widening descriptor bounds/limits or creating a second operator segment cache.
-- [ ] 9.5 Make proof invalidation cover every positive and negative relation even when runtime witnesses, short-circuiting, or cached branches avoided reads.
-- [ ] 9.6 Verify relevant/unrelated writes, selected basis, lifecycle expiry, eviction, concurrent identical/different requests, provider failure, and newly excluding relationships.
-- [ ] 9.7 Verify `:cache? false` performs no operator-related lookup, proof-lifting, coordination, admission, or publication while retaining the same plan, logical demand, value, error, order, and boundary.
+- [x] 9.1 Extend top-level, point-subproblem, and continuation keys with operator expression, signed certificate, cover/anchor, witness/predicate, physical-policy, capability, limits, order, direction, and snapshot/proof inputs as applicable.
+- [x] 9.2 Add request-local complete Boolean/mask memoization keyed by expression node and complete typed context; keep in-progress, witness-only, join, anti-join, and unfinished-stratum state private.
+- [x] 9.3 Publish individual completed point/vector decisions only after the whole demanded vector succeeds and under complete positive/negative dependency proofs.
+- [x] 9.4 Integrate eligible exact scan-response prefixes at the existing fetch seam without widening descriptor bounds/limits or creating a second operator segment cache.
+- [x] 9.5 Make proof invalidation cover every positive and negative relation even when runtime witnesses, short-circuiting, or cached branches avoided reads.
+- [x] 9.6 Verify relevant/unrelated writes, selected basis, lifecycle expiry, eviction, concurrent identical/different requests, provider failure, and newly excluding relationships.
+- [x] 9.7 Verify `:cache? false` performs no operator-related lookup, proof-lifting, coordination, admission, or publication while retaining the same plan, logical demand, value, error, order, and boundary.
 
 ## 10. Complete concrete formal refinements before routing
 

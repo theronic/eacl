@@ -21,6 +21,7 @@
      relation reader: user
      relation writer: user
      relation banned: user
+     relation unrelated: user
      permission view = (reader & writer) - banned
    }")
 
@@ -117,6 +118,7 @@
       {:adapter adapter
        :public-adapter public-adapter
        :client (datascript/make-client conn {})
+       :conn conn
        :plan (plan/seal-plan adapter [:document :view])
        :users users
        :documents documents
@@ -480,6 +482,57 @@
              (engine/count-subjects
               public-adapter
               (assoc (dissoc reverse-query :first) :count-limit 2)))))))
+
+(deftest managed-acyclic-operator-cache-tracks-complete-signed-dependencies-test
+  (let [{:keys [client]} (fixture)
+        user (public-id :user 0)
+        d1 (public-id :document 1)
+        d2 (public-id :document 2)
+        query {:subject user :permission :view :resource d2}]
+    (binding [engine/*operator-routing-enabled?* true]
+      (let [cold (eacl/check-permission client query)
+            warm (eacl/check-permission client query)
+            before (datascript/cache-stats client)]
+        (is (true? (:allowed? cold)))
+        (is (false? (:cached? cold)))
+        (is (true? (:cached? warm)))
+        (eacl/create-relationship!
+         client (eacl/->Relationship user :unrelated d1))
+        (let [lifted (eacl/check-permission client query)
+              after-unrelated (datascript/cache-stats client)]
+          (is (true? (:allowed? lifted)))
+          (is (true? (:cached? lifted)))
+          (is (= (inc (:managed-hits before))
+                 (:managed-hits after-unrelated)))
+          (is (= (:misses before) (:misses after-unrelated)))
+          (is (= (:stamp-failures before)
+                 (:stamp-failures after-unrelated))))
+        (eacl/create-relationship!
+         client (eacl/->Relationship user :banned d2))
+        (let [invalidated (eacl/check-permission client query)]
+          (is (false? (:allowed? invalidated)))
+          (is (false? (:cached? invalidated))))
+
+        (let [before-expiry (datascript/cache-stats client)]
+          (datascript/expire-cache! client)
+          (let [after-expiry-result (eacl/check-permission client query)
+                after-expiry (datascript/cache-stats client)]
+            (is (false? (:allowed? after-expiry-result)))
+            (is (false? (:cached? after-expiry-result)))
+            (is (= (inc (:expirations before-expiry))
+                   (:expirations after-expiry)))))
+
+        (let [before-bypass (datascript/cache-stats client)
+              bypass
+              (eacl/check-permission
+               client (assoc query :cache? false :populate-cache? false))
+              after-bypass (datascript/cache-stats client)]
+          (is (false? (:allowed? bypass)))
+          (is (false? (:cached? bypass)))
+          (is (= (dissoc before-bypass :bypasses)
+                 (dissoc after-bypass :bypasses)))
+          (is (= (inc (:bypasses before-bypass))
+                 (:bypasses after-bypass))))))))
 
 (deftest public-operator-cursors-compose-and-bind-complete-scope-test
   (let [{:keys [public-adapter documents eid]} (fixture)

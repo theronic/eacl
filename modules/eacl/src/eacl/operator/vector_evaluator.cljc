@@ -5,7 +5,8 @@
             [eacl.exact-integer :as exact-integer]
             [eacl.operator.bitmask :as bitmask]
             [eacl.operator.evaluator :as scalar]
-            [eacl.operator.plan :as operator-plan]))
+            [eacl.operator.plan :as operator-plan]
+            [eacl.subproblem-cache :as subproblem]))
 
 (def ^:private required-candidate-keys
   #{:direction :subject-type :subject-eid :resource-type :resource-eid})
@@ -139,7 +140,8 @@
   returns one aligned Boolean per candidate, or throws without returning a
   partial vector. Direct leaves are regrouped through the bounded backend
   dispatcher; arrow leaves retain exact scalar semantics."
-  [{:keys [adapter plan candidates cache-lookup limits permission node-id]}]
+  [{:keys [adapter plan candidates cache-lookup cache-publish-many!
+           limits permission node-id]}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Vector evaluation requires a sealed operator plan."
@@ -154,7 +156,13 @@
             active (atom #{})
             mask-state (atom {})
             node-roots (roots plan)
-            cache-lookup (or cache-lookup (constantly direct/cache-miss))]
+            cache-lookup (or cache-lookup (constantly direct/cache-miss))
+            completed-leaves (atom [])]
+        (when-not (or (nil? cache-publish-many!)
+                      (fn? cache-publish-many!))
+          (invalid! :invalid-cache-publication
+                    "Vector cache publication hook must be callable."
+                    {:value-type (some-> cache-publish-many! type str)}))
         (when-not (some? root-id)
           (invalid! :missing-root
                     "Vector predicate root is outside the sealed plan."
@@ -221,6 +229,12 @@
                                         (direct/dispatch adapter probes
                                                          cache-lookup)
                                         [])]
+                                  ;; Retain exact leaf decisions privately until
+                                  ;; every demanded subgroup in the vector has
+                                  ;; completed. A later failure therefore cannot
+                                  ;; publish a successful prefix.
+                                  (swap! completed-leaves into
+                                         (mapv vector probes decisions))
                                   (reduce (fn [result index]
                                             (assoc result index false))
                                           (reduce (fn [result [index decision]]
@@ -337,7 +351,117 @@
               (when *vector-stats*
                 (swap! *vector-stats* assoc
                        :root-masks (portable-masks masks)))
+              (when cache-publish-many!
+                (cache-publish-many! @completed-leaves))
               (mapv boolean decisions))
             (catch #?(:clj Exception :cljs :default) error
               (add-stat! :failed-vectors 1)
               (throw error))))))))
+
+(def ^:private point-cache-options
+  {:valid? boolean?
+   :weight-fn (constantly 160)})
+
+(def ^:private leaf-cache-options
+  {:valid? boolean?
+   :weight-fn (constantly 128)})
+
+(defn- semantic-candidate-key [candidate]
+  (select-keys candidate required-candidate-keys))
+
+(defn- point-cache-key
+  [plan permission node-id scope-identity candidate]
+  [:operator-acyclic-point 1
+   (:fingerprint plan) permission node-id scope-identity
+   (semantic-candidate-key candidate)])
+
+(defn- leaf-cache-key [probe]
+  [:operator-acyclic-direct-membership 1
+   (:direction probe) (:descriptor probe) (:candidate probe)])
+
+(defn check-cached-many-eids
+  "Evaluates an aligned acyclic vector with proof-compatible completed point
+  and direct-leaf reuse. Cache hits only fill already demanded decisions. All
+  point and leaf misses remain private until the entire demanded vector
+  succeeds; cache-disabled execution performs no cache work."
+  [{:keys [plan candidates permission node-id scope-identity] :as options}]
+  (when-not (operator-plan/operator-plan? plan)
+    (invalid! :operator-plan-required
+              "Vector evaluation requires a sealed operator plan."
+              {:plan-domain (:domain plan)}))
+  (let [candidates (normalize-candidates candidates)
+        permission (or permission (:root plan))
+        node-id (or node-id (get (roots plan) permission))
+        options (assoc options :candidates candidates
+                       :permission permission :node-id node-id)
+        store subproblem/*store*]
+    (if (or (nil? store) (empty? candidates))
+      (check-many-eids options)
+      (let [looked-up
+            (mapv
+             (fn [candidate]
+               (let [key (point-cache-key
+                          plan permission node-id scope-identity candidate)]
+                 (if-let [resolved
+                          (subproblem/lookup!
+                           store :denotation key point-cache-options)]
+                   (do
+                     (subproblem/record-avoided-backend-operation! store)
+                     {:candidate candidate :key key
+                      :decision (:value resolved) :cached? true})
+                   {:candidate candidate :key key :cached? false})))
+             candidates)
+            misses (mapv :candidate (remove :cached? looked-up))
+            leaf-hits (atom #{})
+            leaf-lookup
+            (fn [probe]
+              (let [key (leaf-cache-key probe)]
+                (if-let [resolved
+                         (subproblem/lookup!
+                          store :projection key leaf-cache-options)]
+                  (do
+                    (swap! leaf-hits conj key)
+                    (subproblem/record-avoided-backend-operation! store)
+                    (:value resolved))
+                  direct/cache-miss)))
+            leaf-publication
+            (fn [entries]
+              (when subproblem/*populate?*
+                (let [published (atom @leaf-hits)]
+                  (doseq [[probe decision] entries
+                          :let [key (leaf-cache-key probe)]
+                          :when (not (contains? @published key))]
+                    (swap! published conj key)
+                    (subproblem/publish!
+                     store :projection key leaf-cache-options decision)))))
+            miss-decisions
+            (if (seq misses)
+              (check-many-eids
+               (assoc options
+                      :candidates misses
+                      :cache-lookup leaf-lookup
+                      :cache-publish-many! leaf-publication))
+              [])
+            decisions-by-key
+            (into {}
+                  (map (fn [candidate decision]
+                         [(semantic-candidate-key candidate) decision])
+                       misses miss-decisions))
+            decisions
+            (mapv (fn [{:keys [candidate decision cached?]}]
+                    (if cached?
+                      decision
+                      (get decisions-by-key
+                           (semantic-candidate-key candidate))))
+                  looked-up)]
+        ;; The full miss vector and its leaf subgroups have succeeded before
+        ;; any completed point becomes externally reusable.
+        (when subproblem/*populate?*
+          (doseq [{:keys [candidate key cached?]} looked-up
+                  :when (not cached?)]
+            (subproblem/publish!
+             store :denotation key point-cache-options
+             (get decisions-by-key (semantic-candidate-key candidate)))))
+        (add-stat! :point-cache-hits (count (filter :cached? looked-up)))
+        (add-stat! :point-cache-misses (count misses))
+        decisions))))

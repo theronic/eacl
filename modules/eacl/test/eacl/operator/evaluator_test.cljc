@@ -10,7 +10,8 @@
             [eacl.datascript.schema :as datascript-schema]
             [eacl.execution :as execution]
             [eacl.operator.evaluator :as evaluator]
-            [eacl.operator.plan :as plan]))
+            [eacl.operator.plan :as plan]
+            [eacl.subproblem-cache :as subproblem]))
 
 (def direct-schema
   "definition user {}
@@ -146,6 +147,33 @@
     (is (true? (check env relation-plan u1 d1)))
     (is (true? (check env relation-plan u1 d2)))
     (is (false? (check env relation-plan u2 d1)))))
+
+(deftest acyclic-arrow-chunks-reuse-the-existing-exact-scan-cache-test
+  (let [u1 (object :user "u1")
+        g1 (object :group "g1")
+        d1 (object :document "d1")
+        relationships
+        [(eacl/->Relationship u1 :reader d1)
+         (eacl/->Relationship u1 :member g1)
+         (eacl/->Relationship g1 :parent d1)]
+        env (fixture arrow-schema [u1 g1 d1] relationships)
+        operator-plan (plan/seal-plan (:adapter env) [:document :view])
+        store (subproblem/store)
+        first-stats (atom {})
+        first-result
+        (binding [subproblem/*store* store
+                  evaluator/*evaluation-stats* first-stats]
+          (check env operator-plan u1 d1))
+        second-stats (atom {})
+        second-result
+        (binding [subproblem/*store* store
+                  evaluator/*evaluation-stats* second-stats]
+          (check env operator-plan u1 d1))]
+    (is (= true first-result second-result))
+    (is (pos? (:adapter-commands @first-stats)))
+    (is (zero? (:adapter-commands @second-stats 0)))
+    (is (pos? (:shared-scan-cache-hits @second-stats)))
+    (is (pos? (:projection-hits (subproblem/stats store))))))
 
 (deftest shared-dag-is-memoized-and-short-circuited-test
   (let [user (object :user "u")
