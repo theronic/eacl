@@ -17,6 +17,7 @@
             [eacl.operator.bitmask-test]
             [eacl.operator.vector-evaluator-test]
             [eacl.operator.batch-schedule-test]
+            [eacl.operator.lookup-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
             [eacl.request.context-test]
@@ -77,6 +78,7 @@
                'eacl.operator.bitmask-test
                'eacl.operator.vector-evaluator-test
                'eacl.operator.batch-schedule-test
+               'eacl.operator.lookup-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test
                'eacl.request.context-test

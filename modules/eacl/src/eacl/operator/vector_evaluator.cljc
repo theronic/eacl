@@ -139,7 +139,7 @@
   returns one aligned Boolean per candidate, or throws without returning a
   partial vector. Direct leaves are regrouped through the bounded backend
   dispatcher; arrow leaves retain exact scalar semantics."
-  [{:keys [adapter plan candidates cache-lookup limits]}]
+  [{:keys [adapter plan candidates cache-lookup limits permission node-id]}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Vector evaluation requires a sealed operator plan."
@@ -148,13 +148,17 @@
         width (count candidates)]
     (if (zero? width)
       []
-      (let [root-permission (:root plan)
-            root-id (get (roots plan) root-permission)
+      (let [root-permission (or permission (:root plan))
+            root-id (or node-id (get (roots plan) root-permission))
             memo (atom {})
             active (atom #{})
             mask-state (atom {})
             node-roots (roots plan)
             cache-lookup (or cache-lookup (constantly direct/cache-miss))]
+        (when-not (some? root-id)
+          (invalid! :missing-root
+                    "Vector predicate root is outside the sealed plan."
+                    {:permission root-permission :node-id node-id}))
         (letfn [(commit! [node-key values indexes]
                   (let [current (get @memo node-key
                                      (vec (repeat width unresolved)))

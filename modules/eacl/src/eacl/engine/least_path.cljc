@@ -266,18 +266,34 @@
               (child-hit? emission) true
               :else (recur es' pos' false))))))))
 
+(defn- candidate-accepted?
+  "Applies an optional exact local-node filter. The default is deliberately
+  a zero-work true branch so existing union-only plans retain their trace."
+  [env node subject-eid resource-eid]
+  (if-let [accept? (:candidate-accept? env)]
+    (boolean
+     (accept? {:node node
+               :direction (:traversal env)
+               :subject-type (:subject-type env)
+               :subject-eid subject-eid
+               :resource-eid resource-eid}))
+    true))
+
 (defn- derives?
   "Does `subject-eid` reach `node`'s permission on `resource-eid`? The
   certified membership-probe check anchored at `node`
   (`eacl.engine.stable-route/derives-from-node?`)."
-  [{:keys [plan route-opts subject-type]} node subject-eid resource-eid]
-  (route/derives-from-node?
-   (assoc route-opts
-          :plan plan
-          :start-node node
-          :subject-type subject-type
-          :subject-eid subject-eid
-          :resource-eid resource-eid)))
+  [{:keys [plan route-opts subject-type] :as env}
+   node subject-eid resource-eid]
+  (and
+   (route/derives-from-node?
+    (assoc route-opts
+           :plan plan
+           :start-node node
+           :subject-type subject-type
+           :subject-eid subject-eid
+           :resource-eid resource-eid))
+   (candidate-accepted? env node subject-eid resource-eid)))
 
 ;; ---------------------------------------------------------------------------
 ;; Coordinates
@@ -438,7 +454,8 @@
   recursive least coordinates for permission targets, restricted to the
   entity's via candidates). Bounded by depth × alternatives × probes."
   [env node v]
-  (let [{:keys [ctx subject-type subject-eid]} env
+  (when (candidate-accepted? env node (:subject-eid env) v)
+    (let [{:keys [ctx subject-type subject-eid]} env
         ;; Ordinal order, not the plan's (rank, ordinal) list order: the
         ;; first deriving rule is the least ONLY when arms are walked
         ;; ordinal-ascending (the ordinal is the leading coordinate).
@@ -510,7 +527,7 @@
                  (-> [(:ordinal rule)]
                      (into (:sub best))
                      (conj v)))))
-           (recur (inc oi))))))))
+           (recur (inc oi)))))))))
 
 (defn- fwd-arrow-perm-smaller-intermediate?
   "Same-rule smaller-witness for an arrow-to-permission arm: does some
@@ -608,7 +625,9 @@
             (if (nil? v)
               (recur env (advance))
               (let [level' (assoc level :sub {:scan scan'})]
-                (if (fwd-emit2? env level rule nil v)
+                (if (and (fwd-emit2? env level rule nil v)
+                         (candidate-accepted?
+                          env (:node level) (:subject-eid env) v))
                   [{:value v :coords [(:ordinal rule) v]} level']
                   (recur env level')))))
 
@@ -620,10 +639,13 @@
                     v (:value emission)]
                 ;; earlier-rule witness only: the child already emits
                 ;; least-only within the target node.
-                (if (not (boolean
-                          (some #(fwd-rule-derives?
-                                  env (nth rules %) v)
-                                (fwd-earlier-in-sealed-order level))))
+                (if (and
+                     (not (boolean
+                           (some #(fwd-rule-derives?
+                                   env (nth rules %) v)
+                                 (fwd-earlier-in-sealed-order level))))
+                     (candidate-accepted?
+                      env (:node level) (:subject-eid env) v))
                   [{:value v
                     :coords (into [(:ordinal rule)] (:coords emission))}
                    level']
@@ -642,7 +664,9 @@
                 (recur env (assoc level :sub
                                   (assoc sub :i nil :inner nil)))
                 (let [level' (assoc level :sub (assoc sub :inner inner'))]
-                  (if (fwd-emit2? env level rule {:i (:i sub)} v)
+                  (if (and (fwd-emit2? env level rule {:i (:i sub)} v)
+                           (candidate-accepted?
+                            env (:node level) (:subject-eid env) v))
                     [{:value v
                       :coords [(:ordinal rule) (:i sub) v]} level']
                     (recur env level'))))))
@@ -661,7 +685,9 @@
                 (recur env (assoc level :sub
                                   (assoc sub :i nil :inner nil)))
                 (let [level' (assoc level :sub (assoc sub :inner inner'))]
-                  (if (fwd-emit2? env level rule {:i (:i sub)} v)
+                  (if (and (fwd-emit2? env level rule {:i (:i sub)} v)
+                           (candidate-accepted?
+                            env (:node level) (:subject-eid env) v))
                     [{:value v
                       :coords (-> [(:ordinal rule)]
                                   (into (:coords (:i sub)))
@@ -837,7 +863,9 @@
             (if (nil? s)
               (recur env (advance))
               (let [level' (assoc level :sub {:scan scan'})]
-                (if (rev-emit? env level rule nil s)
+                (if (and (rev-emit? env level rule nil s)
+                         (candidate-accepted?
+                          env (:node level) s (:entity level)))
                   [{:value s :coords [(:ordinal rule) s]} level']
                   (recur env level')))))
 
@@ -847,10 +875,13 @@
               (recur env (advance))
               (let [level' (assoc level :sub {:child child'})
                     s (:value emission)]
-                (if (not (boolean
-                          (some #(rev-rule-derives?
-                                  env (nth rules %) entity s)
-                                (rev-earlier-in-sealed-order level))))
+                (if (and
+                     (not (boolean
+                           (some #(rev-rule-derives?
+                                   env (nth rules %) entity s)
+                                 (rev-earlier-in-sealed-order level))))
+                     (candidate-accepted?
+                      env (:node level) s (:entity level)))
                   [{:value s
                     :coords (into [(:ordinal rule)] (:coords emission))}
                    level']
@@ -874,7 +905,9 @@
               (if (nil? s)
                 (recur env (assoc level :sub (assoc sub :i nil :inner nil)))
                 (let [level' (assoc level :sub (assoc sub :inner inner'))]
-                  (if (rev-emit? env level rule (:i sub) s)
+                  (if (and (rev-emit? env level rule (:i sub) s)
+                           (candidate-accepted?
+                            env (:node level) s (:entity level)))
                     [{:value s :coords [(:ordinal rule) (:i sub) s]}
                      level']
                     (recur env level'))))))
@@ -894,7 +927,9 @@
                 (recur env (assoc level :sub (assoc sub :i nil :child nil)))
                 (let [level' (assoc level :sub (assoc sub :child child'))
                       s (:value emission)]
-                  (if (rev-emit? env level rule (:i sub) s)
+                  (if (and (rev-emit? env level rule (:i sub) s)
+                           (candidate-accepted?
+                            env (:node level) s (:entity level)))
                     [{:value s
                       :coords (-> [(:ordinal rule) (:i sub)]
                                   (into (:coords emission)))}
@@ -1041,12 +1076,16 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- make-env
-  [{:keys [plan subject-type subject-eid desc?] :as options} ctx]
+  [{:keys [plan subject-type subject-eid desc? traversal
+           candidate-accept?]
+    :as options} ctx]
   {:plan plan
    :ctx ctx
    :subject-type subject-type
    :subject-eid subject-eid
    :desc? (boolean desc?)
+   :traversal traversal
+   :candidate-accept? candidate-accept?
    :route-opts (select-keys options
                             [:adapter :fetch-fn :physical-chunk-size
                              :max-commands :max-values :max-transitions
@@ -1089,7 +1128,7 @@
          (not (and after-coords before-coords))]}
   (let [ctx (make-context options)
         desc? (boolean (or before-coords last?))
-        env (make-env (assoc options :desc? desc?) ctx)
+        env (make-env (assoc options :desc? desc? :traversal :forward) ctx)
         root (:root plan)
         level (cond
                 after-coords (fwd-resume-level env root (vec after-coords))
@@ -1107,7 +1146,7 @@
          (not (and after-coords before-coords))]}
   (let [ctx (make-context options)
         desc? (boolean (or before-coords last?))
-        env (make-env (assoc options :desc? desc?) ctx)
+        env (make-env (assoc options :desc? desc? :traversal :reverse) ctx)
         root (:root plan)
         level (cond
                 after-coords (rev-resume-level env root resource-eid
