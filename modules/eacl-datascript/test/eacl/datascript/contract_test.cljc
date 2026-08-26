@@ -21,34 +21,40 @@
         missing-user (contract/->user "missing")
         missing-server (contract/->server "missing")
         reads (atom 0)
-        original-read-schema schema/read-schema]
+        original-read-schema schema/read-schema
+        exercise!
+        (fn []
+          (is (= []
+                 (:data
+                  (eacl/lookup-resources
+                   client {:subject missing-user
+                           :permission :view
+                           :resource/type :server
+                           :first 20
+                           :cache? false}))))
+          (is (= 0
+                 (:count
+                  (eacl/count-resources
+                   client {:subject missing-user
+                           :permission :view
+                           :resource/type :server
+                           :cache? false}))))
+          (is (false?
+               (eacl/can? client {:subject missing-user
+                                  :permission :view
+                                  :resource missing-server
+                                  :cache? false}))))]
     (eacl/write-schema! client contract/smoke-schema)
-    (with-redefs [schema/read-schema
-                  (fn [db]
-                    (swap! reads inc)
-                    (original-read-schema db))]
-      (is (= []
-             (:data
-              (eacl/lookup-resources
-               client {:subject missing-user
-                       :permission :view
-                       :resource/type :server
-                       :first 20
-                       :cache? false}))))
-      (is (= 0
-             (:count
-              (eacl/count-resources
-               client {:subject missing-user
-                       :permission :view
-                       :resource/type :server
-                       :cache? false}))))
-      (is (false?
-           (eacl/can? client {:subject missing-user
-                              :permission :view
-                              :resource missing-server
-                              :cache? false})))
-      (is (= 1 @reads)
-          "missing-anchor validation decodes one immutable schema generation"))))
+    #?(:clj
+       (with-redefs [schema/read-schema
+                     (fn [db & format]
+                       (swap! reads inc)
+                       (apply original-read-schema db format))]
+         (exercise!)
+         (is (= 1 @reads)
+             "missing-anchor validation decodes one immutable schema generation"))
+       :cljs
+       (exercise!))))
 
 (def ^:private permission-tree-schema
   "definition user {}

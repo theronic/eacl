@@ -232,7 +232,8 @@
                 {:adapter adapter :plan view-plan
                  :candidates points :scope-identity :cycle})]
     (is (= [true true false false] (:decisions result)))
-    (is (pos? (get-in result [:counters :duplicate-facts])))
+    (is (zero? (get-in result [:counters :duplicate-facts]))
+        "a witnessed recursive union does not fetch its redundant cycle edge")
     (is (every? #(= 2 (get-in % [1 :width]))
                 (get-in result [:checkpoint :anchor-states])))))
 
@@ -261,6 +262,46 @@
     (is (= [true true true] (:decisions result)))
     (is (<= (get-in result [:counters :anchor-states])
             (get-in result [:counters :facts])))))
+
+(deftest recursive-demand-discovery-skips-blocked-arrows-and-stops-at-a-witness-test
+  (let [{:keys [adapter plan alice bob f0 f1 eid]} (chain-fixture)
+        point
+        (fn [subject resource]
+          {:direction :forward :subject-type :user
+           :subject-eid (eid subject) :resource-eid (eid resource)})
+        forbidden-scan
+        (assoc-in
+         adapter [:eacl.backend.v8/operations :resource->subjects]
+         (fn [& _]
+           (throw (ex-info "A false intersection anchor read its arrow."
+                           {:type :eacl.test/unexpected-arrow-read}))))
+        gated
+        (recursive/evaluate-many
+         {:adapter forbidden-scan :plan plan
+          :candidates [(point bob f1)]
+          :scope-identity :false-anchor-skips-arrow})
+        scan-calls (atom 0)
+        high-fanout (into [(eid f0)] (range 1000 1128))
+        high-fanout-adapter
+        (assoc-in
+         adapter [:eacl.backend.v8/operations :resource->subjects]
+         (fn [& _]
+           (swap! scan-calls inc)
+           high-fanout))
+        witnessed
+        (recursive/evaluate-many
+         {:adapter high-fanout-adapter :plan plan
+          :candidates [(point alice f1)]
+          :scope-identity :first-chunk-witness
+          :limits {:physical-chunk-size 16}})]
+    (is (= [false] (:decisions gated)))
+    (is (zero? (get-in gated [:counters :commands])))
+    (is (zero? (get-in gated [:counters :values])))
+    (is (= [true] (:decisions witnessed)))
+    (is (= 1 @scan-calls))
+    (is (= 1 (get-in witnessed [:counters :commands])))
+    (is (= 16 (get-in witnessed [:counters :values]))
+        "the first recursive witness prevents reading the remaining fanout")))
 
 (deftest mutual-recursive-conjunction-agrees-with-naive-stratified-oracle-test
   (let [alice (object :user "alice")
@@ -629,6 +670,47 @@
     (is (zero? (get-in stats [:tiers :denotation :entries])))
     (is (pos? (get-in recovery [:counters :direct-adapter-commands]))
         "the failed aligned leaf vector published no individual decisions")))
+
+(deftest later-demand-round-failure-publishes-no-earlier-direct-decisions-test
+  (let [{:keys [adapter plan alice f0 f1 eid]} (chain-fixture)
+        original-direct
+        (get-in adapter [:eacl.backend.v8/operations :direct-match?])
+        failing-adapter
+        (assoc-in
+         adapter [:eacl.backend.v8/operations :direct-match?]
+         (fn [subject-type subject-eid relation-eid
+              resource-type resource-eid]
+           (if (= (eid f0) resource-eid)
+             (throw
+              (ex-info "Injected post-arrow direct-membership failure."
+                       {:type :eacl.test/injected-late-provider-failure}))
+             (original-direct subject-type subject-eid relation-eid
+                              resource-type resource-eid))))
+        options
+        {:plan plan
+         :candidates
+         [{:direction :forward :subject-type :user
+           :subject-eid (eid alice) :resource-eid (eid f1)}]
+         :scope-identity :late-provider-failure}
+        store (subproblem/store)
+        error
+        (binding [subproblem/*store* store]
+          (error-data
+           #(recursive/evaluate-many
+             (assoc options :adapter failing-adapter))))
+        cache-free
+        (binding [subproblem/*store* nil]
+          (recursive/evaluate-many (assoc options :adapter adapter)))
+        recovery
+        (binding [subproblem/*store* store]
+          (recursive/evaluate-many (assoc options :adapter adapter)))]
+    (is (= :eacl.test/injected-late-provider-failure (:type error)))
+    (is (= (:decisions cache-free) (:decisions recovery)))
+    (is (= (get-in cache-free [:counters :direct-adapter-commands])
+           (get-in recovery [:counters :direct-adapter-commands]))
+        "successful direct decisions preceding the late failure stayed private")
+    (is (pos? (get-in recovery [:counters :shared-scan-cache-hits]))
+        "a complete exact arrow chunk remains independently reusable")))
 
 (defn- public-object [type id]
   (eacl/spice-object type id))

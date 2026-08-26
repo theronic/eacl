@@ -9,6 +9,7 @@
   (:require [eacl.backend.direct-membership :as direct]
             [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
+            [eacl.operator.batch-schedule :as batch-schedule]
             [eacl.operator.plan :as operator-plan]
             [eacl.request.counters :as request-counters]
             [eacl.secure-format :as secure-format]
@@ -175,72 +176,65 @@
               (question-subject-type q) (question-subject-eid q)
               intermediate-eid)))
 
-(defn- scan-intermediates!
-  [adapter q partition limits counters scan-cache]
+(defn- scan-intermediate-chunk!
+  [adapter q partition bound limits counters]
   (let [descriptor
         {:resource-type (first (question-permission q))
          :resource-eid (question-resource-eid q)
          :relation-eid (:via-relation-eid partition)
-         :intermediate-type (:intermediate-type partition)}]
-    (if-let [cached (get @scan-cache descriptor)]
-      (do (add-counter! counters :scan-cache-hits) cached)
-      (let [chunk-size (:physical-chunk-size limits)
-            cache-key [:operator-recursive-arrow-scan 1 descriptor]
-            resolved
-            (subproblem/resolve-layered-bound!
-             :projection cache-key
-             {:valid? vector?
-              :weight-fn #(max 128 (+ 128 (* 16 (count %))))}
-             (:relation-eid descriptor)
-             (fn []
-               (loop [bound nil result []]
-                 (execution/check! execution/*contract*
-                                   :operator-recursive/arrow-scan-before
-                                   {:commands (:commands @counters)
-                                    :values (:values @counters)})
-                 (let [next-commands (inc (:commands @counters))]
-                   (limit-counter! limits counters :commands
-                                   :maximum-commands next-commands)
-                   (let [options (cond-> {:direction :asc}
-                                   (some? bound)
-                                   (assoc :bound-eid bound
-                                          :inclusive-bound? false))
-                         chunk
-                         (into [] (take chunk-size)
-                               (backend/invoke
-                                adapter :resource->subjects
-                                (:resource-type descriptor)
-                                (:resource-eid descriptor)
-                                (:relation-eid descriptor)
-                                (:intermediate-type descriptor)
-                                options))]
-                     (vswap! counters assoc :commands next-commands)
-                     (request-counters/add! :commands)
-                     (request-counters/add! :fetched-values (count chunk))
-                     (execution/check! execution/*contract*
-                                       :operator-recursive/arrow-scan-after
-                                       {:commands next-commands
-                                        :fetched-values (count chunk)})
-                     (let [result (into result chunk)]
-                       (if (< (count chunk) chunk-size)
-                         result
-                         (recur (peek chunk) result))))))))
-            values (:value resolved)
-            next-values (+ (:values @counters) (count values))]
-        (limit-counter! limits counters :values :maximum-values next-values)
-        (vswap! counters assoc :values next-values)
-        (when (:cached? resolved)
-          (add-counter! counters :shared-scan-cache-hits)
-          (subproblem/record-avoided-backend-operation!))
-        (execution/check! execution/*contract*
-                          :operator-recursive/arrow-scan-complete
-                          {:commands (:commands @counters)
-                           :values next-values})
-        (swap! scan-cache assoc descriptor values)
-        values))))
+         :intermediate-type (:intermediate-type partition)}
+        chunk-size (:physical-chunk-size limits)
+        options (cond-> {:direction :asc}
+                  (some? bound)
+                  (assoc :bound-eid bound :inclusive-bound? false))
+        cache-key [:operator-recursive-arrow-chunk 1
+                   descriptor options chunk-size]
+        resolved
+        (subproblem/resolve-layered-bound!
+         :projection cache-key
+         {:valid? vector?
+          :weight-fn #(max 128 (+ 128 (* 16 (count %))))}
+         (:relation-eid descriptor)
+         (fn []
+           (execution/check! execution/*contract*
+                             :operator-recursive/arrow-scan-before
+                             {:commands (:commands @counters)
+                              :values (:values @counters)})
+           (let [next-commands (inc (:commands @counters))]
+             (limit-counter! limits counters :commands
+                             :maximum-commands next-commands)
+             (let [chunk
+                   (into [] (take chunk-size)
+                         (backend/invoke
+                          adapter :resource->subjects
+                          (:resource-type descriptor)
+                          (:resource-eid descriptor)
+                          (:relation-eid descriptor)
+                          (:intermediate-type descriptor)
+                          options))]
+               (vswap! counters assoc :commands next-commands)
+               (request-counters/add! :commands)
+               (request-counters/add! :fetched-values (count chunk))
+               (execution/check! execution/*contract*
+                                 :operator-recursive/arrow-scan-after
+                                 {:commands next-commands
+                                  :fetched-values (count chunk)})
+               chunk))))
+        values (:value resolved)
+        next-values (+ (:values @counters) (count values))]
+    (limit-counter! limits counters :values :maximum-values next-values)
+    (vswap! counters assoc :values next-values)
+    (when (:cached? resolved)
+      (add-counter! counters :shared-scan-cache-hits)
+      (subproblem/record-avoided-backend-operation!))
+    (execution/check! execution/*contract*
+                      :operator-recursive/arrow-scan-complete
+                      {:commands (:commands @counters)
+                       :values next-values})
+    values))
 
 (defn- node-spec!
-  [adapter plan roots q limits counters scan-cache]
+  [plan roots q]
   (let [permission (question-permission q)
         node-id (question-node q)
         predicate (get-in plan [:predicate-programs permission node-id])
@@ -304,36 +298,14 @@
        :base-probes []}
 
       :arrow-membership
-      (let [parts (:partitions (:descriptor predicate))
-            expanded
-            (mapcat
-             (fn [partition]
-               (map
-                (fn [intermediate-eid]
-                  (if (= :permission (:target-kind partition))
-                    {:dependency
-                     {:key (arrow-target-question
-                            roots q intermediate-eid partition)
-                      :sign :positive}}
-                    {:probe
-                     (direct-probe
-                      (question [(:intermediate-type partition)
-                                 (:target-name partition)]
-                                -1 (question-direction q)
-                                (question-subject-type q)
-                                (question-subject-eid q)
-                                intermediate-eid)
-                      (:target-relation partition))}))
-                (scan-intermediates!
-                 adapter q partition limits counters scan-cache)))
-             parts)]
-        {:key q :kind :union
-         :dependencies
-         (mapv (fn [slot dependency]
-                 (assoc dependency :slot slot))
-               (range)
-               (keep :dependency expanded))
-         :base-probes (mapv :probe (filter :probe expanded))})
+      {:key q :kind :union
+       :dependencies []
+       :base-probes []
+       :arrow-state
+       {:partitions (:partitions (:descriptor predicate))
+        :partition-index 0
+        :bound nil
+        :complete? false}}
 
       (invalid! :unknown-instruction
                 "Recursive plan contains an unknown predicate instruction."
@@ -341,35 +313,39 @@
                  :instruction instruction}))))
 
 (defn- discover-graph!
-  [adapter plan roots root-questions limits counters]
-  (let [scan-cache (atom {})]
-    (loop [queue (vec root-questions)
-           index 0
-           queued (set root-questions)
-           nodes {}]
-      (execution/check! execution/*contract*
-                        :operator-recursive/discovery
-                        {:questions (count nodes)
-                         :queue (- (count queue) index)})
-      (if (= index (count queue))
-        nodes
-        (let [q (nth queue index)]
-          (if (contains? nodes q)
-            (recur queue (inc index) queued nodes)
-            (let [spec (node-spec! adapter plan roots q limits counters
-                                   scan-cache)
-                  dependencies (mapv :key (:dependencies spec))
-                  fresh (vec (remove queued dependencies))
-                  next-questions (+ (count nodes) 1 (count fresh))
-                  next-queue (+ (- (count queue) (inc index))
-                                (count fresh))]
-              (limit-counter! limits counters :questions
-                              :maximum-questions next-questions)
-              (limit-counter! limits counters :queue
-                              :maximum-queue next-queue)
-              (vswap! counters update :maximum-queue max next-queue)
-              (recur (into queue fresh) (inc index) (into queued fresh)
-                     (assoc nodes q spec)))))))))
+  ([plan roots root-questions limits counters]
+   (discover-graph! plan roots root-questions limits counters {}))
+  ([plan roots root-questions limits counters initial-nodes]
+   (loop [queue (vec root-questions)
+          index 0
+          queued (set root-questions)
+          nodes initial-nodes]
+     (execution/check! execution/*contract*
+                       :operator-recursive/discovery
+                       {:questions (count nodes)
+                        :queue (- (count queue) index)})
+     (if (= index (count queue))
+       nodes
+       (let [q (nth queue index)]
+         (if (contains? nodes q)
+           (recur queue (inc index) queued nodes)
+           (let [spec (node-spec! plan roots q)
+                 dependencies (mapv :key (:dependencies spec))
+                 fresh
+                 (vec
+                  (remove #(or (contains? nodes %)
+                               (contains? queued %))
+                          dependencies))
+                 next-questions (+ (count nodes) 1 (count fresh))
+                 next-queue (+ (- (count queue) (inc index))
+                               (count fresh))]
+             (limit-counter! limits counters :questions
+                             :maximum-questions next-questions)
+             (limit-counter! limits counters :queue
+                             :maximum-queue next-queue)
+             (vswap! counters update :maximum-queue max next-queue)
+             (recur (into queue fresh) (inc index) (into queued fresh)
+                    (assoc nodes q spec)))))))))
 
 (defn- finishing-order [vertices adjacency]
   (loop [remaining (seq (sorted-questions vertices))
@@ -448,38 +424,45 @@
                          (remove #{index}))
                         component)]))
               components)
-        dependents
-        (reduce-kv
-         (fn [result from deps]
-           (reduce #(update %1 %2 (fnil conj #{}) from) result deps))
-         (zipmap (range (count components)) (repeat #{})) dependencies)
-        component-key #(question-key (first (nth components %)))]
-    (loop [remaining (into {} (map (fn [[k v]] [k (count v)])) dependencies)
-           ready (vec (sort-by component-key
-                               (keep (fn [[k n]] (when (zero? n) k))
-                                     remaining)))
-           order []]
-      (if-let [component (first ready)]
-        (let [[remaining newly-ready]
-              (reduce
-               (fn [[counts newly] dependent]
-                 (let [n (dec (get counts dependent))
-                       counts (assoc counts dependent n)]
-                   [counts (cond-> newly (zero? n) (conj dependent))]))
-               [remaining []]
-               (sort (get dependents component)))]
-          (recur remaining
-                 (vec (sort-by component-key
-                               (into (subvec ready 1) newly-ready)))
-                 (conj order component)))
-        (do
-          (when-not (= (count order) (count components))
-            (invalid! :component-cycle
-                      "Recursive component condensation graph is cyclic."
-                      {:completed (count order)
-                       :components (count components)}))
-          {:components components :component-of component-of
-           :dependencies dependencies :order order})))))
+        component-key #(question-key (first (nth components %)))
+        starts (vec (sort-by component-key (range (count components))))
+        order
+        (loop [remaining starts visited #{} order []]
+          (if-let [start (first remaining)]
+            (if (contains? visited start)
+              (recur (next remaining) visited order)
+              (let [[visited order]
+                    (loop [stack [[start false]]
+                           visited visited
+                           order order]
+                      (if-let [[component expanded?] (peek stack)]
+                        (cond
+                          expanded?
+                          (recur (pop stack) visited (conj order component))
+
+                          (contains? visited component)
+                          (recur (pop stack) visited order)
+
+                          :else
+                          (let [children
+                                (vec
+                                 (reverse
+                                  (sort-by component-key
+                                           (get dependencies component))))]
+                            (recur
+                             (into (conj (pop stack) [component true])
+                                   (map #(vector % false)) children)
+                             (conj visited component) order)))
+                        [visited order]))]
+                (recur (next remaining) visited order)))
+            order))]
+    (when-not (= (count order) (count components))
+      (invalid! :component-cycle
+                "Recursive component condensation graph is cyclic."
+                {:completed (count order)
+                 :components (count components)}))
+    {:components components :component-of component-of
+     :dependencies dependencies :order order}))
 
 (defn- validate-negative-components! [nodes component-of]
   (doseq [[head spec] nodes
@@ -490,6 +473,205 @@
               "Recursive question graph contains a negative cycle."
               {:head head :dependency key
                :component (component-of head)})))
+
+(defn- expand-arrow-chunk!
+  [adapter plan roots nodes q limits counters]
+  (let [{:keys [arrow-state] :as spec} (get nodes q)
+        {:keys [partitions partition-index bound complete?]} arrow-state]
+    (when-not arrow-state
+      (invalid! :not-an-arrow-question
+                "Demand expansion selected a non-arrow question."
+                {:question q}))
+    (if complete?
+      nodes
+      (if (>= partition-index (count partitions))
+        (assoc-in nodes [q :arrow-state :complete?] true)
+        (let [partition (nth partitions partition-index)
+              values (scan-intermediate-chunk!
+                      adapter q partition bound limits counters)
+              expanded
+              (mapv
+               (fn [intermediate-eid]
+                 (if (= :permission (:target-kind partition))
+                   {:dependency
+                    {:key (arrow-target-question
+                           roots q intermediate-eid partition)
+                     :sign :positive}}
+                   {:probe
+                    (direct-probe
+                     (question [(:intermediate-type partition)
+                                (:target-name partition)]
+                               -1 (question-direction q)
+                               (question-subject-type q)
+                               (question-subject-eid q)
+                               intermediate-eid)
+                     (:target-relation partition))}))
+               values)
+              dependencies (mapv :dependency
+                                  (filter :dependency expanded))
+              probes (mapv :probe (filter :probe expanded))
+              first-slot (count (:dependencies spec))
+              dependencies
+              (mapv (fn [slot dependency]
+                      (assoc dependency :slot slot))
+                    (range first-slot
+                           (+ first-slot (count dependencies)))
+                    dependencies)
+              short-chunk? (< (count values)
+                              (:physical-chunk-size limits))
+              next-partition (if short-chunk?
+                               (inc partition-index)
+                               partition-index)
+              next-state
+              {:partitions partitions
+               :partition-index next-partition
+               :bound (when-not short-chunk? (peek values))
+               :complete? (and short-chunk?
+                               (>= next-partition
+                                   (count partitions)))}
+              nodes
+              (-> nodes
+                  (update-in [q :dependencies] into dependencies)
+                  (update-in [q :base-probes] into probes)
+                  (assoc-in [q :arrow-state] next-state))
+              dependency-questions (mapv :key dependencies)]
+          (add-counter! counters :arrow-chunks)
+          (discover-graph! plan roots dependency-questions
+                           limits counters nodes))))))
+
+(defn- rule-bounds
+  [rule lower-facts upper-facts]
+  (let [{:keys [kind dependencies base-true? arrow-state]} rule
+        lower? #(contains? lower-facts (:key %))
+        upper? #(contains? upper-facts (:key %))
+        incomplete-arrow?
+        (and arrow-state (not (:complete? arrow-state)))]
+    (case kind
+      :base
+      [(boolean base-true?) (boolean base-true?)]
+
+      :union
+      [(boolean (or base-true? (some lower? dependencies)))
+       (boolean (or base-true? (some upper? dependencies)
+                    incomplete-arrow?))]
+
+      :intersection
+      [(every? lower? dependencies)
+       (every? upper? dependencies)]
+
+      :exclusion
+      (let [[left right] dependencies]
+        [(and (lower? left) (not (upper? right)))
+         (and (upper? left) (not (lower? right)))])
+
+      [false false])))
+
+(defn- solve-bounds
+  "Computes lower and upper least fixed points for the discovered graph.
+  Unexhausted arrow continuations are false in the lower bound and possible in
+  the upper bound. Strictly lower negative dependencies reverse their bound at
+  exclusion, so the result remains sound in the presence of negation."
+  [nodes]
+  (let [{:keys [components]} (strongly-connected-components nodes)
+        {:keys [component-of order]}
+        (dependency-first-components nodes components)
+        _ (validate-negative-components! nodes component-of)]
+    (loop [remaining order lower-facts #{} upper-facts #{}]
+      (if-let [component-index (first remaining)]
+        (let [component (nth components component-index)
+              [lower-facts upper-facts]
+              (loop [lower-facts lower-facts upper-facts upper-facts]
+                (let [[next-lower next-upper]
+                      (reduce
+                       (fn [[lower upper] q]
+                         (let [[lower-true? upper-true?]
+                               (rule-bounds (get nodes q) lower upper)]
+                           [(cond-> lower lower-true? (conj q))
+                            (cond-> upper upper-true? (conj q))]))
+                       [lower-facts upper-facts]
+                       (sorted-questions component))]
+                  (if (and (= lower-facts next-lower)
+                           (= upper-facts next-upper))
+                    [lower-facts upper-facts]
+                    (recur next-lower next-upper))))]
+          (recur (rest remaining) lower-facts upper-facts))
+        {:lower lower-facts :upper upper-facts}))))
+
+(defn- uncertain-arrow-questions
+  [nodes root-questions lower-facts upper-facts known-questions]
+  (letfn [(exact? [q]
+            (and (contains? known-questions q)
+                 (= (contains? lower-facts q)
+                    (contains? upper-facts q))))
+          (uncertain-dependencies [rule]
+            (let [{:keys [kind dependencies]} rule]
+              (case kind
+                (:union :intersection)
+                (mapv :key (filter #(not (exact? (:key %))) dependencies))
+
+                :exclusion
+                (let [[left right] dependencies]
+                  (cond-> []
+                    (not (exact? (:key left))) (conj (:key left))
+                    (not (exact? (:key right))) (conj (:key right))))
+
+                [])))
+          (first-arrow [root]
+            (loop [queue [root] index 0 visited #{}]
+              (when (< index (count queue))
+                (let [q (nth queue index)]
+                  (cond
+                    (or (contains? visited q) (exact? q))
+                    (recur queue (inc index) (conj visited q))
+
+                    (and (get-in nodes [q :arrow-state])
+                         (not (get-in nodes [q :arrow-state :complete?])))
+                    q
+
+                    :else
+                    (recur (into queue
+                                 (uncertain-dependencies (get nodes q)))
+                           (inc index) (conj visited q)))))))]
+    ;; Expand at most one arrow frontier per demanded root in a round. This
+    ;; batches independent candidates without speculatively reading sibling
+    ;; union branches or non-anchor intersection branches.
+    (->> root-questions
+         (keep first-arrow)
+         distinct
+         vec)))
+
+(defn- expand-arrow-wave!
+  [adapter plan roots nodes initial-arrows lower-facts upper-facts
+   known-questions width limits counters]
+  (loop [nodes nodes
+         frontier (vec initial-arrows)
+         remaining width]
+    (if (or (zero? remaining) (empty? frontier))
+      nodes
+      (let [batch (vec (take remaining frontier))
+            queued (vec (drop (count batch) frontier))
+            nodes
+            (reduce
+             (fn [current q]
+               (expand-arrow-chunk!
+                adapter plan roots current q limits counters))
+             nodes batch)
+            descendants
+            (mapcat
+             #(uncertain-arrow-questions
+               nodes [%] lower-facts upper-facts known-questions)
+             batch)
+            frontier (vec (distinct (into queued descendants)))]
+        (recur nodes frontier (- remaining (count batch)))))))
+
+(defn- finalize-unused-arrows [nodes]
+  (reduce-kv
+   (fn [result q rule]
+     (if (and (:arrow-state rule)
+              (not (get-in rule [:arrow-state :complete?])))
+       (assoc-in result [q :arrow-state :complete?] true)
+       result))
+   nodes nodes))
 
 (defn- portable-word-count [width]
   (quot (+ width 31) 32))
@@ -692,51 +874,50 @@
    :weight-fn (constantly 128)})
 
 (defn- attach-base-decisions!
-  [adapter nodes limits counters]
+  [adapter nodes limits counters pending-publications]
   (let [entries
         (vec
          (mapcat
           (fn [[q spec]]
-            (map #(vector q %) (:base-probes spec)))
+            (map #(vector q %)
+                 (drop (or (:attached-probe-count spec) 0)
+                       (:base-probes spec))))
           (sort-by (comp question-key key) nodes)))
-        probe-count (count entries)]
-    (limit-counter! limits counters :probes :maximum-probes probe-count)
-    (vswap! counters assoc :probes probe-count)
+        probe-count (count entries)
+        next-probes (+ (:probes @counters) probe-count)]
+    (limit-counter! limits counters :probes :maximum-probes next-probes)
+    (vswap! counters assoc :probes next-probes)
     (if (zero? probe-count)
       nodes
       (let [physical (atom {})
-            cache-hits (atom #{})
+            reused (atom #{})
             cache-lookup
             (fn [probe]
-              (if-let [store subproblem/*store*]
-                (if-let [resolved
-                         (subproblem/lookup!
-                          store :projection (direct-cache-key probe)
-                          direct-cache-options)]
+              (let [key (direct-cache-key probe)]
+                (if-let [[_ decision] (get @pending-publications key)]
                   (do
-                    (swap! cache-hits conj (direct-cache-key probe))
-                    (subproblem/record-avoided-backend-operation! store)
-                    (:value resolved))
-                  direct/cache-miss)
-                direct/cache-miss))
+                    (swap! reused conj key)
+                    decision)
+                  (if-let [store subproblem/*store*]
+                    (if-let [resolved
+                             (subproblem/lookup!
+                              store :projection key direct-cache-options)]
+                      (do
+                        (swap! reused conj key)
+                        (subproblem/record-avoided-backend-operation! store)
+                        (:value resolved))
+                      direct/cache-miss)
+                    direct/cache-miss))))
             decisions
             (binding [direct/*physical-stats* physical]
               (direct/dispatch adapter (mapv second entries) cache-lookup))
             _
-            ;; Individual decisions become visible only after the entire
-            ;; demanded physical vector has completed and passed its aligned
-            ;; Boolean contract. Cache-disabled execution binds no store and
-            ;; therefore performs no lookup or publication work.
-            (when-let [store subproblem/*store*]
-              (when subproblem/*populate?*
-                (let [published (atom @cache-hits)]
-                  (doseq [[[_ probe] decision]
-                          (map vector entries decisions)
-                          :let [key (direct-cache-key probe)]
-                          :when (not (contains? @published key))]
-                    (swap! published conj key)
-                    (subproblem/publish!
-                     store :projection key direct-cache-options decision)))))
+            (doseq [[[_ probe] decision] (map vector entries decisions)
+                    :let [key (direct-cache-key probe)]
+                    :when (not (contains? @reused key))]
+              ;; Publication is deferred until every demand-discovery round,
+              ;; exact fixed point, and checkpoint limit has succeeded.
+              (swap! pending-publications assoc key [probe decision]))
             true-heads
             (into #{}
                   (keep (fn [[[head _] decision]]
@@ -750,9 +931,20 @@
                       (:cache-hits @physical 0))
         (reduce-kv
          (fn [result q spec]
-           (assoc result q (assoc spec :base-true?
-                                  (contains? true-heads q))))
+           (assoc result q
+                  (assoc spec
+                         :attached-probe-count (count (:base-probes spec))
+                         :base-true? (or (:base-true? spec)
+                                         (contains? true-heads q)))))
          {} nodes)))))
+
+(defn- publish-direct-decisions! [pending-publications]
+  (when-let [store subproblem/*store*]
+    (when subproblem/*populate?*
+      (doseq [[key [_ decision]]
+              (sort-by (comp pr-str key) @pending-publications)]
+        (subproblem/publish!
+         store :projection key direct-cache-options decision)))))
 
 (defn- checkpoint-weight
   [facts join-states completed-components completed-strata]
@@ -857,11 +1049,64 @@
                           :join-slots 0 :join-words 0 :components 0
                           :strata 0 :commands 0 :values 0 :probes 0
                           :transitions 0 :maximum-queue 0
-                          :checkpoint-weight 0})
-              nodes (discover-graph! adapter plan roots root-questions
-                                     limits counters)
+                          :checkpoint-weight 0 :duplicate-facts 0
+                          :demand-rounds 0 :arrow-chunks 0
+                          :shared-scan-cache-hits 0
+                          :direct-adapter-commands 0
+                          :direct-fetched-values 0 :direct-cache-hits 0
+                          :late-anchor-initialized-slots 0})
+              pending-direct-publications (atom {})
+              initial-nodes
+              (discover-graph! plan roots root-questions limits counters)
+              [nodes bounded-decisions]
+              (loop [nodes
+                     (attach-base-decisions!
+                      adapter initial-nodes limits counters
+                      pending-direct-publications)
+                     wave-width
+                     (min batch-schedule/maximum-width
+                          (max 1 (count root-questions)))]
+                (execution/check! execution/*contract*
+                                  :operator-recursive/demand-discovery
+                                  {:questions (count nodes)
+                                   :commands (:commands @counters)})
+                (let [{:keys [lower upper]} (solve-bounds nodes)
+                      lower-facts lower
+                      upper-facts upper
+                      decisions
+                      (mapv #(contains? lower-facts %) root-questions)
+                      exact?
+                      (every?
+                       (fn [q]
+                         (= (contains? lower-facts q)
+                            (contains? upper-facts q)))
+                       root-questions)]
+                  (if exact?
+                    [(finalize-unused-arrows nodes) decisions]
+                    (let [known-questions (set (keys nodes))
+                          arrows
+                          (uncertain-arrow-questions
+                           nodes root-questions lower-facts upper-facts
+                           known-questions)]
+                      (when (empty? arrows)
+                        (invalid!
+                         :stalled-demand-discovery
+                         "Recursive demand discovery could not refine an uncertain result."
+                         {:questions (count nodes)
+                          :roots (count root-questions)}))
+                      (let [nodes
+                            (expand-arrow-wave!
+                             adapter plan roots nodes arrows
+                             lower-facts upper-facts known-questions
+                             wave-width limits counters)]
+                        (add-counter! counters :demand-rounds)
+                        (recur
+                         (attach-base-decisions!
+                          adapter nodes limits counters
+                          pending-direct-publications)
+                         (min batch-schedule/maximum-width
+                              (* 2 wave-width))))))))
               _ (vswap! counters assoc :questions (count nodes))
-              nodes (attach-base-decisions! adapter nodes limits counters)
               {:keys [components]} (strongly-connected-components nodes)
               component-count (count components)
               _ (limit-counter! limits counters :components
@@ -924,6 +1169,13 @@
                :checkpoint checkpoint
                :counters @counters
                :replayed? false}]
+          (when-not (= bounded-decisions (:decisions result))
+            (invalid!
+             :demand-discovery-mismatch
+             "Demand-bounded and exact recursive evaluation disagreed."
+             {:bounded bounded-decisions
+              :exact (:decisions result)}))
+          (publish-direct-decisions! pending-direct-publications)
           (observe! @counters)
           result)))))
 
