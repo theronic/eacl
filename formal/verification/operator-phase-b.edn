@@ -79,7 +79,7 @@
     eacl.operator.recursive-test]}
   {:scope :portable-production-and-operator-mutation-parity
    :runtime :cljs
-   :tests 425 :assertions 9244 :failures 0 :errors 0 :status :passed
+   :tests 426 :assertions 9276 :failures 0 :errors 0 :status :passed
    :runner eacl.datascript.cljs-test-runner}
   {:scope :generated-recursive-command-boundary
    :runtime :clj-java
@@ -95,7 +95,7 @@
    :command "EACL_NREPL_PORT=<formal-port> bin/formal counterexample-replay"}
   {:scope :datomic-datascript-datahike-adapter-and-operator-certification
    :runtime :clj
-   :tests 13 :assertions 118 :failures 0 :errors 0 :status :passed
+   :tests 13 :assertions 166 :failures 0 :errors 0 :status :passed
    :namespaces
    [eacl.datomic.adapter-certification-test
     eacl.datascript.adapter-certification-test
@@ -103,7 +103,7 @@
     eacl.operator-engine.cross-backend-operator-test]}
   {:scope :datalevin-adapter-and-operator-certification
    :runtime :clj
-   :tests 4 :assertions 20 :failures 0 :errors 0 :status :passed
+   :tests 4 :assertions 31 :failures 0 :errors 0 :status :passed
    :namespaces
    [eacl.datalevin.adapter-certification-test
     eacl.datalevin.operator-conformance-test]}

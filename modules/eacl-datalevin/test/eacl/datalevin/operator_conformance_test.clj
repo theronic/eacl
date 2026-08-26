@@ -5,7 +5,8 @@
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datalevin.core :as datalevin]
-            [eacl.engine.v8 :as engine]))
+            [eacl.engine.v8 :as engine]
+            [eacl.operator-engine.oracle :as oracle]))
 
 (def ^:private test-key "01234567890123456789012345678901")
 
@@ -32,6 +33,40 @@
 
 (defn- object [type id]
   (eacl/spice-object type id))
+
+(defn- oracle-object [value]
+  [(:type value) (:id value)])
+
+(defn- oracle-relationships [values]
+  (into #{}
+        (map (fn [{:keys [subject relation resource]}]
+               {:subject (oracle-object subject)
+                :relation relation
+                :resource (oracle-object resource)}))
+        values))
+
+(defn- acyclic-oracle-snapshot [objects relationship-values]
+  {:objects (into #{} (map oracle-object) objects)
+   :relationships (oracle-relationships relationship-values)
+   :permissions
+   {[:document :base]
+    [:union [:relation :reader] [:relation :writer]]
+    [:document :view]
+    [:exclusion
+     [:intersection [:permission :base] [:relation :reader]]
+     [:relation :banned]]}})
+
+(defn- recursive-oracle-snapshot [objects relationship-values]
+  {:objects (into #{} (map oracle-object) objects)
+   :relation-target-types {[:folder :parent] #{:folder}}
+   :relationships (oracle-relationships relationship-values)
+   :permissions
+   {[:folder :view]
+    [:union
+     [:relation :direct]
+     [:intersection [:arrow :parent :view] [:relation :eligible]]]
+    [:folder :allowed]
+    [:exclusion [:permission :view] [:relation :banned]]}})
 
 (defn- ids [page]
   (mapv :id (:data page)))
@@ -72,6 +107,9 @@
              (eacl/->Relationship alice :reader d3)
              (eacl/->Relationship alice :writer d3)
              (eacl/->Relationship bob :reader d1)]
+            oracle-snapshot
+            (acyclic-oracle-snapshot
+             (into [alice bob] documents) relationships)
             forward {:subject alice :permission :view
                      :resource/type :document}
             reverse {:resource d1 :permission :view :subject/type :user}]
@@ -80,14 +118,52 @@
                                 ["alice" "bob" "d0" "d1" "d2" "d3"]))
         (eacl/create-relationships! client relationships)
         (binding [engine/*operator-routing-enabled?* true]
+          (is (= (vec
+                  (for [subject [alice bob] resource documents]
+                    (oracle/check?
+                     oracle-snapshot (oracle-object subject) :view
+                     (oracle-object resource))))
+                 (vec
+                  (for [subject [alice bob] resource documents]
+                    (eacl/can? client {:subject subject :permission :view
+                                       :resource resource})))))
           (is (= [true false false true]
                  (mapv #(eacl/can? client {:subject alice :permission :view
                                            :resource %})
                        documents)))
+          (let [allowed (eacl/check-permission
+                         client {:subject alice :permission :view
+                                 :resource d0})
+                denied (eacl/check-permission
+                        client {:subject alice :permission :view
+                                :resource d1})]
+            (is (true? (:allowed? allowed)))
+            (is (false? (:allowed? denied)))
+            (is (boolean? (:cached? allowed)))
+            (is (= [allowed denied]
+                   (eacl/check-permissions
+                    client {:checks [{:subject alice :permission :view
+                                      :resource d0}
+                                     {:subject alice :permission :view
+                                      :resource d1}]}))))
           (is (= ["d0" "d3"]
                  (ids (eacl/lookup-resources client (assoc forward :first 20)))))
+          (is (= ["d0" "d3"]
+                 (ids
+                  (eacl/lookup-resources
+                   client
+                   (assoc forward :first 20
+                          :resource/relationship
+                          {:relation :reader :subject alice})))))
           (is (= ["bob"]
                  (ids (eacl/lookup-subjects client (assoc reverse :first 20)))))
+          (is (= ["bob"]
+                 (ids
+                  (eacl/lookup-subjects
+                   client
+                   (assoc reverse :first 20
+                          :subject/relationship
+                          {:relation :reader :resource d1})))))
           (is (= 2 (:count (eacl/count-resources client forward))))
           (is (= {:count 1 :limit 1 :truncated? true}
                  (select-keys
@@ -117,6 +193,10 @@
              (eacl/->Relationship f1 :parent f2)
              (eacl/->Relationship alice :eligible f2)
              (eacl/->Relationship alice :banned f2)]
+            oracle-snapshot
+            (recursive-oracle-snapshot
+             (into [alice bob] folders) relationships)
+            oracle-evaluation (oracle/evaluate-stratified oracle-snapshot)
             forward {:subject alice :permission :allowed
                      :resource/type :folder}
             reverse {:resource f0 :permission :allowed :subject/type :user}]
@@ -125,6 +205,16 @@
                                 ["alice" "bob" "f0" "f1" "f2"]))
         (eacl/create-relationships! client relationships)
         (binding [engine/*operator-routing-enabled?* true]
+          (is (= (vec
+                  (for [subject [alice bob] resource folders]
+                    (oracle/evaluated-check?
+                     oracle-evaluation (oracle-object subject) :allowed
+                     (oracle-object resource))))
+                 (vec
+                  (for [subject [alice bob] resource folders]
+                    (eacl/can? client {:subject subject
+                                       :permission :allowed
+                                       :resource resource})))))
           (is (= [true true false]
                  (mapv #(eacl/can? client {:subject alice
                                            :permission :allowed
@@ -135,9 +225,32 @@
                                            :permission :allowed
                                            :resource %})
                        folders)))
+          (is (= [true true false]
+                 (mapv :allowed?
+                       (eacl/check-permissions
+                        client
+                        {:checks
+                         (mapv #(hash-map :subject alice
+                                          :permission :allowed
+                                          :resource %)
+                               folders)}))))
           (is (= ["f0" "f1"]
                  (ids (eacl/lookup-resources client (assoc forward :first 20)))))
+          (is (= ["f1"]
+                 (ids
+                  (eacl/lookup-resources
+                   client
+                   (assoc forward :first 20
+                          :resource/relationship
+                          {:relation :eligible :subject alice})))))
           (is (= ["alice" "bob"]
                  (ids (eacl/lookup-subjects client (assoc reverse :first 20)))))
+          (is (= ["alice" "bob"]
+                 (ids
+                  (eacl/lookup-subjects
+                   client
+                   (assoc reverse :first 20
+                          :subject/relationship
+                          {:relation :direct :resource f0})))))
           (is (= 2 (:count (eacl/count-resources client forward))))
           (is (= 2 (:count (eacl/count-subjects client reverse)))))))))

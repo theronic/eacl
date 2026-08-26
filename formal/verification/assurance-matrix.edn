@@ -737,7 +737,9 @@
    :production-authoritative :behind-independent-disabled-route-and-write-gates
    :remaining [:production-performance-acceptance :release-gate-enablement]
    :assurance-qualification :independent-proof-review-not-performed
-   :report "formal/verification/operator-phase-b.edn"}
+   :report "formal/verification/operator-phase-b.edn"
+   :eacl-conformance-report
+   "formal/verification/operator-eacl-conformance.edn"}
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]

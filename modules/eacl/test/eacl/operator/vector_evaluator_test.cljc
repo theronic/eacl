@@ -64,6 +64,100 @@
     (catch #?(:clj Exception :cljs :default) error
       (ex-data error))))
 
+(def ^:private differential-seeds
+  [104729 130363 155921 196613 262147 327673 393241 458789
+   524309 589867 655373 720899 786433 851971 917519 983063])
+
+(def ^:private differential-schema-cases
+  [{:id :shared-left-union
+    :source schema}
+   {:id :union-under-intersection
+    :source
+    "definition user {}
+     definition document {
+       relation a: user
+       relation b: user
+       relation c: user
+       relation banned: user
+       permission view = ((a + b) & c) - banned
+     }"}
+   {:id :exclusion-under-intersection
+    :source
+    "definition user {}
+     definition document {
+       relation a: user
+       relation b: user
+       relation c: user
+       relation banned: user
+       permission view = (a - banned) & (b + c)
+     }"}])
+
+(defn- selected-relationship?
+  [seed relation-index subject-index resource-index]
+  (< (mod (+ seed
+             (* 97 (inc relation-index))
+             (* 193 (inc subject-index))
+             (* 389 (inc resource-index))
+             (* 17 (inc seed) (inc relation-index)
+                (inc resource-index)))
+          11)
+     5))
+
+(defn- differential-fixture [seed schema-source]
+  (let [conn (datascript/create-conn)
+        users (mapv #(object :user (str "u" %)) (range 2))
+        documents (mapv #(object :document (str "d" %)) (range 8))
+        relations [:a :b :c :banned]
+        relationships
+        (vec
+         (for [[relation-index relation] (map-indexed vector relations)
+               [subject-index subject] (map-indexed vector users)
+               [resource-index resource] (map-indexed vector documents)
+               :when (selected-relationship?
+                      seed relation-index subject-index resource-index)]
+           (eacl/->Relationship subject relation resource)))]
+    (datascript-schema/write-schema! conn schema-source)
+    (ds/transact!
+     conn
+     (map-indexed (fn [index value]
+                    {:db/id (- (inc index))
+                     :eacl/id (second (:id value))})
+                  (into users documents)))
+    (doseq [relationship relationships]
+      (ds/transact!
+       conn
+       (datascript-impl/tx-update-relationship
+        (ds/db conn) {:operation :touch :relationship relationship})))
+    (let [db (ds/db conn)
+          eid #(ds/entid db (:id %))]
+      {:adapter (datascript-backend/basis-adapter db {})
+       :users users
+       :documents documents
+       :relationships (set relationships)
+       :eid eid})))
+
+(defn- independent-direct-result
+  [schema-id relationships subject resource]
+  (let [present?
+        (fn [relation]
+          (contains? relationships
+                     (eacl/->Relationship subject relation resource)))]
+    (case schema-id
+      :shared-left-union
+      (and (or (and (present? :a) (present? :b))
+               (and (present? :a) (present? :c)))
+           (not (present? :banned)))
+
+      :union-under-intersection
+      (and (or (present? :a) (present? :b))
+           (present? :c)
+           (not (present? :banned)))
+
+      :exclusion-under-intersection
+      (and (present? :a)
+           (not (present? :banned))
+           (or (present? :b) (present? :c))))))
+
 (deftest vector-equals-scalar-and-uses-aligned-masks-test
   (let [{:keys [adapter user documents eid]} (fixture)
         operator-plan (plan/seal-plan adapter [:document :view])
@@ -101,6 +195,63 @@
                                                  :words]) word)
                                    (bit-shift-left 1 bit))))]
                   index))))))
+
+(deftest fixed-seed-scalar-vector-direction-and-cache-differential-test
+  (doseq [[case-index seed] (map-indexed vector differential-seeds)]
+    (let [{:keys [id source]}
+          (nth differential-schema-cases
+               (mod case-index (count differential-schema-cases)))
+          {:keys [adapter users documents relationships eid]}
+          (differential-fixture seed source)
+          operator-plan (plan/seal-plan adapter [:document :view])
+          candidates
+          (vec
+           (for [subject users resource documents]
+             {:direction :forward
+              :subject-type :user :subject-eid (eid subject)
+              :resource-type :document :resource-eid (eid resource)}))
+          expected
+          (vec
+           (for [subject users resource documents]
+             (independent-direct-result
+              id relationships subject resource)))
+          scalar-result
+          (mapv
+           (fn [candidate]
+             (scalar/check-eids
+              {:adapter adapter :plan operator-plan
+               :subject-type (:subject-type candidate)
+               :subject-eid (:subject-eid candidate)
+               :resource-eid (:resource-eid candidate)}))
+           candidates)
+          vector-result
+          (vector-evaluator/check-many-eids
+           {:adapter adapter :plan operator-plan :candidates candidates})
+          reverse-result
+          (vector-evaluator/check-many-eids
+           {:adapter adapter :plan operator-plan
+            :candidates (mapv #(assoc % :direction :reverse) candidates)})
+          cache-free
+          (binding [subproblem/*store* nil]
+            (vector-evaluator/check-cached-many-eids
+             {:adapter adapter :plan operator-plan :candidates candidates
+              :scope-identity [:fixed-seed seed]}))
+          store (subproblem/store)
+          cached-options
+          {:adapter adapter :plan operator-plan :candidates candidates
+           :scope-identity [:fixed-seed seed]}
+          cold (binding [subproblem/*store* store]
+                 (vector-evaluator/check-cached-many-eids cached-options))
+          warm (binding [subproblem/*store* store]
+                 (vector-evaluator/check-cached-many-eids cached-options))]
+      (is (= expected scalar-result vector-result reverse-result
+             cache-free cold warm)
+          (str "fixed differential schema " id ", seed " seed))
+      (is (= (count candidates)
+             (get-in (subproblem/stats store)
+                     [:tiers :denotation :entries]))
+          (str "complete aligned points published for schema " id
+               ", seed " seed)))))
 
 (deftest reverse-witness-boundary-and-malformed-vector-test
   (let [{:keys [adapter user documents eid]} (fixture)
