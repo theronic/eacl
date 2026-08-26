@@ -1,6 +1,7 @@
 (ns eacl.formal.executed-mutation-controls
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
+            [clojure.string :as str]
             [eacl.backend.v8 :as backend]
             [eacl.backend.direct-membership :as direct]
             [eacl.authorization.batch :as batch]
@@ -9,6 +10,7 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
+            [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
@@ -16,6 +18,8 @@
             [eacl.request.context :as request-context]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-graph :as expression-graph]
+            [eacl.schema.expression-persistence :as persistence]
+            [eacl.schema.expression-resolver :as resolver]
             [eacl.spicedb.parser :as parser]
             [eacl.verified-kernel :as verified]))
 
@@ -770,57 +774,234 @@
                       (dissoc (original candidate) :deadline-nanos))]
         (gate))))))
 
+;;; ---------------------------------------------------------------------------
+;;; Operator engine controls
+;;;
+;;; Every operator control mutates a named production definition and detects
+;;; the mutation through a full production consumer: schema validation, plan
+;;; sealing, acyclic point evaluation, recursive stratified evaluation, or
+;;; filtered pagination. Expectations are independent truth tables derived
+;;; from the documented operator semantics, never from the code under
+;;; mutation, and every control additionally proves its baseline observation
+;;; executed the mutated definition at least once.
+
+(defn- operator-probe-adapter
+  "Builds a v8 adapter over `schema-source` whose relationship tuples are
+  exactly `relationships`: a set of
+  `[subject-type subject-eid relation-name resource-type resource-eid]`.
+  Relation names resolve to the deterministic relation ids the sealed plan
+  sees, and both scan directions honor strict eid order and exclusive or
+  inclusive bounds."
+  [schema-source relationships]
+  (let [validated (resolver/validate-schema schema-source)
+        candidate (persistence/candidate-schema validated)
+        relation-key (juxt :eacl.relation/resource-type
+                           :eacl.relation/relation-name
+                           :eacl.relation/subject-type)
+        rows (->> (:relations candidate)
+                  (sort-by relation-key)
+                  (map-indexed
+                   (fn [index relation]
+                     {:relation-id (+ 100 index)
+                      :resource-type (:eacl.relation/resource-type relation)
+                      :relation-name (:eacl.relation/relation-name relation)
+                      :subject-type (:eacl.relation/subject-type relation)}))
+                  vec)
+        relation-ids (into {}
+                           (map (fn [row]
+                                  [[(:resource-type row)
+                                    (:relation-name row)]
+                                   (:relation-id row)]))
+                           rows)
+        relations (group-by (juxt :resource-type :relation-name) rows)
+        expressions (into {}
+                          (map (fn [entity]
+                                 [[(:eacl.permission/resource-type entity)
+                                   (:eacl.permission/permission-name entity)]
+                                  entity]))
+                          (:permissions candidate))
+        tuples (into #{}
+                     (map (fn [[subject-type subject-eid relation-name
+                                resource-type resource-eid]]
+                            [subject-type subject-eid
+                             (get relation-ids
+                                  [resource-type relation-name])
+                             resource-type resource-eid]))
+                     relationships)
+        scan (fn [match-fn extract-fn]
+               (fn [type-a eid-a relation-id type-b
+                    {:keys [direction bound-eid inclusive-bound?]}]
+                 (let [eids (->> tuples
+                                 (filter #(match-fn % type-a eid-a
+                                                    relation-id type-b))
+                                 (map extract-fn)
+                                 sort
+                                 vec)
+                       eids (if (= :desc direction)
+                              (vec (reverse eids))
+                              eids)]
+                   (cond->> eids
+                     (some? bound-eid)
+                     (filterv
+                      (fn [eid]
+                        (if (= :desc direction)
+                          (if inclusive-bound?
+                            (<= eid bound-eid)
+                            (< eid bound-eid))
+                          (if inclusive-bound?
+                            (>= eid bound-eid)
+                            (> eid bound-eid)))))))))]
+    (backend/make-adapter
+     {:id :operator-mutation-control
+      :capabilities backend/empty-capabilities
+      :operations
+      (merge
+       (operation-map)
+       {:snapshot-id (constantly {:snapshot :operator-mutation-control})
+        :basis-kind (constantly :ordinary)
+        :native-revision (constantly {:revision 1})
+        :order-hint (constantly 1)
+        :exact-locator (constantly nil)
+        :object-id->internal identity
+        :internal-id->object identity
+        :relation-defs
+        (fn [resource-type relation-name]
+          (mapv #(select-keys % [:relation-id :resource-type
+                                 :relation-name :subject-type])
+                (get relations [resource-type relation-name] [])))
+        :permission-expression
+        (fn [resource-type permission-name]
+          (get expressions [resource-type permission-name]))
+        :permission-defs
+        (fn [resource-type permission-name]
+          (when-let [entity (get expressions
+                                 [resource-type permission-name])]
+            (persistence/union-compatible-definitions
+             (:eacl/id entity)
+             (persistence/decode-entity entity))))
+        :subject->resources
+        (scan (fn [[subject-type subject-eid relation resource-type _]
+                   type-a eid-a relation-id type-b]
+                (and (= subject-type type-a) (= subject-eid eid-a)
+                     (= relation relation-id) (= resource-type type-b)))
+              (fn [[_ _ _ _ resource-eid]] resource-eid))
+        :resource->subjects
+        (scan (fn [[subject-type _ relation resource-type resource-eid]
+                   type-a eid-a relation-id type-b]
+                (and (= resource-type type-a) (= resource-eid eid-a)
+                     (= relation relation-id) (= subject-type type-b)))
+              (fn [[_ subject-eid _ _ _]] subject-eid))
+        :direct-match?
+        (fn [subject-type subject-eid relation-eid
+             resource-type resource-eid]
+          (contains? tuples [subject-type subject-eid relation-eid
+                             resource-type resource-eid]))
+        :all-permission-nodes (constantly (set (keys expressions)))})})))
+
+(defn- operator-typed-or
+  "Runs `probe`, returning its value or `{:typed <:eacl/error>}` when it
+  throws. The recursive engine's internal bounded-versus-exact differential
+  converts several mutations into typed integrity errors instead of silent
+  wrong answers; both observations are production output."
+  [probe]
+  (try
+    (probe)
+    (catch #?(:clj Exception :cljs :default) error
+      {:typed (:type (ex-data error))})))
+
+(def ^:private operator-precedence-schema
+  "definition user {}
+definition doc {
+  relation reader: user
+  relation writer: user
+  relation approved: user
+  relation banned: user
+  permission view = reader + writer & approved - banned
+}")
+
+(def ^:private operator-precedence-relationships
+  "Subjects on one shared document: 1 reader; 2 writer; 3 writer+approved;
+  4 reader+banned; 5 reader+approved; 6 writer+approved+banned;
+  7 approved."
+  #{[:user 1 :reader :doc 30]
+    [:user 2 :writer :doc 30]
+    [:user 3 :writer :doc 30] [:user 3 :approved :doc 30]
+    [:user 4 :reader :doc 30] [:user 4 :banned :doc 30]
+    [:user 5 :reader :doc 30] [:user 5 :approved :doc 30]
+    [:user 6 :writer :doc 30] [:user 6 :approved :doc 30]
+    [:user 6 :banned :doc 30]
+    [:user 7 :approved :doc 30]})
+
+(def ^:private operator-precedence-expected
+  "Digest-pinned SpiceDB semantics of
+  `reader + writer & approved - banned` read as
+  `((reader + writer) & approved) - banned` for subjects 1..7."
+  [false false true false true false false])
+
+(defn- operator-precedence-decisions
+  "Validates, seals, and point-evaluates the mixed-operator schema through
+  the production pipeline. The parse runs inside this probe, so mutations at
+  the parse boundary are observed as changed decisions."
+  []
+  (operator-typed-or
+   (fn []
+     (let [adapter (operator-probe-adapter
+                    operator-precedence-schema
+                    operator-precedence-relationships)
+           plan (operator-plan/seal-plan adapter [:doc :view])]
+       (mapv (fn [subject-eid]
+               (operator-evaluator/check-eids
+                {:adapter adapter :plan plan :subject-type :user
+                 :subject-eid subject-eid :resource-eid 30}))
+             [1 2 3 4 5 6 7])))))
+
+(defn- parse-schema-rewriting
+  [original from to]
+  (fn [source & options]
+    (apply original (str/replace source from to) options)))
+
 (defn operator-wrong-precedence-killed?
   []
-  (let [parse
-        #(parser/permission-expression->source-ast
-          (parser/parse-permission-expression "a + b & c - d"))
-        expected
-        {:op :exclusion
-         :left {:op :intersection
-                :children
-                [{:op :union
-                  :children [{:op :identifier :name "a"}
-                             {:op :identifier :name "b"}]}
-                 {:op :identifier :name "c"}]}
-         :right {:op :identifier :name "d"}}
-        original parser/permission-expression->source-ast]
+  (let [original parser/parse-schema
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))]
     (and
-     (= expected (parse))
-     (not=
-      expected
-      (with-redefs
-       [parser/permission-expression->source-ast
-        (fn [tree]
-          (let [correct (original tree)]
-            {:op :union
-             :children
-             [(:left correct)
-              {:op :exclusion
-               :left {:op :identifier :name "c"}
-               :right (:right correct)}]}))]
-       (parse))))))
+     (= operator-precedence-expected
+        (with-redefs [parser/parse-schema counted]
+          (operator-precedence-decisions)))
+     (pos? @executed)
+     ;; Conventional intersection-before-union precedence: subject 1, a bare
+     ;; reader without approval, becomes authorized.
+     (not= operator-precedence-expected
+           (with-redefs [parser/parse-schema
+                         (parse-schema-rewriting
+                          original
+                          "reader + writer & approved - banned"
+                          "(reader + (writer & approved)) - banned")]
+             (operator-precedence-decisions))))))
 
 (defn operator-swapped-exclusion-killed?
   []
-  (let [parse
-        #(parser/permission-expression->source-ast
-          (parser/parse-permission-expression "reader - banned"))
-        expected
-        {:op :exclusion
-         :left {:op :identifier :name "reader"}
-         :right {:op :identifier :name "banned"}}
-        original parser/permission-expression->source-ast]
+  (let [original parser/parse-schema
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))]
     (and
-     (= expected (parse))
-     (not=
-      expected
-      (with-redefs
-       [parser/permission-expression->source-ast
-        (fn [tree]
-          (let [{:keys [left right] :as correct} (original tree)]
-            (assoc correct :left right :right left)))]
-       (parse))))))
+     (= operator-precedence-expected
+        (with-redefs [parser/parse-schema counted]
+          (operator-precedence-decisions)))
+     (pos? @executed)
+     ;; Swapped exclusion operands authorize exactly the banned subjects.
+     (not= operator-precedence-expected
+           (with-redefs [parser/parse-schema
+                         (parse-schema-rewriting
+                          original
+                          "reader + writer & approved - banned"
+                          "banned - (reader + writer & approved)")]
+             (operator-precedence-decisions))))))
 
 (defn operator-unsigned-dependency-killed?
   []
@@ -875,44 +1056,146 @@
           (if (= 1 slot) state (original state candidate-rule slot)))]
        (complete?))))))
 
+(def ^:private operator-recursive-schema
+  "definition user {}
+definition doc {
+  relation sdir: user
+  relation eligible: user
+  relation direct: user
+  relation rdir: user
+  relation banned: user
+  permission seed = sdir
+  permission via = seed & eligible
+  permission rec = member & rdir
+  permission member = (via + direct + rec) - banned
+}")
+
+(def ^:private operator-recursive-relationships
+  "Subject 1 reaches `member` through `via`; subject 2 through `direct`
+  (its member fact then arrives at `via`'s join as a non-anchor child whose
+  anchor never does); subject 3 holds only the join anchor; subject 4 is
+  banned."
+  #{[:user 1 :sdir :doc 10] [:user 1 :eligible :doc 10]
+    [:user 2 :direct :doc 11]
+    [:user 3 :eligible :doc 12]
+    [:user 4 :direct :doc 13] [:user 4 :banned :doc 13]})
+
+(def ^:private operator-recursive-expected
+  "Stratified least-fixed-point truth for subjects 1..4 on their documents."
+  [true true false false])
+
+(defn- operator-recursive-observation
+  "Evaluates the recursive fixture through stratified production evaluation,
+  returning the aligned decisions plus the retained anchor-state count the
+  engine accounts against its D11 bound."
+  []
+  (operator-typed-or
+   (fn []
+     (let [adapter (operator-probe-adapter
+                    operator-recursive-schema
+                    operator-recursive-relationships)
+           plan (operator-plan/seal-plan adapter [:doc :member])
+           result (operator-recursive/evaluate-many
+                   {:adapter adapter :plan plan :permission [:doc :member]
+                    :candidates
+                    [{:direction :forward :subject-type :user
+                      :subject-eid 1 :resource-eid 10}
+                     {:direction :forward :subject-type :user
+                      :subject-eid 2 :resource-eid 11}
+                     {:direction :forward :subject-type :user
+                      :subject-eid 3 :resource-eid 12}
+                     {:direction :forward :subject-type :user
+                      :subject-eid 4 :resource-eid 13}]})]
+       {:decisions (:decisions result)
+        :anchor-states (get-in result [:counters :anchor-states])}))))
+
+(def ^:private operator-duplicate-schema
+  "One cyclic component {b, both} in which `adir` (the join anchor) and `b`
+  are both in the join's facts when it reserves, so `b`'s in-component
+  delivery then re-admits an already-satisfied slot."
+  "definition user {}
+definition doc {
+  relation adir: user
+  relation bdir: user
+  relation cdir: user
+  permission cperm = cdir
+  permission b = bdir + both
+  permission both = adir & b & cperm
+  permission member = both
+}")
+
+(def ^:private operator-duplicate-relationships
+  "Subject 5 lacks `cdir`, so its three-way join must stay incomplete;
+  subject 6 holds all three."
+  #{[:user 5 :adir :doc 20] [:user 5 :bdir :doc 20]
+    [:user 6 :adir :doc 21] [:user 6 :bdir :doc 21]
+    [:user 6 :cdir :doc 21]})
+
+(def ^:private operator-duplicate-expected
+  [false true])
+
+(defn- operator-duplicate-decisions
+  []
+  (operator-typed-or
+   (fn []
+     (let [adapter (operator-probe-adapter
+                    operator-duplicate-schema
+                    operator-duplicate-relationships)
+           plan (operator-plan/seal-plan adapter [:doc :member])]
+       (:decisions
+        (operator-recursive/evaluate-many
+         {:adapter adapter :plan plan :permission [:doc :member]
+          :candidates
+          [{:direction :forward :subject-type :user
+            :subject-eid 5 :resource-eid 20}
+           {:direction :forward :subject-type :user
+            :subject-eid 6 :resource-eid 21}]}))))))
+
 (defn operator-duplicate-satisfaction-count-killed?
   []
-  (let [rule {:key :parent :anchor-slot 0}
-        initial
-        {:join-states
-         {:parent {:width 2 :words [0] :satisfied 0}}}
-        satisfied
-        #(get-in
-          (-> initial
-              (operator-recursive/update-join rule 0)
-              (operator-recursive/update-join rule 0))
-          [:join-states :parent :satisfied])
-        original operator-recursive/update-join]
+  (let [original operator-recursive/update-join
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))]
     (and
-     (= 1 (satisfied))
-     (not=
-      1
-      (with-redefs
-       [operator-recursive/update-join
-        (fn [state candidate-rule slot]
-          (update-in (original state candidate-rule slot)
-                     [:join-states (:key candidate-rule) :satisfied]
-                     inc))]
-       (satisfied))))))
+     (= operator-duplicate-expected
+        (with-redefs [operator-recursive/update-join counted]
+          (operator-duplicate-decisions)))
+     (pos? @executed)
+     ;; Counting a duplicate slot admission drives `satisfied` to the join
+     ;; width before the third child exists; production surfaces the breach
+     ;; instead of authorizing subject 5.
+     (not= operator-duplicate-expected
+           (with-redefs [operator-recursive/update-join
+                         (fn [state rule slot]
+                           (update-in (original state rule slot)
+                                      [:join-states (:key rule) :satisfied]
+                                      inc))]
+             (operator-duplicate-decisions))))))
 
 (defn operator-partial-negative-killed?
   []
-  (let [decision
-        #(operator-recursive/exclusion-decision
-          #{} :negative-component #{:left} :left :right)]
+  (let [original operator-recursive/exclusion-decision
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))
+        expected {:decisions operator-recursive-expected
+                  :anchor-states 2}]
     (and
-     (= :incomplete (decision))
-     (not=
-      :incomplete
-      (with-redefs
-       [operator-recursive/exclusion-decision
-        (fn [& _] :authorize)]
-       (decision))))))
+     (= expected
+        (with-redefs [operator-recursive/exclusion-decision counted]
+          (operator-recursive-observation)))
+     (pos? @executed)
+     ;; Deciding exclusion from left-side presence alone, as if the negative
+     ;; component were absent before completion, authorizes banned subject 4;
+     ;; production refuses to publish the divergent evaluation.
+     (not= expected
+           (with-redefs [operator-recursive/exclusion-decision
+                         (fn [completed right-component facts left right]
+                           (if (contains? facts left) :authorize :deny))]
+             (operator-recursive-observation))))))
 
 (defn- operator-direct-adapter []
   (backend/make-adapter
@@ -950,51 +1233,180 @@
           (vec (reverse (original candidate-adapter request))))]
        (evaluate))))))
 
+(def ^:private operator-lookup-schema
+  "definition user {}
+definition doc {
+  relation reader: user
+  relation banned: user
+  permission view = reader - banned
+}")
+
+(def ^:private operator-lookup-relationships
+  "Subject 1 reads documents 10..17; 11..13 are banned, so accepted
+  results interleave with physically examined rejections and every page
+  boundary sits between a selected result and an overread suffix."
+  (into #{[:user 1 :banned :doc 11]
+          [:user 1 :banned :doc 12]
+          [:user 1 :banned :doc 13]}
+        (map (fn [resource-eid] [:user 1 :reader :doc resource-eid]))
+        [10 11 12 13 14 15 16 17]))
+
+(def ^:private operator-lookup-expected
+  "Every authorized resource in ascending order, independent of paging."
+  [10 14 15 16 17])
+
+(defn- operator-lookup-sweep
+  "Pages the filtered lookup two results at a time, resuming each page from
+  the previous page's public resume coordinate, and returns every emitted
+  resource eid in order."
+  []
+  (operator-typed-or
+   (fn []
+     (let [adapter (operator-probe-adapter
+                    operator-lookup-schema
+                    operator-lookup-relationships)
+           plan (operator-plan/seal-plan adapter [:doc :view])]
+       (loop [boundary nil
+              emitted []
+              pages 0]
+         (let [page (operator-lookup/lookup-page
+                     {:adapter adapter :plan plan :traversal :forward
+                      :subject-type :user :anchor-eid 1 :page-size 2
+                      :boundary boundary :permission [:doc :view]})
+               emitted (into emitted (map :value) (:emissions page))]
+           (if (and (:has-more? page) (< pages 8))
+             (recur (:resume-coords page) emitted (inc pages))
+             emitted)))))))
+
 (defn operator-overread-cursor-advance-killed?
   []
-  (let [selected [{:coords [3 0] :value 30}]
-        logical #(operator-lookup/resume-coordinate true selected [9 0])]
+  (let [original operator-lookup/resume-coordinate
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))]
     (and
-     (= [3 0] (logical))
-     (not=
-      [3 0]
-      (with-redefs
-       [operator-lookup/resume-coordinate
-        (fn [_sentinel? _selected last-examined] last-examined)]
-       (logical))))))
+     (= operator-lookup-expected
+        (with-redefs [operator-lookup/resume-coordinate counted]
+          (operator-lookup-sweep)))
+     (pos? @executed)
+     ;; Advancing the public cursor to the physically examined coordinate
+     ;; skips the sentinel result on resume, so the paged sweep loses an
+     ;; authorized resource.
+     (not= operator-lookup-expected
+           (with-redefs [operator-lookup/resume-coordinate
+                         (fn [sentinel? selected last-examined]
+                           last-examined)]
+             (operator-lookup-sweep))))))
 
 (defn operator-any-child-allocation-killed?
   []
-  (let [state {:join-states {}}
-        rule {:key :parent :anchor-slot 0}
-        action #(operator-recursive/join-transition-action state rule 1)]
+  (let [original operator-recursive/join-transition-action
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))
+        expected {:decisions operator-recursive-expected
+                  :anchor-states 2}]
     (and
-     (= :ignore (action))
-     (not=
-      :ignore
-      (with-redefs
-       [operator-recursive/join-transition-action
-        (fn [& _] :reserve)]
-       (action))))))
+     (= expected
+        (with-redefs [operator-recursive/join-transition-action counted]
+          (operator-recursive-observation)))
+     (pos? @executed)
+     ;; Reserving parent join state for a non-anchor arrival retains state
+     ;; for joins whose anchor never fires, which the engine's accounted
+     ;; anchor-state bound makes visible.
+     (not= expected
+           (with-redefs [operator-recursive/join-transition-action
+                         (fn [state rule slot]
+                           (if (contains? (:join-states state) (:key rule))
+                             :update
+                             :reserve))]
+             (operator-recursive-observation))))))
+
+(def ^:private operator-generator-schema
+  "definition user {}
+definition doc {
+  relation reader: user
+  relation writer: user
+  relation banned: user
+  permission view = (reader & writer) - banned
+}")
+
+(defn- operator-sealed-plans
+  "Seals the same intersection schema twice over independently built
+  adapters. Plan identity across the two runs is the deterministic-selection
+  contract: nothing observed at runtime may change the sealed generator."
+  []
+  (letfn [(seal []
+            (operator-plan/seal-plan
+             (operator-probe-adapter operator-generator-schema #{})
+             [:doc :view]))]
+    (= (seal) (seal))))
 
 (defn operator-cache-selected-generator-killed?
   []
-  (let [children [7 8]
-        costs {7 {:tuple [0 0 1 3 7]}
-               8 {:tuple [1 1 2 4 8]}}
-        select #(operator-plan/select-intersection-anchor children costs)
+  (let [original operator-plan/select-intersection-anchor
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))
         observed-cache (atom false)]
     (and
-     (= [7 7] [(select) (select)])
-     (not=
-      [7 7]
-      (with-redefs
-       [operator-plan/select-intersection-anchor
-        (fn [candidate-children _candidate-costs]
-          (if (swap! observed-cache not)
-            (first candidate-children)
-            (second candidate-children)))]
-       [(select) (select)])))))
+     (true? (with-redefs [operator-plan/select-intersection-anchor counted]
+              (operator-sealed-plans)))
+     (pos? @executed)
+     ;; A selector that consults observed state alternates anchors between
+     ;; compilations, so two seals of one schema stop producing one plan.
+     (false? (with-redefs [operator-plan/select-intersection-anchor
+                           (fn [children costs]
+                             (if (swap! observed-cache not)
+                               (first (sort children))
+                               (second (sort children))))]
+               (operator-sealed-plans))))))
+
+(defn operator-active-recursion-as-false-killed?
+  []
+  (let [original operator-evaluator/active-recursion-outcome
+        executed (volatile! 0)
+        counted (fn [& args]
+                  (vswap! executed inc)
+                  (apply original args))
+        probe
+        (fn []
+          (operator-typed-or
+           (fn []
+             (let [adapter (operator-probe-adapter
+                            operator-lookup-schema
+                            #{[:user 1 :reader :doc 10]})
+                   plan (operator-plan/seal-plan adapter [:doc :view])
+                   rerouted-node
+                   (first (keys (get-in plan
+                                        [:predicate-programs [:doc :view]])))
+                   ;; Reroute one sealed predicate back at its own root: the
+                   ;; only execution that can make a point key active twice,
+                   ;; since sealing rejects cyclic predicate graphs.
+                   self-referential
+                   (assoc-in plan
+                             [:predicate-programs [:doc :view]
+                              rerouted-node]
+                             {:instruction :permission-membership
+                              :target-node [:doc :view]})]
+               (operator-evaluator/check-eids
+                {:adapter adapter :plan self-referential
+                 :subject-type :user :subject-eid 1 :resource-eid 10})))))
+        expected {:typed :eacl.operator/active-recursion}]
+    (and
+     (= expected
+        (with-redefs [operator-evaluator/active-recursion-outcome counted]
+          (probe)))
+     (pos? @executed)
+     ;; Treating an active recursion marker as a false decision converts the
+     ;; fail-closed invariant breach into an ordinary denial.
+     (not= expected
+           (with-redefs [operator-evaluator/active-recursion-outcome
+                         (fn [data] false)]
+             (probe))))))
 
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
@@ -1045,7 +1457,9 @@
    :operator-overread-cursor-advance operator-overread-cursor-advance-killed?
    :operator-any-child-allocation operator-any-child-allocation-killed?
    :operator-cache-selected-generator
-   operator-cache-selected-generator-killed?})
+   operator-cache-selected-generator-killed?
+   :operator-active-recursion-as-false
+   operator-active-recursion-as-false-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

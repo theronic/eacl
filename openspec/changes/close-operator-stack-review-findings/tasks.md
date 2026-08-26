@@ -19,11 +19,11 @@ Ordered by severity. Sections 1 and 2 are merge blockers.
 
 ## 3. Restore mutation-control integrity
 
-- [ ] 3.1 Rewrite `:operator-partial-negative`, `:operator-overread-cursor-advance`, `:operator-any-child-allocation`, and `:operator-cache-selected-generator` on the `:operator-vector-misalignment` pattern: mutate the real definition, detect through a production consumer, expectation derived independently.
-- [ ] 3.2 Strengthen `:operator-wrong-precedence`, `:operator-swapped-exclusion`, and `:operator-duplicate-satisfaction-count` so the kill conjunct depends on production output rather than holding by construction.
-- [ ] 3.3 Add the missing D13 class: `active-recursion-as-false`, detected through a production execution path that reaches the `:eacl.operator/active-recursion` guard.
-- [ ] 3.4 Teach the manifest validator to reject a control whose kill assertion is decidable without the mutated definition, and to require that `:killed-by` names an existing test.
-- [ ] 3.5 Correct or remove the ten fabricated `:killed-by` entries; re-cut registered/killed counts and manifest pins.
+- [x] 3.1 Rewrite `:operator-partial-negative`, `:operator-overread-cursor-advance`, `:operator-any-child-allocation`, and `:operator-cache-selected-generator` on the `:operator-vector-misalignment` pattern: mutate the real definition, detect through a production consumer, expectation derived independently.
+- [x] 3.2 Strengthen `:operator-wrong-precedence`, `:operator-swapped-exclusion`, and `:operator-duplicate-satisfaction-count` so the kill conjunct depends on production output rather than holding by construction.
+- [x] 3.3 Add the missing D13 class: `active-recursion-as-false`, detected through a production execution path that reaches the `:eacl.operator/active-recursion` guard.
+- [x] 3.4 Teach the manifest validator to reject a control whose kill assertion is decidable without the mutated definition, and to require that `:killed-by` names an existing test.
+- [x] 3.5 Correct or remove the ten fabricated `:killed-by` entries; re-cut registered/killed counts and manifest pins.
 
 ## 4. Migration semantic equivalence
 

@@ -199,12 +199,8 @@
                       (do
                         (doseq [index pending]
                           (when (contains? @active [node-key index])
-                            (throw
-                             (ex-info
-                              "Vector predicate encountered active recursion."
-                              {:type :eacl.operator/active-recursion
-                               :eacl/error :eacl.operator/active-recursion
-                               :node node-key :candidate-index index}))))
+                            (scalar/active-recursion-outcome
+                             {:node node-key :candidate-index index})))
                         (swap! active into (map #(vector node-key %) pending))
                         (add-stat! :node-candidate-evaluations (count pending))
                         (let [predicate
