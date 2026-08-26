@@ -199,6 +199,115 @@
         (is (nil? (migration/stamped-permission-storage-version
                    (d/db conn))))))))
 
+(def ^:private two-relation-flat-definitions
+  "Released-v7 rows: reader and writer relations, `view` granted by reader
+  only."
+  [(base/Relation :document :reader :user)
+   (base/Relation :document :writer :user)
+   (base/Permission :document :view {:relation :reader})])
+
+(defn- populate-two-relation-v7! [conn]
+  @(d/transact conn two-relation-flat-definitions))
+
+(deftest semantically-divergent-replacement-schema-is-rejected-test
+  (with-mem-conn [conn released-v7-schema]
+    (populate-two-relation-v7! conn)
+    (let [old-permissions (schema/read-permissions (d/db conn))
+          error
+          (error-data
+           #(migration/migrate!
+             conn
+             {:schema "definition user {}
+                       definition document {
+                         relation reader: user
+                         relation writer: user
+                         permission view = writer
+                       }"}))]
+      (is (= :eacl.migration/permission-semantic-change (:type error)))
+      (is (= (:type error) (:eacl/error error)))
+      (is (= [[:document :view]] (:divergent-permissions error))
+          "the rejection names the divergent permission")
+      (is (= [] (:removed-permissions error)))
+      (is (= :flat (schema/permission-storage-shape (d/db conn)))
+          "the stored v7 rows stay active")
+      (is (= old-permissions (schema/read-permissions (d/db conn))))
+      (is (nil? (migration/stamped-permission-storage-version (d/db conn)))
+          "no storage version was stamped"))))
+
+(deftest replacement-schema-removing-a-stored-permission-is-rejected-test
+  (with-mem-conn [conn released-v7-schema]
+    (populate-two-relation-v7! conn)
+    (let [error
+          (error-data
+           #(migration/migrate!
+             conn
+             {:schema "definition user {}
+                       definition document {
+                         relation reader: user
+                         relation writer: user
+                       }"}))]
+      (is (= :eacl.migration/permission-semantic-change (:type error)))
+      (is (= [[:document :view]] (:removed-permissions error)))
+      (is (= :flat (schema/permission-storage-shape (d/db conn)))))))
+
+(deftest equivalent-and-additive-replacement-schema-migrates-test
+  (testing "union arms compare as a set, so declaration order is free"
+    (with-mem-conn [conn released-v7-schema]
+      @(d/transact conn [(base/Relation :document :reader :user)
+                         (base/Relation :document :writer :user)
+                         (base/Permission :document :view
+                                          {:relation :reader})
+                         (base/Permission :document :view
+                                          {:relation :writer})])
+      (let [report
+            (migration/migrate!
+             conn
+             {:schema "definition user {}
+                       definition document {
+                         relation reader: user
+                         relation writer: user
+                         permission view = writer + reader
+                       }"})]
+        (is (= :migrated (:status report)))
+        (is (= :expression (schema/permission-storage-shape (d/db conn)))))))
+  (testing "permissions present only in the replacement are additive"
+    (with-mem-conn [conn released-v7-schema]
+      (populate-two-relation-v7! conn)
+      (let [report
+            (migration/migrate!
+             conn
+             {:schema "definition user {}
+                       definition document {
+                         relation reader: user
+                         relation writer: user
+                         permission view = reader
+                         permission archive = writer
+                       }"})]
+        (is (= :migrated (:status report)))
+        (is (= 8 (migration/stamped-permission-storage-version
+                  (d/db conn))))))))
+
+(deftest no-op-migration-reports-the-outcome-and-stamped-version-test
+  (with-mem-conn [conn released-v7-schema]
+    ;; A v7-era database: relations and a schema generation exist, no
+    ;; permission rows, and no permission-storage stamp was ever written.
+    @(d/transact conn [(base/Relation :document :reader :user)
+                       {:eacl/id "schema-string"
+                        :eacl/schema-version (d/squuid)}])
+    (let [report
+          (migration/migrate!
+           conn
+           {:schema "definition user {}
+                     definition document {
+                       relation reader: user
+                     }"})]
+      (is (= :no-op (:status report))
+          "a migration that transacts nothing names the no-op outcome")
+      (is (nil? (:permission-storage-version report))
+          "no transaction stamped a storage version, so none is reported")
+      (is (= (migration/stamped-permission-storage-version (d/db conn))
+             (:permission-storage-version report))))))
+
 (deftest mixed-permission-storage-is-rejected-test
   (with-mem-conn [conn released-v7-schema]
     (populate-v7! conn)

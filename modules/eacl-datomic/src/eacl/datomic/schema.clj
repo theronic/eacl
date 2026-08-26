@@ -1,5 +1,6 @@
 (ns eacl.datomic.schema
   (:require [clojure.set]
+            [clojure.walk :as walk]
             [datomic.api :as d]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.relationships.storage :as relationship-storage]
@@ -893,16 +894,68 @@
       flat? :flat
       :else :none)))
 
+(defn- permission-denotation
+  "Canonical denotation of one candidate permission entity, independent of
+  presentation. Explicit grouping flags are annotations on an already-built
+  tree, and released-v7 flat rows carry no arm order, so union children
+  compare as a set."
+  [entity]
+  (walk/postwalk
+   (fn [node]
+     (if (map? node)
+       (let [node (dissoc node :grouped?)]
+         (if (and (= :union (:op node)) (vector? (:children node)))
+           (update node :children #(vec (sort-by pr-str %)))
+           node))
+       node))
+   (:root (expression-persistence/decode-entity entity))))
+
+(defn- assert-equivalent-permission-denotations!
+  "Rejects a replacement schema that redefines or removes any permission the
+  stored v7 rows define. Additive permissions are permitted; everything else
+  must be semantically equivalent, or the upgrade would flip authorization
+  under a storage-only banner. Rejection leaves the v7 rows and stamp
+  active."
+  [stored-candidate supplied-candidate]
+  (let [index (fn [candidate]
+                (into {}
+                      (map (juxt (juxt :eacl.permission/resource-type
+                                       :eacl.permission/permission-name)
+                                 identity))
+                      (:permissions candidate)))
+        stored (index stored-candidate)
+        supplied (index supplied-candidate)
+        removed (vec (sort (remove #(contains? supplied %) (keys stored))))
+        divergent
+        (vec
+         (sort
+          (for [[key stored-entity] stored
+                :let [supplied-entity (get supplied key)]
+                :when (and supplied-entity
+                           (not= (permission-denotation stored-entity)
+                                 (permission-denotation supplied-entity)))]
+            key)))]
+    (when (or (seq removed) (seq divergent))
+      (throw
+       (ex-info
+        "The v7->v8 permission upgrade must preserve stored permission semantics."
+        {:type :eacl.migration/permission-semantic-change
+         :eacl/error :eacl.migration/permission-semantic-change
+         :divergent-permissions divergent
+         :removed-permissions removed})))))
+
 (defn migrate-v7-permissions!
   "Atomically replaces released v7 flat permissions with v8 expressions.
 
   The complete candidate and relation-identity diff are computed before any
   additive v8 attribute is installed. Relation additions/retractions are
   rejected: v7 relationship tuples refer to relation entity ids and this
-  migration is intentionally permission-only. The final write atomically
-  retracts old permission entities, asserts expressions, stores the schema
-  text when supplied, advances :eacl/schema-version, and stamps
-  :eacl/permission-storage-version."
+  migration is intentionally permission-only. A supplied replacement schema
+  must additionally be semantically equivalent to the stored v7 permissions
+  for every permission present in both; only additive permissions may
+  differ. The final write atomically retracts old permission entities,
+  asserts expressions, stores the schema text when supplied, advances
+  :eacl/schema-version, and stamps :eacl/permission-storage-version."
   ([conn schema-string]
    (migrate-v7-permissions! conn schema-string nil))
   ([conn schema-string expression-limit-overrides]
@@ -925,14 +978,23 @@
       (let [;; Validate every released-v7 row even when the caller supplies a
             ;; replacement schema. A replacement must not silently erase
             ;; evidence that the input storage was already corrupt.
-            _ (when (= :flat shape)
-                (legacy-flat-candidate-schema existing expression-limits))
+            stored-candidate
+            (when (= :flat shape)
+              (legacy-flat-candidate-schema existing expression-limits))
             candidate
             (if schema-string
-              (expression-persistence/candidate-schema
-               (expression-resolver/validate-schema
-                schema-string expression-limits))
-              (legacy-flat-candidate-schema existing expression-limits))
+              (binding [expression-persistence/*expression-limits*
+                        expression-limits]
+                (expression-persistence/candidate-schema
+                 (expression-resolver/validate-schema
+                  schema-string expression-limits)))
+              (or stored-candidate
+                  (legacy-flat-candidate-schema existing expression-limits)))
+            _ (when (and schema-string stored-candidate)
+                (binding [expression-persistence/*expression-limits*
+                          expression-limits]
+                  (assert-equivalent-permission-denotations!
+                   stored-candidate candidate)))
             deltas (compare-schema existing candidate)
             relation-additions (get-in deltas [:relations :additions])
             relation-retractions (get-in deltas [:relations :retractions])]
@@ -953,9 +1015,17 @@
                  conn schema-string candidate
                  {:validate-existing? false
                   :expression-limits expression-limits}
-                 expected-version))]
-          {:status :migrated
-           :permission-storage-version permission-storage-version
+                 expected-version))
+              no-op? (boolean (:eacl.schema/no-op? (meta result)))]
+          ;; The report describes the transaction that actually ran. A
+          ;; structural no-op stamps nothing, so it must not claim a storage
+          ;; version no transaction wrote.
+          {:status (if no-op? :no-op :migrated)
+           :permission-storage-version
+           (if no-op?
+             (:eacl/permission-storage-version
+              (d/entity (d/db conn) [:eacl/id "schema-string"]))
+             permission-storage-version)
            :relationships-touched 0
            :permission-additions
            (count (get-in result [:permissions :additions]))

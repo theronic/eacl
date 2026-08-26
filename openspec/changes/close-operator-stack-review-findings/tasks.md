@@ -27,11 +27,12 @@ Ordered by severity. Sections 1 and 2 are merge blockers.
 
 ## 4. Migration semantic equivalence
 
-- [ ] 4.1 Retain the stored-rows conversion already computed in `migrate-v7-permissions!` and compare canonical expressions per permission present in both sides; permit additive permissions.
-- [ ] 4.2 Reject non-equivalence with a typed error naming the divergent permission, leaving v7 rows and stamp active.
-- [ ] 4.3 Add the regression: identical relations, `view = reader` stored vs `view = writer` supplied, must reject.
-- [ ] 4.4 Fix the no-op report so it names the no-op outcome and the version actually stamped.
-- [ ] 4.5 Update the million-resource qualification fixture to supply an equivalent replacement schema, and re-record `datomic-v7-to-v8-million-qualification.edn`.
+- [x] 4.1 Retain the stored-rows conversion already computed in `migrate-v7-permissions!` and compare canonical expressions per permission present in both sides; permit additive permissions.
+- [x] 4.2 Reject non-equivalence with a typed error naming the divergent permission, leaving v7 rows and stamp active.
+- [x] 4.3 Add the regression: identical relations, `view = reader` stored vs `view = writer` supplied, must reject.
+- [x] 4.4 Fix the no-op report so it names the no-op outcome and the version actually stamped.
+- [x] 4.5 Update the million-resource qualification fixture to supply an equivalent replacement schema, and re-record `datomic-v7-to-v8-million-qualification.edn`.
+  - Verified instead of changed: the fixture was already additive-only (`candidate_view`/`selective_view` preserved verbatim, operator permissions added), which the new equivalence check permits. Harness `source-sha256` still matches the recorded pin, the additive shape is regression-covered at mem scale, and the recorded 1M evidence therefore stands.
 
 ## 5. Datahike as-of batch bound
 
