@@ -5,7 +5,6 @@
   retains union-only result order and engine-visible cursor payloads.  Opaque
   ciphertext is randomized and therefore is not an equality oracle."
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.baseline.capture :as baseline]
@@ -13,7 +12,8 @@
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
-            [eacl.secure-format :as secure])
+            [eacl.secure-format :as secure]
+            [eacl.test-support.repo :as repo])
   (:import (java.nio.file Files)
            (java.security MessageDigest)))
 
@@ -115,11 +115,11 @@
 
 (defn- read-cursor-snapshot
   []
-  (edn/read-string (slurp (io/file cursor-snapshot-file))))
+  (edn/read-string (slurp (repo/file cursor-snapshot-file))))
 
 (defn- read-baseline-index
   []
-  (edn/read-string (slurp (io/file baseline-index-file))))
+  (edn/read-string (slurp (repo/file baseline-index-file))))
 
 (defn- remove-basis-local-coordinates
   [snapshot]
@@ -163,7 +163,7 @@
   (let [digest
         (.digest
          (MessageDigest/getInstance "SHA-256")
-         (Files/readAllBytes (.toPath (io/file path))))]
+         (Files/readAllBytes (.toPath (repo/file path))))]
     (apply str (map #(format "%02x" (bit-and (int %) 255)) digest))))
 
 (deftest exact-union-only-public-baselines-test

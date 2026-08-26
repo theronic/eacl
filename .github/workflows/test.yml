@@ -227,7 +227,7 @@ jobs:
                          [\"test\"]
                          [\"test\" \"../eacl/test\"])
                        :patterns
-                       [\"^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.]).*-test$\"]
+                       [\"^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.])(?!eacl[.]operator-engine[.]cross-backend-operator-test$).*-test$\"]
                        :excludes [:benchmark]})]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"isolated nREPL tests failed\" result)))

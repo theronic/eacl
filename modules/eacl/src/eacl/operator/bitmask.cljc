@@ -30,12 +30,16 @@
                :eacl/error :eacl.operator/invalid-mask
                :index index :width width}))))
 
+(defn- word-at [words word-index]
+  #?(:clj (aget ^ints words (int word-index))
+     :cljs (aget words word-index)))
+
 (defn set-bit!
   [{:keys [words] :as mask} index]
   (check-index! mask index)
   (let [word-index (quot index bits-per-word)
         bit-index (mod index bits-per-word)
-        value (bit-or (aget words word-index)
+        value (bit-or (word-at words word-index)
                       (bit-shift-left 1 bit-index))]
     #?(:clj (aset-int ^ints words (int word-index) (unchecked-int value))
        :cljs (aset words word-index value))
@@ -46,7 +50,7 @@
   (check-index! mask index)
   (let [word-index (quot index bits-per-word)
         bit-index (mod index bits-per-word)
-        value (bit-and (aget words word-index)
+        value (bit-and (word-at words word-index)
                        (bit-not (bit-shift-left 1 bit-index)))]
     #?(:clj (aset-int ^ints words (int word-index) (unchecked-int value))
        :cljs (aset words word-index value))
@@ -55,14 +59,14 @@
 (defn bit-set?
   [{:keys [words] :as mask} index]
   (check-index! mask index)
-  (not (zero? (bit-and (aget words (quot index bits-per-word))
+  (not (zero? (bit-and (word-at words (quot index bits-per-word))
                        (bit-shift-left 1 (mod index bits-per-word))))))
 
 (defn portable
   "Returns canonical signed 32-bit words. Bits above :width remain zero."
   [{:keys [width words]}]
   {:width width
-   :words (mapv #(bit-or 0 (aget words %))
+   :words (mapv #(bit-or 0 (word-at words %))
                 (range (word-count width)))})
 
 (defn from-indexes [width indexes]

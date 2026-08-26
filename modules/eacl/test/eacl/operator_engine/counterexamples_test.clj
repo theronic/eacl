@@ -1,16 +1,16 @@
 (ns eacl.operator-engine.counterexamples-test
   (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
             [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
-            [eacl.operator-engine.oracle :as oracle]))
+            [eacl.operator-engine.oracle :as oracle]
+            [eacl.test-support.repo :as repo]))
 
 (def fixture-file
   "exploration/operator-engine/minimized-counterexamples.edn")
 
 (defn- fixtures
   []
-  (:counterexamples (edn/read-string (slurp (io/file fixture-file)))))
+  (:counterexamples (edn/read-string (slurp (repo/file fixture-file)))))
 
 (defn- fixture
   [id]

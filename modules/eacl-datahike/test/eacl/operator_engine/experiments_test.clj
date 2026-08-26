@@ -2,10 +2,11 @@
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is]]
             [eacl.datahike.direct-membership :as datahike-direct]
-            [eacl.operator-engine.experiments :as experiments]))
+            [eacl.operator-engine.experiments :as experiments]
+            [eacl.test-support.repo :as repo]))
 
 (defn- evidence [path]
-  (edn/read-string (slurp path)))
+  (edn/read-string (slurp (repo/file path))))
 
 (deftest deterministic-operator-experiments-self-check-test
   (let [summary

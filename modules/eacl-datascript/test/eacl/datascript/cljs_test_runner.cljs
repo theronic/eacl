@@ -12,6 +12,7 @@
             [eacl.execution-test]
             [eacl.proof-frame-test]
             [eacl.permission-tree-test]
+            [eacl.permission-tree-operator-test]
             [eacl.operator.plan-test]
             [eacl.operator.evaluator-test]
             [eacl.operator.bitmask-test]
@@ -75,6 +76,7 @@
                'eacl.execution-test
                'eacl.proof-frame-test
                'eacl.permission-tree-test
+               'eacl.permission-tree-operator-test
                'eacl.operator.plan-test
                'eacl.operator.evaluator-test
                'eacl.operator.bitmask-test

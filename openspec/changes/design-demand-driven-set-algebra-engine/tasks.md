@@ -137,8 +137,8 @@
 ## 13. Release gating and documentation
 
 - [x] 13.1 Add separate disabled gates for expression schema writes and public operator routing; verify union-only behavior while each gate combination is off.
-- [ ] 13.2 Recreate clean development databases with expression-capable adapters before enabling writes; prove flat-only and mixed pre-release storage fail closed without compatibility interpretation.
-- [ ] 13.3 Run all module tests, CLJS builds, lint/source-closure checks, abstract and concrete formal gates, mutation controls, backend certifications, conformance lanes, storage tests, and performance gates from reproducible clean commands.
+- [x] 13.2 Recreate clean development databases with expression-capable adapters before enabling writes; prove flat-only and mixed pre-release storage fail closed without compatibility interpretation.
+- [x] 13.3 Run all module tests, CLJS builds, lint/source-closure checks, abstract and concrete formal gates, mutation controls, backend certifications, conformance lanes, storage tests, and performance gates from reproducible clean commands.
 - [ ] 13.4 Enable test operator routing, then operator schema writes, only after proof-phase-A authorization and recorded refinement, conformance, storage, and performance evidence are present and valid.
 - [ ] 13.5 Update README and API/backend/formal documentation only with implemented syntax, precedence, strict stratification, order, limits, cursor/cache behavior, measured performance envelopes, and the unchanged unsupported boundary.
 - [ ] 13.6 Document the unreleased-v8 reset contract: source-control rollback requires recreation of disposable development databases, and no older-binary, persisted-cursor, migration, or dual-write compatibility is claimed.
