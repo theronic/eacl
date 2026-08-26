@@ -518,19 +518,22 @@ But you will probably forget one day, so there are helpers to fined & clean up g
 
 ### Permissions
 
+- `:eacl/id`
 - `:eacl.permission/resource-type`
 - `:eacl.permission/permission-name`
-- `:eacl.permission/source-relation-name`
-- `:eacl.permission/target-type`
-- `:eacl.permission/target-name`
+- `:eacl.permission/expression-payload`
 
 #### Permission Tuples (indices):
 
-- Direct Permissions: `:eacl.permission/resource-type+permission-name`
-- Datomic permission arrows: `:eacl.permission/resource-type+source-relation-name+target-type+permission-name`
-- Datomic relation arrows: `:eacl.permission/resource-type+source-relation-name+target-type+target-name`
-- Datomic full key: `:eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name`
-- Datahike, DataScript, and Datalevin full key: `:eacl.permission/full-key`
+- `:eacl.permission/resource-type+permission-name`
+
+The canonical payload contains its expression-format version. EACL does not
+store a second format field, a content digest, a policy digest, admission
+limits, or expression/DAG metrics. Those values either duplicate the payload
+or describe one client's resource-admission policy rather than permission
+meaning. Node counts, depth, fan-in, encoded size, normalized DAG counts, word
+counts, and checkpoint weights are derived from the payload and may be cached
+inside the client.
 
 ### Schema Tracking
 
@@ -539,6 +542,7 @@ But you will probably forget one day, so there are helpers to fined & clean up g
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
 - `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript. Datalevin uses scalar `:eacl.datalevin/schema-generation` and `:eacl.datalevin/schema-write-fence` values in its native `max-tx` domain.
 - `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
+- `:eacl/permission-storage-version` identifies Datomic's canonical permission representation (version 8).
 - `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
 ## Performance
@@ -786,6 +790,11 @@ All schema changes must use `eacl/write-schema!`. If an application changes
 the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
 
+Datomic consumers upgrading a released v7 database must run the explicit
+permission-only v7-to-v8 migration before constructing an ordinary v8 client.
+It reuses the existing relationship tuple attributes and datoms without a
+relationship rebuild. See the [v7-to-v8 migration guide](docs/migration-v7-to-v8.md).
+
 ### Permission-tree expansion
 
 Expansion accepts exactly `:resource`, `:permission`, and the optional `:consistency`, `:timeout-ms`, and `:cancellation-token` keys:
@@ -943,7 +952,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install EACL's current Datomic Relationship schema:
-@(d/transact conn schema/v7-schema)
+@(d/transact conn schema/v8-schema)
 
 ; Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl
@@ -1294,6 +1303,27 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 `make-client` rejects unknown options with `{:type :eacl/invalid-config}`.
 
+Expression admission limits are immutable client configuration. Overrides are
+merged with EACL's calibrated defaults and checked against portable hard
+ceilings:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:expression-limits
+    {:maximum-source-nodes 32768
+     :maximum-source-depth 64
+     :maximum-expression-bytes 262144}}))
+```
+
+The profile applies to schema reads and writes performed by that client. It is
+also accepted by direct schema writers and the explicit Datomic v7-to-v8
+permission migration. Two Peers may deliberately use different profiles: a
+stricter Peer can reject a schema accepted by a looser Peer, but schemas
+accepted by both have identical permission meaning. The profile is never
+written to the database and never coordinates Peers.
+
 All backends issue non-expiring cursors by default. Configure a positive
 `:cursor-ttl-seconds` only when the application deliberately wants a maximum
 pagination age; cache TTL and capacity remain independent of cursor age.
@@ -1395,13 +1425,27 @@ Inspect or expire a client through its backend API:
 ```clojure
 (eacl.datomic.core/cache-stats acl)
 (eacl.datomic.core/expire-cache! acl)
+(eacl.datomic.core/refresh-metrics! acl)
 
 (eacl.datahike.core/cache-stats acl)
 (eacl.datahike.core/expire-cache! acl)
+(eacl.datahike.core/refresh-metrics! acl)
 
 (eacl.datascript.core/cache-stats acl)
 (eacl.datascript.core/expire-cache! acl)
+(eacl.datascript.core/refresh-metrics! acl)
+
+(eacl.datalevin.core/cache-stats acl)
+(eacl.datalevin.core/expire-cache! acl)
+(eacl.datalevin.core/refresh-metrics! acl)
 ```
+
+Metric refresh is cache-only. By default it clears structural and relationship
+observations and performs no relationship scan. Pass
+`{:scope :structural :eager? true}` to reread the bounded permission schema.
+An explicit `:read-through` runs the named public operation with completed
+answer caching bypassed; a count without `:count-limit` is therefore an
+explicit exhaustive read subject to the normal work limits.
 
 After a database restore, reset, branch replacement, or other operation that
 can replace history, expire or replace every affected client before serving

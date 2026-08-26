@@ -12,8 +12,10 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.migrations.v7-to-v8 :as v7-to-v8]
             [eacl.migrations.v6-to-v7 :as migrations]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.expression-policy :as expression-policy]))
 
 (def ^:private maximum-relationship-write-attempts 8)
 (def ^:private delete-object-batch-size 1000)
@@ -95,13 +97,22 @@
 (defn make-client
   "Builds a shared EACL `Acl` over a Datomic connection.
 
-  `:auto-migrate-v6` is consumed by the storage-compatibility gate. Every
-  remaining option belongs to the uniform EACL client contract."
+  `:auto-migrate-v6` and `:auto-migrate-v7` are consumed by explicit storage
+  compatibility gates. Every remaining option belongs to the uniform EACL
+  client contract."
   [conn config-opts]
-  (migrations/assert-storage-compatible!
-   conn {:auto-migrate-v6 (:auto-migrate-v6 config-opts)})
-  (orchestration/make-client
-   api conn (dissoc config-opts :auto-migrate-v6)))
+  (let [expression-limits
+        (expression-policy/normalize-client-limits
+         (:expression-limits config-opts))]
+    (migrations/assert-storage-compatible!
+     conn {:auto-migrate-v6 (:auto-migrate-v6 config-opts)})
+    (v7-to-v8/assert-permission-storage-compatible!
+     conn {:auto-migrate-v7 (:auto-migrate-v7 config-opts)
+           :expression-limits expression-limits})
+    (orchestration/make-client
+     api conn (-> config-opts
+                  (dissoc :auto-migrate-v6 :auto-migrate-v7)
+                  (assoc :expression-limits expression-limits)))))
 
 (defn snapshot
   "Constructs a public snapshot over an admissible Datomic DB value."
@@ -122,6 +133,10 @@
 (defn cache-stats
   [acl]
   (orchestration/cache-stats acl))
+
+(defn refresh-metrics!
+  ([acl] (orchestration/refresh-metrics! acl))
+  ([acl opts] (orchestration/refresh-metrics! acl opts)))
 
 (def prepare-cache-coherence!
   "Initializes missing Datomic cache generations on a quiesced connection."

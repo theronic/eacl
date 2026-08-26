@@ -159,6 +159,7 @@
    :no-production-parser-storage-sealer-evaluator-backend-or-routing-refinement-claimed-and-no-independent-proof-review-performed}
   :operator-engine-phase-b
   {:status :passed
+   :verified-obligations 35
    :whole-tree-obligation-delta-since-phase-a 36
    :whole-tree-obligations 9361
    :generated-policy-leaf-obligations 20
@@ -378,9 +379,9 @@
   :retired-invalid-controls 74}
  :source-closure
  {:report "formal/verification/public-source-closure.json"
-  :source-files 80
+  :source-files 101
   :public-roots 70
-  :reachable-definitions 1691}
+  :reachable-definitions 2093}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 47

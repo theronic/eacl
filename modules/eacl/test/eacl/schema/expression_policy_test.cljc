@@ -15,14 +15,11 @@
 (deftest policy-identity-covers-every-default-test
   (is (= :eacl.permission-expression-policy/v1
          (:format policy/compatibility-value)))
-  (is (= policy/schema-limits
-         (:schema-limits policy/compatibility-value)))
-  (is (= policy/per-permission-limits
-         (:per-permission-limits policy/compatibility-value)))
-  (is (= policy/aggregate-limits
-         (:aggregate-limits policy/compatibility-value)))
-  (is (= "-M2O117LH_9noJ7AMLb_ktCAQwn_-LDH7XQIfuUL3M4"
-         policy/compatibility-digest)))
+  (is (not (contains? policy/compatibility-value :schema-limits)))
+  (is (not (contains? policy/compatibility-value :per-permission-limits)))
+  (is (not (contains? policy/compatibility-value :aggregate-limits)))
+  (is (= policy/default-client-limits
+         (policy/normalize-client-limits nil))))
 
 (deftest checked-in-policy-validates-complete-schema-test
   (let [result
@@ -33,9 +30,7 @@
              relation banned: user
              permission view = reader - banned
            }")]
-    (is (= policy/compatibility-value (:expression-policy result)))
-    (is (= policy/compatibility-digest
-           (:expression-policy-digest result)))
+    (is (= policy/default-client-limits (:expression-limits result)))
     (is (= 1 (get-in result
                      [:aggregate-expression-metrics :permission-count])))))
 
@@ -71,12 +66,20 @@
                   (conj metadata (first metadata))
                   policy/aggregate-limits)))))))
 
-(deftest unknown-policy-cannot-alter-admission-or-plan-identity-test
-  (let [forged (assoc-in policy/compatibility-value
-                         [:per-permission-limits :maximum-source-nodes]
-                         513)
-        data (error-data
-               #(resolver/validate-schema "definition user {}" forged))]
-    (is (= :eacl.schema/unsupported-expression-policy (:type data)))
-    (is (= policy/compatibility-value (:expected data)))
-    (is (= forged (:actual data)))))
+(deftest client-local-limit-profile-is-checked-test
+  (let [custom {:maximum-source-nodes 513}
+        result (resolver/validate-schema "definition user {}" custom)]
+    (is (= 513 (get-in result [:expression-limits :maximum-source-nodes])))
+    (is (= (:maximum-source-depth policy/per-permission-limits)
+           (get-in result [:expression-limits :maximum-source-depth])))
+    (is (not (contains? result :expression-policy-digest))))
+  (let [unknown (error-data #(policy/normalize-client-limits {:unknown 1}))
+        excessive
+        (error-data
+         #(policy/normalize-client-limits
+           {:maximum-source-depth
+            (inc (:maximum-source-depth policy/hard-limit-ceilings))}))]
+    (is (= :eacl/invalid-config (:type unknown)))
+    (is (= [:unknown] (:unknown-keys unknown)))
+    (is (= :eacl/invalid-config (:type excessive)))
+    (is (= :maximum-source-depth (:limit excessive)))))

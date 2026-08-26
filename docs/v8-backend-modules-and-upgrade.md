@@ -320,12 +320,22 @@ cursor ABI, and pass the aggregate conformance suite. An older published
 `eacl-spicedb` artifact is not source- or wire-compatible merely because scalar
 operations still compile.
 
-## Unreleased v8 reset contract
+## Released v7 permission upgrade and unreleased-v8 reset
 
-Permission rows in this unreleased v8 format contain one canonical expression
-payload. There is no flat-permission compatibility reader, migration, dual
-write, or downgrade representation. Flat-only, mixed, duplicated, conflicting,
-corrupt, or unsupported-format permission storage fails closed.
+Ordinary v8 permission rows contain one canonical expression payload. There is
+no flat-permission compatibility reader or dual-write representation. Datomic
+accepts released v7 flat permission rows only through the explicit
+`eacl.migrations.v7-to-v8/migrate!` maintenance path. The migration validates
+the complete replacement and authoritative attribute meanings, rejects any
+relation identity change, then atomically swaps permission rows and stamps
+permission storage version 8. Released v7 relationship attributes and tuples
+are reused without enumeration, backfill, rewrite, or rebuild. See
+[Migrating Datomic permissions from v7 to v8](migration-v7-to-v8.md).
+
+An ordinary v8 client fails closed on flat-only, mixed, duplicated,
+conflicting, corrupt, or unsupported-format permission storage. The optional
+`:auto-migrate-v7` client setting is explicit opt-in to the same migration,
+not a compatibility reader.
 
 If source control is rolled back across this expression-storage change,
 dispose of and recreate development databases with the schema belonging to the
@@ -333,4 +343,5 @@ selected source revision. Do not open an expression-capable database with an
 older binary. No compatibility is claimed for persisted cursors across that
 rollback, and no migration or dual-write path is provided between superseded
 unreleased-v8 representations. This reset contract is distinct from the
-released v6-to-v7 Datomic migration utility.
+released v6-to-v7 relationship migration and released v7-to-v8 permission
+migration utilities.

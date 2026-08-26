@@ -79,8 +79,8 @@
         before (schema/read-permissions before-db)
         view-id (expression-persistence/->expression-id :document :view)
         view-eid (ds/entid before-db [:eacl/id view-id])
-        before-digest (:eacl.permission/expression-digest
-                       (first (filter #(= view-id (:eacl/id %)) before)))]
+        before-payload (:eacl.permission/expression-payload
+                        (first (filter #(= view-id (:eacl/id %)) before)))]
     (is (= 2 (count before)))
     (is (every? #(not-any? (fn [attribute]
                              (contains? % attribute))
@@ -96,8 +96,8 @@
           view (first (filter #(= view-id (:eacl/id %)) after))]
       (is (= view-eid (ds/entid after-db [:eacl/id view-id])))
       (is (= 2 (count after)))
-      (is (not= before-digest
-                (:eacl.permission/expression-digest view)))
+      (is (not= before-payload
+                (:eacl.permission/expression-payload view)))
       (is (= :exclusion
              (:op (:root (expression-persistence/decode-entity view))))))
     (let [stable-db (ds/db conn)
@@ -212,6 +212,10 @@
     (is (not (contains? forward-definition :db/tupleAttrs)))
     (is (every? #(not (contains? schema/datascript-schema %))
                 removed-attributes))))
+
+(deftest derived-expression-metrics-are-not-schema-attributes-test
+  (is (every? #(not (contains? schema/datascript-schema %))
+              expression-persistence/retired-expression-attributes)))
 
 (deftest full-arity-index-boundaries-test
   (let [conn (schema/create-conn)

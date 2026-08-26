@@ -286,6 +286,15 @@
   (require-datalevin-client! client "cache-stats")
   (orchestration/cache-stats client))
 
+(defn refresh-metrics!
+  "Evicts cache-only metrics; optionally recomputes structural metrics now."
+  ([client]
+   (require-datalevin-client! client "refresh-metrics!")
+   (orchestration/refresh-metrics! client))
+  ([client opts]
+   (require-datalevin-client! client "refresh-metrics!")
+   (orchestration/refresh-metrics! client opts)))
+
 (defn make-client
   "Builds an EACL acl over a Datalevin conn.
 

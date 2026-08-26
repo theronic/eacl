@@ -822,8 +822,10 @@
               after-bypass (datascript/cache-stats client)]
           (is (true? (:allowed? bypass)))
           (is (false? (:cached? bypass)))
-          (is (= (dissoc before-bypass :bypasses)
-                 (dissoc after-bypass :bypasses))
+          (is (= (dissoc before-bypass :bypasses
+                         :relationship-observations)
+                 (dissoc after-bypass :bypasses
+                         :relationship-observations))
               "operator bypass performs no lookup, lifting, or publication")
           (is (= (inc (:bypasses before-bypass))
                  (:bypasses after-bypass))))))))

@@ -30,6 +30,9 @@
     (is (= [:base :view]
            (mapv (comp :permission-name :expression) decoded)))
     (is (every? #(not-any? (fn [attribute] (contains? % attribute))
+                           persistence/retired-derived-metric-attributes)
+                permissions))
+    (is (every? #(not-any? (fn [attribute] (contains? % attribute))
                            persistence/legacy-flat-attributes)
                 permissions))))
 
@@ -66,7 +69,17 @@
            (:reason
              (error-data
                #(persistence/validate-entities
-                  [(update entity :eacl.permission/source-node-count inc)])))))
+                  [(assoc entity :eacl.permission/resource-type
+                          :folder)])))))
+    (is (= (:expression (persistence/decode-entity-with-metadata entity))
+           (:expression
+            (persistence/decode-entity-with-metadata
+             (assoc entity :eacl.permission/expression-digest
+                    "stale-experimental-digest")))))
+    (is (= (:expression (persistence/decode-entity-with-metadata entity))
+           (:expression
+            (persistence/decode-entity-with-metadata
+             (assoc entity :eacl.permission/source-node-count 999999)))))
     (is (= :duplicate-expression
            (:reason
              (error-data

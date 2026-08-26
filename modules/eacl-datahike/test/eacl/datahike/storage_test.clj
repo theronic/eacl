@@ -1,5 +1,6 @@
 (ns eacl.datahike.storage-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.set]
+            [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
@@ -66,12 +67,46 @@
   {"attributes as keywords" false
    "attributes as numeric refs" true})
 
+(deftest derived-expression-metrics-are-not-schema-attributes-test
+  (let [idents (set (map :db/ident schema/datahike-schema))]
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/retired-expression-attributes)))))
+
 (defn- exception-data [thunk]
   (try
     (thunk)
     nil
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
+
+(deftest expression-admission-limits-are-client-local-test
+  (let [conn (datahike/create-conn)]
+    (try
+      (schema/write-schema! conn relationship-schema)
+      (let [permissive (datahike/make-client conn {})
+            strict (datahike/make-client
+                    conn {:expression-limits {:maximum-source-nodes 0}})]
+        (is (= 1 (count (:permissions (eacl/read-schema permissive)))))
+        (let [failure (exception-data #(eacl/read-schema strict))]
+          (is (= :eacl.schema/expression-limit (:type failure)))
+          (is (= :node-count (:dimension failure)))
+          (is (= 0 (:maximum failure))))
+        (is (= 1 (count (:permissions (eacl/read-schema permissive))))))
+      (finally
+        (d/release conn))))
+  (let [conn (datahike/create-conn)]
+    (try
+      (let [failure
+            (exception-data
+             #(schema/write-schema!
+               conn relationship-schema
+               {:expression-limits {:maximum-source-nodes 0}}))]
+        (is (= :eacl.schema/expression-limit (:type failure)))
+        (is (empty? (:permissions (schema/read-schema (d/db conn))))))
+      (finally
+        (d/release conn)))))
 
 (defn- copy-tree! [^Path source ^Path target]
   (with-open [paths (Files/walk source (make-array FileVisitOption 0))]
@@ -112,8 +147,8 @@
                 view-id
                 (expression-persistence/->expression-id :document :view)
                 view-eid (ddb/entid before-db [:eacl/id view-id])
-                before-digest
-                (:eacl.permission/expression-digest
+                before-payload
+                (:eacl.permission/expression-payload
                  (first (filter #(= view-id (:eacl/id %)) before)))]
             (is (= 2 (count before)))
             (is (every? #(not-any? (fn [attribute]
@@ -127,8 +162,8 @@
                   view (first (filter #(= view-id (:eacl/id %)) after))]
               (is (= view-eid (ddb/entid after-db [:eacl/id view-id])))
               (is (= 2 (count after)))
-              (is (not= before-digest
-                        (:eacl.permission/expression-digest view)))
+              (is (not= before-payload
+                        (:eacl.permission/expression-payload view)))
               (is (= :exclusion
                      (:op (:root
                            (expression-persistence/decode-entity view))))))

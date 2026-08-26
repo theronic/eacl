@@ -27,3 +27,14 @@ First-page, adjacent-page, candidate-window, replay, bounded-count, complete-enu
 #### Scenario: Exact count reads thousands of nodes
 - **WHEN** an exact count exhausts a large Datahike cover while first-page work stays bounded
 - **THEN** both results are reported against separate accepted ceilings
+
+### Requirement: Metric-cache performance is separately qualified
+Qualification SHALL separately report cold structural recomputation, warm generation-cache reuse, cold relationship-observation fallback, warm high-watermark-compatible physical selection, stale-observation fallback, bounded refresh, and explicit exact refresh. It SHALL record logical work, backend reads, remote GETs where applicable, latency, allocation, and cache occupancy.
+
+#### Scenario: Warm observation cache improves physical work
+- **WHEN** a compatible observation selects a certified equivalent kernel
+- **THEN** qualification reports the physical improvement together with identical semantic sequence, logical boundary, and cursor composition
+
+#### Scenario: Exact refresh scans a large relation
+- **WHEN** an operator explicitly forces exact relationship-stat refresh
+- **THEN** its exhaustive reads are reported in the exact-refresh lane and cannot be attributed to ordinary warm authorization

@@ -530,8 +530,10 @@
               after-bypass (datascript/cache-stats client)]
           (is (false? (:allowed? bypass)))
           (is (false? (:cached? bypass)))
-          (is (= (dissoc before-bypass :bypasses)
-                 (dissoc after-bypass :bypasses)))
+          (is (= (dissoc before-bypass :bypasses
+                         :relationship-observations)
+                 (dissoc after-bypass :bypasses
+                         :relationship-observations)))
           (is (= (inc (:bypasses before-bypass))
                  (:bypasses after-bypass))))))))
 
@@ -592,7 +594,7 @@
          (assoc-in plan [:versions :predicate] :changed)
          (assoc-in plan [:versions :physical-policy] :changed)
          (assoc plan :capability-identity {:changed true})
-         (assoc plan :limits {:changed true})
+         (assoc plan :compatibility-formats {:changed true})
          (assoc plan :order-contract {:changed true})
          (assoc plan :fingerprint "changed")]]
     (doseq [changed changed-plans]

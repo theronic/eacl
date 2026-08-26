@@ -13,11 +13,18 @@
             [eacl.datomic.core :as datomic]
             [eacl.datomic.db :as ddb]
             [eacl.datomic.impl :as datomic-impl]
+            [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as datomic-schema]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.migrations.v7-to-v8 :as v7-to-v8]
+            [eacl.relationships.storage :as relationship-storage])
+  (:import (java.math BigInteger)
+           (java.nio.charset StandardCharsets)
+           (java.security MessageDigest)))
 
 (defonce !progress (atom {:status :idle}))
 (defonce !run (atom nil))
+(defonce !v7-upgrade-progress (atom {:status :idle}))
+(defonce !v7-upgrade-run (atom nil))
 
 (defn status [] @!progress)
 
@@ -66,10 +73,10 @@
          (mapcat
           (fn [{:keys [index tempid]}]
             (cond->
-             [[:db/add subject-eid relationship-storage/forward-attribute
-               [:user candidate-relation-eid :resource tempid]]
-              [:db/add tempid relationship-storage/reverse-attribute
-               [:resource candidate-relation-eid :user subject-eid]]]
+              [[:db/add subject-eid relationship-storage/forward-attribute
+                [:user candidate-relation-eid :resource tempid]]
+               [:db/add tempid relationship-storage/reverse-attribute
+                [:resource candidate-relation-eid :user subject-eid]]]
               (zero? (mod index 4))
               (into
                [[:db/add subject-eid relationship-storage/forward-attribute
@@ -84,7 +91,9 @@
            (datomic-impl/tx-relation-version-stamp selective-relation-eid))}))
 
 (defn- seed-million!
-  [conn resource-count batch-size started]
+  ([conn resource-count batch-size started]
+   (seed-million! conn resource-count batch-size started !progress))
+  ([conn resource-count batch-size started progress]
   (let [db (d/db conn)
         subject-eid (d/entid db [:eacl/id "probe-user"])
         candidate-relation-eid
@@ -100,13 +109,25 @@
               {:keys [entity-ops relationship-ops]}
               (tuple-ops subject-eid candidate-relation-eid
                          selective-relation-eid batch-start batch-end)
+              raw-relationship-ops relationship-ops
               relationship-ops
               (datomic-impl/optimistic-relationship-tx-data
-               db relationship-ops)]
-          @(d/transact conn (into entity-ops relationship-ops))
-          (reset! !progress
+               db raw-relationship-ops)
+              tx-data (into entity-ops relationship-ops)
+              invalid (filterv #(not (or (map? %) (sequential? %))) tx-data)]
+          (when (seq invalid)
+            (throw
+             (ex-info "Datomic experiment produced invalid transaction data."
+                      {:type :eacl.operator-engine/invalid-seed-tx
+                       :invalid invalid
+                       :raw-invalid
+                       (filterv #(not (or (map? %) (sequential? %)))
+                                raw-relationship-ops)
+                       :optimized-tail (take-last 8 relationship-ops)})))
+          @(d/transact conn tx-data)
+          (reset! progress
                   {:status :seeding
-                   :database-uri (:database-uri @!progress)
+                   :database-uri (:database-uri @progress)
                    :batch (inc batch)
                    :batches batches
                    :resources-committed batch-end
@@ -118,7 +139,7 @@
     {:subject-eid subject-eid
      :candidate-relation-eid candidate-relation-eid
      :selective-relation-eid selective-relation-eid
-     :batches batches}))
+     :batches batches})))
 
 (defn- exact-decisions
   [db subject-eid relation-eid candidates]
@@ -498,7 +519,7 @@
        (let [conn (d/connect uri)
              seeded
              (try
-               @(d/transact conn datomic-schema/v7-schema)
+               @(d/transact conn datomic-schema/v8-schema)
                (let [client
                      (datomic/make-client
                       conn {:cache cache/no-cache
@@ -568,4 +589,225 @@
                        {:progress @!progress}))))
    (let [run (future (run! options))]
      (reset! !run run)
+     {:started true :options options})))
+
+;; ---------------------------------------------------------------------------
+;; Released-v7 permission upgrade at the million-resource relationship shape
+;; ---------------------------------------------------------------------------
+
+(def ^:private v8-only-permission-idents
+  #{:eacl/permission-storage-version
+    :eacl.permission/expression-payload
+    :eacl.permission/resource-type+permission-name})
+
+(def ^:private legacy-permission-index-schema
+  [{:db/ident
+    :eacl.permission/resource-type+source-relation-name+target-type+permission-name
+    :db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/permission-name]
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+   {:db/ident
+    :eacl.permission/resource-type+source-relation-name+target-type+target-name
+    :db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/target-name]
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+   {:db/ident
+    :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
+    :db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/target-name
+                    :eacl.permission/permission-name]
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}])
+
+(def ^:private released-v7-schema
+  (vec
+   (concat
+    (remove #(contains? v8-only-permission-idents (:db/ident %))
+            datomic-schema/v7-schema)
+    legacy-permission-index-schema)))
+
+(def ^:private v7-upgrade-schema-string
+  (str "definition user {}\n\n"
+       "definition resource {\n"
+       "  relation candidate: user\n"
+       "  relation selective: user\n"
+       "  permission candidate_view = candidate\n"
+       "  permission selective_view = selective\n"
+       "  permission intersection_view = candidate & selective\n"
+       "  permission exclusion_view = candidate - selective\n"
+       "}"))
+
+(def ^:private released-v7-schema-string
+  (str "definition user {}\n\n"
+       "definition resource {\n"
+       "  relation candidate: user\n"
+       "  relation selective: user\n"
+       "  permission candidate_view = candidate\n"
+       "  permission selective_view = selective\n"
+       "}"))
+
+(def ^:private released-v7-definition-rows
+  [(base/Relation :resource :candidate :user)
+   (base/Relation :resource :selective :user)
+   (base/Permission :resource :candidate_view {:relation :candidate})
+   (base/Permission :resource :selective_view {:relation :selective})])
+
+(defn- digest-line! [^MessageDigest digest value]
+  (.update digest
+           (.getBytes (str (pr-str value) "\n")
+                      StandardCharsets/UTF_8)))
+
+(defn- relationship-summary
+  "Streams both tuple attributes in deterministic AEVT order. This is
+  qualification-only before/after evidence, never part of the migration."
+  [db]
+  (let [digest (MessageDigest/getInstance "SHA-256")
+        counts
+        (into
+         (sorted-map)
+         (map
+          (fn [attribute]
+            [attribute
+             (reduce
+              (fn [count datom]
+                (digest-line! digest [(:e datom) (:a datom) (:v datom)])
+                (inc count))
+              0
+              (d/datoms db :aevt attribute))]))
+         (sort relationship-storage/attributes))]
+    {:counts counts
+     :total (reduce + 0 (vals counts))
+     :sha256 (format "%064x" (BigInteger. 1 (.digest digest)))}))
+
+(defn v7-upgrade-status [] @!v7-upgrade-progress)
+
+(defn run-v7-upgrade-million!
+  "Creates and deletes one unique :dev database. The migration interval is
+  instrumented independently from the before/after streaming digest scans."
+  ([] (run-v7-upgrade-million! {}))
+  ([{:keys [host port resource-count batch-size]
+     :or {host "localhost" port 4334
+          resource-count 1000000 batch-size 2000}}]
+   (let [run-id (str (random-uuid))
+         uri (str "datomic:dev://" host ":" port
+                  "/eacl-v7-upgrade-experiment-" run-id)
+         started (System/nanoTime)
+         deleted? (atom false)]
+     (when-not (d/create-database uri)
+       (throw (ex-info "Could not create unique v7 upgrade database."
+                       {:database-uri uri})))
+     (reset! !v7-upgrade-progress
+             {:status :installing
+              :database-uri uri
+              :resource-count resource-count
+              :batch-size batch-size})
+     (try
+       (let [conn (d/connect uri)]
+         (try
+           @(d/transact conn released-v7-schema)
+           (swap! !v7-upgrade-progress assoc :status :installing-definitions)
+           @(d/transact conn released-v7-definition-rows)
+           (swap! !v7-upgrade-progress assoc :status :installing-v7-stamp)
+           @(d/transact conn [{:eacl/id "schema-string"
+                               :eacl/schema-string released-v7-schema-string
+                               :eacl/schema-version (d/squuid)}
+                              {:eacl/id "probe-user"}])
+           (swap! !v7-upgrade-progress assoc :status :seeding)
+           (let [fixture (seed-million! conn resource-count batch-size started
+                                        !v7-upgrade-progress)
+                 before (relationship-summary (d/db conn))
+                 relationship-index-reads (atom 0)
+                 original-datoms d/datoms
+                 original-index-range d/index-range]
+             (reset! !v7-upgrade-progress
+                     {:status :migrating
+                      :database-uri uri
+                      :resource-count resource-count
+                      :before before
+                      :elapsed-ms (elapsed-ms started)})
+             (let [migration-report
+                   (with-redefs
+                    [d/datoms
+                     (fn [db index & components]
+                       (when (some relationship-storage/attributes components)
+                         (swap! relationship-index-reads inc))
+                       (apply original-datoms db index components))
+                     d/index-range
+                     (fn [db attribute start end]
+                       (when (contains? relationship-storage/attributes
+                                        attribute)
+                         (swap! relationship-index-reads inc))
+                       (original-index-range db attribute start end))]
+                    (v7-to-v8/migrate!
+                     conn {:schema v7-upgrade-schema-string}))
+                   db-after (d/db conn)
+                   after (relationship-summary db-after)
+                   result
+                   {:database-uri uri
+                    :resource-count resource-count
+                    :seed-batches (:batches fixture)
+                    :before before
+                    :after after
+                    :relationship-index-reads-during-migration
+                    @relationship-index-reads
+                    :relationship-digest-identical? (= before after)
+                    :migration-report migration-report
+                    :permission-storage-shape
+                    (datomic-schema/permission-storage-shape db-after)
+                    :permission-storage-version
+                    (v7-to-v8/stamped-permission-storage-version db-after)
+                    :total-elapsed-ms (elapsed-ms started)}]
+               (when-not (and (= before after)
+                              (zero? @relationship-index-reads)
+                              (= :expression
+                                 (:permission-storage-shape result))
+                              (= 8 (:permission-storage-version result)))
+                 (throw
+                  (ex-info "Datomic v7 upgrade qualification failed."
+                           {:type :eacl.migration/qualification-failed
+                            :result result})))
+               (reset! !v7-upgrade-progress
+                       {:status :qualified :result result})
+               result))
+           (finally
+             (d/release conn))))
+       (catch Throwable error
+         (let [failed-at (:status @!v7-upgrade-progress)]
+           (swap! !v7-upgrade-progress assoc
+                  :status :failed
+                  :failed-at failed-at
+                  :class (.getName (class error))
+                  :message (.getMessage error)
+                  :data (ex-data error)
+                  :elapsed-ms (elapsed-ms started)))
+         (throw error))
+       (finally
+         (reset! deleted? (boolean (d/delete-database uri)))
+         (swap! !v7-upgrade-progress assoc
+                :database-deleted @deleted?
+                :database-absence-confirmed
+                (not (some #{(last (.split uri "/"))}
+                           (d/get-database-names
+                            (str "datomic:dev://" host ":" port "/*"))))))))))
+
+(defn start-v7-upgrade-million!
+  ([] (start-v7-upgrade-million! {}))
+  ([options]
+   (when-let [running @!v7-upgrade-run]
+     (when-not (future-done? running)
+       (throw (ex-info "Datomic v7 upgrade experiment is already running."
+                       {:progress @!v7-upgrade-progress}))))
+   (let [run (future (run-v7-upgrade-million! options))]
+     (reset! !v7-upgrade-run run)
      {:started true :options options})))

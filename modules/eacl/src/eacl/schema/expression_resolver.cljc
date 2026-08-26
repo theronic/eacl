@@ -323,22 +323,19 @@
       :dependency-certificate dependency-certificate})))
 
 (defn validate-schema
-  "Parses and validates one complete schema under the checked-in expression
-   admission policy. The returned compatibility value/digest must be included
-   by expression storage and operator plan fingerprints."
+  "Parses and validates one complete schema under a client-local checked
+   expression-limit profile. Limits affect admission only and are not returned
+   as durable schema fields."
   ([schema-source]
-   (validate-schema schema-source expression-policy/compatibility-value))
-  ([schema-source policy]
-   (when-not (= expression-policy/compatibility-value policy)
-     (throw (ex-info "Unsupported permission-expression policy."
-              {:type :eacl.schema/unsupported-expression-policy
-               :eacl/error :eacl.schema/unsupported-expression-policy
-               :expected expression-policy/compatibility-value
-               :actual policy})))
-   (assoc
-     (resolve-parse-tree
-       (parser/parse-schema schema-source (:schema-limits policy))
-       (merge (:per-permission-limits policy)
-              (:aggregate-limits policy)))
-     :expression-policy policy
-     :expression-policy-digest expression-policy/compatibility-digest)))
+   (validate-schema schema-source nil))
+  ([schema-source expression-limits]
+   (let [expression-limits
+         (expression-policy/normalize-client-limits expression-limits)]
+     (assoc
+      (resolve-parse-tree
+       (parser/parse-schema
+        schema-source
+        (select-keys expression-limits
+                     (keys expression-policy/schema-limits)))
+       expression-limits)
+      :expression-limits expression-limits))))

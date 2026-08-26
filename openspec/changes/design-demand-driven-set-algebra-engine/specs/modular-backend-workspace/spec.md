@@ -20,3 +20,10 @@ Each built-in batched implementation SHALL be differentially certified for forwa
 #### Scenario: Reverse candidate vector
 - **WHEN** reverse lookup batches candidate subjects for one resource descriptor
 - **THEN** its aligned result equals independent reverse scalar membership and cannot accidentally consult the forward endpoint
+
+### Requirement: Statistics do not become a required backend semantic operation
+Core MAY consume optional normalized telemetry attached to completed backend operations, but adapter conformance SHALL NOT require a cardinality catalog or backend-wide count operation. Adapters MUST NOT scan data solely to satisfy telemetry.
+
+#### Scenario: Minimal third-party adapter
+- **WHEN** an expression-capable adapter implements certified scans and scalar membership but no telemetry
+- **THEN** it remains usable through the deterministic baseline engine and core's organic counters

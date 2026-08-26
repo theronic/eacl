@@ -17,6 +17,7 @@
             [eacl.operator.vector-evaluator :as operator-vector]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
+            [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
@@ -475,6 +476,7 @@
     ;; fills it. Left nil-valued for unstamped generations by the clients.
     :parsed-schema (atom nil)
     :validation-catalog (atom nil)
+    :expression-metrics (atom {})
     :sealed-plans (atom {})
     :permission-roots (atom {})
     :permission-paths (atom {})
@@ -531,6 +533,7 @@
     :request-local? true
     :parsed-schema (atom nil)
     :validation-catalog (atom nil)
+    :expression-metrics (atom {})
     :sealed-plans (atom {})
     :permission-roots (atom {})
     :permission-paths (atom {})
@@ -1034,7 +1037,9 @@
 
 (defn- seal-and-certify-plan
   [db [resource-type permission :as root-node]]
-  (let [plan (operator-plan/seal-plan db root-node)]
+  (let [plan (binding [expression-persistence/*structural-cache*
+                       (:expression-metrics *schema-cache*)]
+               (operator-plan/seal-plan db root-node))]
     (certify-plan-read-scope!
      plan
      (if (operator-plan/operator-plan? plan)

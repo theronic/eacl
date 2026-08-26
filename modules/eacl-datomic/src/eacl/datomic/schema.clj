@@ -52,6 +52,15 @@
    :db/cardinality :db.cardinality/one
    :db/index       true})
 
+(def permission-storage-version 8)
+
+(def permission-storage-version-attr-definition
+  {:db/ident       :eacl/permission-storage-version
+   :db/doc         "Authoritative EACL permission representation version (8 = canonical expressions)."
+   :db/valueType   :db.type/long
+   :db/cardinality :db.cardinality/one
+   :db/index       true})
+
 (def relation-version-attr-definition
   "Per-relation change stamp: a ref to the transaction that last added or
   retracted a relationship using this relation.
@@ -138,7 +147,7 @@
            :subject-type subject-type}))
         [])})})
 
-(def v7-schema
+(def v7-compatible-schema
   [; :eacl/id is now optional.
    {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
@@ -152,6 +161,7 @@
     :db/cardinality :db.cardinality/one}
 
    schema-version-attr-definition
+   permission-storage-version-attr-definition
    relation-version-attr-definition
    assert-relation-unused-fn-definition
 
@@ -222,45 +232,10 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :eacl.permission/expression-format
-    :db/doc         "EACL canonical permission expression format."
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
    {:db/ident       :eacl.permission/expression-payload
     :db/doc         "EACL canonical permission expression payload."
     :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one}
-
-   {:db/ident       :eacl.permission/expression-digest
-    :db/doc         "Digest of the canonical permission expression."
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.permission/expression-policy-digest
-    :db/doc         "Digest of the expression compatibility policy."
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident :eacl.permission/source-node-count
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
-   {:db/ident :eacl.permission/source-maximum-depth
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
-   {:db/ident :eacl.permission/source-direct-fan-in
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
-   {:db/ident :eacl.permission/encoded-byte-size
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
-   {:db/ident :eacl.permission/normalized-node-count
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
-   {:db/ident :eacl.permission/normalized-child-slot-count
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
-   {:db/ident :eacl.permission/normalized-word-count
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
-   {:db/ident :eacl.permission/normalized-checkpoint-weight
-    :db/valueType :db.type/long :db/cardinality :db.cardinality/one}
 
    ; Permission Indices
    {:db/ident       :eacl.permission/resource-type+permission-name
@@ -291,6 +266,112 @@
                      :db.type/ref]
     :db/cardinality :db.cardinality/many
     :db/index       true}])
+
+(def v8-schema
+  "Clean v8 Datomic install. Released-v7 flat permission attributes are
+  intentionally omitted; an existing v7 database retains those immutable
+  Datomic schema entities as inert upgrade history after its flat rows retire."
+  (filterv
+   #(not (contains? expression-persistence/legacy-flat-attributes
+                    (:db/ident %)))
+   v7-compatible-schema))
+
+(def v7-schema
+  "Compatibility name for the former all-in-one installer. New v8 databases
+  should transact `v8-schema`; released-v7 databases already contain the flat
+  attributes required by the explicit permission migration."
+  v7-compatible-schema)
+
+(def ^:private authoritative-permission-attribute-idents
+  #{:eacl/id
+    :eacl/permission-storage-version
+    :eacl.permission/resource-type
+    :eacl.permission/permission-name
+    :eacl.permission/expression-payload
+    :eacl.permission/resource-type+permission-name})
+
+(def ^:private additive-v8-permission-attribute-idents
+  (disj authoritative-permission-attribute-idents
+        :eacl/id
+        :eacl.permission/resource-type
+        :eacl.permission/permission-name))
+
+(def ^:private authoritative-permission-attribute-definitions
+  (into {}
+        (keep (fn [definition]
+                (when (contains? authoritative-permission-attribute-idents
+                                 (:db/ident definition))
+                  [(:db/ident definition) definition])))
+        v8-schema))
+
+(defn- ident-value
+  [db value]
+  (when value
+    (or (:db/ident value)
+        (d/ident db value))))
+
+(defn- attribute-shape
+  [db ident]
+  (when-let [eid (d/entid db ident)]
+    (let [attribute (d/entity db eid)]
+      {:value-type (ident-value db (:db/valueType attribute))
+       :cardinality (ident-value db (:db/cardinality attribute))
+       :unique (ident-value db (:db/unique attribute))
+       :tuple-attrs (some->> (:db/tupleAttrs attribute)
+                             (mapv #(ident-value db %)))
+       :tuple-types (some->> (:db/tupleTypes attribute)
+                             (mapv #(ident-value db %)))
+       :no-history? (true? (:db/noHistory attribute))
+       :is-component? (true? (:db/isComponent attribute))
+       :fulltext? (true? (:db/fulltext attribute))
+       :indexed? (true? (:db/index attribute))})))
+
+(defn- expected-attribute-shape
+  [definition]
+  {:value-type (:db/valueType definition)
+   :cardinality (:db/cardinality definition)
+   :unique (:db/unique definition)
+   :tuple-attrs (:db/tupleAttrs definition)
+   :tuple-types (:db/tupleTypes definition)
+   :no-history? (true? (:db/noHistory definition))
+   :is-component? (true? (:db/isComponent definition))
+   :fulltext? (true? (:db/fulltext definition))
+   :indexed? (true? (:db/index definition))})
+
+(defn- assert-authoritative-permission-attribute-shapes!
+  [db]
+  (doseq [[ident definition]
+          authoritative-permission-attribute-definitions
+          :let [actual (attribute-shape db ident)]
+          :when actual]
+    (let [expected (expected-attribute-shape definition)]
+      (when-not (= expected actual)
+        (throw
+         (ex-info
+          "An existing Datomic attribute conflicts with EACL v8 permission storage."
+          {:type :eacl.migration/attribute-conflict
+           :eacl/error :eacl.migration/attribute-conflict
+           :attribute ident
+           :expected expected
+           :actual actual})))))
+  nil)
+
+(defn- ensure-v8-permission-attributes!
+  "Installs only authoritative additive v8 permission attributes. Derived
+  metric attributes are intentionally absent."
+  [conn]
+  (let [db (d/db conn)
+        _ (assert-authoritative-permission-attribute-shapes! db)
+        missing
+        (into []
+              (filter #(and (contains? additive-v8-permission-attribute-idents
+                                       (:db/ident %))
+                            (nil? (d/entid db (:db/ident %)))))
+              v8-schema)]
+    (when (seq missing)
+      @(d/transact conn missing))
+    (assert-authoritative-permission-attribute-shapes! (d/db conn))
+    (count missing)))
 
 (defn count-relationships-using-relation
   "Counts v7 forward relationship tuples that reference the given relation."
@@ -330,18 +411,7 @@
                              :eacl.permission/source-relation-name
                              :eacl.permission/target-type
                              :eacl.permission/target-name
-                             :eacl.permission/expression-format
-                             :eacl.permission/expression-payload
-                             :eacl.permission/expression-digest
-                             :eacl.permission/expression-policy-digest
-                             :eacl.permission/source-node-count
-                             :eacl.permission/source-maximum-depth
-                             :eacl.permission/source-direct-fan-in
-                             :eacl.permission/encoded-byte-size
-                             :eacl.permission/normalized-node-count
-                             :eacl.permission/normalized-child-slot-count
-                             :eacl.permission/normalized-word-count
-                             :eacl.permission/normalized-checkpoint-weight]) ...]
+                             :eacl.permission/expression-payload]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
        db))
@@ -494,7 +564,7 @@
 
 (defn- legacy-flat-permission?
   [permission]
-  (not (contains? permission :eacl.permission/expression-format)))
+  (not (contains? permission :eacl.permission/expression-payload)))
 
 (defn- legacy-permission-node
   [relation-subject-types
@@ -525,9 +595,8 @@
                 [resource-type source-relation-name])))))
 
 (defn- expression-metadata
-  [resolved-expression]
-  (let [limits expression-policy/expression-limits
-        source-metrics
+  [resolved-expression limits]
+  (let [source-metrics
         (expression-limits/check-source!
          (:root resolved-expression) limits)
         {:keys [encoded-byte-size]}
@@ -545,7 +614,7 @@
   "Converts released v6/v7 union-only permission rows into the canonical v8
   expression representation. This function is reachable only from the
   explicit v6->v7 migration; ordinary v8 reads never synthesize expressions."
-  [{:keys [relations permissions]}]
+  [{:keys [relations permissions]} limits]
   (model/validate-schema-references
    {:relations relations :permissions permissions})
   (let [relation-subject-types
@@ -585,9 +654,9 @@
            (juxt :eacl.permission/resource-type
                  :eacl.permission/permission-name)
            permissions)))
-        metadata (mapv expression-metadata expressions)]
+        metadata (mapv #(expression-metadata % limits) expressions)]
     (expression-limits/check-aggregate!
-     metadata expression-policy/expression-limits)
+     metadata limits)
     (expression-persistence/candidate-schema
      {:definitions
       (->> relations
@@ -616,6 +685,9 @@
         missing (cond-> []
                   (not (d/entid db :eacl/schema-version))
                   (conj schema-version-attr-definition)
+
+                  (not (d/entid db :eacl/permission-storage-version))
+                  (conj permission-storage-version-attr-definition)
 
                   (not (d/entid db :eacl.fn/assert-relation-unused))
                   (conj assert-relation-unused-fn-definition))]
@@ -698,7 +770,9 @@
                 relation-addition-entities)
           schema-stamp-entity
           (cond-> {:db/id schema-entity
-                   :eacl/id "schema-string"}
+                   :eacl/id "schema-string"
+                   :eacl/permission-storage-version
+                   permission-storage-version}
             (some? schema-string)
             (assoc :eacl/schema-string schema-string))
           tx-data
@@ -755,11 +829,16 @@
   ([conn schema-string opts]
    (write-schema! conn schema-string opts ::read-current-version))
   ([conn schema-string opts known-schema-version]
-   (let [new-schema-map
-         (expression-persistence/candidate-schema
-          (expression-resolver/validate-schema schema-string))]
-     (write-schema-candidate!
-      conn schema-string new-schema-map opts known-schema-version))))
+   (let [expression-limits
+         (expression-policy/normalize-client-limits
+          (:expression-limits opts))]
+     (binding [expression-persistence/*expression-limits* expression-limits]
+       (let [new-schema-map
+             (expression-persistence/candidate-schema
+              (expression-resolver/validate-schema
+               schema-string expression-limits))]
+         (write-schema-candidate!
+          conn schema-string new-schema-map opts known-schema-version))))))
 
 (defn migrate-v6-schema!
   "Migration-only conversion of released flat v6 schema rows to canonical
@@ -767,7 +846,8 @@
   validated before replacement; otherwise the stored union-only rows are
   converted deterministically. The strict v8 read path is never relaxed."
   [conn schema-string]
-  (let [existing (read-schema-unchecked (d/db conn))
+  (let [expression-limits (expression-policy/normalize-client-limits nil)
+        existing (read-schema-unchecked (d/db conn))
         permissions (:permissions existing)
         flat-permissions (filterv legacy-flat-permission? permissions)
         expression-permissions
@@ -783,15 +863,102 @@
       (let [candidate
             (if schema-string
               (expression-persistence/candidate-schema
-               (expression-resolver/validate-schema schema-string))
-              (legacy-flat-candidate-schema existing))]
-        (write-schema-candidate!
-         conn schema-string candidate
-         {:validate-existing? false}
-         ::read-current-version))
+               (expression-resolver/validate-schema
+                schema-string expression-limits))
+              (legacy-flat-candidate-schema existing expression-limits))]
+        (binding [expression-persistence/*expression-limits* expression-limits]
+          (write-schema-candidate!
+           conn schema-string candidate
+           {:validate-existing? false
+            :expression-limits expression-limits}
+           ::read-current-version)))
 
       schema-string
       (write-schema! conn schema-string)
 
       :else
       nil)))
+
+(defn permission-storage-shape
+  "Classifies only permission-definition storage without touching relationship
+  tuples. `:flat` is the released v7 input; ordinary v8 reads accept only
+  `:expression` or `:none`."
+  [db]
+  (let [permissions (read-permissions db)
+        flat? (some legacy-flat-permission? permissions)
+        expression? (some (complement legacy-flat-permission?) permissions)]
+    (cond
+      (and flat? expression?) :mixed
+      expression? :expression
+      flat? :flat
+      :else :none)))
+
+(defn migrate-v7-permissions!
+  "Atomically replaces released v7 flat permissions with v8 expressions.
+
+  The complete candidate and relation-identity diff are computed before any
+  additive v8 attribute is installed. Relation additions/retractions are
+  rejected: v7 relationship tuples refer to relation entity ids and this
+  migration is intentionally permission-only. The final write atomically
+  retracts old permission entities, asserts expressions, stores the schema
+  text when supplied, advances :eacl/schema-version, and stamps
+  :eacl/permission-storage-version."
+  ([conn schema-string]
+   (migrate-v7-permissions! conn schema-string nil))
+  ([conn schema-string expression-limit-overrides]
+  (let [expression-limits
+        (expression-policy/normalize-client-limits expression-limit-overrides)
+        db (d/db conn)
+        existing (read-schema-unchecked db)
+        permissions (:permissions existing)
+        shape (permission-storage-shape db)]
+    (case shape
+      :mixed
+      (expression-persistence/validate-entities permissions)
+
+      :expression
+      {:status :already-v8
+       :permission-storage-version permission-storage-version
+       :relationships-touched 0}
+
+      (:flat :none)
+      (let [;; Validate every released-v7 row even when the caller supplies a
+            ;; replacement schema. A replacement must not silently erase
+            ;; evidence that the input storage was already corrupt.
+            _ (when (= :flat shape)
+                (legacy-flat-candidate-schema existing expression-limits))
+            candidate
+            (if schema-string
+              (expression-persistence/candidate-schema
+               (expression-resolver/validate-schema
+                schema-string expression-limits))
+              (legacy-flat-candidate-schema existing expression-limits))
+            deltas (compare-schema existing candidate)
+            relation-additions (get-in deltas [:relations :additions])
+            relation-retractions (get-in deltas [:relations :retractions])]
+        (when (or (seq relation-additions) (seq relation-retractions))
+          (throw
+           (ex-info
+            "The v7->v8 permission upgrade cannot change relation identities."
+            {:type :eacl.migration/relation-schema-change
+             :eacl/error :eacl.migration/relation-schema-change
+             :relation-additions (count relation-additions)
+             :relation-retractions (count relation-retractions)})))
+        (let [expected-version (impl.indexed/schema-version db)
+              _ (ensure-v8-permission-attributes! conn)
+              result
+              (binding [expression-persistence/*expression-limits*
+                        expression-limits]
+                (write-schema-candidate!
+                 conn schema-string candidate
+                 {:validate-existing? false
+                  :expression-limits expression-limits}
+                 expected-version))]
+          {:status :migrated
+           :permission-storage-version permission-storage-version
+           :relationships-touched 0
+           :permission-additions
+           (count (get-in result [:permissions :additions]))
+           :permission-retractions
+           (count (get-in result [:permissions :retractions]))
+           :schema-generation (:eacl/schema-version (meta result))}))))))

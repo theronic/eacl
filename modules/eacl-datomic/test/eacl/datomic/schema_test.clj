@@ -1,5 +1,6 @@
 (ns eacl.datomic.schema-test
   (:require [clojure.java.io :as io]
+            [clojure.set]
             [clojure.test :as t :refer [deftest testing is]]
             [datomic.api :as d]
             [eacl.core :as eacl]
@@ -98,6 +99,18 @@
      permission view = reader
    }")
 
+(deftest expression-admission-limits-are-local-and-failed-writes-are-atomic-test
+  (with-mem-conn [conn schema/v8-schema]
+    (let [failure
+          (exception-data
+           #(schema/write-schema!
+             conn direct-storage-schema
+             {:expression-limits {:maximum-source-nodes 0}}))]
+      (is (= :eacl.schema/expression-limit (:type failure)))
+      (is (= :node-count (:dimension failure)))
+      (is (= 0 (:maximum failure)))
+      (is (empty? (:permissions (schema/read-schema (d/db conn))))))))
+
 (deftest permission-storage-is-expression-only-and-replaceable-test
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn operator-storage-schema)
@@ -106,8 +119,8 @@
           view-id
           (expression-persistence/->expression-id :document :view)
           view-eid (d/entid before-db [:eacl/id view-id])
-          before-digest
-          (:eacl.permission/expression-digest
+          before-payload
+          (:eacl.permission/expression-payload
            (first (filter #(= view-id (:eacl/id %)) before)))
           installed-idents (set (map :db/ident schema/v7-schema))]
       (is (= 2 (count before)))
@@ -128,8 +141,8 @@
             view (first (filter #(= view-id (:eacl/id %)) after))]
         (is (= view-eid (d/entid after-db [:eacl/id view-id])))
         (is (= 2 (count after)))
-        (is (not= before-digest
-                  (:eacl.permission/expression-digest view)))
+        (is (not= before-payload
+                  (:eacl.permission/expression-payload view)))
         (is (= :exclusion
                (:op (:root
                      (expression-persistence/decode-entity view))))))
@@ -226,6 +239,28 @@
       (is (not (contains? idents :eacl.v7.grant/subject-type+permission+resource-type+resource)))
       (is (not (contains? idents :eacl.v7.grant/resource-type+permission+subject-type+subject)))
       (is (not (contains? idents :eacl.grant/indexed-node))))))
+
+(deftest schema-does-not-include-derived-expression-metrics-test
+  (let [idents (set (map :db/ident schema/v7-schema))]
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/retired-expression-attributes)))))
+
+(deftest clean-v8-schema-retires-flat-permission-attributes-test
+  (let [idents (set (map :db/ident schema/v8-schema))]
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/legacy-flat-attributes)))
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/retired-expression-attributes)))
+    (with-mem-conn [conn schema/v8-schema]
+      (schema/write-schema! conn direct-storage-schema)
+      (is (= :expression
+             (schema/permission-storage-shape (d/db conn)))))))
 
 (deftest eacl-schema-comparison-tests
   (testing "we can calculate additions & retractions"
@@ -627,7 +662,7 @@
     (with-mem-conn [conn schema/v7-schema]
       (schema/write-schema! conn example-schema-string)
       (with-redefs [expression-resolver/validate-schema
-                    (fn [_]
+                    (fn [_ & _]
                       {:definitions []
                        :relations []
                        :expressions []

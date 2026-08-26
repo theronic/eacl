@@ -79,7 +79,7 @@
     eacl.operator.recursive-test]}
   {:scope :portable-production-and-operator-mutation-parity
    :runtime :cljs
-   :tests 428 :assertions 9282 :failures 0 :errors 0 :status :passed
+   :tests 435 :assertions 9326 :failures 0 :errors 0 :status :passed
    :runner eacl.datascript.cljs-test-runner}
   {:scope :generated-recursive-command-boundary
    :runtime :clj-java
@@ -131,6 +131,7 @@
    :production
    ["modules/eacl/src/eacl/spicedb/parser.cljc"
     "modules/eacl/src/eacl/schema/expression.cljc"
+    "modules/eacl/src/eacl/schema/expression_policy.cljc"
     "modules/eacl/src/eacl/schema/expression_resolver.cljc"
     "modules/eacl/src/eacl/schema/expression_graph.cljc"
     "modules/eacl/src/eacl/schema/expression_persistence.cljc"]
@@ -203,18 +204,20 @@
   "beb9391f657cc46c9ce8bbfe9a6c74a468a400b2cbe2aa74521e7e02f4a1c62b"
   "modules/eacl/src/eacl/schema/expression.cljc"
   "3b96fb53c083db22d1260547e05ca0d350d055d1f8cc92e2e5cedace2e6fb01c"
+  "modules/eacl/src/eacl/schema/expression_policy.cljc"
+  "b22fe23eb68fea4b0253c1874ec1f1fc00cc4cf14dcaf7aa4ed82baf9ce69592"
   "modules/eacl/src/eacl/schema/expression_resolver.cljc"
-  "e749b1e1ceab0c0e6e2f7a3e402a359ad1ab1171a9f593011f5f403f3a0c848b"
+  "5b66bcdc3183668281097dfef0b1a0eb4f84ded29f6c34cfdd844679dbcd67b2"
   "modules/eacl/src/eacl/schema/expression_graph.cljc"
   "4466904b5372691039c7599037086a5a6a978886e38f649dc0f9862e814f242f"
   "modules/eacl/src/eacl/schema/expression_persistence.cljc"
-  "c7b69d2d0606e964febbfe73aa97c0e4de36a4739635024dd195d01ed6d41e8f"
+  "e29e52cc28a38ec0be43aabe93cfa82b9deecc089702ab6822d681cf29b7dd6c"
   "modules/eacl/src/eacl/operator/plan.cljc"
-  "4e7554583b4165f52590fbdfe299e741302548b786b3add956e1878d6899419f"
+  "3a60c823b003bea6adde3c3e3f7269f048ace53e27d6508fd7719e26a9b69ad6"
   "modules/eacl/src/eacl/operator/cover_plan.cljc"
   "c52b93119ccee73d80ec81e9673cb4171df091fc9f17e2f3bb9ce5fac1e95ae1"
   "modules/eacl/src/eacl/operator/cursor_scope.cljc"
-  "2d0b042e4db963748073723d18d405165b5a9bef5c0e8ca4931e8b59e6c540c9"
+  "859138c287b51000f4f2ec0c8f0c34aef68021fd7b9f221137107a6d1aa68d6a"
   "modules/eacl/src/eacl/operator/evaluator.cljc"
   "93b1f9b17c86549bb4fc8efdff9f0c1e7b25c212be43e3deca7de7f7fb06ba3f"
   "modules/eacl/src/eacl/operator/vector_evaluator.cljc"
@@ -230,7 +233,7 @@
   "modules/eacl/src/eacl/operator/recursive.cljc"
   "1e6e606041c33b72c60dc74be3083c33a049d78e12b968dd7daffed32708be70"
   "modules/eacl/src/eacl/backend/direct_membership.cljc"
-  "f50973d04d99b13581b3279781b50a29f6179d98629a1d68ca424ab2bf34b60d"
+  "bf73dcd6a5e958646f927df0fd9d615f752d4a1c238b2f0c7339408828c31293"
   "modules/eacl/src/eacl/backend/v8.cljc"
   "9792ea48a0e5769025fbad9a0b7efa81696a3d4decf975abb073831fd911a7a8"
   "modules/eacl-datomic/src/eacl/datomic/backend.clj"
@@ -244,9 +247,13 @@
   "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc"
   "317eb0525cfdfd02dfd9b090cf44c596812a79f7aad898380c5ecfe31e0ccdd3"
   "modules/eacl/src/eacl/client/orchestration.cljc"
-  "60feab771bfe5dc3b39e0ea7779c1764117c9ccefdd9d18684f535e6818f8169"
+  "cad837ec91e6b9c27d1ef7331fc0e112342d7fa44fc9184916377d4abf8dfdbd"
   "modules/eacl/src/eacl/engine/v8.cljc"
-  "5cb78c8ae92e2733e273e9cf92e5f9e84eccf1784a2040321edc227916050990"
+  "82bed944906f44c1ad6be035200a47c5b559483501013ea3a997d3d355c894f2"
+  "modules/eacl/src/eacl/engine/physical.cljc"
+  "6988207dad889bc0660f391df0a8c5145dd7a6d0c50bd606d6907306ea394e9c"
+  "modules/eacl/src/eacl/metrics.cljc"
+  "f8ecd8c483276918609e73eea2e2352fe90a03373387ad0d665aa80d47f087f7"
   "modules/eacl/src/eacl/permission_tree.cljc"
   "9c763c6b7b8fedf3fdcd23a4eb4fa99257bfff022a674060a66d0cc443833b39"}
  :assurance

@@ -138,48 +138,48 @@
  :reverification
  {:captured-at "2026-08-26"
   :command
-  "clj-nrepl-eval -p 7801 --timeout 900000 \"(do (require '[eacl.operator-engine.s3-experiments :as s3] :reload) (s3/run!))\""
+  "clojure -Sdeps '{:deps {org.replikativ/konserve-s3 {:mvn/version \"0.1.38\"}}}' -M:dev -e '(require (quote eacl.operator-engine.s3-experiments)) (eacl.operator-engine.s3-experiments/run!)'"
   :source-sha256
   "5a970e29f2ac03ef70d94b9b74a1b44eb77c70efbdbecbab29737b08e90fea69"
-  :store-id "cea2effa-720c-4303-b6e9-61922bbbd92e"
+  :store-id "d3a878f2-15cf-4947-9a1d-eb1b90d9129a"
   :store-deleted true
   :bucket-empty-after-run true
-  :elapsed-ms 3929.819833
+  :elapsed-ms 4812.149084
   :observed
   {:intersection
-   {:cold {:gets 9 :bytes 73402 :allocated-bytes 53432120
-           :latency-nanos 75294292}
-    :warm {:gets 0 :allocated-bytes 32149504
-           :latency-nanos 11739417}
-    :adjacent {:gets 2 :allocated-bytes 36839096
-               :latency-nanos 21134292}}
+   {:cold {:gets 8 :bytes 63204 :allocated-bytes 42694456
+           :latency-nanos 72875833}
+    :warm {:gets 0 :allocated-bytes 25644464
+           :latency-nanos 22741833}
+    :adjacent {:gets 1 :bytes 8396 :allocated-bytes 29433552
+               :latency-nanos 19823500}}
    :dense-exclusion
-   {:cold {:gets 10 :bytes 80111 :allocated-bytes 50302088
-           :latency-nanos 37975667}
-    :warm {:gets 0 :allocated-bytes 31874616
-           :latency-nanos 11290000}
-    :adjacent {:gets 2 :allocated-bytes 36483504
-               :latency-nanos 20169250}}
+   {:cold {:gets 9 :bytes 69877 :allocated-bytes 39302216
+           :latency-nanos 40273916}
+    :warm {:gets 0 :allocated-bytes 25376312
+           :latency-nanos 10450417}
+    :adjacent {:gets 1 :bytes 8396 :allocated-bytes 29081184
+               :latency-nanos 15172416}}
    :sparse-exclusion
-   {:cold {:gets 7 :bytes 57111 :allocated-bytes 47649752
-           :latency-nanos 33164750}
-    :warm {:gets 0 :allocated-bytes 31892936
-           :latency-nanos 11537291}
-    :adjacent {:gets 0 :allocated-bytes 34917664
-               :latency-nanos 11829500}}
+   {:cold {:gets 7 :bytes 55988 :allocated-bytes 37683296
+           :latency-nanos 31304625}
+    :warm {:gets 0 :allocated-bytes 25400376
+           :latency-nanos 12235875}
+    :adjacent {:gets 1 :bytes 7216 :allocated-bytes 29012528
+               :latency-nanos 14248250}}
    :arrow
-   {:cold {:gets 8 :bytes 67041 :allocated-bytes 59574064
-           :latency-nanos 46527875}
-    :warm {:gets 0 :allocated-bytes 40352288
-           :latency-nanos 16505333}
-    :adjacent {:gets 1 :allocated-bytes 44465680
-               :latency-nanos 21182459}}
+   {:cold {:gets 8 :bytes 63204 :allocated-bytes 48156472
+           :latency-nanos 46375667}
+    :warm {:gets 0 :allocated-bytes 33773568
+           :latency-nanos 16289167}
+    :adjacent {:gets 0 :bytes 0 :allocated-bytes 36844304
+               :latency-nanos 18092291}}
    :bounded-count
-   {:count 20 :limit 20 :truncated true :gets 6 :bytes 49855
-    :allocated-bytes 16134696 :latency-nanos 24806917}
+   {:count 20 :limit 20 :truncated true :gets 6 :bytes 46945
+    :allocated-bytes 12479200 :latency-nanos 22691084}
    :exact-count
-   {:count 1024 :gets 26 :bytes 183475
-    :allocated-bytes 51125640 :latency-nanos 81527667}}
+   {:count 1024 :gets 26 :bytes 180588
+    :allocated-bytes 47443800 :latency-nanos 85745250}}
   :ceiling-checks 17
   :all-ceilings-passed true}
  :conclusion

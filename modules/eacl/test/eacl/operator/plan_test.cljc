@@ -167,7 +167,7 @@
     (is (= (:anchors left) (:anchors right)))
     (is (= (:witness-programs left) (:witness-programs right)))
     (is (= plan/order-contract (:order-contract left)))
-    (is (= "qbgt_ARJfd9I6hMnpX1PzI5of7_Nvh7UmYgThMfPBDc"
+    (is (= "vzgqjN4YMK7bpU-dk5WQSfKPdEXdIDeloaP6pNcqw_I"
            (:fingerprint left))
         "the canonical plan fingerprint is identical in CLJ and CLJS")))
 

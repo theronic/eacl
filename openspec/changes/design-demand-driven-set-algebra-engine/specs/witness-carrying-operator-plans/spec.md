@@ -15,6 +15,10 @@ For every acyclic expression `E`, the sealed plan SHALL define a finite raw cand
 - **WHEN** an operator cursor is resumed without compatible cache entries
 - **THEN** the same sealed cover and candidate order are reconstructed without a selectivity pilot
 
+#### Scenario: Relationship observation favors another public child
+- **WHEN** cached cardinality evidence suggests a non-anchor child is smaller
+- **THEN** the sealed public generator remains unchanged and the observation may affect only an already-certified sequence-equivalent physical kernel
+
 ### Requirement: Candidate witnesses remove redundant predicates
 Every candidate emitted by a recursively exact child generator SHALL carry or reconstruct a bounded witness proving the semantic memberships completed by that child evaluation. A raw cover candidate SHALL carry only raw derivation evidence until its local exact predicate completes. Parent predicate evaluation SHALL test every unresolved expression obligation and SHALL accept a candidate if and only if it belongs to the parent denotation.
 

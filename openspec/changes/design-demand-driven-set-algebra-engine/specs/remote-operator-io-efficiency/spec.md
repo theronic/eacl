@@ -46,3 +46,17 @@ Eligible exact scan-response, point-decision, and completed-answer cache hits MA
 #### Scenario: Cold cache parity
 - **WHEN** cache-enabled and cache-disabled requests begin without compatible entries
 - **THEN** they demand the same candidates and semantic subproblems even if physical grouping differs by a sealed certified rule
+
+### Requirement: Organic statistics never widen remote demand
+Relationship observations SHALL be updated from values, probes, batches, exhaustion, and physical telemetry produced by already demanded work. An ordinary statistics miss or bounded refresh MUST NOT trigger a full relation count, widen a tuple range, enumerate every operand, or open an otherwise-undemanded index stream. Exact refresh SHALL require an explicit exhaustive mode and SHALL be reported and limited as exact-count work.
+
+#### Scenario: Cold observation cache on S3-backed Datahike
+- **WHEN** a bounded page has no relationship statistics
+- **THEN** EACL executes the deterministic bounded plan and records only the work it naturally performs, without extra S3 GETs for statistics collection
+
+### Requirement: Adapter I/O statistics are optional cost telemetry
+Adapters MAY report normalized operation I/O statistics. Datomic I/O stats SHALL be interpreted only as cache/storage-tier work for the measured operation, not as an exact relationship cardinality or stable selectivity estimate. Adapters with no native telemetry SHALL remain fully conformant using EACL logical and physical counters.
+
+#### Scenario: Datomic cache state changes I/O stats
+- **WHEN** identical logical reads report different Datomic I/O because cache residency differs
+- **THEN** both remain observations for physical cost and neither changes the authorization denotation or public plan identity

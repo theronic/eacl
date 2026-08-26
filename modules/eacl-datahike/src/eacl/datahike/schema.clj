@@ -3,6 +3,7 @@
             [eacl.datahike.db :as ddb]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]))
 
@@ -69,46 +70,9 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   {:db/ident       :eacl.permission/expression-format
-    :db/valueType   :db.type/keyword
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
    {:db/ident       :eacl.permission/expression-payload
     :db/valueType   :db.type/string
     :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/expression-digest
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.permission/expression-policy-digest
-    :db/valueType   :db.type/string
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-   {:db/ident       :eacl.permission/source-node-count
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/source-maximum-depth
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/source-direct-fan-in
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/encoded-byte-size
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/normalized-node-count
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/normalized-child-slot-count
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/normalized-word-count
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-   {:db/ident       :eacl.permission/normalized-checkpoint-weight
-    :db/valueType   :db.type/long
-    :db/cardinality :db.cardinality/one}
-
    ])
 
 (def ^:private tuple-schema
@@ -214,18 +178,7 @@
     :eacl.permission/source-relation-name
     :eacl.permission/target-type
     :eacl.permission/target-name
-    :eacl.permission/expression-format
-    :eacl.permission/expression-payload
-    :eacl.permission/expression-digest
-    :eacl.permission/expression-policy-digest
-    :eacl.permission/source-node-count
-    :eacl.permission/source-maximum-depth
-    :eacl.permission/source-direct-fan-in
-    :eacl.permission/encoded-byte-size
-    :eacl.permission/normalized-node-count
-    :eacl.permission/normalized-child-slot-count
-    :eacl.permission/normalized-word-count
-    :eacl.permission/normalized-checkpoint-weight])
+    :eacl.permission/expression-payload])
 
 (defn read-relations
   "Every relation definition. Enumerated from the relation key index rather than
@@ -408,12 +361,17 @@
   ([conn schema-string options]
    (write-schema! conn schema-string options ::read-current-generation))
   ([conn schema-string
-    {:keys [allow-empty-schema?]}
+    {:keys [allow-empty-schema? expression-limits]}
     known-schema-generation]
-   (let [new-schema-map  (expression-persistence/candidate-schema
-                           (expression-resolver/validate-schema schema-string))
+   (let [expression-limits
+         (expression-policy/normalize-client-limits expression-limits)
+         new-schema-map  (expression-persistence/candidate-schema
+                           (expression-resolver/validate-schema
+                            schema-string expression-limits))
          initial-db      (d/db conn)
-         initial-schema  (read-schema initial-db)
+         initial-schema  (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema initial-db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations initial-schema))
@@ -424,7 +382,9 @@
                                             :existing {:relations (count (:relations initial-schema))
                                                        :permissions (count (:permissions initial-schema))}})))
          db              (ensure-schema-coherence! conn)
-         existing-schema (read-schema db)
+         existing-schema (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations existing-schema))

@@ -35,15 +35,15 @@
 - [x] 3.4 Implement source byte/node/depth/direct-fan-in checks before allocation and normalized DAG node/child-slot/word/checkpoint-weight checks after canonicalization.
 - [x] 3.5 Build signed expression dependencies, compute SCCs and strata, reject negative cycles with reproducible typed paths, and verify positive recursive components remain accepted.
 - [x] 3.6 Add CLJ/CLJS parser, codec, canonicalization, corruption, exact-boundary, fuzz, and atomic-validation tests against the independent syntax/denotation oracle.
-- [x] 3.7 Calibrate and check in per-permission and aggregate expression/normalized-state limit defaults from reproducible codec and allocation measurements; include every default in the expression/plan version.
+- [x] 3.7 Calibrate and check in per-permission and aggregate expression/normalized-state limit defaults from reproducible codec and allocation measurements; expose them as checked client defaults rather than durable schema policy.
 
 ## 4. Persist expressions and evolve backend capabilities
 
-- [x] 4.1 Add expression payload, digest, format, and limit-metadata attributes/indexes directly to the unreleased v8 Datomic, DataScript, Datahike, and Datalevin schemas; keep clean installation idempotent.
+- [x] 4.1 Add authoritative expression identity and canonical versioned payload storage directly to the v8 Datomic, DataScript, Datahike, and Datalevin schemas; keep clean installation idempotent.
 - [x] 4.2 Implement atomic expression replacement, schema deletion, snapshot reads, export/import, backup/restore, and failed-replacement atomicity tests on every built-in backend.
 - [x] 4.3 Remove flat permission persistence for every permission, verify that schema writes emit only canonical expressions, and compile union-compatible expressions into the unchanged union-only sealed-plan domain.
-- [x] 4.4 Read valid expression-only snapshots; fail closed on flat-only, mixed, corrupt, conflicting, duplicated, or unsupported-format storage.
-- [x] 4.5 Add explicit storage tests proving the unreleased v8 path performs no legacy synthesis, migration, dual write, old-reader rollout, or binary-downgrade preparation.
+- [x] 4.4 Read valid expression-only snapshots using the payload-carried format; fail closed on flat-only, mixed, corrupt, conflicting, duplicated, or unsupported-format storage.
+- [x] 4.5 Add explicit storage tests proving ordinary v8 reads perform no implicit legacy synthesis, migration, dual write, old-reader rollout, or binary-downgrade preparation.
 - [x] 4.6 Extend adapter construction with a required expression capability and optional bounded batched-direct-membership capability; validate capability/operation pairing and include it in operator compatibility.
 - [x] 4.7 Define the immutable-basis, normalized-descriptor, distinct-typed-input, aligned-Boolean, maximum-width, cancellation, and atomic-failure contract for batched direct membership.
 - [x] 4.8 Differentially certify scalar fallback and native batches in forward/reverse direction for present/missing values, identifier extrema, batch boundaries, concurrent head advancement, and malformed provider responses.
@@ -65,7 +65,7 @@
 - [x] 6.3 Compile the recursive raw-cover and exact-generator graph, ensure local predicates complete before child semantic witnesses are issued, and select one deterministic intersection anchor per acyclic node without semantic pilots, cache observations, or host-order dependencies.
 - [x] 6.4 Compile bounded witness projection rules and exact scalar/vector predicate programs, including typed entity identity and leaf descriptor grouping metadata.
 - [x] 6.5 Seal direct intersection/anti-join eligibility only when sequence, direction, bounds, types, and generic-cover order are compatible.
-- [x] 6.6 Include expression format/digest, normalized DAG, signed certificate, strata, cover, anchors, witness/predicate versions, physical-policy version, capability identity, limits, and order ABI in operator fingerprints.
+- [x] 6.6 Include runtime semantic-DAG identity, code-level expression/DAG formats, normalized DAG, signed certificate, strata, cover, anchors, witness/predicate versions, physical-policy version, capability identity, request execution limits, and order ABI in operator fingerprints; exclude client-local schema-admission profiles and all retired durable digest/policy fields.
 - [x] 6.7 Preserve the existing union-only sealed-plan domain, fingerprint, least-path/recursive routing, cursor identity, counters, and cache keys without constructing operator state.
 - [x] 6.8 Add cross-runtime and cross-backend plan/fingerprint differentials, commutative operand equivalence tests, ordered exclusion inequality tests, and missing/stale/malformed certificate rejection.
 
@@ -94,7 +94,7 @@
 
 ## 9. Integrate proof-compatible cache reuse
 
-- [x] 9.1 Extend top-level, point-subproblem, and continuation keys with operator expression, signed certificate, cover/anchor, witness/predicate, physical-policy, capability, limits, order, direction, and snapshot/proof inputs as applicable.
+- [x] 9.1 Extend top-level, point-subproblem, and continuation keys with operator expression, signed certificate, cover/anchor, witness/predicate, physical-policy, capability, code-level compatibility formats, request execution limits, order, direction, and snapshot/proof inputs as applicable. Keep client-local schema-admission profiles out of semantic plan identity while including them in client-owned structural-validation cache keys.
 - [x] 9.2 Add request-local complete Boolean/mask memoization keyed by expression node and complete typed context; keep in-progress, witness-only, join, anti-join, and unfinished-stratum state private.
 - [x] 9.3 Publish individual completed point/vector decisions only after the whole demanded vector succeeds and under complete positive/negative dependency proofs.
 - [x] 9.4 Integrate eligible exact scan-response prefixes at the existing fetch seam without widening descriptor bounds/limits or creating a second operator segment cache.
@@ -119,7 +119,7 @@
 - [x] 11.2 Run fixed-seed randomized bounded schemas/graphs through CLJ and CLJS, minimize every mismatch, retain seeds, and verify scalar/vector/direct-specialization/cache-on/cache-off equivalence.
 - [x] 11.3 Run the digest-pinned `eacl-spicedb` corpus and randomized shared-subset comparisons through public APIs; compare sets/cardinality, record intentional boundary cases, and never require SpiceDB return order.
 - [x] 11.4 Verify permission-tree operator rendering, non-semantic union/intersection child order, directed exclusion children, snapshot selection, limits, cancellation, and no relationship enumeration during schema expansion.
-- [x] 11.5 Exercise clean expression-only install, flat-only/mixed/conflicting storage rejection, union-only plan compatibility, expression replacement, failed-write atomicity, export/import, and backup/restore on every backend; verify no migration or dual-write path exists.
+- [x] 11.5 Exercise clean expression-only install, ordinary-read flat-only/mixed/conflicting storage rejection, union-only plan compatibility, expression replacement, failed-write atomicity, export/import, and backup/restore on every backend; verify no implicit migration or dual-write path exists.
 - [x] 11.6 Re-run the complete pre-operator union-only corpus and require identical values, order, cursors, fingerprints where promised, deterministic counters, cache behavior, and recursive traces.
 
 ## 12. Gate CPU, allocation, recursion, and remote I/O performance
@@ -137,9 +137,32 @@
 ## 13. Release gating and documentation
 
 - [x] 13.1 Add separate disabled gates for expression schema writes and public operator routing; verify union-only behavior while each gate combination is off.
-- [x] 13.2 Recreate clean development databases with expression-capable adapters before enabling writes; prove flat-only and mixed pre-release storage fail closed without compatibility interpretation.
+- [x] 13.2 Recreate superseded experimental-v8 development databases with expression-capable adapters before enabling writes; prove their flat-only and mixed ordinary reads fail closed without compatibility interpretation.
 - [x] 13.3 Run all module tests, CLJS builds, lint/source-closure checks, abstract and concrete formal gates, mutation controls, backend certifications, conformance lanes, storage tests, and performance gates from reproducible clean commands.
 - [x] 13.4 Enable test operator routing, then operator schema writes, only after proof-phase-A authorization and recorded refinement, conformance, storage, and performance evidence are present and valid.
 - [x] 13.5 Update README and API/backend/formal documentation only with implemented syntax, precedence, strict stratification, order, limits, cursor/cache behavior, measured performance envelopes, and the unchanged unsupported boundary.
-- [x] 13.6 Document the unreleased-v8 reset contract: source-control rollback requires recreation of disposable development databases, and no older-binary, persisted-cursor, migration, or dual-write compatibility is claimed.
+- [x] 13.6 Document the experimental-v8 reset contract separately from the supported released-v7 permission-schema upgrade; no experimental older-binary, persisted-cursor, implicit-migration, or dual-write compatibility is claimed.
 - [x] 13.7 Run `openspec validate --strict`, record final branch/base/diff and all evidence digests, and leave the change ready for review and merge into main without modifications to the original `core` worktree.
+
+## 14. Remove durable derived metrics and qualify the released-v7 upgrade
+
+- [x] 14.1 Remove source/DAG/count/byte/weight metric attributes from the shared expression entity and every built-in backend schema, pull, comparison, export/import, and transaction path; retain metric computation for validation and prove new schema writes assert no retired metric datoms.
+- [x] 14.2 Make expression reads recompute canonical source metrics, normalized DAG metrics, encoded size, and aggregate dimensions from the bounded canonical payload; cache the completed structural result per client by schema generation, authoritative fields, and effective limits, with explicit exact eviction/recompute support.
+- [x] 14.3 Add an adapter-neutral relationship-observation cache keyed by source lifecycle, selected basis/relation high-watermark, normalized descriptor, and direction, with an explicit monotone completeness class on each entry. Populate lower bounds, exact exhausted counts, selectivity, and physical-work observations only from work already demanded by authorization reads.
+- [x] 14.4 Add explicit relationship-stat refresh modes: clear/observe and bounded refresh by default, plus caller-authorized exact exhaustive refresh charged to ordinary exact-count/work limits. Verify that ordinary misses and refresh defaults never widen scans or open otherwise-undemanded index streams.
+- [x] 14.5 Add optional normalized adapter I/O telemetry. Integrate Datomic I/O stats only as cache/storage-tier cost evidence, retain EACL counters as the portable fallback, and prove neither telemetry availability nor observed values can alter the sealed public generator, order, cursor lineage, stopping boundary, or failure semantics.
+- [x] 14.6 Keep cached observations outside semantic plan and generator selection. If an adapter consumes them for physical selection, permit only formally/source-digested sequence-equivalent kernels. Add cold/warm/stale/missing/high-watermark-change differentials showing identical values, traces at the semantic boundary, pages, and cursor composition.
+- [x] 14.7 Implement a released-v7-to-v8 permission-schema upgrade that completely preflights parsing, resolution, bounds, stratification, replacement identity, semantic compatibility, and transaction writability before retiring any v7 permission row; atomically transact the permission replacement and schema/version stamp.
+- [x] 14.8 Prove and test that released v7 relationship attributes and tuple datoms are reused without relationship scans, backfills, rewrites, or rebuilds. Compare relationship count and content digests before/after upgrade on pre-populated fixtures, including the 1M-resource Datomic development shape on a disposable database copy.
+- [x] 14.9 Inject invalid source, corrupt legacy row, attribute conflict, CAS race, transaction rejection, and retry failures. Verify a rejected upgrade leaves the old permission rows and schema stamp usable and never exposes a mixed authorization snapshot.
+- [x] 14.10 Update independent oracle, CLJ/CLJS, cross-backend, Datomic migration, Datahike/MinIO, export/import, backup/restore, formal cache-refinement, source-closure, and documentation evidence for the revised storage/cache/upgrade contract.
+- [x] 14.11 Run all affected module tests and REPL probes, Datomic dev migration qualification, remote-read ceilings, formal/source-closure gates, and `openspec validate --strict`; record exact commands, cold/warm/stat-refresh results, relationship-digest evidence, and any remaining assurance qualification.
+
+## 15. Minimize durable permission state and make admission limits client-local
+
+- [x] 15.1 Remove separate expression-format, expression-digest, and expression-policy-digest fields from the canonical expression entity, built-in backend schemas, pulls, writers, comparisons, migration attribute installation, fixtures, and documentation. Treat already-installed experimental attributes as inert and never assert them again.
+- [x] 15.2 Make the payload-carried format the only durable codec version and validate canonical payload identity against resource type, permission name, and canonical entity ID. Compute any cursor, plan, or cache fingerprint locally from authoritative content and code-level format versions.
+- [x] 15.3 Add immutable per-client expression-limit configuration with calibrated defaults, exact key validation, and hard portable ceilings. Thread the effective profile through schema parsing, reading, normalization, aggregate validation, direct schema writes, and explicit/automatic v7-to-v8 migration.
+- [x] 15.4 Scope structural caches to the client, schema generation, authoritative payload fields, and effective limit profile. Prove a cache entry admitted under a looser profile cannot bypass a stricter profile and that different profiles never change denotation for schemas both accept.
+- [x] 15.5 Add cross-backend CLJ/CLJS storage and conformance tests for minimal durable fields, custom client profiles, exact boundaries, unsupported payload formats, experimental stale-attribute tolerance, v7 migration, startup gating, and failed-write atomicity.
+- [x] 15.6 Refresh formal/source-closure and qualification evidence, rerun affected module/aggregate/CLJS/migration/performance/OpenSpec gates, and document which durable attributes remain and their coordination purpose.

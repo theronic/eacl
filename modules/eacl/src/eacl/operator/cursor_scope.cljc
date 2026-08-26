@@ -28,7 +28,7 @@
    :predicate {:version (get-in plan [:versions :predicate])}
    :physical-policy {:version (get-in plan [:versions :physical-policy])
                      :capability (:capability-identity plan)
-                     :limits (:limits plan)}
+                     :compatibility-formats (:compatibility-formats plan)}
    :order (:order-contract plan)
    :plan-fingerprint (:fingerprint plan)
    :snapshot-proof snapshot-proof-identity

@@ -38,7 +38,8 @@
     :positive-components :strata :relation-closures :child-consumers
     :leaf-descriptors :costs :covers :generators :anchors
     :witness-programs :predicate-programs :specializations
-    :capability-identity :limits :versions :order-contract :fingerprint})
+    :capability-identity :compatibility-formats :versions :order-contract
+    :fingerprint})
 
 (defn- compile-error! [reason message data]
   (throw
@@ -210,7 +211,7 @@
    resolved]
   (let [{:keys [dag metrics]}
         (expression-limits/check-normalized!
-         resolved expression-policy/per-permission-limits)
+         resolved (expression-persistence/effective-expression-limits))
         nodes
         (mapv
          (fn [id record]
@@ -239,8 +240,8 @@
     {:permission permission
      :expression-format expression/format-version
      ;; Plan identity follows the canonical semantic DAG, not source grouping
-     ;; or commutative spelling. The persisted source digest was already
-     ;; authenticated by decode-entity and remains available for introspection.
+     ;; or commutative spelling. This is a runtime plan/cursor fingerprint, not
+     ;; a durable permission attribute or source of schema truth.
      :expression-digest
      (secure/canonical-digest "eacl/operator-expression/v1" dag)
      :dag dag
@@ -607,7 +608,7 @@
                programs)
          :specializations specializations
          :capability-identity (backend/operator-capability-identity adapter)
-         :limits expression-policy/compatibility-value
+         :compatibility-formats expression-policy/compatibility-value
          :versions {:cover cover-version
                     :witness witness-version
                     :predicate predicate-version

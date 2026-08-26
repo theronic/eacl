@@ -52,6 +52,7 @@
             [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
+            [eacl.metrics :as metrics]
             [eacl.permission-tree :as permission-tree]
             [eacl.proof-frame :as proof-frame]
             #?(:clj
@@ -64,6 +65,8 @@
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
             [eacl.schema.errors :as schema-errors]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
             [eacl.spicedb.parser :as schema-parser]
@@ -367,6 +370,14 @@
            :request-proof-frame (request-context/proof-frame context)
            :request-schema-cache (delay (request-context/derived context)))))
 
+(defn- metric-observation-context [opts]
+  (let [identity (:snapshot-semantic-identity opts)]
+    {:backend (:backend identity)
+     :source-id (:source-id identity)
+     :branch (:branch identity)
+     :source-lifecycle (:source-lifecycle identity)
+     :high-watermark (:revision identity)}))
+
 (defn- call-with-request-schema-cache
   "Runs selected-snapshot schema work against the request's proof-keyed
   derived generation.  This is schema decoding reuse, not authorization
@@ -375,6 +386,12 @@
   [opts f]
   (if-let [schema-cache (:request-schema-cache opts)]
     (binding [engine/*schema-cache* @schema-cache
+              expression-persistence/*structural-cache*
+              (:expression-metrics @schema-cache)
+              expression-persistence/*expression-limits*
+              (:expression-limits opts)
+              metrics/*store* (:relationship-observations opts)
+              metrics/*context* (metric-observation-context opts)
               engine/*proof-frame* (:request-proof-frame opts)]
       (f))
     (f)))
@@ -472,7 +489,9 @@
                   schema-cache
                   (:schema-cache candidate-state))]
             (try
-              (binding [engine/*schema-cache* @candidate-schema-cache]
+              (binding [engine/*schema-cache* @candidate-schema-cache
+                        expression-persistence/*expression-limits*
+                        (:expression-limits opts)]
                 (let [permission-ids
                       (when (and resource-type permission)
                         (engine/permission-relationship-eids
@@ -648,6 +667,14 @@
            (execution/check! contract :schema-plan)
            (let [value
                  (binding [engine/*schema-cache* @schema-cache
+                           expression-persistence/*structural-cache*
+                           (:expression-metrics @schema-cache)
+                           expression-persistence/*expression-limits*
+                           (:expression-limits opts)
+                           metrics/*store*
+                           (:relationship-observations opts)
+                           metrics/*context*
+                           (metric-observation-context opts)
                            engine/*proof-frame* request-proof-frame
                            engine/*request-lineage*
                            (:request-lineage opts)
@@ -682,6 +709,8 @@
             dependencies
             (delay
               (binding [engine/*schema-cache* @schema-cache
+                        expression-persistence/*expression-limits*
+                        (:expression-limits opts)
                         engine/*proof-frame* request-proof-frame]
                 (let [permission-deps
                       (when (and resource-type permission)
@@ -865,6 +894,8 @@
                       :permission permission
                       :resource endpoint})]
                    #(binding [engine/*schema-cache* @schema-cache
+                              expression-persistence/*expression-limits*
+                              (:expression-limits opts)
                               engine/*proof-frame*
                               request-proof-frame
                               engine/*recursive-traversal-limits*
@@ -882,6 +913,8 @@
     ;; Root/schema validation is selected-snapshot work but precedes the first
     ;; physical relationship candidate.
     (binding [engine/*schema-cache* @schema-cache
+              expression-persistence/*expression-limits*
+              (:expression-limits opts)
               engine/*proof-frame* request-proof-frame]
       (validate!)
       (validate-permission-root!
@@ -1317,6 +1350,8 @@
         internal-anchor ((:spice-object->internal opts)
                          selected-db public-anchor)]
     (binding [engine/*schema-cache* @schema-cache
+              expression-persistence/*expression-limits*
+              (:expression-limits opts)
               engine/*proof-frame* request-proof-frame]
       (validate!))
     (let [relation (:relation clause)
@@ -1334,6 +1369,8 @@
             :lookup-subjects result-type)
           relation-id
           (binding [engine/*schema-cache* @schema-cache
+                    expression-persistence/*expression-limits*
+                    (:expression-limits opts)
                     engine/*proof-frame* request-proof-frame]
             (required-direct-relation-id
              adapter relation-resource-type relation relation-subject-type))
@@ -1372,6 +1409,8 @@
             :accept? accept?}}
           internal-page
           (binding [engine/*schema-cache* @schema-cache
+                    expression-persistence/*expression-limits*
+                    (:expression-limits opts)
                     engine/*proof-frame* request-proof-frame
                     engine/*recursive-traversal-limits*
                     (:recursive-traversal-limits opts)
@@ -1550,7 +1589,13 @@
                    #(and (map? %) (integer? (:count %)))
                    #(do
                       (validate!)
-                      (engine/count-resources adapter internal-query)))]
+                      (let [result (engine/count-resources
+                                    adapter internal-query)]
+                        (metrics/record-count!
+                         (assoc (dissoc internal-query :count-limit)
+                                :operation :count-resources)
+                         :forward result)
+                        result)))]
               (with-cache-info (:value answer) answer))))))))
 
 (defn lookup-subjects
@@ -1719,7 +1764,13 @@
                    #(and (map? %) (integer? (:count %)))
                    #(do
                       (validate!)
-                      (engine/count-subjects adapter internal-query)))]
+                      (let [result (engine/count-subjects
+                                    adapter internal-query)]
+                        (metrics/record-count!
+                         (assoc (dissoc internal-query :count-limit)
+                                :operation :count-subjects)
+                         :reverse result)
+                        result)))]
               (with-cache-info (:value answer) answer))))))))
 
 (defn expand-permission-tree
@@ -1786,7 +1837,8 @@
     :cache-attempt :continuation-cache-store :basis-cache-store
     :cursor-codec-cache :cursor-construction-cache
     :page-navigation-cache :decision-kernel
-    :derived-schema-caches :entid->object-id :object-id->entid
+    :derived-schema-caches :relationship-observations :expression-limits
+    :entid->object-id :object-id->entid
     :object-id->lookup-ref :object->entid :internal-object->spice
     :spice-object->internal :internal-cursor->spice
     :spice-cursor->internal :format-options :cursor-ttl-seconds
@@ -2021,8 +2073,12 @@
       api source opts (:consistency request)
       (fn [request-context]
         (execution/check! (:execution-contract opts) :schema-read)
-        (let [schema ((get-in api [:schema :read-schema])
-                      (context-db request-context))]
+        (let [selected-opts (selected-cache-options opts request-context)
+              schema
+              (call-with-request-schema-cache
+               selected-opts
+               #((get-in api [:schema :read-schema])
+                 (context-db request-context)))]
           (execution/check! (:execution-contract opts)
                             :schema-read-complete)
           schema)))))
@@ -2414,7 +2470,8 @@
                     {:value
                      (write-schema!
                       conn schema-string
-                      (select-keys options [:token-ttl-seconds])
+                      (select-keys options
+                                   [:token-ttl-seconds :expression-limits])
                       expected-generation)})
                   (catch #?(:clj Throwable :cljs :default) error
                     {:error error}))]
@@ -2678,6 +2735,7 @@
      (when-let [store (:basis-cache-store opts)]
        (cache/expire-basis-cache! store))
      (some-> (:derived-schema-caches opts) (reset! {}))
+     (metrics/refresh! (:relationship-observations opts))
      (cursor/clear-codec-cache! (:cursor-codec-cache opts))
      (when-not (identical? (:cursor-codec-cache opts)
                            (:cursor-construction-cache opts))
@@ -2707,14 +2765,97 @@
   [client]
   (let [opts (client-options client)
         basis-store (:basis-cache-store opts)
-        continuation-store (:continuation-cache-store opts)]
+        continuation-store (:continuation-cache-store opts)
+        derived-generations
+        (some-> (:derived-schema-caches opts) deref)
+        structural-entry-count
+        (reduce + 0
+                (keep (fn [generation]
+                        (some-> (:expression-metrics generation)
+                                deref count))
+                      (vals derived-generations)))]
     (cond->
-     (if basis-store
-       (cache/basis-cache-stats basis-store)
-       {:disabled? true})
+     (assoc (if basis-store
+              (cache/basis-cache-stats basis-store)
+              {:disabled? true})
+            :structural-metrics
+            {:generation-count (count derived-generations)
+             :entry-count structural-entry-count}
+            :relationship-observations
+            (metrics/stats (:relationship-observations opts)))
       continuation-store
       (assoc :continuations
              (continuation/stats continuation-store)))))
+
+(defn refresh-metrics!
+  "Forces cache-only metric refresh without mutating backend data.
+
+  `:scope` is `:structural`, `:relationships`, or `:all` (default). Structural
+  refresh discards generation-derived schema/plan values; `:eager? true`
+  immediately rereads and validates the bounded permission schema. Relationship
+  refresh clears advisory observations and performs no implicit scan. Optional
+  `:read-through {:operation ... :request ...}` explicitly executes one
+  cache-bypassed public read to repopulate observations. A count request without
+  `:count-limit` is therefore an explicit exhaustive refresh; its normal
+  execution limits and errors apply."
+  ([client] (refresh-metrics! client {}))
+  ([client {:keys [scope eager? read-through]
+            :or {scope :all eager? false} :as opts}]
+   (when-not (instance? Acl client)
+     (typed-capability-error! :metrics :non-eacl))
+   (when-let [unknown
+              (seq (remove #{:scope :eager? :read-through} (keys opts)))]
+     (throw (ex-info "Unknown metric refresh option."
+                     {:type :eacl/invalid-config
+                      :eacl/error :eacl/invalid-config
+                      :unknown-keys (vec unknown)})))
+   (when-not (contains? #{:structural :relationships :all} scope)
+     (throw (ex-info "Metric refresh scope is invalid."
+                     {:type :eacl/invalid-config
+                      :eacl/error :eacl/invalid-config
+                      :scope scope})))
+   (when (and read-through
+              (not (and (map? read-through)
+                        (= #{:operation :request}
+                           (set (keys read-through)))
+                        (keyword? (:operation read-through))
+                        (map? (:request read-through)))))
+     (throw (ex-info "Metric read-through request is invalid."
+                     {:type :eacl/invalid-config
+                      :eacl/error :eacl/invalid-config
+                      :read-through read-through})))
+   (let [runtime-opts (client-options client)]
+     (when (contains? #{:structural :all} scope)
+       (some-> (:derived-schema-caches runtime-opts) (reset! {})))
+     (when (contains? #{:relationships :all} scope)
+       (metrics/refresh! (:relationship-observations runtime-opts)))
+     (when (and eager? (contains? #{:structural :all} scope))
+       (eacl/read-schema client {}))
+     (let [read-through-result
+           (when read-through
+             (let [request (assoc (:request read-through)
+                                  :cache? false
+                                  :populate-cache? false)]
+               (case (:operation read-through)
+                 :check-permission (eacl/check-permission client request)
+                 :lookup-resources (eacl/lookup-resources client request)
+                 :lookup-subjects (eacl/lookup-subjects client request)
+                 :count-resources (eacl/count-resources client request)
+                 :count-subjects (eacl/count-subjects client request)
+                 (throw
+                  (ex-info "Metric read-through operation is unsupported."
+                           {:type :eacl/invalid-config
+                            :eacl/error :eacl/invalid-config
+                            :operation (:operation read-through)})))))]
+       (cond->
+        {:scope scope
+         :structural-refreshed? (contains? #{:structural :all} scope)
+         :relationships-refreshed?
+         (contains? #{:relationships :all} scope)
+         :relationship-observations
+         (metrics/stats (:relationship-observations runtime-opts))}
+         read-through
+         (assoc :read-through-result read-through-result))))))
 
 (def base-client-opt-keys
   "The uniform make-client option surface shared by every backend
@@ -2728,6 +2869,7 @@
     :cache
     :proof-contract-reporter
     :recursive-traversal-limits
+    :expression-limits
     :permission-tree-limits
     :security-key
     :security-keyring
@@ -2838,6 +2980,7 @@
            cache
            proof-contract-reporter
            recursive-traversal-limits
+           expression-limits
            permission-tree-limits
            security-key
            security-keyring
@@ -3023,6 +3166,7 @@
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
           :derived-schema-caches (atom {})
+          :relationship-observations (metrics/make-store)
           :adapter-fingerprint
           (or adapter-fingerprint
               {:backend (:backend-id api)
@@ -3083,6 +3227,8 @@
           :recursive-traversal-limits
           (engine/normalize-recursive-traversal-limits
            recursive-traversal-limits)
+          :expression-limits
+          (expression-policy/normalize-client-limits expression-limits)
           :permission-tree-limits
           (permission-tree/normalize-limits
            permission-tree-limits)

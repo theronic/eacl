@@ -20,3 +20,17 @@ Cache availability MAY elide an already selected semantic or physical subproblem
 #### Scenario: Warm non-generator child
 - **WHEN** one non-generator intersection child is fully cached
 - **THEN** the sealed generator remains unchanged and only matching predicate work is elided
+
+### Requirement: Relationship observations are high-watermark scoped and advisory
+Cached relationship cardinality, selectivity, and physical-cost observations SHALL be keyed by source lifecycle, selected basis or relation high-watermark, normalized descriptor, and direction. Every entry SHALL carry an explicit completeness class, and an exact exhausted observation SHALL NOT be downgraded by a later sample at the same key. A partial read MAY publish only its observed lower bound/sample; only exact exhaustion MAY publish an exact count for that watermark. Stale, missing, or optional-adapter observations MUST NOT affect authorization correctness.
+
+#### Scenario: Relation advances after an exact observation
+- **WHEN** a relation high-watermark changes after an exact exhausted count was cached
+- **THEN** the old exact count is ineligible and execution uses the deterministic baseline or observations from the new watermark
+
+### Requirement: Statistics change only sequence-equivalent physical work
+Observation caches MAY select among physical kernels only when a checked refinement proves identical semantic demand, public generator sequence, logical progress, stopping boundary, typed errors, and cursor lineage. They MUST NOT select another public generator or perform planning-only reads.
+
+#### Scenario: Warm statistics favor another kernel
+- **WHEN** cached physical-cost evidence favors a certified alternative leaf kernel
+- **THEN** the kernel may change but the result sequence, page boundary, cursor, and demanded semantic subproblems remain identical

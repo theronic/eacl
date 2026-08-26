@@ -58,6 +58,8 @@ Caching does not alter results:
 | Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
 | Sealed plan | Same source scope, lifecycle, schema generation, and permission root | Reuses the compiled stable-discovery plan across requests and unrelated transactions; `expire-cache!` drops it |
 | Schema-derived generation | Same engine ABI, adapter/source scope, lifecycle, and certified schema generation | Shares parsed validation catalogs, permission roots and paths, dependency closures, routing analysis, direct-grant relations, cycle guards, and sealed plans |
+| Structural expression metrics | Same client, schema generation, authoritative expression fields, and effective client-limit profile | Reuses bounded payload decoding, source/DAG validation, and normalization results; no derived metric or admission policy is stored in the database |
+| Relationship observations | Same backend/source/lifecycle, immutable basis high-watermark, normalized descriptor, and direction | Records samples, selectivity, exact exhausted counts, and optional physical-I/O evidence from reads the caller already demanded |
 | Latest checkpoint | One client, query, lineage, complete plan frame, plan fingerprint, traversal, anchor, page size, and authenticated boundary | Resumes history-free reducer state plus its lookahead on the same or an equal-frame basis; native revision is not part of the key |
 | Visited page | One authenticated query and exact immutable basis | Reuses an already-externalized page (and learns the adjacent opposite-direction page); external identity rendering is not covered by frame equality |
 
@@ -99,6 +101,34 @@ derived slots in a request-local floor and discards them when the request
 ends. It never falls back to native revision keying and has no process-global
 sealed-plan FIFO. `expire-cache!` clears the client's generation registry;
 ordinary relationship writes leave it intact.
+
+## Derived metrics and refresh
+
+Structural expression metrics are exact derivatives of the canonical
+permission payload. A cold schema read verifies the canonical payload and its
+identity fields, enforces that client's source and normalized-DAG limits, and
+caches the completed result in the certified schema generation. The cache key
+contains the effective limit profile, so validation performed for a looser
+client cannot admit the same expression for a stricter client. No policy
+digest or policy-limit value is stored durably. Relationship cardinality and
+selectivity are different: application data changes continuously, so EACL
+records only high-watermark-scoped observations produced by already-demanded
+scans and membership batches. A short final chunk can prove an exact count; a
+bounded probe otherwise remains a sample or lower bound.
+
+The backend `refresh-metrics!` functions accept `:scope` as `:structural`,
+`:relationships`, or `:all`. The default clear/observe refresh performs no
+backend read and cannot open a new index stream. `:eager? true` eagerly
+recomputes only the bounded structural schema data. An optional explicit
+`:read-through` names one public check, lookup, or count operation; EACL runs
+that operation with completed-answer caching bypassed, and ordinary limits,
+deadlines, cancellation, ordering, and cursor rules still apply.
+
+Datomic can attach I/O stats to supported reads. EACL stores those values only
+as physical cache/storage-tier telemetry; it never treats them as relationship
+cardinality. Other adapters rely on the same portable logical counters and may
+provide no physical telemetry. Observations do not change permission meaning,
+the sealed semantic plan, public result order, or cursor lineage.
 
 ## Exact-first lookup
 

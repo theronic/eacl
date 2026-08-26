@@ -7,6 +7,7 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.exact-integer :as exact-integer]
+            [eacl.metrics :as metrics]
             [eacl.request.counters :as request-counters]))
 
 (def request-version 1)
@@ -184,6 +185,9 @@
            {:expected (count candidates) :actual (count result)}))
         (when-not (every? boolean? result)
           (contract-violation! adapter :aligned-boolean-vector :redacted))
+        (metrics/record-membership! (:descriptor request)
+                                    (:direction request)
+                                    candidates result)
         result))))
 
 (def ^:private probe-keys #{:descriptor :candidate :direction})

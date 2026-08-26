@@ -8,18 +8,32 @@
   [:eacl/id
    :eacl.permission/resource-type
    :eacl.permission/permission-name
-   :eacl.permission/expression-format
-   :eacl.permission/expression-payload
-   :eacl.permission/expression-digest
-   :eacl.permission/expression-policy-digest
-   :eacl.permission/source-node-count
-   :eacl.permission/source-maximum-depth
-   :eacl.permission/source-direct-fan-in
-   :eacl.permission/encoded-byte-size
-   :eacl.permission/normalized-node-count
-   :eacl.permission/normalized-child-slot-count
-   :eacl.permission/normalized-word-count
-   :eacl.permission/normalized-checkpoint-weight])
+   :eacl.permission/expression-payload])
+
+(def retired-redundant-expression-attributes
+  "Experimental v8 fields duplicated by the canonical payload or local
+   runtime configuration. Readers ignore them and writers never assert them."
+  #{:eacl.permission/expression-format
+    :eacl.permission/expression-digest
+    :eacl.permission/expression-policy-digest})
+
+(def retired-derived-metric-attributes
+  "Experimental v8 attributes that were derived from the canonical payload.
+   Readers and writers deliberately ignore them. Attribute definitions may
+   remain installed in an already-used Datomic database because Datomic schema
+   is additive, but no v8 expression transaction asserts these attributes."
+  #{:eacl.permission/source-node-count
+    :eacl.permission/source-maximum-depth
+    :eacl.permission/source-direct-fan-in
+    :eacl.permission/encoded-byte-size
+    :eacl.permission/normalized-node-count
+    :eacl.permission/normalized-child-slot-count
+    :eacl.permission/normalized-word-count
+    :eacl.permission/normalized-checkpoint-weight})
+
+(def retired-expression-attributes
+  (into retired-derived-metric-attributes
+        retired-redundant-expression-attributes))
 
 (def legacy-flat-attributes
   #{:eacl.permission/source-relation-name
@@ -30,40 +44,30 @@
     :eacl.permission/resource-type+source-relation-name+target-type+target-name
     :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name})
 
+(def ^:dynamic *structural-cache*
+  "Optional schema-generation-owned atom of completed expression decodes.
+   The containing generation supplies the schema high-watermark; keys include
+   every authoritative expression field. Retired metric datoms are excluded."
+  nil)
+
+(def ^:dynamic *expression-limits*
+  "The immutable client-local admission profile bound around schema work."
+  policy/default-client-limits)
+
+(defn effective-expression-limits []
+  (policy/normalize-client-limits *expression-limits*))
+
 (defn ->expression-id [resource-type permission-name]
   (str "eacl.permission-expression:" resource-type ":" permission-name))
 
-(defn- storage-long [value]
-  #?(:clj (long value)
-     :cljs value))
-
 (defn expression-entity
-  [resolved-expression metadata]
+  [resolved-expression _metadata]
   (let [resolved-expression (expression/canonicalize resolved-expression)
-        {:keys [resource-type permission-name]} resolved-expression
-        {:keys [source-metrics normalized-metrics encoded-byte-size]} metadata]
+        {:keys [resource-type permission-name]} resolved-expression]
     {:eacl/id (->expression-id resource-type permission-name)
      :eacl.permission/resource-type resource-type
      :eacl.permission/permission-name permission-name
-     :eacl.permission/expression-format expression/format-version
-     :eacl.permission/expression-payload (expression/encode resolved-expression)
-     :eacl.permission/expression-digest (expression/digest resolved-expression)
-     :eacl.permission/expression-policy-digest policy/compatibility-digest
-     :eacl.permission/source-node-count
-     (storage-long (:node-count source-metrics))
-     :eacl.permission/source-maximum-depth
-     (storage-long (:maximum-depth source-metrics))
-     :eacl.permission/source-direct-fan-in
-     (storage-long (:direct-fan-in source-metrics))
-     :eacl.permission/encoded-byte-size (storage-long encoded-byte-size)
-     :eacl.permission/normalized-node-count
-     (storage-long (:node-count normalized-metrics))
-     :eacl.permission/normalized-child-slot-count
-     (storage-long (:child-slot-count normalized-metrics))
-     :eacl.permission/normalized-word-count
-     (storage-long (:word-count normalized-metrics))
-     :eacl.permission/normalized-checkpoint-weight
-     (storage-long (:checkpoint-weight normalized-metrics))}))
+     :eacl.permission/expression-payload (expression/encode resolved-expression)}))
 
 (defn candidate-schema
   "Converts a fully validated resolver result to backend transaction values."
@@ -97,8 +101,12 @@
                    :reason reason}
                   data))))
 
-(defn decode-entity
-  "Validates every stored field against recomputed canonical expression data."
+(defn- decode-entity-with-metadata-uncached
+  "Validates authoritative stored fields and derives exact bounded metrics.
+
+   Retired experimental metric datoms are intentionally ignored: the
+   canonical payload is the sole authority. The returned metadata is suitable
+   for a schema-generation cache and never needs durable storage."
   [entity]
   (let [legacy (seq (filter #(contains? entity %) legacy-flat-attributes))]
     (when legacy
@@ -107,48 +115,26 @@
   (doseq [attribute expression-attributes]
     (when-not (contains? entity attribute)
       (corrupt! :missing-field {:field attribute})))
-  (when-not (= expression/format-version
-               (:eacl.permission/expression-format entity))
-    (corrupt! :unsupported-format
-              {:format (:eacl.permission/expression-format entity)}))
-  (when-not (= policy/compatibility-digest
-               (:eacl.permission/expression-policy-digest entity))
-    (corrupt! :unsupported-policy
-              {:policy-digest
-               (:eacl.permission/expression-policy-digest entity)}))
-  (let [resolved
+  (let [expression-limits (effective-expression-limits)
+        resolved
         (try
           (expression/decode (:eacl.permission/expression-payload entity))
           (catch #?(:clj Exception :cljs :default) error
             (corrupt! :invalid-payload {:codec-error (ex-data error)})))
         resource-type (:resource-type resolved)
         permission-name (:permission-name resolved)
-        source-metrics (limits/source-metrics (:root resolved))
-        encoded-byte-size (limits/expression-byte-size resolved)
-        normalized-metrics (:metrics (limits/normalized-dag resolved))
+        source-metrics (limits/check-source!
+                        (:root resolved) expression-limits)
+        {:keys [encoded-byte-size]}
+        (limits/check-expression-bytes!
+         resolved expression-limits)
+        {:keys [dag metrics]}
+        (limits/check-normalized! resolved expression-limits)
         expected
         {:eacl/id (->expression-id resource-type permission-name)
          :eacl.permission/resource-type resource-type
          :eacl.permission/permission-name permission-name
-         :eacl.permission/expression-format expression/format-version
-         :eacl.permission/expression-payload (expression/encode resolved)
-         :eacl.permission/expression-digest (expression/digest resolved)
-         :eacl.permission/expression-policy-digest policy/compatibility-digest
-         :eacl.permission/source-node-count
-         (storage-long (:node-count source-metrics))
-         :eacl.permission/source-maximum-depth
-         (storage-long (:maximum-depth source-metrics))
-         :eacl.permission/source-direct-fan-in
-         (storage-long (:direct-fan-in source-metrics))
-         :eacl.permission/encoded-byte-size (storage-long encoded-byte-size)
-         :eacl.permission/normalized-node-count
-         (storage-long (:node-count normalized-metrics))
-         :eacl.permission/normalized-child-slot-count
-         (storage-long (:child-slot-count normalized-metrics))
-         :eacl.permission/normalized-word-count
-         (storage-long (:word-count normalized-metrics))
-         :eacl.permission/normalized-checkpoint-weight
-         (storage-long (:checkpoint-weight normalized-metrics))}
+         :eacl.permission/expression-payload (expression/encode resolved)}
         mismatch
         (first
           (for [[field value] expected
@@ -156,7 +142,44 @@
             {:field field :expected value :actual (get entity field)}))]
     (when mismatch
       (corrupt! :field-mismatch mismatch))
-    resolved))
+    {:expression resolved
+     :metadata {:source-metrics source-metrics
+                :encoded-byte-size encoded-byte-size
+                :normalized-dag dag
+                :normalized-metrics metrics}}))
+
+(defn decode-entity-with-metadata
+  "Returns one validated expression and its exact derived metadata.
+
+   When a schema-generation cache is bound, concurrent readers share one
+   completed delay. A failed decode remains scoped to that immutable schema
+   generation and is discarded when the generation cache is refreshed."
+  [entity]
+  (if-not *structural-cache*
+    (decode-entity-with-metadata-uncached entity)
+    (let [key [(select-keys
+                entity
+                (into expression-attributes legacy-flat-attributes))
+               (effective-expression-limits)]
+          candidate (delay (decode-entity-with-metadata-uncached entity))
+          selected
+          (get (swap! *structural-cache*
+                      #(if (contains? % key) % (assoc % key candidate)))
+               key)]
+      @selected)))
+
+(defn clear-structural-cache!
+  "Evicts a bound or explicitly supplied structural metric cache."
+  ([] (clear-structural-cache! *structural-cache*))
+  ([cache]
+   (when cache (reset! cache {}))
+   nil))
+
+(defn decode-entity
+  "Validates one stored expression and returns its canonical expression.
+   Exact metrics are recomputed from the payload, never read from datoms."
+  [entity]
+  (:expression (decode-entity-with-metadata entity)))
 
 (defn validate-entities
   "Rejects flat-only, mixed, duplicate, corrupt, or unsupported permission
@@ -165,7 +188,7 @@
   (let [entities (vec entities)
         flat-only
         (first (filter #(not (contains? %
-                              :eacl.permission/expression-format))
+                              :eacl.permission/expression-payload))
                        entities))]
     (when flat-only
       (corrupt! :flat-only-representation
@@ -180,12 +203,17 @@
                                key)))]
       (when duplicate
         (corrupt! :duplicate-expression {:permission duplicate})))
-    (->> entities
-         (map (fn [entity]
-                {:entity entity :expression (decode-entity entity)}))
-         (sort-by (juxt (comp str :resource-type :expression)
-                        (comp str :permission-name :expression)))
-         vec)))
+    (let [decoded
+          (->> entities
+               (map (fn [entity]
+                      (assoc (decode-entity-with-metadata entity)
+                             :entity entity)))
+               (sort-by (juxt (comp str :resource-type :expression)
+                              (comp str :permission-name :expression)))
+               vec)]
+      (limits/check-aggregate! (mapv :metadata decoded)
+                               (effective-expression-limits))
+      decoded)))
 
 (defn union-compatible-definitions
   "Projects an expression-only entity into the unchanged union plan domain.

@@ -61,6 +61,10 @@
      :source-lifecycle "expression-storage-test"
      :security-key test-key}))
 
+(deftest derived-expression-metrics-are-not-schema-attributes-test
+  (is (every? #(not (contains? schema/datalevin-schema %))
+              expression-persistence/retired-expression-attributes)))
+
 (defn- exception-data [thunk]
   (try
     (thunk)
@@ -80,6 +84,32 @@
       (finally
         (d/close conn)
         (u/delete-files dir)))))
+
+(deftest expression-admission-limits-are-client-local-test
+  (with-store
+    (fn [conn]
+      (let [permissive (datalevin/make-client conn (options))]
+        (eacl/write-schema! permissive direct-schema)
+        (is (= 1 (count (:permissions (eacl/read-schema permissive)))))
+        (let [strict
+              (datalevin/make-client
+               conn (assoc (options)
+                           :expression-limits
+                           {:maximum-source-nodes 0}))
+              failure (exception-data #(eacl/read-schema strict))]
+          (is (= :eacl.schema/expression-limit (:type failure)))
+          (is (= :node-count (:dimension failure)))
+          (is (= 0 (:maximum failure))))
+        (is (= 1 (count (:permissions (eacl/read-schema permissive))))))))
+  (with-store
+    (fn [conn]
+      (let [failure
+            (exception-data
+             #(schema/write-schema!
+               conn direct-schema
+               {:expression-limits {:maximum-source-nodes 0}}))]
+        (is (= :eacl.schema/expression-limit (:type failure)))
+        (is (empty? (:permissions (schema/read-schema (d/db conn)))))))))
 
 (defn- expression-storage-projection [db]
   {:schema (schema/read-schema db)
@@ -101,8 +131,8 @@
                   view-id
                   (expression-persistence/->expression-id :document :view)
                   view-eid (d/entid before-db [:eacl/id view-id])
-                  before-digest
-                  (:eacl.permission/expression-digest
+                  before-payload
+                  (:eacl.permission/expression-payload
                    (first (filter #(= view-id (:eacl/id %)) before)))]
               (is (= 2 (count before)))
               (is (every? #(not-any? (fn [attribute]
@@ -117,8 +147,8 @@
                     view (first (filter #(= view-id (:eacl/id %)) after))]
                 (is (= view-eid (d/entid after-db [:eacl/id view-id])))
                 (is (= 2 (count after)))
-                (is (not= before-digest
-                          (:eacl.permission/expression-digest view)))
+                (is (not= before-payload
+                          (:eacl.permission/expression-payload view)))
                 (is (= :exclusion
                        (:op (:root
                              (expression-persistence/decode-entity view))))))

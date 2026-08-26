@@ -35,3 +35,24 @@ When a reachable permission graph contains no intersection or exclusion, sealing
 #### Scenario: Union-only workload after upgrade
 - **WHEN** the existing union-only conformance corpus runs on an expression-capable build
 - **THEN** deterministic values, order, cursor payload interpretation, and work counters remain unchanged
+
+### Requirement: Structural and relationship metrics are cache-only
+The shared engine SHALL derive expression/DAG dimensions from canonical payloads and SHALL retain any completed structural result only in a generation-scoped cache. Mutable relationship cardinality, selectivity, and physical-cost observations SHALL be retained only in high-watermark-scoped cache entries and SHALL be optional to authorization execution.
+
+#### Scenario: Application relationships change after schema write
+- **WHEN** relationship data advances while the permission expression remains unchanged
+- **THEN** structural expression metrics remain valid for the schema generation while relationship observations from the old high-watermark are not reused as current
+
+### Requirement: Structural admission policy is client-owned
+The shared engine SHALL accept a checked expression-limit profile at client construction, retain it immutably for that client's lifetime, and apply it to schema decoding, normalization, sealing, and schema writes. The profile SHALL have calibrated defaults, SHALL remain within hard portable codec and allocation ceilings, and SHALL NOT be loaded from or published to backend storage.
+
+#### Scenario: Client starts with a custom checked profile
+- **WHEN** a library consumer constructs one client with tighter aggregate expression limits
+- **THEN** only that client applies the tighter admission boundary and no schema or metric transaction is emitted
+
+### Requirement: Metric refresh is explicit and bounded
+The public cache-management boundary SHALL permit forced structural recomputation and relationship-observation refresh. Structural refresh SHALL read only bounded permission payloads. Relationship refresh SHALL be non-exhaustive unless the caller explicitly selects exact mode and supplies ordinary exhaustive work limits.
+
+#### Scenario: Forced bounded refresh on a large remote relation
+- **WHEN** a caller requests the default relationship-stat refresh
+- **THEN** EACL clears or replaces observations using bounded demanded reads and does not scan the whole relation merely to count it

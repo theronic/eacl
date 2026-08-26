@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Operator cursors authenticate semantic and generator identity
-Every operator lookup cursor SHALL authenticate the expression format and digest, signed dependency and stratum certificate, candidate-cover graph, selected generator anchors, witness program version, specialization policy version, order ABI, direction, selected snapshot/proof identity, and logical progress coordinate needed to reproduce the page boundary.
+Every operator lookup cursor SHALL authenticate the payload-carried expression format and a runtime-computed collision-safe expression/plan fingerprint, signed dependency and stratum certificate, candidate-cover graph, selected generator anchors, witness program version, specialization policy version, order ABI, direction, selected snapshot/proof identity, and logical progress coordinate needed to reproduce the page boundary. The fingerprint is derived from authoritative schema content and is not a durable permission attribute.
 
 #### Scenario: Generator anchor changes
 - **WHEN** a resumed request seals a different intersection generator from the cursor's generator identity

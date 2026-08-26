@@ -27,3 +27,17 @@ Differential qualification SHALL exclude only constructs outside EACL's document
 #### Scenario: SpiceDB stores negative recursion
 - **WHEN** the pinned SpiceDB version accepts a negative-recursive schema that EACL rejects as unstratified
 - **THEN** the case is recorded as an intentional schema-validation boundary rather than an authorization mismatch
+
+### Requirement: Cache-only metrics are portable across adapters
+The shared conformance suite SHALL verify that each built-in backend persists only authoritative expression fields, recomputes identical structural metrics, invalidates relationship observations at the adapter's certified high-watermark, and retains identical public results when native I/O telemetry is unavailable.
+
+#### Scenario: Datomic reports I/O stats and DataScript does not
+- **WHEN** the same operator fixture runs against both adapters
+- **THEN** telemetry detail may differ while denotation, order, pages, cursor identity, and refresh semantics agree
+
+### Requirement: Released-v7 upgrade preserves relationship storage
+The Datomic upgrade suite SHALL compare relationship tuple counts and canonical content digests before and after permission-schema upgrade and SHALL verify no relationship enumeration or rewrite command is issued by the migration.
+
+#### Scenario: Million-resource fixture
+- **WHEN** a disposable copy of the pre-populated released-v7-shaped Datomic database is upgraded
+- **THEN** permission expressions become readable in v8 and the relationship storage digest is unchanged

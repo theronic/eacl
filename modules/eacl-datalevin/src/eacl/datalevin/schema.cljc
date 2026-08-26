@@ -5,6 +5,7 @@
             [eacl.datalevin.fork :as fork]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]))
 
@@ -40,23 +41,7 @@
                                  :db/index true}
    :eacl.permission/target-name {:db/valueType :db.type/keyword
                                  :db/index true}
-   :eacl.permission/expression-format
-   {:db/valueType :db.type/keyword :db/index true}
    :eacl.permission/expression-payload {:db/valueType :db.type/string}
-   :eacl.permission/expression-digest
-   {:db/valueType :db.type/string :db/index true}
-   :eacl.permission/expression-policy-digest
-   {:db/valueType :db.type/string :db/index true}
-   :eacl.permission/source-node-count {:db/valueType :db.type/long}
-   :eacl.permission/source-maximum-depth {:db/valueType :db.type/long}
-   :eacl.permission/source-direct-fan-in {:db/valueType :db.type/long}
-   :eacl.permission/encoded-byte-size {:db/valueType :db.type/long}
-   :eacl.permission/normalized-node-count {:db/valueType :db.type/long}
-   :eacl.permission/normalized-child-slot-count
-   {:db/valueType :db.type/long}
-   :eacl.permission/normalized-word-count {:db/valueType :db.type/long}
-   :eacl.permission/normalized-checkpoint-weight
-   {:db/valueType :db.type/long}
    :eacl.permission/resource-type+permission-name
    {:db/valueType :db.type/tuple
     :db/tupleAttrs [:eacl.permission/resource-type
@@ -293,18 +278,7 @@
    :eacl.permission/permission-name
    :eacl.permission/source-relation-name
    :eacl.permission/target-type :eacl.permission/target-name
-   :eacl.permission/expression-format
-   :eacl.permission/expression-payload
-   :eacl.permission/expression-digest
-   :eacl.permission/expression-policy-digest
-   :eacl.permission/source-node-count
-   :eacl.permission/source-maximum-depth
-   :eacl.permission/source-direct-fan-in
-   :eacl.permission/encoded-byte-size
-   :eacl.permission/normalized-node-count
-   :eacl.permission/normalized-child-slot-count
-   :eacl.permission/normalized-word-count
-   :eacl.permission/normalized-checkpoint-weight])
+   :eacl.permission/expression-payload])
 
 (defn- eager-entity
   [db eid attributes]
@@ -550,19 +524,25 @@
   ([conn schema-string options]
    (write-schema! conn schema-string options ::read-current-generation))
   ([conn schema-string
-    {:keys [allow-empty-schema?]}
+    {:keys [allow-empty-schema? expression-limits]}
     known-schema-generation]
    (write-schema! conn schema-string
-                  {:allow-empty-schema? allow-empty-schema?}
+                  {:allow-empty-schema? allow-empty-schema?
+                   :expression-limits expression-limits}
                   known-schema-generation nil))
   ([conn schema-string
-    {:keys [allow-empty-schema?]}
+    {:keys [allow-empty-schema? expression-limits]}
     known-schema-generation
     write-token]
-   (let [new-schema-map  (expression-persistence/candidate-schema
-                           (expression-resolver/validate-schema schema-string))
+   (let [expression-limits
+         (expression-policy/normalize-client-limits expression-limits)
+         new-schema-map  (expression-persistence/candidate-schema
+                           (expression-resolver/validate-schema
+                            schema-string expression-limits))
          initial-db      (ds/db conn)
-         initial-schema  (read-schema initial-db)
+         initial-schema  (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema initial-db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations initial-schema))
@@ -573,7 +553,9 @@
                                             :existing {:relations (count (:relations initial-schema))
                                                        :permissions (count (:permissions initial-schema))}})))
          db              (ensure-schema-coherence! conn)
-         existing-schema (read-schema db)
+         existing-schema (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations existing-schema))

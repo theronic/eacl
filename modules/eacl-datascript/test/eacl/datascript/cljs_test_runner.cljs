@@ -10,6 +10,7 @@
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
             [eacl.execution-test]
+            [eacl.metrics-test]
             [eacl.proof-frame-test]
             [eacl.permission-tree-test]
             [eacl.permission-tree-operator-test]
@@ -74,6 +75,7 @@
                'eacl.consistency-test
                'eacl.engine.relationships-test
                'eacl.execution-test
+               'eacl.metrics-test
                'eacl.proof-frame-test
                'eacl.permission-tree-test
                'eacl.permission-tree-operator-test
