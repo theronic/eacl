@@ -79,7 +79,7 @@
     eacl.operator.recursive-test]}
   {:scope :portable-production-and-operator-mutation-parity
    :runtime :cljs
-   :tests 424 :assertions 9235 :failures 0 :errors 0 :status :passed
+   :tests 425 :assertions 9244 :failures 0 :errors 0 :status :passed
    :runner eacl.datascript.cljs-test-runner}
   {:scope :generated-recursive-command-boundary
    :runtime :clj-java
@@ -119,7 +119,12 @@
    [{:operator-expression-writes false :operator-routing false}
     {:operator-expression-writes false :operator-routing true}
     {:operator-expression-writes true :operator-routing false}
-    {:operator-expression-writes true :operator-routing true}]}]
+    {:operator-expression-writes true :operator-routing true}]}
+  {:scope :operator-permission-tree-source-rendering
+   :runtime :clj
+   :tests 20 :assertions 184 :failures 0 :errors 0 :status :passed
+   :namespace eacl.permission-tree-test
+   :cljs-included-in :portable-production-and-operator-mutation-parity}]
  :bindings
  {:parser-codec-signed-graph
   {:abstract-input :finite-canonical-typed-expression-table
@@ -178,7 +183,13 @@
    [:operator-expression-write-gate :operator-public-routing-gate]
    :default-state
    {:operator-expression-writes false :operator-routing false}
-   :union-only-independent true}}
+   :union-only-independent true}
+  :permission-tree
+  {:production ["modules/eacl/src/eacl/permission_tree.cljc"]
+   :source-authority :persisted-source-expression
+   :operator-nodes [:union :intersection :exclusion]
+   :directed-exclusion true
+   :union-only-route-unchanged true}}
  :source-digests
  {"formal/cross-runtime/operator-vectors.edn"
   "33fb285f607192f4e1df18bc012725548895aaf8b3929eb2cf4a5de0c7ddcbc6"
@@ -229,7 +240,9 @@
   "modules/eacl/src/eacl/client/orchestration.cljc"
   "7438873e92f8544a18833e4524f7e8dd10bf5f154b1ef3a3c8f932d83c028c7d"
   "modules/eacl/src/eacl/engine/v8.cljc"
-  "7d5e82d47879db407ab549550502c6fb5862ba0641a76a11029620aefa9c02b6"}
+  "7d5e82d47879db407ab549550502c6fb5862ba0641a76a11029620aefa9c02b6"
+  "modules/eacl/src/eacl/permission_tree.cljc"
+  "9c763c6b7b8fedf3fdcd23a4eb4fa99257bfff022a674060a66d0cc443833b39"}
  :assurance
  {:production-source-refinement
   :executable-differential-mutation-and-digest-closed

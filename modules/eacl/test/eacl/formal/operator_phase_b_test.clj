@@ -32,7 +32,8 @@
     (is (every? zero? (mapcat (juxt :failures :errors)
                               executable-runs)))
     (is (= #{:parser-codec-signed-graph :plan :acyclic-evaluation
-             :recursive-evaluation :backend-premises :release-gates}
+             :recursive-evaluation :backend-premises :release-gates
+             :permission-tree}
            (set (keys bindings))))
     (is (= :executable-differential-mutation-and-digest-closed
            (:production-source-refinement assurance)))

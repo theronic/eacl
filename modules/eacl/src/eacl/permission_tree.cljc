@@ -3,7 +3,8 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl]
-            [eacl.execution :as execution]))
+            [eacl.execution :as execution]
+            [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def default-limits
   {:max-depth 50
@@ -210,13 +211,13 @@
       (do
         (when-not
          (every?
-         (fn [definition]
+          (fn [definition]
             (and (portable-natural? (:relation-id definition))
                  (= resource-type (:resource-type definition))
                  (= name (:relation-name definition))
                  (unqualified-keyword? (:subject-type definition))))
           definitions)
-         (adapter-contract! :malformed-relation-definition))
+          (adapter-contract! :malformed-relation-definition))
         (when-not (= (count definitions)
                      (count (distinct (map :subject-type definitions))))
           (adapter-contract! :duplicate-relation-subject-type)))
@@ -235,7 +236,7 @@
                             (:target-type definition))
                  (unqualified-keyword? (:target-name definition))))
           definitions)
-         (adapter-contract! :malformed-permission-definition)))
+          (adapter-contract! :malformed-permission-definition)))
 
       (adapter-contract! :unknown-definition-kind))
     definitions))
@@ -250,6 +251,16 @@
     [(subvec values 0 start)
      (subvec values start)]))
 
+(defn- operator-expression?
+  [root]
+  (loop [pending [root]]
+    (if-let [node (peek pending)]
+      (case (:op node)
+        (:intersection :exclusion) true
+        :union (recur (into (pop pending) (:children node)))
+        (recur (pop pending)))
+      false)))
+
 (defn expand
   "Expands one root against exactly one immutable selected adapter.
 
@@ -262,6 +273,7 @@
                         :tree-nodes 0
                         :leaf-subjects 0})
         schema-cache (atom {})
+        expression-cache (atom {})
         codec-cache (atom {})
         check! (fn [stage]
                  (execution/check!
@@ -296,10 +308,30 @@
                               (conj definitions definition))))})))
                     definitions
                     (definition-sequence!
-                     kind resource-type name raw)
+                      kind resource-type name raw)
                     _ (check! :permission-tree-definition-read)]
                 (swap! schema-cache assoc cache-key definitions)
                 definitions))))
+        expression!
+        (fn [resource-type permission-name]
+          (let [cache-key [resource-type permission-name]]
+            (if (contains? @expression-cache cache-key)
+              (get @expression-cache cache-key)
+              (let [entity
+                    (adapter-call!
+                     (fn [_]
+                       (backend/invoke adapter :permission-expression
+                                       resource-type permission-name)))
+                    resolved
+                    (when entity
+                      (expression-persistence/decode-entity entity))]
+                (when (and resolved
+                           (not= cache-key
+                                 [(:resource-type resolved)
+                                  (:permission-name resolved)]))
+                  (adapter-contract! :expression-identity-mismatch))
+                (swap! expression-cache assoc cache-key resolved)
+                resolved))))
         render-internal!
         (fn [type internal-id]
           (when-not (portable-natural? internal-id)
@@ -332,38 +364,38 @@
                (adapter-call!
                 (fn [controlled!]
                   (backend/reduce-scan
-                  adapter
-                  :resource->subjects
-                  [(:type resource-descriptor)
-                   (:internal-id resource-descriptor)
-                   relation-id
-                   subject-type
-                   {:direction :asc
-                    :bound-eid nil
-                    :inclusive-bound? false}]
-                  subjects
-                  {:before-realize!
-                   #(controlled!
-                     (fn []
-                       (check! :permission-tree-relationship-realization)))
-                   :after-realize!
-                   #(controlled!
-                     (fn []
-                       (check! :permission-tree-relationship-realization)))
-                   :step
-                   (fn [acc internal-id]
-                     (controlled!
+                   adapter
+                   :resource->subjects
+                   [(:type resource-descriptor)
+                    (:internal-id resource-descriptor)
+                    relation-id
+                    subject-type
+                    {:direction :asc
+                     :bound-eid nil
+                     :inclusive-bound? false}]
+                   subjects
+                   {:before-realize!
+                    #(controlled!
                       (fn []
-                        (consume! limits counters
-                                  :relationship-values 1)
-                        (when leaf?
-                          (consume! limits counters :leaf-subjects 1))
-                        (conj acc
-                              {:type subject-type
-                               :internal-id internal-id
-                               :identity [:internal subject-type internal-id]
-                               :public (render-internal!
-                                        subject-type internal-id)}))))}))))
+                        (check! :permission-tree-relationship-realization)))
+                    :after-realize!
+                    #(controlled!
+                      (fn []
+                        (check! :permission-tree-relationship-realization)))
+                    :step
+                    (fn [acc internal-id]
+                      (controlled!
+                       (fn []
+                         (consume! limits counters
+                                   :relationship-values 1)
+                         (when leaf?
+                           (consume! limits counters :leaf-subjects 1))
+                         (conj acc
+                               {:type subject-type
+                                :internal-id internal-id
+                                :identity [:internal subject-type internal-id]
+                                :public (render-internal!
+                                         subject-type internal-id)}))))}))))
              []
              relation-definitions)))
         root-type (:type resource)
@@ -412,12 +444,22 @@
                            "Permission-tree expansion encountered an active-path cycle."
                            {:path-node [(:type resource) name]}))
                       relations (definitions! :relation (:type resource) name)
-                      permissions (definitions! :permission (:type resource) name)
-                      _ (when (and (seq relations) (seq permissions))
+                      expression (expression! (:type resource) name)
+                      operator-expression
+                      (when (and expression
+                                 (operator-expression? (:root expression)))
+                        expression)
+                      permissions
+                      (when-not operator-expression
+                        (definitions! :permission (:type resource) name))
+                      _ (when (and (seq relations)
+                                   (or operator-expression
+                                       (seq permissions)))
                           (adapter-contract! :contradictory-root-definition))
                       actual (cond
                                (seq relations) :relation
-                               (seq permissions) :permission
+                               (or operator-expression
+                                   (seq permissions)) :permission
                                :else nil)
                       _ (when-not actual
                           (if (= :either expected)
@@ -447,25 +489,155 @@
                          "Permission-tree expansion encountered an active-path cycle."
                          {:path-node [(:type resource) name]}))
                       (consume! limits counters :tree-nodes 1)
-                      (let [next-active (conj active expansion-key)
-                            components
-                            (mapv
-                             (fn [definition]
-                               {:op :component
-                                :resource resource
-                                :permission name
-                                :definition definition
+                      (let [next-active (conj active expansion-key)]
+                        (if operator-expression
+                          [(conj work
+                                 {:op :expression-node
+                                  :resource resource
+                                  :permission name
+                                  :node (:root operator-expression)
+                                  :depth (inc depth)
+                                  :root? true
+                                  :active next-active})
+                           values]
+                          (let [components
+                                (mapv
+                                 (fn [definition]
+                                   {:op :component
+                                    :resource resource
+                                    :permission name
+                                    :definition definition
+                                    :depth (inc depth)
+                                    :active next-active})
+                                 permissions)]
+                            [(schedule
+                              work
+                              {:op :assemble
+                               :resource resource
+                               :name name
+                               :child-count (count components)}
+                              components)
+                             values]))))))
+
+                :expression-node
+                (let [{:keys [resource permission node depth root? active]}
+                      frame
+                      _ (check-depth! limits counters depth)
+                      _ (consume! limits counters :schema-components 1)]
+                  (case (:op node)
+                    :relation
+                    [(conj work
+                           {:op :expand
+                            :resource resource
+                            :name (:name node)
+                            :expected :relation
+                            :depth depth
+                            :active active})
+                     values]
+
+                    :permission
+                    [(conj work
+                           {:op :expand
+                            :resource resource
+                            :name (:name node)
+                            :expected :permission
+                            :depth depth
+                            :active active})
+                     values]
+
+                    :arrow
+                    (let [_ (consume! limits counters :tree-nodes 1)
+                          source-relations
+                          (definitions!
+                            :relation (:type resource) (:relation node))
+                          source-permissions
+                          (definitions!
+                            :permission (:type resource) (:relation node))
+                          _ (when (or (empty? source-relations)
+                                      (seq source-permissions))
+                              (adapter-contract!
+                               :invalid-arrow-source-definition))
+                          partitions (into {}
+                                           (map (juxt :subject-type identity))
+                                           (:partitions node))
+                          _ (when-not (= (set (keys partitions))
+                                         (set (map :subject-type
+                                                   source-relations)))
+                              (adapter-contract!
+                               :arrow-partition-mismatch))
+                          intermediates
+                          (scan-relation! resource source-relations false)
+                          targets
+                          (mapv
+                           (fn [intermediate]
+                             (let [{:keys [target-kind target-name]}
+                                   (get partitions (:type intermediate))]
+                               {:op :expand
+                                :resource intermediate
+                                :name target-name
+                                :expected target-kind
                                 :depth (inc depth)
-                                :active next-active})
-                             permissions)]
-                        [(schedule
-                          work
-                          {:op :assemble
-                           :resource resource
-                           :name name
-                           :child-count (count components)}
-                          components)
-                         values]))))
+                                :active active}))
+                           intermediates)]
+                      [(schedule
+                        work
+                        {:op :assemble-expression
+                         :resource resource
+                         :name permission
+                         :operation :union
+                         :child-count (count targets)}
+                        targets)
+                       values])
+
+                    (:union :intersection)
+                    (let [_ (when-not root?
+                              (consume! limits counters :tree-nodes 1))
+                          children
+                          (mapv
+                           (fn [child]
+                             {:op :expression-node
+                              :resource resource
+                              :permission permission
+                              :node child
+                              :depth (inc depth)
+                              :root? false
+                              :active active})
+                           (:children node))]
+                      [(schedule
+                        work
+                        {:op :assemble-expression
+                         :resource resource
+                         :name permission
+                         :operation (:op node)
+                         :child-count (count children)}
+                        children)
+                       values])
+
+                    :exclusion
+                    (let [_ (when-not root?
+                              (consume! limits counters :tree-nodes 1))
+                          children
+                          (mapv
+                           (fn [child]
+                             {:op :expression-node
+                              :resource resource
+                              :permission permission
+                              :node child
+                              :depth (inc depth)
+                              :root? false
+                              :active active})
+                           [(:left node) (:right node)])]
+                      [(schedule
+                        work
+                        {:op :assemble-expression
+                         :resource resource
+                         :name permission
+                         :operation :exclusion
+                         :child-count 2}
+                        children)
+                       values])
+
+                    (adapter-contract! :unknown-expression-node)))
 
                 :component
                 (let [{:keys [resource permission definition depth active]}
@@ -528,6 +700,18 @@
                           :expanded-relation (:name frame)
                           :intermediate
                           {:operation :union
+                           :children (vec children)}})])
+
+                :assemble-expression
+                (let [[remaining children]
+                      (assemble-children values (:child-count frame))]
+                  [work
+                   (conj remaining
+                         {:expanded-object
+                          (get-in frame [:resource :public])
+                          :expanded-relation (:name frame)
+                          :intermediate
+                          {:operation (:operation frame)
                            :children (vec children)}})])
 
                 (adapter-contract! :unknown-work-frame))]

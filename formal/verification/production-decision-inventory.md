@@ -41,6 +41,7 @@ refinement evidence is recorded in
 | Recursive typed facts, anchor joins, strata, and exclusion absence | `eacl.operator.recursive` | positive recursive conjunction, strict lower-stratum exclusion, checkpoint/replay, and recursive limits |
 | Operator direct-membership locality and aligned scatter | `eacl.backend.direct-membership` and the built-in backend implementations | proof-compatible leaf-cache hits, scalar fallback, Datahike dense/sparse batching, aligned Boolean results, and physical work counters |
 | Operator release gates | `eacl.client.orchestration/*operator-expression-writes-enabled?*`, `eacl.engine.v8/*operator-routing-enabled?*` | independent admission of public operator-expression schema writes and public operator query routing; union-only schemas and plans bypass both decisions |
+| Operator permission-tree rendering | `eacl.permission-tree` over the persisted source expression | explicit union/intersection nodes, directed exclusion children, named-permission and one-hop-arrow expansion on one selected immutable snapshot; union-only permissions retain their existing component path |
 
 ### Retired-engine boundaries (historical, pending the task 9.2 formal cut)
 
