@@ -13,9 +13,9 @@ Ordered by severity. Sections 1 and 2 are merge blockers.
 
 ## 2. Make the assurance gates able to fail (critical)
 
-- [ ] 2.1 Wrap `bin/formal counterexample-replay`'s eval form in `(when (pos? (+ (:fail result 0) (:error result 0))) (throw (ex-info ...)))`, matching the neighbouring CI steps.
-- [ ] 2.2 Audit every other `bin/formal` subcommand and `formal.yml` step for the same shape; fix any that report failure as a return value.
-- [ ] 2.3 Add a self-test that a deliberately failing replay fails the step, so the gate's failure path is itself exercised.
+- [x] 2.1 Wrap `bin/formal counterexample-replay`'s eval form in `(when (pos? (+ (:fail result 0) (:error result 0))) (throw (ex-info ...)))`, matching the neighbouring CI steps.
+- [x] 2.2 Audit every other `bin/formal` subcommand and `formal.yml` step for the same shape; fix any that report failure as a return value.
+- [x] 2.3 Add a self-test that a deliberately failing replay fails the step, so the gate's failure path is itself exercised.
 
 ## 3. Restore mutation-control integrity
 
