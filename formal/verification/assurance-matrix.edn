@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated
   :source-files 98
   :public-roots 70
-  :reachable-definitions 2049
+  :reachable-definitions 2052
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -715,7 +715,7 @@
     :abstract-operator-cross-runtime-vectors]
    :report "formal/verification/operator-phase-a.edn"}
   {:operation :operator-engine-phase-b
-   :status :passed-concrete-routing-withheld
+   :status :passed-concrete-routing-and-writes-withheld
    :entry-points
    ["EaclKernel.__default/DecideOperatorRecursiveCommand"
     "eacl.operator.plan/seal-plan"
@@ -733,8 +733,8 @@
    :backend-certification [:datomic :datascript :datahike :datalevin]
    :production-mutations {:registered 10 :killed 10 :survived 0}
    :source-closure
-   {:source-files 98 :public-roots 70 :reachable-definitions 2049}
-   :production-authoritative :behind-disabled-route-gate
+   {:source-files 98 :public-roots 70 :reachable-definitions 2052}
+   :production-authoritative :behind-independent-disabled-route-and-write-gates
    :remaining [:production-performance-acceptance :release-gate-enablement]
    :assurance-qualification :independent-proof-review-not-performed
    :report "formal/verification/operator-phase-b.edn"}

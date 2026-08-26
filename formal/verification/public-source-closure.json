@@ -193,7 +193,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/client/orchestration.cljc",
-      "sha256": "0bdfd2477ce7a67f7a95424412da881aafcf49246d45308628babeb143e0a45d"
+      "sha256": "7438873e92f8544a18833e4524f7e8dd10bf5f154b1ef3a3c8f932d83c028c7d"
     },
     {
       "path": "modules/eacl/src/eacl/consistency.cljc",
@@ -478,9 +478,9 @@
       "eacl.datalevin.core/db"
     ],
     "rootCount": 70,
-    "unionInternalDefinitionCount": 2049,
-    "unionInternalDefinitionIdsSha256": "c575f6edbd112d722ff69d4b90700e6676e4cdfda9ef8ee65ce03ed06bb7222e",
-    "unionDefinitionLocationsSha256": "bd708b2a0f94d590bfb87f630b3ea1461420c2f3de347ffb96f48d2469e5e63d",
+    "unionInternalDefinitionCount": 2052,
+    "unionInternalDefinitionIdsSha256": "c82607ddf91d116f3d64f727b352c0a7e9b379ac0eec4a58f5955fe69f31340a",
+    "unionDefinitionLocationsSha256": "3b1ae3f887e0551497db796e84400e045e5743a714f31c07d7a8d5c3d49d971a",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 26,
@@ -615,8 +615,8 @@
         "idsSha256": "75c0ad0273fa5828aca5833652de740c7b968ed2565099995d8ca177fdc1d1b4"
       },
       "modules/eacl/src/eacl/client/orchestration.cljc": {
-        "count": 91,
-        "idsSha256": "385cb83795d7a7ca117697bb9d7037f4490900b0572e8c7531880cc9558857a8"
+        "count": 94,
+        "idsSha256": "f29dd2519d4338b5779f87cb87cb3eed194bb09a5ba0af78d4a1d689c4532ee8"
       },
       "modules/eacl/src/eacl/consistency.cljc": {
         "count": 24,
@@ -1336,9 +1336,9 @@
       "externalCalls": []
     },
     "eacl.client.orchestration/Acl": {
-      "internalDefinitionCount": 399,
-      "internalDefinitionIdsSha256": "525cf1aa4a32b16129f3fa9a2722955d4e17230af76c93672eb7ced7a23f5436",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 406,
+      "internalDefinitionIdsSha256": "e64ebe5444121f4094de077c6f0a39cd218e7019c3ee8b4ca47f95475cfc6389",
+      "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
@@ -1349,6 +1349,7 @@
         "com.rpl.specter/transform",
         "goog.crypt/stringToUtf8ByteArray",
         "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/parser",
         "unresolved/js/Date.now",
         "unresolved/js/Math.floor",
         "unresolved/js/Number.isSafeInteger",
@@ -1378,9 +1379,9 @@
       ]
     },
     "eacl.client.orchestration/direct-snapshot": {
-      "internalDefinitionCount": 406,
-      "internalDefinitionIdsSha256": "c5c47e21ddd2db94489b18574dbc3340241fa43403b7752b863269332539f38a",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 413,
+      "internalDefinitionIdsSha256": "e8a840ea1b105cb836b1e00b6ff560b5faecdd561f0d2b82cbf5f95153de629f",
+      "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
@@ -1391,6 +1392,7 @@
         "com.rpl.specter/transform",
         "goog.crypt/stringToUtf8ByteArray",
         "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/parser",
         "unresolved/js/Date.now",
         "unresolved/js/Math.floor",
         "unresolved/js/Number.isSafeInteger",
@@ -1452,9 +1454,9 @@
       ]
     },
     "eacl.datomic.core/snapshot": {
-      "internalDefinitionCount": 407,
-      "internalDefinitionIdsSha256": "68651b1cd4ee3189a8ea73bdf0195db23b377347ae7248526ad764630a022d83",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 414,
+      "internalDefinitionIdsSha256": "9754f99f6ce3e1e7edfeb100a3bb012576e8ed4a173c9f0ac92460def67f9e17",
+      "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
@@ -1465,6 +1467,7 @@
         "com.rpl.specter/transform",
         "goog.crypt/stringToUtf8ByteArray",
         "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/parser",
         "unresolved/js/Date.now",
         "unresolved/js/Math.floor",
         "unresolved/js/Number.isSafeInteger",
@@ -1555,9 +1558,9 @@
       ]
     },
     "eacl.datahike.core/snapshot": {
-      "internalDefinitionCount": 407,
-      "internalDefinitionIdsSha256": "ef95ac9f45c9299431f965fe0b4ee8f00c87ab601578dd23803de2172c53c138",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 414,
+      "internalDefinitionIdsSha256": "7477520f5c05b7d22bd07b9b3a273c82524978366f2c0bc8e050bce0c6f78d8f",
+      "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
@@ -1568,6 +1571,7 @@
         "com.rpl.specter/transform",
         "goog.crypt/stringToUtf8ByteArray",
         "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/parser",
         "unresolved/js/Date.now",
         "unresolved/js/Math.floor",
         "unresolved/js/Number.isSafeInteger",
@@ -1629,9 +1633,9 @@
       ]
     },
     "eacl.datascript.core/snapshot": {
-      "internalDefinitionCount": 407,
-      "internalDefinitionIdsSha256": "d2c2048a12acdf75e4cf20f55cff1672a4e20fd718e901a545a5b26150318be7",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 414,
+      "internalDefinitionIdsSha256": "56a57d985a5724a0ad6a3e335ecbf22956fde5ca61b820a2ca7d480889cec052",
+      "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
@@ -1642,6 +1646,7 @@
         "com.rpl.specter/transform",
         "goog.crypt/stringToUtf8ByteArray",
         "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/parser",
         "unresolved/js/Date.now",
         "unresolved/js/Math.floor",
         "unresolved/js/Number.isSafeInteger",
@@ -1709,9 +1714,9 @@
       ]
     },
     "eacl.datalevin.core/snapshot": {
-      "internalDefinitionCount": 407,
-      "internalDefinitionIdsSha256": "378b6a180e6297087d0f71acd7e8c61e99af65f441571a90b0a57fbc516800cd",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 414,
+      "internalDefinitionIdsSha256": "135db89d437c44bf26b21dd2ead2c69ddb83cf76ca0d72867112d32026a37039",
+      "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
@@ -1722,6 +1727,7 @@
         "com.rpl.specter/transform",
         "goog.crypt/stringToUtf8ByteArray",
         "goog.crypt/utf8ByteArrayToString",
+        "instaparse.core/parser",
         "unresolved/js/Date.now",
         "unresolved/js/Math.floor",
         "unresolved/js/Number.isSafeInteger",

@@ -413,6 +413,8 @@
   :binding
   :digest-closed-executable-differential-and-production-mutation-refinement
   :public-routing :disabled-pending-performance-and-release-gates
+  :public-operator-expression-writes
+  :disabled-pending-performance-and-release-gates
   :status :passed}
  :remaining
  [:production-adapter-trace-refinement

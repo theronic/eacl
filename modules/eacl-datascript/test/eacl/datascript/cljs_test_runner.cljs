@@ -18,6 +18,7 @@
             [eacl.operator.vector-evaluator-test]
             [eacl.operator.batch-schedule-test]
             [eacl.operator.lookup-test]
+            [eacl.operator.feature-gate-test]
             [eacl.operator.recursive-test]
             [eacl.relationships.endpoint-pair-test]
             [eacl.relay-test]
@@ -80,6 +81,7 @@
                'eacl.operator.vector-evaluator-test
                'eacl.operator.batch-schedule-test
                'eacl.operator.lookup-test
+               'eacl.operator.feature-gate-test
                'eacl.operator.recursive-test
                'eacl.relationships.endpoint-pair-test
                'eacl.relay-test

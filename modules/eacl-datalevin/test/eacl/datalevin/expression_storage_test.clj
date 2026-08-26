@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datalevin.core :as d]
             [datalevin.util :as u]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datalevin.core :as datalevin]
             [eacl.datalevin.schema :as schema]
@@ -67,6 +68,10 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
+(defn- write-operator-schema! [client schema-source]
+  (binding [orchestration/*operator-expression-writes-enabled?* true]
+    (eacl/write-schema! client schema-source)))
+
 (defn- with-store [f]
   (let [dir (u/tmp-dir (str "eacl-expression-storage-" (random-uuid)))
         conn (datalevin/create-conn dir)]
@@ -80,7 +85,7 @@
   (with-store
     (fn [conn]
       (let [client (datalevin/make-client conn (options))]
-        (eacl/write-schema! client operator-schema)
+        (write-operator-schema! client operator-schema)
         (let [before-db (d/db conn)
               before-snapshot (d/open-read-snapshot conn)]
           (try
@@ -98,7 +103,7 @@
                           before))
               (is (not (contains? (d/schema conn)
                                   :eacl.permission/full-key)))
-              (eacl/write-schema! client replacement-schema)
+              (write-operator-schema! client replacement-schema)
               (let [after-db (d/db conn)
                     after (schema/read-permissions after-db)
                     view (first (filter #(= view-id (:eacl/id %)) after))]
@@ -115,7 +120,8 @@
                     (schema/current-schema-generation stable-db)
                     data
                     (exception-data
-                     #(eacl/write-schema! client invalid-negative-cycle-schema))
+                     #(write-operator-schema!
+                       client invalid-negative-cycle-schema))
                     after-failure (d/db conn)]
                 (is (= :eacl.schema/unstratified-exclusion (:type data)))
                 (is (= stable-generation

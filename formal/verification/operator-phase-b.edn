@@ -79,7 +79,7 @@
     eacl.operator.recursive-test]}
   {:scope :portable-production-and-operator-mutation-parity
    :runtime :cljs
-   :tests 422 :assertions 9228 :failures 0 :errors 0 :status :passed
+   :tests 424 :assertions 9235 :failures 0 :errors 0 :status :passed
    :runner eacl.datascript.cljs-test-runner}
   {:scope :generated-recursive-command-boundary
    :runtime :clj-java
@@ -110,7 +110,16 @@
   {:scope :production-operator-mutations
    :runtime :clj
    :tests 5 :assertions 175 :failures 0 :errors 0 :survivors 0
-   :status :passed}]
+   :status :passed}
+  {:scope :independent-operator-write-and-route-gates
+   :runtime :clj
+   :tests 2 :assertions 7 :failures 0 :errors 0 :status :passed
+   :namespace eacl.operator.feature-gate-test
+   :union-only-gate-combinations
+   [{:operator-expression-writes false :operator-routing false}
+    {:operator-expression-writes false :operator-routing true}
+    {:operator-expression-writes true :operator-routing false}
+    {:operator-expression-writes true :operator-routing true}]}]
  :bindings
  {:parser-codec-signed-graph
   {:abstract-input :finite-canonical-typed-expression-table
@@ -160,7 +169,16 @@
    :certified
    [:expression-read :ordered-scan :inclusive-reseek :scalar-membership
     :bounded-batch-membership :basis-stability :cancellation
-    :typed-error-classification]}}
+    :typed-error-classification]}
+  :release-gates
+  {:production
+   ["modules/eacl/src/eacl/client/orchestration.cljc"
+    "modules/eacl/src/eacl/engine/v8.cljc"]
+   :controls
+   [:operator-expression-write-gate :operator-public-routing-gate]
+   :default-state
+   {:operator-expression-writes false :operator-routing false}
+   :union-only-independent true}}
  :source-digests
  {"formal/cross-runtime/operator-vectors.edn"
   "33fb285f607192f4e1df18bc012725548895aaf8b3929eb2cf4a5de0c7ddcbc6"
@@ -207,9 +225,15 @@
   "modules/eacl-datahike/src/eacl/datahike/direct_membership.clj"
   "37081b45f3035fa673bcce8c1b2c22dff69bba95554cb5d5e0be5347e8d4dc3b"
   "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc"
-  "317eb0525cfdfd02dfd9b090cf44c596812a79f7aad898380c5ecfe31e0ccdd3"}
+  "317eb0525cfdfd02dfd9b090cf44c596812a79f7aad898380c5ecfe31e0ccdd3"
+  "modules/eacl/src/eacl/client/orchestration.cljc"
+  "7438873e92f8544a18833e4524f7e8dd10bf5f154b1ef3a3c8f932d83c028c7d"
+  "modules/eacl/src/eacl/engine/v8.cljc"
+  "7d5e82d47879db407ab549550502c6fb5862ba0641a76a11029620aefa9c02b6"}
  :assurance
  {:production-source-refinement
   :executable-differential-mutation-and-digest-closed
   :public-operator-routing :withheld-until-performance-and-release-gates
+  :public-operator-expression-writes
+  :withheld-until-performance-and-release-gates
   :independent-review :not-performed-not-required-for-execution}}

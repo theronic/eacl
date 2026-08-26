@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is]]
             [datalevin.core :as d]
             [datalevin.util :as u]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datalevin.core :as datalevin]
             [eacl.engine.v8 :as engine]))
@@ -34,6 +35,10 @@
 
 (defn- ids [page]
   (mapv :id (:data page)))
+
+(defn- write-operator-schema! [client schema-source]
+  (binding [orchestration/*operator-expression-writes-enabled?* true]
+    (eacl/write-schema! client schema-source)))
 
 (defn- with-client [f]
   (let [dir (u/tmp-dir (str "eacl-operator-conformance-" (random-uuid)))
@@ -70,7 +75,7 @@
             forward {:subject alice :permission :view
                      :resource/type :document}
             reverse {:resource d1 :permission :view :subject/type :user}]
-        (eacl/write-schema! client operator-schema)
+        (write-operator-schema! client operator-schema)
         (d/transact! conn (mapv #(hash-map :eacl/id %)
                                 ["alice" "bob" "d0" "d1" "d2" "d3"]))
         (eacl/create-relationships! client relationships)
@@ -115,7 +120,7 @@
             forward {:subject alice :permission :allowed
                      :resource/type :folder}
             reverse {:resource f0 :permission :allowed :subject/type :user}]
-        (eacl/write-schema! client recursive-schema)
+        (write-operator-schema! client recursive-schema)
         (d/transact! conn (mapv #(hash-map :eacl/id %)
                                 ["alice" "bob" "f0" "f1" "f2"]))
         (eacl/create-relationships! client relationships)

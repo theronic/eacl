@@ -66,10 +66,46 @@
             [eacl.schema.errors :as schema-errors]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]
+            [eacl.spicedb.parser :as schema-parser]
             [eacl.spicedb.consistency :as consistency]))
 
 (declare request-cache-controls
          validate-permission-root!)
+
+(def ^:dynamic *operator-expression-writes-enabled?*
+  "Pre-release gate for public schema writes containing intersection or
+  exclusion. Union-only schemas never consult this value. The gate is
+  independent of eacl.engine.v8/*operator-routing-enabled?* so storage and
+  query rollout can be verified separately."
+  false)
+
+(defn- operator-expression-node?
+  "Recognizes an actual intersection/exclusion operation in an Instaparse
+  tree. The grammar emits one-child wrapper nodes with these tags for every
+  permission expression, so the tag alone is deliberately insufficient."
+  [parse-tree]
+  (loop [pending [parse-tree]]
+    (if-let [node (peek pending)]
+      (let [pending (pop pending)]
+        (if (vector? node)
+          (if (and (contains? #{:intersect-expr :exclusion-expr}
+                              (first node))
+                   (< 2 (count node)))
+            true
+            (recur (into pending (filter vector?) (next node))))
+          (recur pending)))
+      false)))
+
+(defn- require-operator-expression-writes-enabled!
+  [schema-string]
+  (when (and (not *operator-expression-writes-enabled?*)
+             (operator-expression-node?
+              (schema-parser/parse-schema schema-string)))
+    (throw
+     (ex-info
+      "Public operator-expression schema writes are disabled by the pre-release gate."
+      {:type :eacl.schema/operator-expression-writes-disabled
+       :eacl/error :eacl.schema/operator-expression-writes-disabled}))))
 
 (defn- ensure-execution-contract
   [opts operation request]
@@ -2361,6 +2397,7 @@
 
 (defn- write-schema-through!
   [writer schema-string]
+  (require-operator-expression-writes-enabled! schema-string)
   (let [{:keys [conn options api]} (backend-writer/state writer)
         write-schema! (backend-writer/operation writer :write-schema!)
         contention? (backend-writer/operation writer :contention?)

@@ -3,6 +3,7 @@
             [datahike.api :as dh]
             [datascript.core :as ds]
             [datomic.api :as d]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.datahike.db :as datahike-db]
@@ -73,6 +74,10 @@
 
 (defn- ids [page]
   (mapv :id (:data page)))
+
+(defn- write-operator-schema! [client schema-source]
+  (binding [orchestration/*operator-expression-writes-enabled?* true]
+    (eacl/write-schema! client schema-source)))
 
 (defn- exercise-operator-api! [client]
   (let [alice (object :user "alice")
@@ -167,7 +172,7 @@
   (testing "DataScript"
     (let [conn (datascript/create-conn)
           client (datascript/make-client conn {})]
-      (eacl/write-schema! client schema-source)
+      (write-operator-schema! client schema-source)
       (ds/transact! conn (mapv #(hash-map :eacl/id %) ids-to-create))
       (eacl/create-relationships! client relationships-to-create)
       (exercise! client)))
@@ -180,7 +185,7 @@
             config (datahike-db/db-config (dh/db conn))
             client (datahike/make-client conn {})]
         (try
-          (eacl/write-schema! client schema-source)
+          (write-operator-schema! client schema-source)
           (dh/transact conn (mapv #(hash-map :eacl/id %) ids-to-create))
           (eacl/create-relationships! client relationships-to-create)
           (exercise! client)
@@ -192,7 +197,7 @@
     #_{:clj-kondo/ignore [:unresolved-symbol]}
     (with-mem-conn [conn datomic-schema/v7-schema]
       (let [client (datomic/make-client conn {})]
-        (eacl/write-schema! client schema-source)
+        (write-operator-schema! client schema-source)
         @(d/transact conn (mapv #(hash-map :eacl/id %) ids-to-create))
         (eacl/create-relationships! client relationships-to-create)
         (exercise! client)))))

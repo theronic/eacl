@@ -169,11 +169,11 @@
    :boundary-source "formal/dafny/EaclKernel.dfy"
    :report "formal/verification/operator-phase-b.edn"
    :integration-status
-   :concrete-production-refinement-passed-routing-withheld-for-performance
+   :concrete-production-refinement-passed-routing-and-writes-withheld-for-performance
    :claim
    :conditional-generated-recursive-command-and-executable-production-refinement
    :qualification
-   :independent-proof-review-not-performed-and-public-routing-disabled}
+   :independent-proof-review-not-performed-and-public-routing-and-writes-disabled}
   :indexed-recursive-public-engine
   {:status :passed
    :verified-obligations 7985

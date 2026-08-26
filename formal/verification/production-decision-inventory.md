@@ -14,8 +14,9 @@ The three generated operator entry points
 oracles and are not called directly by production. The unreleased v8
 production parser, expression storage, planner, acyclic evaluator, recursive
 evaluator, cursor scope, cache path, and backend capability protocol do accept
-intersection and exclusion. Public operator routing remains behind its
-feature gate until the recorded performance and release gates pass. Concrete
+intersection and exclusion. Public operator-expression writes and public
+operator routing remain behind independent feature gates until the recorded
+performance and release gates pass. Concrete
 refinement evidence is recorded in
 `formal/verification/operator-phase-b.edn`.
 
@@ -39,6 +40,7 @@ refinement evidence is recorded in
 | Acyclic scalar/vector set-algebra decisions and bounded progress | `eacl.operator.evaluator`, `eacl.operator.vector-evaluator`, `eacl.operator.batch-schedule`, `eacl.operator.lookup`, `eacl.operator.seekable` | exact point membership, aligned batches, forward/reverse pages, bounded/exact counts, and logical resume coordinates |
 | Recursive typed facts, anchor joins, strata, and exclusion absence | `eacl.operator.recursive` | positive recursive conjunction, strict lower-stratum exclusion, checkpoint/replay, and recursive limits |
 | Operator direct-membership locality and aligned scatter | `eacl.backend.direct-membership` and the built-in backend implementations | proof-compatible leaf-cache hits, scalar fallback, Datahike dense/sparse batching, aligned Boolean results, and physical work counters |
+| Operator release gates | `eacl.client.orchestration/*operator-expression-writes-enabled?*`, `eacl.engine.v8/*operator-routing-enabled?*` | independent admission of public operator-expression schema writes and public operator query routing; union-only schemas and plans bypass both decisions |
 
 ### Retired-engine boundaries (historical, pending the task 9.2 formal cut)
 

@@ -32,12 +32,14 @@
     (is (every? zero? (mapcat (juxt :failures :errors)
                               executable-runs)))
     (is (= #{:parser-codec-signed-graph :plan :acyclic-evaluation
-             :recursive-evaluation :backend-premises}
+             :recursive-evaluation :backend-premises :release-gates}
            (set (keys bindings))))
     (is (= :executable-differential-mutation-and-digest-closed
            (:production-source-refinement assurance)))
     (is (= :withheld-until-performance-and-release-gates
-           (:public-operator-routing assurance)))))
+           (:public-operator-routing assurance)))
+    (is (= :withheld-until-performance-and-release-gates
+           (:public-operator-expression-writes assurance)))))
 
 (deftest production-refinement-source-digests-are-current-test
   (doseq [[path expected] (:source-digests (report))]

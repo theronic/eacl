@@ -111,7 +111,7 @@
 - [x] 10.5 Certify each backend's expression reads, ordered scans, inclusive reseeks, scalar/batch membership, basis stability, cancellation, and error classification premises.
 - [x] 10.6 Add and kill production mutations for wrong precedence, swapped exclusion, unsigned dependency, missing join slot, duplicate satisfaction count, partial negative, vector misalignment, overread cursor advance, any-child allocation, and cache-selected generator.
 - [x] 10.7 Regenerate Java/JavaScript/browser artifacts and update size bounds, source closures, theorem pins, manifests, model inventory, trusted assumptions, and public decision inventory from a clean checkout.
-- [ ] 10.8 Complete the source-refinement and assurance audit; keep public operator routing and schema writes disabled until every section-10 gate is green, with any unperformed independent review recorded as an explicit assurance qualification.
+- [x] 10.8 Complete the source-refinement and assurance audit; keep public operator routing and schema writes disabled until every section-10 gate is green, with any unperformed independent review recorded as an explicit assurance qualification.
 
 ## 11. Establish semantic and storage conformance
 
@@ -136,7 +136,7 @@
 
 ## 13. Release gating and documentation
 
-- [ ] 13.1 Add separate disabled gates for expression schema writes and public operator routing; verify union-only behavior while each gate combination is off.
+- [x] 13.1 Add separate disabled gates for expression schema writes and public operator routing; verify union-only behavior while each gate combination is off.
 - [ ] 13.2 Recreate clean development databases with expression-capable adapters before enabling writes; prove flat-only and mixed pre-release storage fail closed without compatibility interpretation.
 - [ ] 13.3 Run all module tests, CLJS builds, lint/source-closure checks, abstract and concrete formal gates, mutation controls, backend certifications, conformance lanes, storage tests, and performance gates from reproducible clean commands.
 - [ ] 13.4 Enable test operator routing, then operator schema writes, only after proof-phase-A authorization and recorded refinement, conformance, storage, and performance evidence are present and valid.
