@@ -82,6 +82,20 @@
      :physical-candidates (nat->long (.dtor_physicalCandidates decision))
      :physical-overread (nat->long (.dtor_physicalOverread decision))}))
 
+(defn advance
+  "Generated batch-growth decision for one completed candidate vector.
+  Inputs are the values after the issued vector's accepted results and
+  width have been subtracted."
+  [{:keys [remaining-demand remaining-window physical-cap
+           issued-width accepted-count]}]
+  (nat->long
+   (__default/DecideOperatorBatchAdvance
+    (dafny-nat remaining-demand)
+    (dafny-nat remaining-window)
+    (dafny-nat physical-cap)
+    (dafny-nat issued-width)
+    (dafny-nat accepted-count))))
+
 (defn decide-signed-graph
   [{:keys [vertices edges components]}]
   (let [^OperatorSignedGraphDecision decision

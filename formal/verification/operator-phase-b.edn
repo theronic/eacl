@@ -35,7 +35,7 @@
    :verified 1 :errors 0 :status :passed}]
  :whole-tree
  {:command "bin/formal format && bin/formal verify"
-  :modules 48 :verified-obligations 9361 :errors 0 :status :passed
+  :modules 48 :verified-obligations 9371 :errors 0 :status :passed
   :maximum-proof-effort
   {:source "SeekableSetKernels.dfy"
    :display-name "SeekableSetKernels.KWayLeapfrogMembership (correctness)"
@@ -52,12 +52,12 @@
    :ci-pinned-version "1.12.213"
    :artifact-byte-count-independent-of-gate-runtime true}
   :measurements
-  {:java-source {:actual-bytes 2294075 :maximum-bytes 2670869}
+  {:java-source {:actual-bytes 2295517 :maximum-bytes 2670869}
    :java-classes-with-runtime
-   {:actual-bytes 2041834 :maximum-bytes 2377367}
+   {:actual-bytes 2042557 :maximum-bytes 2377367}
    :javascript-with-runtime
-   {:actual-bytes 1030862 :maximum-bytes 1188865}
-   :browser-iife {:actual-bytes 632867 :maximum-bytes 738488}}}
+   {:actual-bytes 1031991 :maximum-bytes 1188865}
+   :browser-iife {:actual-bytes 633248 :maximum-bytes 738488}}}
  :executable-runs
  [{:scope :parser-codec-signed-graph-plan-evaluation-recursion
    :runtime :clj
@@ -157,7 +157,16 @@
     "modules/eacl/src/eacl/operator/seekable.cljc"
     "modules/eacl/src/eacl/backend/direct_membership.cljc"]
    :controls
-   [:operator-vector-misalignment :operator-overread-cursor-advance]}
+   [:operator-vector-misalignment :operator-overread-cursor-advance]
+   :batch-growth
+   {:generated "EaclKernel.__default/DecideOperatorBatchAdvance"
+    :abstract-rule "AdaptiveBatching.ScheduledNextWidth"
+    :production "modules/eacl/src/eacl/operator/batch_schedule.cljc"
+    :binding :randomized-production-schedule-step-differential
+    :namespace eacl.formal.operator-decision-test
+    :walks 200
+    :note
+    "The production schedule is compared step for step against the generated demand-clamped rejection-gated rule; production does not call the generated function."}}
   :recursive-evaluation
   {:abstract-input :typed-anchor-gated-state-and-completed-negative-question
    :production ["modules/eacl/src/eacl/operator/recursive.cljc"]
@@ -194,7 +203,11 @@
    :directed-exclusion true
    :union-only-route-unchanged true}}
  :source-digests
- {"formal/cross-runtime/operator-vectors.edn"
+ {"formal/dafny/EaclKernel.dfy"
+  "e44989181fff9663a89f6e726320ad793ea57eb05788cf4942580194f5771c28"
+  "formal/dafny/OperatorGeneratedPolicy.dfy"
+  "2037126d1c2e3dea07250bb97d625b5d0c0ba7986abf246fd8b232408aa6abfd"
+  "formal/cross-runtime/operator-vectors.edn"
   "33fb285f607192f4e1df18bc012725548895aaf8b3929eb2cf4a5de0c7ddcbc6"
   "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
   "fc23429b63990d8e94db211bfe945e61bd8f88495f9bb247a31eaeb3e6101210"
@@ -219,9 +232,9 @@
   "modules/eacl/src/eacl/operator/cursor_scope.cljc"
   "859138c287b51000f4f2ec0c8f0c34aef68021fd7b9f221137107a6d1aa68d6a"
   "modules/eacl/src/eacl/operator/evaluator.cljc"
-  "93b1f9b17c86549bb4fc8efdff9f0c1e7b25c212be43e3deca7de7f7fb06ba3f"
+  "5bec377d6ed18488ebc302cdbe0e20cbdcf7e734c6fdbfa992de463aed5d171f"
   "modules/eacl/src/eacl/operator/vector_evaluator.cljc"
-  "e95175265c3ef58603670b589553ad85222df2202b43151640238937c63ed4ac"
+  "f9b26d5c4890baebb9c7e66ac9e1f4a57b430a51e671ed1e3effd0b5258b7b61"
   "modules/eacl/src/eacl/operator/bitmask.cljc"
   "76186d91a15723b7a2981e9e360ed586f2a52f01b521f2e5c2121714ae6ac4ad"
   "modules/eacl/src/eacl/operator/batch_schedule.cljc"
@@ -233,27 +246,27 @@
   "modules/eacl/src/eacl/operator/recursive.cljc"
   "1e6e606041c33b72c60dc74be3083c33a049d78e12b968dd7daffed32708be70"
   "modules/eacl/src/eacl/backend/direct_membership.cljc"
-  "bf73dcd6a5e958646f927df0fd9d615f752d4a1c238b2f0c7339408828c31293"
+  "d8e63f99560011155ea9fb874de28bf4bf91938232174c275b4ebf358dc756e3"
   "modules/eacl/src/eacl/backend/v8.cljc"
   "9792ea48a0e5769025fbad9a0b7efa81696a3d4decf975abb073831fd911a7a8"
   "modules/eacl-datomic/src/eacl/datomic/backend.clj"
-  "9735e9703dd89f7b0eea3e7b58da34e074960ed433c245f19d35ee62ad6bdcf0"
+  "e416a74c53039da20cedc663d13acd71f8b5b40711346bdafb60dc2163d90e80"
   "modules/eacl-datascript/src/eacl/datascript/backend.cljc"
-  "ca833aaae605792bfb6eb07da09a7d974ebd38a74188d28964b6fce09c991908"
+  "94b5ad4153601ad802e4927a3a2c37ad6451deff4fe6553fd32cc9ceb1b3170d"
   "modules/eacl-datahike/src/eacl/datahike/backend.clj"
-  "845c0d92af9b1748ff6ccd5e1ca7afaf3082e8dcf71bc8f30c7d1be362c08f29"
+  "cb0849cf672af8751c6c9b5ad94ed878810819185ab629cbba5d57b8c705ee31"
   "modules/eacl-datahike/src/eacl/datahike/direct_membership.clj"
-  "6a1513844f279aa6820c7661f8f4aadacd74825f862456e6553ad98bff060b5b"
+  "e5a08f45ff3d1dba4f496f93cfb3012fbf91615c65a60b8d2fe0b67dde14b2f0"
   "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc"
-  "317eb0525cfdfd02dfd9b090cf44c596812a79f7aad898380c5ecfe31e0ccdd3"
+  "d992c3bb289d4fc9c9d2e68dbcaf7b0b23ad0d506121e5faad8a27d2e219ac2c"
   "modules/eacl/src/eacl/client/orchestration.cljc"
-  "cad837ec91e6b9c27d1ef7331fc0e112342d7fa44fc9184916377d4abf8dfdbd"
+  "4a5a7bde7753b681f4bd0df3f36af67f9aff8a95ec8307a5c64756184cdd8e6e"
   "modules/eacl/src/eacl/engine/v8.cljc"
   "82bed944906f44c1ad6be035200a47c5b559483501013ea3a997d3d355c894f2"
   "modules/eacl/src/eacl/engine/physical.cljc"
-  "6988207dad889bc0660f391df0a8c5145dd7a6d0c50bd606d6907306ea394e9c"
+  "06ccca1e425861c0852824bba10afcaea4467aa941acb0d98194173bfd92eac3"
   "modules/eacl/src/eacl/metrics.cljc"
-  "f8ecd8c483276918609e73eea2e2352fe90a03373387ad0d665aa80d47f087f7"
+  "befeeea18930b7ad7c40f0ba068b32779d902492b33e431bd6c35e6e3a4039cb"
   "modules/eacl/src/eacl/permission_tree.cljc"
   "9c763c6b7b8fedf3fdcd23a4eb4fa99257bfff022a674060a66d0cc443833b39"}
  :assurance

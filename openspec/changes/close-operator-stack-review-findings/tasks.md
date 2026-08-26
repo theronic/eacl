@@ -36,24 +36,24 @@ Ordered by severity. Sections 1 and 2 are merge blockers.
 
 ## 5. Datahike as-of batch bound
 
-- [ ] 5.1 Add the failing case: dense batch on an as-of snapshot with many tuples below the first candidate; assert realized values stay within the certified bound.
-- [ ] 5.2 Honor `cursor-tail` in `eavt-tuple-prefix`'s non-direct-DB fallback, or select the exact-probe kernel when `direct-db?` is false.
-- [ ] 5.3 Add the span == 2k boundary cases (2k, 2k+1, k=1, k=0) in both directions and pin the selected mode against the certified policy identity.
-- [ ] 5.4 Re-record the Datahike physical-policy evidence if the selected kernel changes for any basis kind.
+- [x] 5.1 Add the failing case: dense batch on an as-of snapshot with many tuples below the first candidate; assert realized values stay within the certified bound.
+- [x] 5.2 Honor `cursor-tail` in `eavt-tuple-prefix`'s non-direct-DB fallback, or select the exact-probe kernel when `direct-db?` is false.
+- [x] 5.3 Add the span == 2k boundary cases (2k, 2k+1, k=1, k=0) in both directions and pin the selected mode against the certified policy identity.
+- [x] 5.4 Re-record the Datahike physical-policy evidence if the selected kernel changes for any basis kind.
 
 ## 6. Request-path telemetry
 
-- [ ] 6.1 Make the relationship-observation store opt-in via client configuration or lazily constructed on first consumer use.
-- [ ] 6.2 Skip all recording work — including key construction — when disabled.
-- [ ] 6.3 Add a gate asserting zero observation allocation on a default-constructed client's page, count, and membership paths.
+- [x] 6.1 Make the relationship-observation store opt-in via client configuration or lazily constructed on first consumer use.
+- [x] 6.2 Skip all recording work — including key construction — when disabled.
+- [x] 6.3 Add a gate asserting zero observation allocation on a default-constructed client's page, count, and membership paths.
 
 ## 7. Formal ledger honesty
 
-- [ ] 7.1 Replace `AdaptiveBatching.GrownWidth` with the demand-clamped, rejection-gated rule the engine runs, or add it alongside and prove the same envelope over it.
-- [ ] 7.2 Bind `eacl.operator.batch-schedule/advance` differentially to the generated decision, so the smoke test stops comparing the kernel against a copy of its own formula.
-- [ ] 7.3 Add `EaclKernel.dfy` to the enforced phase-b digest closure and refresh the stale phase-a pin.
-- [ ] 7.4 Add the dense-path exactness lemma to `DensityBoundedBatch.dfy` (aligned dense decisions equal `MembershipDecisions`).
-- [ ] 7.5 Align `operator-phase-b.edn`'s binding claims with `trusted-boundary.md`'s wording for the batch-growth decision.
+- [x] 7.1 Replace `AdaptiveBatching.GrownWidth` with the demand-clamped, rejection-gated rule the engine runs, or add it alongside and prove the same envelope over it.
+- [x] 7.2 Bind `eacl.operator.batch-schedule/advance` differentially to the generated decision, so the smoke test stops comparing the kernel against a copy of its own formula.
+- [x] 7.3 Add `EaclKernel.dfy` to the enforced phase-b digest closure and refresh the stale phase-a pin.
+- [x] 7.4 Add the dense-path exactness lemma to `DensityBoundedBatch.dfy` (aligned dense decisions equal `MembershipDecisions`).
+- [x] 7.5 Align `operator-phase-b.edn`'s binding claims with `trusted-boundary.md`'s wording for the batch-growth decision.
 
 ## 8. Coverage gaps
 

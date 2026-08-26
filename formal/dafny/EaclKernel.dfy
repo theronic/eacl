@@ -224,6 +224,42 @@ module EaclKernel {
     );
   }
 
+  // The batch-growth decision the engine actually runs, exported so the
+  // production schedule can be bound differentially to the generated rule
+  // instead of to a local re-copy of a formula.  `remainingDemand` and
+  // `remainingWindow` are the values after the issued vector's accepted
+  // results and width have been subtracted; an over-counted acceptance is
+  // clamped to the issued width so the boundary stays total.
+  method DecideOperatorBatchAdvance(
+    remainingDemand: nat,
+    remainingWindow: nat,
+    physicalCap: nat,
+    issuedWidth: nat,
+    acceptedCount: nat
+  ) returns (nextWidth: nat)
+    ensures nextWidth ==
+            OperatorGeneratedPolicy.ScheduledNextWidth(
+              remainingDemand,
+              remainingWindow,
+              physicalCap,
+              issuedWidth,
+              OperatorGeneratedPolicy.Min(acceptedCount, issuedWidth)
+            )
+    ensures nextWidth <= physicalCap
+    ensures nextWidth <= remainingWindow
+    ensures remainingDemand == 0 ==> nextWidth == 0
+    ensures remainingWindow == 0 ==> nextWidth == 0
+    ensures acceptedCount >= issuedWidth ==> nextWidth <= remainingDemand
+  {
+    nextWidth := OperatorGeneratedPolicy.ScheduledNextWidth(
+      remainingDemand,
+      remainingWindow,
+      physicalCap,
+      issuedWidth,
+      OperatorGeneratedPolicy.Min(acceptedCount, issuedWidth)
+    );
+  }
+
   method DecideOperatorSignedGraph(
     vertices: seq<nat>,
     edges: seq<OperatorDependencyEdge>,

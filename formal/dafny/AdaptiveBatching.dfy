@@ -75,6 +75,89 @@ module AdaptiveBatching {
   {
   }
 
+  function Max(left: nat, right: nat): nat {
+    if left < right then right else left
+  }
+
+  // The batch-growth rule the engine actually runs.  `GrownWidth` doubles
+  // unconditionally, which permits exactly the overread the demand contract
+  // forbids: with demand 300, window 4096, and a fully accepted first batch
+  // of 256, it asks for 256 where the engine asks for 44.  This rule is
+  // rejection-gated and demand-clamped: rejection is the only reason to
+  // grow, and an all-accepted batch never schedules more than the
+  // unresolved demand.
+  function ScheduledNextWidth(
+    remainingDemand: nat,
+    remainingWindow: nat,
+    physicalCap: nat,
+    issuedWidth: nat,
+    acceptedCount: nat
+  ): nat
+    requires acceptedCount <= issuedWidth
+  {
+    var desired :=
+      if acceptedCount < issuedWidth then
+        Min(physicalCap, 2 * issuedWidth)
+      else
+        remainingDemand;
+    if remainingDemand == 0 || remainingWindow == 0 then
+      0
+    else
+      Min3(physicalCap, remainingWindow, Max(remainingDemand, desired))
+  }
+
+  lemma ScheduledNextWidthIsDemandClampedAndRejectionGated(
+    remainingDemand: nat,
+    remainingWindow: nat,
+    physicalCap: nat,
+    issuedWidth: nat,
+    acceptedCount: nat
+  )
+    requires acceptedCount <= issuedWidth
+    ensures ScheduledNextWidth(
+              remainingDemand, remainingWindow,
+              physicalCap, issuedWidth, acceptedCount
+            ) <= physicalCap
+    ensures ScheduledNextWidth(
+              remainingDemand, remainingWindow,
+              physicalCap, issuedWidth, acceptedCount
+            ) <= remainingWindow
+    ensures remainingDemand == 0 ==>
+              ScheduledNextWidth(
+                remainingDemand, remainingWindow,
+                physicalCap, issuedWidth, acceptedCount
+              ) == 0
+    ensures remainingWindow == 0 ==>
+              ScheduledNextWidth(
+                remainingDemand, remainingWindow,
+                physicalCap, issuedWidth, acceptedCount
+              ) == 0
+    // Demand clamp: without rejection, the schedule never overreads the
+    // unresolved demand.
+    ensures acceptedCount == issuedWidth ==>
+              ScheduledNextWidth(
+                remainingDemand, remainingWindow,
+                physicalCap, issuedWidth, acceptedCount
+              ) <= remainingDemand
+    // Rejection-gated growth stays within the envelope the doubling model
+    // proves: demand, or bounded doubling of the issued width.
+    ensures ScheduledNextWidth(
+              remainingDemand, remainingWindow,
+              physicalCap, issuedWidth, acceptedCount
+            ) <= Max(
+                   remainingDemand,
+                   GrownWidth(issuedWidth, physicalCap, remainingWindow)
+                 )
+    // Progress: positive demand, window, and cap always schedule work.
+    ensures 0 < remainingDemand && 0 < remainingWindow &&
+            0 < physicalCap ==>
+              0 < ScheduledNextWidth(
+                remainingDemand, remainingWindow,
+                physicalCap, issuedWidth, acceptedCount
+              )
+  {
+  }
+
   function CountTrue(values: seq<bool>): nat
     decreases |values|
   {

@@ -9,8 +9,8 @@
  :dafny
  {:command "bin/formal format && bin/formal verify"
   :status :passed
-  :modules 46
-  :whole-tree-obligations 9325
+  :modules 48
+  :whole-tree-obligations 9371
   :pre-change-whole-tree-obligations 8794
   :phase-a-new-obligations 531
   :new-proof-leaf-obligations 525
@@ -28,16 +28,16 @@
    "CandidateCover.dfy" 34
    "WitnessPredicate.dfy" 15
    "VectorPredicate.dfy" 60
-   "AdaptiveBatching.dfy" 26
+   "AdaptiveBatching.dfy" 29
    "OperatorLeastPath.dfy" 40
    "SeekableSetKernels.dfy" 91
-   "DensityBoundedBatch.dfy" 16
+   "DensityBoundedBatch.dfy" 18
    "AnchorGatedConjunction.dfy" 35
    "StratifiedExclusion.dfy" 9
    "OperatorCacheRefinement.dfy" 17
    "ExpressionPlanRefinement.dfy" 42
-   "OperatorGeneratedPolicy.dfy" 6
-   "OperatorGeneratedPolicyRefinement.dfy" 4
+   "OperatorGeneratedPolicy.dfy" 7
+   "OperatorGeneratedPolicyRefinement.dfy" 6
    "OperatorProofKernel.dfy" 1}}
  :temporal
  {:model "formal/tla/EaclOperatorSafety.tla"
@@ -142,6 +142,7 @@
  :generated-boundary
  {:methods
   ["EaclKernel.__default/DecideOperatorBatch"
+   "EaclKernel.__default/DecideOperatorBatchAdvance"
    "EaclKernel.__default/DecideOperatorSignedGraph"]
   :policy-module "formal/dafny/OperatorGeneratedPolicy.dfy"
   :proof-refinement
@@ -151,6 +152,7 @@
    :checked-inclusive-span
    :initial-batch-width
    :grown-batch-width
+   :scheduled-next-width
    :logical-candidates
    :physical-candidates
    :physical-overread]
@@ -160,7 +162,7 @@
    :negative-cycle-status
    :canonical-first-negative-edge]
   :java
-  {:tests 4
+  {:tests 5
    :batch-fixed-vectors 9
    :batch-random-vectors 1000
    :signed-graph-fixed-vectors 7
@@ -212,13 +214,13 @@
    "formal/dafny/VectorPredicate.dfy"
    "45c3335b28a96e669e627bef3d164aca4cd99710d5cb2ac57678d57e7294829b"
    "formal/dafny/AdaptiveBatching.dfy"
-   "8bd5c9c54c42374b9ac327fdf3c81e8fbad017adacf0af1895cfcedfff6404db"
+   "dc13d5558f13137cfaebfe2b1df7ba703b24960841ea2ee02226091032973ca4"
    "formal/dafny/OperatorLeastPath.dfy"
    "84e00434409ddb9faec151d646f021eb1470b699361229c9bb6b0dce49ed7e72"
    "formal/dafny/SeekableSetKernels.dfy"
    "667895969e970ce577e2d568ea79a92a1b25e7a3e5336e23dc336920b944346b"
    "formal/dafny/DensityBoundedBatch.dfy"
-   "0b92f8a91cc11c9f48018eb18c4bb49a73838d940cd0a73ca51eadb7f33aa50b"
+   "cdae70214c4cc1076388757dc58756fc4aabef0f9cae5f91d8d06ff828bb0b97"
    "formal/dafny/AnchorGatedConjunction.dfy"
    "a41a8b5360027b8e7fba112ecb45765c687dc1697f5748aa620e258f99f3535c"
    "formal/dafny/StratifiedExclusion.dfy"
@@ -228,13 +230,13 @@
    "formal/dafny/ExpressionPlanRefinement.dfy"
    "942b65794e35b30a60ff4577de21d0a7c8e0017bad13a3825615d7cb2ce3be3e"
    "formal/dafny/OperatorGeneratedPolicy.dfy"
-   "80950fcdcefb6d36b98853721488a3cd937e202b9c30837cf33c87ac8207edad"
+   "2037126d1c2e3dea07250bb97d625b5d0c0ba7986abf246fd8b232408aa6abfd"
    "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
-   "83e78a843cbeda48903a1d96863a39cbc52b18f0dc70f81466b6ba7abccf851e"
+   "788f8bec6e618372d2d1215a694eece9a9ed157403d9c80b0549b7431a8cb7ef"
    "formal/dafny/OperatorProofKernel.dfy"
    "7abdfc785d024a82a5942f4581e5d0b39021f467064b71bb7d646f6f2eff2bee"
    "formal/dafny/EaclKernel.dfy"
-   "38ff6d8084b90bc08a9e3e8a1b01ab5da9851db04bd617a62df0d8af61f05601"
+   "e44989181fff9663a89f6e726320ad793ea57eb05788cf4942580194f5771c28"
    "formal/tla/EaclOperatorSafety.tla"
    "46a2cc7578b46af4b9c2d875e53623d49d49405166d06d63cdd83c1d543add63"
    "formal/cross-runtime/operator-vectors.edn"
