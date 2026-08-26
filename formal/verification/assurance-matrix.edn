@@ -60,6 +60,7 @@
    :class :formal-smoke-only
    :consumer ["formal/smoke/js/round_trip.mjs"
               "formal/smoke/clj/eacl/formal/java_operator_decision.clj"
+              "formal/smoke/clj/eacl/formal/java_operator_recursive.clj"
               "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]}
   {:source "formal/dafny/PermissionSetAlgebra.dfy"
    :class :abstract-operator-phase-a-proof-only
@@ -104,6 +105,11 @@
    :class :abstract-operator-phase-a-generated-smoke
    :consumer ["formal/dafny/EaclKernel.dfy"
               "formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+   :class :operator-phase-b-generated-command-state
+   :consumer ["formal/dafny/EaclKernel.dfy"
+              "formal/smoke/clj/eacl/formal/java_operator_recursive.clj"
+              "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]}
   {:source "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
    :class :abstract-operator-phase-a-proof-only
    :consumer ["formal/verification/operator-phase-a.edn"]}

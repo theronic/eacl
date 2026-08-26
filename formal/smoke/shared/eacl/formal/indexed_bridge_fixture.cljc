@@ -128,6 +128,7 @@
         {:cache-stamp (constantly 1)
          :relation-defs relation-defs
          :permission-defs permission-defs
+         :permission-expression (fn [& _] nil)
          :subject->resources scan
          :resource->subjects reverse-scan
          :direct-match? direct-match?}
