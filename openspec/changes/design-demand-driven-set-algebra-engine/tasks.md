@@ -40,10 +40,10 @@
 ## 4. Persist expressions and evolve backend capabilities
 
 - [x] 4.1 Add expression payload, digest, format, and limit-metadata attributes/indexes directly to the unreleased v8 Datomic, DataScript, Datahike, and Datalevin schemas; keep clean installation idempotent.
-- [ ] 4.2 Implement atomic expression replacement, schema deletion, snapshot reads, export/import, backup/restore, and failed-replacement atomicity tests on every built-in backend.
+- [x] 4.2 Implement atomic expression replacement, schema deletion, snapshot reads, export/import, backup/restore, and failed-replacement atomicity tests on every built-in backend.
 - [x] 4.3 Remove flat permission persistence for every permission, verify that schema writes emit only canonical expressions, and compile union-compatible expressions into the unchanged union-only sealed-plan domain.
 - [x] 4.4 Read valid expression-only snapshots; fail closed on flat-only, mixed, corrupt, conflicting, duplicated, or unsupported-format storage.
-- [ ] 4.5 Add explicit storage tests proving the unreleased v8 path performs no legacy synthesis, migration, dual write, old-reader rollout, or binary-downgrade preparation.
+- [x] 4.5 Add explicit storage tests proving the unreleased v8 path performs no legacy synthesis, migration, dual write, old-reader rollout, or binary-downgrade preparation.
 - [x] 4.6 Extend adapter construction with a required expression capability and optional bounded batched-direct-membership capability; validate capability/operation pairing and include it in operator compatibility.
 - [x] 4.7 Define the immutable-basis, normalized-descriptor, distinct-typed-input, aligned-Boolean, maximum-width, cancellation, and atomic-failure contract for batched direct membership.
 - [x] 4.8 Differentially certify scalar fallback and native batches in forward/reverse direction for present/missing values, identifier extrema, batch boundaries, concurrent head advancement, and malformed provider responses.
@@ -87,7 +87,7 @@
 - [x] 8.2 Retain complete child fact sets and allocate parent join state only on anchor admission; initialize late anchors from existing facts and update only anchored entities on later non-anchor facts.
 - [x] 8.3 Represent join slots as portable 32-bit word vectors plus satisfied counts, make duplicate facts idempotent, and admit each completed parent fact exactly once.
 - [x] 8.4 Evaluate strict strata bottom-up within anchored demand and allow exclusion to consume only completed exact lower-stratum Boolean/denotation results.
-- [ ] 8.5 Extend deterministic recursive scheduling/order for operator roots while preserving byte-for-byte union-only recursive traces and checkpoint identities.
+- [x] 8.5 Extend deterministic recursive scheduling/order for operator roots while preserving byte-for-byte union-only recursive traces and checkpoint identities.
 - [x] 8.6 Extend checkpoint/replay with facts, anchor states, satisfied counts, completed strata, pending negative questions, command identity, and undelivered boundaries without backend handles or mutable cache state.
 - [x] 8.7 Add pre-allocation limits and dimensional counters for facts, anchor states, join words/slots, strata, commands, values, transitions, queue, checkpoint weight, deadline, and cancellation.
 - [x] 8.8 Differentially test positive self/mutual conjunction, stars, chains, arrows, late anchors, duplicate derivations, typed-ID collisions, unseeded cycles, multiple strata, and failure injection against the naive oracle.
