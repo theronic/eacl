@@ -12,7 +12,8 @@
             [eacl.execution :as execution]
             [eacl.operator.plan :as plan]
             [eacl.operator.recursive :as recursive]
-            [eacl.operator-engine.oracle :as oracle]))
+            [eacl.operator-engine.oracle :as oracle]
+            [eacl.subproblem-cache :as subproblem]))
 
 (def recursive-schema
   "definition user {}
@@ -20,6 +21,7 @@
      relation direct: user
      relation eligible: user
      relation banned: user
+     relation unrelated: user
      relation parent: folder
      permission view = direct + (parent->view & eligible)
      permission blocked = banned
@@ -354,6 +356,72 @@
                       :scope-identity {:proof :generation-b}
                       :checkpoint checkpoint))))))))
 
+(deftest completed-direct-decisions-reuse-proof-compatible-cache-test
+  (let [{:keys [adapter plan] :as fixture} (chain-fixture)
+        options {:adapter adapter :plan plan
+                 :candidates (candidates fixture)
+                 :scope-identity :cached-direct-decisions}
+        store (subproblem/store)
+        first-run (binding [subproblem/*store* store]
+                    (recursive/evaluate-many options))
+        second-run (binding [subproblem/*store* store]
+                     (recursive/evaluate-many options))
+        before-disabled (subproblem/stats store)
+        disabled-run (binding [subproblem/*store* nil]
+                       (recursive/evaluate-many options))
+        after-disabled (subproblem/stats store)
+        read-only-store (subproblem/store)
+        read-only-run
+        (binding [subproblem/*store* read-only-store
+                  subproblem/*populate?* false]
+          (recursive/evaluate-many options))]
+    (is (= (:decisions first-run) (:decisions second-run)
+           (:decisions disabled-run) (:decisions read-only-run)))
+    (is (pos? (get-in first-run [:counters :direct-adapter-commands])))
+    (is (zero? (get-in second-run [:counters :direct-adapter-commands])))
+    (is (pos? (get-in second-run [:counters :direct-cache-hits])))
+    (is (pos? (get-in first-run [:counters :commands])))
+    (is (zero? (get-in second-run [:counters :commands])))
+    (is (pos? (get-in second-run [:counters :shared-scan-cache-hits])))
+    (is (= (get-in first-run [:counters :values])
+           (get-in second-run [:counters :values]))
+        "cached scan responses retain the same logical value charge")
+    (is (= before-disabled after-disabled)
+        "cache-disabled execution performs no operator cache work")
+    (is (pos? (get-in read-only-run [:counters :direct-adapter-commands])))
+    (is (zero? (get-in (subproblem/stats read-only-store)
+                       [:tiers :projection :entries])))))
+
+(deftest completed-recursive-points-are-reused-only-in-their-proof-scope-test
+  (let [{:keys [adapter plan] :as fixture} (chain-fixture)
+        store (subproblem/store)
+        base {:adapter adapter :plan plan
+              :candidates (candidates fixture)}
+        first-run
+        (binding [subproblem/*store* store]
+          (recursive/evaluate-cached-many
+           (assoc base :scope-identity :proof-a)))
+        second-run
+        (binding [subproblem/*store* store]
+          (recursive/evaluate-cached-many
+           (assoc base :scope-identity :proof-a)))
+        changed-proof-run
+        (binding [subproblem/*store* store]
+          (recursive/evaluate-cached-many
+           (assoc base :scope-identity :proof-b)))]
+    (is (= (:decisions first-run) (:decisions second-run)
+           (:decisions changed-proof-run)))
+    (is (:point-cached? second-run))
+    (is (= 6 (get-in second-run [:counters :point-cache-hits])))
+    (is (zero? (get-in second-run [:counters :point-cache-misses])))
+    (is (zero? (get-in second-run
+                       [:counters :direct-adapter-commands] 0)))
+    (is (false? (:point-cached? changed-proof-run)))
+    (is (= 6 (get-in changed-proof-run
+                     [:counters :point-cache-misses])))
+    (is (pos? (get-in changed-proof-run
+                      [:counters :direct-cache-hits])))))
+
 (deftest fact-arrival-order-does-not-change-results-or-retained-state-test
   (let [alice (object :user "alice")
         bob (object :user "bob")
@@ -463,6 +531,45 @@
              (engine/count-subjects
               public-adapter
               (assoc (dissoc reverse :first) :count-limit 1)))))))
+
+(deftest managed-operator-cache-lifts-only-across-unrelated-writes-test
+  (let [{:keys [client]} (chain-fixture)
+        alice (public-object :user "alice")
+        f0 (public-object :folder "f0")
+        f2 (public-object :folder "f2")
+        f0-query {:subject alice :permission :allowed :resource f0}
+        f2-query {:subject alice :permission :allowed :resource f2}]
+    (binding [engine/*operator-routing-enabled?* true]
+      (let [cold (eacl/check-permission client f0-query)
+            warm (eacl/check-permission client f0-query)
+            before (datascript/cache-stats client)]
+        (is (true? (:allowed? cold)))
+        (is (false? (:cached? cold)))
+        (is (true? (:cached? warm)))
+        (is (pos? (:managed-generations before)))
+        (is (zero? (:stamp-failures before)))
+
+        (eacl/create-relationship!
+         client (eacl/->Relationship alice :unrelated f2))
+        (let [lifted (eacl/check-permission client f0-query)
+              after-unrelated (datascript/cache-stats client)]
+          (is (true? (:allowed? lifted)))
+          (is (true? (:cached? lifted)))
+          (is (= (inc (:managed-hits before))
+                 (:managed-hits after-unrelated)))
+          (is (= (:misses before) (:misses after-unrelated)))
+          (is (= (:stamp-failures before)
+                 (:stamp-failures after-unrelated))))
+
+        (let [excluded (eacl/check-permission client f2-query)]
+          (is (false? (:allowed? excluded)))
+          (is (false? (:cached? excluded))))
+        (eacl/delete-relationship!
+         client (eacl/->Relationship alice :banned f2))
+        (let [after-relevant (eacl/check-permission client f2-query)]
+          (is (true? (:allowed? after-relevant)))
+          (is (false? (:cached? after-relevant))
+              "a new negative-absence result must not reuse the excluded answer"))))))
 
 (deftest recursive-operator-pages-compose-and-cursors-bind-scope-test
   (let [{:keys [public-adapter f0 f1 eid]} (chain-fixture)

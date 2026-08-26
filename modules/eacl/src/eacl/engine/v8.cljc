@@ -831,26 +831,38 @@
                  relationship-eids')))
       (vec (sort relationship-eids)))))
 
+(declare stable-plan)
+
 (defn permission-relationship-eids
   "Returns the sorted relation-definition eids whose relationship tuples can
   affect one permission lookup. A stamped client memoises the vector for its
   schema generation, so live-result reads do not sort dependencies."
   [db resource-type permission-name]
-  (if-not (derived-cache-active?)
-    (calc-permission-relationship-eids db resource-type permission-name)
-    (let [cache-key (permission-paths-cache-key resource-type permission-name)
-          cache-atom (:relationship-dependencies *schema-cache*)
-          snapshot @cache-atom]
-      (if (contains? snapshot cache-key)
-        (get snapshot cache-key)
-        (let [dependencies
-              (calc-permission-relationship-eids
-               db resource-type permission-name)]
-          (get (swap! cache-atom
-                      #(if (contains? % cache-key)
-                         %
-                         (assoc % cache-key dependencies)))
-               cache-key))))))
+  (try
+    (if-not (derived-cache-active?)
+      (calc-permission-relationship-eids db resource-type permission-name)
+      (let [cache-key
+            (permission-paths-cache-key resource-type permission-name)
+            cache-atom (:relationship-dependencies *schema-cache*)
+            snapshot @cache-atom]
+        (if (contains? snapshot cache-key)
+          (get snapshot cache-key)
+          (let [dependencies
+                (calc-permission-relationship-eids
+                 db resource-type permission-name)]
+            (get (swap! cache-atom
+                        #(if (contains? % cache-key)
+                           %
+                           (assoc % cache-key dependencies)))
+                 cache-key)))))
+    (catch #?(:clj Exception :cljs :default) error
+      (if (= :eacl.schema/operator-plan-required (:type (ex-data error)))
+        (let [root [resource-type permission-name]
+              plan (stable-plan db root)]
+          (if (operator-plan/operator-plan? plan)
+            (get-in plan [:relation-closures root :all])
+            (throw error)))
+        (throw error)))))
 
 (defn- permission-query-dependencies
   [db [resource-type permission-name]]
@@ -880,10 +892,18 @@
   root. Cache adapters use this as an opaque proof scope so unrelated schema
   definitions do not invalidate an otherwise exact authorization answer."
   [db resource-type permission-name]
-  (set
-   (reachable-permission-query-nodes
-    db
-    (permission-query-node resource-type permission-name))))
+  (try
+    (set
+     (reachable-permission-query-nodes
+      db
+      (permission-query-node resource-type permission-name)))
+    (catch #?(:clj Exception :cljs :default) error
+      (if (= :eacl.schema/operator-plan-required (:type (ex-data error)))
+        (let [plan (stable-plan db [resource-type permission-name])]
+          (if (operator-plan/operator-plan? plan)
+            (into #{} (map :permission) (:expressions plan))
+            (throw error)))
+        (throw error)))))
 
 (defn direct-match-datoms-in-relationship-index
   [snapshot subject-type subject-eid relation-eid resource-type resource-eid]
@@ -1973,7 +1993,7 @@
                      (with-public-limit-errors
                        #(with-service-admission
                           (fn []
-                            (operator-recursive/evaluate-many
+                            (operator-recursive/evaluate-cached-many
                              {:adapter db
                               :plan plan
                               :candidates candidates
@@ -2143,7 +2163,7 @@
                                 :limits (recursive-operator-limits))
                          base-options)]
                    ((if recursive?
-                      operator-recursive/check-eids
+                      operator-recursive/check-cached-eids
                       operator-evaluator/check-eids)
                     options)))))
           (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)

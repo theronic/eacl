@@ -11,7 +11,8 @@
             [eacl.execution :as execution]
             [eacl.operator.plan :as operator-plan]
             [eacl.request.counters :as request-counters]
-            [eacl.secure-format :as secure-format]))
+            [eacl.secure-format :as secure-format]
+            [eacl.subproblem-cache :as subproblem]))
 
 (def checkpoint-version 1)
 (def checkpoint-domain "eacl.operator.recursive-checkpoint.v1")
@@ -184,43 +185,57 @@
     (if-let [cached (get @scan-cache descriptor)]
       (do (add-counter! counters :scan-cache-hits) cached)
       (let [chunk-size (:physical-chunk-size limits)
-            values
-            (loop [bound nil result []]
-              (execution/check! execution/*contract*
-                                :operator-recursive/arrow-scan-before
-                                {:commands (:commands @counters)
-                                 :values (:values @counters)})
-              (let [next-commands (inc (:commands @counters))]
-                (limit-counter! limits counters :commands :maximum-commands
-                                next-commands)
-                (let [options (cond-> {:direction :asc}
-                                (some? bound)
-                                (assoc :bound-eid bound
-                                       :inclusive-bound? false))
-                      chunk
-                      (into [] (take chunk-size)
-                            (backend/invoke
-                             adapter :resource->subjects
-                             (:resource-type descriptor)
-                             (:resource-eid descriptor)
-                             (:relation-eid descriptor)
-                             (:intermediate-type descriptor)
-                             options))
-                      next-values (+ (:values @counters) (count chunk))]
-                  (limit-counter! limits counters :values :maximum-values
-                                  next-values)
-                  (vswap! counters assoc :commands next-commands
-                          :values next-values)
-                  (request-counters/add! :commands)
-                  (request-counters/add! :fetched-values (count chunk))
-                  (execution/check! execution/*contract*
-                                    :operator-recursive/arrow-scan-after
-                                    {:commands next-commands
-                                     :values next-values})
-                  (let [result (into result chunk)]
-                    (if (< (count chunk) chunk-size)
-                      result
-                      (recur (peek chunk) result))))))]
+            cache-key [:operator-recursive-arrow-scan 1 descriptor]
+            resolved
+            (subproblem/resolve-layered-bound!
+             :projection cache-key
+             {:valid? vector?
+              :weight-fn #(max 128 (+ 128 (* 16 (count %))))}
+             (:relation-eid descriptor)
+             (fn []
+               (loop [bound nil result []]
+                 (execution/check! execution/*contract*
+                                   :operator-recursive/arrow-scan-before
+                                   {:commands (:commands @counters)
+                                    :values (:values @counters)})
+                 (let [next-commands (inc (:commands @counters))]
+                   (limit-counter! limits counters :commands
+                                   :maximum-commands next-commands)
+                   (let [options (cond-> {:direction :asc}
+                                   (some? bound)
+                                   (assoc :bound-eid bound
+                                          :inclusive-bound? false))
+                         chunk
+                         (into [] (take chunk-size)
+                               (backend/invoke
+                                adapter :resource->subjects
+                                (:resource-type descriptor)
+                                (:resource-eid descriptor)
+                                (:relation-eid descriptor)
+                                (:intermediate-type descriptor)
+                                options))]
+                     (vswap! counters assoc :commands next-commands)
+                     (request-counters/add! :commands)
+                     (request-counters/add! :fetched-values (count chunk))
+                     (execution/check! execution/*contract*
+                                       :operator-recursive/arrow-scan-after
+                                       {:commands next-commands
+                                        :fetched-values (count chunk)})
+                     (let [result (into result chunk)]
+                       (if (< (count chunk) chunk-size)
+                         result
+                         (recur (peek chunk) result))))))))
+            values (:value resolved)
+            next-values (+ (:values @counters) (count values))]
+        (limit-counter! limits counters :values :maximum-values next-values)
+        (vswap! counters assoc :values next-values)
+        (when (:cached? resolved)
+          (add-counter! counters :shared-scan-cache-hits)
+          (subproblem/record-avoided-backend-operation!))
+        (execution/check! execution/*contract*
+                          :operator-recursive/arrow-scan-complete
+                          {:commands (:commands @counters)
+                           :values next-values})
         (swap! scan-cache assoc descriptor values)
         values))))
 
@@ -250,9 +265,9 @@
         {:key q :kind :union
          :dependencies
          [{:key (question target target-root (question-direction q)
-                         (question-subject-type q)
-                         (question-subject-eid q)
-                         (question-resource-eid q))
+                          (question-subject-type q)
+                          (question-subject-eid q)
+                          (question-resource-eid q))
            :sign :positive :slot 0}]
          :base-probes []})
 
@@ -268,7 +283,7 @@
       (let [children (:children predicate)
             anchor (get-in plan [:anchors permission node-id])
             anchor-slot (first (keep-indexed #(when (= anchor %2) %1)
-                                              children))]
+                                             children))]
         (when (nil? anchor-slot)
           (invalid! :missing-anchor
                     "Recursive intersection is missing its sealed anchor."
@@ -668,6 +683,14 @@
                           (get consumers fact [])))]
             (recur state)))))))
 
+(defn- direct-cache-key [probe]
+  [:operator-recursive-direct-membership 1
+   (:direction probe) (:descriptor probe) (:candidate probe)])
+
+(def ^:private direct-cache-options
+  {:valid? boolean?
+   :weight-fn (constantly 128)})
+
 (defn- attach-base-decisions!
   [adapter nodes limits counters]
   (let [entries
@@ -682,9 +705,38 @@
     (if (zero? probe-count)
       nodes
       (let [physical (atom {})
+            cache-hits (atom #{})
+            cache-lookup
+            (fn [probe]
+              (if-let [store subproblem/*store*]
+                (if-let [resolved
+                         (subproblem/lookup!
+                          store :projection (direct-cache-key probe)
+                          direct-cache-options)]
+                  (do
+                    (swap! cache-hits conj (direct-cache-key probe))
+                    (subproblem/record-avoided-backend-operation! store)
+                    (:value resolved))
+                  direct/cache-miss)
+                direct/cache-miss))
             decisions
             (binding [direct/*physical-stats* physical]
-              (direct/dispatch adapter (mapv second entries)))
+              (direct/dispatch adapter (mapv second entries) cache-lookup))
+            _
+            ;; Individual decisions become visible only after the entire
+            ;; demanded physical vector has completed and passed its aligned
+            ;; Boolean contract. Cache-disabled execution binds no store and
+            ;; therefore performs no lookup or publication work.
+            (when-let [store subproblem/*store*]
+              (when subproblem/*populate?*
+                (let [published (atom @cache-hits)]
+                  (doseq [[[_ probe] decision]
+                          (map vector entries decisions)
+                          :let [key (direct-cache-key probe)]
+                          :when (not (contains? @published key))]
+                    (swap! published conj key)
+                    (subproblem/publish!
+                     store :projection key direct-cache-options decision)))))
             true-heads
             (into #{}
                   (keep (fn [[[head _] decision]]
@@ -694,6 +746,8 @@
                       (:adapter-commands @physical 0))
         (add-counter! counters :direct-fetched-values
                       (:adapter-fetched-values @physical 0))
+        (add-counter! counters :direct-cache-hits
+                      (:cache-hits @physical 0))
         (reduce-kv
          (fn [result q spec]
            (assoc result q (assoc spec :base-true?
@@ -879,6 +933,94 @@
   (first
    (:decisions
     (evaluate-many
+     (-> options
+         (dissoc :subject-type :subject-eid :resource-eid :direction)
+         (assoc :candidates
+                [{:direction (or direction :forward)
+                  :subject-type subject-type
+                  :subject-eid subject-eid
+                  :resource-eid resource-eid}]))))))
+
+(def ^:private point-cache-options
+  {:valid? boolean?
+   :weight-fn (constantly 160)})
+
+(defn- point-cache-key
+  [plan permission scope-identity candidate]
+  [:operator-recursive-point checkpoint-version
+   (:fingerprint plan) permission scope-identity candidate])
+
+(defn evaluate-cached-many
+  "Returns aligned recursive point decisions with proof-compatible completed
+  point reuse. Only unresolved distinct points enter the recursive evaluator;
+  no point is published until that whole demanded vector succeeds."
+  [{:keys [plan candidates permission scope-identity checkpoint] :as options}]
+  (when-not (operator-plan/operator-plan? plan)
+    (invalid! :operator-plan-required
+              "Recursive evaluation requires an operator plan."
+              {:plan-domain (:domain plan)}))
+  (when-not (vector? candidates)
+    (invalid! :invalid-candidates
+              "Recursive candidates must be a vector."
+              {:value-type (some-> candidates type str)}))
+  (doseq [candidate candidates] (validate-candidate! candidate))
+  (let [options (assoc options :limits (normalize-limits (:limits options)))]
+    (if (or checkpoint (nil? subproblem/*store*))
+      (evaluate-many options)
+      (let [permission (or permission (:root plan))
+            store subproblem/*store*
+            looked-up
+            (mapv
+             (fn [candidate]
+               (let [key (point-cache-key
+                          plan permission scope-identity candidate)]
+                 (if-let [resolved
+                          (subproblem/lookup!
+                           store :denotation key point-cache-options)]
+                   (do
+                     (subproblem/record-avoided-backend-operation! store)
+                     {:candidate candidate :key key
+                      :decision (:value resolved) :cached? true})
+                   {:candidate candidate :key key :cached? false})))
+             candidates)
+            misses
+            (->> looked-up
+                 (remove :cached?)
+                 (map :candidate)
+                 distinct
+                 vec)
+            evaluated
+            (if (seq misses)
+              (evaluate-many (assoc options :candidates misses))
+              {:decisions [] :counters {}})
+            miss-decisions (zipmap misses (:decisions evaluated))
+            decisions
+            (mapv (fn [{:keys [candidate decision cached?]}]
+                    (if cached? decision (get miss-decisions candidate)))
+                  looked-up)]
+        (when subproblem/*populate?*
+          (let [published (atom #{})]
+            (doseq [{:keys [candidate key cached?]} looked-up
+                    :when (and (not cached?)
+                               (not (contains? @published key)))]
+              (swap! published conj key)
+              (subproblem/publish!
+               store :denotation key point-cache-options
+               (get miss-decisions candidate)))))
+        {:decisions decisions
+         :counters
+         (assoc (:counters evaluated)
+                :point-cache-hits (count (filter :cached? looked-up))
+                :point-cache-misses (count misses))
+         :replayed? false
+         :point-cached? (empty? misses)}))))
+
+(defn check-cached-eids
+  "Returns one exact recursive membership decision with completed point reuse."
+  [{:keys [subject-type subject-eid resource-eid direction] :as options}]
+  (first
+   (:decisions
+    (evaluate-cached-many
      (-> options
          (dissoc :subject-type :subject-eid :resource-eid :direction)
          (assoc :candidates
