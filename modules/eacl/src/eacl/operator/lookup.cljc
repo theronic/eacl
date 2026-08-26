@@ -153,7 +153,8 @@
 
 (defn- evaluate-emissions
   [{:keys [adapter plan traversal subject-type anchor-eid
-           cache-lookup vector-limits permission specialization-node]}
+           cache-lookup vector-limits permission specialization-node
+           accept-result?]}
    cover-plan emissions]
   (let [permission (or permission (:root plan))
         node-id (get (expression-roots plan) permission)
@@ -170,7 +171,13 @@
                   :limits vector-limits}
            cache-lookup (assoc :cache-lookup cache-lookup)))]
     (mapv (fn [emission witness decision]
-            (assoc emission :true-nodes witness :accepted? decision))
+            (assoc emission
+                   :true-nodes witness
+                   :accepted?
+                   (boolean
+                    (and decision
+                         (or (nil? accept-result?)
+                             (accept-result? (:value emission)))))))
           emissions witnesses decisions)))
 
 (defn- add-counters [total delta]
@@ -202,8 +209,14 @@
   (when-not (and (keyword? subject-type) (some? anchor-eid))
     (invalid! :invalid-anchor "Operator lookup anchor is malformed."
               {:subject-type subject-type :anchor-eid anchor-eid}))
+  (when-not (or (nil? (:accept-result? options))
+                (fn? (:accept-result? options)))
+    (invalid! :invalid-result-filter
+              "Operator result filter must be callable."
+              {:value-type (some-> (:accept-result? options) type str)}))
   (let [permission (or permission (:root plan))
-        cover-plan (cover-plan/seal-plan adapter plan permission)
+        cover-plan (or (:cover-plan options)
+                       (cover-plan/seal-plan adapter plan permission))
         candidate-accept? (local-node-acceptor
                            (assoc options :permission permission)
                            cover-plan)
@@ -322,7 +335,8 @@
     (invalid! :invalid-count-limit "Count limit must be a natural integer."
               {:count-limit count-limit}))
   (let [permission (or permission (:root plan))
-        cover-plan (cover-plan/seal-plan adapter plan permission)
+        cover-plan (or (:cover-plan options)
+                       (cover-plan/seal-plan adapter plan permission))
         candidate-accept? (local-node-acceptor
                            (assoc options :permission permission)
                            cover-plan)

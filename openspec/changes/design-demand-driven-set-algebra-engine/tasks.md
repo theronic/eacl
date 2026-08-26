@@ -77,9 +77,9 @@
 - [x] 7.4 Implement the demand-sized initial batch and deterministic doubling schedule up to 256 and the remaining candidate window; charge all physical work while advancing only logical progress.
 - [x] 7.5 Implement recursively exact least-path generators and local cover filters for forward and reverse lookup, filters, bounded counts, exact counts, candidate-window continuation, deadlines, cancellation, and dimensional limits.
 - [x] 7.6 Implement seekable direct-leaf intersection and monotone exclusion anti-join behind certified eligibility, inclusive reseek, and exact sequence/boundary differential tests.
-- [ ] 7.7 Extend the authenticated semantic scope of the current v8 cursor envelope with expression, signed certificate, cover, anchors, witness, physical-policy, order, snapshot/proof, direction, and logical coordinate identity; do not bump the envelope version or add old-version migration/rejection branches.
+- [x] 7.7 Extend the authenticated semantic scope of the current v8 cursor envelope with expression, signed certificate, cover, anchors, witness, physical-policy, order, snapshot/proof, direction, and logical coordinate identity; do not bump the envelope version or add old-version migration/rejection branches.
 - [x] 7.8 Prove by executable differential that every resumed page sequence equals uninterrupted filtered cover order and that physical overread cannot skip the next page's candidates.
-- [ ] 7.9 Route every acyclic public operation through operator evaluation only behind a disabled test feature gate; retain union-only routing unchanged.
+- [x] 7.9 Route every acyclic public operation through operator evaluation only behind a disabled test feature gate; retain union-only routing unchanged.
 
 ## 8. Implement recursive conjunction and stratified exclusion
 

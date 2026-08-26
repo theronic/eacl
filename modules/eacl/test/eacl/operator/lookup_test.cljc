@@ -7,7 +7,10 @@
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as datascript-impl]
             [eacl.datascript.schema :as datascript-schema]
+            [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
+            [eacl.operator.cover-plan :as cover-plan]
+            [eacl.operator.cursor-scope :as cursor-scope]
             [eacl.operator.lookup :as lookup]
             [eacl.operator.plan :as plan]
             [eacl.operator.seekable :as seekable]))
@@ -101,8 +104,19 @@
         (ds/db conn) {:operation :touch :relationship relationship})))
     (let [db (ds/db conn)
           eid #(ds/entid db (:id %))
-          adapter (datascript-backend/basis-adapter db {})]
+          adapter (datascript-backend/basis-adapter db {})
+          public-adapter
+          (datascript-backend/basis-adapter
+           db
+           {:object-id->entid
+            (fn [snapshot object-id]
+              (ds/entid snapshot [:eacl/id object-id]))
+            :entid->object-id
+            (fn [snapshot internal-id]
+              (:eacl/id (ds/entity snapshot internal-id)))})]
       {:adapter adapter
+       :public-adapter public-adapter
+       :client (datascript/make-client conn {})
        :plan (plan/seal-plan adapter [:document :view])
        :users users
        :documents documents
@@ -406,3 +420,184 @@
           :counters {:commands 0 :fetched-values 0
                      :stream-opens 0 :emissions 0}}
          (seekable/page {:width 0}))))
+
+(defn- public-id [prefix index]
+  (eacl/spice-object prefix (str (name (case prefix
+                                         :user :u
+                                         :document :d))
+                                 index)))
+
+(defn- public-page-ids [page]
+  (mapv :id (:data page)))
+
+(deftest public-acyclic-operator-routing-is-disabled-by-default-test
+  (let [{:keys [public-adapter]} (fixture)
+        query {:subject (public-id :user 0)
+               :permission :view
+               :resource/type :document
+               :first 1}]
+    (is (= :eacl.operator/routing-disabled
+           (:type (error-data #(engine/lookup-resources
+                                public-adapter query)))))
+    (is (= :eacl.operator/routing-disabled
+           (:type (error-data #(engine/can?
+                                public-adapter
+                                (public-id :user 0)
+                                :view
+                                (public-id :document 2))))))))
+
+(deftest public-acyclic-operator-operation-matrix-is-exact-test
+  (let [{:keys [public-adapter users documents eid]} (fixture)
+        subject (public-id :user 0)
+        forward-query {:subject subject :permission :view
+                       :resource/type :document :first 64}
+        reverse-query {:resource (public-id :document 2)
+                       :permission :view :subject/type :user :first 64}
+        expected-forward (mapv #(eid (nth documents %)) (range 2 16 4))
+        expected-reverse (mapv eid (subvec users 0 3))]
+    (binding [engine/*operator-routing-enabled?* true]
+      (is (true? (engine/can? public-adapter subject :view
+                              (public-id :document 2))))
+      (is (false? (engine/can? public-adapter subject :view
+                               (public-id :document 0))))
+      (is (= expected-forward
+             (public-page-ids
+              (engine/lookup-resources public-adapter forward-query))))
+      (is (= expected-reverse
+             (public-page-ids
+              (engine/lookup-subjects public-adapter reverse-query))))
+      (is (= {:count 4 :limit -1}
+             (engine/count-resources
+              public-adapter (dissoc forward-query :first))))
+      (is (= {:count 2 :limit 2 :truncated? true}
+             (engine/count-resources
+              public-adapter
+              (assoc (dissoc forward-query :first) :count-limit 2))))
+      (is (= {:count 3 :limit -1}
+             (engine/count-subjects
+              public-adapter (dissoc reverse-query :first))))
+      (is (= {:count 2 :limit 2 :truncated? true}
+             (engine/count-subjects
+              public-adapter
+              (assoc (dissoc reverse-query :first) :count-limit 2)))))))
+
+(deftest public-operator-cursors-compose-and-bind-complete-scope-test
+  (let [{:keys [public-adapter documents eid]} (fixture)
+        base {:subject (public-id :user 0)
+              :permission :view :resource/type :document}
+        expected (mapv #(eid (nth documents %)) (range 2 16 4))]
+    (binding [engine/*operator-routing-enabled?* true]
+      (let [first-page (engine/lookup-resources
+                        public-adapter (assoc base :first 1))
+            after (get-in first-page [:page-info :end-cursor])
+            second-page (engine/lookup-resources
+                         public-adapter (assoc base :first 3 :after after))
+            reverse-page (engine/lookup-resources
+                          public-adapter (assoc base :last 1))
+            before (get-in reverse-page [:page-info :start-cursor])
+            reverse-prefix (engine/lookup-resources
+                            public-adapter
+                            (assoc base :last 3 :before before))]
+        (is (= expected
+               (into (public-page-ids first-page)
+                     (public-page-ids second-page))))
+        (is (= expected
+               (into (public-page-ids reverse-prefix)
+                     (public-page-ids reverse-page))))
+        (doseq [[field replacement]
+                [[:fingerprint "wrong-plan"]
+                 [:cover-fingerprint "wrong-cover"]
+                 [:semantic-scope "wrong-scope"]
+                 [:version 999]
+                 [:order-abi 999]
+                 [:traversal :reverse]
+                 [:coords []]]]
+          (let [tampered (assoc after field replacement)
+                error (error-data
+                       #(engine/lookup-resources
+                         public-adapter
+                         (assoc base :first 1 :after tampered)))]
+            (is (contains? #{:eacl.pagination/invalid-cursor
+                             :eacl.pagination/wrong-cursor-kind}
+                           (:eacl/error error))
+                (str field " " error))))))))
+
+(deftest operator-cursor-scope-covers-every-semantic-dimension-test
+  (let [{:keys [adapter plan]} (fixture)
+        cover (cover-plan/seal-plan adapter plan)
+        proof {:generation :proof-a}
+        digest #(cursor-scope/digest %1 %2 %3 %4)
+        baseline (digest plan cover :forward proof)
+        changed-plans
+        [(assoc-in plan [:expressions 0 :expression-digest] "changed")
+         (assoc plan :dependency-certificate {:changed true})
+         (assoc plan :strata {:changed true})
+         (assoc plan :anchors {:changed true})
+         (assoc plan :witness-programs {:changed true})
+         (assoc-in plan [:versions :witness] :changed)
+         (assoc-in plan [:versions :predicate] :changed)
+         (assoc-in plan [:versions :physical-policy] :changed)
+         (assoc plan :capability-identity {:changed true})
+         (assoc plan :limits {:changed true})
+         (assoc plan :order-contract {:changed true})
+         (assoc plan :fingerprint "changed")]]
+    (doseq [changed changed-plans]
+      (is (not= baseline (digest changed cover :forward proof))))
+    (is (not= baseline
+              (digest plan (assoc cover :fingerprint "changed")
+                      :forward proof)))
+    (is (not= baseline (digest plan cover :reverse proof)))
+    (is (not= baseline
+              (digest plan cover :forward {:generation :proof-b})))))
+
+(deftest authenticated-public-operator-cursor-keeps-current-envelope-test
+  (let [{:keys [client]} (fixture)
+        base {:subject (public-id :user 0)
+              :permission :view :resource/type :document :first 1}]
+    (binding [engine/*operator-routing-enabled?* true]
+      (let [first-page (eacl/lookup-resources client base)
+            token (get-in first-page [:page-info :end-cursor])
+            envelope (datascript/token->cursor token)
+            second-page (eacl/lookup-resources client (assoc base :after token))]
+        (is (= ["d2"] (public-page-ids first-page)))
+        (is (= ["d6"] (public-page-ids second-page)))
+        (is (= 13 (:v envelope))
+            "the current public cursor envelope version is unchanged")
+        (is (= :operator-least-path-edge
+               (get-in envelope [:edge :kind])))
+        (is (= 2 (get-in envelope [:edge :version])))
+        (is (string? (get-in envelope [:edge :fingerprint])))
+        (is (string? (get-in envelope [:edge :cover-fingerprint])))
+        (is (string? (get-in envelope [:edge :semantic-scope])))
+        (is (vector? (get-in envelope [:edge :coords])))))))
+
+(deftest public-filtered-operator-page-retains-empty-bounded-progress-test
+  (let [{:keys [public-adapter documents eid]} (fixture)
+        base {:subject (public-id :user 0)
+              :permission :view :resource/type :document :first 1}
+        target (eid (nth documents 6))
+        candidate-filter
+        {:candidate-window 1
+         :accept? #(= target (:id %))}]
+    (binding [engine/*operator-routing-enabled?* true]
+      (loop [query base steps 0 saw-empty-progress? false]
+        (is (< steps 32))
+        (let [page (engine/lookup-resources
+                    public-adapter query
+                    {:candidate-filter candidate-filter})
+              values (public-page-ids page)
+              cursor (get-in page [:page-info :end-cursor])
+              empty-progress?
+              (and (empty? values)
+                   (get-in page [:page-info :bounded?])
+                   (some? cursor))]
+          (if (seq values)
+            (do
+              (is (= [target] values))
+              (is saw-empty-progress?))
+            (do
+              (is (get-in page [:page-info :has-next-page?]))
+              (is (some? cursor))
+              (recur (assoc base :after cursor)
+                     (inc steps)
+                     (or saw-empty-progress? empty-progress?)))))))))

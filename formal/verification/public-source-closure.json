@@ -249,7 +249,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/engine/v8.cljc",
-      "sha256": "8fbc649b26bfd99a32bd690b86719289b7ee9796a3eeff47c3ee4623f2e5b5e0"
+      "sha256": "903df1f147cd9921a184fc45d399a50f276d435204fa22a9b5d64574bb2e67a6"
     },
     {
       "path": "modules/eacl/src/eacl/exact_integer.cljc",
@@ -284,12 +284,16 @@
       "sha256": "64eb4cd5fb68169ea8c8aaf00a8942727b715290f31131989e29f4317d20f056"
     },
     {
+      "path": "modules/eacl/src/eacl/operator/cursor_scope.cljc",
+      "sha256": "2d0b042e4db963748073723d18d405165b5a9bef5c0e8ca4931e8b59e6c540c9"
+    },
+    {
       "path": "modules/eacl/src/eacl/operator/evaluator.cljc",
       "sha256": "38bab2caa5080144843486caf17a27b780a0c8ecde1e73601642accc627998e2"
     },
     {
       "path": "modules/eacl/src/eacl/operator/lookup.cljc",
-      "sha256": "734b47ada1b2a3d2fc75105ce399046ed91f814c6ade84abd201bcb602494d3e"
+      "sha256": "ebb24f4f59d1ff7c401fac619e9311ee318878e7bd9cbdf5fe263f958320075d"
     },
     {
       "path": "modules/eacl/src/eacl/operator/plan.cljc",
@@ -470,9 +474,9 @@
       "eacl.datalevin.core/db"
     ],
     "rootCount": 70,
-    "unionInternalDefinitionCount": 1798,
-    "unionInternalDefinitionIdsSha256": "0afa39849fdd205d6ae57c89a38ec3adf5fa98eb8e0de205a2cdd5a54b7b530c",
-    "unionDefinitionLocationsSha256": "f8047edba7cc7748eadff7c70f0dc3fbdeb650a6ff8da526ad0ee0faeafaca6b",
+    "unionInternalDefinitionCount": 1955,
+    "unionInternalDefinitionIdsSha256": "92a651e1fa26a4640e7b75b98971d921001d50a9a155b257257f464df052efaf",
+    "unionDefinitionLocationsSha256": "420e6b1b6de9a924ebd091a2d4426feef7acaf020dc20e7cb30b7aae76e49551",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 26,
@@ -582,13 +586,17 @@
         "count": 9,
         "idsSha256": "9a8e3e091839600919c9138e25fd0e79dbaf27ab6e7d47f58ef076b225227c50"
       },
+      "modules/eacl/src/eacl/backend/direct_membership.cljc": {
+        "count": 16,
+        "idsSha256": "f0680396d6db421ebff7c6c9a187439285b0a8f569cfdba794f8f8d53c2a36df"
+      },
       "modules/eacl/src/eacl/backend/source.cljc": {
         "count": 43,
         "idsSha256": "8e2754474bb12d36a8b389a37d957e6ff30afeb7990a2ddee59763cc2749a0df"
       },
       "modules/eacl/src/eacl/backend/v8.cljc": {
-        "count": 47,
-        "idsSha256": "5efadfba43abbce5eb433d76f4ac0a926bb4c69a61f7fcb70452c4f160c0ddd9"
+        "count": 51,
+        "idsSha256": "3483e4c4417d8f2a2226fe1d9ca61d42cde69ec8a470f7dc8feff6b07521c320"
       },
       "modules/eacl/src/eacl/backend/writer.cljc": {
         "count": 13,
@@ -659,8 +667,8 @@
         "idsSha256": "a454e8e67d5e5a1269e6fceb131697e265e25cec7bb033843ac36b04bd268668"
       },
       "modules/eacl/src/eacl/engine/v8.cljc": {
-        "count": 95,
-        "idsSha256": "d296badc3ebedb9287f975d01b1e63535d09685dcceeedef951a8b0c6f2a6563"
+        "count": 102,
+        "idsSha256": "a6f0de098b1d5efa349888bc1bb897503808d38c516804ab2a2a9059e708abdb"
       },
       "modules/eacl/src/eacl/exact_integer.cljc": {
         "count": 2,
@@ -677,6 +685,42 @@
       "modules/eacl/src/eacl/formal/production_kernel.clj": {
         "count": 86,
         "idsSha256": "e3dab20dbcdbe98a3c7279004b02be042768f8c4ba589f3b5f84f1f68fa22c6f"
+      },
+      "modules/eacl/src/eacl/operator/batch_schedule.cljc": {
+        "count": 5,
+        "idsSha256": "6e5a306e55829b469ce36a6d1f1ef39ddf6d4f2013713bb1bee8c2b243a53104"
+      },
+      "modules/eacl/src/eacl/operator/bitmask.cljc": {
+        "count": 9,
+        "idsSha256": "521e12a55ce076ca20476ed0d780db27ffc6613abd1bff1fedc5d7e758273b9f"
+      },
+      "modules/eacl/src/eacl/operator/cover_plan.cljc": {
+        "count": 14,
+        "idsSha256": "28a0feb6f52f9c34d55d7a5cd8434d56a959f45eb6af40cfd2f1150d43016459"
+      },
+      "modules/eacl/src/eacl/operator/cursor_scope.cljc": {
+        "count": 4,
+        "idsSha256": "e20598b0f9bfdafb87c2941dce1a2f01096784323db5ef0c1f108d7875c7d6f9"
+      },
+      "modules/eacl/src/eacl/operator/evaluator.cljc": {
+        "count": 16,
+        "idsSha256": "5b9e873da985035cfeee60e32babd956a52664136c1b72ab21df139b8391292c"
+      },
+      "modules/eacl/src/eacl/operator/lookup.cljc": {
+        "count": 18,
+        "idsSha256": "ed140db08eb892bd7a929b5083a5e9212235318872ab2108ae4783a542300df8"
+      },
+      "modules/eacl/src/eacl/operator/plan.cljc": {
+        "count": 31,
+        "idsSha256": "60abed69b2b31840de4dad4f2da78b417229780cd1e091b11fa0e93e0f98a483"
+      },
+      "modules/eacl/src/eacl/operator/seekable.cljc": {
+        "count": 17,
+        "idsSha256": "fafde832c195bc54eab7ab7819fe015addf234de1bb5ec2731049c011c0b5804"
+      },
+      "modules/eacl/src/eacl/operator/vector_evaluator.cljc": {
+        "count": 16,
+        "idsSha256": "4a1298b9a4ac85952b8fa6405d11d15c773294cb7d8590b35f5165892aa7142e"
       },
       "modules/eacl/src/eacl/permission_tree.cljc": {
         "count": 19,
@@ -778,12 +822,13 @@
   },
   "roots": {
     "eacl.engine.v8/can?": {
-      "internalDefinitionCount": 146,
-      "internalDefinitionIdsSha256": "6737e9b93f1070ce97a7fa531d3f95166fdd7d1753a4580a30cbf177761c5277",
-      "externalCallCount": 9,
+      "internalDefinitionCount": 281,
+      "internalDefinitionIdsSha256": "9ceeeb3bdfd1a8a5caaf5702852f74af437351f0617eb8720723c6ce31ac8e6a",
+      "externalCallCount": 10,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/starts-with?",
@@ -794,12 +839,13 @@
       ]
     },
     "eacl.engine.v8/lookup-resources": {
-      "internalDefinitionCount": 385,
-      "internalDefinitionIdsSha256": "0b757615b32df4885408d3e15e1e7f3997b8ec7ce2065c0544857f34c3d2b819",
-      "externalCallCount": 9,
+      "internalDefinitionCount": 640,
+      "internalDefinitionIdsSha256": "9ab2118c6a1350d2f55689f63a545de444dcef32c8f7854baa519bfb3f2279f7",
+      "externalCallCount": 10,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/starts-with?",
@@ -810,12 +856,13 @@
       ]
     },
     "eacl.engine.v8/lookup-subjects": {
-      "internalDefinitionCount": 385,
-      "internalDefinitionIdsSha256": "15925a314af47d757e804595e292587c48eb958b16f5122acd0d8f92efd72d2c",
-      "externalCallCount": 9,
+      "internalDefinitionCount": 640,
+      "internalDefinitionIdsSha256": "243be8943d74211950bf71dae7436dbdd913b3d1d8ad65373e43cf27afec083e",
+      "externalCallCount": 10,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/starts-with?",
@@ -826,12 +873,13 @@
       ]
     },
     "eacl.engine.v8/count-resources": {
-      "internalDefinitionCount": 170,
-      "internalDefinitionIdsSha256": "7a4d7b8c27ad6021c232d1e725372b9fff7b121ee675aec25caefcdd43206e08",
-      "externalCallCount": 9,
+      "internalDefinitionCount": 459,
+      "internalDefinitionIdsSha256": "8bb29f05925f63e05c39cd95de23ce9afc1554a279a553532dcbf92f8f48f672",
+      "externalCallCount": 10,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/starts-with?",
@@ -842,12 +890,13 @@
       ]
     },
     "eacl.engine.v8/count-subjects": {
-      "internalDefinitionCount": 170,
-      "internalDefinitionIdsSha256": "a70ef7668645ab4fb7af0d80363fbb56a4086f5d71e4f368f07af5427577d18b",
-      "externalCallCount": 9,
+      "internalDefinitionCount": 459,
+      "internalDefinitionIdsSha256": "aaf693b854f212fb9db404660dce375e58fb1f9bee9fcec7d6fadc858f4a64a1",
+      "externalCallCount": 10,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/starts-with?",
@@ -1300,12 +1349,13 @@
       ]
     },
     "eacl.client.orchestration/Snapshot": {
-      "internalDefinitionCount": 889,
-      "internalDefinitionIdsSha256": "7998824082c1c5c659ccc6095f691be0b846cf5b35bea8e834f203749538fdec",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 1128,
+      "internalDefinitionIdsSha256": "a0ba492dc41d8cd635a7e1459ed470f288769f745cfae038d3a6fb5c99e37ae2",
+      "externalCallCount": 14,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/split",
@@ -1415,12 +1465,13 @@
       ]
     },
     "eacl.datomic.core/db": {
-      "internalDefinitionCount": 892,
-      "internalDefinitionIdsSha256": "0c4598a67747b80e342748506f32a1bd04645d953c0dd610beb618cac5545fba",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 1131,
+      "internalDefinitionIdsSha256": "da0bf38252f8690c7df98e60d8c6fa5f1ddba2322d577eb1e5c4dc5b35f0b788",
+      "externalCallCount": 14,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/split",
@@ -1441,12 +1492,13 @@
       "externalCalls": []
     },
     "eacl.datomic.core/basis-instant": {
-      "internalDefinitionCount": 903,
-      "internalDefinitionIdsSha256": "82d4a26945baf7aa7cd39b7f45ac5ebb7eba5870de1df0ed13b5bb6028d4b665",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 1142,
+      "internalDefinitionIdsSha256": "3cf285583d3197718c9fb32465517ef3ec79217af3db399f9de1cf7287e9fd3d",
+      "externalCallCount": 16,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/split",
@@ -1516,12 +1568,13 @@
       ]
     },
     "eacl.datahike.core/db": {
-      "internalDefinitionCount": 892,
-      "internalDefinitionIdsSha256": "9e2d201de30814eea38922034d36a0f528a16b28d5aff5f7ee4729f1048a5d58",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 1131,
+      "internalDefinitionIdsSha256": "03aab06d9adab317940d37fd6e953c0035aceb8e87d68c3e1b6c342a2f16ed96",
+      "externalCallCount": 14,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/split",
@@ -1589,12 +1642,13 @@
       ]
     },
     "eacl.datascript.core/db": {
-      "internalDefinitionCount": 892,
-      "internalDefinitionIdsSha256": "854f416ac4f8b553faa828ce9ef01caac8f593bdd1cb03fb2478c4189ed55b67",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 1131,
+      "internalDefinitionIdsSha256": "b03fc601e3b48bc239e847aba37014a7db631d9585981830b25ecb47213c9dc4",
+      "externalCallCount": 14,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/split",
@@ -1668,12 +1722,13 @@
       ]
     },
     "eacl.datalevin.core/db": {
-      "internalDefinitionCount": 892,
-      "internalDefinitionIdsSha256": "8abed8317faf55b5cd503c7e06cba56c128acd70648d936586b3fd7976789c53",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 1131,
+      "internalDefinitionIdsSha256": "4e3ebd93e6c9171f1a947510d301405c55591829b7b224ab06860f24a244dcae",
+      "externalCallCount": 14,
       "externalCalls": [
         "cljs.reader/read-string",
         "clojure.edn/read-string",
+        "clojure.set/intersection",
         "clojure.string/join",
         "clojure.string/replace",
         "clojure.string/split",
