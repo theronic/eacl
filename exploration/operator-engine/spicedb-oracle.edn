@@ -1,10 +1,10 @@
 {:format-version 1
- :captured-at "2026-08-25"
+ :captured-at "2026-08-26"
  :oracle
  {:repository "/Users/petrus/code/eacl/eacl-spicedb-operator-engine"
   :branch "agent/operator-engine-oracle"
   :base-commit "370723a9f3af5ea9132935a3bf1ab5f533eabdc6"
-  :candidate-commit "17d8e9830af2a36b0d98870c4be2b567c77e82b7"
+  :candidate-commit "e0f8994a987e506405a086ee4c076c5b2acbac55"
   :original-worktree-preserved
   "/Users/petrus/code/eacl/eacl-spicedb"}
  :spicedb
@@ -23,9 +23,22 @@
  [:union-before-intersection-before-exclusion
   :nested-intersection-and-exclusion
   :positive-recursive-conjunction
+  :deterministic-randomized-shared-subset
   :negative-recursion]
  :result
- {:tests 1 :assertions 21 :failures 0 :errors 0
+ {:tests 2 :assertions 678 :failures 0 :errors 0
+  :randomized
+  {:seeds [104729 130363 155921 196613
+           262147 327673 393241 458789]
+   :permissions [:access :nested]
+   :point-decisions 336
+   :lookup-resource-sets 48
+   :lookup-subject-sets 112
+   :count-directions [:resources :subjects]
+   :comparison :independent-oracle-eacl-spicedb
+   :eacl-api :public
+   :spicedb-api :public-grpc
+   :return-order :ignored}
   :negative-recursion
   {:schema-write :accepted
    :check-grpc-code :failed-precondition
@@ -33,10 +46,10 @@
    :eacl-expected-schema-error :eacl/unstratified-exclusion}}
  :source-sha256
  {:fixture
-  "519844995906d68f1a5f53cf700f8a5838b545884a13b24b835df3cbc84d83bf"
+  "a7d35e5bc13f959e4df21280f1ece1bf07bfed53ac53467e317321a61d255541"
   :test
-  "de202ee80da03379c7606995250fa784b6f6afb8e30070a6aa8ecbfdbb4a0566"
+  "9560e658ba1b25256e17ed5b1e95c21220253ac19f278714ecb99b1a493d06d9"
   :deps
-  "9f7ca57e49bba81b06814ecd41f50800808d81c6f45eb3e855f9768acb540ceb"
+  "051301e302c162b33a1c4dbe8f1008b4c8b211c3672da17ff5db7d17240a7f1c"
   :runner
   "76cb8a11395674d0e3581429e6e4972d801b7f569b86c8f657f76c78fd4ea3cd"}}
