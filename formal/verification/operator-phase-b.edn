@@ -1,0 +1,186 @@
+{:schema-version 1
+ :change :design-demand-driven-set-algebra-engine
+ :phase :concrete-production-refinement
+ :status :passed
+ :captured-at "2026-08-26"
+ :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+ :branch "agent/design-operator-engine-performance"
+ :authority
+ {:abstract
+  ["formal/dafny/PermissionSetAlgebra.dfy"
+   "formal/dafny/SignedDependencyStratification.dfy"
+   "formal/dafny/VectorPredicate.dfy"
+   "formal/dafny/AdaptiveBatching.dfy"
+   "formal/dafny/OperatorLeastPath.dfy"
+   "formal/dafny/SeekableSetKernels.dfy"
+   "formal/dafny/AnchorGatedConjunction.dfy"
+   "formal/dafny/StratifiedExclusion.dfy"]
+  :generated-command-state
+  "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+  :proof-refinement
+  "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+  :generated-vectors "formal/cross-runtime/operator-vectors.edn"}
+ :proof-runs
+ [{:scope :recursive-generated-policy-refinement
+   :command
+   "dafny verify --verification-time-limit 30 --resource-limit 40000000 formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+   :verified 15 :errors 0 :status :passed}
+  {:scope :operator-proof-kernel
+   :command
+   "dafny verify --verification-time-limit 30 --resource-limit 40000000 formal/dafny/OperatorProofKernel.dfy"
+   :verified 1 :errors 0 :status :passed}]
+ :executable-runs
+ [{:scope :parser-codec-signed-graph-plan-evaluation-recursion
+   :runtime :clj
+   :tests 92 :assertions 504 :failures 0 :errors 0 :status :passed
+   :namespaces
+   [eacl.schema.expression-test
+    eacl.schema.expression-limits-test
+    eacl.schema.expression-resolver-test
+    eacl.schema.expression-graph-test
+    eacl.schema.expression-fuzz-test
+    eacl.schema.expression-persistence-test
+    eacl.spicedb.parser-portability-test
+    eacl.operator.plan-test
+    eacl.operator.evaluator-test
+    eacl.operator.bitmask-test
+    eacl.operator.vector-evaluator-test
+    eacl.operator.batch-schedule-test
+    eacl.operator.lookup-test
+    eacl.operator.recursive-test]}
+  {:scope :portable-production-and-operator-mutation-parity
+   :runtime :cljs
+   :tests 422 :assertions 9228 :failures 0 :errors 0 :status :passed
+   :runner eacl.datascript.cljs-test-runner}
+  {:scope :generated-recursive-command-boundary
+   :runtime :clj-java
+   :tests 3 :assertions 20 :failures 0 :errors 0 :status :passed
+   :namespace eacl.formal.operator-recursive-decision-test}
+  {:scope :generated-operator-browser-boundary
+   :runtime :cljs-javascript
+   :tests 50 :assertions 11993 :failures 0 :errors 0 :status :passed
+   :runner eacl.formal.cljs-test-runner}
+  {:scope :phase-a-counterexample-replay
+   :runtime :clj
+   :tests 71 :assertions 18766 :failures 0 :errors 0 :status :passed
+   :command "EACL_NREPL_PORT=<formal-port> bin/formal counterexample-replay"}
+  {:scope :datomic-datascript-datahike-adapter-and-operator-certification
+   :runtime :clj
+   :tests 13 :assertions 118 :failures 0 :errors 0 :status :passed
+   :namespaces
+   [eacl.datomic.adapter-certification-test
+    eacl.datascript.adapter-certification-test
+    eacl.datahike.adapter-certification-test
+    eacl.operator-engine.cross-backend-operator-test]}
+  {:scope :datalevin-adapter-and-operator-certification
+   :runtime :clj
+   :tests 4 :assertions 20 :failures 0 :errors 0 :status :passed
+   :namespaces
+   [eacl.datalevin.adapter-certification-test
+    eacl.datalevin.operator-conformance-test]}
+  {:scope :production-operator-mutations
+   :runtime :clj
+   :tests 5 :assertions 175 :failures 0 :errors 0 :survivors 0
+   :status :passed}]
+ :bindings
+ {:parser-codec-signed-graph
+  {:abstract-input :finite-canonical-typed-expression-table
+   :production
+   ["modules/eacl/src/eacl/spicedb/parser.cljc"
+    "modules/eacl/src/eacl/schema/expression.cljc"
+    "modules/eacl/src/eacl/schema/expression_resolver.cljc"
+    "modules/eacl/src/eacl/schema/expression_graph.cljc"
+    "modules/eacl/src/eacl/schema/expression_persistence.cljc"]
+   :controls
+   [:operator-wrong-precedence
+    :operator-swapped-exclusion
+    :operator-unsigned-dependency]}
+  :plan
+  {:abstract-input :cover-witness-predicate-and-signed-certificate
+   :production
+   ["modules/eacl/src/eacl/operator/plan.cljc"
+    "modules/eacl/src/eacl/operator/cover_plan.cljc"
+    "modules/eacl/src/eacl/operator/cursor_scope.cljc"]
+   :controls [:operator-cache-selected-generator]}
+  :acyclic-evaluation
+  {:abstract-input :complete-scalar-vector-and-bounded-progress-partitions
+   :production
+   ["modules/eacl/src/eacl/operator/evaluator.cljc"
+    "modules/eacl/src/eacl/operator/vector_evaluator.cljc"
+    "modules/eacl/src/eacl/operator/batch_schedule.cljc"
+    "modules/eacl/src/eacl/operator/lookup.cljc"
+    "modules/eacl/src/eacl/operator/seekable.cljc"
+    "modules/eacl/src/eacl/backend/direct_membership.cljc"]
+   :controls
+   [:operator-vector-misalignment :operator-overread-cursor-advance]}
+  :recursive-evaluation
+  {:abstract-input :typed-anchor-gated-state-and-completed-negative-question
+   :production ["modules/eacl/src/eacl/operator/recursive.cljc"]
+   :controls
+   [:operator-missing-join-slot
+    :operator-duplicate-satisfaction-count
+    :operator-partial-negative
+    :operator-any-child-allocation]}
+  :backend-premises
+  {:production
+   ["modules/eacl-datomic/src/eacl/datomic/backend.clj"
+    "modules/eacl-datascript/src/eacl/datascript/backend.cljc"
+    "modules/eacl-datahike/src/eacl/datahike/backend.clj"
+    "modules/eacl-datahike/src/eacl/datahike/direct_membership.clj"
+    "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc"]
+   :certified
+   [:expression-read :ordered-scan :inclusive-reseek :scalar-membership
+    :bounded-batch-membership :basis-stability :cancellation
+    :typed-error-classification]}}
+ :source-digests
+ {"formal/cross-runtime/operator-vectors.edn"
+  "33fb285f607192f4e1df18bc012725548895aaf8b3929eb2cf4a5de0c7ddcbc6"
+  "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+  "fc23429b63990d8e94db211bfe945e61bd8f88495f9bb247a31eaeb3e6101210"
+  "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+  "b79468467b3ec3f926db7dc583a4319cdb3ef8e786225bcaf13617912e4a3141"
+  "modules/eacl/src/eacl/spicedb/parser.cljc"
+  "beb9391f657cc46c9ce8bbfe9a6c74a468a400b2cbe2aa74521e7e02f4a1c62b"
+  "modules/eacl/src/eacl/schema/expression.cljc"
+  "3b96fb53c083db22d1260547e05ca0d350d055d1f8cc92e2e5cedace2e6fb01c"
+  "modules/eacl/src/eacl/schema/expression_resolver.cljc"
+  "e749b1e1ceab0c0e6e2f7a3e402a359ad1ab1171a9f593011f5f403f3a0c848b"
+  "modules/eacl/src/eacl/schema/expression_graph.cljc"
+  "4466904b5372691039c7599037086a5a6a978886e38f649dc0f9862e814f242f"
+  "modules/eacl/src/eacl/schema/expression_persistence.cljc"
+  "c7b69d2d0606e964febbfe73aa97c0e4de36a4739635024dd195d01ed6d41e8f"
+  "modules/eacl/src/eacl/operator/plan.cljc"
+  "4e7554583b4165f52590fbdfe299e741302548b786b3add956e1878d6899419f"
+  "modules/eacl/src/eacl/operator/cover_plan.cljc"
+  "64eb4cd5fb68169ea8c8aaf00a8942727b715290f31131989e29f4317d20f056"
+  "modules/eacl/src/eacl/operator/cursor_scope.cljc"
+  "2d0b042e4db963748073723d18d405165b5a9bef5c0e8ca4931e8b59e6c540c9"
+  "modules/eacl/src/eacl/operator/evaluator.cljc"
+  "93b1f9b17c86549bb4fc8efdff9f0c1e7b25c212be43e3deca7de7f7fb06ba3f"
+  "modules/eacl/src/eacl/operator/vector_evaluator.cljc"
+  "e95175265c3ef58603670b589553ad85222df2202b43151640238937c63ed4ac"
+  "modules/eacl/src/eacl/operator/batch_schedule.cljc"
+  "3a89d3a7f78be9f15dcba94aed249a613ef16ed7e08b786b26d7206a22f0597f"
+  "modules/eacl/src/eacl/operator/lookup.cljc"
+  "22cfe4298f5ca126b4ffc8f1eecd961a3e52d8d3ce620b12c5a4f80f5a957ecb"
+  "modules/eacl/src/eacl/operator/seekable.cljc"
+  "f92bef59e1ed1b5426a1ce7b15cff6b6c14635b4a64dd7729204c0237f3c6492"
+  "modules/eacl/src/eacl/operator/recursive.cljc"
+  "1e6e606041c33b72c60dc74be3083c33a049d78e12b968dd7daffed32708be70"
+  "modules/eacl/src/eacl/backend/direct_membership.cljc"
+  "f50973d04d99b13581b3279781b50a29f6179d98629a1d68ca424ab2bf34b60d"
+  "modules/eacl-datomic/src/eacl/datomic/backend.clj"
+  "9735e9703dd89f7b0eea3e7b58da34e074960ed433c245f19d35ee62ad6bdcf0"
+  "modules/eacl-datascript/src/eacl/datascript/backend.cljc"
+  "49df7e0796553744a0aa09dc8e81649c7ade09f58a7e3d488234593d520a5f1b"
+  "modules/eacl-datahike/src/eacl/datahike/backend.clj"
+  "e234a381c28b1f2322632781d84274e228ec121e1470cd6f10d34ae520c071fd"
+  "modules/eacl-datahike/src/eacl/datahike/direct_membership.clj"
+  "37081b45f3035fa673bcce8c1b2c22dff69bba95554cb5d5e0be5347e8d4dc3b"
+  "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc"
+  "317eb0525cfdfd02dfd9b090cf44c596812a79f7aad898380c5ecfe31e0ccdd3"}
+ :assurance
+ {:production-source-refinement
+  :executable-differential-mutation-and-digest-closed
+  :public-operator-routing :withheld-until-performance-and-release-gates
+  :independent-review :not-performed-not-required-for-execution}}

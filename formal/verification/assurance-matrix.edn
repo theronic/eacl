@@ -114,6 +114,10 @@
   {:source "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
    :class :operator-phase-b-proof-only-refinement
    :consumer ["formal/dafny/OperatorProofKernel.dfy"]}
+  {:source "formal/verification/operator-phase-b.edn"
+   :class :operator-phase-b-production-refinement-evidence
+   :consumer
+   ["modules/eacl/test/eacl/formal/operator_phase_b_test.clj"]}
   {:source "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
    :class :abstract-operator-phase-a-proof-only
    :consumer ["formal/verification/operator-phase-a.edn"]}
