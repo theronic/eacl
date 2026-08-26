@@ -20,4 +20,3 @@ For one valid cursor lineage and compatible immutable graph or proof-equivalent 
 #### Scenario: Candidate-window continuation
 - **WHEN** a low-selectivity page returns bounded progress before producing an item
 - **THEN** repeated valid continuation eventually produces exactly the same suffix or a typed configured-work failure
-

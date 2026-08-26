@@ -31,4 +31,3 @@ With `:cache? false`, every public operator operation SHALL bypass answer, Boole
 #### Scenario: Hot operator caches bypassed
 - **WHEN** a client with hot operator-related entries evaluates the same request with `:cache? false`
 - **THEN** the answer is independently recomputed and no cache metric records lookup or publication
-

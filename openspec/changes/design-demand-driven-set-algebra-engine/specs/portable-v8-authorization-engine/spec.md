@@ -35,4 +35,3 @@ When a reachable permission graph contains no intersection or exclusion, sealing
 #### Scenario: Union-only workload after upgrade
 - **WHEN** the existing union-only conformance corpus runs on an expression-capable build
 - **THEN** deterministic values, order, cursor payload interpretation, and work counters remain unchanged
-

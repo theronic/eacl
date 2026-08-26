@@ -38,4 +38,3 @@ Formal cache and exclusion models SHALL prove that only completed exact lower-st
 #### Scenario: Incomplete negative mutation control
 - **WHEN** a model mutation treats timeout, active recursion, or a bounded prefix as false
 - **THEN** the assurance gate produces a counterexample and rejects the mutation
-

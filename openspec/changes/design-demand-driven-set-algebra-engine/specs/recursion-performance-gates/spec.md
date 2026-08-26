@@ -27,4 +27,3 @@ Union-only recursive programs SHALL retain their existing generated scheduling o
 #### Scenario: Existing recursive corpus
 - **WHEN** the pre-operator recursive corpus runs after the upgrade
 - **THEN** its deterministic traces and output remain unchanged
-

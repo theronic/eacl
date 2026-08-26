@@ -27,4 +27,3 @@ Differential qualification SHALL exclude only constructs outside EACL's document
 #### Scenario: SpiceDB stores negative recursion
 - **WHEN** the pinned SpiceDB version accepts a negative-recursive schema that EACL rejects as unstratified
 - **THEN** the case is recorded as an intentional schema-validation boundary rather than an authorization mismatch
-

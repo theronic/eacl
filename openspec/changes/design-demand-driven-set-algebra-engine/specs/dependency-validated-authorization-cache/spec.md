@@ -20,4 +20,3 @@ Cache availability MAY elide an already selected semantic or physical subproblem
 #### Scenario: Warm non-generator child
 - **WHEN** one non-generator intersection child is fully cached
 - **THEN** the sealed generator remains unchanged and only matching predicate work is elided
-

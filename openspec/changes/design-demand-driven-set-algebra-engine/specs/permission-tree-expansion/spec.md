@@ -13,4 +13,3 @@ Expression expansion SHALL use one selected immutable snapshot, apply existing d
 #### Scenario: Oversized operator tree
 - **WHEN** expansion would exceed a configured tree limit
 - **THEN** it returns the existing typed bounded failure and no partial tree as complete
-

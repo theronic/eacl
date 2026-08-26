@@ -20,4 +20,3 @@ Each built-in batched implementation SHALL be differentially certified for forwa
 #### Scenario: Reverse candidate vector
 - **WHEN** reverse lookup batches candidate subjects for one resource descriptor
 - **THEN** its aligned result equals independent reverse scalar membership and cannot accidentally consult the forward endpoint
-

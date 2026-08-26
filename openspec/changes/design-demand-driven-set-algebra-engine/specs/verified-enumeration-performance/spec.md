@@ -27,4 +27,3 @@ First-page, adjacent-page, candidate-window, replay, bounded-count, complete-enu
 #### Scenario: Exact count reads thousands of nodes
 - **WHEN** an exact count exhausts a large Datahike cover while first-page work stays bounded
 - **THEN** both results are reported against separate accepted ceilings
-

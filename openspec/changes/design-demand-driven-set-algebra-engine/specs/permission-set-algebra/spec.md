@@ -65,4 +65,3 @@ Adding set algebra SHALL NOT accept direct chained arrows, `.all()` intersection
 #### Scenario: Chained arrow remains unsupported
 - **WHEN** a schema directly declares `relation->subrelation->permission`
 - **THEN** schema validation returns the existing unsupported-arrow error class
-

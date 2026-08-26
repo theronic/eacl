@@ -34,4 +34,3 @@ Cancellation, deadline, candidate, command, fetched-value, probe, transition, al
 #### Scenario: Cancellation between physical subgroups
 - **WHEN** cancellation is observed after one subgroup and before the next subgroup of a vector predicate
 - **THEN** the entire vector fails and no candidate decision from it is released
-

@@ -24,4 +24,3 @@ Changing among certified trace-equivalent physical leaf kernels MUST NOT change 
 #### Scenario: Dense leaf kernel changes
 - **WHEN** a direct leaf batch qualifies for prefix merge instead of exact seeks
 - **THEN** the public operator sequence and cursor boundary remain identical
-

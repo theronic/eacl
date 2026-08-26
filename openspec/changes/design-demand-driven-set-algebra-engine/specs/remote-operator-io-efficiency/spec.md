@@ -46,4 +46,3 @@ Eligible exact scan-response, point-decision, and completed-answer cache hits MA
 #### Scenario: Cold cache parity
 - **WHEN** cache-enabled and cache-disabled requests begin without compatible entries
 - **THEN** they demand the same candidates and semantic subproblems even if physical grouping differs by a sealed certified rule
-

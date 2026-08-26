@@ -31,4 +31,3 @@ The plan's authorization dependency proof SHALL contain every relation reachable
 #### Scenario: Unread excluding relation changes
 - **WHEN** a cached request previously short-circuited before reading one exclusion dependency and that relation changes
 - **THEN** the prior proof no longer validates reuse
-
