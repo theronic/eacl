@@ -8,11 +8,13 @@
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.stable-route :as stable-route]
             [eacl.execution :as execution]
+            [eacl.operator.batch-schedule :as operator-batch-schedule]
             [eacl.operator.cover-plan :as operator-cover-plan]
             [eacl.operator.cursor-scope :as operator-cursor-scope]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
+            [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.subproblem-cache :as subproblem]
@@ -943,9 +945,8 @@
                       {:type :eacl/invalid-config
                        :eacl/error :eacl/invalid-config
                        :recursive-traversal-limits overrides})))
-    (let [
-        known (set (keys default-recursive-traversal-limits))
-        unknown (seq (remove known (keys overrides)))]
+    (let [known (set (keys default-recursive-traversal-limits))
+          unknown (seq (remove known (keys overrides)))]
       (when unknown
         (throw (ex-info "Unknown recursive traversal safety limit."
                         {:type :eacl/invalid-config
@@ -1143,6 +1144,60 @@
        {:eacl/error :eacl.pagination/invalid-cursor
         :reason :malformed-boundary}))))
 
+(defn- recursive-operator-edge
+  [db plan cover-plan traversal cover-edge]
+  {:kind :operator-recursive-edge
+   :version stable-cursor-version
+   :anchor :progress
+   :order-abi stable-order-abi
+   :fingerprint (:fingerprint plan)
+   :cover-fingerprint (:fingerprint cover-plan)
+   :semantic-scope
+   (operator-cursor-scope/digest
+    plan cover-plan traversal (operator-snapshot-proof-identity db))
+   :recursive-checkpoint-version operator-recursive/checkpoint-version
+   :traversal traversal
+   :cover-edge cover-edge})
+
+(defn- validate-recursive-operator-bound!
+  [db plan cover-plan traversal bound]
+  (when bound
+    (when-not (= :operator-recursive-edge (:kind bound))
+      (page-error!
+       "Recursive operator cursor has the wrong kind."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:kind bound)}))
+    (when-not (and (= stable-cursor-version (:version bound))
+                   (= stable-order-abi (:order-abi bound))
+                   (= operator-recursive/checkpoint-version
+                      (:recursive-checkpoint-version bound)))
+      (page-error!
+       "Recursive operator cursor uses an incompatible execution ABI."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :operator-abi-mismatch}))
+    (when-not (and (= (:fingerprint plan) (:fingerprint bound))
+                   (= (:fingerprint cover-plan)
+                      (:cover-fingerprint bound))
+                   (= (operator-cursor-scope/digest
+                       plan cover-plan traversal
+                       (operator-snapshot-proof-identity db))
+                      (:semantic-scope bound)))
+      (page-error!
+       "Recursive operator cursor is bound to an incompatible semantic scope."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :operator-scope-mismatch}))
+    (when-not (= traversal (:traversal bound))
+      (page-error!
+       "Recursive operator cursor traversal does not match the request."
+       {:eacl/error :eacl.pagination/wrong-cursor-kind
+        :actual (:traversal bound)}))
+    (when-not (and (= :progress (:anchor bound))
+                   (map? (:cover-edge bound)))
+      (page-error!
+       "Recursive operator cursor boundary is malformed."
+       {:eacl/error :eacl.pagination/invalid-cursor
+        :reason :malformed-boundary}))))
+
 (defn- validate-least-path-bound!
   [plan traversal bound]
   (when bound
@@ -1235,6 +1290,19 @@
                   (+ (or max-derived-grants 0)
                      (or max-advanced-datoms 0)))))))
 
+(defn- recursive-operator-limits []
+  (let [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}
+        *recursive-traversal-limits*]
+    (cond-> {}
+      max-derived-grants
+      (assoc :maximum-questions max-derived-grants
+             :maximum-facts max-derived-grants
+             :maximum-anchor-states max-derived-grants)
+      max-advanced-datoms
+      (assoc :maximum-values max-advanced-datoms)
+      max-queued-work
+      (assoc :maximum-queue max-queued-work))))
+
 (def ^:private stable-limit-kinds
   {:max-admissions :derived-grants
    :max-values :advanced-datoms
@@ -1242,6 +1310,21 @@
    ;; Internal safety ceilings surface under the closest public kind.
    :max-commands :advanced-datoms
    :max-transitions :queued-work})
+
+(def ^:private recursive-limit-kinds
+  {:questions :derived-grants
+   :facts :derived-grants
+   :anchor-states :derived-grants
+   :join-slots :derived-grants
+   :join-words :derived-grants
+   :components :derived-grants
+   :strata :derived-grants
+   :checkpoint-weight :derived-grants
+   :commands :advanced-datoms
+   :values :advanced-datoms
+   :probes :advanced-datoms
+   :transitions :queued-work
+   :queue :queued-work})
 
 (defn- with-public-limit-errors
   "The stable reducer's typed limit failure surfaces under the public
@@ -1254,18 +1337,34 @@
       (thunk))
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) error
       (if (contains? #{:eacl.reducer/limit-exceeded
-                       :eacl.page/resource-exhausted}
+                       :eacl.page/resource-exhausted
+                       :eacl.operator/recursive-limit-exceeded}
                      (:eacl/error (ex-data error)))
         ;; The public shape is exactly {:eacl/error :limit-kind :limit}
         ;; with :limit as the caller's configured numeric ceiling; internal
         ;; counters and reducer budget keys never leak.
         (let [data (ex-data error)
-              budget-key (:limit data)]
+              recursive? (= :eacl.operator/recursive-limit-exceeded
+                            (:eacl/error data))
+              budget-key (:limit data)
+              limit-kind
+              (if recursive?
+                (get recursive-limit-kinds (:dimension data)
+                     :derived-grants)
+                (get stable-limit-kinds budget-key :derived-grants))
+              configured-limit
+              (if recursive?
+                (get *recursive-traversal-limits*
+                     (case limit-kind
+                       :advanced-datoms :max-advanced-datoms
+                       :queued-work :max-queued-work
+                       :max-derived-grants))
+                (get data budget-key))]
           (page-error!
            "Recursive traversal exceeded its configured limits."
            {:eacl/error :eacl.recursive-traversal/limit-exceeded
-            :limit-kind (get stable-limit-kinds budget-key :derived-grants)
-            :limit (get data budget-key)}))
+            :limit-kind limit-kind
+            :limit configured-limit}))
         (throw error)))))
 
 (defn- stable-cut-point
@@ -1442,7 +1541,8 @@
 
 (defn- execute-filtered-lookup-window
   [result-type {:keys [direction size bound]}
-   {:keys [candidate-window accept?]} fetch-exclusive]
+   {:keys [candidate-window accept? accept-many? maximum-batch-width]}
+   fetch-exclusive]
   (when-not (and (integer? candidate-window) (pos? candidate-window))
     (page-error!
      "The authorization candidate window must be a positive integer."
@@ -1450,10 +1550,19 @@
       :eacl/error :eacl.execution/resource-limit-exceeded
       :limit-kind :candidate-window
       :value candidate-window}))
-  (when-not (fn? accept?)
+  (when-not (or (fn? accept?) (fn? accept-many?))
     (page-error!
      "A filtered lookup window requires an accept predicate."
      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config}))
+  (when-not (or (nil? maximum-batch-width)
+                (and (integer? maximum-batch-width)
+                     (pos? maximum-batch-width)))
+    (page-error!
+     "The filtered lookup batch width must be a positive integer."
+     {:type :eacl.execution/resource-limit-exceeded
+      :eacl/error :eacl.execution/resource-limit-exceeded
+      :limit-kind :maximum-batch-width
+      :value maximum-batch-width}))
   (let [fetch-candidates
         #(fetch-inclusive-candidates result-type fetch-exclusive %1 %2)
         result
@@ -1489,19 +1598,33 @@
             :else
             (let [remaining-window (- candidate-window examined)
                   remaining-sentinel (- (inc size) (count accepted))
-                  chunk-limit (min remaining-window remaining-sentinel)
+                  chunk-limit (min remaining-window remaining-sentinel
+                                   (or maximum-batch-width
+                                       remaining-window))
                   chunk (vec (fetch-candidates cursor chunk-limit))
+                  decisions
+                  (if accept-many?
+                    (let [values (vec (accept-many? (mapv :node chunk)))]
+                      (when-not (and (= (count chunk) (count values))
+                                     (every? boolean? values))
+                        (page-error!
+                         "A filtered lookup batch returned malformed decisions."
+                         {:type :eacl/backend-contract-violation
+                          :eacl/error :eacl/backend-contract-violation
+                          :obligation :aligned-filter-decisions}))
+                      values)
+                    (mapv #(boolean (accept? (:node %))) chunk))
                   [accepted examined last-examined]
                   (reduce
-                   (fn [[accepted examined _] candidate]
+                   (fn [[accepted examined _] [candidate accepted?]]
                      (request-counters/add! :candidates-examined)
                      [(cond-> accepted
-                        (accept? (:node candidate))
+                        accepted?
                         (conj candidate))
                       (inc examined)
                       candidate])
                    [accepted examined last-examined]
-                   chunk)
+                   (map vector chunk decisions))
                   last-cursor (some-> last-examined :cursor)]
               (recur last-cursor examined accepted last-examined
                      (< (count chunk) chunk-limit)))))
@@ -1813,6 +1936,83 @@
         (report-adapter-attempts! attempts)
         page))))
 
+(defn- recursive-operator-lookup-page
+  "Enumerates the sealed recursive cover and evaluates exact recursive
+  operator membership in bounded aligned vectors. The public cursor advances
+  only through the cover edge actually examined; physical predicate batching
+  is never cursor progress."
+  [db plan traversal query {:keys [bound] :as page-req} cache-fn
+   result-type anchor subject-type candidate-filter]
+  (let [cover-plan (operator-cover-plan/seal-plan db plan)
+        _ (validate-recursive-operator-bound!
+           db plan cover-plan traversal bound)
+        anchor-eid (object-eid db (:id anchor))]
+    (if (nil? anchor-eid)
+      {:data []
+       :page-info {:start-cursor nil
+                   :end-cursor nil
+                   :has-next-page? false
+                   :has-previous-page? false
+                   :bounded? false}}
+      (let [external-accept? (:accept? candidate-filter)
+            external-accept-many? (:accept-many? candidate-filter)
+            evaluate-batch
+            (fn [nodes]
+              (let [candidates
+                    (mapv
+                     (fn [node]
+                       {:direction traversal
+                        :subject-type subject-type
+                        :subject-eid (if (= :forward traversal)
+                                       anchor-eid (:id node))
+                        :resource-eid (if (= :forward traversal)
+                                        (:id node) anchor-eid)})
+                     nodes)
+                    recursive-decisions
+                    (:decisions
+                     (with-public-limit-errors
+                       #(with-service-admission
+                          (fn []
+                            (operator-recursive/evaluate-many
+                             {:adapter db
+                              :plan plan
+                              :candidates candidates
+                              :scope-identity
+                              (operator-snapshot-proof-identity db)
+                              :limits (recursive-operator-limits)})))))
+                    external-decisions
+                    (cond
+                      external-accept-many?
+                      (vec (external-accept-many? nodes))
+
+                      external-accept?
+                      (mapv #(boolean (external-accept? %)) nodes)
+
+                      :else
+                      (vec (repeat (count nodes) true)))]
+                (mapv #(and %1 %2)
+                      recursive-decisions external-decisions)))
+            cover-page
+            (filtered-lookup-page
+             db cover-plan traversal query
+             (assoc page-req :bound (:cover-edge bound))
+             cache-fn result-type anchor subject-type
+             {:candidate-window
+              (or (:candidate-window candidate-filter)
+                  operator-lookup/default-candidate-window)
+              :maximum-batch-width operator-batch-schedule/maximum-width
+              :accept-many? evaluate-batch})]
+        (update
+         cover-page :page-info
+         (fn [page-info]
+           (reduce
+            (fn [result field]
+              (update result field
+                      #(when %
+                         (recursive-operator-edge
+                          db plan cover-plan traversal %))))
+            page-info [:start-cursor :end-cursor])))))))
+
 (defn- stable-lookup-page
   "`cache-fn` is a thunk producing the continuation cache (or nil): the
   least-path route consults no continuation state, so the context —
@@ -1838,9 +2038,13 @@
       (let [root-node (permission-query-node root-type (:permission query))
             plan (stable-plan db root-node)]
         (if (operator-plan/operator-plan? plan)
-          (operator-lookup-page
-           db plan traversal page-req result-type anchor subject-type
-           candidate-filter)
+          (if (operator-recursive/recursive-plan? plan)
+            (recursive-operator-lookup-page
+             db plan traversal query page-req cache-fn result-type anchor
+             subject-type candidate-filter)
+            (operator-lookup-page
+             db plan traversal page-req result-type anchor subject-type
+             candidate-filter))
           (if candidate-filter
             (filtered-lookup-page
              db plan traversal query page-req cache-fn result-type anchor
@@ -1924,10 +2128,24 @@
           (with-public-limit-errors
             #(with-service-admission
                (fn []
-                 (operator-evaluator/check-eids
-                  {:adapter db :plan plan
-                   :subject-type subject-type :subject-eid subject-eid
-                   :resource-eid resource-eid}))))
+                 (let [recursive? (operator-recursive/recursive-plan? plan)
+                       base-options
+                       {:adapter db :plan plan
+                        :subject-type subject-type
+                        :subject-eid subject-eid
+                        :resource-eid resource-eid}
+                       options
+                       (if recursive?
+                         (assoc base-options
+                                :direction :forward
+                                :scope-identity
+                                (operator-snapshot-proof-identity db)
+                                :limits (recursive-operator-limits))
+                         base-options)]
+                   ((if recursive?
+                      operator-recursive/check-eids
+                      operator-evaluator/check-eids)
+                    options)))))
           (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
                 allowed?
                 (with-public-limit-errors
@@ -2004,6 +2222,48 @@
   (cond-> {:count count
            :limit (or limit -1)}
     (some? limit) (assoc :truncated? truncated?)))
+
+(defn- recursive-operator-count
+  "Streams exact recursive operator pages with bounded retained continuation
+  state. A bounded count asks for precisely its limit plus one lookahead;
+  an exact count remains explicitly exhaustive."
+  [db plan traversal query result-type anchor subject-type count-limit]
+  (let [target (when (some? count-limit) (inc count-limit))
+        continuation-cache (stable-page/make-checkpoint-store)]
+    (loop [bound nil
+           accumulated 0]
+      (execution/check! execution/*contract*
+                        :operator-recursive/count-page
+                        {:count accumulated})
+      (let [remaining (when target (- target accumulated))
+            page-size (if remaining
+                        (min operator-batch-schedule/maximum-width remaining)
+                        operator-batch-schedule/maximum-width)
+            page
+            (recursive-operator-lookup-page
+             db plan traversal query
+             {:direction :asc :size page-size :bound bound}
+             (constantly continuation-cache)
+             result-type anchor subject-type nil)
+            next-count (+ accumulated (count (:data page)))
+            more? (get-in page [:page-info :has-next-page?])
+            next-bound (get-in page [:page-info :end-cursor])]
+        (cond
+          (and target (>= next-count target))
+          {:count count-limit :truncated? true}
+
+          more?
+          (do
+            (when-not next-bound
+              (page-error!
+               "Recursive count continuation made no cursor progress."
+               {:type :eacl.page/invalid-cursor
+                :eacl/error :eacl.page/invalid-cursor}))
+            (recur next-bound next-count))
+
+          :else
+          {:count next-count :truncated? false})))))
+
 (defn count-resources
   [db {:as query}]
   (reject-count-pagination-keys! "count-resources" query)
@@ -2017,17 +2277,21 @@
                    db (permission-query-node result-type permission))]
          (if (operator-plan/operator-plan? plan)
            (if-let [subject-eid (object-eid db (:id subject))]
-             (select-keys
-              (with-public-limit-errors
-                #(with-service-admission
-                   (fn []
-                     (operator-lookup/count-results
-                      {:adapter db :plan plan :traversal :forward
-                       :subject-type (:type subject)
-                       :anchor-eid subject-eid :count-limit limit
-                       :cut-point! (stable-cut-point)
-                       :traversal-limits (stable-limits)}))))
-              [:count :truncated?])
+             (if (operator-recursive/recursive-plan? plan)
+               (recursive-operator-count
+                db plan :forward query result-type subject
+                (:type subject) limit)
+               (select-keys
+                (with-public-limit-errors
+                  #(with-service-admission
+                     (fn []
+                       (operator-lookup/count-results
+                        {:adapter db :plan plan :traversal :forward
+                         :subject-type (:type subject)
+                         :anchor-eid subject-eid :count-limit limit
+                         :cut-point! (stable-cut-point)
+                         :traversal-limits (stable-limits)}))))
+                [:count :truncated?]))
              {:count 0 :truncated? false})
            (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
                  counted
@@ -2063,17 +2327,21 @@
                    db (permission-query-node (:type resource) permission))]
          (if (operator-plan/operator-plan? plan)
            (if-let [resource-eid (object-eid db (:id resource))]
-             (select-keys
-              (with-public-limit-errors
-                #(with-service-admission
-                   (fn []
-                     (operator-lookup/count-results
-                      {:adapter db :plan plan :traversal :reverse
-                       :subject-type (:subject/type query)
-                       :anchor-eid resource-eid :count-limit limit
-                       :cut-point! (stable-cut-point)
-                       :traversal-limits (stable-limits)}))))
-              [:count :truncated?])
+             (if (operator-recursive/recursive-plan? plan)
+               (recursive-operator-count
+                db plan :reverse query (:subject/type query) resource
+                (:subject/type query) limit)
+               (select-keys
+                (with-public-limit-errors
+                  #(with-service-admission
+                     (fn []
+                       (operator-lookup/count-results
+                        {:adapter db :plan plan :traversal :reverse
+                         :subject-type (:subject/type query)
+                         :anchor-eid resource-eid :count-limit limit
+                         :cut-point! (stable-cut-point)
+                         :traversal-limits (stable-limits)}))))
+                [:count :truncated?]))
              {:count 0 :truncated? false})
            (let [{:keys [fetch-fn attempts]} (stable-fetch-fn db)
                  counted

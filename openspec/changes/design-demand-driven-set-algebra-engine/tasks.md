@@ -84,12 +84,12 @@
 ## 8. Implement recursive conjunction and stratified exclusion
 
 - [ ] 8.1 Extend the generated recursive command/state model with typed expression facts, positive consumer edges, deterministic intersection anchors, strata, and exact lower-stratum questions.
-- [ ] 8.2 Retain complete child fact sets and allocate parent join state only on anchor admission; initialize late anchors from existing facts and update only anchored entities on later non-anchor facts.
-- [ ] 8.3 Represent join slots as portable 32-bit word vectors plus satisfied counts, make duplicate facts idempotent, and admit each completed parent fact exactly once.
-- [ ] 8.4 Evaluate strict strata bottom-up within anchored demand and allow exclusion to consume only completed exact lower-stratum Boolean/denotation results.
+- [x] 8.2 Retain complete child fact sets and allocate parent join state only on anchor admission; initialize late anchors from existing facts and update only anchored entities on later non-anchor facts.
+- [x] 8.3 Represent join slots as portable 32-bit word vectors plus satisfied counts, make duplicate facts idempotent, and admit each completed parent fact exactly once.
+- [x] 8.4 Evaluate strict strata bottom-up within anchored demand and allow exclusion to consume only completed exact lower-stratum Boolean/denotation results.
 - [ ] 8.5 Extend deterministic recursive scheduling/order for operator roots while preserving byte-for-byte union-only recursive traces and checkpoint identities.
-- [ ] 8.6 Extend checkpoint/replay with facts, anchor states, satisfied counts, completed strata, pending negative questions, command identity, and undelivered boundaries without backend handles or mutable cache state.
-- [ ] 8.7 Add pre-allocation limits and dimensional counters for facts, anchor states, join words/slots, strata, commands, values, transitions, queue, checkpoint weight, deadline, and cancellation.
+- [x] 8.6 Extend checkpoint/replay with facts, anchor states, satisfied counts, completed strata, pending negative questions, command identity, and undelivered boundaries without backend handles or mutable cache state.
+- [x] 8.7 Add pre-allocation limits and dimensional counters for facts, anchor states, join words/slots, strata, commands, values, transitions, queue, checkpoint weight, deadline, and cancellation.
 - [ ] 8.8 Differentially test positive self/mutual conjunction, stars, chains, arrows, late anchors, duplicate derivations, typed-ID collisions, unseeded cycles, multiple strata, and failure injection against the naive oracle.
 
 ## 9. Integrate proof-compatible cache reuse
