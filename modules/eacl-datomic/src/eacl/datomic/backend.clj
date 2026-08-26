@@ -531,13 +531,18 @@
                             timeout-ms
                             :exact-sync locator)
                exact-db (d/as-of caught-up locator)]
-           (when-not (= locator (db-revision exact-db))
+           ;; `db-revision` of the as-of view returns the requested locator
+           ;; verbatim, so it cannot witness anything. The reachable
+           ;; divergence is a synchronized head that still sits below the
+           ;; requested basis: the as-of window would then silently show an
+           ;; older database while claiming the exact locator.
+           (when (< (d/basis-t caught-up) locator)
              (throw
               (ex-info
                "Datomic exact locator resolved to another basis."
                {:type :eacl.consistency/history-divergence
                 :eacl/error :eacl.consistency/history-divergence
                 :requested locator
-                :selected (db-revision exact-db)})))
+                :selected (d/basis-t caught-up)})))
            (borrowed exact-db)))
        :release! (constantly nil)}})))

@@ -396,10 +396,25 @@
        :acquire-authoritative!
        (fn [_timeout-ms] (acquire-owned! conn adapter-options))
        ;; Shared consistency orchestration compares the revision, closes an
-       ;; insufficient candidate, preserves the original deadline, and retries.
+       ;; insufficient candidate, preserves the original deadline, and
+       ;; retries. Returning the head immediately made that retry loop spin
+       ;; LMDB read transactions at full CPU until the writer caught up, so
+       ;; an insufficient head now waits briefly before acquiring, matching
+       ;; the Datahike and DataScript freshness polls.
        :acquire-at-least!
-       (fn [_token-data _remaining-ms]
-         (acquire-owned! conn adapter-options))
+       (fn [token-data _remaining-ms]
+         (let [requested (:revision token-data)
+               candidate (acquire-owned! conn adapter-options)
+               revision (:revision
+                         (backend/invoke (:adapter candidate)
+                                         :native-revision))]
+           (if (or (nil? requested)
+                   (and (integer? revision) (>= revision requested)))
+             candidate
+             (do
+               (d/close-read-snapshot! (:release-token candidate))
+               #?(:clj (Thread/sleep 2))
+               (acquire-owned! conn adapter-options)))))
        :acquire-exact!
        (fn [_token-data _timeout-ms]
          (throw

@@ -329,9 +329,17 @@
                    (assoc-in [:by-end (scope-key end-token)]
                              request-key))
                  state
+                 ;; The alias answers the opposite-direction query with the
+                 ;; stored adjacent page verbatim, which is only the correct
+                 ;; answer when that page holds exactly the aliased size:
+                 ;; the boundary index carries no page size, so without the
+                 ;; count guard a {:last N} request could be served a page
+                 ;; of any size.
                  (if (and previous-page
                           start-token
-                          (integer? (:first query)))
+                          (integer? (:first query))
+                          (= (:first query)
+                             (count (:data previous-page))))
                    (put-page-request
                     state
                     (page-request-key
@@ -345,7 +353,9 @@
                    state)]
              (if (and next-page
                       end-token
-                      (integer? (:last query)))
+                      (integer? (:last query))
+                      (= (:last query)
+                         (count (:data next-page))))
                (put-page-request
                 state
                 (page-request-key

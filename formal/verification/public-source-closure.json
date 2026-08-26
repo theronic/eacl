@@ -45,7 +45,7 @@
     },
     {
       "path": "modules/eacl-datalevin/src/eacl/datalevin/backend.cljc",
-      "sha256": "d992c3bb289d4fc9c9d2e68dbcaf7b0b23ad0d506121e5faad8a27d2e219ac2c"
+      "sha256": "0fa41e18b3d7cafe71605e3d0438f3f59100b7f3b75495d5892c09492f643884"
     },
     {
       "path": "modules/eacl-datalevin/src/eacl/datalevin/core.cljc",
@@ -105,7 +105,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/backend.clj",
-      "sha256": "e416a74c53039da20cedc663d13acd71f8b5b40711346bdafb60dc2163d90e80"
+      "sha256": "9ae7d64b1452c058b0831521056070d2730110389218c2c5647698a3868a76a7"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/cache.clj",
@@ -257,7 +257,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/engine/v8.cljc",
-      "sha256": "82bed944906f44c1ad6be035200a47c5b559483501013ea3a997d3d355c894f2"
+      "sha256": "d3ff0a8fe90c7f02805e6b0638400401e53997b914e45b00224c444d00fda07b"
     },
     {
       "path": "modules/eacl/src/eacl/exact_integer.cljc",
@@ -353,7 +353,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/relay.cljc",
-      "sha256": "624af24e9c6f4c24e8391bdcbdf823cdb3d3bd94ebf74b5d46100b7c45f2471a"
+      "sha256": "535ec53a3728334d9ece9d2482737aa0ddbd769ba10ffb1cdd6bcf1368a62270"
     },
     {
       "path": "modules/eacl/src/eacl/request/context.cljc",
@@ -492,7 +492,7 @@
     "rootCount": 70,
     "unionInternalDefinitionCount": 2107,
     "unionInternalDefinitionIdsSha256": "556de163dc085a5686386261a3e0b67200fb7e012f2eedf5102aa995c5088d8b",
-    "unionDefinitionLocationsSha256": "580c8f363be75d3d545527be3251c196730809ddf1f27c1a2ca55102a162fbee",
+    "unionDefinitionLocationsSha256": "f1d04fa2fb427d0360917b9371b7c4e64f75e104a1b06dd2e0349c3f7c3aef7d",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 28,
@@ -1697,8 +1697,8 @@
       ]
     },
     "eacl.datalevin.core/make-client": {
-      "internalDefinitionCount": 558,
-      "internalDefinitionIdsSha256": "dc62845a1ee0707ddc3cd640072c9032e5939422d317620816baca3c1dd2c261",
+      "internalDefinitionCount": 575,
+      "internalDefinitionIdsSha256": "6ae57c35ddfc4000e9f0f89df7451a8b6ff86fd0b5169356bd34658457863c84",
       "externalCallCount": 29,
       "externalCalls": [
         "cljs.reader/read-string",

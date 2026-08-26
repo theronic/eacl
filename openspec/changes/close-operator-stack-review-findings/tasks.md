@@ -63,9 +63,16 @@ Ordered by severity. Sections 1 and 2 are merge blockers.
 
 ## 9. Recorded but unscheduled (decide before merge)
 
-- [ ] 9.1 Decide on F7 (wrong-size page from the navigation alias) — guard the alias with an item-count check or include size in the key.
-- [ ] 9.2 Decide on F8 (Datalevin at-least-as-fresh busy-wait) — add backoff in the shared loop or a blocking watermark wait.
-- [ ] 9.3 Triage F12–F16 (dead consistency guard, exception-caching `stable-plan` delay, cursor TTL delivery, Datalevin error typing, raw-facade decode amortization).
+- [x] 9.1 Decide on F7 (wrong-size page from the navigation alias) — guard the alias with an item-count check or include size in the key.
+  - Fixed: the alias registers only when the stored adjacent page holds exactly the aliased size, with an in-tree regression proving a `:last 3` request now returns the true three-item window instead of a smaller cached page.
+- [x] 9.2 Decide on F8 (Datalevin at-least-as-fresh busy-wait) — add backoff in the shared loop or a blocking watermark wait.
+  - Fixed in the Datalevin backend: an insufficient head releases its snapshot and waits 2 ms before re-acquiring, matching the Datahike/DataScript freshness polls; the shared loop keeps compare/retry/deadline authority. Verification rides the hand-run Datalevin suite (not in the CI matrix).
+- [x] 9.3 Triage F12–F16 (dead consistency guard, exception-caching `stable-plan` delay, cursor TTL delivery, Datalevin error typing, raw-facade decode amortization).
+  - F12 fixed: the exact-selection guard now checks the reachable divergence (synchronized head below the requested locator) instead of comparing the as-of view against its own input.
+  - F13 fixed: `memoized-derived!` clears its slot on a thrown build so one transient adapter failure no longer poisons the schema generation; regression added.
+  - F14 accepted as documented: no token outlives its authenticated expiry; delivered TTL in `(0, ttl]` on encode-side reuse stays a recorded trade-off.
+  - F15 deferred to the Datalevin hand-run follow-up: reclassifying `:write-policy-drift` vs `:generation-unprepared` needs the Datalevin store harness to validate.
+  - F16 recorded as follow-up: binding the structural expression cache on the raw facade is a scoped performance change on a compatibility surface with no correctness impact.
 
 ## 10. Benchmarks vs `main` (not started)
 
