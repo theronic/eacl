@@ -130,7 +130,7 @@
   {:status :passed
    :authorization-status :project-operator-authorized
    :review-status :not-performed
-   :verified-obligations 525
+   :verified-obligations 533
    :generated-boundary-new-obligations 6
    :whole-tree-obligation-delta 531
    :sources
@@ -161,7 +161,7 @@
   {:status :passed
    :verified-obligations 35
    :whole-tree-obligation-delta-since-phase-a 36
-   :whole-tree-obligations 9361
+   :whole-tree-obligations 9371
    :generated-policy-leaf-obligations 20
    :proof-refinement-leaf-obligations 15
    :sources
@@ -196,7 +196,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9361
+   :verified-obligations 9371
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -381,7 +381,7 @@
  {:report "formal/verification/public-source-closure.json"
   :source-files 101
   :public-roots 70
-  :reachable-definitions 2093}
+  :reachable-definitions 2107}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 47

@@ -12,9 +12,9 @@
   :modules 48
   :whole-tree-obligations 9371
   :pre-change-whole-tree-obligations 8794
-  :phase-a-new-obligations 531
-  :new-proof-leaf-obligations 525
-  :generated-boundary-new-obligations 6
+  :phase-a-new-obligations 542
+  :new-proof-leaf-obligations 533
+  :generated-boundary-new-obligations 9
   :maximum-proof-effort
   {:source "SeekableSetKernels.dfy"
    :display-name
