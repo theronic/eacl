@@ -63,6 +63,53 @@
    (eacl/->Relationship (->account "account-1") :account (->server "server-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-2"))])
 
+(def speculative-schema
+  "definition user {}
+   definition account {
+     relation owner: user
+     permission admin = owner
+   }")
+
+(def speculative-replacement-schema
+  "definition user {}
+   definition account {
+     relation owner: user
+     permission admin = owner - owner
+   }")
+
+(def speculative-user (eacl/spice-object :user "speculative-user"))
+(def speculative-account (eacl/spice-object :account "speculative-account"))
+
+(defn assert-speculative-contract!
+  "Checks native transaction and schema speculation without committing either
+  prospective result. The adapter supplies only its ordinary object write."
+  [client transact-objects!]
+  (eacl/write-schema! client speculative-schema)
+  (transact-objects!)
+  (eacl/create-relationship!
+   client speculative-user :owner speculative-account)
+  (is (true? (eacl/can?
+              client speculative-user :admin speculative-account)))
+  (eacl/with-snapshot [base (eacl/snapshot client)]
+    (let [delete-owner
+          (eacl/tx-relationship
+           base :delete speculative-user :owner speculative-account)]
+      (eacl/with-snapshot [prospective (eacl/with base delete-owner)]
+        (is (false?
+             (eacl/can?
+              prospective speculative-user :admin speculative-account)))
+        (is (= :speculative (:kind (eacl/basis prospective)))))))
+  (eacl/with-snapshot [base (eacl/snapshot client)]
+    (eacl/with-snapshot
+      [prospective
+       (eacl/with-schema base speculative-replacement-schema)]
+      (is (false?
+           (eacl/can?
+            prospective speculative-user :admin speculative-account)))
+      (is (= :speculative (:kind (eacl/basis prospective))))))
+  (is (true? (eacl/can?
+              client speculative-user :admin speculative-account))))
+
 (def boundary-counter-keys
   "Independent source/adapter/writer lifecycle counters asserted by shared
   backend contracts."

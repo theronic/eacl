@@ -94,8 +94,8 @@
   :committed-retain-inert :rejected-before-mutation}
  :executable-evidence
  {:primary-suite eacl.datomic.speculative-admission-test
-  :tests 13
-  :assertions 101
+  :tests 11
+  :assertions 87
   :failures 0
   :errors 0
   :repository-full-suite

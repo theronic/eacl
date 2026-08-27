@@ -2,13 +2,8 @@
   "Public provenance and same-basis cache-poisoning regressions for eacl/with."
   (:require [clojure.test :refer [deftest is]]
             [datomic.api :as d]
-            [datahike.api :as dh]
-            [datascript.core :as ds]
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
-            [eacl.datahike.core :as datahike]
-            [eacl.datahike.db :as datahike-db]
-            [eacl.datascript.core :as datascript]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as datomic-schema]
@@ -70,8 +65,6 @@
 
 (deftest caller-native-database-values-have-no-public-constructor-test
   (is (nil? (ns-resolve 'eacl.datomic.core 'snapshot)))
-  (is (nil? (ns-resolve 'eacl.datahike.core 'snapshot)))
-  (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
   (with-mem-conn [conn datomic-schema/v7-schema]
     (let [db (d/db conn)
           values
@@ -447,68 +440,3 @@
                 (is (= (:puts before) (:puts after)))
                 (is (= (:exact-size before) (:exact-size after)))
                 (is (= (:managed-size before) (:managed-size after)))))))))))
-
-(def ^:private portable-schema
-  "definition user {}
-   definition account {
-     relation owner: user
-     permission admin = owner
-   }")
-
-(def ^:private portable-prospective-schema
-  "definition user {}
-   definition account {
-     relation owner: user
-     permission admin = owner - owner
-   }")
-
-(def ^:private portable-user (eacl/spice-object :user "portable-user"))
-(def ^:private portable-account
-  (eacl/spice-object :account "portable-account"))
-
-(defn- portable-speculative-contract!
-  [client transact-objects!]
-  (eacl/write-schema! client portable-schema)
-  (transact-objects!)
-  (eacl/create-relationship!
-   client portable-user :owner portable-account)
-  (is (true? (eacl/can? client portable-user :admin portable-account)))
-  (eacl/with-snapshot [base (eacl/snapshot client)]
-    (let [delete-owner
-          (eacl/tx-relationship
-           base :delete portable-user :owner portable-account)]
-      (eacl/with-snapshot [prospective (eacl/with base delete-owner)]
-        (is (false?
-             (eacl/can?
-              prospective portable-user :admin portable-account)))
-        (is (= :speculative (:kind (eacl/basis prospective)))))))
-  (eacl/with-snapshot [base (eacl/snapshot client)]
-    (eacl/with-snapshot
-      [prospective (eacl/with-schema base portable-prospective-schema)]
-      (is (false?
-           (eacl/can?
-            prospective portable-user :admin portable-account)))
-      (is (= :speculative (:kind (eacl/basis prospective))))))
-  (is (true? (eacl/can? client portable-user :admin portable-account))))
-
-(deftest datascript-native-with-contract-test
-  (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {})]
-    (portable-speculative-contract!
-     client
-     #(ds/transact! conn [{:eacl/id "portable-user"}
-                          {:eacl/id "portable-account"}]))))
-
-(deftest datahike-native-with-contract-test
-  (let [conn (datahike/create-conn nil {})
-        config (datahike-db/db-config (dh/db conn))
-        client (datahike/make-client conn {})]
-    (try
-      (portable-speculative-contract!
-       client
-       #(dh/transact
-         conn {:tx-data [{:eacl/id "portable-user"}
-                         {:eacl/id "portable-account"}]}))
-      (finally
-        (dh/release conn)
-        (dh/delete-database config)))))

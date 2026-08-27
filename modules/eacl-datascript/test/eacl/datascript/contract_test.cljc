@@ -15,6 +15,18 @@
             [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
 
+(deftest native-speculative-contract-test
+  #?(:clj
+     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
+     :cljs
+     (is true))
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (contract/assert-speculative-contract!
+     client
+     #(ds/transact! conn [{:eacl/id "speculative-user"}
+                          {:eacl/id "speculative-account"}]))))
+
 (deftest missing-anchor-validation-reuses-derived-schema-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})
