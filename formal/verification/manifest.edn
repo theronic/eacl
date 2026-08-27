@@ -71,6 +71,15 @@
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
+  :filtered-pagination
+  {:status :passed
+   :verified-obligations 16
+   :source "formal/dafny/FilteredPagination.dfy"
+   :report "formal/verification/filtered-pagination.edn"
+   :integration-status
+   :scan-and-enumerate-routes-cross-backend-and-cross-runtime-passed
+   :claim
+   :conditional-filter-then-window-composition-sentinel-budget-and-deadline-model}
   :cursor-codec-cost-model
   {:status :passed
    :verified-obligations 7
@@ -83,29 +92,21 @@
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
   {:status :passed
-   :verified-obligations 18
+   :verified-obligations 20
    :source "formal/dafny/ConsistencyDecision.dfy"
    :report "formal/verification/consistency-decision.edn"
    :integration-status
    :generated-java-and-javascript-production-boundaries-routed
    :claim
    :conditional-public-normalization-finite-selection-decision-and-logical-call-bound}
-  :cache-decision-kernel
-  {:status :passed
-   :verified-obligations 17
-   :source "formal/dafny/CacheKernel.dfy"
-   :report "formal/verification/cache-kernel.edn"
-   :classification :proof-only-model
-   :integration-status :no-runtime-operation
-   :production-assurance-contribution :none}
-  :current-generation-cache
+  :basis-first-cache
   {:status :passed
    :verified-obligations 32
    :source "formal/dafny/CurrentCache.dfy"
-   :report "formal/verification/cache-kernel.edn"
+   :report "formal/verification/basis-first-cache.edn"
    :integration-status
    :generated-selection-routed-and-all-three-backends-regression-passed
-   :claim :conditional-current-cache-refinement}
+   :claim :conditional-basis-first-cache-refinement}
   :subproblem-cache
   {:status :passed
    :verified-obligations 73
@@ -115,6 +116,18 @@
    :atomic-managed-datascript-and-all-backend-contracts-passed
    :claim
    :conditional-exact-and-managed-atomic-projection-refinement}
+  :speculative-cache-coherence
+  {:status :passed
+   :verified-obligations 11
+   :source "formal/dafny/SpeculativeCacheCoherence.dfy"
+   :temporal-source "formal/tla/EaclSpeculativeCache.tla"
+   :report "formal/verification/speculative-cache-coherence.edn"
+   :integration-status
+   :internal-source-audit-and-adversarial-cross-backend-tests-passed
+   :claim
+   :conditional-explicit-provenance-zero-publication-committed-disjoint-read-through-and-cursor-isolation
+   :qualification
+   :proof-only-models-with-internal-not-mechanized-source-refinement}
   :permission-tree-expansion
   {:status :passed
    :verified-obligations 62
@@ -125,6 +138,55 @@
    :conditional-mathematical-shallow-tree-topology-cycle-and-limit-model
    :qualification
    :no-mechanical-clojure-extraction-adapter-codec-clock-token-and-host-runtime-remain-trusted-boundaries}
+  :abstract-operator-engine-phase-a
+  {:status :passed
+   :authorization-status :project-operator-authorized
+   :review-status :not-performed
+   :verified-obligations 533
+   :generated-boundary-new-obligations 6
+   :whole-tree-obligation-delta 531
+   :sources
+   ["formal/dafny/PermissionSetAlgebra.dfy"
+    "formal/dafny/SignedDependencyStratification.dfy"
+    "formal/dafny/CandidateCover.dfy"
+    "formal/dafny/WitnessPredicate.dfy"
+    "formal/dafny/VectorPredicate.dfy"
+    "formal/dafny/AdaptiveBatching.dfy"
+    "formal/dafny/OperatorLeastPath.dfy"
+    "formal/dafny/SeekableSetKernels.dfy"
+    "formal/dafny/DensityBoundedBatch.dfy"
+    "formal/dafny/AnchorGatedConjunction.dfy"
+    "formal/dafny/StratifiedExclusion.dfy"
+    "formal/dafny/OperatorCacheRefinement.dfy"
+    "formal/dafny/ExpressionPlanRefinement.dfy"
+    "formal/dafny/OperatorGeneratedPolicy.dfy"
+    "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+    "formal/dafny/OperatorProofKernel.dfy"]
+   :boundary-source "formal/dafny/EaclKernel.dfy"
+   :report "formal/verification/operator-phase-a.edn"
+   :integration-status :abstract-phase-complete-production-refinement-pending
+   :claim
+   :conditional-finite-stratified-set-algebra-cover-predicate-batching-pagination-recursion-and-cache-refinement
+   :qualification
+   :no-production-parser-storage-sealer-evaluator-backend-or-routing-refinement-claimed-and-no-independent-proof-review-performed}
+  :operator-engine-phase-b
+  {:status :passed
+   :verified-obligations 35
+   :whole-tree-obligation-delta-since-phase-a 36
+   :whole-tree-obligations 9382
+   :generated-policy-leaf-obligations 20
+   :proof-refinement-leaf-obligations 15
+   :sources
+   ["formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+    "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"]
+   :boundary-source "formal/dafny/EaclKernel.dfy"
+   :report "formal/verification/operator-phase-b.edn"
+   :integration-status
+   :concrete-production-refinement-passed-routing-and-writes-enabled-after-performance-acceptance
+   :claim
+   :conditional-generated-recursive-command-and-executable-production-refinement
+   :qualification
+   :independent-proof-review-not-performed}
   :indexed-recursive-public-engine
   {:status :passed
    :verified-obligations 7985
@@ -146,31 +208,36 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8793
+   :verified-obligations 9382
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
    :claim
    :conditional-composition-of-generated-recursive-authority-acyclic-decisions-and-source-specializations-under-documented-tcb
    :qualification
-   :clj-cljs-orchestration-adapters-cryptography-and-host-runtime-remain-trusted-boundaries}}
+   :clj-cljs-orchestration-adapters-cryptography-and-host-runtime-remain-trusted-boundaries
+   :excluded-from-production-composition
+   [:abstract-operator-engine-phase-a]}}
  :adapter-certification
  {:report "formal/verification/adapter-certification.edn"
-  :datomic :certification-suite-passed
+ :datomic :certification-suite-passed
   :datascript :certification-suite-passed
-  :datahike :certification-suite-passed}
+  :datahike :certification-suite-passed
+  :datalevin :ordered-generation-certification-suite-passed}
  :runtime-targets
  {:clj-java
   {:boundary-smoke :passed
    :semantic-fixtures :passed
    :persistent-collection-boundary :passed
-   :cross-runtime-vectors :passed}
+   :cross-runtime-vectors :passed
+   :abstract-operator-decision-vectors :passed}
   :cljs-javascript
   {:node-smoke :passed
    :browser-esbuild-smoke :passed
    :persistent-collection-and-sequence-boundary :passed
    :indexed-traversal-linear-scaling-gate :passed
-   :cross-runtime-vectors :passed}}
+   :cross-runtime-vectors :passed
+   :abstract-operator-decision-vectors :passed}}
  :cross-runtime-parity
  {:status :passed
   :report "formal/verification/cross-runtime-parity.edn"}
@@ -290,7 +357,11 @@
    :report "formal/verification/performance-gates.edn"
    :explorer-v8-release-report
    "formal/verification/explorer-v8-release.edn"
-   :current-generation-cache-heavy-suite :passed
+   :basis-first-cache-heavy-suite :passed
+   :datalevin-ordered-generations
+   {:status :passed
+    :report
+    "formal/verification/datalevin-ordered-generation-benchmark.edn"}
    :generated-authority-heavy-suite :passed
    :shared-subgraph-zero-final-hit :passed
    :completed-answer-hot-nonregression :passed
@@ -315,8 +386,18 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 96
-  :registered 96}
+  :killed 56
+  :registered 56
+  :retired-invalid-controls 74}
+ :source-closure
+ {:report "formal/verification/public-source-closure.json"
+  :source-files 101
+  :public-roots 70
+  :reachable-definitions 2115}
+ :stable-discovery
+ {:gate "formal/stable-discovery/verify-fast.sh"
+  :dafny-leaves 47
+  :verified-obligations 651}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -326,11 +407,7 @@
  {:status :target-authorities-routing-passed
   :report "formal/verification/generated-boundary.edn"
   :complete-public-routing true}
- :proof-only-exclusions
- [{:source "formal/dafny/CacheKernel.dfy"
-   :runtime-operation :none
-   :reason :proof-only-model
-   :production-assurance-contribution :none}]
+ :proof-only-exclusions []
  :release-gate
  {:verified-status-allowed? false
   :decision :refused

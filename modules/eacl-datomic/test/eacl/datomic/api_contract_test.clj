@@ -11,6 +11,7 @@
             [eacl.datomic.impl :as impl :refer [Relationship]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.relationships :as relationships]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.v8 :as engine]
             [eacl.verified-kernel :as verified]))
@@ -37,7 +38,7 @@
   #_{:clj-kondo/ignore [:unresolved-symbol]}
   (with-mem-conn [conn schema/v7-schema]
     (let [default-selection
-          (get-in (core/make-client conn {}) [:opts :decision-kernel])
+          (get-in (core/make-client conn {}) [:runtime :decision-kernel])
           error
           (try
             (core/make-client conn {:engine-selection :anything})
@@ -125,10 +126,11 @@
           edge (get-in page-1 [:page-info :end-cursor])
           page-2 (impl/read-relationships db (assoc query :after edge))]
       (is (= {:kind :relationship-index
-              :v 1
+              :v relationships/relationship-cursor-version
+              :anchor :progress
               :scan-index 0}
-             (select-keys edge [:kind :v :scan-index])))
-      (is (= #{:kind :v :scan-index :subject-id :resource-id}
+             (select-keys edge [:kind :v :anchor :scan-index])))
+      (is (= #{:kind :v :anchor :scan-index :subject-id :resource-id}
              (set (keys edge))))
       (is (= 1 (count (:data page-2))))
       (testing "the superseded Datomic-private edge is rejected"

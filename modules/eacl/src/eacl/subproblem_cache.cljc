@@ -26,7 +26,7 @@
   nil)
 
 (def ^:dynamic *managed-key-fn*
-  "Returns a same-snapshot `{:schema-stamp n :dependency-stamp n}` descriptor
+  "Returns a same-snapshot `{:schema-generation n :dependency-stamp n}` descriptor
   for one relation dependency, or nil when managed reuse is unavailable."
   nil)
 
@@ -37,6 +37,11 @@
 (def ^:dynamic *publication-attempt-limit*
   "Maximum best-effort CAS publication attempts for the owning request."
   4)
+
+(def ^:dynamic *populate?*
+  "False for a read-only cache request. Lookups and request-local memoization
+  remain active, but no completed subproblem is published."
+  true)
 
 (def ^:dynamic *decision-kernel*
   "Generated-kernel selection inherited from the enclosing public client.
@@ -99,7 +104,7 @@
   [option value]
   (when-not (and (integer? value) (pos? value))
     (throw (ex-info "Subproblem cache weights must be positive integers."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :option option
                      :value value})))
   value)
@@ -128,7 +133,7 @@
            (throw
             (ex-info
              "Unknown subproblem cache option."
-             {:type :eacl/invalid-config
+             {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
               :unknown-keys (vec unknown-keys)
               :known-keys (vec (sort option-keys))})))
          budgets
@@ -193,11 +198,11 @@
   [store tier]
   (when-not (store? store)
     (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :store store})))
   (when-not (contains? known-tiers tier)
     (throw (ex-info "Unknown EACL subproblem cache tier."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :tier tier
                      :known-tiers known-tiers}))))
 
@@ -205,7 +210,7 @@
   [store]
   (when-not (store? store)
     (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :store store})))
   (let [state @(:state store)]
     (assoc @(:metrics store)
@@ -224,7 +229,7 @@
   [store]
   (when-not (store? store)
     (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :store store})))
   (reset! (:state store)
           (assoc
@@ -379,7 +384,7 @@
      (throw
       (ex-info
        "Subproblem publication options are invalid."
-       {:type :eacl/invalid-config :tier tier})))
+       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config :tier tier})))
    (let [deadline-expired? (execution/expired?)
          valid-value?
          (try
@@ -482,10 +487,13 @@
     (if-let [hit (lookup! store tier key options)]
       hit
       (let [value (compute)
+            populate? (get options :populate? *populate?*)
             publication
-            (publish!
-             store tier key options value *publication-attempt-limit*
-             lifecycle)]
+            (if populate?
+              (publish!
+               store tier key options value *publication-attempt-limit*
+               lifecycle)
+              {:published? false :reason :suppressed})]
         (swap! (:metrics store) update :misses inc)
         {:value value
          :cached? false
@@ -518,7 +526,7 @@
 (defn- valid-managed-descriptor?
   [descriptor]
   (and (map? descriptor)
-       (proof-stamp? (:schema-stamp descriptor))
+       (proof-stamp? (:schema-generation descriptor))
        (proof-stamp? (:dependency-stamp descriptor))))
 
 (defn- dependency-atom-count
@@ -576,7 +584,7 @@
    key
    options
    (fn []
-     (if-let [{:keys [schema-stamp dependency-stamp]}
+     (if-let [{:keys [schema-generation dependency-stamp]}
               (managed-descriptor dependency)]
        (let [managed
              (resolve-independent!
@@ -585,7 +593,7 @@
               [:managed-subproblem
                2
                *managed-scope*
-               schema-stamp
+               schema-generation
                dependency
                dependency-stamp
                tier
@@ -609,7 +617,7 @@
   (validate-tier! store tier)
   (when-not (and (fn? valid?) (fn? weight-fn))
     (throw (ex-info "Subproblem lookup callbacks must be functions."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :tier tier})))
   (swap! (:metrics store) update :lookup-probes inc)
   (let [entry (get-in @(:state store) [tier :entries key])]
@@ -627,4 +635,3 @@
         {:value (:value entry)
          :cached? true
          :cache-tier (exact-cache-tier tier)}))))
-

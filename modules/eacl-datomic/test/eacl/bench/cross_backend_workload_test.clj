@@ -11,7 +11,6 @@
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.datascript.core :as datascript]
-            [eacl.datomic.cache :as datomic-cache]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.schema :as datomic-schema]
             [eacl.engine.v8 :as engine])
@@ -165,17 +164,16 @@
     [(eacl/->Relationship (user 0) :reader (document 0))])))
 
 (defn- cache-config
-  [mode datomic?]
+  [mode]
   (case mode
     :cache-free
-    (if datomic? datomic-cache/no-cache shared-cache/no-cache)
+    shared-cache/no-cache
 
     :completed-answer-only
-    {:remember-answers true
-     :subproblem-cache {:enabled? false}}
+    {:subproblem-cache {:enabled? false}}
 
     :layered-current
-    {:remember-answers true}))
+    {}))
 
 (defn- make-clients
   [make-client connection datomic?]
@@ -187,10 +185,9 @@
        (make-client
         connection
         (merge
-         {:cache (cache-config mode datomic?)}
+         {:cache (cache-config mode)}
          (if datomic?
-           {:page-token-key "cross-backend-workload-page"
-            :zed-token-key "cross-backend-workload-zed"}
+           {:security-key "cross-backend-workload-page00000"}
            {:security-key
             "01234567890123456789012345678901"})))])
     [:cache-free :completed-answer-only :layered-current])))

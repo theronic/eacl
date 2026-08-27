@@ -19,6 +19,7 @@
             [clojure.string :as string]
             [datascript.core :as ds]
             [eacl.bench.explorer-fixture :as fixture]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.execution :as execution]))
@@ -260,14 +261,13 @@
 
 (defn seed-client!
   "Builds a DataScript-backed public client for one fixture with answer
-  caching disabled. Each store mints its own source lifecycle — distinct
-  stores sharing one lifecycle would violate the adapter source-identity
-  contract (and poison identity-keyed caches across fixtures)."
+  caching disabled. Stores use the portable default lifecycle; their native
+  source identities remain distinct cache/token lineage dimensions."
   [{:keys [schema objects relationships]}]
   (let [conn (datascript/create-conn)
         client (datascript/make-client
                 conn
-                {:cache {:remember-answers false}})]
+                {:cache cache/no-cache})]
     (eacl/write-schema! client schema)
     (ds/transact! conn
                   (vec (map-indexed

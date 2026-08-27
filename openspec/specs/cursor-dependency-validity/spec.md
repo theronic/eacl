@@ -1,7 +1,9 @@
 # cursor-dependency-validity Specification
 
 ## Purpose
-TBD - created by archiving change eacl-v8-root-fixes. Update Purpose after archive.
+Define how page cursors remain valid across source changes, how they bind
+schema and relationship dependencies, and how their portable envelope protects
+confidential state while supporting safe key rotation.
 ## Requirements
 ### Requirement: Dependency-scoped continuation proofs
 Cursor continuation proofs SHALL be scoped to the query's compiled relation dependency stamps (schema stamp plus the sorted per-relation stamp vector), not to whole-database identity (`basis-t`). A transaction touching no relation in the cursor's dependency set SHALL NOT invalidate the continuation.
@@ -24,12 +26,19 @@ Cursor acceptance SHALL validate the cursor's schema generation against the sele
 ### Requirement: One authenticated-and-confidential token codec
 All backends SHALL use one page-token codec providing both authenticity and confidentiality (AEAD). Backend capability sets SHALL advertise identical `:cursor` properties for the built-in adapters.
 
+The portable CLJ/CLJS envelope SHALL use independently domain-derived
+encryption and authentication keys, AES-256-CTR with a random 96-bit nonce,
+and encrypt-then-HMAC-SHA-256. The decoder SHALL authenticate the visible key
+id, nonce, and ciphertext before decrypting or parsing the confidential
+payload. A key SHALL be rotated before 2^32 cursor encryptions; old keys MAY
+remain in the verification keyring only for the intended cursor lifetime.
+
 #### Scenario: Portable token confidentiality
 - **WHEN** a Datahike or DataScript page token is issued
 - **THEN** its payload (source lifecycle, native revision/exact locator, proof digests, result ids) is not recoverable from the token without the key, and tampering is rejected before any payload parse
 
 ### Requirement: Key-management transparency
-Constructing a client without explicit token key material SHALL emit a startup warning stating that cursors and tokens will not survive process restart or load-balanced deployment. Documentation SHALL state the AEAD nonce-per-key invocation bound and rotation guidance.
+Constructing a client without explicit token key material SHALL emit a startup warning stating that cursors and tokens will not survive process restart or load-balanced deployment. The warning and documentation SHALL state the 2^32 AEAD nonce-per-key invocation bound and rotation guidance.
 
 #### Scenario: Defaulted key warning
 - **WHEN** `make-client` is called with no token key option

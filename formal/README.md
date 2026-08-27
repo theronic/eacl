@@ -9,9 +9,9 @@ the generated release manifest.
 ## Layout
 
 - `stable-discovery/` contains the release-assurance tree of the shipped
-  enumeration engine: 42 Dafny leaves, two TLC families, five executable
+  enumeration engine: 47 Dafny leaves, two TLC families, five executable
   refinement bridges and the randomized refinement campaign
-  (`verify-fast.sh`, 528 obligations; see its README).
+  (`verify-fast.sh`, 651 obligations; see its README).
 - `dafny/` contains the executable mathematical semantics, the generated
   decision kernels, and proof lemmas. The `AcyclicEngine`, `RecursiveEngine`,
   `OrderedMerge`, `RoutingCertificate`, `CursorCost` and `Indexed*` leaves
@@ -20,7 +20,9 @@ the generated release manifest.
   `openspec/changes/adopt-stable-discovery-enumeration/tasks.md`.
 - `tla/` contains bounded temporal models used to discover hostile cache,
   cursor, snapshot, continuation, subproblem-publication, proof-frame, and
-  source-switch histories.
+  source-switch histories. `EaclOperatorSafety.tla` adds the abstract operator
+  publication, logical-cursor, checkpoint, cache-lifecycle, and completed
+  negative-premise histories.
 - `counterexamples/` retains minimized witnesses and their bug ledger.
 - `verification/` records the decision inventory, trusted boundary, assurance
   matrix, tool-selection research, baselines, and release-manifest inputs.
@@ -77,12 +79,51 @@ the aggregate report is `target/formal/dafny-verification.json`.
 This model is not mechanically extracted into production. The corresponding
 handwritten source is `modules/eacl/src/eacl/permission_tree.cljc`; bounded
 reference/property tests are in
-`modules/eacl/test/eacl/permission_tree_test.cljc`, backend contracts in
+`modules/eacl/test/eacl/permission_tree_test.cljc` and
+`modules/eacl-datascript/test/eacl/permission_tree_operator_test.cljc`, backend contracts in
 `modules/eacl/test/eacl/contract_support.cljc`, and the pinned upstream fixture
 in `formal/fixtures/permission-tree/`. Immutable/complete adapter reads,
 identity conversion, selected-snapshot token authentication, monotonic clocks,
 host integer/runtime semantics, and general Clojure source refinement remain
 explicit trusted or empirically checked boundaries.
+
+The abstract operator Phase A consists of
+`PermissionSetAlgebra.dfy`, `SignedDependencyStratification.dfy`,
+`CandidateCover.dfy`, `WitnessPredicate.dfy`, `VectorPredicate.dfy`,
+`AdaptiveBatching.dfy`, `OperatorLeastPath.dfy`, `SeekableSetKernels.dfy`,
+`DensityBoundedBatch.dfy`, `AnchorGatedConjunction.dfy`,
+`StratifiedExclusion.dfy`, `OperatorCacheRefinement.dfy`,
+`ExpressionPlanRefinement.dfy`, `OperatorGeneratedPolicy.dfy`,
+`OperatorGeneratedPolicyRefinement.dfy`, and `OperatorProofKernel.dfy`.
+Together they add 525 proof-leaf obligations plus six obligations at the
+generated `EaclKernel` boundary; the locked whole-tree run verifies 9,325
+obligations. The generated `DecideOperatorBatch` and
+`DecideOperatorSignedGraph` boundaries are each exercised by Java and
+JavaScript against fixed and 1,000-case randomized independent host oracles,
+for 2,016 operator assertions per runtime. The proof-only aggregate is kept out
+of generated runtime artifacts and is mechanically connected to the small
+generated policy through `OperatorGeneratedPolicyRefinement.dfy`. The direct
+n-ary intersection proof is an anchor-preserving max-head k-way leapfrog; it
+does not use repeated binary filtering. Its demand-stopping result/work model
+proves zero-demand silence, exact generic-prefix output, and dimensional
+anchor-round, operand-seek, driver-seek, and combined-seek bounds. Its exact
+per-round operand-seek trace stops at the first exhausted child rather than
+opening later operands unnecessarily.
+
+Phase A is abstract: production does not call its two generated decision
+functions directly. Its exact claim, limitations, counts, and digests are
+recorded in `verification/operator-phase-a.edn`.
+
+Phase B adds the generated recursive command boundary and binds the handwritten
+CLJ/CLJS parser, canonical expression storage, signed graph, plan, scalar and
+vector evaluators, direct specializations, cursor progress, recursive state,
+cache seam, and all four adapters through digest closure, independent-oracle
+differentials, counterexample replay, backend certification, and killed
+production mutants. The locked whole-tree run verifies 9,361 obligations.
+Public intersection/exclusion schema writes and routing are enabled after the
+recorded conformance, storage, performance, remote-I/O, and release gates
+passed. The executable refinement claim and its host-language boundary are
+recorded in `verification/operator-phase-b.edn`.
 
 The operational guide, theorem navigation, adapter certification,
 counterexample workflow, generated-engine cutover policy, and assurance wording are in

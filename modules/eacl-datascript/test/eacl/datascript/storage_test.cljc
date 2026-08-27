@@ -10,6 +10,7 @@
             [eacl.datascript.schema :as schema]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.model :as model]))
 
 (def relationship-schema
@@ -18,6 +19,136 @@
      relation owner: user
      permission admin = owner
    }")
+
+(def operator-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = base & reader - banned
+   }")
+
+(def replacement-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = reader - banned
+   }")
+
+(def no-permission-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+   }")
+
+(def invalid-negative-cycle-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     permission a = reader - b
+     permission b = a
+   }")
+
+(defn- exception-data [thunk]
+  (try
+    (thunk)
+    nil
+    (catch #?(:clj clojure.lang.ExceptionInfo
+              :cljs cljs.core.ExceptionInfo) error
+      (ex-data error))))
+
+(defn- expression-storage-projection [db]
+  {:schema (schema/read-schema db)
+   :permissions
+   (->> (schema/read-permissions db)
+        (map #(select-keys % expression-persistence/expression-attributes))
+        (sort-by :eacl/id)
+        vec)})
+
+(deftest permission-storage-is-expression-only-and-replacement-is-atomic-test
+  (let [conn (datascript/create-conn)
+        _ (schema/write-schema! conn operator-storage-schema)
+        before-db (ds/db conn)
+        before (schema/read-permissions before-db)
+        view-id (expression-persistence/->expression-id :document :view)
+        view-eid (ds/entid before-db [:eacl/id view-id])
+        before-payload (:eacl.permission/expression-payload
+                        (first (filter #(= view-id (:eacl/id %)) before)))]
+    (is (= 2 (count before)))
+    (is (every? #(not-any? (fn [attribute]
+                             (contains? % attribute))
+                           expression-persistence/legacy-flat-attributes)
+                before))
+    (is (empty?
+         (filter #(contains? expression-persistence/legacy-flat-attributes
+                             (:a %))
+                 (ds/datoms before-db :eavt))))
+    (schema/write-schema! conn replacement-storage-schema)
+    (let [after-db (ds/db conn)
+          after (schema/read-permissions after-db)
+          view (first (filter #(= view-id (:eacl/id %)) after))]
+      (is (= view-eid (ds/entid after-db [:eacl/id view-id])))
+      (is (= 2 (count after)))
+      (is (not= before-payload
+                (:eacl.permission/expression-payload view)))
+      (is (= :exclusion
+             (:op (:root (expression-persistence/decode-entity view))))))
+    (let [stable-db (ds/db conn)
+          stable-schema (schema/read-schema stable-db)
+          stable-generation (schema/current-schema-generation stable-db)
+          data (exception-data
+                #(schema/write-schema! conn invalid-negative-cycle-schema))
+          after-failure (ds/db conn)]
+      (is (= :eacl.schema/unstratified-exclusion (:type data)))
+      (is (= stable-generation
+             (schema/current-schema-generation after-failure)))
+      (is (= stable-schema (schema/read-schema after-failure))))
+    (let [exported (ds/serializable before-db)
+          restored (ds/from-serializable exported)]
+      (is (= (expression-storage-projection before-db)
+             (expression-storage-projection restored))
+          "DataScript export/import backup preserves expression rows"))
+    (schema/write-schema! conn no-permission-storage-schema)
+    (is (empty? (schema/read-permissions (ds/db conn))))
+    (is (= 2 (count (schema/read-permissions before-db))))))
+
+(deftest permission-storage-fails-closed-on-flat-mixed-and-duplicate-rows-test
+  (testing "flat-only"
+    (let [conn (datascript/create-conn)]
+      (ds/transact!
+       conn
+       [{:eacl/id "flat"
+         :eacl.permission/resource-type :document
+         :eacl.permission/permission-name :view
+         :eacl.permission/source-relation-name :self
+         :eacl.permission/target-type :relation
+         :eacl.permission/target-name :reader}])
+      (is (= :flat-only-representation
+             (:reason (exception-data #(schema/read-schema (ds/db conn))))))))
+  (testing "mixed"
+    (let [conn (datascript/create-conn)
+          _ (schema/write-schema! conn relationship-schema)
+          permission (first (schema/read-permissions (ds/db conn)))]
+      (ds/transact!
+       conn
+       [[:db/add [:eacl/id (:eacl/id permission)]
+         :eacl.permission/target-type :relation]])
+      (is (= :mixed-flat-and-expression
+             (:reason (exception-data #(schema/read-schema (ds/db conn))))))))
+  (testing "duplicate"
+    (let [conn (datascript/create-conn)
+          _ (schema/write-schema! conn relationship-schema)
+          permission (first (schema/read-permissions (ds/db conn)))]
+      (ds/transact! conn [(assoc permission :eacl/id "duplicate")])
+      (is (= :duplicate-expression
+             (:reason (exception-data #(schema/read-schema (ds/db conn)))))))))
 
 (defn- seeded
   []
@@ -81,6 +212,10 @@
     (is (not (contains? forward-definition :db/tupleAttrs)))
     (is (every? #(not (contains? schema/datascript-schema %))
                 removed-attributes))))
+
+(deftest derived-expression-metrics-are-not-schema-attributes-test
+  (is (every? #(not (contains? schema/datascript-schema %))
+              expression-persistence/retired-expression-attributes)))
 
 (deftest full-arity-index-boundaries-test
   (let [conn (schema/create-conn)
@@ -242,6 +377,28 @@
     (let [{:keys [forward reverse]} (relationship-state (ds/db conn))]
       (is (empty? forward))
       (is (empty? reverse)))))
+
+(deftest retain-inert-presence-detects-reverse-only-ghost-test
+  (let [{:keys [conn]} (seeded)
+        db (ds/db conn)
+        {:keys [user-eid forward reverse]} (relationship-state db)
+        relation
+        (first
+         (filter #(= :owner (:eacl.relation/relation-name %))
+                 (schema/read-relations db)))]
+    (is (= 1 (count forward)))
+    (is (= 1 (count reverse)))
+    (ds/transact!
+     conn
+     [[:db/retract user-eid relationship-storage/forward-attribute
+       (:v (first forward))]])
+    (let [{:keys [forward reverse]} (relationship-state (ds/db conn))]
+      (is (empty? forward))
+      (is (= 1 (count reverse)))
+      (is (true?
+           (schema/relationship-present-for-relation?
+            (ds/db conn) relation))
+          "retain-inert diagnostics must detect either surviving tuple half"))))
 
 (defn- lookup-ref-relationship
   "The internal relationship shape the shared client hands to the impl:

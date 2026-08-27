@@ -364,7 +364,7 @@
                     (pos? admission-entries)
                     (fn? clock))
        (throw (ex-info "Invalid EACL cache capacity."
-                       {:type :eacl/invalid-config
+                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                         :cache config'})))
      (->LocalStore (atom (initial-state)) config'))))
 

@@ -62,9 +62,9 @@ The canonical snapshot-exact key SHALL include stable backend/source/branch iden
 - **WHEN** adapter fingerprint, identity contract, engine/order ABI, or an answer-affecting limit changes
 - **THEN** entries computed under the prior semantic identity are ineligible
 
-#### Scenario: Arbitrary historical view
-- **WHEN** a caller supplies a filtered, since, history, speculative, or otherwise uncertified database view
-- **THEN** EACL does not identify it with an ordinary current/as-of exact generation merely because source and numeric revision match
+#### Scenario: Native database value is not a public target
+- **WHEN** a caller offers a native filtered, since, history, speculative, or otherwise uncertified database value to a public EACL operation
+- **THEN** EACL rejects it as an authorization target before exact-generation lookup
 
 ### Requirement: Complete managed dependency proof
 Managed-current reuse SHALL require an equal schema generation and an equal, canonically ordered version for every relation in the request's complete authorization dependency closure.
@@ -182,10 +182,6 @@ Cache correctness SHALL cover ordinary forward history only. Database restore, r
 - **WHEN** a backend exposes reliable source-lifecycle replacement evidence
 - **THEN** EACL may automatically rotate its cache lifecycle instead of requiring an explicit expiry call
 
-#### Scenario: Arbitrary historical database value
-- **WHEN** a low-level caller evaluates an arbitrary historical, filtered, speculative, or caller-supplied database value
-- **THEN** completed-answer caching is bypassed
-
 #### Scenario: Long-running ordinary request
 - **WHEN** an ordinary request holds an older immutable current database value after a newer transaction commits
 - **THEN** it may use stores and generations captured from the same lifecycle that are valid for its selected value; only authenticated adapter-selected ordinary exact snapshots are eligible for historical exact retention
@@ -300,9 +296,10 @@ A managed proof SHALL be all-or-nothing and scoped to the exact selected adapter
 - **WHEN** a complete valid proof is available but its schema generation or dependency frontier differs from the cached proof
 - **THEN** the request is a managed miss rather than a proof-unavailable request
 
-#### Scenario: Historical or constructed database value
-- **WHEN** a request explicitly uses `as-of`, `since`, a filtered or speculative database, or an unsupported caller-supplied database value
-- **THEN** EACL makes no managed-cache availability guarantee and bypasses proof-backed completed-answer reuse
+#### Scenario: EACL-created speculative snapshot
+- **WHEN** a request evaluates an EACL-created speculative snapshot
+- **THEN** managed reuse requires an authenticated committed proof with complete dependencies disjoint from cumulative speculative effects
+- **AND** exact lookup and persistent publication remain disabled
 
 #### Scenario: Long-running ordinary request
 - **WHEN** an ordinary request retains an older immutable current database value while later transactions commit

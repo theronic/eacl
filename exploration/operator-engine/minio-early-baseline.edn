@@ -1,0 +1,60 @@
+{:format-version 1
+ :captured-at "2026-08-25"
+ :purpose :pre-production-operator-s3-laziness-baseline
+ :environment
+ {:endpoint "http://127.0.0.1:19000"
+  :bucket "eacl-datahike-local"
+  :minio-image
+  "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+  :datahike "0.8.1801"
+  :konserve-s3 "0.1.38"
+  :eacl-core-base "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+  :java "26.0.2"
+  :os "Mac OS X 26.4.1 aarch64"}
+ :retained-demo-probe
+ {:command
+  "/Users/petrus/code/eacl/eacl-datahike-demo/infra/scripts/measure-s3-amplification.sh"
+  :status :baseline-mismatch
+  :expected {:capture-branch-head-gets 1}
+  :observed {:capture-branch-head-gets 0
+             :public-branch-head-gets 0
+             :warm-repeat-total-gets 0}
+  :cause
+  :current-demo-snapshot-manager-reused-cached-branch-object
+  :interpretation
+  :not-an-amplification-regression-and-not-used-as-operator-evidence}
+ :disposable-probe
+ {:command
+  "clj-nrepl-eval -p 7790 \"(do (require 'eacl.operator-engine.s3-experiments :reload) (eacl.operator-engine.s3-experiments/run! {:endpoint \\\"http://127.0.0.1:19000\\\" :bucket \\\"eacl-datahike-local\\\" :resource-count 4096 :cache-size 1}))\""
+  :source
+  "modules/eacl-datahike/test/eacl/operator_engine/s3_experiments.clj"
+  :source-sha256
+  "723fa712e353a10e1a51892193938c689705a8ee4a0c60a19783e22418552591"
+  :store-id "2ce67e9c-ede5-4a45-b32f-c375a1f85e86"
+  :store-deleted true
+  :fixture {:resources 4096 :selective-density 1/4 :store-cache-size 1}
+  :connection-operations {:head 1 :put 1 :get 1}
+  :dense
+  {:candidates 256 :eid-span 256 :equal-decisions true
+   :exact {:gets 2 :values-probed 256 :warm-gets 0}
+   :prefix {:gets 3 :values-scanned 64 :warm-gets 0}}
+  :sparse
+  {:candidates 256 :eid-span 4096 :equal-decisions true
+   :exact {:gets 4 :values-probed 256 :warm-gets 0}
+   :prefix {:gets 5 :values-scanned 1024 :warm-gets 0}}
+  :demand
+  {:accepted 21
+   :adaptive {:physical-candidates 147 :batches 3 :gets 1}
+   :fixed-256 {:physical-candidates 256 :batches 1 :gets 2}
+   :equal-results true}
+  :experiment-elapsed-ms 1306.262792}
+ :early-conclusion
+ {:high-s3-get-amplification-observed false
+  :query-remains-lazy true
+  :basis-connection-cost-separated true
+  :warm-query-gets 0
+  :adaptive-vs-fixed-get-reduction 1
+  :sparse-exact-vs-range-get-reduction 1
+  :sparse-range-realization-reduction 768
+  :qualification
+  :early-local-baseline-not-final-operator-acceptance-ceiling}}

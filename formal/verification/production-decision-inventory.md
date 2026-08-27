@@ -1,27 +1,47 @@
 # Production decision inventory
 
-> Revised 2026-08-15 for the routed stable-discovery engine. Sections that still describe the retired routing certificate, ordered merge, acyclic evaluator or generated indexed traversal are historical and are marked as such.
+> Revised 2026-08-23 for proof-equivalent cursor streams. Sections that still describe the retired routing certificate, ordered merge, acyclic evaluator or generated indexed traversal are historical and are marked as such.
 
 This inventory identifies code that can change an externally observable
 authorization result. Pure encoding, I/O, and backend implementation details
 are included only where they can cause a decision to be accepted, resumed, or
 reused.
 
+The three generated operator entry points
+`EaclKernel.__default/DecideOperatorBatch`,
+`EaclKernel.__default/DecideOperatorSignedGraph`, and
+`EaclKernel.__default/DecideOperatorRecursiveCommand` remain formal boundary
+oracles and are not called directly by production. The unreleased v8
+production parser, expression storage, planner, acyclic evaluator, recursive
+evaluator, cursor scope, cache path, and backend capability protocol do accept
+intersection and exclusion. Public operator-expression writes and public
+operator routing are enabled after the recorded performance and release gates
+passed; independent dynamic gates remain as regression controls. Concrete
+refinement evidence is recorded in
+`formal/verification/operator-phase-b.edn`.
+
 | Decision area | Production source | Decision consumed by |
 | --- | --- | --- |
 | Sealed plan compilation and rank certification | `eacl.engine.sealed-plan/seal-plan` (four-kind rules from adapter definitions, dense canonical ordinals, 0/1 read-rank certificate checked by `valid-certificate?`, composite fingerprint), cached per source/basis/root by `eacl.engine.v8/stable-plan` | every `can?`, lookup, and count; cursor fingerprint validation |
-| Permission dependency closure | `eacl.engine.v8/calc-permission-paths`, `get-permission-paths`, `permission-relationship-eids`, `permission-schema-nodes` | lookup/count cache dependency sets and Relay cursor dependency proofs |
+| Permission dependency closure and read-scope certification | `eacl.engine.v8/calc-permission-paths`, `get-permission-paths`, `permission-relationship-eids`, `permission-schema-nodes`, `certify-plan-read-scope!` | lookup/count cache dependency sets, Relay cursor frames, and rejection of sealed plans that name relations outside the closure |
 | Execution normalization and deadline | `eacl.execution/normalize`, deadline/cancellation checks in orchestration, relay, and at every reducer transition (`eacl.engine.physical/execution-cut-point`) | evaluation mode, bounded demand, timeout stage/error, whether another command may begin |
 | Stable-discovery reducer: admission, order, emission, limits | `eacl.engine.stable-reducer` (`schedule`, `step`, `release-one`, `run-forward`, `run-reverse`, `resume`), public limits mapped by `eacl.engine.v8/stable-limits` | forward/reverse enumeration order and uniqueness, exact and bounded counts, anchored `can?` (`eacl.engine.stable-route/check-eids`), typed limit errors |
-| Page composition, checkpoints and replay | `eacl.engine.stable-page/edge-page`, `deliver-page`, `state-at-boundary`, `checkpoint-put!`/`checkpoint-hit`; boundary validation by `eacl.engine.v8/validate-stable-bound!` | lookup page data, one-based `:stable-edge` cursors, page flags, stale-cursor rejection, continuation reuse |
+| Page composition, frame-keyed checkpoints and replay | `eacl.engine.v8/checkpoint-key`; `eacl.engine.stable-page/edge-page`, `deliver-page`, `state-at-boundary`, `checkpoint-put!`/`checkpoint-hit`; `eacl.engine.stable-reducer/history-free` and `resume`; boundary validation by `eacl.engine.v8/validate-stable-bound!` | lookup page data, one-based `:stable-edge` cursors, page flags, stale-cursor rejection, and client-private continuation reuse across equal-frame bases without native revision in the key |
 | Public pagination normalization | `eacl.relay` pagination argument and cursor handling | all lookup/count Relay entry points |
-| Relationship pagination | `eacl.engine.relationships` scan planning, physical keyset edges, bounded lookahead, and generated page-window decision | relationship list APIs |
-| Authenticated token scope and continuation decision | cursor decode/validate and current/exact graph selection in `eacl.relay` | lookup/count/relationship continuation |
-| Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `captured-current-selection`, `select` | snapshot chosen for every Datomic, Datahike, and DataScript authorization request |
-| Semantic cache key and entry eligibility | canonical source/lifecycle/native-locator/view/adapter identity plus generated current-exact, snapshot-exact, and managed entry decisions and completed typed artifact validation | `can?`, lookup, count, relationship-read, and permission-tree cache-enabled responses; eligibility has zero backend-command authority |
+| Relationship and authorized pagination | `eacl.engine.relationships` physical keyset pages and bounded authorization windows; `eacl.engine.v8/execute-filtered-lookup-window` over stable discovery; route orchestration in `eacl.client.orchestration` and the Datomic historical facade | relationship pages, authorization scan pages, enumerate-route pages, progress anchors, `:bounded?`, and exact lookahead |
+| Authenticated token scope and continuation decision | cursor decode/validate in `eacl.relay`; generated current decision over canonical `[lineage frame closure-digest]`; source-owned exact selection accepted by authenticated source scope, lifecycle, revision, and locator identity | lookup/count/relationship continuation |
+| Consistency plan and selected-snapshot postconditions | `eacl.consistency/selection-plan`, `select-from-source`, `select` | snapshot chosen for every Datomic, Datahike, DataScript, and Datalevin authorization request through an `Acl`; retained snapshots use the separate assertion boundary and perform no source selection |
+| Semantic cache key and entry eligibility | complete basis identity plus generated exact-only and managed entry decisions and completed typed artifact validation | `can?`, lookup, count, relationship-read, and permission-tree cache-enabled responses; eligibility has zero backend-command authority |
 | Cache miss ownership and publication | `eacl.subproblem-cache/resolve-independent!`, generation-qualified bounded `publish!` | misses compute independently; compatible winners are retained and losing/late candidates are discarded without changing authorization |
-| Local cache failure and invalid-entry handling | `eacl.cache` current-generation decisions plus `eacl.subproblem-cache` lookup/validation/publication | whether a client-private cached authorization result may be returned |
+| Local cache failure and invalid-entry handling | `eacl.cache` exact-basis/managed decisions plus `eacl.subproblem-cache` lookup/validation/publication | whether a client-private cached authorization result may be returned |
 | Backend snapshot and scan contract | `eacl.backend.v8` protocol operations | every engine result, through adapter-provided facts and identities |
+| Operator parsing, resolution, signed dependencies, and strict strata | `eacl.spicedb.parser`, `eacl.schema.expression`, `eacl.schema.expression-resolver`, `eacl.schema.expression-graph` | expression storage, plan compilation, negative-cycle rejection, and deterministic schema errors |
+| Operator plan, generator, anchor, witness, and fingerprint selection | `eacl.operator.plan`, `eacl.operator.cover-plan`, `eacl.operator.cursor-scope` | every intersection/exclusion check, lookup, count, cursor, and cache identity when operator routing is enabled |
+| Acyclic scalar/vector set-algebra decisions and bounded progress | `eacl.operator.evaluator`, `eacl.operator.vector-evaluator`, `eacl.operator.batch-schedule`, `eacl.operator.lookup`, `eacl.operator.seekable` | exact point membership, aligned batches, forward/reverse pages, bounded/exact counts, and logical resume coordinates |
+| Recursive typed facts, anchor joins, strata, and exclusion absence | `eacl.operator.recursive` | positive recursive conjunction, strict lower-stratum exclusion, checkpoint/replay, and recursive limits |
+| Operator direct-membership locality and aligned scatter | `eacl.backend.direct-membership` and the built-in backend implementations | proof-compatible leaf-cache hits, scalar fallback, Datahike dense/sparse batching, aligned Boolean results, and physical work counters |
+| Operator release gates | `eacl.client.orchestration/*operator-expression-writes-enabled?*`, `eacl.engine.v8/*operator-routing-enabled?*` | enabled-by-default admission of public operator-expression schema writes and public operator query routing, with explicit disabled regression controls; union-only schemas and plans bypass both decisions |
+| Operator permission-tree rendering | `eacl.permission-tree` over the persisted source expression | explicit union/intersection nodes, directed exclusion children, named-permission and one-hop-arrow expansion on one selected immutable snapshot; union-only permissions retain their existing component path |
 
 ### Retired-engine boundaries (historical, pending the task 9.2 formal cut)
 
@@ -47,20 +67,22 @@ differential campaign.
 history, a present malformed adapter, cross-source selection, and failed
 native-revision/exact-locator postconditions. The
 16 plan states and 48 well-formed validation states are exhaustively compared
-through generated Java and JavaScript. Datomic, Datahike, and DataScript pass
-their configured engine selection into this boundary. The zero-coordination
-captured-current path makes one plan decision and returns the identical
-already-captured immutable adapter; scope equality is reflexive and therefore
-does not justify a second FFI call or backend scope read.
+through generated Java and JavaScript. Datomic, Datahike, DataScript, and
+Datalevin pass their configured engine selection into this boundary. The
+plan-only cost vector covers the minimize-latency decision before source
+acquisition. Every successful `Acl` selection then acquires and validates one
+selected basis. A retained snapshot does not call this source-selection
+boundary: its descriptor is asserted against its already closed basis identity
+before evaluation and without a source operation.
 
 This verifies the finite decision over observed facts. It does not prove that
 an adapter's source scope, native revision, exact reconstruction, or
 authoritative barrier is truthful, and it does not prove token cryptography.
 Those remain explicit adapter and cryptographic refinement obligations.
 
-The generated cache decision now has a separate snapshot-exact entry stage:
-availability selects `UseSnapshotExactEntry`; absence selects
-`ComputeSnapshotExactValue` and can never fall through to managed proof reuse.
+The generated cache decision has one exact-only entry stage for every admitted
+basis: availability selects `UseExactEntry`; absence selects
+`ComputeExactValue` and can never fall through to managed proof reuse.
 The finite decision proves only that a declared available entry controls the
 corresponding hit. It does not prove that the host's composite key truthfully
 identifies an ordinary immutable snapshot. Backend I/O effects (including
@@ -118,8 +140,8 @@ partition. It derives direct relation EIDs only from relation paths matching the
 query subject type and proves that a direct positive is sound; if every path is
 a relation, the direct result is complete. Generated Java and JavaScript match
 the actual CLJ/CLJS materializer and direct summary on 99 fixtures each.
-Adapter certification v2 checks the composed path maps against real relation
-IDs on Datomic, Datahike, and DataScript. Clojure language semantics and
+Adapter certification v4 checks the composed path maps against real relation
+IDs on Datomic, Datahike, DataScript, and Datalevin. Clojure language semantics and
 arbitrary backend implementation correctness remain explicit trusted
 obligations.
 
@@ -140,6 +162,8 @@ The decisions above flow into these externally observable families:
 - exact and bounded count;
 - lookup cursor continuation in both supported page directions;
 - relationship pagination and cursor continuation;
+- authorization-filtered relationship scans and relationship-filtered resource/subject enumeration;
+- ordered batch permission checks under one selected snapshot and aggregate budget;
 - cache-enabled variants of checks, lookup, and count.
 
 No production decision may be omitted from the assurance matrix when it can
@@ -153,7 +177,7 @@ does not imply a global, lexical, domain, or cross-backend order.
 shared and backend EACL source files. It closes the cross-namespace call graph
 from engine, relationship-pagination, relay, cursor, cache, subproblem-cache,
 consistency, causal-token, authority-provider, and named
-Datomic/Datahike/DataScript roots. Exact counts and digests are release-artifact
+Datomic/Datahike/DataScript/Datalevin roots. Exact counts and digests are release-artifact
 data and MUST be regenerated after this change; prose does not pin stale counts.
 Unattributed clj-kondo usages inside exact `defrecord` spans are assigned to
 their containing protocol implementation, so those public client and generated
@@ -167,7 +191,7 @@ remaining scopes are adapter-operation semantic refinement and theorem
 classification for every reachable definition. `backend-dispatch.edn`
 separately proves the static closure fact that every CLJ and CLJS
 `backend/invoke` site uses a literal key from the pinned operation set (the
-required snapshot operations plus `:proof-frame`; the committed ledger holds
+required snapshot operations plus `:schema-generation` and `:proof-frame`; the committed ledger holds
 the exact site and key counts); this does not prove what an adapter
 implementation does. The release claim remains withheld until those semantic
 classifications are complete.

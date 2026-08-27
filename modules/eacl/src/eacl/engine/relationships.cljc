@@ -1,9 +1,11 @@
 (ns eacl.engine.relationships
-  (:require [eacl.subproblem-cache :as subproblem]
+  (:require [eacl.request.counters :as request-counters]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (def default-limit 1000)
 (def maximum-limit 10000)
+(def relationship-cursor-version 2)
 
 (defn- sort-token
   [value]
@@ -60,6 +62,9 @@
   [scan-kind direction cursor {:keys [subject-id resource-id]}]
   (or
    (nil? cursor)
+   (and (:resume-inclusive? cursor)
+        (= subject-id (:subject-id cursor))
+        (= resource-id (:resource-id cursor)))
    (let [ordered-after?
          (fn [a b]
            (case direction
@@ -84,25 +89,37 @@
 
        false))))
 
-(defn- relationship-edge
+(defn progress-edge
+  "Builds the exclusive relationship-keyset anchor for one examined row.
+
+  The row need not be emitted. Authorized window routes use this to advance
+  past rejected candidates while ordinary pages use the selected boundary;
+  both are the same stable physical stream position."
   [{:keys [spec-idx subject-id resource-id]}]
   {:kind :relationship-index
-   :v 1
+   :v relationship-cursor-version
+   :anchor :progress
    :scan-index spec-idx
    :subject-id subject-id
    :resource-id resource-id})
 
 (defn- valid-edge?
   [scan-specs edge]
-  (and (map? edge)
-       (= #{:kind :v :scan-index :subject-id :resource-id}
-          (set (keys edge)))
+  (let [base-keys
+        #{:kind :v :anchor :scan-index :subject-id :resource-id}
+        edge-keys (when (map? edge) (set (keys edge)))]
+    (and (map? edge)
+       (or (= base-keys edge-keys)
+           (= (conj base-keys :resume-inclusive?) edge-keys))
        (= :relationship-index (:kind edge))
-       (= 1 (:v edge))
+       (= relationship-cursor-version (:v edge))
+       (= :progress (:anchor edge))
+       (or (not (contains? edge :resume-inclusive?))
+           (true? (:resume-inclusive? edge)))
        (nat-int? (:scan-index edge))
        (< (:scan-index edge) (count scan-specs))
        (nat-int? (:subject-id edge))
-       (nat-int? (:resource-id edge))))
+       (nat-int? (:resource-id edge)))))
 
 (defn- invalid-edge!
   [edge]
@@ -135,9 +152,9 @@
       (if (or (empty? pending)
               (= target (count rows)))
         rows
-        (let [spec (first pending)
+        (let [remaining (- target (count rows))
+              spec (assoc (first pending) :physical-limit remaining)
               resume-edge (when (= (:idx spec) start-index) edge)
-              remaining (- target (count rows))
               scanned (take remaining
                             (scan-fn spec resume-edge direction))]
           (recur (rest pending) (into rows scanned)))))))
@@ -206,7 +223,7 @@
          (verified/decide
           decision-kernel
           :relationship-keyset-page
-         {:direction direction
+          {:direction direction
            :size size
            :bound? (some? bound)
            :realized-count (count realized)})
@@ -219,14 +236,166 @@
      {:data (mapv :relationship selected)
       :page-info
       {:start-cursor
-       (when any? (relationship-edge (first selected)))
+       (when any? (progress-edge (first selected)))
        :end-cursor
-       (when any? (relationship-edge (last selected)))
+       (when any? (progress-edge (last selected)))
        :has-next-page?
        (boolean (and any? (:has-next? page-decision)))
        :has-previous-page?
        (boolean
         (and any? (:has-previous? page-decision)))}})))
+
+(defn- window-specs
+  [scan-specs direction edge]
+  (let [start-index (if edge
+                      (:scan-index edge)
+                      (case direction
+                        :asc 0
+                        :desc (dec (count scan-specs))))]
+    {:start-index start-index
+     :specs (vec
+             (if (seq scan-specs)
+               (pending-specs scan-specs direction start-index)
+               []))}))
+
+(defn- scan-window-chunk
+  [scan-fn spec cursor direction limit]
+  (vec
+   (take limit
+         (scan-fn (assoc spec :physical-limit limit)
+                  cursor direction))))
+
+(defn- rows-remain?
+  [scan-fn specs spec-position cursor direction]
+  (loop [position spec-position
+         cursor cursor]
+    (if (= position (count specs))
+      false
+      (let [spec (nth specs position)
+            row (first (scan-window-chunk
+                        scan-fn spec cursor direction 1))]
+        (if row
+          true
+          (recur (inc position) nil))))))
+
+(defn execute-filtered-window
+  "Filters the ordered physical relationship stream inside one bounded page.
+
+  `accept?` is called exactly once per examined candidate. Physical chunks
+  never exceed the smaller of the remaining candidate window and the
+  remaining accepted sentinel demand. A one-row, predicate-free exhaustion
+  probe is used only when the candidate budget lands exactly on a physical
+  boundary, so `:bounded?` and the continuation booleans remain exact."
+  [scan-specs query decision-kernel scan-fn
+   {:keys [candidate-window accept?]}]
+  (when-not (and (integer? candidate-window) (pos? candidate-window))
+    (throw
+     (ex-info
+      "The authorization candidate window must be a positive integer."
+      {:type :eacl.execution/resource-limit-exceeded
+       :eacl/error :eacl.execution/resource-limit-exceeded
+       :limit-kind :candidate-window
+       :value candidate-window})))
+  (when-not (fn? accept?)
+    (throw
+     (ex-info "A filtered relationship window requires an accept predicate."
+              {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
+  (let [{:keys [direction size]} (normalized-page decision-kernel query)
+        bound (case direction
+                :asc (:after query)
+                :desc (:before query))
+        _ (when (and bound (not (valid-edge? scan-specs bound)))
+            (invalid-edge! bound))
+        {:keys [specs]} (window-specs scan-specs direction bound)
+        initial-position 0
+        initial-cursor (when bound bound)
+        result
+        (loop [spec-position initial-position
+               cursor initial-cursor
+               examined 0
+               accepted []
+               last-examined nil]
+          (cond
+            (= (count accepted) (inc size))
+            {:accepted accepted
+             :last-examined last-examined
+             :more? true
+             :sentinel? true
+             :bounded? false}
+
+            (= examined candidate-window)
+            (let [more? (rows-remain?
+                         scan-fn specs spec-position cursor direction)]
+              {:accepted accepted
+               :last-examined last-examined
+               :more? more?
+               :sentinel? false
+               :bounded? more?})
+
+            (= spec-position (count specs))
+            {:accepted accepted
+             :last-examined last-examined
+             :more? false
+             :sentinel? false
+             :bounded? false}
+
+            :else
+            (let [remaining-window (- candidate-window examined)
+                  remaining-sentinel (- (inc size) (count accepted))
+                  chunk-limit (min remaining-window remaining-sentinel)
+                  spec (nth specs spec-position)
+                  chunk (scan-window-chunk
+                         scan-fn spec cursor direction chunk-limit)]
+              (if (empty? chunk)
+                (recur (inc spec-position) nil examined accepted
+                       last-examined)
+                (let [[accepted examined last-examined]
+                      (reduce
+                       (fn [[accepted examined _] row]
+                         (request-counters/add! :candidates-examined)
+                         [(cond-> accepted
+                            (accept? (:relationship row))
+                            (conj row))
+                          (inc examined)
+                          row])
+                       [accepted examined last-examined]
+                       chunk)
+                      exhausted-spec? (< (count chunk) chunk-limit)
+                      next-position (if exhausted-spec?
+                                      (inc spec-position)
+                                      spec-position)
+                      next-cursor (when-not exhausted-spec?
+                                    (progress-edge last-examined))]
+                  (recur next-position next-cursor examined accepted
+                         last-examined))))))
+        selected-direction (vec (take size (:accepted result)))
+        selected (if (= :desc direction)
+                   (vec (reverse selected-direction))
+                   selected-direction)
+        progress
+        (cond-> (some-> (:last-examined result) progress-edge)
+          (:sentinel? result) (assoc :resume-inclusive? true))
+        first-selected (some-> selected first progress-edge)
+        last-selected (some-> selected last progress-edge)
+        start-cursor (case direction
+                       :asc (or first-selected progress)
+                       :desc progress)
+        end-cursor (case direction
+                     :asc progress
+                     :desc (or last-selected progress))]
+    {:data (mapv :relationship selected)
+     :page-info
+     {:start-cursor start-cursor
+      :end-cursor end-cursor
+      :has-next-page?
+      (case direction
+        :asc (boolean (:more? result))
+        :desc (boolean bound))
+      :has-previous-page?
+      (case direction
+        :asc (boolean bound)
+        :desc (boolean (:more? result)))
+      :bounded? (boolean (:bounded? result))}}))
 
 (defn- build-cursor
   [cursor last-row]
@@ -251,7 +420,9 @@
               (and remaining (zero? remaining)))
         {:data (mapv :relationship acc)
          :cursor (build-cursor cursor last-row)}
-        (let [spec          (first pending)
+        (let [spec          (cond-> (first pending)
+                              remaining
+                              (assoc :physical-limit remaining))
               resume-cursor (when (= (:idx spec) start-idx) cursor)
               rows          (seq (scan-fn spec resume-cursor))]
           (if (empty? rows)

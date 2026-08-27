@@ -1,41 +1,59 @@
 (ns eacl.datascript.backend
   "DataScript storage operations for the shared v8 authorization engine."
   (:require [datascript.core :as ds]
+            [datascript.db :as dsdb]
+            [eacl.backend.source :as source]
+            [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.backend.v8 :as backend]
-            [eacl.datascript.impl :as impl])
-  #?(:clj (:import [java.util WeakHashMap])))
-
-(defonce ^:private connection-source-ids
-  ;; A DataScript source is one connection, not merely any DB whose numeric
-  ;; :max-tx happens to match. Weak keys avoid retaining abandoned conns.
-  #?(:clj (WeakHashMap.)
-     :cljs (js/WeakMap.)))
+            [eacl.datascript.impl :as impl]))
 
 (defn connection-source-id
   "Returns the process-local stable identity of one DataScript connection."
   [conn]
   (when conn
-    #?(:clj
-       (locking connection-source-ids
-         (or (.get ^WeakHashMap connection-source-ids conn)
-             (let [source-id (str (random-uuid))]
-               (.put ^WeakHashMap connection-source-ids conn source-id)
-               source-id)))
-       :cljs
-       (or (.get connection-source-ids conn)
-           (let [source-id (str (random-uuid))]
-             (.set connection-source-ids conn source-id)
-             source-id)))))
+    (or (:eacl.datascript/source-id (meta conn))
+        (:eacl.datascript/source-id
+         (alter-meta!
+          conn
+          (fn [metadata]
+            (if (:eacl.datascript/source-id metadata)
+              metadata
+              (assoc metadata
+                     :eacl.datascript/source-id
+                     (str (random-uuid))))))))))
 
-(def capabilities
+(defn basis-kind
+  "Classifies one DataScript database value without touching an EACL runtime.
+
+  This is structural classification only. It cannot distinguish `db-with`
+  products; public EACL APIs therefore never admit arbitrary native values."
+  [db]
+  (cond
+    (not (dsdb/db? db)) :foreign-backend
+    (identical? db (dsdb/unfiltered-db db)) :ordinary
+    :else :filtered))
+
+(defn database-source-scope
+  "Returns the source identity materialized by `eacl.datascript/create-conn`."
+  [db]
+  (when (= :ordinary (basis-kind db))
+    (when-let [source-id
+               (:eacl.datascript/source-id
+                (ds/entity db [:eacl/id "datascript-metadata"]))]
+      {:source-id {:connection-id source-id}
+       :branch nil})))
+
+(def adapter-capabilities
+  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
+   :runtime #{:clj :cljs}})
+
+(def source-capabilities
   {:consistency #{:minimize-latency
                   :fully-consistent
                   :at-least-as-fresh}
    :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
-   :cursor #{:forward :reverse :opaque}
-   :transactions #{:schema :relationships :object-deletion}
-   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj :cljs}})
 
 (defn- freshness-timeout!
@@ -81,51 +99,44 @@
            (freshness-timeout!
             token-data timeout-ms candidate))))))
 
-(defn- normalized-permission
+(defn- normalized-permissions
   [permission]
-  {:permission-id (:db/id permission)
-   :resource-type (:eacl.permission/resource-type permission)
-   :permission-name (:eacl.permission/permission-name permission)
-   :source-relation-name
-   (:eacl.permission/source-relation-name permission)
-   :target-type (:eacl.permission/target-type permission)
-   :target-name (:eacl.permission/target-name permission)})
+  (expression-persistence/union-compatible-definitions
+    (:db/id permission)
+    (expression-persistence/decode-entity permission)))
+
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (impl/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
-  {:schema-stamp
-   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
-     (some-> (first (ds/datoms db :eavt schema-eid
-                                :eacl/schema-generation))
-             :tx))
-   :relation-stamps
-   (mapv
-    (fn [relation-id]
-      [relation-id
-       (some-> (first (ds/datoms db :eavt relation-id
-                                  :eacl/relation-version))
-               :tx)])
-    relation-ids)})
+  (mapv
+   (fn [relation-id]
+     [relation-id
+      (some-> (first (ds/datoms db :eavt relation-id
+                                 :eacl/relation-version))
+              :tx)])
+   relation-ids))
 
-(defn snapshot-adapter
+(defn- certified-schema-generation
+  [db]
+  (when (contains? (:schema db) :eacl/schema-generation)
+    (some-> (first (ds/datoms db :avet :eacl/schema-generation))
+            :tx)))
+
+(def adapter-config-keys
+  #{:object-id->entid :entid->object-id
+    :adapter-fingerprint :adapter-deterministic? :identity-contract})
+
+(defn basis-adapter
   "Creates a v8 adapter bound to one immutable DataScript db value."
-  [db {:keys [object-id->entid entid->object-id conn]
+  [db {:keys [object-id->entid entid->object-id]
        :as opts}]
-  (let [source-lifecycle
-        (or (some-> (:source-lifecycle-state opts) deref)
-            (:source-lifecycle opts)
-            (str (random-uuid)))
-        source-scope
-        (or (:source-scope opts)
-            {:source-id
-             {:connection-id
-              (or (:native-source-id opts) source-lifecycle)}
-             :branch nil})
-        opts' (-> opts
-                  (dissoc :source-lifecycle-state)
-                  (assoc :source-lifecycle source-lifecycle
-                         :source-scope source-scope))]
-    (backend/make-adapter
+  (backend/validate-adapter-config! :datascript adapter-config-keys opts)
+  (backend/make-adapter
      {:id :datascript
       :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
@@ -133,11 +144,7 @@
       :identity-contract
       (:identity-contract opts
                           :selected-internal/current-external-injective-v2)
-      :capabilities
-      (cond-> capabilities
-        (nil? conn)
-        (update :consistency disj
-                :fully-consistent :at-least-as-fresh))
+      :capabilities adapter-capabilities
       :state {:db db}
       :operations
       {:snapshot-id
@@ -145,11 +152,8 @@
          {:database-id :datascript
           :basis-t (:max-tx db)})
 
-       :source-scope
-       (fn [] source-scope)
-
-       :source-lifecycle
-       (fn [] source-lifecycle)
+       :basis-kind
+       (fn [] (basis-kind db))
 
        :native-revision
        (fn []
@@ -158,25 +162,12 @@
 
        :order-hint (fn [] (:max-tx db))
 
-       :select-current
+       :schema-generation
        (fn []
-         (snapshot-adapter db opts'))
-
-       :select-authoritative
-       (fn [_timeout-ms]
-         (snapshot-adapter (if conn (ds/db conn) db) opts'))
-
-       :select-at-least
-       (fn [token-data timeout-ms]
-         (snapshot-adapter
-          (await-revision-db conn db token-data timeout-ms)
-          opts'))
+         (certified-schema-generation db))
 
        :exact-locator
        (constantly nil)
-
-       :select-exact
-       (fn [_token-data _timeout-ms] nil)
 
        :object-id->internal
        (fn [object-id]
@@ -199,9 +190,13 @@
 
        :permission-defs
        (fn [resource-type permission-name]
-         (mapv normalized-permission
-               (impl/find-permission-defs
-                db resource-type permission-name)))
+         (vec (mapcat normalized-permissions
+                      (impl/find-permission-defs
+                       db resource-type permission-name))))
+
+       :permission-expression
+       (fn [resource-type permission-name]
+         (permission-expression db resource-type permission-name))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
@@ -227,4 +222,60 @@
 
        :proof-frame
        (fn [relation-ids]
-         (ordered-generation-frame db relation-ids))}})))
+         (ordered-generation-frame db relation-ids))}}))
+
+(defn source
+  "Builds the borrowed immutable-basis source for one DataScript conn."
+  [conn opts]
+  (let [source-scope
+        {:source-id {:connection-id (:native-source-id opts)}
+         :branch nil}
+        source-lifecycle
+        (fn []
+          (or (some-> (:source-lifecycle-state opts) deref)
+              (:source-lifecycle opts)))
+        adapter-options (select-keys opts adapter-config-keys)
+        adapter-cache (volatile! nil)
+        borrowed
+        (fn [db]
+          (let [{cached-db :db cached-adapter :adapter} @adapter-cache
+                adapter
+                (if (identical? cached-db db)
+                  cached-adapter
+                  (let [created (basis-adapter db adapter-options)]
+                    (vreset! adapter-cache {:db db :adapter created})
+                    created))]
+            {:adapter adapter
+             :ownership :borrowed
+             :release-token nil}))]
+    (source/make-source
+     {:id :datascript
+      :capabilities source-capabilities
+      :traversal-execution backend/strict-sequential-traversal-execution
+      :topology {:deployment :embedded
+                 :snapshot-values :immutable}
+      :execution-constraints source/default-execution-constraints
+      :basis-ownership :borrowed
+      :fingerprint (:adapter-fingerprint opts)
+      :deterministic? (:adapter-deterministic? opts)
+      :operations
+      {:source-scope (constantly source-scope)
+       :source-lifecycle source-lifecycle
+       :acquire-current! #(borrowed (ds/db conn))
+       :acquire-authoritative! (fn [_timeout-ms]
+                                 (borrowed (ds/db conn)))
+       :acquire-at-least! (fn [token-data timeout-ms]
+                            (borrowed
+                             (await-revision-db
+                              conn nil token-data timeout-ms)))
+       :acquire-exact!
+       (fn [_token-data _timeout-ms]
+         (throw
+          (ex-info
+           "DataScript does not retain exact historical snapshots."
+           {:type :eacl/unsupported-capability
+            :eacl/error :eacl/unsupported-capability
+            :backend :datascript
+            :capability :consistency
+            :requested :at-exact-snapshot})))
+       :release! (constantly nil)}})))

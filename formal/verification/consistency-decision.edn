@@ -19,11 +19,12 @@
    :heap-and-wall-time]}
  :formal
  {:source "formal/dafny/ConsistencyDecision.dfy"
-  :verified-obligations 18
+  :verified-obligations 20
   :definitions
   [ConsistencyDecision.NormalizePublicConsistency
    ConsistencyDecision.SelectionPlanDecision
    ConsistencyDecision.SelectedSnapshotDecision
+   ConsistencyDecision.SelectionPlanWork
    ConsistencyDecision.SuccessfulSelectionWork]
   :lemmas
   [ConsistencyDecision.OnlyOmittedOrNilConsistencyDefaultsToMinimizeLatency
@@ -31,7 +32,8 @@
    ConsistencyDecision.MalformedConsistencyCannotBeAccepted
    ConsistencyDecision.ExplicitConsistencyModeIsPreserved
    ConsistencyDecision.SuccessfulSelectionLogicalWorkIsConstantBounded
-   ConsistencyDecision.CapturedCurrentNeedsNoPostSelectionDecision
+   ConsistencyDecision.SelectionPlanNeedsNoAcquisitionOrValidation
+   ConsistencyDecision.ResponseTokenUsesClosedSelectedIdentity
    ConsistencyDecision.SelectedCurrentHasOneSelectionAndValidation
    ConsistencyDecision.UnsupportedExactPlanIsExactSnapshotUnavailable
    ConsistencyDecision.AtLeastAcceptanceRequiresRevisionFloor
@@ -41,10 +43,12 @@
  :refinement-map
  {:formal-input-to-production-observation
   {:mode eacl.spicedb.consistency/descriptor
-   :capability-supported eacl.backend.v8/supports?
+   :capability-supported eacl.backend.source/supports?
    :selection-present [some? :selected]
    :selected-adapter [eacl.backend.v8/adapter? :selected]
-   :same-source-scope eacl.consistency/source-scope
+   :same-source-scope
+   [= [:source-scope :source-lifecycle]
+    [:selected-basis-semantic-identity :source-scope :source-lifecycle]]
    :revision-satisfied
    {:at-least
     [>= [:selected-native-revision :revision]
@@ -72,7 +76,7 @@
   :cross-check :generated-result-equals-independent-portable-reference}
  :production
  {:source "modules/eacl/src/eacl/consistency.cljc"
-  :captured-current
+  :plan-only
   {:backend-selection-calls 0
    :post-selection-decisions 0}
   :selected-current
@@ -80,19 +84,26 @@
    :validation-decisions 1
    :native-revision-reads 1
    :order-hint-reads 1
-   :exact-locator-reads 1}
+   :exact-locator-reads 1
+   :source-lifecycle-reads 2
+   :snapshot-id-reads 1
+   :basis-kind-reads 1}
   :successful-path-bounds
   {:plan-decisions 1
    :validation-decisions-at-most 1
    :backend-selection-calls-at-most 1
    :authentication-attempts-at-most 1
-   :source-scope-reads-at-most 4
+   :source-scope-reads 2
    :revision-validation-calls-at-most 1
-   :native-revision-reads-at-most 2
-   :order-hint-reads-at-most 2
-   :exact-locator-reads-at-most 2}
+   :native-revision-reads 1
+   :order-hint-reads 1
+   :exact-locator-reads 1
+   :source-lifecycle-reads 2
+   :snapshot-id-reads 1
+   :basis-kind-reads 1
+   :response-token-additional-source-or-adapter-reads 0}
   :source-counter-evidence
-  eacl.consistency-test/consistency-selection-logical-work-matches-formal-path-bounds
+  eacl.consistency-source-test/successful-selection-logical-work-matches-formal-path-counts
   :boundary-evidence
   [eacl.consistency-test/production-plan-observations-refine-the-complete-formal-matrix
    eacl.consistency-test/production-selection-observations-refine-reachable-formal-states

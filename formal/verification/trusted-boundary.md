@@ -58,6 +58,75 @@ Handwritten CLJ/CLJS conversion code must:
 
 These obligations are tested and runtime-guarded, not proved as Clojure facts.
 
+### Abstract operator Phase A boundary
+
+The Phase A set-algebra models prove properties of finite typed expressions,
+strictly stratified negation, candidate covers, scalar and aligned vector
+predicates, bounded batching, least-path pagination, seekable set kernels,
+anchor-gated recursive conjunction, and signed cache invalidation. The three
+generated callable boundaries are `EaclKernel.__default/DecideOperatorBatch`,
+`EaclKernel.__default/DecideOperatorBatchAdvance`, and
+`EaclKernel.__default/DecideOperatorSignedGraph`. They are pure abstract
+policy and signed-graph validation decisions exercised only by formal smoke
+tests; none is called by production. `DecideOperatorBatchAdvance` exports the
+demand-clamped, rejection-gated batch-growth rule the engine actually runs —
+`AdaptiveBatching.GrownWidth` remains the unconditional-doubling envelope
+model, and `AdaptiveBatching.ScheduledNextWidth` proves the shipped rule
+stays inside that envelope while never overreading the unresolved demand —
+and the production schedule in `eacl.operator.batch-schedule/advance` is
+bound to the generated decision step for step by a randomized differential,
+not by a re-copy of the formula. The proof-heavy aggregate remains in
+`OperatorProofKernel.dfy`, while the small generated policy is refined to the
+abstract batching and density models by
+`OperatorGeneratedPolicyRefinement.dfy`. This separation keeps proof-only
+ghost structure out of runtime artifacts without weakening the locked artifact
+size ceilings.
+
+These proofs do not establish Clojure or ClojureScript parser, codec, storage,
+plan, evaluator, cursor, cache, adapter, or routing correctness, and they make
+no production latency, allocation, remote-I/O, or asymptotic backend claim.
+The dense-prefix argument assumes a checked, finite EID span and strict,
+duplicate-free adapter order. Seekable kernels assume inclusive monotone
+reseek. Vector publication assumes aligned responses and atomic failure.
+Cache refinement assumes a complete signed dependency closure, truthful
+generation stamps, selected-snapshot identity, and completed lower-stratum
+negative results. Those premises require concrete source refinement and
+backend certification before operator routing may be enabled. In particular,
+the abstract per-stratum theorem does not prove that production holds a stable,
+complete lower-stratum fact context at each concrete evaluator node; that is a
+section-10 source-refinement obligation.
+
+`formal/verification/operator-phase-a.edn` records the exact proof counts,
+source digests, temporal bounds, mutations, and cross-runtime vectors. Its
+status is `:passed-operator-authorized`: the project operator explicitly
+authorized Phase B after the abstract gates passed. No independent proof
+review has been performed, and the evidence records that absence as an
+assurance qualification rather than claiming external certification.
+
+### Concrete operator Phase B boundary
+
+The Phase B command model adds
+`EaclKernel.__default/DecideOperatorRecursiveCommand` for typed fact
+admission, anchor-slot scheduling, completed-stratum state, and exact
+lower-stratum exclusion questions. It is generated for Java and JavaScript
+and refined in `OperatorRecursiveGeneratedPolicyRefinement.dfy` to the Phase A
+anchor-gated conjunction and strict-exclusion models. Like the two Phase A
+entry points, production does not call this generated function directly.
+
+`formal/verification/operator-phase-b.edn` binds the digest-closed production
+parser, codec, signed graph, plan, scalar/vector evaluator, adaptive batching,
+seekable specializations, cursor progress, recursive state, cache boundary,
+and four backend implementations to those decisions through fixed and random
+differentials, CLJ/CLJS parity, counterexample replay, adapter certification,
+and ten executed production mutants. This is executable source-refinement
+evidence, not a formal semantics of Clojure or the storage engines. The
+measured production performance and the explicit route/write enablement gates
+have passed. Public expression writes and public routing are enabled by
+default; explicit dynamic bindings exercise both disabled paths, and the four
+gate combinations preserve union-only public behavior. The absence of an
+independent review remains recorded as a qualification and is not an operator
+action or execution prerequisite.
+
 ### Portable ClojureScript authority boundary
 
 `eacl.engine.portable-decisions` implements the production CLJS decision

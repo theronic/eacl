@@ -54,11 +54,9 @@
                    (spice-object :account "a-1"))))
 
 (defn- live-cache-context
-  "A client that memoizes completed results. This used to need an explicit
-  coordinator plus :live-results? true; per-relation stamps made the
-  coordinator unnecessary, so it is now just :remember-answers."
+  "The shared cache memoizes completed results by default."
   []
-  {:remember-answers true})
+  {})
 
 (deftest live-non-recursive-pages-survive-unrelated-transactions-test
   (with-mem-conn [conn schema/v7-schema]
@@ -73,14 +71,14 @@
                          :evaluation :complete-denotation}
           forward-calls (atom 0)
           reverse-calls (atom 0)
-          original-forward impl/lookup-resources
-          original-reverse impl/lookup-subjects]
+          original-forward engine/lookup-resources
+          original-reverse engine/lookup-subjects]
       (seed-direct! conn client)
-      (with-redefs [impl/lookup-resources
+      (with-redefs [engine/lookup-resources
                     (fn [db query continuation-context]
                       (swap! forward-calls inc)
                       (original-forward db query continuation-context))
-                    impl/lookup-subjects
+                    engine/lookup-subjects
                     (fn [db query continuation-context]
                       (swap! reverse-calls inc)
                       (original-reverse db query continuation-context))]
@@ -103,12 +101,12 @@
                  :resource/type :account
                  :evaluation :complete-denotation}
           calls (atom 0)
-          original impl/lookup-resources
+          original engine/lookup-resources
           second-rel (->Relationship (spice-object :user "alice")
                                      :owner
                                      (spice-object :account "a-2"))]
       (seed-direct! conn client)
-      (with-redefs [impl/lookup-resources
+      (with-redefs [engine/lookup-resources
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (original db internal-query continuation-context))]
@@ -178,14 +176,14 @@
                  :resource/type :server
                  :evaluation :complete-denotation}
           calls (atom 0)
-          original impl/lookup-resources]
+          original engine/lookup-resources]
       (eacl/write-schema! client arrow-schema)
       @(d/transact conn [{:eacl/id "alice"}
                          {:eacl/id "bob"}
                          {:eacl/id "account"}
                          {:eacl/id "server"}])
       (eacl/create-relationships! client [owner-rel account-rel])
-      (with-redefs [impl/lookup-resources
+      (with-redefs [engine/lookup-resources
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (original db internal-query continuation-context))]
@@ -215,10 +213,10 @@
 (deftest cached-pages-store-eids-and-reapply-current-id-coercion-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
-          original impl/lookup-resources
+          original engine/lookup-resources
           calls (atom 0)]
       (seed-direct! conn client)
-      (with-redefs [impl/lookup-resources
+      (with-redefs [engine/lookup-resources
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (original db internal-query continuation-context))]
@@ -305,14 +303,14 @@
                          :evaluation :complete-denotation}
           forward-calls (atom 0)
           reverse-calls (atom 0)
-          original-forward impl/count-resources
-          original-reverse impl/count-subjects]
+          original-forward engine/count-resources
+          original-reverse engine/count-subjects]
       (seed-direct! conn client)
-      (with-redefs [impl/count-resources
+      (with-redefs [engine/count-resources
                     (fn [db query]
                       (swap! forward-calls inc)
                       (original-forward db query))
-                    impl/count-subjects
+                    engine/count-subjects
                     (fn [db query]
                       (swap! reverse-calls inc)
                       (original-reverse db query))]
@@ -344,7 +342,7 @@
 (deftest recursive-cursors-replay-across-independent-client-proofs-test
   (with-mem-conn [conn schema/v7-schema]
     (let [token-key "shared-store-opaque-continuation"
-          first-client (core/make-client conn {:cache {:remember-answers false}
+          first-client (core/make-client conn {:cache {}
                                                :source-lifecycle
                                                "datomic-lookup-cache-v4-test"
                                                :security-key token-key})
@@ -363,10 +361,9 @@
        first-client
        [(->Relationship alice :reader root)
         (->Relationship root :parent child)])
-      ;; :remember-answers false forces deterministic replay. The old recursive
-      ;; page side cache was process-local and unauthenticated; v3 refuses to
-      ;; read it until continuation state uses the proof envelope contract.
-      (let [second-client (core/make-client conn {:cache {:remember-answers false}
+      ;; Client-private state cannot be reused by an independently constructed
+      ;; client. The second client therefore performs authenticated replay.
+      (let [second-client (core/make-client conn {:cache {}
                                                   :source-lifecycle
                                                   "datomic-lookup-cache-v4-test"
                                                   :security-key token-key})
@@ -388,8 +385,8 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:cache {:remember-answers false}
-                   :security-key "private-continuation"})
+                  {:cache {}
+                   :security-key "private-continuation000000000000"})
           alice (spice-object :user "alice")
           root (spice-object :folder "root")
           child (spice-object :folder "child")
@@ -430,10 +427,8 @@
         (let [bounded-client
               (core/make-client
                conn
-               {:cache {:remember-answers false
-                        :max-weight 1024
-                        :max-entry-weight 512}
-                :security-key "rejected-private-continuation"})
+               {:cache {:max-entries 1}
+                :security-key "rejected-private-continuation000"})
               first-page (eacl/lookup-resources bounded-client query)
               stats (atom {})
               second-page
@@ -457,9 +452,9 @@
                  :resource/type :account}
           entered-count (promise)
           release-count (promise)
-          original-count impl/count-resources]
+          original-count engine/count-resources]
       (seed-direct! conn client)
-      (with-redefs [impl/count-resources
+      (with-redefs [engine/count-resources
                     (fn [db internal-query]
                       (deliver entered-count true)
                       @release-count
@@ -493,9 +488,14 @@
                  (core/make-client conn {:cache {:ttl-ms 0}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:remember-answers :yes}})))
-    (testing ":on-repeat is accepted"
+    (testing "the closed shared-cache configuration is accepted"
       (is (some? (core/make-client
-                  conn {:cache {:remember-answers :on-repeat}}))))
+                  conn {:cache {:admit-on-repeat? true}})))
+      (is (some? (core/make-client conn {:cache {:max-entries 8}})))
+      (is (some? (core/make-client conn {:cache {:retained-bases 2}})))
+      (is (some? (core/make-client
+                  conn {:cache {:subproblem-cache
+                                {:answer-max-weight 1024}}}))))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:namespace ""}})))
     (is (thrown? clojure.lang.ExceptionInfo
@@ -508,7 +508,7 @@
                     (catch clojure.lang.ExceptionInfo ex ex))]
         (is (= :unsupported-provider-store (:reason (ex-data error))))))
     (testing "the cache option configures the client's private stores"
-      (let [store-of #(:current-cache-store (:opts (core/make-client conn %)))]
+      (let [store-of #(:basis-cache-store (:runtime (core/make-client conn %)))]
         (testing "nil and absent both mean the default adapter"
           (is (some? (store-of {})))
           (is (some? (store-of {:cache nil}))))
@@ -540,31 +540,31 @@
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client
                   conn
-                  {:zed-token-key "one"
-                   :zed-token-keyring {:current "two"}})))
+                  {:security-key "one"
+                   :security-keyring {:current "two"}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client
                   conn
-                  {:zed-token-keyring {:old "old"}
-                   :zed-token-kid :missing})))
+                  {:security-keyring {:old "old"}
+                   :security-kid :missing})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client
                   conn
-                  {:zed-token-keyring {:current 42}})))
+                  {:security-keyring {:current 42}})))
     (doseq [config [{:consistency-sync-timeout-ms nil}
-                    {:zed-token-key nil}
-                    {:zed-token-key false}
-                    {:zed-token-key ""}
-                    {:zed-token-key (byte-array 0)}
-                    {:zed-token-keyring nil}
-                    {:zed-token-keyring []}
-                    {:zed-token-keyring {}}
-                    {:zed-token-keyring {"" "key"}
-                     :zed-token-kid ""}
-                    {:zed-token-keyring {:current "key"}
-                     :zed-token-kid nil}
-                    {:zed-token-keyring {:current "key"}
-                     :zed-token-kid []}]]
+                    {:security-key nil}
+                    {:security-key false}
+                    {:security-key ""}
+                    {:security-key (byte-array 0)}
+                    {:security-keyring nil}
+                    {:security-keyring []}
+                    {:security-keyring {}}
+                    {:security-keyring {"" "key"}
+                     :security-kid ""}
+                    {:security-keyring {:current "key"}
+                     :security-kid nil}
+                    {:security-keyring {:current "key"}
+                     :security-kid []}]]
       (try
         (core/make-client conn config)
         (is false (str "expected invalid config: " (pr-str config)))
@@ -575,13 +575,13 @@
 
 (deftest disabled-cache-skips-native-cache-strategy-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [enabled (core/make-client conn {:cache {:remember-answers true}})
+    (let [enabled (core/make-client conn {:cache {}})
           _ (seed-direct! conn enabled)
-          disabled (core/make-client conn {:cache cache/no-cache})
+          disabled (core/make-client conn {:cache shared-cache/no-cache})
           demand {:subject (spice-object :user "alice")
                   :permission :admin
                   :resource (spice-object :account "a-1")}]
-      (with-redefs [shared-cache/resolve-current!
+      (with-redefs [shared-cache/resolve-basis!
                     (fn [& _]
                       (throw
                        (ex-info "cache resolution must be unreachable" {})))]
@@ -592,19 +592,19 @@
 
 (deftest per-request-cache-flag-bypasses-the-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache {:remember-answers true}})
+    (let [client (core/make-client conn {:cache {}})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
           query {:subject alice :permission :admin :resource/type :account}
           calls (atom 0)
-          original impl/can?
+          original engine/can?
           lookups (atom 0)
-          original-lookup impl/lookup-resources]
-      (with-redefs [impl/can? (fn [db s p r]
-                                (swap! calls inc)
-                                (original db s p r))
-                    impl/lookup-resources
+          original-lookup engine/lookup-resources]
+      (with-redefs [engine/can? (fn [db s p r]
+                                  (swap! calls inc)
+                                  (original db s p r))
+                    engine/lookup-resources
                     (fn [db q cc]
                       (swap! lookups inc)
                       (original-lookup db q cc))]
@@ -646,7 +646,7 @@
   ;; make a page-2 request that omits it fail against a page-1 token minted
   ;; with it — the same failure :consistency once caused.
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache {:remember-answers true}})]
+    (let [client (core/make-client conn {:cache {}})]
       (eacl/write-schema! client direct-schema)
       @(d/transact conn (into [{:eacl/id "alice"}]
                               (for [n (range 6)] {:eacl/id (str "a-" n)})))
@@ -684,7 +684,7 @@
   ;; accepted set. This test is why that was caught: an operation-by-operation
   ;; sweep rather than a spot check on can? and lookup-resources.
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:security-key "bypass-all"})
+    (let [client (core/make-client conn {:security-key "bypass-all0000000000000000000000"})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
@@ -692,8 +692,8 @@
           ;; provider answer path died with 11.1.
           puts #(:puts (core/cache-stats client))
           calls [[:can? #(eacl/can? client (assoc % :subject alice
-                                                 :permission :admin
-                                                 :resource account))]
+                                                  :permission :admin
+                                                  :resource account))]
                  [:lookup-resources #(eacl/lookup-resources
                                       client (assoc % :subject alice
                                                     :permission :admin
@@ -730,8 +730,8 @@
 
 (deftest responses-report-whether-they-came-from-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:security-key "provenance"
-                                         :cache {:remember-answers true}})
+    (let [client (core/make-client conn {:security-key "provenance0000000000000000000000"
+                                         :cache {}})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
@@ -739,29 +739,33 @@
       (testing "a computed answer reports its own basis and no hit"
         (let [r (eacl/lookup-resources client query)]
           (is (false? (:cached? r)))
-          (is (integer? (:cache-basis r)))))
+          (is (map? (:cache-basis r)))
+          (is (integer? (get-in r [:cache-basis :basis-t])))))
 
       (testing "a repeat is a hit at the basis it was computed at"
         (let [r (eacl/lookup-resources client query)]
           (is (true? (:cached? r)))
-          (is (integer? (:cache-basis r)))))
+          (is (map? (:cache-basis r)))
+          (is (integer? (get-in r [:cache-basis :basis-t])))))
 
       (testing "counts too"
         (is (false? (:cached? (eacl/count-resources client query))))
         (is (true? (:cached? (eacl/count-resources client query)))))
 
       (testing "a write to a dependency moves the basis and clears the hit"
-        (let [before (:cache-basis (eacl/lookup-resources client query))]
+        (let [before (get-in (eacl/lookup-resources client query)
+                             [:cache-basis :basis-t])]
           (eacl/create-relationship!
            client (->Relationship alice :owner (spice-object :account "a-2")))
           (let [r (eacl/lookup-resources client query)]
             (is (false? (:cached? r)))
-            (is (> (:cache-basis r) before)
+            (is (> (get-in r [:cache-basis :basis-t]) before)
                 "recomputed against a newer basis"))))
 
       (testing "the basis resolves to a wall-clock instant"
         (let [r (eacl/lookup-resources client query)]
-          (is (inst? (core/basis-instant client (:cache-basis r))))
+          (is (inst? (core/basis-instant
+                      client (get-in r [:cache-basis :basis-t]))))
           (is (nil? (core/basis-instant client nil)))))
 
       (testing "a bypassed call never reports a hit"
@@ -769,8 +773,8 @@
                                client (assoc query :cache? false))))))
 
       (testing "and neither does a client with no cache"
-        (let [plain (core/make-client conn {:cache cache/no-cache
-                                            :security-key "provenance"})]
+        (let [plain (core/make-client conn {:cache shared-cache/no-cache
+                                            :security-key "provenance0000000000000000000000"})]
           (is (false? (:cached? (eacl/lookup-resources plain query))))
           (is (false? (:cached? (eacl/count-resources plain query)))))))))
 
@@ -794,7 +798,11 @@
 (deftest default-client-cache-has-no-ttl-test
   (with-mem-conn [conn schema/v7-schema]
     (is (nil? (:lookup-cache-ttl-ms
-               (:opts (core/make-client conn {}))))
-        "no expiry unless the caller asks for one")
-    (is (= 5000 (:lookup-cache-ttl-ms
-                 (:opts (core/make-client conn {:cache {:ttl-ms 5000}})))))))
+               (:runtime (core/make-client conn {}))))
+        "client-private authorization results do not expire by wall clock")
+    (let [error (try
+                  (core/make-client conn {:cache {:ttl-ms 5000}})
+                  nil
+                  (catch clojure.lang.ExceptionInfo ex ex))]
+      (is (= :eacl/invalid-config (:type (ex-data error))))
+      (is (= [:ttl-ms] (:unknown-keys (ex-data error)))))))

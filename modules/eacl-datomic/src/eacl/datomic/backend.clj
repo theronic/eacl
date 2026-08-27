@@ -2,12 +2,18 @@
   "Datomic's storage-specific implementation of the shared v8 snapshot
   adapter. Authorization graph algorithms remain outside this namespace."
   (:require [datomic.api :as d]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
-            [eacl.datomic.db :as ddb])
-  (:import [java.util UUID]
-           [java.util.concurrent Future]))
+            [eacl.datomic.db :as ddb]
+            [eacl.schema.expression-persistence :as expression-persistence])
+  (:import [java.util.concurrent Future]))
 
-(def capabilities
+(def adapter-capabilities
+  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
+   :runtime #{:clj}})
+
+(def source-capabilities
   {:consistency #{:minimize-latency
                   :fully-consistent
                   :at-least-as-fresh
@@ -15,9 +21,6 @@
    :snapshots #{:current :historical}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint
              :exact-locator}
-   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
-   :transactions #{:schema :relationships :object-deletion}
-   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
 (defn- db-revision
@@ -32,16 +35,39 @@
   basis as the plain value they wrap, so nothing downstream can tell them apart
   by revision: they would mint the identical snapshot identity while answering
   different questions. Exact-snapshot consistency is therefore refused for
-  them, which is also what keeps them out of the snapshot-exact cache tier. An
+  them, which is also what keeps them out of the exact-basis cache tier. An
   as-of value is ordinary — it is precisely the exact view this backend
   selects. Public: the raw facade uses the same discrimination to keep
-  filtered/since/history views out of the process-global sealed-plan
-  cache (they report the plain value's database id, basis, and schema
-  stamp, so a stable plan key cannot tell them apart)."
+  filtered/since/history views out of runtime-owned sealed-plan reuse (they
+  report the plain value's database id, basis, and schema stamp, so a stable
+  plan key cannot tell them apart)."
   [^datomic.Database db]
   (and (not (.isFiltered db))
        (not (.isHistory db))
        (nil? (.sinceT db))))
+
+(defn basis-kind
+  "Classifies one Datomic database value without touching an EACL runtime.
+
+  This is structural classification only. It deliberately does not claim to
+  distinguish a speculative `d/with` product from committed state; public
+  EACL APIs never admit arbitrary native values."
+  [db]
+  (if-not (instance? datomic.Database db)
+    :foreign-backend
+    (cond
+      (.isFiltered ^datomic.Database db) :filtered
+      (.isHistory ^datomic.Database db) :history
+      (some? (.sinceT ^datomic.Database db)) :since
+      (some? (.asOfT ^datomic.Database db)) :as-of
+      :else :ordinary)))
+
+(defn database-source-scope
+  "Returns the durable Datomic database identity carried by `db`."
+  [db]
+  (when (contains? #{:ordinary :as-of} (basis-kind db))
+    {:source-id {:database-id (str (.id ^datomic.Database db))}
+     :branch nil}))
 
 (def ^:private sync-timeout-marker (Object.))
 
@@ -189,6 +215,37 @@
        :exact-locator exact-locator})))
   token-data)
 
+(defn- public-instance-field
+  [value field-name]
+  (try
+    (let [field (.getField (class value) field-name)]
+      (.get field value))
+    (catch Exception _ nil)))
+
+(defn connection-source-id
+  "Returns Datomic's durable database identity without calling `d/db`.
+
+  Peer connections expose `db_id`; local connections expose their resident
+  database reference. The fallback is deliberately rejected rather than
+  manufacturing a process-local identity that would make cross-process tokens
+  unsound."
+  [conn]
+  (let [db-id
+        (or (public-instance-field conn "db_id")
+            (when-let [db-ref (public-instance-field conn "db_ref")]
+              (let [db @db-ref]
+                (.id ^datomic.Database db))))]
+    (if (some? db-id)
+      {:database-id (str db-id)}
+      (throw
+       (ex-info
+        "Datomic connection does not expose a stable database identity."
+        {:type :eacl/unsupported-topology
+         :eacl/error :eacl/unsupported-topology
+         :backend :datomic
+         :required :stable-connection-database-id
+         :connection-class (some-> conn class str)})))))
+
 (defn- relation-defs
   [db resource-type relation-name]
   (mapv (fn [datom]
@@ -202,315 +259,260 @@
   [db resource-type permission-name]
   (->> (ddb/find-permission-defs
         db resource-type permission-name)
-       (mapv
+       (mapcat
         (fn [permission]
-          {:permission-id (:db/id permission)
-           :resource-type (:eacl.permission/resource-type permission)
-           :permission-name (:eacl.permission/permission-name permission)
-           :source-relation-name
-           (:eacl.permission/source-relation-name permission)
-           :target-type (:eacl.permission/target-type permission)
-           :target-name (:eacl.permission/target-name permission)}))))
+          (expression-persistence/union-compatible-definitions
+           (:db/id permission)
+           (expression-persistence/decode-entity permission))))
+       vec))
+
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (ddb/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
-  {:schema-stamp
-   (when-let [schema-eid (d/entid db [:eacl/id "schema-string"])]
-     (some-> (first (d/datoms db :eavt schema-eid
-                              :eacl/schema-version))
-             :tx))
-   :relation-stamps
-   (mapv
-    (fn [relation-id]
-      [relation-id
-       (some-> (first (d/datoms db :eavt relation-id
-                                :eacl/relation-version))
-               :tx)])
-    relation-ids)})
+  (mapv
+   (fn [relation-id]
+     [relation-id
+      (some-> (first (d/datoms db :eavt relation-id
+                               :eacl/relation-version))
+              :tx
+              d/tx->t)])
+   relation-ids))
 
-(defn snapshot-adapter
-  "Creates an adapter bound to one immutable Datomic db value. Proof and scan
-  operations therefore cannot accidentally observe a different basis."
-  ([db]
-   (snapshot-adapter db {}))
-  ([db {:keys [entid->object-id
-               object-eid-fn subject->resources-fn
-               resource->subjects-fn conn
-               database-id]
-        :as opts}]
-   (let [external-id
-         (or entid->object-id
-             (fn [snapshot eid]
-               (:eacl/id (d/entity snapshot eid))))
-         source-lifecycle
-         (or (some-> (:source-lifecycle-state opts) deref)
-             (:source-lifecycle opts)
-             (str (UUID/randomUUID)))
-         source-scope
-         (or (:source-scope opts)
-             {:source-id
-              {:database-id
-               (or database-id (str (.id ^datomic.Database db)))}
-              :branch nil})
-         opts' (-> opts
-                   (dissoc :source-lifecycle-state)
-                   (assoc :source-lifecycle source-lifecycle
-                          :source-scope source-scope))]
-     (backend/make-adapter
-      {:id :datomic
-       :traversal-execution backend/strict-sequential-traversal-execution
-       :fingerprint (:adapter-fingerprint opts)
-       :deterministic? (:adapter-deterministic? opts)
-       :identity-contract
-       (:identity-contract opts
-                           :selected-internal/current-external-injective-v2)
-       :capabilities
-       (cond-> capabilities
-         (nil? conn)
-         (update :consistency disj
-                 :fully-consistent :at-least-as-fresh
-                 :at-exact-snapshot)
+(defn- certified-schema-generation
+  [db]
+  (when (d/entid db :eacl/schema-version)
+    (some-> (first (d/datoms db :avet :eacl/schema-version))
+            :tx
+            d/tx->t)))
 
-         (not (ordinary-view? db))
-         (update :consistency disj :at-exact-snapshot))
-       :state {:db db
-               :opts opts}
-       :operations
-       {:snapshot-id
+(def adapter-config-keys
+  #{:entid->object-id :object-id->entid :object-eid-fn
+    :subject->resources-fn :resource->subjects-fn
+    :adapter-fingerprint :adapter-deterministic? :identity-contract})
+
+(defn basis-adapter
+  "Creates the connection-free basis adapter used by the shared pipeline."
+  [db {:keys [entid->object-id object-id->entid object-eid-fn
+              subject->resources-fn
+              resource->subjects-fn adapter-fingerprint
+              adapter-deterministic? identity-contract]
+       :as config}]
+  (backend/validate-adapter-config! :datomic adapter-config-keys config)
+  (let [external-id
+        (or entid->object-id
+            (fn [snapshot eid]
+              (:eacl/id (d/entity snapshot eid))))]
+    (backend/make-adapter
+     {:id :datomic
+      :traversal-execution backend/strict-sequential-traversal-execution
+      :fingerprint adapter-fingerprint
+      :deterministic? adapter-deterministic?
+      :identity-contract
+      (or identity-contract
+          :selected-internal/current-external-injective-v2)
+      :capabilities adapter-capabilities
+      :state {:db db}
+      :operations
+      {:snapshot-id
+       (fn []
+         {:database-id (str (.id ^datomic.Database db))
+          :basis-t (db-revision db)})
+       :basis-kind (fn [] (basis-kind db))
+       :native-revision
+       (fn []
+         {:revision (db-revision db)
+          :exact-locator (db-revision db)})
+       :order-hint (fn [] (db-revision db))
+       :exact-locator (fn [] (db-revision db))
+       :schema-generation (fn [] (certified-schema-generation db))
+       :object-id->internal
+       (fn [object-id]
+         ;; Shared orchestration uses internal numeric eids in cache-normalized
+         ;; engine requests, while permission-tree expansion resolves a public
+         ;; id directly through this operation. Preserve Datomic's historical
+         ;; numeric-eid convention before invoking the configurable public-id
+         ;; resolver; otherwise an already-resolved eid is encoded a second
+         ;; time (for example as [:eacl/id 1759]) and every point/list read
+         ;; becomes a false negative.
+         (if (number? object-id)
+           (d/entid db object-id)
+           ((or object-id->entid object-eid-fn ddb/object-eid)
+            db object-id)))
+       :internal-id->object (fn [internal-id] (external-id db internal-id))
+       :relation-defs
+       (fn [resource-type relation-name]
+         (relation-defs db resource-type relation-name))
+       :permission-defs
+       (fn [resource-type permission-name]
+         (permission-defs db resource-type permission-name))
+       :permission-expression
+       (fn [resource-type permission-name]
+         (permission-expression db resource-type permission-name))
+       :subject->resources
+       (fn [subject-type subject-id relation-id resource-type scan-options]
+         ((or subject->resources-fn ddb/subject->resources)
+          db subject-type subject-id relation-id resource-type scan-options))
+       :resource->subjects
+       (fn [resource-type resource-id relation-id subject-type scan-options]
+         ((or resource->subjects-fn ddb/resource->subjects)
+          db resource-type resource-id relation-id subject-type scan-options))
+       :direct-match?
+       (fn [subject-type subject-id relation-id resource-type resource-id]
+         (ddb/direct-match?
+          db subject-type subject-id relation-id resource-type resource-id))
+       :all-permission-nodes (fn [] (ddb/all-permission-nodes db))
+       :proof-frame
+       (fn [relation-ids]
+         (ordered-generation-frame db relation-ids))}})))
+
+(defn- await-sync!
+  [waiter timeout-ms phase requested-t]
+  (try
+    (let [selected (deref waiter timeout-ms sync-timeout-marker)]
+      (when (identical? sync-timeout-marker selected)
+        (cancel-waiter! waiter)
+        (freshness-unavailable!
+         "Timed out selecting a Datomic basis."
+         {:reason :freshness-timeout
+          :phase phase
+          :requested-order-hint requested-t
+          :timeout-ms timeout-ms}))
+      (when (and requested-t (< (d/basis-t selected) requested-t))
+        (freshness-unavailable!
+         "Datomic synchronization returned below the requested basis."
+         {:reason :head-behind
+          :phase phase
+          :requested-order-hint requested-t
+          :observed-order-hint (d/basis-t selected)
+          :timeout-ms timeout-ms}))
+      selected)
+    (catch InterruptedException interrupt
+      (cancel-waiter! waiter)
+      (.interrupt (Thread/currentThread))
+      (selection-failure!
+       "Datomic basis selection was interrupted."
+       :cancelled phase
+       {:requested-order-hint requested-t
+        :timeout-ms timeout-ms}
+       interrupt))
+    (catch clojure.lang.ExceptionInfo error
+      (throw error))
+    (catch Exception error
+      (selection-failure!
+       "Datomic basis selection failed."
+       :retryable phase
+       {:requested-order-hint requested-t
+        :timeout-ms timeout-ms}
+       error))))
+
+(defn- start-sync!
+  [start phase requested-t failure-kind]
+  (try
+    (start)
+    (catch InterruptedException interrupt
+      (.interrupt (Thread/currentThread))
+      (selection-failure!
+       "Starting Datomic basis selection was interrupted."
+       :cancelled phase
+       {:requested-order-hint requested-t}
+       interrupt))
+    (catch Exception error
+      (case failure-kind
+        :freshness
+        (freshness-unavailable!
+         "Failed starting Datomic synchronization."
+         {:reason :sync-failed
+          :phase phase
+          :requested-order-hint requested-t
+          :cause error})
+
+        :selection
+        (selection-failure!
+         "Failed starting Datomic exact-basis synchronization."
+         :retryable phase
+         {:requested-order-hint requested-t}
+         error)))))
+
+(defn source
+  "Builds a static borrowed Datomic basis source.
+
+  Construction reads only the connection's durable database id. Exact
+  selection starts a targeted `d/sync` and never qualifies the request by
+  acquiring current first."
+  [conn opts]
+  (let [source-scope
+        {:source-id (connection-source-id conn) :branch nil}
+        source-lifecycle
         (fn []
-          {:database-id (str (.id ^datomic.Database db))
-           :basis-t (db-revision db)})
-
-        :source-scope
-        (fn [] source-scope)
-
-        :source-lifecycle
-        (fn [] source-lifecycle)
-
-        :native-revision
-        (fn []
-          {:revision (db-revision db)
-           :exact-locator (db-revision db)})
-
-        :order-hint
-        (fn []
-          (db-revision db))
-
-        :select-current
-        (fn []
-          (snapshot-adapter (if conn (d/db conn) db) opts'))
-
-        :select-authoritative
-        (fn [timeout-ms]
-          ;; The waiter is held outside the body so every exit path can cancel
-          ;; it, while `d/sync` itself stays inside the try and keeps its
-          ;; existing failure classification.
-          (let [waiter (volatile! nil)]
-            (try
-              (let [selected
-                    (if conn
-                      (do (vreset! waiter (d/sync conn))
-                          (deref @waiter (or timeout-ms 30000) ::timeout))
-                      db)]
-                (when (= ::timeout selected)
-                  ;; EACL owns the future once it stops waiting: an abandoned
-                  ;; sync stays registered on the connection until its basis
-                  ;; arrives, which under retry traffic is unbounded.
-                  (cancel-waiter! @waiter)
-                  (throw
-                   (ex-info
-                    "Timed out establishing the Datomic authoritative head."
-                    {:type :eacl.consistency/freshness-unavailable
-                     :eacl/error :eacl.consistency/freshness-unavailable
-                     :reason :freshness-timeout
-                     :timeout-ms (or timeout-ms 30000)})))
-                (snapshot-adapter selected opts'))
-              (catch InterruptedException interrupt
-                (cancel-waiter! @waiter)
-                (let [classified
-                      (ex-info
-                       "Establishing the Datomic authoritative head was interrupted."
-                       {:type :eacl.basis/selection-failure
-                        :eacl/error :eacl.basis/selection-failure
-                        :classification :cancelled
-                        :phase :authoritative-sync
-                        :timeout-ms (or timeout-ms 30000)}
-                       interrupt)]
-                  (.interrupt (Thread/currentThread))
-                  (throw classified)))
-              (catch clojure.lang.ExceptionInfo error
-                (if (= :eacl.consistency/freshness-unavailable
-                       (:type (ex-data error)))
-                  (throw error)
-                  (throw
-                   (ex-info
-                    "Failed establishing the Datomic authoritative head."
-                    {:type :eacl.consistency/freshness-unavailable
-                     :eacl/error :eacl.consistency/freshness-unavailable
-                     :reason :sync-failed
-                     :timeout-ms (or timeout-ms 30000)}
-                    error)))))))
-
-        :select-at-least
-        (fn [token-data timeout-ms]
-          ;; The waiter is held outside the body so every exit path can cancel
-          ;; it, while `d/sync` itself stays inside the try and keeps its
-          ;; existing failure classification.
-          (let [waiter (volatile! nil)]
-            (try
-              (let [selected
-                    (if conn
-                      (do (vreset! waiter (d/sync conn (:revision token-data)))
-                          (deref @waiter (or timeout-ms 30000) ::timeout))
-                      db)
-                    requested-order-hint (:revision token-data)]
-                (when (= ::timeout selected)
-                  ;; EACL owns the future once it stops waiting: an abandoned
-                  ;; sync stays registered on the connection until its basis
-                  ;; arrives, which under retry traffic is unbounded.
-                  (cancel-waiter! @waiter)
-                  (throw
-                   (ex-info
-                    "Timed out waiting for the Datomic causal floor."
-                    {:type :eacl.consistency/freshness-unavailable
-                     :eacl/error :eacl.consistency/freshness-unavailable
-                     :reason :freshness-timeout
-                     :requested-order-hint (:revision token-data)
-                     :timeout-ms (or timeout-ms 30000)})))
-                ;; d/sync is specified to return a DB at least as new as the
-                ;; requested basis. Check the postcondition anyway: adapters and
-                ;; test doubles are not allowed to turn an order hint into an
-                ;; unverified freshness claim.
-                (when (and requested-order-hint
-                           (< (d/basis-t selected) requested-order-hint))
-                  (throw
-                   (ex-info
-                    "The selected Datomic snapshot did not reach the causal floor."
-                    {:type :eacl.consistency/freshness-unavailable
-                     :eacl/error :eacl.consistency/freshness-unavailable
-                     :reason :head-behind
-                     :requested-order-hint requested-order-hint
-                     :observed-order-hint (d/basis-t selected)
-                     :timeout-ms (or timeout-ms 30000)})))
-                (snapshot-adapter selected opts'))
-              (catch InterruptedException interrupt
-                (cancel-waiter! @waiter)
-                (let [classified
-                      (ex-info
-                       "Waiting for the Datomic causal floor was interrupted."
-                       {:type :eacl.basis/selection-failure
-                        :eacl/error :eacl.basis/selection-failure
-                        :classification :cancelled
-                        :phase :at-least-sync
-                        :requested-order-hint (:revision token-data)
-                        :timeout-ms (or timeout-ms 30000)}
-                       interrupt)]
-                  (.interrupt (Thread/currentThread))
-                  (throw classified)))
-              (catch clojure.lang.ExceptionInfo error
-                (if (= :eacl.consistency/freshness-unavailable
-                       (:type (ex-data error)))
-                  (throw error)
-                  (throw
-                   (ex-info
-                    "Failed waiting for the Datomic causal floor."
-                    {:type :eacl.consistency/freshness-unavailable
-                     :eacl/error :eacl.consistency/freshness-unavailable
-                     :reason :sync-failed
-                     :requested-order-hint (:revision token-data)
-                     :timeout-ms (or timeout-ms 30000)}
-                    error)))))))
-
-        :exact-locator
-        (fn []
-          (db-revision db))
-
-        :select-exact
-        (fn [token-data timeout-ms]
-          (validate-exact-token! token-data)
-          (let [locator (:exact-locator token-data)
-                current
-                (try
-                  (if conn (d/db conn) db)
-                  (catch Exception failure
-                    (selection-failure!
-                     "Failed reading the local Datomic database."
-                     :retryable :exact-local-read
-                     {:requested-t locator
-                      :requested-order-hint locator
-                      :timeout-ms (or timeout-ms 30000)}
-                     failure)))
-                caught-up
-                (await-basis-db
-                 conn current locator timeout-ms :exact-sync)
-                exact-db
-                (try
-                  (d/as-of caught-up locator)
-                  (catch InterruptedException interrupt
-                    (let [classified
-                          (ex-info
-                           "Exact Datomic reconstruction was interrupted."
-                           {:type :eacl.basis/selection-failure
-                            :eacl/error :eacl.basis/selection-failure
-                            :classification :cancelled
-                            :phase :exact-as-of
-                            :requested-t locator
-                            :requested-order-hint locator
-                            :timeout-ms (or timeout-ms 30000)}
-                           interrupt)]
-                      (.interrupt (Thread/currentThread))
-                      (throw classified)))
-                  (catch Exception failure
-                    (selection-failure!
-                     "Exact Datomic reconstruction failed."
-                     :retryable :exact-as-of
-                     {:requested-t locator
-                      :requested-order-hint locator
-                      :observed-t (d/basis-t caught-up)
-                      :observed-order-hint (d/basis-t caught-up)
-                      :timeout-ms (or timeout-ms 30000)}
-                     failure)))]
-            (snapshot-adapter
-             exact-db
-             (assoc opts'
-                    :selected-order-hint locator
-                    :selected-exact-locator locator))))
-
-        :object-id->internal
-        (fn [object-id]
-          ((or object-eid-fn ddb/object-eid) db object-id))
-
-        :internal-id->object
-        (fn [internal-id]
-          (external-id db internal-id))
-
-        :relation-defs
-        (fn [resource-type relation-name]
-          (relation-defs db resource-type relation-name))
-
-        :permission-defs
-        (fn [resource-type permission-name]
-          (permission-defs db resource-type permission-name))
-
-        :subject->resources
-        (fn [subject-type subject-id relation-id resource-type scan-options]
-          ((or subject->resources-fn ddb/subject->resources)
-           db subject-type subject-id relation-id resource-type scan-options))
-
-        :resource->subjects
-        (fn [resource-type resource-id relation-id subject-type scan-options]
-          ((or resource->subjects-fn ddb/resource->subjects)
-           db resource-type resource-id relation-id subject-type scan-options))
-
-        :direct-match?
-        (fn [subject-type subject-id relation-id resource-type resource-id]
-          (ddb/direct-match?
-           db subject-type subject-id relation-id resource-type resource-id))
-
-        :all-permission-nodes
-        (fn []
-          (ddb/all-permission-nodes db))
-
-        :proof-frame
-        (fn [relation-ids]
-          (ordered-generation-frame db relation-ids))}}))))
+          (or (some-> (:source-lifecycle-state opts) deref)
+              (:source-lifecycle opts)))
+        adapter-options (select-keys opts adapter-config-keys)
+        borrowed
+        (fn [db]
+          {:adapter (basis-adapter db adapter-options)
+           :ownership :borrowed
+           :release-token nil})
+        timeout
+        (fn [timeout-ms] (or timeout-ms 30000))]
+    (source/make-source
+     {:id :datomic
+      :capabilities source-capabilities
+      :traversal-execution backend/strict-sequential-traversal-execution
+      :topology {:deployment :embedded-or-peer
+                 :snapshot-values :immutable}
+      :execution-constraints source/default-execution-constraints
+      :basis-ownership :borrowed
+      :fingerprint (:adapter-fingerprint opts)
+      :deterministic? (:adapter-deterministic? opts)
+      :operations
+      {:source-scope (constantly source-scope)
+       :source-lifecycle source-lifecycle
+       :acquire-current! #(borrowed (d/db conn))
+       :acquire-authoritative!
+       (fn [timeout-ms]
+         (let [timeout-ms (timeout timeout-ms)]
+           (borrowed
+            (await-sync! (start-sync! #(d/sync conn)
+                                      :authoritative-sync nil :freshness)
+                         timeout-ms
+                         :authoritative-sync nil))))
+       :acquire-at-least!
+       (fn [token-data timeout-ms]
+         (let [requested (:revision token-data)
+               timeout-ms (timeout timeout-ms)]
+           (borrowed
+            (await-sync! (start-sync! #(d/sync conn requested)
+                                      :at-least-sync requested :freshness)
+                         timeout-ms
+                         :at-least-sync requested))))
+       :acquire-exact!
+       (fn [token-data timeout-ms]
+         (validate-exact-token! token-data)
+         (let [locator (:exact-locator token-data)
+               timeout-ms (timeout timeout-ms)
+               caught-up
+               (await-sync! (start-sync! #(d/sync conn locator)
+                                         :exact-sync locator :selection)
+                            timeout-ms
+                            :exact-sync locator)
+               exact-db (d/as-of caught-up locator)]
+           ;; `db-revision` of the as-of view returns the requested locator
+           ;; verbatim, so it cannot witness anything. The reachable
+           ;; divergence is a synchronized head that still sits below the
+           ;; requested basis: the as-of window would then silently show an
+           ;; older database while claiming the exact locator.
+           (when (< (d/basis-t caught-up) locator)
+             (throw
+              (ex-info
+               "Datomic exact locator resolved to another basis."
+               {:type :eacl.consistency/history-divergence
+                :eacl/error :eacl.consistency/history-divergence
+                :requested locator
+                :selected (d/basis-t caught-up)})))
+           (borrowed exact-db)))
+       :release! (constantly nil)}})))

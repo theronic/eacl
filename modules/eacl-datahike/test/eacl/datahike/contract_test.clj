@@ -30,10 +30,144 @@
                                    :eacl/id id})
                                 contract/smoke-objects))))
 
+(defn- error-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(defn- current-source-scope
+  [client]
+  (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+    (select-keys (eacl/basis snapshot) [:backend :source-id :branch])))
+
+(deftest native-speculative-contract-test
+  (is (nil? (ns-resolve 'eacl.datahike.core 'snapshot)))
+  (let [conn (datahike/create-conn nil {})
+        config (:config (d/db conn))
+        client (datahike/make-client conn {})]
+    (try
+      (contract/assert-speculative-contract!
+       client
+       #(d/transact
+         conn {:tx-data [{:eacl/id "speculative-user"}
+                         {:eacl/id "speculative-account"}]}))
+      (finally
+        (d/release conn)
+        (d/delete-database config)))))
+
+(deftest fixed-memory-store-id-does-not-become-lineage-test
+  (let [key "01234567890123456789012345678901"
+        fixed-id (random-uuid)
+        config {:store {:backend :memory :id fixed-id}}
+        first-conn (datahike/create-conn nil config)
+        first-config (:config (d/db first-conn))
+        first-result
+        (try
+          (let [first-client
+                (datahike/make-client first-conn {:security-key key})]
+            (eacl/write-schema! first-client contract/smoke-schema)
+            (seed-objects! first-conn)
+            (let [token
+                  (:zed/token
+                   (eacl/create-relationship!
+                    first-client
+                    (first contract/smoke-relationships)))
+                  _ (eacl/create-relationships!
+                     first-client (rest contract/smoke-relationships))
+                  query {:subject (contract/->user "user-1")
+                         :permission :view
+                         :resource/type :server
+                         :first 1}]
+              {:token token
+               :query query
+               :first-page (eacl/lookup-resources first-client query)
+               :oracle-stream
+               (:data
+                (eacl/lookup-resources
+                 first-client
+                 (assoc query
+                        :first 10
+                        :cache? false
+                        :populate-cache? false)))
+               :scope (current-source-scope first-client)}))
+          (finally
+            (d/release first-conn)
+            (d/delete-database first-config)))
+        second-conn (datahike/create-conn nil config)]
+    (try
+      (let [second-client
+            (datahike/make-client second-conn {:security-key key})
+            second-scope
+            (current-source-scope second-client)]
+        (is (not= (:scope first-result) second-scope))
+        (is (not= (str fixed-id)
+                  (get-in first-result [:scope :source-id :store-id])))
+        (is (not= (str fixed-id)
+                  (get-in second-scope [:source-id :store-id])))
+        (eacl/write-schema! second-client contract/smoke-schema)
+        (seed-objects! second-conn)
+        (eacl/create-relationships!
+         second-client contract/smoke-relationships)
+        (is (= :eacl.consistency/incomparable-scope
+               (:type
+                (error-data
+                 #(eacl/can?
+                   second-client
+                   (contract/->user "user-1")
+                   :admin
+                   (contract/->account "account-1")
+                   (consistency/at-least-as-fresh
+                    (:token first-result)))))))
+        (contract/assert-cursor-source-transition!
+         {:client second-client
+          :query (:query first-result)
+          :first-page (:first-page first-result)
+          :oracle-stream (:oracle-stream first-result)
+          :durability :non-durable}))
+      (finally
+        (let [second-config (:config (d/db second-conn))]
+          (d/release second-conn)
+          (d/delete-database second-config))))))
+
+(deftest default-source-lifecycle-is-cross-client-constant-test
+  (let [conn (datahike/create-conn)
+        key "01234567890123456789012345678901"
+        client-a (datahike/make-client conn {:security-key key})
+        client-b (datahike/make-client conn {:security-key key})
+        snapshot-a (eacl/snapshot client-a)
+        snapshot-b (eacl/snapshot client-b)]
+    (try
+      (is (= "eacl/initial"
+             (get-in client-a [:runtime :source-lifecycle])
+             (get-in client-b [:runtime :source-lifecycle])
+             (:source-lifecycle (eacl/basis snapshot-a))
+             (:source-lifecycle (eacl/basis snapshot-b))))
+      (finally
+        (eacl/release! snapshot-a)
+        (eacl/release! snapshot-b)))
+    (try
+      (eacl/write-schema! client-a contract/smoke-schema)
+      (seed-objects! conn)
+      (let [token
+            (:zed/token
+             (eacl/create-relationship!
+              client-a (first contract/smoke-relationships)))]
+        (is (true?
+             (eacl/can?
+              client-b
+              (contract/->user "user-1") :admin
+              (contract/->account "account-1")
+              (consistency/at-least-as-fresh token)))))
+      (finally
+        (d/release conn)))))
+
 (deftest generated-authority-is-the-only-production-engine-test
   (let [conn (datahike/create-conn)
         default-selection
-        (get-in (datahike/make-client conn {}) [:opts :decision-kernel])
+        (get-in (datahike/make-client conn {}) [:runtime :decision-kernel])
         error
         (try
           (datahike/make-client conn {:engine-selection :anything})
@@ -69,6 +203,9 @@
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
     (contract/assert-v8-permission-tree-contract! client)
+    (contract/assert-authorization-target-matrix!
+     {:writable client
+      :read-only (datahike/make-client conn {:read-only? true})})
     (contract/assert-unified-filter-validation! client)
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
@@ -108,6 +245,18 @@
   (testing "attributes as numeric refs (:attribute-refs?, Datomic's representation)"
     (run-contract! {:attribute-refs? true})))
 
+(deftest datahike-certified-generation-plan-reuse-test
+  (doseq [[label config]
+          [["attributes as keywords" nil]
+           ["attributes as numeric refs" {:attribute-refs? true}]]]
+    (testing label
+      (let [conn (datahike/create-conn nil config)
+            client (datahike/make-client conn {})]
+        (eacl/write-schema! client contract/smoke-schema)
+        (seed-objects! conn)
+        (eacl/create-relationships! client contract/smoke-relationships)
+        (contract/assert-certified-generation-plan-reuse! client)))))
+
 (deftest datahike-pinned-spicedb-permission-tree-golden-test
   (doseq [config [nil {:attribute-refs? true}]]
     (let [conn (datahike/create-conn nil config)
@@ -134,8 +283,8 @@
         (is (= (:tree-root first-response)
                (:tree-root exact-response)
                (:tree-root repeated-exact)))
-        (is (= (+ 2 (:snapshot-exact-hits before))
-               (:snapshot-exact-hits after))
+        (is (= (+ 2 (:exact-hits before))
+               (:exact-hits after))
             "tree roots are reusable, while expanded-at is rebuilt per exact request")))))
 
 (deftest datahike-permission-tree-schema-mutation-snapshot-test

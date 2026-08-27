@@ -31,25 +31,39 @@ Maven consumers neither install formal tools nor run verification.
 
 ## Backend contract
 
-Backends supply the validated operation map consumed through
-`eacl.backend.v8`. It declares consistency, snapshot, cursor, transaction,
-cache-proof, and runtime capabilities and implements normalized operations for
-snapshot identity, source scope/lifecycle, native revision and order hint,
-snapshot selection, exact locators, object ID conversion, schema definitions,
-ordered adjacency scans, direct matches, permission nodes, and
-ordered-generation proof frames. An adapter without certified proof support
-remains a correct exact-current adapter.
+Backends supply three validated roles. `eacl.backend.v8` is an immutable
+basis adapter for identity, basis kind, native revision/locator, object
+conversion, schema definitions, ordered adjacency, direct matches, permission
+nodes, the memoized `:schema-generation` read, and optional proof frames.
+`eacl.backend.source` owns source scope/lifecycle, consistency selection, native
+ownership, and release. `eacl.backend.writer` owns planning, submission,
+contention classification, retry, and transaction-size bounds. An adapter
+without certified proof support remains a correct exact-basis adapter; a nil
+schema generation limits derived-plan reuse to one request.
 
 The contract uses logical types and identifiers. Datoms, attribute ids,
 database values, and raw index tuples stay inside each adapter. See the
 [v8 adapter boundary](../../docs/v8-backend-adapter-boundary.md) for the full
-inventory.
+inventory and the
+[basis-source migration guide](../../docs/v8-snapshot-provider-migration.md)
+for owned/borrowed lifecycle and third-party adapter requirements.
 
 The shared contract fixture is
 `modules/eacl/test/eacl/contract_support.cljc`. It exercises the same v8 public
-API and recursive/cache behavior for Datomic, DataScript, and Datahike and
-compares authorization sets with independent semantic oracles. Those oracles
+API and recursive/cache behavior for Datomic, DataScript, Datahike, and
+Datalevin, and compares authorization sets with independent semantic oracles. Those oracles
 are test code, not selectable production engines.
+
+## Aggregate reads
+
+Shared orchestration implements ordered `eacl/check-permissions` batches,
+`read-relationships` with an `:authorization` clause, and relationship-filtered
+`lookup-resources`/`lookup-subjects`. One request context owns the snapshot,
+deadline, cancellation token, schema/root memos, cumulative limits, cursor
+state, and release. Backend modules supply only their ordinary certified
+operations, including `:schema-generation` and exact direct relationship
+membership; they must not add private aggregate evaluators. See [aggregate
+authorization](../../docs/aggregate-authorization.md).
 
 ## Permission-tree expansion
 

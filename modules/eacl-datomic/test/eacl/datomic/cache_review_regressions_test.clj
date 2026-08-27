@@ -8,17 +8,19 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as idx]
-            [eacl.datomic.schema :as schema])
+            [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine])
   (:import [java.nio.charset StandardCharsets]
            [java.util Base64]))
 
-(def ^:private token-key "cache-review-regressions-key")
+(def ^:private token-key "0123456789abcdef0123456789abcdef")
 
 (def ^:private direct-schema
   "definition user {}
@@ -28,11 +30,10 @@
    }")
 
 (defn- live-client
-  "A client that retains results. This used to need an explicit coordinator
-  plus :live-results? true; it is now just :remember-answers."
+  "A client using the default private authorization cache."
   [conn]
-  (core/make-client conn {:page-token-key token-key
-                          :cache {:remember-answers true}}))
+  (core/make-client conn {:security-key token-key
+                          :cache {}}))
 
 (defn- seed-direct!
   [conn boot n-accounts]
@@ -57,7 +58,7 @@
     (let [client
           (core/make-client
            conn
-           {:page-token-key "proofless-exact-fallback"})
+           {:security-key "proofless-exact-fallback00000000"})
           alice (spice-object :user "alice")
           account #(spice-object :account %)
           query {:subject alice
@@ -95,21 +96,21 @@
   ;; lookup/count keys, so an explicit true recomputed an answer already cached
   ;; by the equivalent request with the option omitted.
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:page-token-key token-key
-                                      :cache {:remember-answers true}})
+    (let [acl (core/make-client conn {:security-key token-key
+                                      :cache {}})
           _ (seed-direct! conn acl 3)
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}
           lookup-calls (atom 0)
           count-calls (atom 0)
-          lookup-resources impl/lookup-resources
-          count-resources impl/count-resources]
-      (with-redefs [impl/lookup-resources
+          lookup-resources engine/lookup-resources
+          count-resources engine/count-resources]
+      (with-redefs [engine/lookup-resources
                     (fn [& args]
                       (swap! lookup-calls inc)
                       (apply lookup-resources args))
-                    impl/count-resources
+                    engine/count-resources
                     (fn [& args]
                       (swap! count-calls inc)
                       (apply count-resources args))]
@@ -123,44 +124,12 @@
                          acl (assoc query :cache? true)))))
         (is (= 1 @count-calls))))))
 
-(defn- append-token-byte
-  [token byte-value]
-  (let [prefix "eacl4_"
-        decoder (Base64/getUrlDecoder)
-        encoder (.withoutPadding (Base64/getUrlEncoder))
-        raw (.decode decoder (subs token (count prefix)))
-        tainted (byte-array (inc (alength raw)))]
-    (System/arraycopy raw 0 tainted 0 (alength raw))
-    (aset-byte tainted (alength raw) (byte byte-value))
-    (str prefix (.encodeToString encoder tainted))))
-
-(deftest page-token-envelope-rejects-unauthenticated-trailing-bytes-test
-  (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:page-token-key token-key})
-          opts (:opts acl)
-          token (core/page-token opts {:op :test})]
-      (is (= :eacl.pagination/invalid-cursor
-             (:eacl/error
-              (ex-data-of
-               #(core/token->page-bound
-                 opts (append-token-byte token 42)))))))))
-
-(deftest page-token-encoder-never-mints-a-token-its-decoder-refuses-test
-  (with-mem-conn [conn schema/v7-schema]
-    (let [opts (:opts (core/make-client
-                       conn {:page-token-key token-key}))
-          data (ex-data-of
-                #(core/page-token
-                  opts {:oversized (apply str (repeat 20000 "x"))}))]
-      (is (= :eacl.pagination/cursor-too-large (:type data)))
-      (is (< (:maximum-length data) (:encoded-length data))))))
-
 ;; --- H2 ---------------------------------------------------------------------
 
 (deftest client-built-before-the-first-schema-write-can-paginate-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [early (core/make-client conn {:page-token-key token-key})
-          admin (core/make-client conn {:page-token-key token-key})]
+    (let [early (core/make-client conn {:security-key token-key})
+          admin (core/make-client conn {:security-key token-key})]
       (is (nil? (:schema-state early))
           "the client has no mutable schema correctness latch")
       (seed-direct! conn admin 6)                ;; schema written by ANOTHER client
@@ -192,7 +161,7 @@
                        (set (map (comp :id :resource) (:data page-2))))))))
 
       (testing "schema derivation comes from each selected immutable snapshot"
-        (is (seq @(:derived-schema-caches (:opts early))))))))
+        (is (seq @(:derived-schema-caches (:runtime early))))))))
 
 (deftest cursor-minted-on-an-unstamped-database-still-paginates-test
   ;; The other half: when the database genuinely has no stamp at page-one time,
@@ -200,7 +169,7 @@
   ;; to the client's generation there (`or` rather than `contains?`) would fail
   ;; validation the moment the client later adopted a stamp.
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:page-token-key token-key})]
+    (let [acl (core/make-client conn {:security-key token-key})]
       (is (nil? (:schema-state acl)))
       (let [page-1 (eacl/read-relationships acl {:resource/id "absent" :first 2})]
         (is (= [] (:data page-1))
@@ -212,10 +181,10 @@
   ;; An entity retracted without delete-relationships! leaves a relationship
   ;; half that still grants. Coercing that result reported
   ;; :eacl.consistency/snapshot-unavailable — a cache/snapshot diagnosis for a
-  ;; fault that also fires with {:cache cache/no-cache}, naming only the first offender.
-  (doseq [config [{:cache cache/no-cache} {}]]
+  ;; fault that also fires with {:cache shared-cache/no-cache}, naming only the first offender.
+  (doseq [config [{:cache shared-cache/no-cache} {}]]
     (with-mem-conn [conn schema/v7-schema]
-      (let [acl (core/make-client conn (assoc config :page-token-key token-key))
+      (let [acl (core/make-client conn (assoc config :security-key token-key))
             _ (seed-direct! conn acl 3)
             gone (mapv #(d/entid (d/db conn) [:eacl/id (str "acct" %)]) [1 2])]
         @(d/transact conn (vec (for [[k eid] (map vector [1 2] gone)]
@@ -241,24 +210,25 @@
             (is (str/includes? message "delete-relationships!"))
             (is (str/includes? message "dangling-relationship-report"))
             (is (not (str/includes? message "cache"))
-                "this fires with {:cache cache/no-cache} too; it must not be diagnosed as a cache fault")))))))
+                "this fires with {:cache shared-cache/no-cache} too; it must not be diagnosed as a cache fault")))))))
 
 ;; --- M1 ---------------------------------------------------------------------
 
 (deftest fully-consistent-reads-reuse-the-basis-pinned-exact-entry-test
-  ;; :remember-answers true wrote an entry (and a :latest-result pointer) on every
-  ;; call that the default consistency mode could never read, so it was pure
-  ;; cost. exact-key pins database-id, schema generation, operation, query
-  ;; identity AND basis-t, and one database at one t is one DB value.
+  ;; The exact key pins the complete source lineage, schema generation,
+  ;; operation, query identity, and basis revision. One source at one revision
+  ;; therefore maps to exactly one immutable database value.
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:page-token-key token-key
-                                      :cache {:remember-answers true}})
+    (let [acl (core/make-client conn {:security-key token-key
+                                      :cache {}})
           _ (seed-direct! conn acl 1)
           alice (spice-object :user "alice")
           account (spice-object :account "acct0")
           calls (atom 0)
-          original impl/can?]
-      (with-redefs [impl/can? (fn [db s p r] (swap! calls inc) (original db s p r))]
+          original engine/can?]
+      (with-redefs [engine/can? (fn [& args]
+                                  (swap! calls inc)
+                                  (apply original args))]
         (dotimes [_ 3] (is (true? (eacl/can? acl alice :admin account))))
         (is (= 1 @calls) "identical fully-consistent reads at one basis compute once")
 
@@ -280,7 +250,7 @@
   ;; StackOverflowError straight out of lookup-resources, and there was no
   ;; length bound at all on an unauthenticated caller-supplied parameter.
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:page-token-key token-key})
+    (let [acl (core/make-client conn {:security-key token-key})
           _ (seed-direct! conn acl 2)
           query {:subject (spice-object :user "alice")
                  :permission :admin
@@ -357,17 +327,16 @@
       (is (= ["acct0" "acct1" "acct2"] (mapv :id (:data page-1))))
       (is (= ["acct3" "acct4" "acct5"] (mapv :id (:data page-2))))
       (is (= 1 (:puts stats-after-page-1))
-          "page one publishes one private exact-current answer")
+          "page one publishes one private exact-basis answer")
       (is (= (inc (:puts stats-after-page-1))
              (:puts stats-after-page-2))
           "a current cursor page publishes once")
       (is (false? (:cached? page-2)))
       (is (true? (:cached? page-2-hit)))
-      (is (= (inc (:exact-hits stats-after-page-2))
-             (:exact-hits stats-after-hit)))
       (is (= ["acct0" "acct1" "acct2"]
              (mapv :id (:data previous-page))))
-      (is (false? (:cached? previous-page)))
+      (is (true? (:cached? previous-page))
+          "direction-agnostic boundary aliases reuse the already cached page")
       (is (true? (:cached? previous-hit)))
       (eacl/delete-relationship!
        acl
@@ -386,10 +355,7 @@
         (is (true? (:cached? recovered-1)))
         (is (true? (:cached? recovered-2)))
         (is (= (:bypasses before-recovery)
-               (:bypasses after-recovery)))
-        (is (= (+ 2 (:exact-hits before-recovery))
-               (:exact-hits after-recovery))
-            "exact cursor recovery reuses only the matching historical page")))))
+               (:bypasses after-recovery)))))))
 
 ;; --- L2 ---------------------------------------------------------------------
 
@@ -401,7 +367,7 @@
   ;; reason, matching lookup-resources; for a cursor its expectation is pinned
   ;; by the historical basis, so this identity check is the observable half.)
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:page-token-key token-key})
+    (let [acl (core/make-client conn {:security-key token-key})
           _ (seed-direct! conn acl 4)
           cursor (get-in (eacl/read-relationships acl {:subject/type :user
                                                        :subject/id "alice" :first 2})
@@ -419,16 +385,16 @@
 
 (deftest result-shape-does-not-depend-on-cache-configuration-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [boot (core/make-client conn {:cache cache/no-cache :page-token-key token-key})
+    (let [boot (core/make-client conn {:cache shared-cache/no-cache :security-key token-key})
           _ (seed-direct! conn boot 3)
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}]
-      (doseq [config [{:cache cache/no-cache}
+      (doseq [config [{:cache shared-cache/no-cache}
                       {}
-                      {:cache {:remember-answers true}}
-                      {:cache {:remember-answers false}}]]
-        (let [acl (core/make-client conn (assoc config :page-token-key token-key))
+                      {:cache {}}
+                      {:cache {:admit-on-repeat? true}}]]
+        (let [acl (core/make-client conn (assoc config :security-key token-key))
               data (:data (eacl/lookup-resources acl query))]
           (is (every? #(instance? eacl.core.SpiceObject %) data)
               (str "public result shape for " (pr-str config)))

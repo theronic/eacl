@@ -43,7 +43,7 @@
 (defn- unencodable!
   [value]
   (throw (ex-info "Value is not encodable in an EACL page token."
-                  {:type :eacl.codec/unencodable
+                  {:type :eacl.codec/unencodable :eacl/error :eacl.codec/unencodable
                    :value-class (some-> value class str)})))
 
 (defn- write-string!
@@ -108,7 +108,7 @@
   (let [n (.readInt in)]
     (when (or (neg? n) (> n maximum-collection-count))
       (throw (ex-info "EACL page token string length is out of range."
-                      {:type :eacl.codec/malformed :length n})))
+                      {:type :eacl.codec/malformed :eacl/error :eacl.codec/malformed :length n})))
     (let [bytes (byte-array n)]
       (.readFully in bytes)
       (String. bytes StandardCharsets/UTF_8))))
@@ -118,7 +118,7 @@
   (let [n (.readInt in)]
     (when (or (neg? n) (> n maximum-collection-count))
       (throw (ex-info "EACL page token collection length is out of range."
-                      {:type :eacl.codec/malformed :length n})))
+                      {:type :eacl.codec/malformed :eacl/error :eacl.codec/malformed :length n})))
     n))
 
 (defn read-value
@@ -161,7 +161,7 @@
             (recur (inc i) (conj! acc (read-value in))))))
 
       (throw (ex-info "Unknown EACL page token value tag."
-                      {:type :eacl.codec/malformed :tag tag})))))
+                      {:type :eacl.codec/malformed :eacl/error :eacl.codec/malformed :tag tag})))))
 
 (defn encode
   "Serializes one cursor payload value to bytes."
@@ -179,6 +179,6 @@
         value (read-value in)]
     (when (pos? (.available in))
       (throw (ex-info "Trailing bytes in EACL page token value."
-                      {:type :eacl.codec/malformed
+                      {:type :eacl.codec/malformed :eacl/error :eacl.codec/malformed
                        :trailing-bytes (.available in)})))
     value))

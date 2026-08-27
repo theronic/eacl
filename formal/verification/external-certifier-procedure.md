@@ -19,10 +19,11 @@ record:
 - the result of an independent source/model/control-flow review, not merely a
   rerun of maintainer-authored tests.
 
-`CacheKernel.dfy` is proof-only and exposes no runtime decision operation. The
-v8 target rejects caller-supplied cache providers. A reviewer MUST fail the
-review if either fact is represented otherwise in generated-boundary,
-assurance-matrix, manifest, or public claim text.
+The superseded `CacheKernel.dfy` graph-ancestry model was removed because it
+had no runtime consumer. The v8 target rejects caller-supplied cache providers.
+A reviewer MUST fail the review if the removed model is presented as release
+evidence or if the provider restriction is represented otherwise in the
+generated boundary, assurance matrix, manifest, or public claim text.
 
 ## Clean-checkout execution
 

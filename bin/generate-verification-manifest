@@ -1,6 +1,7 @@
 #!/usr/bin/env bb
 
 (require '[clojure.edn :as edn]
+         '[cheshire.core :as json]
          '[clojure.java.io :as io]
          '[clojure.pprint :as pprint]
          '[clojure.string :as str])
@@ -21,6 +22,10 @@
     (if (.isAbsolute file)
       file
       (io/file repo-root path))))
+
+(defn read-edn
+  [path]
+  (edn/read-string (slurp (repo-file path))))
 
 (defn relative-path
   [file]
@@ -154,6 +159,51 @@
   (edn/read-string
    (slurp (repo-file "formal/verification/manifest.edn"))))
 
+(def mutation-registry
+  (read-edn "formal/mutations/registry.edn"))
+
+(def mutation-ledger
+  (read-edn "formal/verification/mutation-control.edn"))
+
+(def source-closure
+  (json/parse-string
+   (slurp (repo-file "formal/verification/public-source-closure.json"))
+   true))
+
+(def stable-discovery-script
+  (slurp (repo-file "formal/stable-discovery/verify-fast.sh")))
+
+(def stable-discovery-obligations
+  (some->> stable-discovery-script
+           (re-find #"expected_dafny_obligations=([0-9]+)")
+           second
+           parse-long))
+
+(def stable-discovery-leaves
+  (count
+   (files-under "formal/stable-discovery"
+                #(str/ends-with? (.getName %) ".dfy"))))
+
+(def mutation-row
+  {:status (:status mutation-ledger)
+   :report "formal/verification/mutation-control.edn"
+   :score (:score mutation-ledger)
+   :registered (count (:mutants mutation-registry))
+   :killed (:killed mutation-ledger)
+   :retired-invalid-controls (:retired-invalid-controls mutation-ledger)})
+
+(def source-closure-row
+  {:report "formal/verification/public-source-closure.json"
+   :source-files (count (:sources source-closure))
+   :public-roots (get-in source-closure [:scope :rootCount])
+   :reachable-definitions
+   (get-in source-closure [:scope :unionInternalDefinitionCount])})
+
+(def stable-discovery-row
+  {:gate "formal/stable-discovery/verify-fast.sh"
+   :dafny-leaves stable-discovery-leaves
+   :verified-obligations stable-discovery-obligations})
+
 (def counterexample-entries
   (->> (files-under
         "formal/counterexamples"
@@ -166,6 +216,9 @@
   (assoc
    template
    :generator-version 1
+   :mutation-control mutation-row
+   :source-closure source-closure-row
+   :stable-discovery stable-discovery-row
    :source-digests
    (into
     (sorted-map)
@@ -199,4 +252,7 @@
      :source-files (count source-files)
      :reports (count report-paths)
      :counterexamples (count counterexample-entries)
+     :mutation-control mutation-row
+     :source-closure source-closure-row
+     :stable-discovery stable-discovery-row
      :generated-artifacts generated-artifacts})))

@@ -1,11 +1,13 @@
 (ns eacl.relay-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
-             :refer [deftest is testing]]
+            :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
-            [eacl.cache :as cache]
+            [eacl.backend.source :as source]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
+            [eacl.proof-frame :as proof-frame]
             [eacl.relay :as relay]
+            [eacl.request.context :as request-context]
             [eacl.verified-kernel :as verified]))
 
 (defn- operation-map
@@ -16,9 +18,7 @@
                 [operation (fn [& _] nil)]))
          backend/required-snapshot-operations)
    {:snapshot-id (constantly {:revision snapshot-id})
-    :source-scope
-    (constantly {:source-id "relay-source" :branch nil})
-    :source-lifecycle (constantly "relay-lifecycle")
+    :basis-kind (constantly :ordinary)
     :native-revision
     (constantly
      {:revision snapshot-id
@@ -37,29 +37,42 @@
     :deterministic? deterministic?
     :operations (operation-map snapshot-id proof)}))
 
-(defn- adapter-with-exact
-  [snapshot-id exact]
+(defn- basis-identity
+  [revision]
+  {:backend :relay-test
+   :source-id "relay-source"
+   :branch nil
+   :source-lifecycle "relay-lifecycle"
+   :basis-kind :ordinary
+   :revision revision
+   :exact-locator revision
+   :backend-snapshot-id {:revision revision}})
+
+(defn- proof-adapter
+  [revision provider]
   (backend/make-adapter
    {:id :relay-test
-    :capabilities {:consistency #{:at-exact-snapshot}
-                   :snapshots #{:historical}}
+    :capabilities {:cache-proofs #{:ordered-generations}}
     :fingerprint {:adapter :relay-test}
     :deterministic? true
     :operations
-    (assoc
-     (operation-map snapshot-id nil)
-     :select-exact (fn [& _] exact))}))
+    (merge
+     (operation-map revision nil)
+     {:schema-generation (constantly 3)
+      :proof-frame provider})}))
 
-(deftest snapshot-exact-key-requires-certified-exact-selection-test
-  (let [current-only (adapter 1 nil true)
-        exact-capable (adapter-with-exact 1 current-only)]
-    (is (nil? (cache/snapshot-exact-key current-only))
-        "a current-only or arbitrary immutable view cannot infer exact identity from revision equality")
-    (is (= :ordinary-exact
-           (:view-kind (cache/snapshot-exact-key exact-capable))))
-    (is (= 1 (:exact-locator (cache/snapshot-exact-key exact-capable))))))
+(defn- proof-opts
+  [selected revision]
+  (let [identity (basis-identity revision)]
+    {:snapshot-semantic-identity identity
+     :request-lineage (request-context/lineage-for-basis identity)
+     :cursor-dependency-relation-ids (delay [1])
+     :request-proof-frame
+     (proof-frame/request-frame selected {:basis-identity identity})}))
 
-(deftest cursor-proof-identity-test
+(declare lookup-query lookup-page)
+
+(deftest cursor-frame-identity-test
   (testing "even equal dependency proofs cannot lift across revisions"
     (let [first-context
           (relay/dependency-context
@@ -67,16 +80,16 @@
           later-context
           (relay/dependency-context
            (adapter 2 {:digest "same"} true))]
-      (is (not= (:proof-digest first-context)
-                (:proof-digest later-context)))))
+      (is (not= (:frame first-context)
+                (:frame later-context)))))
 
   (testing "the same exact snapshot has a stable identity"
     (let [first-context
           (relay/dependency-context (adapter 1 nil true))
           later-context
           (relay/dependency-context (adapter 1 {:different "proof"} true))]
-      (is (= (:proof-digest first-context)
-             (:proof-digest later-context)))))
+      (is (= (:frame first-context)
+             (:frame later-context)))))
 
   (testing "adapter determinism cannot enable cross-revision lifting"
     (let [first-context
@@ -85,8 +98,187 @@
           later-context
           (relay/dependency-context
            (adapter 2 {:digest "same"} false))]
-      (is (not= (:proof-digest first-context)
-                (:proof-digest later-context))))))
+      (is (not= (:frame first-context)
+                (:frame later-context))))))
+
+(deftest cursor-envelope-carries-canonical-frame-identity-test
+  (let [selected (proof-adapter 10 (constantly [[1 5]]))
+        page
+        (relay/externalize-page
+         selected (proof-opts selected 10)
+         :lookup-resources lookup-query lookup-page)
+        envelope
+        (cursor/token->cursor
+         (get-in page [:page-info :end-cursor]))]
+    (is (= 13 (:v envelope)))
+    (is (= (request-context/lineage-for-basis (basis-identity 10))
+           (:lineage envelope)))
+    (is (= {:schema-generation 3 :dependency-stamp 5}
+           (:frame envelope)))
+    (is (string? (:closure-digest envelope)))
+    (is (not (contains? envelope :dependency-scope-digest)))
+    (is (not (contains? envelope :proof-digest)))))
+
+(deftest request-lineage-must-match-selected-basis-test
+  (let [selected (proof-adapter 10 (constantly [[1 5]]))
+        error
+        (try
+          (relay/externalize-page
+           selected
+           (assoc-in (proof-opts selected 10)
+                     [:request-lineage :source-lifecycle]
+                     "another-lifecycle")
+           :lookup-resources lookup-query lookup-page)
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo) thrown
+            thrown))]
+    (is (= :eacl/backend-contract-violation
+           (:type (ex-data error))))))
+
+(deftest exact-fallback-accepts-and-remints-by-identity-without-frame-read-test
+  (let [original (proof-adapter 10 (constantly [[1 5]]))
+        current (proof-adapter 11 (constantly [[1 6]]))
+        exact-frame-reads (atom 0)
+        exact
+        (proof-adapter
+         10
+         (fn [_]
+           (swap! exact-frame-reads inc)
+           (throw (ex-info "historical frame must not be read" {}))))
+        acquisition
+        (fn [adapter]
+          {:adapter adapter
+           :ownership :borrowed
+           :release-token nil})
+        history-source
+        (source/make-source
+         {:id :relay-test
+          :capabilities {:snapshots #{:exact}
+                         :cache-proofs #{:ordered-generations}}
+          :basis-ownership :borrowed
+          :operations
+          {:source-scope
+           (constantly {:source-id "relay-source" :branch nil})
+           :source-lifecycle (constantly "relay-lifecycle")
+           :acquire-current! (fn [] (acquisition current))
+           :acquire-authoritative! (fn [] (acquisition current))
+           :acquire-at-least! (fn [& _] (acquisition current))
+           :acquire-exact!
+           (fn [revision _timeout-ms]
+             (when-not (= {:revision 10 :exact-locator 10} revision)
+               (throw (ex-info "wrong exact revision" {:revision revision})))
+             (acquisition exact))
+           :release! (fn [_] nil)}})
+        mint-opts (proof-opts original 10)
+        first-page
+        (relay/externalize-page
+         original mint-opts :lookup-resources lookup-query lookup-page)
+        token (get-in first-page [:page-info :end-cursor])
+        current-opts
+        (assoc (proof-opts current 11)
+               :authorization-target-kind :acl)
+        prepared
+        (binding [relay/*acl-cursor-recovery-source* history-source]
+          (relay/prepare-page-query
+           current current-opts :lookup-resources
+           (assoc lookup-query :after token)))
+        reminted
+        (relay/externalize-page
+         (:adapter prepared)
+         (assoc current-opts
+                :snapshot-semantic-identity (basis-identity 10)
+                :cursor-dependency-context
+                (:continuation-context prepared))
+         :lookup-resources lookup-query lookup-page)
+        original-envelope (cursor/token->cursor token)
+        reminted-envelope
+        (cursor/token->cursor
+         (get-in reminted [:page-info :end-cursor]))]
+    (is (identical? exact (:adapter prepared)))
+    (is (zero? @exact-frame-reads))
+    (is (= (select-keys original-envelope
+                        [:lineage :native-revision :adapter-fingerprint
+                         :identity-contract :frame :closure-digest])
+           (select-keys reminted-envelope
+                        [:lineage :native-revision :adapter-fingerprint
+                         :identity-contract :frame :closure-digest])))))
+
+(deftest proof-equivalent-continuation-reuses-one-request-frame-for-remint-test
+  (let [original (proof-adapter 10 (constantly [[1 5]]))
+        frame-reads (atom 0)
+        current
+        (proof-adapter
+         11
+         (fn [relation-ids]
+           (swap! frame-reads inc)
+           (mapv (fn [relation-id] [relation-id 5]) relation-ids)))
+        first-page
+        (relay/externalize-page
+         original (proof-opts original 10)
+         :lookup-resources lookup-query lookup-page)
+        prepared
+        (relay/prepare-page-query
+         current (proof-opts current 11)
+         :lookup-resources
+         (assoc lookup-query
+                :after (get-in first-page [:page-info :end-cursor])))
+        reminted
+        (relay/externalize-page
+         (:adapter prepared)
+         (assoc (proof-opts current 11)
+                :cursor-dependency-context
+                (:continuation-context prepared))
+         :lookup-resources lookup-query lookup-page)
+        envelope
+        (cursor/token->cursor
+         (get-in reminted [:page-info :end-cursor]))]
+    (is (identical? current (:adapter prepared)))
+    (is (= 1 @frame-reads)
+        "cursor validation and re-minting share one closure resolution")
+    (is (= {:revision 11 :exact-locator 11}
+           (:native-revision envelope)))
+    (is (= {:schema-generation 3 :dependency-stamp 5}
+           (:frame envelope)))))
+
+(deftest contract-violating-cursor-proof-falls-back-exact-and-cannot-equal-test
+  (let [producer (proof-adapter 10 (constantly [[1 5]]))
+        invalid-at-10-adapter
+        (proof-adapter 10 (constantly [[1 11]]))
+        consumer (proof-adapter 11 (constantly [[1 12]]))
+        query lookup-query
+        first-page
+        (relay/externalize-page
+         producer (proof-opts producer 10)
+         :lookup-resources query lookup-page)
+        continuation-query
+        (assoc query :after (get-in first-page [:page-info :end-cursor]))
+        error
+        (try
+          (relay/internalize-page-query
+           consumer (proof-opts consumer 11)
+           :lookup-resources continuation-query)
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) cause
+            (ex-data cause)))
+        invalid-at-10
+        (relay/dependency-context
+         invalid-at-10-adapter [1])
+        invalid-at-11
+        (relay/dependency-context consumer [1])
+        exact-at-10 (relay/dependency-context invalid-at-10-adapter)
+        exact-at-11 (relay/dependency-context consumer)]
+    (is (= :eacl.pagination/stale-cursor (:type error)))
+    (is (= :frame-changed (:reason error)))
+    (is (= (:closure-digest exact-at-10)
+           (:closure-digest exact-at-11))
+        "exact-bound cursors use one distinguished empty closure digest")
+    (is (= (:closure-digest invalid-at-10)
+           (:closure-digest invalid-at-11))
+        "violated evidence is represented only by exact-snapshot fallback")
+    (is (not= (:frame invalid-at-10)
+              (:frame invalid-at-11))
+        "equal violation status across revisions is never equality evidence")))
 
 (def lookup-query
   {:subject {:type :user :id "user-1"}
@@ -176,6 +368,49 @@
                  (:reason (ex-data error)))))
           (pr-str changed-query)))))
 
+(deftest completed-page-cache-is-partitioned-by-consistency-mode-test
+  (let [snapshot (adapter 1 nil true)
+        page-cache (relay/page-navigation-cache)
+        opts {:page-navigation-cache page-cache
+              :completed-cache? true
+              :snapshot-semantic-identity (basis-identity 1)}
+        at-least-query
+        (assoc lookup-query :consistency
+               {:consistency/mode :at-least-as-fresh
+                :zed/token "opaque-test-token"})
+        authoritative-query
+        (assoc lookup-query :consistency :fully-consistent)
+        public-page
+        (relay/externalize-page
+         snapshot opts :lookup-resources at-least-query lookup-page)]
+    (relay/remember-visited-page!
+     snapshot opts :lookup-resources at-least-query public-page)
+    (is (some? (relay/lookup-visited-page
+                snapshot opts :lookup-resources at-least-query)))
+    (is (nil? (relay/lookup-visited-page
+               snapshot opts :lookup-resources authoritative-query))
+        "a cached public cursor must never cross consistency query scope")))
+
+(deftest read-without-publication-can-read-but-not-write-visited-pages-test
+  (let [snapshot (adapter 1 nil true)
+        page-cache (relay/page-navigation-cache)
+        base-opts {:page-navigation-cache page-cache
+                   :completed-cache? true
+                   :snapshot-semantic-identity (basis-identity 1)}
+        read-only-opts (assoc base-opts :populate-cache-request? false)
+        public-page
+        (relay/externalize-page
+         snapshot base-opts :lookup-resources lookup-query lookup-page)]
+    (relay/remember-visited-page!
+     snapshot read-only-opts :lookup-resources lookup-query public-page)
+    (is (nil? (relay/lookup-visited-page
+               snapshot base-opts :lookup-resources lookup-query)))
+    (relay/remember-visited-page!
+     snapshot base-opts :lookup-resources lookup-query public-page)
+    (is (some? (relay/lookup-visited-page
+                snapshot read-only-opts :lookup-resources lookup-query))
+        "publication control must not disable visited-page lookup")))
+
 (deftest cursor-is-bound-to-normalized-traversal-limits-test
   (let [snapshot (adapter 1 nil true)
         original-limits {:max-derived-grants 100
@@ -201,27 +436,31 @@
              (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
                (:reason (ex-data error))))))))
 
-(deftest changed-proof-without-history-is-stale-test
+(deftest changed-proof-on-snapshot-is-a-basis-conflict-test
   (let [original (adapter 1 nil true)
         current (adapter 2 nil true)
         first-page
         (relay/externalize-page
-         original {} :lookup-resources lookup-query lookup-page)
+         original
+         {:snapshot-semantic-identity (basis-identity 1)}
+         :lookup-resources lookup-query lookup-page)
         token (get-in first-page [:page-info :end-cursor])
         data
         (try
           (relay/prepare-page-query
            current
-           {:cursor-consistency-mode :fully-consistent}
+           {:cursor-consistency-mode :fully-consistent
+            :authorization-target-kind :snapshot
+            :snapshot-semantic-identity (basis-identity 2)}
            :lookup-resources
            (assoc lookup-query :after token))
           nil
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
             (ex-data error)))]
-    (is (= :eacl.pagination/stale-cursor (:type data)))
-    (is (= :dependency-proof-changed (:reason data)))))
+    (is (= :eacl.consistency/basis-conflict (:type data)))
+    (is (= :cursor (:source data)))))
 
-(deftest recursive-continuation-does-not-rebase-after-graph-change-test
+(deftest recursive-snapshot-continuation-does-not-rebase-test
   (let [original (adapter 1 nil true)
         current (adapter 2 nil true)
         recursive-page
@@ -233,12 +472,16 @@
           :result-eid "document-1"})
         first-page
         (relay/externalize-page
-         original {} :lookup-resources lookup-query recursive-page)
+         original
+         {:snapshot-semantic-identity (basis-identity 1)}
+         :lookup-resources lookup-query recursive-page)
         data
         (try
           (relay/prepare-page-query
            current
-           {:cursor-consistency-mode :minimize-latency}
+           {:cursor-consistency-mode :minimize-latency
+            :authorization-target-kind :snapshot
+            :snapshot-semantic-identity (basis-identity 2)}
            :lookup-resources
            (assoc lookup-query
                   :after
@@ -246,8 +489,8 @@
           nil
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
             (ex-data error)))]
-    (is (= :eacl.pagination/stale-cursor (:type data)))
-    (is (= :dependency-proof-changed (:reason data)))))
+    (is (= :eacl.consistency/basis-conflict (:type data)))
+    (is (= :cursor (:source data)))))
 
 (deftest expired-cursor-reaches-the-kernel-decision-test
   ;; cursor-dependency-validity: the TTL check result is a computed input of
@@ -303,50 +546,6 @@
     (is (not (contains? (:cursor-context (:opts prepared)) :exp))
         "elapsed age far beyond five minutes is irrelevant without an explicit TTL")))
 
-(deftest exact-snapshot-continuation-never-rebases-test
-  (let [exact (adapter 1 nil true)
-        current (adapter-with-exact 2 exact)
-        exact-query
-        (assoc lookup-query
-               :consistency
-               {:consistency/mode :at-exact-snapshot
-                :zed/token "exact-token"})
-        page
-        (relay/externalize-page
-         exact {} :lookup-resources exact-query lookup-page)
-        prepared
-        (relay/prepare-page-query
-         current
-         {:cursor-consistency-mode :at-exact-snapshot
-          :cursor-request-token
-          {:revision 1
-           :exact-locator 1}}
-         :lookup-resources
-         (assoc exact-query
-                :after
-                (get-in page [:page-info :end-cursor])))]
-    (is (identical? exact (:adapter prepared)))
-    (is (not (contains? prepared :recovery)))))
-
-(deftest changed-current-schema-reaches-exact-cursor-fallback-test
-  (let [exact (adapter 1 nil true)
-        current (adapter-with-exact 2 exact)
-        page
-        (relay/externalize-page
-         exact
-         {:cursor-schema-stamp {:adapter exact :stamp (delay 10)}}
-         :lookup-resources lookup-query lookup-page)
-        prepared
-        (relay/prepare-page-query
-         current
-         {:cursor-consistency-mode :minimize-latency
-          :cursor-schema-stamp {:adapter current :stamp (delay 20)}}
-         :lookup-resources
-         (assoc lookup-query
-                :after (get-in page [:page-info :end-cursor])))]
-    (is (identical? exact (:adapter prepared))
-        "schema proof changes must not masquerade as query-scope changes")))
-
 (deftest one-page-builds-one-snapshot-context-test
   (let [native-revision-calls (atom 0)
         snapshot-id-calls (atom 0)
@@ -370,7 +569,8 @@
               1)
             :internal-id->object str})})
         edge {:kind :relationship-index
-              :v 1
+              :v 2
+              :anchor :progress
               :scan-index 0
               :subject-id 10
               :resource-id 20}
@@ -387,7 +587,9 @@
           :has-previous-page? false}}
         external
         (relay/externalize-relationship-page
-         test-adapter {} :read-relationships
+         test-adapter
+         {:snapshot-semantic-identity (basis-identity 1)}
+         :read-relationships
          {:subject/type :user :first 1}
          page)]
     (is (= 1 @native-revision-calls))

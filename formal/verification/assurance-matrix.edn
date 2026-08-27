@@ -4,9 +4,9 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 58
-  :public-roots 63
-  :reachable-definitions 1404
+  :source-files 102
+  :public-roots 72
+  :reachable-definitions 2146
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -29,10 +29,6 @@
               'eacl.engine.v8/acyclic-lookup
               'eacl.engine.v8/count-acyclic-pages
               'eacl.engine.v8/acyclic-bound-authorized?]}
-  {:source "formal/dafny/CacheKernel.dfy"
-   :class :proof-only-generated-boundary
-   :consumer []
-   :reason :no-runtime-operation}
   {:source "formal/dafny/ConsistencyDecision.dfy"
    :class :generated-production
    :consumer ['eacl.consistency]}
@@ -48,7 +44,15 @@
               'eacl.subproblem-cache]}
   {:source "formal/dafny/CurrentCache.dfy"
    :class :generated-production
-   :consumer ['eacl.cache/current-generation-decision]}
+   :consumer ['eacl.cache]}
+  {:source "formal/dafny/SpeculativeCacheCoherence.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.cache/resolve-managed-read-only!
+              'eacl.client.orchestration/cached-engine-result
+              'eacl.client.orchestration/speculative-with-snapshot
+              'eacl.client.orchestration/speculative-with-schema-snapshot
+              'eacl.relay/validate-context!]
+   :report "formal/verification/speculative-cache-coherence.edn"}
   {:source "formal/dafny/ExecutionContract.dfy"
    :class :proof-only-host-control-model
    :consumer ['eacl.execution/normalize
@@ -62,7 +66,68 @@
    :consumer ["formal/verification/performance-gates.edn"]}
   {:source "formal/dafny/EaclKernel.dfy"
    :class :formal-smoke-only
-   :consumer ["formal/smoke/js/round_trip.mjs"]}
+   :consumer ["formal/smoke/js/round_trip.mjs"
+              "formal/smoke/clj/eacl/formal/java_operator_decision.clj"
+              "formal/smoke/clj/eacl/formal/java_operator_recursive.clj"
+              "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]}
+  {:source "formal/dafny/PermissionSetAlgebra.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/SignedDependencyStratification.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/CandidateCover.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/WitnessPredicate.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/VectorPredicate.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/AdaptiveBatching.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorLeastPath.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/SeekableSetKernels.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/DensityBoundedBatch.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/AnchorGatedConjunction.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/StratifiedExclusion.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorCacheRefinement.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/ExpressionPlanRefinement.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorGeneratedPolicy.dfy"
+   :class :abstract-operator-phase-a-generated-smoke
+   :consumer ["formal/dafny/EaclKernel.dfy"
+              "formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+   :class :operator-phase-b-generated-command-state
+   :consumer ["formal/dafny/EaclKernel.dfy"
+              "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+              "formal/smoke/clj/eacl/formal/java_operator_recursive.clj"
+              "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]}
+  {:source "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+   :class :operator-phase-b-proof-only-refinement
+   :consumer ["formal/dafny/OperatorProofKernel.dfy"]}
+  {:source "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+   :class :abstract-operator-phase-a-proof-only
+   :consumer ["formal/verification/operator-phase-a.edn"]}
+  {:source "formal/dafny/OperatorProofKernel.dfy"
+   :class :abstract-operator-phase-a-proof-aggregate
+   :consumer ["formal/verification/operator-phase-a.edn"]}
   {:source "formal/dafny/IndexedTraversal.dfy"
    :class :generated-production
    :consumer ['eacl.engine.v8/run-generated-traversal]}
@@ -102,6 +167,14 @@
               'eacl.engine.relationships/execute-page
               'eacl.client.orchestration/cursor-options
               'eacl.relay]}
+  {:source "formal/dafny/FilteredPagination.dfy"
+   :class :proof-only-host-control-model
+   :consumer ['eacl.engine.relationships/execute-filtered-window
+              'eacl.engine.v8/execute-filtered-lookup-window
+              'eacl.client.orchestration/authorization-scan-page
+              'eacl.client.orchestration/relationship-filtered-lookup-page
+              'eacl.datomic.core/spiceomic-read-relationships
+              'eacl.datomic.core/filtered-lookup-state]}
   {:source "formal/dafny/PermissionTree.dfy"
    :class :proof-only-host-control-and-semantic-model
    :consumer ['eacl.permission-tree]
@@ -310,14 +383,15 @@
   {:operation :snapshot-consistency-selection
    :entry-points
    ['eacl.consistency/selection-plan
-    'eacl.consistency/captured-current-selection
+    'eacl.consistency/select-from-source
     'eacl.consistency/select]
    :theorems
    [:unsupported-exact-plan-is-exact-snapshot-unavailable
     :at-least-acceptance-requires-ancestor
     :exact-acceptance-requires-pinned-graph
     :present-malformed-selection-is-not-snapshot-absence
-    :captured-current-needs-no-post-selection-decision
+    :selection-plan-needs-no-acquisition-or-validation
+    :response-token-uses-closed-selected-identity
     :selected-current-has-one-selection-and-validation
     :successful-selection-logical-work-is-constant-bounded]
    :dafny ["formal/dafny/ConsistencyDecision.dfy"
@@ -349,14 +423,32 @@
               :cursor-minting-does-no-relationship-content-scan
               :no-cache-cursor-minting-does-no-generation-scan
               :automatic-current-requests-use-ordered-generation-proofs
-              :current-continuation-requires-equal-proof
-              :exact-continuation-requires-authenticated-exact-proof
-              :changed-proof-never-continues-on-current
-              :changed-proof-without-exact-snapshot-is-rejected
-              :datascript-exact-proof-continues-only-at-current-basis
+              :current-continuation-requires-equal-lineage-frame-and-closure
+              :equal-scalar-frame-preserves-every-closure-slice
+              :sealed-plan-descriptors-stay-inside-certified-closure
+              :equal-closure-slices-preserve-adaptive-stream-and-boundaries
+              :least-path-resume-is-exact-suffix-or-reverse-prefix
+              :stable-boundary-resume-is-exact-residual
+              :exact-continuation-requires-authenticated-original-basis-identity
+              :changed-frame-never-continues-on-current
+              :changed-frame-without-exact-selection-is-rejected
+              :datascript-exact-frame-continues-only-at-current-basis
               :datascript-changed-basis-cannot-yield-cursor-page]
    :dafny ["formal/dafny/PageWindow.dfy"
-           "formal/dafny/TemporalSafety.dfy"]
+           "formal/dafny/TemporalSafety.dfy"
+           "formal/dafny/ScalarFrontierCoherence.dfy"
+           "formal/stable-discovery/ReducerReadScope.dfy"
+           "formal/stable-discovery/LeastPathResume.dfy"
+           "formal/stable-discovery/PaginationComposition.dfy"
+           "formal/stable-discovery/RuntimeCheckpointComposition.dfy"]
+   :premises
+   [:same-lineage
+    :equal-certified-schema-generation-and-scalar-frontier
+    :complete-canonical-relation-closure
+    :sealed-plan-read-scope-guard-passed
+    :immutable-snapshot
+    :deterministic-adapter-scan-order
+    :authenticated-order-boundary]
    :adapter-obligations
    [:immutable-snapshot
     :exact-selection
@@ -367,7 +459,8 @@
    :runtime-targets [:clj-java :cljs-javascript]
    :production-authoritative
    {:continuation-decision :generated-production
-    :cursor-proof-strategy :proof-only-host-control-model-cross-checked}
+    :cursor-frame-strategy :proof-only-host-control-model-cross-checked
+    :plan-read-scope-guard :executed-production-mutation-controlled}
    :remaining
    [:mechanized-host-cursor-proof-strategy-source-refinement
     :backend-proof-construction-refinement
@@ -375,6 +468,53 @@
    :ci [:generated-production-kernel
         :cross-runtime-vectors
         :cross-adapter-state-trace]}
+  {:operation :frame-keyed-checkpoint-resume
+   :entry-points ['eacl.engine.v8/checkpoint-key
+                  'eacl.engine.stable-page/state-at-boundary
+                  'eacl.engine.stable-page/checkpoint-put!
+                  'eacl.engine.stable-reducer/history-free
+                  'eacl.engine.stable-reducer/resume]
+   :theorems
+   [:checkpoint-is-history-free-state-plus-undelivered-lookahead
+    :checkpoint-resume-equals-same-basis-replay
+    :sealed-plan-descriptors-stay-inside-certified-closure
+    :equal-scalar-frame-preserves-every-closure-slice
+    :equal-frame-resume-preserves-next-page-state-boundary-and-resource-outcome
+    :native-revision-is-not-checkpoint-semantic-identity
+    :visited-public-pages-remain-exact-basis-keyed]
+   :dafny
+   ["formal/stable-discovery/ReducerCheckpoint.dfy"
+    "formal/stable-discovery/RuntimeCheckpointComposition.dfy"
+    "formal/stable-discovery/ReducerReadScope.dfy"
+    "formal/dafny/ScalarFrontierCoherence.dfy"]
+   :premises
+   [:same-lineage
+    :equal-certified-schema-generation-and-scalar-frontier
+    :complete-canonical-plan-relation-closure
+    :sealed-plan-read-scope-guard-passed
+    :equal-sealed-plan-fingerprint-and-order-abi
+    :authenticated-boundary-ordinal-and-identity
+    :closed-history-free-state-and-lookahead
+    :cumulative-resource-counters-retained]
+   :adapter-obligations
+   [:immutable-snapshot
+    :durable-source-lineage-truthfulness
+    :supported-writer-ordered-generation-stamping
+    :ordered-generation-proof-completeness
+    :deterministic-complete-exclusive-scans]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   {:checkpoint-key :frame-keyed-host-control-mutation-controlled
+    :resume :history-free-host-runtime-formally-composed
+    :public-cursor-order :checkpoint-subordinate-after-acceptance}
+   :remaining
+   [:mechanized-host-checkpoint-key-source-refinement
+    :backend-proof-construction-refinement
+    :independent-review]
+   :ci [:stable-discovery
+        :mutation-control
+        :cross-backend-checkpoint-conformance
+        :datascript-cljs-test]}
   {:operation :acyclic-frontier-alias-canonicalization
    :entry-points ['eacl.engine.v8/frontier-permission-paths]
    :theorems
@@ -399,12 +539,18 @@
         :mutation-control]}
   {:operation :relationship-pagination
    :entry-points ['eacl.engine.relationships/execute-page
+                  'eacl.engine.relationships/execute-filtered-window
+                  'eacl.engine.v8/execute-filtered-lookup-window
                   'eacl.relay/externalize-relationship-page]
    :theorems [:relationship-keyset-page-decision-exact
               :single-permitted-graph
               :matching-relationship-page-scope-reuses-exact-page
-              :relationship-page-scope-mismatch-cannot-hit]
+              :relationship-page-scope-mismatch-cannot-hit
+              :arbitrary-window-concatenation-is-exact
+              :unbounded-has-next-is-exact
+              :deadline-cut-publishes-no-page]
    :dafny ["formal/dafny/PageWindow.dfy"
+           "formal/dafny/FilteredPagination.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot :ordered-complete-scans
                          :exact-selection :source-fingerprint]
@@ -515,19 +661,113 @@
         :generated-indexed-scan-rejection
         :recursive-contract
         :heavy-pagination]}
+  {:operation :abstract-operator-engine-phase-a
+   :status :passed-operator-authorized
+   :entry-points
+   ["EaclKernel.__default/DecideOperatorBatch"
+    "EaclKernel.__default/DecideOperatorSignedGraph"
+    "formal/smoke/clj/eacl/formal/java_operator_decision.clj"
+    "formal/smoke/cljs/eacl/formal/operator_decision_test.cljs"]
+   :theorems
+   [:finite-typed-stratified-expression-semantics
+    :exact-expression-table-to-plan-denotation
+    :executable-exact-scc-certificate-and-canonical-negative-cycle-rejection
+    :recursive-candidate-cover-containment-and-exact-emission
+    :exact-derivation-scoped-witness-predicates
+    :aligned-atomic-mask-schedule-and-vector-refinement
+    :bounded-adaptive-batching
+    :logical-cursor-suffix-equivalence
+    :anchor-preserving-max-head-k-way-seekable-sequence-refinement
+    :demand-stopping-k-way-prefix-and-dimensional-seek-bounds
+    :density-bounded-prefix-selection
+    :arrival-independent-operational-anchor-gated-recursive-conjunction
+    :completed-lower-stratum-exclusion
+    :complete-signed-snapshot-projection-generation-cache-refinement
+    :generated-policy-refinement]
+   :dafny
+   ["formal/dafny/PermissionSetAlgebra.dfy"
+    "formal/dafny/SignedDependencyStratification.dfy"
+    "formal/dafny/CandidateCover.dfy"
+    "formal/dafny/WitnessPredicate.dfy"
+    "formal/dafny/VectorPredicate.dfy"
+    "formal/dafny/AdaptiveBatching.dfy"
+    "formal/dafny/OperatorLeastPath.dfy"
+    "formal/dafny/SeekableSetKernels.dfy"
+    "formal/dafny/DensityBoundedBatch.dfy"
+    "formal/dafny/AnchorGatedConjunction.dfy"
+    "formal/dafny/StratifiedExclusion.dfy"
+    "formal/dafny/OperatorCacheRefinement.dfy"
+    "formal/dafny/ExpressionPlanRefinement.dfy"
+    "formal/dafny/OperatorGeneratedPolicy.dfy"
+    "formal/dafny/OperatorGeneratedPolicyRefinement.dfy"
+    "formal/dafny/OperatorProofKernel.dfy"]
+   :adapter-obligations
+   [:immutable-snapshot
+    :strictly-ordered-unique-eid-scans
+    :inclusive-reseek
+    :complete-signed-dependency-generations
+    :atomic-vector-response-or-failure
+    :truthful-dimensional-work-counters]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative false
+   :remaining
+   [:production-per-node-lower-stratum-fact-context-stability-refinement
+    :production-expression-to-recursive-join-rule-refinement
+    :production-parser-codec-and-storage-refinement
+    :production-plan-evaluator-cache-and-backend-refinement
+    :production-performance-acceptance]
+   :assurance-qualification :independent-proof-review-not-performed
+   :ci
+   [:locked-dafny-verification
+    :operator-temporal-mutation-control
+    :abstract-operator-cross-runtime-vectors]
+   :report "formal/verification/operator-phase-a.edn"}
+  {:operation :operator-engine-phase-b
+   :status :passed-concrete-routing-and-writes-enabled
+   :entry-points
+   ["EaclKernel.__default/DecideOperatorRecursiveCommand"
+    "eacl.operator.plan/seal-plan"
+    "eacl.operator.evaluator/check-eids"
+    "eacl.operator.vector-evaluator/check-cached-many-eids"
+    "eacl.operator.lookup/lookup-page"
+    "eacl.operator.recursive/evaluate-cached-many"]
+   :theorems
+   [:generated-typed-fact-command-authority
+    :generated-intersection-slot-to-anchor-model-refinement
+    :generated-completed-negative-to-stratified-exclusion-refinement
+    :generated-incomplete-negative-fails-closed
+    :typed-fact-identity-separation]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :backend-certification [:datomic :datascript :datahike :datalevin]
+   :production-mutations {:registered 10 :killed 10 :survived 0}
+   :source-closure
+   {:source-files 102 :public-roots 72 :reachable-definitions 2146}
+   :production-authoritative
+   :enabled-after-conformance-storage-and-performance-qualification
+   :remaining []
+   :assurance-qualification :independent-proof-review-not-performed
+   :report "formal/verification/operator-phase-b.edn"
+   :eacl-conformance-report
+   "formal/verification/operator-eacl-conformance.edn"
+   :expression-storage-report
+   "formal/verification/operator-expression-storage.edn"
+   :union-only-conformance-report
+   "formal/verification/operator-union-only-conformance.edn"}
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]
-   :theorems [:exact-current-same-snapshot
-              :snapshot-exact-hit-requires-available-entry
-              :snapshot-exact-miss-computes-without-managed-fallback
+   :theorems [:exact-basis-hit-is-same-selected-basis
+              :exact-only-hit-requires-available-entry
+              :exact-only-miss-computes-without-managed-fallback
               :numeric-revision-alone-cannot-establish-exact-identity
               :managed-atomic-relation-projection-frame
               :managed-source-schema-scalar-frontier-key-separation
+              :equal-scalar-proof-preserves-every-deterministic-denotation
+              :equal-scalar-proof-also-preserves-an-older-selected-snapshot
               :changed-relation-slice-requires-changed-stamp
               :forward-scalar-stamp-invalidation
               :late-publication-unreachable
-              :arbitrary-db-bypass-and-canonical-exact-admission
+              :inadmissible-basis-bypass-and-complete-identity-admission
               :projection-chunk-concatenation
               :equal-root-rule-bodies-have-equal-semantic-denotations
               :acyclic-subproblem-call-stack-independence
@@ -539,18 +779,22 @@
               :bounded-best-effort-publication
               :compatible-publication-winner-retained
               :linearized-lifecycle-lookup-and-publication-selection]
-   :dafny ["formal/dafny/CacheKernel.dfy"
-           "formal/dafny/CurrentCache.dfy"
+   :dafny ["formal/dafny/CurrentCache.dfy"
            "formal/dafny/RootDenotation.dfy"
            "formal/dafny/IndexedRootDenotation.dfy"
+           "formal/dafny/ScalarFrontierCoherence.dfy"
            "formal/dafny/SubproblemCache.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot
-                         :truthful-canonical-snapshot-exact-key
+                         :truthful-complete-exact-basis-key
+                         :complete-source-scope-plus-lifecycle-lineage
+                         :fresh-source-id-per-non-durable-live-source
                          :durable-history-when-advertised
                          :targeted-sync-and-exact-as-of-effects
                          :provider-future-cancellation
                          :complete-compiled-dependencies
+                         :proof-generations-share-native-revision-domain
+                         :proof-generations-at-or-below-selected-revision
                          :atomic-relation-stamped-writer-contract
                          :selected-snapshot-rendering
                          :source-fingerprint
@@ -559,4 +803,11 @@
    :ci [:generated-production-kernel
         :authoritative-rejection-regression
         :cross-runtime-vectors
-        :cross-adapter-state-trace]}]}
+        :cross-adapter-state-trace]
+   :derived-metrics-report
+   "formal/verification/derived-metrics-cache.edn"}]
+ :removed-models
+ [{:source "formal/dafny/CacheKernel.dfy"
+   :reason :superseded-graph-ancestry-model-with-no-production-consumer
+   :replacement ["formal/dafny/CurrentCache.dfy"
+                 "formal/dafny/ScalarFrontierCoherence.dfy"]}]}

@@ -194,7 +194,7 @@
    :completeness
    :when-exhaustive-direct-result-equals-complete-path-result}
   :adapter-composition
-  {:certification-version "eacl.adapter-certification/v2"
+  {:certification-version "eacl.adapter-certification/v4"
    :datomic :passed
    :datahike :passed
    :datascript-clj :passed

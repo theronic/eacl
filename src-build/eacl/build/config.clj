@@ -7,7 +7,9 @@
 (def minimum-java-release 8)
 
 (def module-order
-  [:eacl :eacl-datomic :eacl-datahike :eacl-datascript])
+  [:eacl :eacl-datomic :eacl-datahike :eacl-datascript :eacl-datalevin])
+
+(def datalevin-fork-version "1.0.2-eacl.2")
 
 (def modules
   {:eacl
@@ -51,7 +53,32 @@
     {'org.clojure/clojure {:mvn/version "1.11.4"}
      'dev.eacl/eacl ::eacl-version
      'com.rpl/specter {:mvn/version "1.1.4"}
-     'datascript/datascript {:mvn/version "1.7.8"}}}})
+     'datascript/datascript {:mvn/version "1.7.8"}}}
+
+   :eacl-datalevin
+   {:lib 'dev.eacl/eacl-datalevin
+    :directory "modules/eacl-datalevin"
+    :description "Datalevin adapter for the EACL authorization engine"
+    :required-entry "eacl/datalevin/core.cljc"
+    ;; Keep workspace identity/build metadata complete without admitting an
+    ;; artifact whose pinned runtime dependency is not public yet.
+    :release-ready? false
+    :release-blocker :datalevin-fork-artifact-unpublished
+    :dependencies
+    {'org.clojure/clojure {:mvn/version "1.12.4"}
+     'dev.eacl/eacl ::eacl-version
+     'com.rpl/specter {:mvn/version "1.1.4"}
+     'dev.eacl/datalevin-embedded-eacl
+     {:mvn/version datalevin-fork-version}}}})
+
+(def release-module-order
+  "Modules eligible for the coordinated Maven release pipeline. A workspace
+  module joins only after all of its declared Maven dependencies resolve from
+  the clean public repositories used by release consumers."
+  (into
+   []
+   (filter #(not= false (:release-ready? (get modules %))))
+   module-order))
 
 (def scm
   {:connection "scm:git:https://github.com/theronic/eacl.git"
@@ -155,7 +182,8 @@
         '#{dev.eacl/eacl
            dev.eacl/eacl-datomic
            dev.eacl/eacl-datahike
-           dev.eacl/eacl-datascript}]
+           dev.eacl/eacl-datascript
+           dev.eacl/eacl-datalevin}]
     (when-not (= expected (set libs))
       (throw
        (ex-info

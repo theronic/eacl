@@ -2,7 +2,7 @@
   "Node/CLJS absolute gate for the generated consistency boundary."
   (:refer-clojure :exclude [run!])
   (:require
-   [eacl.backend.v8 :as backend]
+   [eacl.backend.source :as source]
    [eacl.consistency :as consistency]
    [eacl.formal.production-kernel-js :as production]
    [eacl.spicedb.consistency :as public-consistency]))
@@ -16,43 +16,31 @@
          (js/Math.floor (* proportion (count ordered))))]
     (nth ordered index)))
 
-(defn- benchmark-adapter
+(defn- benchmark-source
   []
-  (let [self (atom nil)
-        base-operations
-        (into
-         {}
-         (map (fn [operation] [operation (fn [& _] nil)]))
-         backend/required-snapshot-operations)
-        adapter
-        (backend/make-adapter
-         {:id :consistency-benchmark
-          :capabilities
-          {:consistency #{:minimize-latency}
-           :snapshots #{:current}
-           :source #{:stable-scope :source-lifecycle
-                     :native-revision :order-hint :exact-locator}
-           :cursor #{}
-           :transactions #{}
-           :cache-proofs #{}
-           :runtime #{:cljs}}
-          :operations
-          (merge
-           base-operations
-           {:snapshot-id (fn [] [:source nil 1])
-            :source-scope
-            (fn [] {:source-id "source" :branch nil})
-            :source-lifecycle (constantly "benchmark-lifecycle")
-            :native-revision
-            (constantly {:revision 1 :exact-locator 1})
-            :order-hint (constantly 1)
-            :exact-locator (constantly 1)
-            :select-current (fn [] @self)})})]
-    (reset! self adapter)
-    adapter))
+  (source/make-source
+   {:id :consistency-benchmark
+    :capabilities
+    {:consistency #{:minimize-latency}
+     :snapshots #{:current}
+     :source #{:stable-scope :source-lifecycle
+               :native-revision :order-hint :exact-locator}
+     :cursor #{}
+     :transactions #{}
+     :cache-proofs #{}
+     :runtime #{:cljs}}
+    :basis-ownership :borrowed
+    :operations
+    {:source-scope (constantly {:source-id "source" :branch nil})
+     :source-lifecycle (constantly "benchmark-lifecycle")
+     :acquire-current! (fn [& _] nil)
+     :acquire-authoritative! (fn [& _] nil)
+     :acquire-at-least! (fn [& _] nil)
+     :acquire-exact! (fn [& _] nil)
+     :release! (fn [& _] nil)}}))
 
 (defn- run-batch
-  [adapter repetitions]
+  [source repetitions]
   (let [options
         {:decision-kernel production/default-selection}
         started (.now js/performance)]
@@ -63,13 +51,12 @@
          :nanoseconds-per-call
          (/ (* 1000000.0 (- (.now js/performance) started))
             repetitions)}
-        (let [selected
-              (:adapter
-               (consistency/captured-current-selection
-                adapter
-                public-consistency/minimize-latency
-                options))]
-          (recur (inc iteration) (+ checksum (hash selected))))))))
+        (let [action
+              (consistency/selection-plan
+               source
+               {:mode public-consistency/minimize-latency}
+               options)]
+          (recur (inc iteration) (+ checksum (hash action))))))))
 
 (defn run!
   ([]
@@ -78,10 +65,10 @@
      :or {repetitions 2000
           warmup 10
           samples 40}}]
-   (let [adapter (benchmark-adapter)
+   (let [source (benchmark-source)
          observations
          (mapv
-          (fn [_] (run-batch adapter repetitions))
+          (fn [_] (run-batch source repetitions))
           (range (+ warmup samples)))
          measured (subvec observations warmup)
          checksums (mapv :checksum measured)
@@ -89,7 +76,7 @@
      (when-not (apply = checksums)
        (throw
         (ex-info
-         "CLJS consistency boundary selected different adapters."
+         "CLJS consistency boundary returned different plan actions."
          {:checksums checksums})))
      {:generated-ns times
       :generated-p50-ns (percentile times 0.50)
@@ -110,7 +97,7 @@
          passed? (<= median-p95 maximum-median-p95-ns)]
      {:runtime :node-cljs
       :fixture
-      {:path :captured-current
+      {:path :minimize-latency-plan
        :repetitions (or (:repetitions options) 2000)
        :warmup (or (:warmup options) 10)
        :samples (or (:samples options) 40)
@@ -130,7 +117,10 @@
        :revision-validation-calls 0
        :native-revision-reads 0
        :order-hint-reads 0
-       :exact-locator-reads 0}
+       :exact-locator-reads 0
+       :source-lifecycle-reads 0
+       :snapshot-id-reads 0
+       :basis-kind-reads 0}
       :resource-qualification
       {:wall-time :host-specific-measurement
        :javascript-heap-bytes :not-established

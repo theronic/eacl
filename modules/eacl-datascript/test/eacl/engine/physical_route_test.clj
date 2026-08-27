@@ -26,20 +26,14 @@
   (let [fixture ((get capture/fixtures fixture-key))
         {:keys [conn]} (capture/seed-client! fixture)
         db (ds/db conn)
-        adapter (datascript-backend/snapshot-adapter
+        adapter (datascript-backend/basis-adapter
                  db
                  {:object-id->entid
                   (fn [snapshot object-id]
                     (ds/entid snapshot [:eacl/id object-id]))
                   :entid->object-id
                   (fn [snapshot internal-id]
-                    (:eacl/id (ds/entity snapshot internal-id)))
-                  :conn conn
-                  ;; Unique per call: seeded stores are distinct sources, and
-                  ;; a shared lifecycle would alias plan-cache identities.
-                  :source-lifecycle (str (gensym (str "physical-route-"
-                                                      (name fixture-key)
-                                                      "-")))})]
+                    (:eacl/id (ds/entity snapshot internal-id)))})]
     {:fixture fixture :db db :adapter adapter
      :plan (sealed-plan/seal-plan adapter [(:resource-type fixture)
                                            (:permission fixture)])}))
@@ -528,16 +522,14 @@
     (eacl/create-relationships!
      client (mapv #(eacl/->Relationship % :viewer doc) users))
     (let [db (ds/db conn)
-          adapter (datascript-backend/snapshot-adapter
+          adapter (datascript-backend/basis-adapter
                    db
                    {:object-id->entid
                     (fn [snapshot object-id]
                       (ds/entid snapshot [:eacl/id object-id]))
                     :entid->object-id
                     (fn [snapshot internal-id]
-                      (:eacl/id (ds/entity snapshot internal-id)))
-                    :conn conn
-                    :source-lifecycle (str (gensym "physical-route-wide-"))})]
+                      (:eacl/id (ds/entity snapshot internal-id)))})]
       {:db db :adapter adapter :doc-eid (ds/entid db [:eacl/id "doc-1"])})))
 
 (defn- adapter-with-realization-ledger
@@ -691,7 +683,7 @@
                       (catch clojure.lang.ExceptionInfo e (:type (ex-data e)))))
               (pr-str bad)))
         (let [client (datascript/make-client conn {:service-admission {:max-concurrent 4}})
-              admission (:service-admission (:opts client))]
+              admission (:service-admission (:runtime client))]
           (is (some? admission))
           (is (= 4 (:max-concurrent @admission)))
           (is (map? (eacl/lookup-resources

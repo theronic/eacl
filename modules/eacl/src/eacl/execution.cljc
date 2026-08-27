@@ -5,7 +5,8 @@
   work. Runtime layers may observe the contract and cooperatively check its
   absolute monotonic deadline and caller-owned cancellation token, but never
   replace either control with a fresh relative timeout or token."
-  (:refer-clojure :exclude [next]))
+  (:refer-clojure :exclude [next])
+  (:require [eacl.authorization.batch :as batch]))
 
 (def default-execution-timeout-ms 30000)
 (def maximum-execution-timeout-ms 3600000)
@@ -63,7 +64,7 @@
     (throw
      (ex-info
       ":cancellation-token must implement CooperativeCancellation."
-      {:type :eacl/invalid-request
+      {:type :eacl.execution/invalid-contract
        :eacl/error :eacl.execution/invalid-contract
        :key :cancellation-token
        :value-type (some-> token type str)})))
@@ -83,7 +84,7 @@
   (throw
    (ex-info
     message
-    (merge {:type :eacl/invalid-request
+    (merge {:type :eacl.execution/invalid-contract
             :eacl/error :eacl.execution/invalid-contract}
            data))))
 
@@ -117,7 +118,7 @@
       (throw
        (ex-info
         ":cache-attempt must be a map."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :cache-attempt
          :value overrides})))
     (when-let [unknown (seq (remove positive-cache-attempt-keys
@@ -125,7 +126,7 @@
       (throw
        (ex-info
         "Unknown cache-attempt option."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :cache-attempt
          :unknown-keys (vec unknown)
          :known-keys positive-cache-attempt-keys})))
@@ -135,7 +136,7 @@
       (throw
        (ex-info
         "Cache-attempt limits must be positive integers."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :cache-attempt
          :value overrides})))
     (merge default-cache-attempt overrides)))
@@ -178,12 +179,17 @@
      :render
      (case operation
        (:can? :check-permission) :boolean
+       :check-permissions :batch
        (:count-resources :count-subjects) :count
        (:lookup-resources :lookup-subjects) :page
        :unknown)}
     (case operation
       (:can? :check-permission)
       {:kind :boolean}
+
+      :check-permissions
+      {:kind :batch
+       :size (count (:checks request))}
 
       (:count-resources :count-subjects)
       (if-some [limit (validated-count-limit request)]
@@ -224,7 +230,11 @@
              (:execution-timeout-ms client-options)
              default-execution-timeout-ms))
         started-nanos (now-nanos)
-        deadline-nanos (+ started-nanos (* timeout-ms 1000000))]
+        deadline-nanos (+ started-nanos (* timeout-ms 1000000))
+        aggregate-limits
+        (batch/normalize-request-limits
+         (:aggregate-limits client-options)
+         (:aggregate-limits request))]
     {:version 1
      :operation operation
      :evaluation evaluation
@@ -234,8 +244,59 @@
      :deadline-nanos deadline-nanos
      :cancellation-token cancellation-token
      :limits (:recursive-traversal-limits client-options)
+     :aggregate-limits aggregate-limits
      :cache-attempt (or (:cache-attempt client-options)
                         default-cache-attempt)}))
+
+(defn refine
+  "Builds a nested semantic-operation contract without renewing request time.
+
+  Composed snapshot views retain the outer absolute deadline and cancellation
+  token. A nested operation may tighten aggregate work limits and select its
+  own demand/evaluation shape, but it cannot loosen an outer request-wide
+  ceiling or install a new clock/token budget."
+  [contract client-options operation request]
+  (let [request (or request {})
+        _ (when-let [forbidden
+                     (seq
+                      (filter #(contains? request %)
+                              [:cache-attempt
+                               :recursive-traversal-limits
+                               :permission-tree-limits]))]
+            (invalid-request!
+             "Cache-attempt and structural safety envelopes are client configuration, not per-request demand controls."
+             {:forbidden-keys (vec forbidden)}))
+        evaluation
+        (if (contains? request :evaluation)
+          (normalize-evaluation (:evaluation request))
+          (:evaluation contract))
+        _ (when (contains? request :timeout-ms)
+            (normalize-timeout-ms (:timeout-ms request)))
+        cancellation-token (:cancellation-token request)
+        _ (when (and cancellation-token
+                     (not (cancellation-token? cancellation-token)))
+            (invalid-request!
+             ":cancellation-token must be created by eacl.execution/cancellation-token or implement CooperativeCancellation."
+             {:key :cancellation-token
+              :value-type (some-> cancellation-token type str)}))
+        _ (when (and cancellation-token
+                     (not (identical? cancellation-token
+                                     (:cancellation-token contract))))
+            (invalid-request!
+             "A composed snapshot operation cannot replace the outer cancellation token."
+             {:key :cancellation-token
+              :reason :request-control-fixed}))
+        nested-limits
+        (batch/normalize-request-limits
+         (:aggregate-limits client-options)
+         (:aggregate-limits request))
+        aggregate-limits
+        (merge-with min (:aggregate-limits contract) nested-limits)]
+    (assoc contract
+           :operation operation
+           :evaluation evaluation
+           :demand (operation-demand operation request evaluation)
+           :aggregate-limits aggregate-limits)))
 
 (defn remaining-nanos
   ([contract]

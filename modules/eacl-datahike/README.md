@@ -19,6 +19,13 @@ Responsibilities:
 Exact immutable-snapshot lookup runs first. Complete ordered-generation proof
 reuse across unrelated forward transactions is automatic; unavailable proof
 falls back to exact evaluation.
+Public prospective testing uses `eacl/tx-relationship` plus `eacl/with`, or
+`eacl/with-schema` for permission-schema replacement. Caller-owned Datahike
+database values have no public EACL wrapper. EACL-created speculative snapshots
+are immutable, publication-free readers; complete committed proofs may be read
+only for disjoint dependencies. `:orphan-policy :retain-inert` is
+speculative-only and reports bounded presence diagnostics without tuple counts.
+Internal raw-database injection forfeits coherence guarantees.
 All authorization-relevant mutations must use EACL APIs or EACL-produced
 transaction data/functions transacted intact. After unsupported raw mutation,
 quiesce callers, repair the data, and call
@@ -26,6 +33,9 @@ quiesce callers, repair the data, and call
 Expiry never repairs ghost tuples. Custom identity codecs are exact-only and
 client-local unless configured with a portable `:adapter-fingerprint`,
 `:adapter-deterministic? true`, and a certified injective round trip.
+Proof-equivalent cursors additionally require `:identity-immutable? true`;
+otherwise they remain exact-basis-bound. The built-in `:eacl/id` codec assumes
+IDs never change for an entity; configure `false` if reassignment is allowed.
 
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:

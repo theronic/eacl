@@ -1,6 +1,7 @@
 (ns eacl.datomic.db
   "Datomic-only entity, schema-definition, and ordered adjacency operations."
   (:require [datomic.api :as d]
+            [eacl.datomic.io-stats :as io-stats]
             [eacl.relationships.storage :as relationship-storage]))
 
 (defn object-eid
@@ -99,12 +100,13 @@
   [db resource-type relation-name]
   (when-let [datom (first (relation-datoms
                            db resource-type relation-name))]
-    (d/pull db
-            '[:db/id
-              :eacl.relation/subject-type
-              :eacl.relation/resource-type
-              :eacl.relation/relation-name]
-            (:e datom))))
+    (io-stats/pull db
+                   '[:db/id
+                     :eacl.relation/subject-type
+                     :eacl.relation/resource-type
+                     :eacl.relation/relation-name]
+                   (:e datom)
+                   :relation-definition-pull)))
 
 (defn find-permission-defs
   [db resource-type permission-name]
@@ -113,7 +115,18 @@
         :eacl.permission/resource-type+permission-name
         [resource-type permission-name])
        (map :e)
-       (map #(d/pull db '[*] %))
+       (map #(dissoc
+              (io-stats/pull db '[*] % :permission-expression-pull)
+              ;; Released flat-permission schemas installed these derived
+              ;; tuple attributes permanently. After expression migration,
+              ;; Datomic materializes nil-filled projections from the shared
+              ;; resource/permission fields. Omit only those physical
+              ;; projections; genuine mixed rows retain their scalar legacy
+              ;; source/target fields and still fail closed in the shared
+              ;; expression decoder.
+              :eacl.permission/resource-type+source-relation-name+target-type+permission-name
+              :eacl.permission/resource-type+source-relation-name+target-type+target-name
+              :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name))
        vec))
 
 (defn all-permission-nodes

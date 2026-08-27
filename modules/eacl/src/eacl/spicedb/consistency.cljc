@@ -45,4 +45,5 @@
     :else
     (throw (ex-info "Unsupported EACL consistency descriptor."
                     {:type :eacl/unsupported-consistency
+                     :eacl/error :eacl/unsupported-consistency
                      :consistency value}))))

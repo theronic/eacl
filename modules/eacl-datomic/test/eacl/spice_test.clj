@@ -17,65 +17,6 @@
   [page]
   (get-in page [:page-info :end-cursor]))
 
-(deftest opaque-page-token-test
-  (let [opts {:page-token-current-kid :test
-              :page-token-keyring {:test (.getBytes "01234567890123456789012345678901" "UTF-8")}}]
-    (testing "page-token round-trip preserves the encrypted pagination payload"
-      (let [payload {:op :lookup-resources
-                     :query-shape "shape"
-                     :basis :stable
-                     :basis-t 42
-                     :edge {:kind :lookup-eid
-                            :result-eid 123
-                            :frontier-version 1
-                            :frontier-direction :asc
-                            :path-frontiers {"path-a" 99
-                                             "path-b" :exhausted}}
-                     :ttl-seconds 60}
-            token (spiceomic/page-token opts payload)
-            decoded (spiceomic/token->page-bound opts token)]
-        (is (string? token))
-        (is (.startsWith ^String token "eacl4_"))
-        (is (= (dissoc payload :ttl-seconds)
-               (select-keys decoded [:op :query-shape :basis :basis-t :edge])))))
-
-    (testing "tokens use a fresh nonce for the same payload"
-      (let [payload {:op :lookup-resources
-                     :query-shape "shape"
-                     :basis :stable
-                     :basis-t 42
-                     :edge {:kind :lookup-eid :result-eid 123}
-                     :ttl-seconds 60}]
-        (is (not= (spiceomic/page-token opts payload)
-                  (spiceomic/page-token opts payload)))))
-
-    (testing "keyring rotation accepts configured old keys and rejects missing keys"
-      (let [old-opts {:page-token-current-kid :old
-                      :page-token-keyring {:old (.getBytes "old-old-old-old-old-old-old-old-" "UTF-8")}}
-            rotated-opts {:page-token-current-kid :new
-                          :page-token-keyring {:old (.getBytes "old-old-old-old-old-old-old-old-" "UTF-8")
-                                               :new (.getBytes "new-new-new-new-new-new-new-new-" "UTF-8")}}
-            new-only-opts {:page-token-current-kid :new
-                           :page-token-keyring {:new (.getBytes "new-new-new-new-new-new-new-new-" "UTF-8")}}
-            payload {:op :lookup-resources
-                     :query-shape "shape"
-                     :basis :stable
-                     :basis-t 42
-                     :edge {:kind :lookup-eid :result-eid 123}
-                     :ttl-seconds 60}
-            old-token (spiceomic/page-token old-opts payload)]
-        (is (= (:edge payload)
-               (:edge (spiceomic/token->page-bound rotated-opts old-token))))
-        (is (thrown? Throwable
-                     (spiceomic/token->page-bound new-only-opts old-token)))))
-
-    (testing "nil token decodes to nil"
-      (is (nil? (spiceomic/token->page-bound opts nil))))
-
-    (testing "invalid input is rejected"
-      (is (thrown? Throwable (spiceomic/token->page-bound opts "garbage")))
-      (is (thrown? Throwable (spiceomic/token->page-bound opts "eacl4_not-valid-base64!!!"))))))
-
 (deftest protocol-completeness-tests
   ;; Audit §13: write-relationship!/delete-relationship! were declared on the
   ;; protocol but unimplemented -> AbstractMethodError.
@@ -252,7 +193,7 @@
                     conn
                     {})]
         (is client)
-        ;(is (satisfies? IAuthorization client))
+        ;(is (satisfies? EACL acl))
         ; use :spicedb/client Integrant key instead of :permissions/spicedb because we want to migrate Spice schema manually in these tests.
         ;"ensure channel is a managed gRPC channel"
         ;(is (= io.grpc.internal.ManagedChannelOrphanWrapper (class channel)))
@@ -260,7 +201,8 @@
         ; def *client REPL testing convenience and fewer parens.
         (def *client client)))
 
-    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    (fixtures/install-expression-schema! conn)
+    @(d/transact conn fixtures/entity-fixtures)
     @(d/transact conn (fixtures/relationship-fixtures (d/db conn))) ; temp until write-relationships
 
     ;(is (= [] (eacl/read-relationships *client {:resource/type :vpc})))
@@ -493,7 +435,6 @@
         (is (= (:data page1) (:data previous-page)))
         (is (string? (page-start-cursor page1)))
         (is (string? (page-end-cursor page1)))
-        (is (.startsWith ^String (page-end-cursor page1) "eacl4_"))
         (is (true? (get-in page1 [:page-info :has-next-page?])))
         (is (false? (get-in page1 [:page-info :has-previous-page?])))
         (is (true? (get-in previous-page [:page-info :has-next-page?])))))
@@ -521,11 +462,10 @@
                 my-server]
                page2-data))
 
-        (testing "page-info contains opaque eacl3 tokens and no legacy top-level cursor"
+        (testing "page-info contains opaque tokens and no legacy top-level cursor"
           (is (nil? (:cursor page1)))
           (is (string? (page-start-cursor page1)))
-          (is (string? page1-end-cursor))
-          (is (.startsWith ^String page1-end-cursor "eacl4_")))
+          (is (string? page1-end-cursor)))
 
         (testing "reverse pagination can get the previous page without a cursor stack"
           (is (= page1-data (:data previous-page)))

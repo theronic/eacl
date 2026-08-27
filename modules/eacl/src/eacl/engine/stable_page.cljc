@@ -2,22 +2,17 @@
   "Result-edge pagination and exact continuation for stable discovery
   (adopt-stable-discovery-enumeration, section 6).
 
-  - A public cursor is one bounded HMAC edge token binding the format
+  - The standalone API cursor is one bounded HMAC edge token binding the format
     version, order ABI, composite plan fingerprint, source lifecycle, exact
     basis, anchor (subject or resource), traversal direction, fixed page
     size, the boundary result's one-based ordinal and external identity,
     and optional expiry. Navigation mode (after/before) is request input.
-  - Continuation is a latest-only in-process checkpoint per exact execution
-    identity — complete history-free reducer state PLUS the undelivered
-    lookahead segment and the constant-size boundary identity — replaced
-    only on a strictly greater scalar transition ordinal; or governed
-    deterministic replay validating the boundary before any page publishes.
-  - Continuation on a basis other than the token's exact basis is rejected
-    typed (:eacl.page/stale-cursor), or as
-    :eacl.page/cursor-consistency-conflict when the request's consistency
-    mode demanded fresher than the pinned basis. The certified
-    full-read-scope dependency-proof path for current-only topologies is
-    specified in the change and not yet implemented here.
+  - The engine-facing path receives a latest-only checkpoint key built from
+    request lineage, the complete plan frame, plan/order identity, traversal,
+    anchor and page size. Equal frames exclude the changed-slice hazard, so
+    history-free state plus lookahead may resume across native revisions.
+  - The standalone token path remains exact-basis-bound and derives its own
+    exact checkpoint key. It does not claim cross-basis frame equivalence.
   - Replay budgets surface as :eacl.page/resource-exhausted — distinct from
     stale-cursor — when they make a page unreachable."
   (:require [clojure.string :as string]
@@ -47,26 +42,29 @@
   (secure-format/derive-key (or (:security-key options) @default-key)
                             token-domain))
 
-(defn- execution-binding
-  "Everything the cursor binds besides the boundary itself."
-  [{:keys [adapter plan direction anchor subject-type page-size]}]
+(defn ^:no-doc execution-binding
+  "Everything the standalone token binds besides the boundary itself.
+
+  Its `:basis` is intentionally exact. Public EACL Relay cursors validate
+  lineage and frame before calling `edge-page`; they do not use this token."
+  [{:keys [adapter basis-identity plan direction anchor subject-type
+           page-size]}]
   {:v token-version
    :order-abi order-abi
    :fingerprint (:fingerprint plan)
-   :lifecycle (backend/invoke adapter :source-lifecycle)
+   :lifecycle (:source-lifecycle basis-identity)
    :basis (backend/invoke adapter :native-revision)
    :direction direction
    :anchor anchor
    :subject-type subject-type
    :page-size page-size})
 
-(defn- checkpoint-key
-  "The exact execution identity a checkpoint belongs to. The basis is part
-  of it: a checkpoint recorded at one basis carries that basis's admitted
-  set and stack, and resuming it at another basis with a coincidentally
-  equal boundary would silently drop results (a merge point admitted
-  through a branch that no longer exists suppresses the entity when the
-  new basis reaches it another way)."
+(defn ^:no-doc checkpoint-key
+  "Exact checkpoint identity for the standalone token API.
+
+  The engine-facing caller supplies a frame key instead. Equal complete plan
+  frames exclude the changed-slice hazard described here; this standalone
+  path has no such proof and therefore keeps the exact basis in its binding."
   [binding]
   (secure-format/canonical-digest token-domain binding))
 
@@ -165,7 +163,12 @@
   "A client-scoped continuation context (`eacl.continuation/private-context`):
   fn-map storage whose own bounds and eviction replace the atom store's."
   [store]
-  (and (map? store) (fn? (:get store)) (fn? (:put! store))))
+  (and (map? store)
+       (fn? (:peek store))
+       (fn? (:get store))
+       (fn? (:hit! store))
+       (fn? (:miss! store))
+       (fn? (:put! store))))
 
 (defn- checkpoint-weight
   "Conservative retained-heap estimate for a client-store entry; the store's
@@ -184,7 +187,7 @@
     (context-store? store)
     ;; The read-compare-put pair is not atomic across requests; losing that
     ;; race retains an older checkpoint, which only costs a later replay.
-    (let [existing ((:get store) key)]
+    (let [existing ((:peek store) key)]
       (when-not (and existing
                      (>= (:transitions (:state existing))
                          (:transitions (:state checkpoint))))
@@ -219,16 +222,23 @@
                                  (update :order subvec 1))))))))
       nil)))
 
-(defn- checkpoint-hit
+(defn ^:no-doc checkpoint-hit
   "A checkpoint serves a continuation only when its delivered boundary
   ordinal and constant-size boundary identity both match the token."
   [store key ordinal boundary]
   (when-let [entry (cond
                      (context-store? store) ((:get store) key)
                      store (get (:entries @store) key))]
-    (when (and (= ordinal (:ordinal entry))
-               (= boundary (:boundary entry)))
-      entry)))
+    (if (and (= ordinal (:ordinal entry))
+             (= boundary (:boundary entry)))
+      (do
+        (when (context-store? store)
+          ((:hit! store)))
+        entry)
+      (do
+        (when (context-store? store)
+          ((:miss! store) :boundary-mismatch))
+        nil))))
 
 ;; ---------------------------------------------------------------------------
 ;; Page execution
@@ -295,8 +305,8 @@
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:
   by checkpoint when the exact edge matches, else by governed deterministic
-  replay that validates the boundary identity (an internal eid at the exact
-  basis) before continuing."
+  replay that validates the boundary identity at the already accepted basis
+  before continuing. Public cursor acceptance always precedes this lookup."
   [options store key anchor-eid ordinal boundary-eid]
   (if-let [hit (checkpoint-hit store key ordinal boundary-eid)]
     (do
@@ -314,19 +324,20 @@
                      {:ordinal ordinal}))
       {:state (reducer/history-free replayed) :pending []})))
 
-(declare deliver-page)
+(declare deliver-page deliver-raw-page)
 
 (defn edge-page
   "Engine-facing pagination over internal-eid boundaries: `after`/`before`
   are {:ordinal n :eid e} edges (already authenticated by the caller's
-  cursor layer against the same composite fingerprint and exact basis).
+  cursor layer against the same composite fingerprint, lineage and frame).
   Returns {:eids [..] :start-ordinal k :has-next? :has-previous?} in
   canonical forward order. A `:last-window?` request returns the final
   window of the exhausted sequence. When `:service-admission` names a
   service-edge admission, replays (checkpoint misses, backward runs and last
   windows) run under its replay ledger keyed by `:checkpoint-key`."
   [{:keys [plan direction anchor-eid subject-type page-size
-           after before last-window? checkpoints checkpoint-key]
+           after before last-window? checkpoints checkpoint-key
+           raw-candidates?]
     :as options}]
   {:pre [(some? plan) (contains? #{:forward :reverse} direction)
          (keyword? subject-type) (pos-int? page-size)
@@ -373,11 +384,17 @@
             {:state nil :pending []})
           {:keys [page-ids lookahead end-state]}
           (if state
-            (deliver-page options state pending page-size)
+            (if raw-candidates?
+              (deliver-raw-page options state pending page-size)
+              (deliver-page options state pending page-size))
             (let [run (guard-exhaustion
-                       #(run-fresh options anchor-eid (inc page-size)))]
+                       #(run-fresh
+                         options anchor-eid
+                         (if raw-candidates? page-size (inc page-size))))]
               {:page-ids (vec (take page-size (:results run)))
-               :lookahead (vec (drop page-size (:results run)))
+               :lookahead (if raw-candidates?
+                            []
+                            (vec (drop page-size (:results run))))
                :end-state (reducer/history-free run)}))
           delivered (+ ordinal (count page-ids))]
       (when (and (seq page-ids) checkpoints checkpoint-key)
@@ -391,6 +408,21 @@
        :start-ordinal ordinal
        :has-next? (boolean (seq lookahead))
        :has-previous? (pos? ordinal)})))
+
+(defn- deliver-raw-page
+  "Continues a checkpoint by exactly `page-size` candidates, with no
+  lookahead. Filtered lookup orchestration owns its sentinel and budget, so
+  fetching an extra authorized candidate here would cross that boundary."
+  [options state pending page-size]
+  (let [pending (vec (take page-size pending))
+        needed (- page-size (count pending))
+        continued
+        (when (pos? needed)
+          (guard-exhaustion
+           #(run-resume options state (+ (:discovered state) needed))))]
+    {:page-ids (into pending (when continued (:results continued)))
+     :lookahead []
+     :end-state (if continued (reducer/history-free continued) state)}))
 
 (defn- deliver-page
   "Runs from `state`+`pending` (whose scalar `:discovered` count is the

@@ -113,7 +113,7 @@ abstract snapshot-oracle contract:
 10. cursor decisions reject cross-query, cross-operation, cross-result, scope,
    tampering, expiry, and incompatible-history use before the cursor can
    influence authorization;
-11. exact/current cache admission, complete managed dependency frames,
+11. exact-basis cache admission, complete managed dependency frames,
     subproblem projection/denotation reuse, lifecycle isolation, and
     validation telemetry cannot turn a rejected or stale candidate into an
     authorization result;
@@ -188,7 +188,7 @@ valuable precisely at this boundary.
 
 ## Bugs and regressions found
 
-The retained corpus contains 63 minimized findings, all marked fixed. Each
+The retained corpus contains 67 minimized findings, all marked fixed. Each
 entry under `formal/counterexamples/EACL-FORMAL-NNN/` records its witness,
 impact, affected backends/version, root cause, fix, and closing evidence. The
 complete corpus is the exact bug ledger; the table below calls out the
@@ -230,7 +230,7 @@ The final pre-audit run on 2026-08-08 produced the following evidence:
 
 | Gate | Result |
 | --- | --- |
-| Dafny | 30 modules, 8,785 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
+| Dafny | 30 modules, 8,794 proof efforts, 0 errors; no admitted lemma or undocumented axiom |
 | TLA+/Apalache | all five models type checked; bounded, inductive, mutation-control, and longer scheduled configurations reported `NoError` |
 | Generated Java runtime bridges | 51 tests, 16,176 assertions, 0 failures/errors |
 | Generated-authority-injected JVM public/backend suite | 523 tests, 39,462 assertions, 0 failures/errors; recursive operations execute generated indexed authority while acyclic operations execute generated decisions plus documented host source specializations |

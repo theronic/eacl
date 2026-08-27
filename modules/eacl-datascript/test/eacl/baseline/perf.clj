@@ -14,6 +14,7 @@
             [clojure.pprint :as pprint]
             [datascript.core :as ds]
             [eacl.bench.explorer-fixture :as fixture]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine])
@@ -40,7 +41,7 @@
   (let [conn (datascript/create-conn)
         client (datascript/make-client
                 conn
-                {:cache {:remember-answers false}
+                {:cache cache/no-cache
                  :source-lifecycle "stable-discovery-perf-baseline"})]
     (eacl/write-schema! client schema)
     (ds/transact! conn (vec (fixture/object-transactions shape)))

@@ -1,0 +1,101 @@
+{:format-version 1
+ :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+ :counterexamples
+ [{:id :active-recursion-as-false
+   :snapshot
+   {:objects #{[:user "alice"] [:folder "f"]}
+    :relationships
+    #{{:resource [:folder "f"] :relation :seed :subject [:user "alice"]}
+      {:resource [:folder "f"] :relation :eligible :subject [:user "alice"]}}
+    :permissions
+    {[:folder :p] [:union [:permission :q] [:relation :seed]]
+     [:folder :q]
+     [:intersection [:permission :p] [:relation :eligible]]}}
+   :evaluation-order [[[:folder :p] [:folder "f"] [:user "alice"]]
+                      [[:folder :q] [:folder "f"] [:user "alice"]]]
+   :query
+   {:permission :q :resource [:folder "f"] :subject [:user "alice"]}
+   :expected true
+   :killed-mutant :memoized-active-recursion-as-false}
+
+  {:id :missing-intersection-premise
+   :snapshot
+   {:objects #{[:user "alice"] [:document "d"]}
+    :relationships
+    #{{:resource [:document "d"]
+       :relation :reader
+       :subject [:user "alice"]}}
+    :permissions
+    {[:document :view]
+     [:intersection [:relation :reader] [:relation :approved]]}}
+   :query
+   {:permission :view :resource [:document "d"] :subject [:user "alice"]}
+   :expected false
+   :killed-mutant :intersection-grants-on-any-premise}
+
+  {:id :partial-right-side-absence
+   :left :completed-true
+   :right :incomplete
+   :expected :propagate-incomplete
+   :killed-mutant :incomplete-right-treated-as-false}
+
+  {:id :swapped-exclusion-operands
+   :snapshot
+   {:objects #{[:user "alice"] [:user "bob"] [:document "d"]}
+    :relationships
+    #{{:resource [:document "d"]
+       :relation :reader
+       :subject [:user "alice"]}
+      {:resource [:document "d"]
+       :relation :banned
+       :subject [:user "bob"]}}
+    :permissions
+    {[:document :view]
+     [:exclusion [:relation :reader] [:relation :banned]]}}
+   :query
+   {:permission :view :resource [:document "d"] :subject [:user "alice"]}
+   :expected true
+   :killed-mutant :exclusion-operands-swapped}
+
+  {:id :cursor-advanced-through-batch-overread
+   :page-size 2
+   :physical-batch [:a :b :c :d]
+   :accepted [:a :b :c :d]
+   :returned [:a :b]
+   :lookahead-sentinel :c
+   :expected-cursor-boundary :b
+   :expected-resume [:c :d]
+   :killed-mutant :cursor-uses-last-physical-candidate}
+
+  {:id :wrong-typed-id-join-identity
+   :left #{[:user "same"]}
+   :right #{[:service "same"]}
+   :expected #{}
+   :killed-mutant :join-compares-eid-without-type}
+
+  {:id :incomplete-arrow-object-catalog
+   :resource [:folder "f"]
+   :subject [:user "alice"]
+   :intermediate [:group "g"]
+   :catalog #{[:folder "f"] [:user "alice"]}
+   :relationships
+   #{{:resource [:folder "f"] :relation :parent :subject [:group "g"]}
+     {:resource [:group "g"] :relation :member :subject [:user "alice"]}}
+   :expected true
+   :killed-mutant :arrow-enumerates-incomplete-object-catalog}
+
+  {:id :cache-write-sign-mismatch
+   :dependencies #{{:relation :banned :sign :negative}}
+   :changed {:relation :banned :sign :positive}
+   :expected-invalidated true
+   :killed-mutant :cache-invalidation-compares-signed-dependency}
+
+  {:id :unchecked-scc-certificate
+   :snapshot
+   {:permissions
+    {[:document :view]
+     [:exclusion [:relation :reader] [:permission :blocked]]
+     [:document :blocked] [:permission :view]}}
+   :forged-components [[[:document :view]] [[:document :blocked]]]
+   :expected-error :unstratified-exclusion
+   :killed-mutant :signed-validator-trusts-forged-components}]}

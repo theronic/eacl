@@ -87,7 +87,6 @@ module ConsistencyDecision {
     | SelectionRejected(error: ConsistencyError)
 
   datatype SuccessfulSelectionPath =
-    | CapturedCurrentPath
     | SelectedCurrentPath
     | AuthoritativePath
     | AtLeastPath
@@ -103,7 +102,10 @@ module ConsistencyDecision {
     revisionValidationCalls: nat,
     nativeRevisionReads: nat,
     orderHintReads: nat,
-    exactLocatorReads: nat
+    exactLocatorReads: nat,
+    sourceLifecycleReads: nat,
+    snapshotIdReads: nat,
+    basisKindReads: nat
   )
 
   function SuccessfulSelectionWork(
@@ -111,16 +113,18 @@ module ConsistencyDecision {
     issueResponseToken: bool
   ): SelectionWork {
     match path
-    case CapturedCurrentPath =>
-      SelectionWork(1, 1, 0, 0, 0, 0, 0, 0, 0, 0)
     case SelectedCurrentPath =>
-      SelectionWork(1, 1, 0, 1, 1, 2 + if issueResponseToken then 1 else 0, 0, 1, 1, 1)
+      SelectionWork(1, 1, 0, 1, 1, 2, 0, 1, 1, 1, 2, 1, 1)
     case AuthoritativePath =>
-      SelectionWork(1, 1, 0, 1, 1, 2 + if issueResponseToken then 1 else 0, 0, 1, 1, 1)
+      SelectionWork(1, 1, 0, 1, 1, 2, 0, 1, 1, 1, 2, 1, 1)
     case AtLeastPath =>
-      SelectionWork(1, 1, 1, 1, 1, 3 + if issueResponseToken then 1 else 0, 1, 2, 2, 2)
+      SelectionWork(1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1)
     case ExactPath =>
-      SelectionWork(1, 1, 1, 1, 1, 3 + if issueResponseToken then 1 else 0, 1, 2, 2, 2)
+      SelectionWork(1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1)
+  }
+
+  function SelectionPlanWork(): SelectionWork {
+    SelectionWork(1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0)
   }
 
   lemma SuccessfulSelectionLogicalWorkIsConstantBounded(
@@ -132,29 +136,39 @@ module ConsistencyDecision {
     ensures SuccessfulSelectionWork(path, issueResponseToken).authenticationAttempts <= 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).backendSelectionCalls <= 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).validationDecisions <= 1
-    ensures SuccessfulSelectionWork(path, issueResponseToken).sourceScopeReads <= 4
+    ensures SuccessfulSelectionWork(path, issueResponseToken).sourceScopeReads == 2
     ensures SuccessfulSelectionWork(path, issueResponseToken).revisionValidationCalls <= 1
-    ensures SuccessfulSelectionWork(path, issueResponseToken).nativeRevisionReads <= 2
-    ensures SuccessfulSelectionWork(path, issueResponseToken).orderHintReads <= 2
-    ensures SuccessfulSelectionWork(path, issueResponseToken).exactLocatorReads <= 2
+    ensures SuccessfulSelectionWork(path, issueResponseToken).nativeRevisionReads == 1
+    ensures SuccessfulSelectionWork(path, issueResponseToken).orderHintReads == 1
+    ensures SuccessfulSelectionWork(path, issueResponseToken).exactLocatorReads == 1
+    ensures SuccessfulSelectionWork(path, issueResponseToken).sourceLifecycleReads == 2
+    ensures SuccessfulSelectionWork(path, issueResponseToken).snapshotIdReads == 1
+    ensures SuccessfulSelectionWork(path, issueResponseToken).basisKindReads == 1
   {
   }
 
-  lemma CapturedCurrentNeedsNoPostSelectionDecision(
-    issueResponseToken: bool
+  lemma SelectionPlanNeedsNoAcquisitionOrValidation()
+    ensures SelectionPlanWork().capabilityObservations == 1
+    ensures SelectionPlanWork().planDecisions == 1
+    ensures SelectionPlanWork().authenticationAttempts == 0
+    ensures SelectionPlanWork().backendSelectionCalls == 0
+    ensures SelectionPlanWork().validationDecisions == 0
+    ensures SelectionPlanWork().sourceScopeReads == 0
+    ensures SelectionPlanWork().revisionValidationCalls == 0
+    ensures SelectionPlanWork().nativeRevisionReads == 0
+    ensures SelectionPlanWork().orderHintReads == 0
+    ensures SelectionPlanWork().exactLocatorReads == 0
+    ensures SelectionPlanWork().sourceLifecycleReads == 0
+    ensures SelectionPlanWork().snapshotIdReads == 0
+    ensures SelectionPlanWork().basisKindReads == 0
+  {
+  }
+
+  lemma ResponseTokenUsesClosedSelectedIdentity(
+    path: SuccessfulSelectionPath
   )
-    ensures SuccessfulSelectionWork(
-              CapturedCurrentPath,
-              issueResponseToken
-            ).validationDecisions == 0
-    ensures SuccessfulSelectionWork(
-              CapturedCurrentPath,
-              issueResponseToken
-            ).backendSelectionCalls == 0
-    ensures SuccessfulSelectionWork(
-              CapturedCurrentPath,
-              issueResponseToken
-            ).sourceScopeReads == 0
+    ensures SuccessfulSelectionWork(path, true) ==
+            SuccessfulSelectionWork(path, false)
   {
   }
 

@@ -28,7 +28,7 @@
     (is (var-absent? 'eacl.cache/cache-store))
     (is (var-absent? 'eacl.datomic.cache/authenticated-store))
     (is (var-present? 'eacl.cache/no-cache))
-    (is (var-present? 'eacl.cache/resolve-current!))
+    (is (var-present? 'eacl.cache/resolve-basis!))
     (is (var-present? 'eacl.datomic.cache/local-continuation-store)))
   (testing "the v2 zed-token constructors are gone; key derivation survives"
     (is (var-absent? 'eacl.datomic.consistency/zed-token))
@@ -60,12 +60,10 @@
       (is (not (re-find #"\(locking\b|schema-lock|ReentrantReadWriteLock|Semaphore|single[- ]flight"
                         source))
           (str resource " must stay free of EACL-owned blocking coordination"))))
-  (testing "the vestigial :latest-result answer kind is gone"
-    (is (= #{:can? :lookup-page :count
-             :relationship-page :permission-tree}
-           @(resolve 'eacl.datomic.core/answer-cache-kinds))))
+  (testing "the Datomic-only answer-kind registry is gone"
+    (is (var-absent? 'eacl.datomic.core/answer-cache-kinds)))
   (testing "the write-only provider options are gone from client opts"
     (with-mem-conn [conn schema/v7-schema]
-      (let [client (core/make-client conn {:page-token-key "audit-test"})]
-        (is (not (contains? (:opts client) :shared-cache-store)))
-        (is (not (contains? (:opts client) :lookup-cache-store)))))))
+      (let [client (core/make-client conn {:security-key "audit-test0000000000000000000000"})]
+        (is (not (contains? (:runtime client) :shared-cache-store)))
+        (is (not (contains? (:runtime client) :lookup-cache-store)))))))

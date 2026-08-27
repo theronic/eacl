@@ -299,31 +299,6 @@
                (set (:items generated))
                production))))))
 
-(deftest generated-cache-dependency-scope-covers-recursive-semantics
-  (is (= {:permission-nodes
-          #{[:folder :read]
-            [:folder :write]}
-          :relations
-          #{[:folder :reader]
-            [:folder :editor]
-            [:folder :parent]}}
-         (formal/dependency-scope
-          recursive-fixture
-          :folder
-          :read)))
-  (is (= {:permission-nodes
-          #{[:folder :duplicate]
-            [:folder :read]
-            [:folder :write]}
-          :relations
-          #{[:folder :reader]
-            [:folder :editor]
-            [:folder :parent]}}
-         (formal/dependency-scope
-          recursive-fixture
-          :folder
-          :duplicate))))
-
 (defn- apply-window
   [values cursor-or-options]
   (let [{:keys [direction bound-eid inclusive-bound?]}
@@ -457,21 +432,17 @@
         {:cache-stamp (constantly 1)
          :relation-defs relation-defs
          :permission-defs permission-defs
+         :permission-expression (fn [& _] nil)
          :subject->resources scan
          :resource->subjects reverse-scan
          :direct-match? direct-match?}
         operations
         {:snapshot-id (constantly {:source :memory :revision 1})
-         :source-scope (constantly {:source-id :memory :branch nil})
-         :source-lifecycle (constantly "formal-memory-lifecycle")
+         :basis-kind (constantly :ordinary)
          :native-revision
          (constantly {:revision 1 :exact-locator 1})
          :order-hint (constantly 1)
-         :select-current (constantly nil)
-         :select-authoritative (fn [_] nil)
-         :select-at-least (fn [_ _] nil)
          :exact-locator (constantly 1)
-         :select-exact (fn [_ _] nil)
          :object-id->internal
          (fn [object-id]
            (some-> (get id->object object-id)
@@ -481,6 +452,7 @@
            (:id (get internal->object internal-id)))
          :relation-defs relation-defs
          :permission-defs permission-defs
+         :permission-expression (fn [& _] nil)
          :subject->resources scan
          :resource->subjects reverse-scan
          :direct-match? direct-match?

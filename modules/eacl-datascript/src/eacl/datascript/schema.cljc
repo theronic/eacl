@@ -2,11 +2,15 @@
   (:require [datascript.core :as ds]
             [eacl.datascript.db :as ddb]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]
+            [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
-            [eacl.spicedb.parser :as parser]))
+            [eacl.schema.replacement-plan :as replacement-plan]))
 
 (def datascript-schema
   {:eacl/id {:db/unique :db.unique/identity}
+   :eacl.datascript/source-id {:db/unique :db.unique/identity}
    :eacl/schema-generation {:db/valueType :db.type/ref}
    :eacl/schema-write-fence {:db/valueType :db.type/ref}
    :eacl/relation-version {:db/valueType :db.type/ref}
@@ -25,19 +29,12 @@
    :eacl.permission/source-relation-name {:db/index true}
    :eacl.permission/target-type {:db/index true}
    :eacl.permission/target-name {:db/index true}
+   :eacl.permission/expression-payload {}
    :eacl.permission/resource-type+permission-name
    {:db/valueType :db.type/tuple
     :db/tupleAttrs [:eacl.permission/resource-type
                     :eacl.permission/permission-name]
     :db/index true}
-   :eacl.permission/full-key
-   {:db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/source-relation-name
-                    :eacl.permission/target-type
-                    :eacl.permission/target-name
-                    :eacl.permission/permission-name]
-    :db/unique :db.unique/identity}
 
    relationship-storage/forward-attribute
    {:db/cardinality :db.cardinality/many
@@ -54,7 +51,14 @@
 (defn create-conn
   ([] (create-conn nil))
   ([extra-schema]
-   (ds/create-conn (merge-schema extra-schema))))
+   (let [source-id (str (random-uuid))
+         conn (ds/create-conn (merge-schema extra-schema))]
+     (alter-meta! conn assoc :eacl.datascript/source-id source-id)
+     (ds/transact!
+      conn
+      [{:eacl/id "datascript-metadata"
+        :eacl.datascript/source-id source-id}])
+     conn)))
 
 (defn read-relations
   [db]
@@ -73,15 +77,18 @@
                               :eacl.permission/permission-name
                               :eacl.permission/source-relation-name
                               :eacl.permission/target-type
-                              :eacl.permission/target-name]) ...]
+                              :eacl.permission/target-name
+                              :eacl.permission/expression-payload]) ...]
           :where
           [?perm :eacl.permission/permission-name]]
         db))
 
 (defn read-schema
   [db & [_format]]
-  {:relations   (read-relations db)
-   :permissions (read-permissions db)})
+  (let [permissions (read-permissions db)]
+    (expression-persistence/validate-entities permissions)
+    {:relations   (read-relations db)
+     :permissions permissions}))
 
 (defn prepare-cache-coherence!
   "Initializes missing physical schema/relation generations and the schema
@@ -150,7 +157,6 @@
        schema-fence-missing-after? (conj :eacl/schema-write-fence))
      :db-after db-after}))
 
-(def validate-schema-references model/validate-schema-references)
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation
@@ -174,7 +180,24 @@
          db relationship-storage/reverse-attribute
          [resource-type relation-eid subject-type]))))))
 
-(defn- current-schema-generation
+(defn relationship-present-for-relation?
+  "At most one bounded AVET probe per physical direction for speculative
+  retain-inert diagnostics. Either half witnesses retained relationship data,
+  including a one-sided tuple left by earlier corruption."
+  [db {:eacl.relation/keys [resource-type subject-type] :as relation}]
+  (when-let [relation-eid (ds/entid db [:eacl/id (:eacl/id relation)])]
+    (boolean
+     (or
+      (first
+       (ddb/avet-endpoint-prefix
+        db relationship-storage/forward-attribute
+        [subject-type relation-eid resource-type]))
+      (first
+       (ddb/avet-endpoint-prefix
+        db relationship-storage/reverse-attribute
+        [resource-type relation-eid subject-type]))))))
+
+(defn current-schema-generation
   [db]
   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
     (some-> (ds/datoms db :eavt schema-eid :eacl/schema-generation)
@@ -239,7 +262,9 @@
           throwable))
         (throw throwable)))))
 
-(defn write-schema!
+#_{:clj-kondo/ignore [:unused-private-var]}
+(declare write-schema!)
+(defn- write-schema-legacy!
   "Parses, validates, diffs and transacts a SpiceDB schema string.
   Throws :eacl.schema/parse-error on unparseable input (a failed parse must
   never retract the stored schema) and :eacl.schema/empty-schema-guard when the
@@ -247,36 +272,47 @@
   {:allow-empty-schema? true} to wipe intentionally."
   ([conn schema-string]
    (write-schema! conn schema-string {}))
+  ([conn schema-string options]
+   (write-schema! conn schema-string options ::read-current-generation))
   ([conn schema-string
-    {:keys [allow-empty-schema?]}]
-   (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
-         _               (validate-schema-references new-schema-map)
+    {:keys [allow-empty-schema? expression-limits]}
+    known-schema-generation]
+   (let [expression-limits
+         (expression-policy/normalize-client-limits expression-limits)
+         new-schema-map  (expression-persistence/candidate-schema
+                           (expression-resolver/validate-schema
+                            schema-string expression-limits))
          initial-db      (ds/db conn)
-         initial-schema  (read-schema initial-db)
+         initial-schema  (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema initial-db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations initial-schema))
                                         (seq (:permissions initial-schema))))
                            (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                 " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard
+                                           {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
                                             :existing {:relations (count (:relations initial-schema))
                                                        :permissions (count (:permissions initial-schema))}})))
          db              (ensure-schema-coherence! conn)
-         existing-schema (read-schema db)
+         existing-schema (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations existing-schema))
                                         (seq (:permissions existing-schema))))
                            (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                 " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard
+                                           {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
                                             :existing {:relations (count (:relations existing-schema))
                                                        :permissions (count (:permissions existing-schema))}})))
          deltas          (compare-schema existing-schema new-schema-map)
          {:keys [relations permissions]} deltas
          relation-retractions   (:retractions relations)
-         permission-retractions (:retractions permissions)]
+         permission-retractions
+         (expression-persistence/entity-deletions permissions)]
      (doseq [rel relation-retractions]
        (let [cnt (count-relationships-using-relation db rel)]
          (when (pos? cnt)
@@ -290,7 +326,10 @@
            (mapv #(assoc % :eacl/relation-version :db/current-tx)
                  (:additions relations))
            schema-eid (ds/entid db [:eacl/id "schema-string"])
-           schema-generation (current-schema-generation db)
+           schema-generation
+           (if (= ::read-current-generation known-schema-generation)
+             (current-schema-generation db)
+             known-schema-generation)
            schema-write-fence (current-schema-write-fence db)
            relation-commit-guards
            (mapv
@@ -306,7 +345,7 @@
                   (throw
                    (ex-info
                     "Relation removal requires prepared native generations."
-                    {:type :eacl.cache/generation-unprepared
+                    {:type :eacl.cache/generation-unprepared :eacl/error :eacl.cache/generation-unprepared
                      :backend :datascript
                      :relation-id (:eacl/id relation)})))
                 [:db.fn/cas relation-eid :eacl/relation-version
@@ -355,3 +394,146 @@
        (assoc deltas
               :eacl.schema/db-after (:db-after report)
               :eacl.schema/no-op? (boolean (:no-op? report)))))))
+
+(defn plan-schema-replacement
+  "Pure schema replacement planner shared by committed and speculative paths."
+  [db schema-string
+   {:keys [allow-empty-schema? expression-limits orphan-policy]
+    :or {orphan-policy :error}}]
+  (let [expression-limits
+        (expression-policy/normalize-client-limits expression-limits)
+        new-schema-map
+        (expression-persistence/candidate-schema
+         (expression-resolver/validate-schema schema-string expression-limits))
+        existing-schema
+        (binding [expression-persistence/*expression-limits* expression-limits]
+          (read-schema db))
+        _
+        (when (and (empty? (:definitions new-schema-map))
+                   (not allow-empty-schema?)
+                   (or (seq (:relations existing-schema))
+                       (seq (:permissions existing-schema))))
+          (throw
+           (ex-info
+            (str "Refusing to replace a non-empty schema with zero definitions."
+                 " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
+            {:type :eacl.schema/empty-schema-guard
+             :eacl/error :eacl.schema/empty-schema-guard
+             :existing {:relations (count (:relations existing-schema))
+                        :permissions (count (:permissions existing-schema))}})))
+        deltas (compare-schema existing-schema new-schema-map)
+        semantic
+        (replacement-plan/plan
+         {:deltas deltas
+          :orphan-policy orphan-policy
+          :relationship-count #(count-relationships-using-relation db %)
+          :relationship-present?
+          #(relationship-present-for-relation? db %)})
+        {:keys [relations permissions]} deltas
+        relation-retractions (:retractions relations)
+        permission-retractions
+        (expression-persistence/entity-deletions permissions)
+        relation-additions
+        (mapv #(assoc % :eacl/relation-version :db/current-tx)
+              (:additions relations))
+        schema-eid (or (ds/entid db [:eacl/id "schema-string"]) -1)
+        relation-commit-guards
+        (mapv
+         (fn [relation]
+           (let [relation-eid
+                 (ds/entid db [:eacl/id (:eacl/id relation)])
+                 relation-generation
+                 (some-> (ds/datoms db :eavt relation-eid
+                                    :eacl/relation-version)
+                         first :v)]
+             (when-not relation-generation
+               (throw
+                (ex-info
+                 "Relation removal requires prepared native generations."
+                 {:type :eacl.cache/generation-unprepared
+                  :eacl/error :eacl.cache/generation-unprepared
+                  :backend :datascript
+                  :relation-id (:eacl/id relation)})))
+             [:db.fn/cas relation-eid :eacl/relation-version
+              relation-generation relation-generation]))
+         relation-retractions)
+        tx-data
+        (vec
+         (concat
+          relation-additions
+          (:additions permissions)
+          (for [relation relation-retractions
+                :let [eid (ds/entid db [:eacl/id (:eacl/id relation)])]
+                :when eid]
+            [:db/retractEntity eid])
+          (for [permission permission-retractions
+                :let [eid (ds/entid db [:eacl/id (:eacl/id permission)])]
+                :when eid]
+            [:db/retractEntity eid])
+          [{:db/id schema-eid
+            :eacl/id "schema-string"
+            :eacl/schema-string schema-string}
+           [:db/add schema-eid :eacl/schema-generation :db/current-tx]
+           [:db/add schema-eid :eacl/schema-write-fence :db/current-tx]]))
+        stored-string
+        (some-> (ds/entity db [:eacl/id "schema-string"])
+                :eacl/schema-string)
+        no-op?
+        (not (or (not= stored-string schema-string)
+                 (some seq
+                       [(:additions relations)
+                        (:retractions relations)
+                        (:additions permissions)
+                        (:retractions permissions)])))
+        tx-data (if no-op? [] tx-data)]
+    (assoc semantic
+           :tx-data tx-data
+           :speculative-tx-data tx-data
+           :relation-commit-guards relation-commit-guards
+           :schema-entity schema-eid
+           :no-op? no-op?
+           :schema-string schema-string)))
+
+(defn- reject-committed-retain-inert!
+  [options]
+  (when (= :retain-inert (:orphan-policy options))
+    (throw
+     (ex-info
+      ":orphan-policy :retain-inert is available only through eacl/with-schema."
+      {:type :eacl.schema/invalid-orphan-policy
+       :eacl/error :eacl.schema/invalid-orphan-policy
+       :orphan-policy :retain-inert
+       :operation :write-schema!}))))
+
+(defn write-schema!
+  "Plans through `plan-schema-replacement`, adds committed CAS guards, and
+  transacts the resulting DataScript schema replacement."
+  ([conn schema-string]
+   (write-schema! conn schema-string {}))
+  ([conn schema-string options]
+   (write-schema! conn schema-string options ::read-current-generation))
+  ([conn schema-string options known-schema-generation]
+   (reject-committed-retain-inert! options)
+   ;; Validate before the additive first-write coherence bootstrap.
+   (plan-schema-replacement (ds/db conn) schema-string options)
+   (let [db (ensure-schema-coherence! conn)
+         plan (plan-schema-replacement db schema-string options)
+         schema-generation
+         (if (= ::read-current-generation known-schema-generation)
+           (current-schema-generation db)
+           known-schema-generation)
+         schema-write-fence (current-schema-write-fence db)
+         tx-data
+         (vec
+          (concat
+           [[:db.fn/cas (:schema-entity plan) :eacl/schema-write-fence
+             schema-write-fence schema-write-fence]]
+           (:relation-commit-guards plan)
+           (:tx-data plan)))
+         report
+         (if (:no-op? plan)
+           {:db-before db :db-after db :tx-data [] :no-op? true}
+           (transact-schema! conn tx-data schema-generation))]
+     (assoc (:deltas plan)
+            :eacl.schema/db-after (:db-after report)
+            :eacl.schema/no-op? (boolean (:no-op? report))))))

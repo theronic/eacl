@@ -245,7 +245,7 @@
      :relation-orders 2}
     :missing-definition-fixtures 3
     :adapter-certification
-    {:version "eacl.adapter-certification/v2"
+    {:version "eacl.adapter-certification/v4"
      :datomic-clj :passed
      :datahike-clj :passed
      :datascript-clj :passed

@@ -19,6 +19,14 @@ Responsibilities:
 - client-private exact-first and automatic proof-backed caching
 - DataScript contract tests and adapter-specific edge cases
 
+Public prospective testing uses `eacl/tx-relationship` plus `eacl/with`, or
+`eacl/with-schema` for permission-schema replacement. Caller-owned DataScript
+database values have no public EACL wrapper. EACL-created speculative snapshots
+are immutable, publication-free readers; complete committed proofs may be read
+only for disjoint dependencies. `:orphan-policy :retain-inert` is
+speculative-only and uses bounded presence diagnostics. Internal raw-database
+injection forfeits coherence guarantees.
+
 Missing, malformed, oversized, or exceptional ordered-generation proof data
 falls back to exact immutable-snapshot evaluation. After unsupported raw authorization mutation, quiesce
 callers, repair the data, and call
@@ -26,6 +34,9 @@ callers, repair the data, and call
 Expiry never repairs ghost vectors. Custom identity codecs are exact-only and
 client-local unless configured with a portable `:adapter-fingerprint`,
 `:adapter-deterministic? true`, and a certified injective round trip.
+Proof-equivalent cursors additionally require `:identity-immutable? true`;
+otherwise they remain exact-basis-bound. The built-in `:eacl/id` codec assumes
+IDs never change for an entity; configure `false` if reassignment is allowed.
 
 DataScript supports serialized connection-head `:fully-consistent`, local
 `:minimize-latency`, and connection-lifecycle causal at-least selection. It intentionally

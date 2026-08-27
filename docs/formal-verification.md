@@ -10,7 +10,7 @@ remains an explicit unmet release obligation. Two verified bodies now coexist.
 Enumeration, point checks, and counts run on the hand-written CLJC
 stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 `stable-page`, `stable-route`) on both targets; its evidence is the
-release-assurance tree under `formal/stable-discovery/` (42 Dafny leaves, two
+release-assurance tree under `formal/stable-discovery/` (47 Dafny leaves, two
 TLC families, executable refinement bridges, mutation controls; see
 [docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
 Dafny kernel remains the production authority for the pure decisions that
@@ -103,7 +103,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 
 | Source | Main responsibility |
 | --- | --- |
-| `formal/stable-discovery/*.dfy` (42 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 528 obligations) |
+| `formal/stable-discovery/*.dfy` (47 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check, and the adaptive reducer read-scope bridge; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 651 obligations) |
 | `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
 | `SnapshotOracle.dfy` | abstract immutable adapter contract |
 | `AcyclicEngine.dfy` | **retired engine model** (path compilation, direct checks, acyclic projections and counts); kept as a regression model until task 9.2's formal cut |
@@ -112,8 +112,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions (live decisions) |
 | `IndexedBatching.dfy` | **retired** bounded ordered scan waves and crossing law of the generated indexed traversal; same disposition |
 | `IndexedBatchCompleteness.dfy` | **retired** proof-only pending-scan ghost views; same disposition |
-| `CacheKernel.dfy` | dependency-scope completeness, forward cache acceptance, recomputation equivalence, and telemetry noninterference |
-| `CurrentCache.dfy` | distinct current-exact/snapshot-exact/managed admission, canonical exact identity and lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-snapshot rendering |
+| `CurrentCache.dfy` | exact-basis/managed admission, complete exact identity and lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-basis rendering |
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
 | `ScalarFrontierCoherence.dfy` | globally ordered native generations, scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
@@ -126,6 +125,28 @@ adapter assumptions, runtime targets, and CI evidence. A passing proof file is
 not by itself a public assurance claim. `formal/verification/manifest.edn` is
 the release gate and must continue to refuse verified status while any required
 obligation is incomplete.
+
+### Operator set-algebra boundary
+
+The Phase A models prove finite typed union/intersection/exclusion semantics,
+strict signed-dependency stratification, candidate-cover soundness, scalar and
+aligned-vector predicates, bounded batching, least-path pagination, direct
+k-way leapfrog and anti-join kernels, anchor-gated positive recursion,
+completed lower-stratum exclusion, and cache refinement. The direct n-ary
+intersection proof uses an anchor-preserving max-head k-way leapfrog, not
+repeated binary filtering.
+
+Phase B adds the generated recursive command decision and digest-closes the
+handwritten parser, canonical expression codec/storage, signed graph, plan,
+evaluators, cursor/cache boundary, Datahike density-bounded batch, scalar
+fallbacks, and four backend adapters. The clean whole-tree run verifies 48
+modules and 9,361 obligations; generated Java and advanced JavaScript boundary
+suites, fixed/random differentials, counterexample replay, formal and temporal
+mutation controls, cross-backend conformance, storage, and matched-host
+performance gates pass. Public expression writes and public operator routing
+are enabled by default. Exact evidence and source digests are in
+`formal/verification/operator-phase-b.edn`; operational semantics and measured
+limits are in [Permission set algebra](permission-set-algebra.md).
 
 ### Permission-tree assurance boundary
 
@@ -271,7 +292,16 @@ subject's holdings whichever side is enumerated (`StrategiesAgree`,
 `DecideEqualsArmAnswer`), and proves the interleaved decision's consumption
 bounded by the SMALLER side (`RoundsBoundedByShorterSide`) — the complexity
 property that makes a check on a widely shared resource cost the subject's
-few holdings rather than the resource's fan-in; `eacl.engine.point-check-test` is the executable
+few holdings rather than the resource's fan-in. Acyclic plans paginate in
+least-derivation-path order (order ABI v2): `LeastPathOrder.dfy` proves
+the per-scan coordinate order strict, total, and a pure function of
+(plan, snapshot); `LeastPathEnumeration.dfy` proves the smaller-witness
+emission filter yields exactly the reachable denotation once per entity
+(bridged onto `ReducerCompleteness`) and that pruning repeated interior
+states drops nothing; `LeastPathResume.dfy` proves seek-past-boundary
+resume equals the enumeration suffix and that descending windows agree
+with ascending positions — the theorems behind self-contained keyset
+cursors with no checkpoint state and no replay; `eacl.engine.point-check-test` is the executable
 oracle differential against the retained reverse-enumeration form
 (`enumeration-check-eids`). EACL-FORMAL-055 retains the historical
 subject-forward scaling regression of the retired generated state machine as

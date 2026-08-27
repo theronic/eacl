@@ -53,7 +53,7 @@
   ([db known-schema-version]
    (assoc
     (engine/make-schema-cache
-     (backend/snapshot-adapter db)
+     (backend/basis-adapter db {})
      known-schema-version)
     :database-id (database-id db))))
 
@@ -68,9 +68,9 @@
    (some-> (:direct-grant-relations schema-cache) (reset! {}))
    nil))
 
-(defn- snapshot-adapter
+(defn- basis-adapter
   [db]
-  (backend/snapshot-adapter
+  (backend/basis-adapter
    db
    {:object-eid-fn object-eid
     :subject->resources-fn subject->resources
@@ -93,7 +93,7 @@
   [db resource-type permission-name]
   (with-engine-bindings
     (engine/calc-permission-paths
-     (snapshot-adapter db) resource-type permission-name)))
+     (basis-adapter db) resource-type permission-name)))
 
 (defn get-permission-paths
   [db resource-type permission-name]
@@ -116,19 +116,19 @@
   [db resource-type permission-name]
   (with-engine-bindings
     (engine/permission-relationship-eids
-     (snapshot-adapter db) resource-type permission-name)))
+     (basis-adapter db) resource-type permission-name)))
 
 (defn permission-schema-nodes
   [db resource-type permission-name]
   (with-engine-bindings
     (engine/permission-schema-nodes
-     (snapshot-adapter db) resource-type permission-name)))
+     (basis-adapter db) resource-type permission-name)))
 
 (defn can?
   ([db subject permission resource]
    (with-engine-bindings
      (engine/can?
-      (snapshot-adapter db) subject permission resource)))
+      (basis-adapter db) subject permission resource)))
   ([db {:keys [subject permission resource]}]
    (can? db subject permission resource)))
 
@@ -138,7 +138,7 @@
   ([db query opts]
    (with-engine-bindings
      (engine/lookup-resources
-      (snapshot-adapter db) query opts))))
+      (basis-adapter db) query opts))))
 
 (defn lookup-subjects
   ([db query]
@@ -146,15 +146,14 @@
   ([db query opts]
    (with-engine-bindings
      (engine/lookup-subjects
-      (snapshot-adapter db) query opts))))
+      (basis-adapter db) query opts))))
 
 (defn count-resources
   [db query]
   (with-engine-bindings
-    (engine/count-resources (snapshot-adapter db) query)))
+    (engine/count-resources (basis-adapter db) query)))
 
 (defn count-subjects
   [db query]
   (with-engine-bindings
-    (engine/count-subjects (snapshot-adapter db) query)))
-
+    (engine/count-subjects (basis-adapter db) query)))

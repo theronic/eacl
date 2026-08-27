@@ -1,0 +1,57 @@
+{:format-version 1
+ :captured-at "2026-08-26"
+ :oracle
+ {:repository "/Users/petrus/code/eacl/eacl-spicedb-operator-engine"
+  :branch "agent/operator-engine-oracle"
+  :base-commit "370723a9f3af5ea9132935a3bf1ab5f533eabdc6"
+  :candidate-commit "c5a6335e84b825b149088578714ee1f85155e462"
+  :original-worktree-preserved
+  "/Users/petrus/code/eacl/eacl-spicedb"}
+ :spicedb
+ {:version "1.56.0"
+  :image
+  "ghcr.io/authzed/spicedb@sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c"
+  :image-index-digest
+  "sha256:c8a558a6cc1f9379fcdcab0171b623d65e7e5f95c998ebb7f937ca00a7c1598c"}
+ :command "bin/run-live-tests operator-oracle"
+ :comparison
+ {:checks :exact
+  :lookup-resources :set-and-cardinality
+  :lookup-subjects :set-and-cardinality
+  :return-order :ignored}
+ :coverage
+ [:union-before-intersection-before-exclusion
+  :nested-intersection-and-exclusion
+  :positive-recursive-conjunction
+  :deterministic-randomized-shared-subset
+  :negative-recursion]
+ :result
+ {:tests 2 :assertions 680 :failures 0 :errors 0
+  :randomized
+  {:seeds [104729 130363 155921 196613
+           262147 327673 393241 458789]
+   :permissions [:access :nested]
+   :point-decisions 336
+   :lookup-resource-sets 48
+   :lookup-subject-sets 112
+   :count-directions [:resources :subjects]
+   :comparison :independent-oracle-eacl-spicedb
+   :eacl-api :public
+   :spicedb-api :public-grpc
+   :return-order :ignored}
+  :negative-recursion
+  {:schema-write :accepted
+   :check-grpc-code :failed-precondition
+   :reason :maximum-depth-exceeded
+   :eacl-api :public-schema-write
+   :eacl-expected-schema-error :eacl.schema/unstratified-exclusion
+   :eacl-actual-schema-error :eacl.schema/unstratified-exclusion}}
+ :source-sha256
+ {:fixture
+  "30ab10827ce23bb1f2b2160deedfd9dcf37f8968a8de3bdd3651fe08c7f09083"
+  :test
+  "21b88bdcd937f6db26d02c5c3944bd195e38c762a68bdcddbf2ff5a11005515a"
+  :deps
+  "051301e302c162b33a1c4dbe8f1008b4c8b211c3672da17ff5db7d17240a7f1c"
+  :runner
+  "76cb8a11395674d0e3581429e6e4972d801b7f569b86c8f657f76c78fd4ea3cd"}}
