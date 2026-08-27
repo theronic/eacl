@@ -71,7 +71,11 @@
                   (assoc metadata ::live-source-id (random-uuid))))))))))
 
 (defn basis-kind
-  "Classifies one Datahike database value without touching an EACL runtime."
+  "Classifies one Datahike database value without touching an EACL runtime.
+
+  This is structural classification only. It cannot distinguish a speculative
+  `db-with` product from committed state; public EACL APIs therefore never
+  admit arbitrary native values."
   [db]
   (cond
     (instance? AsOfDB db) :as-of

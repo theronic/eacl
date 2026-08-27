@@ -152,6 +152,18 @@
    snapshot-or-db
    #(impl/relationship-relation-id % relationship)))
 
+(defn- snapshot-relation-coordinate
+  [snapshot-or-db relation-id]
+  (ddb/with-db
+   snapshot-or-db
+   (fn [db]
+     (let [entity (ds/entity db relation-id)
+           resource-type (:eacl.relation/resource-type entity)
+           relation-name (:eacl.relation/relation-name entity)
+           subject-type (:eacl.relation/subject-type entity)]
+       (when (and resource-type relation-name subject-type)
+         [:relation resource-type relation-name subject-type])))))
+
 (defn- snapshot-tx-update-relationship
   [snapshot-or-db update]
   (ddb/with-db snapshot-or-db #(impl/tx-update-relationship % update)))
@@ -200,6 +212,7 @@
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
           :relationship-relation-id snapshot-relationship-relation-id
+          :relation-coordinate snapshot-relation-coordinate
           :tx-update-relationship snapshot-tx-update-relationship
           :tx-delete-object snapshot-tx-delete-object
           :affected-relation-ids #'impl/affected-relation-ids
@@ -457,13 +470,8 @@
             prepared-native-source-id-key validated-source-id
             datalevin-backend/prepared-schema-eid-key schema-eid))))
 
-(defn snapshot
-  "Constructs a borrowed public snapshot over an open Datalevin read snapshot."
-  [acl read-snapshot]
-  (orchestration/direct-snapshot acl :datalevin read-snapshot))
-
 (defn db
-  "Returns the open Datalevin read snapshot wrapped by `snapshot`."
+  "Returns the open Datalevin value held by an EACL-created snapshot."
   [snapshot]
   (orchestration/snapshot-db snapshot :datalevin))
 

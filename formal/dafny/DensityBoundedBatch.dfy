@@ -267,6 +267,79 @@ module DensityBoundedBatch {
     }
   }
 
+  // The dense kernel decides each candidate against the realized range
+  // prefix, exactly as the production loop tests membership in the values
+  // it realized between the batch's first and last candidate.
+  function DensePrefixDecisions(
+    candidates: seq<nat>,
+    relationValues: seq<nat>,
+    firstEid: nat,
+    lastEid: nat
+  ): seq<bool>
+    ensures |DensePrefixDecisions(
+              candidates, relationValues, firstEid, lastEid
+            )| == |candidates|
+    decreases |candidates|
+  {
+    if |candidates| == 0 then
+      []
+    else
+      [candidates[0] in ValuesInRange(relationValues, firstEid, lastEid)] +
+      DensePrefixDecisions(candidates[1..], relationValues, firstEid, lastEid)
+  }
+
+  // Dense-path exactness: for candidates within the realized span - which
+  // the batch guarantees, since the span is bounded by its own first and
+  // last candidate - the dense decisions equal exact membership, so both
+  // physical modes decide identically.
+  lemma DensePrefixDecisionsAreExact(
+    candidates: seq<nat>,
+    relationValues: seq<nat>,
+    firstEid: nat,
+    lastEid: nat
+  )
+    requires SeekableSetKernels.StrictlyIncreasing(relationValues)
+    requires forall candidate <- candidates ::
+               firstEid <= candidate <= lastEid
+    ensures DensePrefixDecisions(
+              candidates, relationValues, firstEid, lastEid
+            ) ==
+            SeekableSetKernels.MembershipDecisions(
+              candidates,
+              relationValues,
+              true
+            )
+    decreases |candidates|
+  {
+    if |candidates| != 0 {
+      RangeMembershipIsExact(
+        relationValues,
+        firstEid,
+        lastEid,
+        candidates[0]
+      );
+      assert candidates[0] in candidates;
+      assert (candidates[0] in
+                ValuesInRange(relationValues, firstEid, lastEid)) <==>
+             (candidates[0] in relationValues);
+      assert forall candidate <- candidates[1..] ::
+          candidate in candidates;
+      DensePrefixDecisionsAreExact(
+        candidates[1..],
+        relationValues,
+        firstEid,
+        lastEid
+      );
+      assert SeekableSetKernels.MembershipDecisions(
+          candidates, relationValues, true
+        ) ==
+             [candidates[0] in relationValues] +
+             SeekableSetKernels.MembershipDecisions(
+               candidates[1..], relationValues, true
+             );
+    }
+  }
+
   predicate SortedPhysicalOrder(
     candidates: seq<nat>,
     order: seq<nat>

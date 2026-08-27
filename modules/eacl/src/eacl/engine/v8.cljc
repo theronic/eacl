@@ -543,7 +543,12 @@
     :direct-grant-relations (atom {})}))
 
 (defn memoized-derived!
-  "Forces exactly one installed delay in an initially nil artifact slot."
+  "Forces at most one concurrent build of an initially nil artifact slot.
+
+  Success is cached permanently. A thrown build failure clears the slot so
+  a later caller retries: a Clojure delay caches its exception, and leaving
+  it installed would poison the derived artifact for the rest of the schema
+  generation after one transient adapter read failure."
   [slot build]
   (let [candidate (delay (build))
         selected
@@ -553,7 +558,11 @@
               current current
               (compare-and-set! slot nil candidate) candidate
               :else (recur))))]
-    @selected))
+    (try
+      @selected
+      (catch #?(:clj Throwable :cljs :default) error
+        (compare-and-set! slot selected nil)
+        (throw error)))))
 
 (defn schema-cache-key
   "Identity of schema-derived state for one selected immutable snapshot.

@@ -153,6 +153,58 @@
         "the identical cursor-page request must be served from cache")
     (is (= (:data page-2) (:data page-2-again)))))
 
+(deftest navigation-alias-never-serves-a-wrong-size-page-test
+  ;; Review finding F7: the page-navigation cache learns an
+  ;; opposite-direction alias for an adjacent page, but the boundary index
+  ;; carries no page size, so a {:last N :before start} request could be
+  ;; served a stored page of a different size. The alias may only answer
+  ;; when the stored adjacent page holds exactly N items. Self-seeded so
+  ;; both runtimes have the depth for three distinct pages.
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        alice (eacl/spice-object :user "alias-alice")
+        docs (mapv #(eacl/spice-object :document (str "alias-doc-" %))
+                   (range 9))]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation reader: user
+        permission view = reader
+      }")
+    (ds/transact! conn (mapv #(hash-map :eacl/id (:id %))
+                             (into [alice] docs)))
+    (eacl/create-relationships!
+     client (mapv #(eacl/->Relationship alice :reader %) docs))
+    (let [base {:subject alice
+                :permission :view
+                :resource/type :document}
+          one-shot (mapv :id (:data (eacl/lookup-resources
+                                     client (assoc base :first 1000))))
+          page-0 (eacl/lookup-resources client (assoc base :first 2))
+          page-a (eacl/lookup-resources
+                  client (assoc base :first 2
+                                :after (get-in page-0
+                                               [:page-info :end-cursor])))
+          ;; This request records the backward alias for page-a under
+          ;; {:last 3 :before start-of-b} - page-a holds 2 items, not 3.
+          page-b (eacl/lookup-resources
+                  client (assoc base :first 3
+                                :after (get-in page-a
+                                               [:page-info :end-cursor])))
+          backwards (eacl/lookup-resources
+                     client (assoc base :last 3
+                                   :before (get-in page-b
+                                                   [:page-info
+                                                    :start-cursor])))]
+      (is (= 9 (count one-shot)))
+      (is (= (take 2 (drop 2 one-shot)) (mapv :id (:data page-a))))
+      (is (= (take 3 (drop 4 one-shot)) (mapv :id (:data page-b))))
+      (is (= 3 (count (:data backwards)))
+          "a :last 3 request must return exactly the three preceding items")
+      (is (= (take 3 (drop 1 one-shot)) (mapv :id (:data backwards)))
+          "the answer is the true window, not the smaller adjacent page"))))
+
 (deftest repeated-count-is-served-from-cache-test
   (let [{:keys [fixture client]} (seeded-caching-client :explorer-acyclic)
         query {:subject (get-in fixture [:principals :super-user])

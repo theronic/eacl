@@ -43,6 +43,21 @@
   (eacl/with-snapshot [snapshot (eacl/snapshot client)]
     (select-keys (eacl/basis snapshot) [:backend :source-id :branch])))
 
+(deftest native-speculative-contract-test
+  (is (nil? (ns-resolve 'eacl.datahike.core 'snapshot)))
+  (let [conn (datahike/create-conn nil {})
+        config (:config (d/db conn))
+        client (datahike/make-client conn {})]
+    (try
+      (contract/assert-speculative-contract!
+       client
+       #(d/transact
+         conn {:tx-data [{:eacl/id "speculative-user"}
+                         {:eacl/id "speculative-account"}]}))
+      (finally
+        (d/release conn)
+        (d/delete-database config)))))
+
 (deftest fixed-memory-store-id-does-not-become-lineage-test
   (let [key "01234567890123456789012345678901"
         fixed-id (random-uuid)
@@ -190,9 +205,7 @@
     (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-authorization-target-matrix!
      {:writable client
-      :read-only (datahike/make-client conn {:read-only? true})
-      :snapshot-db datahike/db
-      :direct-snapshot datahike/snapshot})
+      :read-only (datahike/make-client conn {:read-only? true})})
     (contract/assert-unified-filter-validation! client)
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!

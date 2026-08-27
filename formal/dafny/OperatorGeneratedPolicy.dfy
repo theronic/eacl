@@ -27,6 +27,35 @@ module OperatorGeneratedPolicy {
     Min3(2 * previousWidth, physicalCap, remainingWindow)
   }
 
+  function Max(left: nat, right: nat): nat {
+    if left < right then right else left
+  }
+
+  // The batch-growth rule the engine actually runs: rejection is the only
+  // reason to grow, and without rejection the next width never exceeds the
+  // unresolved result demand.  `remainingDemand` and `remainingWindow` are
+  // the values after the issued vector's accepted results and width have
+  // been subtracted.
+  function ScheduledNextWidth(
+    remainingDemand: nat,
+    remainingWindow: nat,
+    physicalCap: nat,
+    issuedWidth: nat,
+    acceptedCount: nat
+  ): nat
+    requires acceptedCount <= issuedWidth
+  {
+    var desired :=
+      if acceptedCount < issuedWidth then
+        Min(physicalCap, 2 * issuedWidth)
+      else
+        remainingDemand;
+    if remainingDemand == 0 || remainingWindow == 0 then
+      0
+    else
+      Min3(physicalCap, remainingWindow, Max(remainingDemand, desired))
+  }
+
   function PrefixForDemand(values: seq<bool>, demand: nat): nat
     ensures PrefixForDemand(values, demand) <= |values|
     decreases |values|

@@ -329,9 +329,17 @@
                    (assoc-in [:by-end (scope-key end-token)]
                              request-key))
                  state
+                 ;; The alias answers the opposite-direction query with the
+                 ;; stored adjacent page verbatim, which is only the correct
+                 ;; answer when that page holds exactly the aliased size:
+                 ;; the boundary index carries no page size, so without the
+                 ;; count guard a {:last N} request could be served a page
+                 ;; of any size.
                  (if (and previous-page
                           start-token
-                          (integer? (:first query)))
+                          (integer? (:first query))
+                          (= (:first query)
+                             (count (:data previous-page))))
                    (put-page-request
                     state
                     (page-request-key
@@ -345,7 +353,9 @@
                    state)]
              (if (and next-page
                       end-token
-                      (integer? (:last query)))
+                      (integer? (:last query))
+                      (= (:last query)
+                         (count (:data next-page))))
                (put-page-request
                 state
                 (page-request-key
@@ -404,10 +414,13 @@
               :request-lineage request-lineage
               :derived-lineage derived-lineage})))
          base
-         {:lineage (or request-lineage derived-lineage)
-          :native-revision native-revision
-          :adapter-fingerprint (backend/fingerprint adapter)
-          :identity-contract (backend/identity-contract adapter)}
+         (cond->
+          {:lineage (or request-lineage derived-lineage)
+           :native-revision native-revision
+           :adapter-fingerprint (backend/fingerprint adapter)
+           :identity-contract (backend/identity-contract adapter)}
+           (some? (:speculative-id basis-identity))
+           (assoc :speculative-id (:speculative-id basis-identity)))
          relation-ids (some-> relation-ids vec)
          descriptor
          (when relation-ids
@@ -588,7 +601,9 @@
   [context]
   (secure/canonical-digest
    "eacl/cursor/execution-identity/v1"
-   (select-keys context [:lineage :adapter-fingerprint :identity-contract])))
+   (select-keys context
+                [:lineage :speculative-id
+                 :adapter-fingerprint :identity-contract])))
 
 (defn- identity-mismatch
   [current envelope]
@@ -602,6 +617,10 @@
           (secure/canonicalize
            (get-in envelope [:lineage :source-lifecycle])))
     :source-lifecycle
+
+    (not= (secure/canonicalize (:speculative-id current))
+          (secure/canonicalize (:speculative-id envelope)))
+    :speculative-provenance
 
     (not= (secure/canonicalize (:adapter-fingerprint current))
           (secure/canonicalize (:adapter-fingerprint envelope)))
@@ -698,6 +717,7 @@
 (def ^:private dependency-context-fields
   [:lineage
    :native-revision
+   :speculative-id
    :adapter-fingerprint
    :identity-contract
    :frame

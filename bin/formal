@@ -45,6 +45,7 @@ usage() {
     "  source-closure        check the public engine source dependency ledger" \
     "  counterexample-replay replay every minimized bug through nREPL" \
     "  mutation-control      run registered mutation controls via nREPL" \
+    "  gate-selftest         prove the nREPL gates fail on failing suites" \
     "  manifest              validate the release assurance gate" \
     "  tla-typecheck         parse and typecheck TLA+ models" \
     "  apalache-check        run bounded temporal safety checks" \
@@ -240,7 +241,14 @@ case "$command" in
       exit 2
     fi
     nrepl_eval "$EACL_NREPL_PORT" 60000 \
-      "(do (require 'eacl.formal.generators :reload) (require 'eacl.formal.mutation-control-test :reload) (clojure.test/run-tests 'eacl.formal.mutation-control-test))"
+      "(do
+         (require 'eacl.formal.generators :reload)
+         (require 'eacl.formal.mutation-control-test :reload)
+         (let [result
+               (clojure.test/run-tests 'eacl.formal.mutation-control-test)]
+           (when (pos? (+ (:fail result 0) (:error result 0)))
+             (throw (ex-info \"mutation controls failed\" result)))
+           result))"
     ;;
   counterexample-replay)
     if [ -z "${EACL_NREPL_PORT:-}" ]; then
@@ -265,7 +273,61 @@ case "$command" in
                    eacl.cache-test]]
            (require test-ns :reload))
          (require 'eacl.formal.counterexample-replay-test :reload)
-         (clojure.test/run-tests 'eacl.formal.counterexample-replay-test))"
+         (let [result
+               (clojure.test/run-tests
+                'eacl.formal.counterexample-replay-test)]
+           (when (pos? (+ (:fail result 0) (:error result 0)))
+             (throw
+              (ex-info \"minimized counterexample replay failed\" result)))
+           result))"
+    ;;
+  gate-selftest)
+    if [ -z "${EACL_NREPL_PORT:-}" ]; then
+      printf '%s\n' \
+        "EACL_NREPL_PORT must name a running dev nREPL." >&2
+      exit 2
+    fi
+    # The replay and mutation-control gates report failure by converting a
+    # failing clojure.test summary into a thrown error, because the nREPL
+    # eval bridge exits non-zero only when the eval throws. Exercise that
+    # conversion in both directions through the exact wrapped shape the
+    # gates use: a deliberately failing suite must fail the step, and a
+    # passing suite must not.
+    selftest_wrapped_run="(let [result
+               (clojure.test/run-tests
+                'eacl.formal.gate-selftest-suite)]
+           (when (pos? (+ (:fail result 0) (:error result 0)))
+             (throw (ex-info \"gate selftest suite failed\" result)))
+           result)"
+    if sh "$repo_root/bin/ci-nrepl-eval" "$EACL_NREPL_PORT" \
+      "(do
+         (ns eacl.formal.gate-selftest-suite
+           (:require [clojure.test :refer [deftest is]]))
+         (deftest deliberately-failing-test
+           (is (= :expected :deliberate-failure)))
+         (in-ns 'user)
+         $selftest_wrapped_run)" >/dev/null 2>&1
+    then
+      printf '%s\n' \
+        "gate selftest: a deliberately failing suite exited zero." >&2
+      exit 1
+    fi
+    if sh "$repo_root/bin/ci-nrepl-eval" "$EACL_NREPL_PORT" \
+      "(do
+         (ns eacl.formal.gate-selftest-suite
+           (:require [clojure.test :refer [deftest is]]))
+         (deftest deliberately-failing-test
+           (is (= :expected :expected)))
+         (in-ns 'user)
+         $selftest_wrapped_run)" >/dev/null 2>&1
+    then
+      printf '%s\n' \
+        "gate selftest: failing suites fail the step, passing suites pass."
+    else
+      printf '%s\n' \
+        "gate selftest: a passing suite exited non-zero." >&2
+      exit 1
+    fi
     ;;
   manifest)
     EACL_REPO_ROOT="$repo_root" \
@@ -285,6 +347,7 @@ case "$command" in
       "$repo_root/formal/tla/EaclSubproblemCache.tla" \
       "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
       "$repo_root/formal/tla/EaclOperatorSafety.tla"
     do
       java -cp "$tla_jar" tla2sany.SANY "$model"
@@ -321,6 +384,11 @@ case "$command" in
       "managed-projection-bounded" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.cfg" \
+      8
+    apalache_check \
+      "speculative-cache-bounded" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.cfg" \
       8
     apalache_check \
       "operator-safety-bounded" \
@@ -360,6 +428,10 @@ case "$command" in
       "managed-projection" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.cfg"
+    apalache_induction \
+      "speculative-cache" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.cfg"
     apalache_induction \
       "operator-safety" \
       "$repo_root/formal/tla/EaclOperatorSafety.tla" \

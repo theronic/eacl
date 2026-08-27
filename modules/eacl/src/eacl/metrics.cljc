@@ -69,19 +69,42 @@
     [backend source-id branch source-lifecycle high-watermark
      direction descriptor]))
 
-(defn- trim-entries [entries]
-  ;; Observations are advisory and carry no recency semantics. Evicting an
-  ;; arbitrary resident is therefore sufficient; sorting every key to choose
-  ;; a deterministic victim makes a full cache O(n log n) on every new scan
-  ;; descriptor and turns metric collection into authorization-path work.
-  (loop [entries entries
-         overflow (- (count entries) maximum-entries)
-         evicted 0]
-    (if (pos? overflow)
-      (recur (dissoc entries (key (first entries)))
-             (dec overflow)
-             (inc evicted))
-      [entries evicted])))
+(def ^:private key-watermark-index
+  "Both entry and io-event keys carry the immutable high-watermark at the
+  same position."
+  4)
+
+(defn- trim-entries
+  ;; Observations are advisory and carry no recency semantics, so no global
+  ;; ordering is maintained. On overflow, entries recorded at superseded
+  ;; watermarks are preferred victims: their keys can never be reused, and
+  ;; evicting them first keeps entries that remain reusable at the current
+  ;; watermark resident on write-active sources. The stale scan runs only at
+  ;; capacity, never on an ordinary insert.
+  ([entries]
+   (trim-entries entries nil))
+  ([entries current-key]
+   (let [current-watermark (when current-key
+                             (nth current-key key-watermark-index nil))
+         victim
+         (fn [entries]
+           (or (when (some? current-watermark)
+                 (reduce-kv
+                  (fn [_ key _]
+                    (when (not= current-watermark
+                                (nth key key-watermark-index nil))
+                      (reduced key)))
+                  nil
+                  entries))
+               (key (first entries))))]
+     (loop [entries entries
+            overflow (- (count entries) maximum-entries)
+            evicted 0]
+       (if (pos? overflow)
+         (recur (dissoc entries (victim entries))
+                (dec overflow)
+                (inc evicted))
+         [entries evicted])))))
 
 (defn record-membership!
   "Records an already-completed exact membership batch.
@@ -110,7 +133,7 @@
                 (let [prior (get-in state [:entries key])
                       entry (sample-entry prior samples matches io)
                       [entries evicted]
-                      (trim-entries (assoc (:entries state) key entry))]
+                      (trim-entries (assoc (:entries state) key entry) key)]
                   (-> state
                       (assoc :entries entries)
                       (update :recorded-events checked-add 1)
@@ -139,7 +162,8 @@
                               {:completeness :exact
                                :exact-count exact-count
                                :observed-lower-bound exact-count
-                               :last-io io}))]
+                               :last-io io})
+                       key)]
                   (-> state
                       (assoc :entries entries)
                       (update :recorded-events checked-add 1)
@@ -170,7 +194,7 @@
                   (let [entry (sample-entry
                                (get-in state [:entries key]) count count nil)
                         [entries evicted]
-                        (trim-entries (assoc (:entries state) key entry))]
+                        (trim-entries (assoc (:entries state) key entry) key)]
                     (-> state
                         (assoc :entries entries)
                         (update :recorded-events checked-add 1)
@@ -204,7 +228,7 @@
                           entry (sample-entry prior observed observed nil)
                           [entries evicted]
                           (trim-entries
-                           (assoc (:entries state) key entry))]
+                           (assoc (:entries state) key entry) key)]
                       (-> state
                           (assoc :entries entries)
                           (update :recorded-events checked-add 1)
@@ -231,7 +255,8 @@
                       (trim-entries
                        (assoc (:io-events state) key
                               {:observation io
-                               :classification :physical-cost-only}))]
+                               :classification :physical-cost-only})
+                       key)]
                   (-> state
                       (assoc :io-events io-events)
                       (update :recorded-events checked-add 1)

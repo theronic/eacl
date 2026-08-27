@@ -1,7 +1,8 @@
 (ns eacl.formal.operator-decision-test
   (:require [clojure.edn :as edn]
             [clojure.test :refer [deftest is testing]]
-            [eacl.formal.java-operator-decision :as generated])
+            [eacl.formal.java-operator-decision :as generated]
+            [eacl.operator.batch-schedule :as batch-schedule])
   (:import (java.util Random)))
 
 (defn- vectors
@@ -225,6 +226,37 @@
         (let [input (random-input random)]
           (is (= (oracle input) (generated/decide input))
               (pr-str {:case case-index :input input})))))))
+
+(deftest production-batch-schedule-is-bound-to-the-generated-decision
+  ;; The differential runs the production schedule itself against the
+  ;; generated batch-growth decision, step for step, rather than comparing
+  ;; the kernel with a local re-copy of its formula. Every walk issues the
+  ;; production-selected width and randomizes acceptance, so growth is
+  ;; exercised both rejection-gated and demand-clamped.
+  (let [random (Random. 640353)]
+    (dotimes [walk 200]
+      (let [result-demand (.nextInt random 400)
+            candidate-window (.nextInt random 1200)]
+        (loop [state (batch-schedule/initial result-demand candidate-window)
+               step 0]
+          (when (and (not (batch-schedule/done? state)) (< step 64))
+            (let [issued (:next-width state)
+                  accepted (.nextInt random (inc issued))
+                  advanced (batch-schedule/advance state issued accepted)
+                  generated-width
+                  (generated/advance
+                   {:remaining-demand (:remaining-demand advanced)
+                    :remaining-window (:remaining-window advanced)
+                    :physical-cap batch-schedule/maximum-width
+                    :issued-width issued
+                    :accepted-count accepted})]
+              (is (= (:next-width advanced) generated-width)
+                  (pr-str {:walk walk
+                           :step step
+                           :state state
+                           :issued issued
+                           :accepted accepted}))
+              (recur advanced (inc step)))))))))
 
 (deftest generated-signed-graph-fixed-vectors
   (doseq [{:keys [input expected]} (:signed-graph-cases (vectors))]

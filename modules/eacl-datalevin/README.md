@@ -88,6 +88,13 @@ reused by the enumerate route as exactly one snapshot-bound relationship probe
 per candidate. The adapter has no backend-private aggregate loop, makes no
 backend-private proof rule, and never moves an owned reader to another thread.
 
+The qualified Datalevin fork does not currently expose a native in-memory
+transaction operation with the transaction report required to certify actual
+effects. `eacl/with` and `eacl/with-schema` therefore fail closed with
+`:eacl/unsupported-capability`; EACL never guesses effects or admits an
+ordinary live Datalevin handle as speculation. `eacl/tx-relationship` remains
+available for read-only transaction planning on an EACL snapshot where useful.
+
 The built-in `:eacl/id` codec treats public IDs as immutable for an entity's
 lifetime. This is a supported-writer premise because application identity is
 deliberately outside the Datalevin write policy. Set `:identity-immutable?

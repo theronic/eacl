@@ -4,7 +4,7 @@
   Public reads, writes, consistency, caching, pagination, and lifecycle are
   implemented once by `eacl.client.orchestration`. This namespace contributes
   only Datomic's basis adapter, basis source, writer primitives, schema
-  operations, direct-snapshot accessors, and Datomic-specific utilities."
+  operations, explicit speculative application, and Datomic-specific utilities."
   (:require [datomic.api :as d]
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
@@ -45,6 +45,58 @@
   [conn {:keys [tx-data]}]
   @(d/transact conn (vec tx-data)))
 
+(defn- native-with
+  [db tx-data]
+  (d/with db (vec tx-data)))
+
+(defn- datom-attribute
+  [db-before db-after attribute]
+  (if (keyword? attribute)
+    attribute
+    (or (:db/ident (d/entity db-after attribute))
+        (:db/ident (d/entity db-before attribute)))))
+
+(defn- normalize-report-datom
+  [db-before db-after datom]
+  {:e (:e datom)
+   :a (datom-attribute db-before db-after (:a datom))
+   :v (:v datom)
+   :tx (:tx datom)
+   :added (boolean (:added datom))})
+
+(defn- schema-entity?
+  [db entity-id]
+  (let [entity (d/entity db entity-id)]
+    (or (= "schema-string" (:eacl/id entity))
+        (some? (:eacl.relation/relation-name entity))
+        (some? (:eacl.permission/permission-name entity)))))
+
+(defn- schema-storage-datom?
+  [db-before db-after {:keys [e a]}]
+  (let [attribute-namespace (namespace a)
+        schema-attribute?
+        (or (= a :eacl/schema-string)
+            (= a :eacl/schema-version)
+            (= a :eacl/permission-storage-version)
+            (= attribute-namespace "eacl.relation")
+            (= attribute-namespace "eacl.permission")
+            (and (= a :eacl/id)
+                 (or (schema-entity? db-before e)
+                     (schema-entity? db-after e))))]
+    (and schema-attribute?
+         (not= (get (d/entity db-before e) a)
+               (get (d/entity db-after e) a)))))
+
+(defn- relation-coordinate
+  [db relation-id]
+  (when relation-id
+    (let [entity (d/entity db relation-id)
+          resource-type (:eacl.relation/resource-type entity)
+          relation-name (:eacl.relation/relation-name entity)
+          subject-type (:eacl.relation/subject-type entity)]
+      (when (and resource-type relation-name subject-type)
+        [:relation resource-type relation-name subject-type]))))
+
 (defn- write-schema!
   [conn schema-string options expected-generation]
   (let [deltas
@@ -71,6 +123,11 @@
      (let [revision (or (.asOfT db) (d/basis-t db))]
        {:revision revision :exact-locator revision}))
    :relationship-retraction-count relationship-retraction-count
+   :native-with native-with
+   :normalize-report-datom normalize-report-datom
+   :transaction-datom? #(= :db/txInstant (:a %))
+   :schema-storage-datom? schema-storage-datom?
+   :relation-version-attribute :eacl/relation-version
    :transact! transact!
    :writer-max-attempts maximum-relationship-write-attempts
    :writer-max-transaction-size delete-object-batch-size
@@ -82,11 +139,13 @@
    :schema
    {:read-schema schema/read-schema
     :generation indexed/schema-version
+    :plan-replacement schema/plan-schema-replacement
     :write-schema! write-schema!}
    :impl
    {:validate-relationship-operation!
     impl/validate-relationship-operation!
     :relationship-relation-id impl/relationship-relation-id
+    :relation-coordinate relation-coordinate
     :tx-update-relationship impl/tx-update-relationship
     :tx-delete-object impl/tx-delete-object
     :tx-delete-object-stream impl/tx-delete-object-stream
@@ -114,13 +173,8 @@
                   (dissoc :auto-migrate-v6 :auto-migrate-v7)
                   (assoc :expression-limits expression-limits)))))
 
-(defn snapshot
-  "Constructs a public snapshot over an admissible Datomic DB value."
-  [acl db]
-  (orchestration/direct-snapshot acl :datomic db))
-
 (defn db
-  "Returns the immutable Datomic DB wrapped by `snapshot`."
+  "Returns the immutable Datomic DB held by an EACL-created snapshot."
   [snapshot]
   (orchestration/snapshot-db snapshot :datomic))
 

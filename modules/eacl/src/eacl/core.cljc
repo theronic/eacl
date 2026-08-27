@@ -56,6 +56,16 @@
   "Authorization extension for ordered point checks over one snapshot."
   (-check-permissions [this request]))
 
+(defprotocol ISpeculativeAuthorization
+  "Explicit, EACL-owned prospective transaction capabilities.
+
+  Implementations establish provenance from this call path; callers cannot
+  assert that an arbitrary native database value is ordinary or speculative."
+  (-with [this tx-data])
+  (-with-schema [this schema options])
+  (-tx-relationship [this update])
+  (-speculative-diagnostics [this]))
+
 (defn snapshot?
   "True when `value` is an immutable EACL authorization snapshot."
   [value]
@@ -191,6 +201,70 @@
     [(->RelationshipUpdate
       operation
       (->Relationship subject relation resource))])))
+
+(defn with
+  "Applies native transaction data in memory and returns an immutable,
+  cache-safe speculative snapshot. `target` must be an EACL client or
+  EACL-created snapshot; native database values are never accepted."
+  [target tx-data]
+  (if (satisfies? ISpeculativeAuthorization target)
+    (-with target tx-data)
+    (throw
+     (typed-error
+      :eacl/unsupported-capability
+      "Authorization target cannot create a speculative snapshot."
+      {:capability :with
+       :target (target-kind target)}))))
+
+(defn with-schema
+  "Prospectively replaces the permission schema without committing it."
+  ([target schema]
+   (with-schema target schema {}))
+  ([target schema options]
+   (if (satisfies? ISpeculativeAuthorization target)
+     (-with-schema target schema options)
+     (throw
+      (typed-error
+       :eacl/unsupported-capability
+       "Authorization target cannot create a speculative schema snapshot."
+       {:capability :with-schema
+        :target (target-kind target)})))))
+
+(defn tx-relationship
+  "Plans one relationship mutation against an immutable EACL snapshot.
+
+  The returned native transaction data uses the same paired relationship
+  representation, commit guards, and relation-version stamps as the committed
+  writer. It can be composed with application tx-data and passed to `with`."
+  ([snapshot update]
+   (if (and (snapshot? snapshot)
+            (satisfies? ISpeculativeAuthorization snapshot))
+     (-tx-relationship snapshot update)
+     (throw
+      (typed-error
+       :eacl/unsupported-capability
+       "Relationship transaction planning requires an EACL snapshot."
+       {:capability :tx-relationship
+        :target (target-kind snapshot)}))))
+  ([snapshot operation subject relation resource]
+   (tx-relationship
+    snapshot
+    (->RelationshipUpdate
+     operation
+     (->Relationship subject relation resource)))))
+
+(defn speculative-diagnostics
+  "Returns immutable warnings accumulated by a speculative snapshot."
+  [snapshot]
+  (if (and (snapshot? snapshot)
+           (satisfies? ISpeculativeAuthorization snapshot))
+    (-speculative-diagnostics snapshot)
+    (throw
+     (typed-error
+      :eacl/unsupported-capability
+      "Diagnostics require an EACL speculative snapshot."
+      {:capability :speculative-diagnostics
+       :target (target-kind snapshot)}))))
 
 (defn create-relationships!
   [target relationships]

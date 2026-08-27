@@ -104,6 +104,20 @@
 
          [:folder :seedless]
          [:arrow :parent [:permission :seedless]]}
+        ;; Intersection and exclusion are valid operator variants over the
+        ;; same relationship graph. They are carried separately from the
+        ;; union-only `:rules` so the union-only generated authority keeps
+        ;; its exact vocabulary while the operator differential evaluates
+        ;; the combined schema.
+        operator-rules
+        {[:document :confidential]
+         [:intersection [:relation :reader] [:relation :editor]]
+
+         [:document :disclosed]
+         [:exclusion [:permission :read] [:relation :editor]]
+
+         [:folder :cleared]
+         [:exclusion [:permission :read] [:relation :reader]]}
         fixture
         {:seed seed
          :objects
@@ -112,12 +126,14 @@
          :relationships
          (vec (distinct (concat base-relationships extra-relationships)))
          :rules rules
+         :operator-rules operator-rules
          :empty-relations #{[:document :unused] [:folder :blocked]}
          :features
          #{:alias :arrow-relation :arrow-permission :recursive-scc
            :multiple-subject-types :duplicate-semantic-path
            :disconnected :cycle :diamond :fan-in :fan-out
-           :empty-relation :extreme-id}}]
+           :empty-relation :extreme-id
+           :intersection :exclusion :exclusion-over-recursion}}]
     (assoc
      fixture
      :malformed-variants
@@ -125,7 +141,7 @@
              :id :unknown-rule-operator
              :rules (assoc rules
                            [:document :broken]
-                           [:intersection
+                           [:xor
                             [:relation :reader]
                             [:relation :editor]]))
       (assoc fixture

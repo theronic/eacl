@@ -185,9 +185,10 @@
            {:expected (count candidates) :actual (count result)}))
         (when-not (every? boolean? result)
           (contract-violation! adapter :aligned-boolean-vector :redacted))
-        (metrics/record-membership! (:descriptor request)
-                                    (:direction request)
-                                    candidates result)
+        (when metrics/*store*
+          (metrics/record-membership! (:descriptor request)
+                                      (:direction request)
+                                      candidates result))
         result))))
 
 (def ^:private probe-keys #{:descriptor :candidate :direction})

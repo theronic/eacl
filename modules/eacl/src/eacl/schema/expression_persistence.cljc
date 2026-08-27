@@ -55,7 +55,11 @@
   policy/default-client-limits)
 
 (defn effective-expression-limits []
-  (policy/normalize-client-limits *expression-limits*))
+  ;; Reuse the complete immutable default profile. Non-default bindings still
+  ;; cross the public normalizer so bound overrides remain validated.
+  (if (identical? *expression-limits* policy/default-client-limits)
+    policy/default-client-limits
+    (policy/normalize-client-limits *expression-limits*)))
 
 (defn ->expression-id [resource-type permission-name]
   (str "eacl.permission-expression:" resource-type ":" permission-name))

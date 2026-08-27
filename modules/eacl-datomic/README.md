@@ -23,6 +23,18 @@ uses complete ordered-generation proofs to reuse completed answers across
 unrelated forward transactions. Missing, malformed, oversized, or exceptional
 proof data falls back to exact evaluation.
 
+## Prospective snapshots
+
+The public adapter does not wrap caller-owned Datomic database values. Use
+`eacl/tx-relationship` with `eacl/with` for composable relationship/application
+transactions and `eacl/with-schema` for prospective permission-schema changes.
+These EACL-created snapshots are immutable readers: they may reuse only a
+complete committed proof for disjoint dependencies and publish no speculative
+cache data. `:orphan-policy :retain-inert` is available only to
+`with-schema`; diagnostics report bounded presence without counting tuples.
+Calling implementation namespaces to inject raw `d/with` or `d/filter` values
+forfeits coherence guarantees.
+
 Every authorization-relevant mutation must use EACL APIs or EACL-produced
 transaction data/functions transacted intact. After unsupported raw mutation,
 quiesce callers, repair the data, and call

@@ -108,4 +108,29 @@ module OperatorGeneratedPolicyRefinement {
             )
   {
   }
+
+  lemma GeneratedScheduledNextWidthEqualsAbstract(
+    remainingDemand: nat,
+    remainingWindow: nat,
+    physicalCap: nat,
+    issuedWidth: nat,
+    acceptedCount: nat
+  )
+    requires acceptedCount <= issuedWidth
+    ensures Generated.ScheduledNextWidth(
+              remainingDemand,
+              remainingWindow,
+              physicalCap,
+              issuedWidth,
+              acceptedCount
+            ) ==
+            Batch.ScheduledNextWidth(
+              remainingDemand,
+              remainingWindow,
+              physicalCap,
+              issuedWidth,
+              acceptedCount
+            )
+  {
+  }
 }

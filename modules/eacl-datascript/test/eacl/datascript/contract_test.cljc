@@ -15,6 +15,18 @@
             [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
 
+(deftest native-speculative-contract-test
+  #?(:clj
+     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
+     :cljs
+     (is true))
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (contract/assert-speculative-contract!
+     client
+     #(ds/transact! conn [{:eacl/id "speculative-user"}
+                          {:eacl/id "speculative-account"}]))))
+
 (deftest missing-anchor-validation-reuses-derived-schema-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})
@@ -58,9 +70,12 @@
 
 (deftest cache-only-metrics-refresh-preserves-results-and-cursors-test
   (let [conn (datascript/create-conn)
+        ;; Relationship observations are opt-in; this contract exercises the
+        ;; recording and refresh machinery, so it is the consumer.
         client (datascript/make-client
                 conn {:security-key
-                      "metrics-refresh00000000000000000"})
+                      "metrics-refresh00000000000000000"
+                      :relationship-observations? true})
         alice (eacl/spice-object :user "metrics-alice")
         documents (mapv #(eacl/spice-object
                           :document (str "metrics-d" %))
@@ -769,9 +784,7 @@
     (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-authorization-target-matrix!
      {:writable client
-      :read-only (datascript/make-client conn {:read-only? true})
-      :snapshot-db datascript/db
-      :direct-snapshot datascript/snapshot})
+      :read-only (datascript/make-client conn {:read-only? true})})
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))

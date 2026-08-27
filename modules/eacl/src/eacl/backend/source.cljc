@@ -26,6 +26,10 @@
     :acquire-exact!
     :release!})
 
+(def optional-source-operations
+  "Operations a source MAY provide beyond committed basis selection."
+  #{})
+
 (def source-obligations
   "Runtime-facing assumptions for basis selection and native lifecycle. These
   are distinct from the immutable basis-adapter assumptions modeled by

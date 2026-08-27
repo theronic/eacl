@@ -288,20 +288,61 @@ floor; `at-exact-snapshot` evaluates only when the token names that basis; and
 `fully-consistent` fails with `:eacl.consistency/selection-required`. Select a
 new snapshot through the `acl` when an assertion fails.
 
-If the application already owns an immutable database value, direct constructors
-perform no source acquisition:
+Caller-owned native database values are deliberately outside the public
+authorization boundary. Datomic cannot distinguish a committed database from
+one returned by `d/with` when database id, basis `t`, and `:db/txInstant`
+collide. Consequently there is no public backend constructor that wraps a raw
+`d/with`, `d/filter`, `d/as-of`, `d/since`, or `d/history` value. Calling EACL
+implementation namespaces to inject one forfeits cache-coherence guarantees.
+
+Use explicit EACL speculation instead. Relationship helpers preserve the
+committed writer's validation, paired tuples, guards, and relation stamp:
 
 ```clojure
-(datomic/snapshot acl datomic-db)
-(datahike/snapshot acl datahike-db)
-(datascript/snapshot acl datascript-db)
-(datalevin/snapshot acl open-read-snapshot)
+(eacl/with-snapshot [base (eacl/snapshot acl)]
+  (let [tx (eacl/tx-relationship
+             base :delete alice :banned document)]
+    (eacl/with-snapshot [prospective (eacl/with base tx)]
+      (eacl/can? prospective alice :view document))))
 ```
 
-Ordinary and as-of values are admissible basis kinds. Filtered, since, history,
-speculative, foreign-backend, and arbitrary Datalevin database values are
-refused with `:eacl/unsupported-database-value`. Use `eacl/basis` for public
-basis metadata and `eacl/basis-token` for an authenticated portable token.
+`eacl/with` is composable and accepts backend-native transaction data. Its
+actual emitted transaction datoms determine the cumulative relationship
+effects, including transaction-function expansion:
+
+```clojure
+(eacl/with-snapshot [s1 (eacl/with base tx-1)]
+  (eacl/with-snapshot [s2 (eacl/with s1 tx-2)]
+    (eacl/check-permission s2 demand)))
+```
+
+Prospective permission-schema changes use the same replacement planner as
+committed `write-schema!`:
+
+```clojure
+(eacl/with-snapshot [prospective
+                     (eacl/with-schema base candidate-schema)]
+  (eacl/can? prospective alice :view document))
+```
+
+The default orphan policy is `:error`. A large in-memory test may retain tuple
+data without counting or retracting it; removed relation definitions make the
+tuples semantically inert, and bounded warnings are available explicitly:
+
+```clojure
+(eacl/with-snapshot [prospective
+                     (eacl/with-schema
+                      base candidate-schema
+                      {:orphan-policy :retain-inert})]
+  (eacl/speculative-diagnostics prospective))
+```
+
+`:retain-inert` is speculative-only. Committed `write-schema!` always preserves
+the no-orphan invariant. Speculative snapshots may read validated committed
+proofs for wholly disjoint dependencies, but never read the native exact tier
+and never publish computed values to any persistent cache. Use `eacl/basis`
+for public basis metadata and `eacl/basis-token` for the authenticated committed
+root token.
 
 For reader-Peer session pinning, let the writer return a basis token with its
 mutation response, select that exact basis once on the reader, and retain the

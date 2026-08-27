@@ -4,9 +4,9 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 101
-  :public-roots 70
-  :reachable-definitions 2093
+  :source-files 102
+  :public-roots 72
+  :reachable-definitions 2146
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -45,6 +45,14 @@
   {:source "formal/dafny/CurrentCache.dfy"
    :class :generated-production
    :consumer ['eacl.cache]}
+  {:source "formal/dafny/SpeculativeCacheCoherence.dfy"
+   :class :proof-only-production-assurance
+   :consumer ['eacl.cache/resolve-managed-read-only!
+              'eacl.client.orchestration/cached-engine-result
+              'eacl.client.orchestration/speculative-with-snapshot
+              'eacl.client.orchestration/speculative-with-schema-snapshot
+              'eacl.relay/validate-context!]
+   :report "formal/verification/speculative-cache-coherence.edn"}
   {:source "formal/dafny/ExecutionContract.dfy"
    :class :proof-only-host-control-model
    :consumer ['eacl.execution/normalize
@@ -733,7 +741,7 @@
    :backend-certification [:datomic :datascript :datahike :datalevin]
    :production-mutations {:registered 10 :killed 10 :survived 0}
    :source-closure
-   {:source-files 101 :public-roots 70 :reachable-definitions 2093}
+   {:source-files 102 :public-roots 72 :reachable-definitions 2146}
    :production-authoritative
    :enabled-after-conformance-storage-and-performance-qualification
    :remaining []

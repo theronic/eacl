@@ -378,6 +378,28 @@
       (is (empty? forward))
       (is (empty? reverse)))))
 
+(deftest retain-inert-presence-detects-reverse-only-ghost-test
+  (let [{:keys [conn]} (seeded)
+        db (ds/db conn)
+        {:keys [user-eid forward reverse]} (relationship-state db)
+        relation
+        (first
+         (filter #(= :owner (:eacl.relation/relation-name %))
+                 (schema/read-relations db)))]
+    (is (= 1 (count forward)))
+    (is (= 1 (count reverse)))
+    (ds/transact!
+     conn
+     [[:db/retract user-eid relationship-storage/forward-attribute
+       (:v (first forward))]])
+    (let [{:keys [forward reverse]} (relationship-state (ds/db conn))]
+      (is (empty? forward))
+      (is (= 1 (count reverse)))
+      (is (true?
+           (schema/relationship-present-for-relation?
+            (ds/db conn) relation))
+          "retain-inert diagnostics must detect either surviving tuple half"))))
+
 (defn- lookup-ref-relationship
   "The internal relationship shape the shared client hands to the impl:
   endpoint ids as lookup refs, which also serve as commit-time identity

@@ -223,55 +223,34 @@
     (is (zero? (:db-calls failure)))
     (is (empty? (:provider-calls failure)))))
 
-(deftest direct-snapshot-admission-and-zero-acquisition-test
-  (let [{:keys [conn client user account]} (fixture)
-        native-db (ds/db conn)
-        ledger (request-counters/make-ledger)
-        {:keys [value provider-calls db-calls]}
-        (binding [request-counters/*ledger* ledger]
-          (observed-call
-           conn
-           #(let [snapshot (datascript/snapshot client native-db)]
-              (try
-                {:snapshot snapshot
-                 :native-db (datascript/db snapshot)
-                 :basis (eacl/basis snapshot)
-                 :allowed? (eacl/can? snapshot user :admin account)}
-                (finally
-                  (eacl/release! snapshot))))))
-        counts (request-counters/snapshot ledger)]
-    (is (eacl/snapshot? (:snapshot value)))
-    (is (identical? native-db (:native-db value)))
-    (is (= :ordinary (get-in value [:basis :kind])))
-    (is (true? (:allowed? value)))
-    (is (zero? db-calls))
-    (is (zero? (:acquisitions counts)))
-    (is (= 1 (:context-constructions counts)))
-    (is (= {:source-scope 1} provider-calls))))
-
-(deftest direct-snapshot-refuses-inadmissible-and-foreign-values-first-test
-  (let [{:keys [conn client]} (fixture)
+(deftest raw-database-snapshot-constructor-is-not-public-test
+  #?(:clj
+     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
+     :cljs
+     (is true))
+  (let [{:keys [conn]} (fixture)
         other-conn (datascript/create-conn)
         cases
-        [[:filtered
-          (ds/filter (ds/db conn) (fn [_ _] true))]
-         [:foreign-source (ds/db other-conn)]
-         [:foreign-backend {}]]]
-    (doseq [[expected-kind value] cases]
+        [(ds/db conn)
+         (ds/filter (ds/db conn) (fn [_ _] true))
+         (ds/db other-conn)
+         (ds/db-with (ds/db conn) [{:eacl/id "speculative-marker"}])]]
+    (doseq [value cases]
       (let [ledger (request-counters/make-ledger)
             data
             (binding [request-counters/*ledger* ledger]
               (try
-                (datascript/snapshot client value)
+                (eacl/snapshot value)
                 nil
                 (catch #?(:clj clojure.lang.ExceptionInfo
                           :cljs cljs.core.ExceptionInfo)
                        error
                   (ex-data error))))
             counts (request-counters/snapshot ledger)]
-        (is (= :eacl/unsupported-database-value (:type data)))
+        (is (= :eacl/unsupported-capability (:type data)))
         (is (= (:type data) (:eacl/error data)))
-        (is (= expected-kind (:basis-kind data)))
+        (is (= :snapshot (:capability data)))
+        (is (= :non-eacl (:target data)))
         (is (zero? (:acquisitions counts)))
         (is (zero? (:context-constructions counts)))
         (is (zero? (:adapter-reads counts)))))))
@@ -412,7 +391,12 @@
          (fn [value]
            (some #(identical? value %) forbidden-identities))
          reachable))
-    (is (= #{:backend-id :schema :impl} (set (keys snapshot-api))))
+    (is (= #{:backend-id :schema :impl
+             :basis-adapter :basis-adapter-config-keys
+             :native-with :normalize-report-datom
+             :schema-storage-datom? :transaction-datom?
+             :relation-version-attribute :prepare-relationship-tx}
+           (set (keys snapshot-api))))
     (is (= :eacl/unsupported-capability
            (get-in value [:write-error :type])))
     (is (= :write (get-in value [:write-error :capability])))

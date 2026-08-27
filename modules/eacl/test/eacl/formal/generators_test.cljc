@@ -9,7 +9,8 @@
   #{:alias :arrow-relation :arrow-permission :recursive-scc
     :multiple-subject-types :duplicate-semantic-path
     :disconnected :cycle :diamond :fan-in :fan-out
-    :empty-relation :extreme-id})
+    :empty-relation :extreme-id
+    :intersection :exclusion :exclusion-over-recursion})
 
 (deftest coherent-schema-and-graph-generator-test
   (doseq [seed (range 1 26)]

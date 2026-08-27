@@ -147,6 +147,40 @@ an unstamped database validates against a direct read). A proof-backed hit is
 promoted into the exact store for the selected value, so the next identical
 request on that value is exact.
 
+## Explicit speculative snapshots
+
+`eacl/with` and `eacl/with-schema` establish speculative provenance through a
+trusted EACL call path. EACL does not try to recognize a caller's native
+database value: a Datomic `d/with` value can intentionally collide with
+different committed content on database identity, basis `t`, and
+`:db/txInstant`. Raw database values therefore have no public snapshot
+constructor.
+
+A speculative operation never consults the exact completed-answer tier. It
+also publishes no completed answer, subproblem, projection, schema artifact,
+plan, checkpoint, visited page, cursor proof, or other derived value that can
+outlive the request. Request-local evaluator memoization is permitted and is
+discarded when the operation returns. Repeating a speculative miss may
+recompute by design.
+
+The operation may read an existing committed managed proof only after ordinary
+validation authenticates it at the speculative snapshot's committed root and
+its complete semantic dependencies are disjoint from every cumulative
+speculative effect. Relationship and stable schema-component dimensions are
+checked separately. Identity, existence, ordering, or application effects
+that the adapter cannot completely classify make the effect certificate
+unknown and disable all managed read-through for that snapshot. The operation
+still evaluates correctly against its speculative database and remains
+publication-free.
+
+Effects come from the native in-memory transaction report's actual emitted
+datoms, so relationship mutations expanded by transaction functions are not
+missed. Prospective schema effects come from the same pure replacement planner
+used by committed `write-schema!`. Effect sets only grow across chained
+`with`/`with-schema` calls; an apparent restoration never re-enables an
+affected committed proof. Cache coherence uses no transaction-log scan,
+listener, `d/log`, or `d/tx-range` operation.
+
 Ordinary and authenticated historical selections share one bounded exact-basis
 tier. Its composite identity includes backend and source scope, configured
 lifecycle, native revision and exact locator, basis kind, adapter fingerprint
@@ -250,7 +284,8 @@ Proof is unavailable when:
   exceeds its configured `:managed-proof-max-atoms` bound;
 - the provider throws;
 - the selected value cannot read the historical generations it names;
-- the request uses a filtered, speculative, or caller-constructed value;
+- the request uses a filtered or caller-constructed value, or a speculative
+  value lacks the complete committed-root/disjointness certificate;
 - caching is disabled, the response is incomplete, or the operation is not
   deterministic; or
 - a custom identity codec lacks its stable deterministic contract.
@@ -479,9 +514,11 @@ mutation.
 An admissible `as-of` value can use proof-backed reuse when it can read the
 schema and relation generations visible at that value and they pass the same
 domain and ceiling checks. Datomic retains relation-version history for this
-purpose; Datahike requires readable retained history. `since`, filtered,
-speculative, and caller-constructed values remain outside managed reuse. Exact
-historical evaluation is always authoritative.
+purpose; Datahike requires readable retained history. `since`, filtered, and
+caller-constructed values remain outside managed reuse. Explicit EACL
+speculative snapshots use only the committed-root, complete-disjoint-proof
+path described above; they never use exact native-basis reuse. Exact historical
+evaluation is always authoritative.
 
 ## Metrics and evidence
 

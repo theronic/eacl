@@ -47,6 +47,22 @@
              :maximum maximum
              :actual actual})))
 
+(defn active-recursion-outcome
+  "Fail-closed outcome for a point that is already being evaluated.
+
+  A key can only be active twice when the plan's predicate graph is cyclic,
+  which the sealing pipeline rejects — so this state is an invariant breach,
+  never a decision. The outcome sits in a value position at its call sites
+  precisely so that treating active recursion as a boolean decision is an
+  executable mutation, detected by the registered
+  `:operator-active-recursion-as-false` control."
+  [data]
+  (throw
+   (ex-info "Operator evaluation encountered active recursion."
+            (assoc data
+                   :type :eacl.operator/active-recursion
+                   :eacl/error :eacl.operator/active-recursion))))
+
 (defn- normalize-limits [overrides]
   (let [overrides (or overrides {})]
     (when-not (map? overrides)
@@ -313,14 +329,13 @@
                     (do
                       (add-stat! :memo-hits 1)
                       (recur stack memo active (get memo key)))
-                    (do
-                      (when (contains? active key)
-                        (throw
-                         (ex-info
-                          "Acyclic operator evaluation encountered active recursion."
-                          {:type :eacl.operator/active-recursion
-                           :eacl/error :eacl.operator/active-recursion
-                           :key key})))
+                    (if (contains? active key)
+                      (let [[memo active value]
+                            (complete-value memo active key
+                                            (active-recursion-outcome
+                                             {:key key})
+                                            (:maximum-memo-entries limits))]
+                        (recur stack memo active value))
                       (let [[permission node-id current-subject-type
                              current-subject-eid current-resource-eid] key
                             predicate

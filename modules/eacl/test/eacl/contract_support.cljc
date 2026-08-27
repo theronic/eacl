@@ -63,6 +63,53 @@
    (eacl/->Relationship (->account "account-1") :account (->server "server-1"))
    (eacl/->Relationship (->account "account-1") :account (->server "server-2"))])
 
+(def speculative-schema
+  "definition user {}
+   definition account {
+     relation owner: user
+     permission admin = owner
+   }")
+
+(def speculative-replacement-schema
+  "definition user {}
+   definition account {
+     relation owner: user
+     permission admin = owner - owner
+   }")
+
+(def speculative-user (eacl/spice-object :user "speculative-user"))
+(def speculative-account (eacl/spice-object :account "speculative-account"))
+
+(defn assert-speculative-contract!
+  "Checks native transaction and schema speculation without committing either
+  prospective result. The adapter supplies only its ordinary object write."
+  [client transact-objects!]
+  (eacl/write-schema! client speculative-schema)
+  (transact-objects!)
+  (eacl/create-relationship!
+   client speculative-user :owner speculative-account)
+  (is (true? (eacl/can?
+              client speculative-user :admin speculative-account)))
+  (eacl/with-snapshot [base (eacl/snapshot client)]
+    (let [delete-owner
+          (eacl/tx-relationship
+           base :delete speculative-user :owner speculative-account)]
+      (eacl/with-snapshot [prospective (eacl/with base delete-owner)]
+        (is (false?
+             (eacl/can?
+              prospective speculative-user :admin speculative-account)))
+        (is (= :speculative (:kind (eacl/basis prospective)))))))
+  (eacl/with-snapshot [base (eacl/snapshot client)]
+    (eacl/with-snapshot
+      [prospective
+       (eacl/with-schema base speculative-replacement-schema)]
+      (is (false?
+           (eacl/can?
+            prospective speculative-user :admin speculative-account)))
+      (is (= :speculative (:kind (eacl/basis prospective))))))
+  (is (true? (eacl/can?
+              client speculative-user :admin speculative-account))))
+
 (def boundary-counter-keys
   "Independent source/adapter/writer lifecycle counters asserted by shared
   backend contracts."
@@ -75,20 +122,18 @@
 (declare normalize-permission-tree)
 
 (defn assert-authorization-target-matrix!
-  "Runs every public read over writable/read-only acls plus captured, selected,
-  and direct snapshots. `snapshot-db` and `direct-snapshot` are the backend's
-  native accessor and direct constructor."
-  [{:keys [writable read-only snapshot-db direct-snapshot]}]
+  "Runs every public read over writable/read-only acls plus EACL-captured and
+  explicitly selected snapshots. Caller native database values are absent by
+  construction from the public target matrix."
+  [{:keys [writable read-only]}]
   (let [captured (eacl/snapshot writable)
         selected
         (eacl/snapshot writable consistency/minimize-latency)
-        direct (direct-snapshot writable (snapshot-db captured))
         targets
         [[:writable-acl writable]
          [:read-only-acl read-only]
          [:captured-snapshot captured]
-         [:selected-snapshot selected]
-         [:direct-snapshot direct]]
+         [:selected-snapshot selected]]
         subject (->user "user-1")
         resource (->server "server-1")
         demand {:subject subject :permission :view :resource resource}
@@ -144,9 +189,8 @@
             (normalize-permission-tree (:tree-root result)))]]]
     (try
       (is (every? eacl/acl? [writable read-only]))
-      (is (every? eacl/snapshot? [captured selected direct]))
+      (is (every? eacl/snapshot? [captured selected]))
       (is (identical? (:runtime captured) (:runtime selected)))
-      (is (identical? (:runtime captured) (:runtime direct)))
       (doseq [[operation call project] operations]
         (testing (name operation)
           (let [observed
@@ -157,7 +201,6 @@
             (is (apply = (map second observed))
                 (pr-str observed)))))
       (finally
-        (eacl/release! direct)
         (eacl/release! selected)
         (eacl/release! captured)))))
 

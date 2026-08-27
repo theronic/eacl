@@ -4,6 +4,7 @@
             [eacl.authorization-oracle :as oracle]
             [eacl.formal.differential-runner :as differential]
             [eacl.formal.generators :as generators]
+            [eacl.formal.operator-campaign :as operator-campaign]
             [eacl.formal.semantics-bridge :as formal]))
 
 (defn- mismatch
@@ -39,6 +40,11 @@
                    :message (ex-message error)
                    :data (ex-data error)}})))
 
+(defn- any-mismatch
+  [fixture]
+  (or (mismatch fixture)
+      (operator-campaign/mismatch fixture)))
+
 (defn- minimize-mismatch
   [fixture]
   (loop [current fixture]
@@ -47,7 +53,7 @@
               (sort-by
                (juxt #(count (:relationships %))
                      #(count (:objects %)))
-               (filter mismatch (generators/shrink-graph current))))]
+               (filter any-mismatch (generators/shrink-graph current))))]
       (recur smaller)
       current)))
 
@@ -77,7 +83,7 @@
         :checked checked
         :coverage coverage})
       (let [fixture (generators/coherent-schema seed)]
-        (if-let [difference (mismatch fixture)]
+        (if-let [difference (any-mismatch fixture)]
           (let [minimized (minimize-mismatch fixture)
                 failure
                 {:schema-version 1

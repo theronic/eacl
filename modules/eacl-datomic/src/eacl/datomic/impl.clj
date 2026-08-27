@@ -10,7 +10,8 @@
    [eacl.engine.v8 :as engine]
    [eacl.relationships.endpoint-pair :as endpoint-pair]
    [eacl.relationships.filters :as relationship-filters]
-   [eacl.relationships.storage :as relationship-storage]))
+   [eacl.relationships.storage :as relationship-storage]
+   [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def Relation base/Relation)
 (def Permission base/Permission)
@@ -28,6 +29,10 @@
   snapshot (eliminating duplicate proof reads, path walks, and plan
   compiles inside one raw request without cross-request publication).
 
+  The request-local generation also owns the structural expression cache, so
+  the root-existence probe and subsequent plan compilation share one decode
+  per immutable permission entity.
+
   A caller-supplied schema cache (the public client, or a v7-compat caller
   binding impl.indexed/*schema-cache*) keeps the pre-existing contract: no
   stamp read here because the bound generation already carries the plan
@@ -36,10 +41,13 @@
   [[adapter-sym db] & body]
   `(let [db# ~db
          bound-cache# impl.indexed/*schema-cache*
-         ~adapter-sym (backend/basis-adapter db# {})]
-     (binding [engine/*schema-cache*
-               (or bound-cache#
-                   (engine/request-schema-cache ~adapter-sym))
+         ~adapter-sym (backend/basis-adapter db# {})
+         schema-cache#
+         (or bound-cache#
+             (engine/request-schema-cache ~adapter-sym))]
+     (binding [engine/*schema-cache* schema-cache#
+               expression-persistence/*structural-cache*
+               (:expression-metrics schema-cache#)
                engine/*recursive-traversal-limits*
                impl.indexed/*recursive-traversal-limits*
                engine/*recursive-traversal-stats*

@@ -63,11 +63,19 @@ These obligations are tested and runtime-guarded, not proved as Clojure facts.
 The Phase A set-algebra models prove properties of finite typed expressions,
 strictly stratified negation, candidate covers, scalar and aligned vector
 predicates, bounded batching, least-path pagination, seekable set kernels,
-anchor-gated recursive conjunction, and signed cache invalidation. The two
-generated callable boundaries are `EaclKernel.__default/DecideOperatorBatch`
-and `EaclKernel.__default/DecideOperatorSignedGraph`. They are pure abstract
+anchor-gated recursive conjunction, and signed cache invalidation. The three
+generated callable boundaries are `EaclKernel.__default/DecideOperatorBatch`,
+`EaclKernel.__default/DecideOperatorBatchAdvance`, and
+`EaclKernel.__default/DecideOperatorSignedGraph`. They are pure abstract
 policy and signed-graph validation decisions exercised only by formal smoke
-tests; neither is called by production. The proof-heavy aggregate remains in
+tests; none is called by production. `DecideOperatorBatchAdvance` exports the
+demand-clamped, rejection-gated batch-growth rule the engine actually runs —
+`AdaptiveBatching.GrownWidth` remains the unconditional-doubling envelope
+model, and `AdaptiveBatching.ScheduledNextWidth` proves the shipped rule
+stays inside that envelope while never overreading the unresolved demand —
+and the production schedule in `eacl.operator.batch-schedule/advance` is
+bound to the generated decision step for step by a randomized differential,
+not by a re-copy of the formula. The proof-heavy aggregate remains in
 `OperatorProofKernel.dfy`, while the small generated policy is refined to the
 abstract batching and density models by
 `OperatorGeneratedPolicyRefinement.dfy`. This separation keeps proof-only

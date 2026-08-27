@@ -588,6 +588,10 @@ jobs:
                    (throw (ex-info \"generator/mutation controls failed\" result)))
                  result))"
 
+      - name: Verify the nREPL gate failure path can fail this build
+        run: |
+          EACL_NREPL_PORT=7788 bin/formal gate-selftest
+
       - name: Replay minimized counterexample corpus
         run: |
           EACL_NREPL_PORT=7788 bin/formal counterexample-replay

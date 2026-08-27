@@ -1,0 +1,169 @@
+{:baseline
+ {:tree "/Users/petrus/code/eacl/core-main",
+  :commit "9900b8a",
+  :label :origin-main},
+ :captured-at "2026-08-26",
+ :protocol
+ {:harness
+  "modules/eacl-datascript/test/eacl/operator_engine/union_performance.clj",
+  :campaigns-per-side 3,
+  :alternating-fresh-jvms true,
+  :statistic :median-of-campaign-medians,
+  :samples-per-operation 31,
+  :warmups 50,
+  :cache :cold-both-sides,
+  :note
+  "origin/main's own perf seeder keeps non-answer cache tiers enabled; its copied harness was patched to construct the client with cache/no-cache so both sides measure the cold path, matching the recorded frozen-versus-head protocol."},
+ :purpose :head-versus-origin-main-union-only-cold-comparison,
+ :head
+ {:tree "/Users/petrus/code/eacl/core2",
+  :branch "agent/close-operator-stack-review-findings",
+  :base-pr-head "7faac92"},
+ :conclusions
+ {:first-pages
+  :head-18-to-57-percent-faster-at-roughly-half-the-allocation,
+  :empty-pages :head-42-to-50-percent-faster,
+  :exhaustive-count-and-enumeration :parity-within-6-percent,
+  :point-checks :head-31-to-35-percent-slower,
+  :work-counters
+  :differ-between-engines-except-empty-pages-as-expected-across-the-stack-rewrite,
+  :recorded-gain-reproduction
+  "The recorded frozen-versus-head union-only gains partially reproduce against origin/main on this host: the empty-page direction reproduces (-66% recorded frozen-vs-head; -42%/-50% head-vs-main), while the point-check gain does not - head point checks are 31-35% slower than origin/main's engine despite being faster than the frozen stack base."},
+ :environment
+ {:java-version "26.0.2",
+  :os "Mac OS X 26.4.1",
+  :architecture "aarch64",
+  :processors 14,
+  :clojure "1.11.4"},
+ :format-version 1,
+ :final-page-characterization
+ {:harness
+  "modules/eacl-datomic/test/eacl/bench/version_comparison.clj",
+  :fixture
+  {:num-accounts 100,
+   :teams-per-acct 4,
+   :vpcs-per-acct 2,
+   :servers-per-acct 300,
+   :resources 30000,
+   :page-size 50,
+   :store :datomic-mem},
+  :finding
+  "The 600th and final page of the 30k walk must prove exhaustion, so it consumes the remaining recursive closure past the last result and exceeds the default 100k consumed-values guardrail; pages 1-599 stay flat at 1.5-2.0 ms under checkpoints.",
+  :default-limits
+  {:head
+   {:page 600,
+    :error :eacl.recursive-traversal/limit-exceeded,
+    :limit-kind :advanced-datoms,
+    :limit 100000,
+    :previous-page-ms 1.535},
+   :frozen-base-8dc3b16
+   {:page 600,
+    :error :eacl.recursive-traversal/limit-exceeded,
+    :limit-kind :advanced-datoms,
+    :limit 100000,
+    :previous-page-ms 1.995}},
+  :raised-limits
+  {:client-opts
+   {:recursive-traversal-limits {:max-advanced-datoms 4000000}},
+   :head {:pages 600, :final-page-ms 683.1, :final-page-count 50},
+   :frozen-base-8dc3b16
+   {:pages 600, :final-page-ms 740.0, :final-page-count 50}},
+  :disposition
+  "Not a #153 regression: the frozen stack base fails identically and completes identically under raised limits. The documented remedy for exhaustive walks at this scale is the :recursive-traversal-limits client opt, matching the deployed demo's configuration; the final-page exhaustion cost itself is the known uncached-exhaustive trade-off recorded at release."},
+ :results
+ {[:acyclic :user-1-first-page-20]
+  {:main-median-ms 0.767,
+   :head-median-ms 0.571,
+   :latency-ratio 0.745,
+   :allocation-ratio 0.555,
+   :deterministic-work-counters-equal? false},
+  [:recursive :stranger-empty-page]
+  {:main-median-ms 0.062,
+   :head-median-ms 0.036,
+   :latency-ratio 0.581,
+   :allocation-ratio 0.396,
+   :deterministic-work-counters-equal? true},
+  [:acyclic :owner-first-page-20]
+  {:main-median-ms 0.708,
+   :head-median-ms 0.461,
+   :latency-ratio 0.651,
+   :allocation-ratio 0.546,
+   :deterministic-work-counters-equal? false},
+  [:recursive :user-1-full-enumeration-100]
+  {:main-median-ms 7.674,
+   :head-median-ms 6.758,
+   :latency-ratio 0.881,
+   :allocation-ratio 0.921,
+   :deterministic-work-counters-equal? false},
+  [:acyclic :user-1-full-enumeration-100]
+  {:main-median-ms 62.512,
+   :head-median-ms 64.27,
+   :latency-ratio 1.028,
+   :allocation-ratio 0.969,
+   :deterministic-work-counters-equal? false},
+  [:acyclic :stranger-empty-page]
+  {:main-median-ms 0.092,
+   :head-median-ms 0.046,
+   :latency-ratio 0.505,
+   :allocation-ratio 0.429,
+   :deterministic-work-counters-equal? true},
+  [:acyclic :reverse-first-page-20]
+  {:main-median-ms 0.864,
+   :head-median-ms 0.711,
+   :latency-ratio 0.822,
+   :allocation-ratio 0.651,
+   :deterministic-work-counters-equal? false},
+  [:recursive :super-user-count]
+  {:main-median-ms 4.588,
+   :head-median-ms 4.869,
+   :latency-ratio 1.061,
+   :allocation-ratio 1.014,
+   :deterministic-work-counters-equal? false},
+  [:recursive :owner-first-page-20]
+  {:main-median-ms 0.666,
+   :head-median-ms 0.427,
+   :latency-ratio 0.641,
+   :allocation-ratio 0.56,
+   :deterministic-work-counters-equal? false},
+  [:recursive :user-1-first-page-20]
+  {:main-median-ms 0.641,
+   :head-median-ms 0.383,
+   :latency-ratio 0.597,
+   :allocation-ratio 0.564,
+   :deterministic-work-counters-equal? false},
+  [:acyclic :point-check]
+  {:main-median-ms 0.06,
+   :head-median-ms 0.078,
+   :latency-ratio 1.309,
+   :allocation-ratio 1.005,
+   :deterministic-work-counters-equal? false},
+  [:acyclic :super-user-first-page-20]
+  {:main-median-ms 0.843,
+   :head-median-ms 0.661,
+   :latency-ratio 0.784,
+   :allocation-ratio 0.559,
+   :deterministic-work-counters-equal? false},
+  [:recursive :reverse-first-page-20]
+  {:main-median-ms 0.543,
+   :head-median-ms 0.236,
+   :latency-ratio 0.434,
+   :allocation-ratio 0.437,
+   :deterministic-work-counters-equal? false},
+  [:acyclic :super-user-count]
+  {:main-median-ms 15.009,
+   :head-median-ms 14.658,
+   :latency-ratio 0.977,
+   :allocation-ratio 1.007,
+   :deterministic-work-counters-equal? false},
+  [:recursive :super-user-first-page-20]
+  {:main-median-ms 0.72,
+   :head-median-ms 0.397,
+   :latency-ratio 0.552,
+   :allocation-ratio 0.574,
+   :deterministic-work-counters-equal? false},
+  [:recursive :point-check]
+  {:main-median-ms 0.047,
+   :head-median-ms 0.064,
+   :latency-ratio 1.348,
+   :allocation-ratio 0.98,
+   :deterministic-work-counters-equal? false}}}

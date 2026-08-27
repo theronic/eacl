@@ -9,14 +9,21 @@
             [eacl.relationships.storage :as relationship-storage]
             [eacl.request.counters :as request-counters]))
 
-(def physical-policy-version :datahike-density-bounded-v1)
+(def physical-policy-version :datahike-density-bounded-v2)
 (def density-multiplier 2)
 (def physical-policy-identity
+  "The dense range kernel seeks from the batch's first candidate, and only a
+  direct DB can honor that bound: temporal and filter wrappers fall back to
+  exact visible datoms, where a range scan would realize and sort the whole
+  endpoint prefix. Wrapped bases therefore always take the exact-probe
+  kernel, whose realization is bounded by the candidate count on every
+  admissible basis kind."
   {:id physical-policy-version
    :parameters
    {:density-multiplier density-multiplier
     :maximum-width 256
     :dense-kernel :endpoint-local-bounded-prefix-v1
+    :dense-kernel-bases :direct-database-values
     :sparse-kernel :sorted-exact-seek-v1}})
 
 (def ^:dynamic *physical-stats*
@@ -138,7 +145,9 @@
     []
     (let [ordered (ordered-candidates candidates)
           descriptor (shape request)
-          dense? (dense-span? ordered)
+          ;; A wrapped basis cannot honor the dense kernel's seek bound, so
+          ;; selecting it there would realize the entire endpoint prefix.
+          dense? (and (ddb/direct-db? db) (dense-span? ordered))
           decisions (if dense?
                       (dense-decisions db descriptor ordered)
                       (sparse-decisions db descriptor ordered))]

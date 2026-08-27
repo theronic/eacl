@@ -23,7 +23,10 @@
                      (str (random-uuid))))))))))
 
 (defn basis-kind
-  "Classifies one DataScript database value without touching an EACL runtime."
+  "Classifies one DataScript database value without touching an EACL runtime.
+
+  This is structural classification only. It cannot distinguish `db-with`
+  products; public EACL APIs therefore never admit arbitrary native values."
   [db]
   (cond
     (not (dsdb/db? db)) :foreign-backend
