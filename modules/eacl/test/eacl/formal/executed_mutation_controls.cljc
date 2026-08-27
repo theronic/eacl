@@ -785,16 +785,15 @@
 ;;; mutation, and every control additionally proves its baseline observation
 ;;; executed the mutated definition at least once.
 
-(defn- operator-probe-adapter
-  "Builds a v8 adapter over `schema-source` whose relationship tuples are
+(defn- operator-probe-adapter-from-validated
+  "Builds a v8 adapter over `validated` schema whose relationship tuples are
   exactly `relationships`: a set of
   `[subject-type subject-eid relation-name resource-type resource-eid]`.
   Relation names resolve to the deterministic relation ids the sealed plan
   sees, and both scan directions honor strict eid order and exclusive or
   inclusive bounds."
-  [schema-source relationships]
-  (let [validated (resolver/validate-schema schema-source)
-        candidate (persistence/candidate-schema validated)
+  [validated relationships]
+  (let [candidate (persistence/candidate-schema validated)
         relation-key (juxt :eacl.relation/resource-type
                            :eacl.relation/relation-name
                            :eacl.relation/subject-type)
@@ -898,6 +897,12 @@
                              resource-type resource-eid]))
         :all-permission-nodes (constantly (set (keys expressions)))})})))
 
+(defn- operator-probe-adapter
+  [schema-source relationships]
+  (operator-probe-adapter-from-validated
+   (resolver/validate-schema schema-source)
+   relationships))
+
 (defn- operator-typed-or
   "Runs `probe`, returning its value or `{:typed <:eacl/error>}` when it
   throws. The recursive engine's internal bounded-versus-exact differential
@@ -940,14 +945,13 @@ definition doc {
 
 (defn- operator-precedence-decisions
   "Validates, seals, and point-evaluates the mixed-operator schema through
-  the production pipeline. The parse runs inside this probe, so mutations at
-  the parse boundary are observed as changed decisions."
-  []
+  the production pipeline from an already observed parser result."
+  [parse-tree]
   (operator-typed-or
    (fn []
-     (let [adapter (operator-probe-adapter
-                    operator-precedence-schema
-                    operator-precedence-relationships)
+     (let [validated (resolver/resolve-parse-tree parse-tree)
+           adapter (operator-probe-adapter-from-validated
+                    validated operator-precedence-relationships)
            plan (operator-plan/seal-plan adapter [:doc :view])]
        (mapv (fn [subject-eid]
                (operator-evaluator/check-eids
@@ -955,22 +959,40 @@ definition doc {
                  :subject-eid subject-eid :resource-eid 30}))
              [1 2 3 4 5 6 7])))))
 
+(defn- operator-precedence-parse
+  []
+  ;; `apply` keeps the parser invocation first-class under advanced CLJS
+  ;; optimization, so the production mutation is actually executed instead
+  ;; of bypassed by a statically dispatched arity call.
+  (apply parser/parse-schema [operator-precedence-schema]))
+
 (defn- parse-schema-rewriting
   [original from to]
-  (fn [source & options]
-    (apply original (str/replace source from to) options)))
+  (fn
+    ([source]
+     (original (str/replace source from to) {}))
+    ([source options]
+     (original (str/replace source from to) options))))
+
+(defn- parse-schema-counting
+  [original executed]
+  (fn
+    ([source]
+     (vswap! executed inc)
+     (original source {}))
+    ([source options]
+     (vswap! executed inc)
+     (original source options))))
 
 (defn operator-wrong-precedence-killed?
   []
   (let [original parser/parse-schema
         executed (volatile! 0)
-        counted (fn [& args]
-                  (vswap! executed inc)
-                  (apply original args))]
+        counted (parse-schema-counting original executed)]
     (and
      (= operator-precedence-expected
         (with-redefs [parser/parse-schema counted]
-          (operator-precedence-decisions)))
+          (operator-precedence-decisions (operator-precedence-parse))))
      (pos? @executed)
      ;; Conventional intersection-before-union precedence: subject 1, a bare
      ;; reader without approval, becomes authorized.
@@ -980,19 +1002,18 @@ definition doc {
                           original
                           "reader + writer & approved - banned"
                           "(reader + (writer & approved)) - banned")]
-             (operator-precedence-decisions))))))
+             (operator-precedence-decisions
+              (operator-precedence-parse)))))))
 
 (defn operator-swapped-exclusion-killed?
   []
   (let [original parser/parse-schema
         executed (volatile! 0)
-        counted (fn [& args]
-                  (vswap! executed inc)
-                  (apply original args))]
+        counted (parse-schema-counting original executed)]
     (and
      (= operator-precedence-expected
         (with-redefs [parser/parse-schema counted]
-          (operator-precedence-decisions)))
+          (operator-precedence-decisions (operator-precedence-parse))))
      (pos? @executed)
      ;; Swapped exclusion operands authorize exactly the banned subjects.
      (not= operator-precedence-expected
@@ -1001,7 +1022,8 @@ definition doc {
                           original
                           "reader + writer & approved - banned"
                           "banned - (reader + writer & approved)")]
-             (operator-precedence-decisions))))))
+             (operator-precedence-decisions
+              (operator-precedence-parse)))))))
 
 (defn operator-unsigned-dependency-killed?
   []
