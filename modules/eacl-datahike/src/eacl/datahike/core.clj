@@ -56,6 +56,57 @@
     (catch Exception error
       (throw (or (typed-transaction-error error) error)))))
 
+(defn- native-with
+  [db tx-data]
+  (d/with db (vec tx-data)))
+
+(defn- datom-attribute
+  [db-before db-after attribute]
+  (if (keyword? attribute)
+    attribute
+    (or (:db/ident (d/entity db-after attribute))
+        (:db/ident (d/entity db-before attribute)))))
+
+(defn- normalize-report-datom
+  [db-before db-after datom]
+  {:e (:e datom)
+   :a (datom-attribute db-before db-after (:a datom))
+   :v (:v datom)
+   :tx (:tx datom)
+   :added (boolean (:added datom))})
+
+(defn- schema-entity?
+  [db entity-id]
+  (let [entity (d/entity db entity-id)]
+    (or (= "schema-string" (:eacl/id entity))
+        (some? (:eacl.relation/relation-name entity))
+        (some? (:eacl.permission/permission-name entity)))))
+
+(defn- schema-storage-datom?
+  [db-before db-after {:keys [e a]}]
+  (let [attribute-namespace (namespace a)
+        schema-attribute?
+        (or (= a :eacl/schema-string)
+            (= a :eacl/schema-generation)
+            (= attribute-namespace "eacl.relation")
+            (= attribute-namespace "eacl.permission")
+            (and (= a :eacl/id)
+                 (or (schema-entity? db-before e)
+                     (schema-entity? db-after e))))]
+    (and schema-attribute?
+         (not= (get (d/entity db-before e) a)
+               (get (d/entity db-after e) a)))))
+
+(defn- relation-coordinate
+  [db relation-id]
+  (when relation-id
+    (let [entity (d/entity db relation-id)
+          resource-type (:eacl.relation/resource-type entity)
+          relation-name (:eacl.relation/relation-name entity)
+          subject-type (:eacl.relation/subject-type entity)]
+      (when (and resource-type relation-name subject-type)
+        [:relation resource-type relation-name subject-type]))))
+
 (def ^:private api
   {:backend-id :datahike
    :db d/db
@@ -72,16 +123,23 @@
       :exact-locator
       (some-> (get-in db [:meta :datahike/commit-id]) str)})
    :relationship-retraction-count relationship-retraction-count
+   :native-with native-with
+   :normalize-report-datom normalize-report-datom
+   :transaction-datom? #(= :db/txInstant (:a %))
+   :schema-storage-datom? schema-storage-datom?
+   :relation-version-attribute :eacl/relation-version
    :transact! transact-native!
    ;; Vars, not values: late binding keeps instrumentation (with-redefs in
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
             :generation #'schema/current-schema-generation
+            :plan-replacement #'schema/plan-schema-replacement
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
           :relationship-relation-id #'impl/relationship-relation-id
+          :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship
           :tx-delete-object #'impl/tx-delete-object
           :affected-relation-ids #'impl/affected-relation-ids
@@ -147,13 +205,8 @@
   [conn config-opts]
   (orchestration/make-client api conn config-opts))
 
-(defn snapshot
-  "Constructs a public snapshot over an application-owned Datahike DB."
-  [acl db]
-  (orchestration/direct-snapshot acl :datahike db))
-
 (defn db
-  "Returns the immutable Datahike DB wrapped by `snapshot`."
+  "Returns the immutable Datahike DB held by an EACL-created snapshot."
   [snapshot]
   (orchestration/snapshot-db snapshot :datahike))
 

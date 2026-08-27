@@ -116,6 +116,18 @@
    :atomic-managed-datascript-and-all-backend-contracts-passed
    :claim
    :conditional-exact-and-managed-atomic-projection-refinement}
+  :speculative-cache-coherence
+  {:status :passed
+   :verified-obligations 11
+   :source "formal/dafny/SpeculativeCacheCoherence.dfy"
+   :temporal-source "formal/tla/EaclSpeculativeCache.tla"
+   :report "formal/verification/speculative-cache-coherence.edn"
+   :integration-status
+   :internal-source-audit-and-adversarial-cross-backend-tests-passed
+   :claim
+   :conditional-explicit-provenance-zero-publication-committed-disjoint-read-through-and-cursor-isolation
+   :qualification
+   :proof-only-models-with-internal-not-mechanized-source-refinement}
   :permission-tree-expansion
   {:status :passed
    :verified-obligations 62
@@ -161,7 +173,7 @@
   {:status :passed
    :verified-obligations 35
    :whole-tree-obligation-delta-since-phase-a 36
-   :whole-tree-obligations 9371
+   :whole-tree-obligations 9382
    :generated-policy-leaf-obligations 20
    :proof-refinement-leaf-obligations 15
    :sources
@@ -196,7 +208,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9371
+   :verified-obligations 9382
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -381,7 +393,7 @@
  {:report "formal/verification/public-source-closure.json"
   :source-files 101
   :public-roots 70
-  :reachable-definitions 2107}
+  :reachable-definitions 2115}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 47

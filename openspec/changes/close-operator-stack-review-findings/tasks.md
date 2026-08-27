@@ -2,14 +2,14 @@
 
 Ordered by severity. Sections 1 and 2 are merge blockers.
 
-## 1. Refuse bases that are not provably committed (critical)
+## 1. Isolate public snapshots from caller database values (critical)
 
-- [x] 1.1 Add a failing regression first: capture `(:db-after (d/with db tx))` through `eacl.datomic.core/snapshot` on a `reader - banned` fixture, then assert the live client and a head snapshot both answer `false` for the banned subject. Control (same fixture, no capture) must already answer `false`. Mirror it for Datahike and DataScript `db-with`.
-- [x] 1.2 Give the Datomic classifier a committedness witness (the transaction at `basis-t` present in the log), returning `:speculative` when it cannot be witnessed; do the same for Datahike and DataScript, or confine unwitnessable values to request-local cache context.
-- [x] 1.3 Make `eacl.client.orchestration/direct-snapshot` refuse `:speculative` with `:eacl/unsupported-database-value` before any identity, cache, or proof-frame construction.
-- [x] 1.4 Confirm Datalevin's `read-snapshot?` gate already satisfies the new requirement; record it in the adapter certification rather than re-implementing.
-- [x] 1.5 Add the admission matrix to cross-backend adapter certification: ordinary admitted, as-of admitted, filtered/since/history/speculative refused with typed errors.
-- [x] 1.6 Re-run the probes from design "Live probes" to confirm no behavioral regression in the snapshot path.
+- [x] 1.1 Preserve the same-`t`, same-`:db/txInstant`, different-content poisoning regression with a no-capture control.
+- [x] 1.2 Remove public raw-database snapshot constructors and accept only EACL clients or EACL-created snapshots as public authorization targets.
+- [x] 1.3 Add explicit speculative provenance through composable `eacl/with` and `eacl/with-schema` snapshots.
+- [x] 1.4 Disable speculative exact-tier lookup and every persistent publication path while retaining validated committed managed-proof reuse for complete disjoint effects.
+- [x] 1.5 Classify effects from native transaction-report datoms, fail unknown dimensions closed to uncached evaluation, and make unsupported adapter capabilities explicit.
+- [x] 1.6 Run collision, cache-publication, schema, cursor-provenance, and cross-backend conformance suites.
 
 ## 2. Make the assurance gates able to fail (critical)
 

@@ -190,9 +190,7 @@
     (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-authorization-target-matrix!
      {:writable client
-      :read-only (datahike/make-client conn {:read-only? true})
-      :snapshot-db datahike/db
-      :direct-snapshot datahike/snapshot})
+      :read-only (datahike/make-client conn {:read-only? true})})
     (contract/assert-unified-filter-validation! client)
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!

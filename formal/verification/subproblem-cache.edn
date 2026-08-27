@@ -6,6 +6,7 @@
  {:sources
   ["modules/eacl/src/eacl/subproblem_cache.cljc"
    "modules/eacl/src/eacl/cache.cljc"
+   "modules/eacl/src/eacl/client/orchestration.cljc"
    "modules/eacl/src/eacl/continuation.cljc"
    "modules/eacl-datomic/src/eacl/datomic/cache.clj"]
   :represented-entry-kinds :completed-immutable-values-only
@@ -66,7 +67,16 @@
    [:completed-artifact-only-store
     :managed-hit-current-source-schema-scalar-frontier]
    :mutation-controls [:managed-proof-bypass]
-   :status :typechecked}]
+   :status :typechecked}
+  {:source "formal/tla/EaclSpeculativeCache.tla"
+   :configuration "formal/tla/EaclSpeculativeCache.cfg"
+   :models
+   [:no-speculative-publication
+    :no-speculative-exact-hit
+    :committed-root-disjoint-managed-read-through
+    :unknown-effect-fallback
+    :cumulative-effects]
+   :status :typechecked-and-bounded-safety-checked}]
  :executable-conformance
  {:generated-production-boundary
   eacl.formal.production-kernel/subproblem-cache-decision

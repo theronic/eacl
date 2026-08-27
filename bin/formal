@@ -347,6 +347,7 @@ case "$command" in
       "$repo_root/formal/tla/EaclSubproblemCache.tla" \
       "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
       "$repo_root/formal/tla/EaclOperatorSafety.tla"
     do
       java -cp "$tla_jar" tla2sany.SANY "$model"
@@ -383,6 +384,11 @@ case "$command" in
       "managed-projection-bounded" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.cfg" \
+      8
+    apalache_check \
+      "speculative-cache-bounded" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.cfg" \
       8
     apalache_check \
       "operator-safety-bounded" \
@@ -422,6 +428,10 @@ case "$command" in
       "managed-projection" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
       "$repo_root/formal/tla/EaclManagedProjectionCache.cfg"
+    apalache_induction \
+      "speculative-cache" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
+      "$repo_root/formal/tla/EaclSpeculativeCache.cfg"
     apalache_induction \
       "operator-safety" \
       "$repo_root/formal/tla/EaclOperatorSafety.tla" \

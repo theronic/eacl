@@ -101,13 +101,20 @@
 
 (defn- validate-basis-identity!
   [basis-identity]
-  (when-not (and (map? basis-identity)
-                 (= source/semantic-identity-keys
-                    (set (keys basis-identity))))
-    (invalid-context!
-     "Request context basis identity must be the closed semantic identity."
-     {:basis-identity basis-identity
-      :expected-keys source/semantic-identity-keys})))
+  (let [identity-keys (when (map? basis-identity)
+                        (set (keys basis-identity)))
+        speculative-identity-keys
+        (conj source/semantic-identity-keys :speculative-id)]
+    (when-not (and (map? basis-identity)
+                   (or (= source/semantic-identity-keys identity-keys)
+                       (and (= speculative-identity-keys identity-keys)
+                            (string? (:speculative-id basis-identity))
+                            (seq (:speculative-id basis-identity)))))
+      (invalid-context!
+       "Request context basis identity must be the closed semantic identity."
+       {:basis-identity basis-identity
+        :expected-keys #{source/semantic-identity-keys
+                         speculative-identity-keys}}))))
 
 (defn lineage-for-basis
   "Returns the one history witness used by every cross-basis artifact."

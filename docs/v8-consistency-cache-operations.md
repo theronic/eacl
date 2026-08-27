@@ -8,7 +8,7 @@ result rendering, and cursor construction all use that value.
 
 | Mode | Datomic | Datahike | DataScript | Datalevin | Completed-answer cache |
 | --- | --- | --- | --- | --- | --- |
-| omitted / `:minimize-latency` | current DB visible to the Peer | current connection DB | current connection DB | new owned read snapshot | exact-first, then automatic proof-backed reuse when certified |
+| omitted / `:minimize-latency` | reuse client pin | reuse client pin | reuse client pin | reuse/acquire the adapter's qualified owned pin | exact-first, then automatic proof-backed reuse when certified |
 | `:fully-consistent` | bounded zero-argument `d/sync` | authoritative head barrier when supported | serialized connection head | new owned read snapshot under the sole-writer topology | enabled for the selected ordinary basis |
 | `:at-least-as-fresh` | targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | bounded acquire/check/release retry | enabled only when selection is an ordinary basis |
 | `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | unsupported | exact-first; managed reuse when the historical value has a readable contract-valid frame |
@@ -20,10 +20,13 @@ evaluates only if the token names that basis; fully-consistent is rejected
 because a value with no source cannot establish a new head barrier. Assertion
 failure occurs before cache lookup, schema planning, or adapter evaluation.
 
-The default performs no synchronization or historical selection. Low-level
-engine functions that accept caller-supplied historical, filtered, or
-prospective database values do not have a managed-cache availability
-guarantee.
+The default performs no synchronization, branch-head request, or historical
+selection after the client has a pin. Evaluation on an EACL snapshot never
+refreshes or replaces it. Public operations do not accept caller-supplied
+historical, filtered, or prospective native database values. Explicit
+`eacl/with` and `eacl/with-schema` snapshots remain on their immutable
+prospective value, never use the native exact tier, may read only a completely
+validated disjoint committed proof, and publish no cache data.
 
 For Datomic, an authenticated same-source exact token ahead of the local Peer
 is a freshness barrier, not an out-of-range snapshot. EACL compares `T` with

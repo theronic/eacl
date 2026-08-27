@@ -163,9 +163,7 @@
        {:writable client
         :read-only
         (datomic/make-client
-         conn {:security-key security-key :read-only? true})
-        :snapshot-db datomic/db
-        :direct-snapshot datomic/snapshot})
+         conn {:security-key security-key :read-only? true})})
       (contract/assert-unified-filter-validation! client)
       (contract/assert-v8-request-cache-controls! client {})
       (contract/assert-v8-cache-disabled!

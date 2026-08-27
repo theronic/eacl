@@ -19,6 +19,13 @@ Responsibilities:
 Exact immutable-snapshot lookup runs first. Complete ordered-generation proof
 reuse across unrelated forward transactions is automatic; unavailable proof
 falls back to exact evaluation.
+Public prospective testing uses `eacl/tx-relationship` plus `eacl/with`, or
+`eacl/with-schema` for permission-schema replacement. Caller-owned Datahike
+database values have no public EACL wrapper. EACL-created speculative snapshots
+are immutable, publication-free readers; complete committed proofs may be read
+only for disjoint dependencies. `:orphan-policy :retain-inert` is
+speculative-only and reports bounded presence diagnostics without tuple counts.
+Internal raw-database injection forfeits coherence guarantees.
 All authorization-relevant mutations must use EACL APIs or EACL-produced
 transaction data/functions transacted intact. After unsupported raw mutation,
 quiesce callers, repair the data, and call

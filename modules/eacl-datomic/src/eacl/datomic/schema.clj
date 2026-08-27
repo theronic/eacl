@@ -9,7 +9,8 @@
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
-            [eacl.schema.model :as model]))
+            [eacl.schema.model :as model]
+            [eacl.schema.replacement-plan :as replacement-plan]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -385,12 +386,38 @@
   (let [relation-eid (d/entid db [:eacl/id (:eacl/id relation)])]
     (if-not relation-eid
       0
-      (reduce (fn [n _] (inc n))
-              0
-              (d/index-range db
-                             relationship-storage/forward-attribute
-                             [subject-type relation-eid resource-type 0]
-                             [subject-type relation-eid resource-type Long/MAX_VALUE])))))
+      (max
+       (reduce (fn [n _] (inc n))
+               0
+               (d/index-range db
+                              relationship-storage/forward-attribute
+                              [subject-type relation-eid resource-type 0]
+                              [subject-type relation-eid resource-type Long/MAX_VALUE]))
+       (reduce (fn [n _] (inc n))
+               0
+               (d/index-range db
+                              relationship-storage/reverse-attribute
+                              [resource-type relation-eid subject-type 0]
+                              [resource-type relation-eid subject-type Long/MAX_VALUE]))))))
+
+(defn relationship-present-for-relation?
+  "A bounded endpoint-index presence decision used only by speculative
+  retain-inert planning. It performs at most one seek per physical direction
+  and deliberately does not enumerate or count relationship tuples."
+  [db {:eacl.relation/keys [resource-type subject-type] :as relation}]
+  (when-let [relation-eid (d/entid db [:eacl/id (:eacl/id relation)])]
+    (boolean
+     (or
+      (first
+       (d/index-range db
+                      relationship-storage/forward-attribute
+                      [subject-type relation-eid resource-type 0]
+                      [subject-type relation-eid resource-type Long/MAX_VALUE]))
+      (first
+       (d/index-range db
+                      relationship-storage/reverse-attribute
+                      [resource-type relation-eid subject-type 0]
+                      [resource-type relation-eid subject-type Long/MAX_VALUE]))))))
 
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."
@@ -671,11 +698,126 @@
       :expressions expressions
       :expression-metadata metadata})))
 
+(defn- plan-schema-candidate
+  [db schema-string new-schema-map
+   {:keys [allow-empty-schema? validate-existing? orphan-policy]
+    :or {validate-existing? true
+         orphan-policy :error}}]
+  (let [existing-schema ((if validate-existing?
+                           read-schema
+                           read-schema-unchecked)
+                         db)
+        _ (when
+           (and (empty? (:definitions new-schema-map))
+                (not allow-empty-schema?)
+                (or (seq (:relations existing-schema))
+                    (seq (:permissions existing-schema))))
+            (throw
+             (ex-info
+              (str "Refusing to replace a non-empty schema with zero definitions."
+                   " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
+              {:type :eacl.schema/empty-schema-guard
+               :eacl/error :eacl.schema/empty-schema-guard
+               :existing
+               {:relations (count (:relations existing-schema))
+                :permissions (count (:permissions existing-schema))}})))
+        deltas (compare-schema existing-schema new-schema-map)
+        semantic
+        (replacement-plan/plan
+         {:deltas deltas
+          :orphan-policy orphan-policy
+          :relationship-count
+          #(count-relationships-using-relation db %)
+          :relationship-present?
+          #(relationship-present-for-relation? db %)})
+        {:keys [relations permissions]} deltas
+        relation-retractions (:retractions relations)
+        permission-retractions
+        (expression-persistence/entity-deletions permissions)
+        relation-addition-entities
+        (mapv (fn [relation]
+                (assoc relation :db/id (d/tempid :db.part/user)))
+              (:additions relations))
+        relation-initial-stamps
+        (mapv (fn [relation]
+                [:db/add (:db/id relation)
+                 :eacl/relation-version "datomic.tx"])
+              relation-addition-entities)
+        schema-entity (or (d/entid db [:eacl/id "schema-string"])
+                          (d/tempid :db.part/user))
+        schema-stamp-entity
+        (cond-> {:db/id schema-entity
+                 :eacl/id "schema-string"
+                 :eacl/permission-storage-version
+                 permission-storage-version}
+          (some? schema-string)
+          (assoc :eacl/schema-string schema-string))
+        tx-data
+        (vec
+         (concat
+          relation-addition-entities
+          relation-initial-stamps
+          (:additions permissions)
+          (for [relation relation-retractions]
+            [:db.fn/retractEntity [:eacl/id (:eacl/id relation)]])
+          (for [permission permission-retractions]
+            [:db.fn/retractEntity [:eacl/id (:eacl/id permission)]])
+          [schema-stamp-entity]))
+        relation-commit-guards
+        (mapv
+         (fn [relation]
+           [:eacl.fn/assert-relation-unused
+            (:eacl.relation/resource-type relation)
+            (d/entid db [:eacl/id (:eacl/id relation)])
+            (:eacl.relation/subject-type relation)])
+         relation-retractions)
+        no-op? (not (some seq
+                          [(:additions relations)
+                           (:retractions relations)
+                           (:additions permissions)
+                           (:retractions permissions)]))]
+    (let [tx-data (if no-op? [] tx-data)]
+      (assoc semantic
+             :tx-data tx-data
+             :speculative-tx-data
+             (if no-op?
+               []
+               (conj tx-data
+                     [:db/add schema-entity :eacl/schema-version (d/squuid)]))
+             :relation-commit-guards relation-commit-guards
+             :schema-entity schema-entity
+             :schema-stamp-entity schema-stamp-entity
+             :no-op? no-op?
+             :schema-string schema-string))))
+
+(defn plan-schema-replacement
+  "Pure prospective schema replacement plan for one immutable Datomic db.
+  Parsing, validation, semantic diffing, orphan policy, transaction data and
+  stable effect identities are shared with committed `write-schema!`."
+  [db schema-string options]
+  (let [expression-limits
+        (expression-policy/normalize-client-limits
+         (:expression-limits options))
+        new-schema-map
+        (expression-persistence/candidate-schema
+         (expression-resolver/validate-schema schema-string expression-limits))]
+    (binding [expression-persistence/*expression-limits* expression-limits]
+      (plan-schema-candidate db schema-string new-schema-map options))))
+
+(defn- committed-retain-inert!
+  []
+  (throw
+   (ex-info
+    ":orphan-policy :retain-inert is available only through eacl/with-schema."
+    {:type :eacl.schema/invalid-orphan-policy
+     :eacl/error :eacl.schema/invalid-orphan-policy
+     :orphan-policy :retain-inert
+     :operation :write-schema!})))
+
 (defn- write-schema-candidate!
-  [conn schema-string new-schema-map
-   {:keys [allow-empty-schema? validate-existing?]
-    :or {validate-existing? true}}
-   known-schema-version]
+  [conn schema-string new-schema-map options known-schema-version]
+  (when (= :retain-inert (:orphan-policy options))
+    (committed-retain-inert!))
   ;; Fresh/partially installed v7 databases may not have the stamp
   ;; attributes yet. This is schema installation, not a v6 compatibility
   ;; path. :eacl/relation-version is installed the same way so a database
@@ -694,126 +836,52 @@
                   (conj assert-relation-unused-fn-definition))]
     (when (seq missing)
       @(d/transact conn missing)))
-  (let [db                     (d/db conn)
-        existing-schema        ((if validate-existing?
-                                  read-schema
-                                  read-schema-unchecked)
-                                db)
-        _                      (when
-                                 (and (empty? (:definitions new-schema-map))
-                                      (not allow-empty-schema?)
-                                      (or (seq (:relations existing-schema))
-                                          (seq (:permissions existing-schema))))
-                                 (throw
-                                  (ex-info
-                                   (str "Refusing to replace a non-empty schema with zero definitions."
-                                        " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                   {:type :eacl.schema/empty-schema-guard
-                                    :eacl/error :eacl.schema/empty-schema-guard
-                                    :existing
-                                    {:relations (count (:relations existing-schema))
-                                     :permissions (count (:permissions existing-schema))}})))
-        deltas                 (compare-schema existing-schema new-schema-map)
-        {:keys [relations permissions]} deltas
-        relation-retractions   (:retractions relations)
-        permission-retractions
-        (expression-persistence/entity-deletions permissions)]
-
-       ;; Check for orphaned relationships.
-    (doseq [rel relation-retractions]
-      (let [cnt (count-relationships-using-relation db rel)]
-        (when (pos? cnt)
-          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                               " because it is used by " cnt " relationships.")
-                          {:type :eacl.schema/relation-in-use
-                           :eacl/error :eacl.schema/relation-in-use
-                           :relation rel
-                           :count cnt})))))
-
-       ;; Transact changes.
-    (let [schema-changed? (boolean
-                           (or (seq (:additions relations))
-                               (seq relation-retractions)
-                               (seq (:additions permissions))
-                               (seq permission-retractions)))
+  (let [db (d/db conn)
+        plan (plan-schema-candidate
+              db schema-string new-schema-map options)
+        deltas (:deltas plan)
+        schema-changed? (not (:no-op? plan))
              ;; A connection-backed client passes the version its generation
              ;; was built from. A direct caller uses the version in this exact
              ;; db snapshot. Either value becomes the CAS expectation; a stale
              ;; client therefore fails closed instead of relabeling a new diff.
-          current-version (if (= ::read-current-version
-                                 known-schema-version)
-                            (impl.indexed/schema-version db)
-                            known-schema-version)
-          stamp-missing? (nil? current-version)
-          stamp-schema? (or schema-changed? stamp-missing?)
-          next-version (if stamp-schema?
-                         (d/squuid)
-                         current-version)
-          schema-entity (or (d/entid db [:eacl/id "schema-string"])
-                            (d/tempid :db.part/user))
-          relation-commit-guards
-          (mapv
-           (fn [relation]
-             [:eacl.fn/assert-relation-unused
-              (:eacl.relation/resource-type relation)
-              (d/entid db [:eacl/id (:eacl/id relation)])
-              (:eacl.relation/subject-type relation)])
-           relation-retractions)
-          relation-addition-entities
-          (mapv (fn [relation]
-                  (assoc relation
-                         :db/id (d/tempid :db.part/user)))
-                (:additions relations))
-          relation-initial-stamps
-          (mapv (fn [relation]
-                  [:db/add (:db/id relation)
-                   :eacl/relation-version "datomic.tx"])
-                relation-addition-entities)
-          schema-stamp-entity
-          (cond-> {:db/id schema-entity
-                   :eacl/id "schema-string"
-                   :eacl/permission-storage-version
-                   permission-storage-version}
-            (some? schema-string)
-            (assoc :eacl/schema-string schema-string))
-          tx-data
-          (concat
-              ;; Additions
-           relation-addition-entities
-           relation-initial-stamps
-           (:additions permissions)
-              ;; Retractions
-           (for [rel relation-retractions]
-             [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
-           (for [perm permission-retractions]
-             [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
-              ;; Close the orphan-check race in the transactor's db value. A
-              ;; relationship committed after the count above makes this
-              ;; transaction fail instead of deleting an in-use definition.
-           relation-commit-guards
+        current-version (if (= ::read-current-version
+                               known-schema-version)
+                          (impl.indexed/schema-version db)
+                          known-schema-version)
+        stamp-missing? (nil? current-version)
+        stamp-schema? (or schema-changed? stamp-missing?)
+        next-version (if stamp-schema?
+                       (d/squuid)
+                       current-version)
+        schema-entity (:schema-entity plan)
+        tx-data
+        (concat
+         (if (and stamp-missing? (:no-op? plan))
+           [(:schema-stamp-entity plan)]
+           (:tx-data plan))
+         (:relation-commit-guards plan)
               ;; The schema text and generation rotate atomically. CAS with
               ;; old==new is deliberate for a structural no-op: it still
               ;; asserts that another replacement did not commit after the
               ;; diff above was calculated.
-           [schema-stamp-entity
-            [:db.fn/cas schema-entity
-             :eacl/schema-version current-version next-version]])
-          report
-          (if stamp-schema?
-            (transact-schema!
-             conn
-             tx-data
-             current-version)
-            (let [db (d/db conn)]
-              {:db-before db
-               :db-after db
-               :tx-data []
-               :no-op? true}))]
-      (with-meta
-        deltas
-        {:eacl/schema-version next-version
-         :eacl.schema/db-after (:db-after report)
-         :eacl.schema/no-op? (boolean (:no-op? report))}))))
+         [[:db.fn/cas schema-entity
+           :eacl/schema-version current-version next-version]])
+        report
+        (if stamp-schema?
+          (transact-schema!
+           conn
+           tx-data
+           current-version)
+          (let [db (d/db conn)]
+            {:db-before db
+             :db-after db
+             :tx-data []
+             :no-op? true}))]
+    (with-meta deltas
+      {:eacl/schema-version next-version
+       :eacl.schema/db-after (:db-after report)
+       :eacl.schema/no-op? (boolean (:no-op? report))})))
 
 (defn write-schema!
   "Computes delta between existing schema and

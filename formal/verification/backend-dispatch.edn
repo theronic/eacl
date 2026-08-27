@@ -26,7 +26,10 @@
     ;; 61 -> 62 (2026-08-26): the Datalevin at-least-as-fresh acquisition
     ;; reads the candidate's native revision before deciding to wait,
     ;; closing the busy-wait finding without widening the operation set.
-    :invoke-call-count 62
+    ;; 62 -> 63 (2026-08-27): speculative snapshot construction captures the
+    ;; committed root schema generation before applying a local native report.
+    ;; This is an existing literal :schema-generation capability.
+    :invoke-call-count 63
    :operations
    #{:snapshot-id
      :basis-kind
@@ -46,7 +49,7 @@
      :schema-generation
      :proof-frame}}
   :cljs
-  {:invoke-call-count 62
+  {:invoke-call-count 63
    :operations
    #{:snapshot-id
      :basis-kind

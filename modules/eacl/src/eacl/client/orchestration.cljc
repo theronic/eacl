@@ -30,7 +30,8 @@
               :read-relationships               (fn [db query kernel])}
     :extra-client-opt-keys      set of documented per-backend extension
                                 option keys accepted by make-client"
-  (:require [com.rpl.specter :as S]
+  (:require [clojure.set :as set]
+            [com.rpl.specter :as S]
             [eacl.authorization.batch :as batch]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.source :as source]
@@ -46,6 +47,7 @@
                                         IBatchedAuthorization
                                         ISnapshotSource
                                         IAuthorizationSnapshot
+                                        ISpeculativeAuthorization
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate]]
@@ -62,6 +64,7 @@
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
+            [eacl.relationships.storage :as relationship-storage]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
             [eacl.schema.errors :as schema-errors]
@@ -73,7 +76,10 @@
             [eacl.spicedb.consistency :as consistency]))
 
 (declare request-cache-controls
-         validate-permission-root!)
+         validate-permission-root!
+         speculative-with-snapshot
+         speculative-with-schema-snapshot
+         snapshot-tx-relationship)
 
 (def ^:dynamic *operator-expression-writes-enabled?*
   "Public schema-write gate for intersection or exclusion expressions.
@@ -728,11 +734,33 @@
                                    page-deps)
                            distinct
                            sort
-                           vec)]
+                           vec)
+                      speculative (:speculative-context opts)
+                      relation-coordinate-fn
+                      (:relation-coordinate-fn speculative)
+                      selected-db (:db (backend/state adapter))
+                      relationship-components
+                      (when speculative
+                        (when (fn? relation-coordinate-fn)
+                          (into #{}
+                                (keep #(relation-coordinate-fn selected-db %))
+                                relation-ids)))
+                      permission-components
+                      (when speculative
+                        (into #{}
+                              (map (fn [[definition permission-name]]
+                                     [:permission definition permission-name]))
+                              (get-in permission-deps
+                                      [:schema-scope :permission-nodes])))]
                   {:relation-ids relation-ids
                    :schema-scope
                    (assoc (or (:schema-scope permission-deps) {})
-                          :relation-ids relation-ids)})))
+                          :relation-ids relation-ids)
+                   :relationship-components relationship-components
+                   :schema-components
+                   (when speculative
+                     (set/union relationship-components
+                                permission-components))})))
             complete-proof
             (delay
               (proof-frame/resolve!
@@ -740,6 +768,40 @@
                (:relation-ids @dependencies)))
             semantic-snapshot (:snapshot-semantic-identity opts)
             exact-basis-key (cache/exact-basis-key adapter semantic-snapshot)
+            speculative (:speculative-context opts)
+            speculative-effects (:effects speculative)
+            speculative-disjoint?
+            (delay
+              (and speculative
+                   (:complete? speculative-effects)
+                   (set? (:relationship-components @dependencies))
+                   (set? (:schema-components @dependencies))
+                   (empty?
+                    (set/intersection
+                     (:relationship-components @dependencies)
+                     (:relationships speculative-effects)))
+                   (empty?
+                    (set/intersection
+                     (:schema-components @dependencies)
+                     (:schema-components speculative-effects)))
+                   (empty? (:other speculative-effects))))
+            committed-proof-frame
+            (delay
+              (when @speculative-disjoint?
+                (proof-frame/request-frame
+                 adapter
+                 {:basis-identity semantic-snapshot
+                  :schema-generation-fn
+                  (constantly (:root-schema-generation speculative))
+                  :diagnostic-fn
+                  (fn [diagnostic]
+                    (cache/record-proof-diagnostic!
+                     (:basis-cache-store opts) diagnostic))})))
+            committed-proof
+            (delay
+              (when-let [frame @committed-proof-frame]
+                (proof-frame/resolve!
+                 frame (:relation-ids @dependencies))))
             semantic-key
             {:operation operation
              :query query
@@ -761,28 +823,47 @@
                 (get-in contract
                         [:cache-attempt :maximum-atomic-attempts]
                         4)]
-                (cache/resolve-basis!
-                 (:basis-cache-store opts)
-                 {:snapshot semantic-snapshot
-                  :cache-lifecycle (:cache-lifecycle opts)
-                  :snapshot-order (:revision semantic-snapshot)
-                  :exact-basis-key exact-basis-key
-                  :cache-basis (backend/invoke adapter :snapshot-id)
-                  :decision-kernel (:decision-kernel opts)
-                  :populate-cache?
-                  (:populate-cache-request? opts true)
-                  :managed-key-fn
-                  (when (and (:managed-cache-enabled? opts)
-                             resource-type permission)
-                    #(proof-frame/descriptor @complete-proof))
-                  :managed-subproblem-key-fn
-                  (when (and (:managed-cache-enabled? opts)
-                             resource-type permission)
-                    (fn [dependency]
-                      (proof-frame/subset-descriptor
-                       @complete-proof dependency)))
-                  :managed-subproblem-scope (:request-lineage opts)}
-                 semantic-key operation valid-value? evaluate))]
+                (if speculative
+                  (cache/resolve-managed-read-only!
+                   (:basis-cache-store opts)
+                   {:cache-lifecycle (:cache-lifecycle opts)
+                    :decision-kernel (:decision-kernel opts)
+                    :managed-key-fn
+                    (when (and @speculative-disjoint?
+                               (:managed-cache-enabled? opts)
+                               resource-type permission)
+                      #(proof-frame/descriptor @committed-proof))
+                    :managed-subproblem-key-fn
+                    (when (and @speculative-disjoint?
+                               (:managed-cache-enabled? opts)
+                               resource-type permission)
+                      (fn [dependency]
+                        (proof-frame/subset-descriptor
+                         @committed-proof dependency)))
+                    :managed-subproblem-scope (:request-lineage opts)}
+                   semantic-key operation valid-value? evaluate)
+                  (cache/resolve-basis!
+                   (:basis-cache-store opts)
+                   {:snapshot semantic-snapshot
+                    :cache-lifecycle (:cache-lifecycle opts)
+                    :snapshot-order (:revision semantic-snapshot)
+                    :exact-basis-key exact-basis-key
+                    :cache-basis (backend/invoke adapter :snapshot-id)
+                    :decision-kernel (:decision-kernel opts)
+                    :populate-cache?
+                    (:populate-cache-request? opts true)
+                    :managed-key-fn
+                    (when (and (:managed-cache-enabled? opts)
+                               resource-type permission)
+                      #(proof-frame/descriptor @complete-proof))
+                    :managed-subproblem-key-fn
+                    (when (and (:managed-cache-enabled? opts)
+                               resource-type permission)
+                      (fn [dependency]
+                        (proof-frame/subset-descriptor
+                         @complete-proof dependency)))
+                    :managed-subproblem-scope (:request-lineage opts)}
+                   semantic-key operation valid-value? evaluate)))]
           (execution/check! contract :cache-publication)
           answer)))))
 
@@ -1837,7 +1918,8 @@
 (defrecord Runtime [])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
-                  owner-thread acquired-at-ms maximum-retention-ms])
+                  owner-thread acquired-at-ms maximum-retention-ms
+                  speculative])
 
 (def ^:private runtime-option-keys
   #{:adapter-fingerprint :adapter-deterministic? :aggregate-limits
@@ -1860,8 +1942,27 @@
 (defn- reader-api
   [api]
   {:backend-id (:backend-id api)
-   :schema {:read-schema (get-in api [:schema :read-schema])}
-   :impl {:read-relationships (get-in api [:impl :read-relationships])}})
+   :basis-adapter (:basis-adapter api)
+   :basis-adapter-config-keys (:basis-adapter-config-keys api)
+   :native-with (:native-with api)
+   :normalize-report-datom (:normalize-report-datom api)
+   :transaction-datom? (:transaction-datom? api)
+   :schema-storage-datom? (:schema-storage-datom? api)
+   :relation-version-attribute (:relation-version-attribute api)
+   :prepare-relationship-tx (:prepare-relationship-tx api)
+   :schema {:read-schema (get-in api [:schema :read-schema])
+            :generation (get-in api [:schema :generation])
+            :plan-replacement (get-in api [:schema :plan-replacement])}
+   :impl {:validate-relationship-operation!
+          (get-in api [:impl :validate-relationship-operation!])
+          :relationship-relation-id
+          (get-in api [:impl :relationship-relation-id])
+          :relation-coordinate (get-in api [:impl :relation-coordinate])
+          :tx-update-relationship
+          (get-in api [:impl :tx-update-relationship])
+          :affected-relation-ids
+          (get-in api [:impl :affected-relation-ids])
+          :read-relationships (get-in api [:impl :read-relationships])}})
 
 (defn- runtime-options
   [runtime]
@@ -1980,7 +2081,9 @@
   [runtime basis]
   (basis-open! basis)
   (consistency-v3/selected-basis-token
-   (:identity basis) (runtime-options runtime)))
+   (or (get-in basis [:speculative :committed-root])
+       (:identity basis))
+   (runtime-options runtime)))
 
 (defn- basis-token-data
   [runtime basis token source]
@@ -2061,6 +2164,20 @@
                    (if (::transient-acl-selection? opts)
                      :acl
                      :snapshot))
+      (:speculative basis)
+      ;; Prospective state may read an already committed, proof-carrying
+      ;; managed entry after disjointness validation, but no result or derived
+      ;; artifact from the prospective value may outlive this operation.
+      (assoc :speculative-context (:speculative basis)
+             :populate-cache-request? false
+             :continuation-cache-request? false
+             :continuation-cache-store nil
+             :cursor-codec-cache nil
+             :cursor-construction-cache nil
+             :page-navigation-cache nil
+             :derived-schema-caches (atom {})
+             :relationship-observations nil)
+
       retired?
       ;; Lifecycle rotation makes every old registry generation unreachable
       ;; to the live Acl. A retained immutable snapshot remains evaluable, but
@@ -2093,16 +2210,21 @@
 (defn- make-basis
   [{:keys [adapter selected-snapshot semantic-identity selection
            historical-basis? execution-constraints
-           maximum-snapshot-retention-ms]}]
+           maximum-snapshot-retention-ms speculative]}]
   (->Basis adapter selected-snapshot semantic-identity selection
-           (:basis-kind semantic-identity)
+           (if speculative :speculative (:basis-kind semantic-identity))
            historical-basis?
            (or execution-constraints
                source/default-execution-constraints)
            (atom :open)
            #?(:clj (Thread/currentThread) :cljs nil)
            (monotonic-millis)
-           maximum-snapshot-retention-ms))
+           maximum-snapshot-retention-ms
+           speculative))
+
+(defn- snapshot-populate-cache?
+  [basis requested?]
+  (and (nil? (:speculative basis)) requested?))
 
 (defrecord Snapshot [runtime basis api]
   IAuthorizationReader
@@ -2117,7 +2239,8 @@
               :request-operation :check-permission
               :execution-request request
               :completed-cache-request? cache-enabled?
-              :populate-cache-request? populate-cache?)
+              :populate-cache-request?
+              (snapshot-populate-cache? basis populate-cache?))
        subject permission resource
        (or consistency consistency/minimize-latency))))
   (-read-schema [_ request]
@@ -2131,7 +2254,8 @@
        api nil
        (assoc (snapshot-opts runtime basis)
               :completed-cache-request? cache-enabled?
-              :populate-cache-request? populate-cache?)
+              :populate-cache-request?
+              (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-lookup-resources [_ request]
     (assert-snapshot-consistency! runtime basis request)
@@ -2141,7 +2265,8 @@
        api nil
        (assoc (snapshot-opts runtime basis)
               :completed-cache-request? cache-enabled?
-              :populate-cache-request? populate-cache?
+              :populate-cache-request?
+              (snapshot-populate-cache? basis populate-cache?)
               :continuation-cache-request? cache-enabled?)
        (dissoc request :cache? :populate-cache?))))
   (-lookup-subjects [_ request]
@@ -2152,7 +2277,8 @@
        api nil
        (assoc (snapshot-opts runtime basis)
               :completed-cache-request? cache-enabled?
-              :populate-cache-request? populate-cache?
+              :populate-cache-request?
+              (snapshot-populate-cache? basis populate-cache?)
               :continuation-cache-request? cache-enabled?)
        (dissoc request :cache? :populate-cache?))))
   (-count-resources [_ request]
@@ -2163,7 +2289,8 @@
        api nil
        (assoc (snapshot-opts runtime basis)
               :completed-cache-request? cache-enabled?
-              :populate-cache-request? populate-cache?)
+              :populate-cache-request?
+              (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-count-subjects [_ request]
     (assert-snapshot-consistency! runtime basis request)
@@ -2173,7 +2300,8 @@
        api nil
        (assoc (snapshot-opts runtime basis)
               :completed-cache-request? cache-enabled?
-              :populate-cache-request? populate-cache?)
+              :populate-cache-request?
+              (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
   (-expand-permission-tree [_ request]
     (assert-snapshot-consistency! runtime basis request)
@@ -2182,13 +2310,27 @@
       (expand-permission-tree
        api nil (assoc (snapshot-opts runtime basis)
                       :completed-cache-request? cache-enabled?
-                      :populate-cache-request? populate-cache?)
+                      :populate-cache-request?
+                      (snapshot-populate-cache? basis populate-cache?))
        (dissoc request :cache? :populate-cache?))))
 
   IBatchedAuthorization
   (-check-permissions [_ request]
     (assert-snapshot-consistency! runtime basis request)
     (check-permissions api nil (snapshot-opts runtime basis) request))
+
+  ISpeculativeAuthorization
+  (-with [this tx-data]
+    (speculative-with-snapshot this tx-data))
+  (-with-schema [this schema options]
+    (speculative-with-schema-snapshot this schema options))
+  (-tx-relationship [this update]
+    (snapshot-tx-relationship this update))
+  (-speculative-diagnostics [_]
+    (basis-open! basis)
+    (if-let [speculative (:speculative basis)]
+      (:diagnostics speculative)
+      (typed-capability-error! :speculative-diagnostics :ordinary-snapshot)))
 
   IAuthorizationSnapshot
   (-basis [_] (public-basis basis))
@@ -2458,7 +2600,16 @@
           (recur retracted response))))))
 
 (defn- write-schema-through!
-  [writer schema-string]
+  [writer {:keys [schema] :as request}]
+  (when (= :retain-inert (:orphan-policy request))
+    (throw
+     (ex-info
+      ":orphan-policy :retain-inert is available only through eacl/with-schema."
+      {:type :eacl.schema/invalid-orphan-policy
+       :eacl/error :eacl.schema/invalid-orphan-policy
+       :orphan-policy :retain-inert
+       :operation :write-schema!})))
+  (let [schema-string schema]
   (require-operator-expression-writes-enabled! schema-string)
   (let [{:keys [conn options api]} (backend-writer/state writer)
         write-schema! (backend-writer/operation writer :write-schema!)
@@ -2475,10 +2626,13 @@
                              writer :schema-generation)
                             db)))]
                     {:value
-                     (write-schema!
+                    (write-schema!
                       conn schema-string
-                      (select-keys options
-                                   [:token-ttl-seconds :expression-limits])
+                      (merge
+                       (select-keys options
+                                    [:token-ttl-seconds :expression-limits])
+                       (select-keys request
+                                    [:allow-empty-schema? :orphan-policy]))
                       expected-generation)})
                   (catch #?(:clj Throwable :cljs :default) error
                     {:error error}))]
@@ -2498,7 +2652,290 @@
            (if (:eacl.schema/no-op? result)
              (write-response api (:eacl.schema/db-after result) options)
              (committed-write-response
-              api (:eacl.schema/db-after result) options)))))
+              api (:eacl.schema/db-after result) options))))))
+
+(defn- speculative-capability!
+  [api capability]
+  (throw
+   (ex-info
+    "Backend does not support this speculative operation."
+    {:type :eacl/unsupported-capability
+     :eacl/error :eacl/unsupported-capability
+     :backend (:backend-id api)
+     :capability capability})))
+
+(defn- relation-coordinate
+  [api db relation-id]
+  (when-let [coordinate-fn (get-in api [:impl :relation-coordinate])]
+    (coordinate-fn db relation-id)))
+
+(defn- empty-speculative-effects
+  []
+  {:complete? true
+   :relationships #{}
+   :schema-components #{}
+   :other #{}})
+
+(defn- union-speculative-effects
+  [parent child]
+  {:complete? (and (:complete? parent) (:complete? child))
+   :relationships
+   (set/union (:relationships parent) (:relationships child))
+   :schema-components
+   (set/union (:schema-components parent) (:schema-components child))
+   :other (set/union (:other parent) (:other child))})
+
+(defn- emitted-effects
+  [api {:keys [db-before db-after tx-data]}]
+  (let [normalize (:normalize-report-datom api)
+        schema-storage? (:schema-storage-datom? api)
+        transaction-datom? (:transaction-datom? api)
+        relation-version-attribute (:relation-version-attribute api)]
+    (when-not (and (fn? normalize)
+                   (fn? schema-storage?)
+                   (fn? transaction-datom?))
+      (speculative-capability! api :native-with-effect-certificate))
+    (reduce
+     (fn [effects raw-datom]
+       (let [{:keys [e a v added] :as datom}
+             (normalize db-before db-after raw-datom)]
+         (cond
+           (schema-storage? db-before db-after datom)
+           (throw
+            (ex-info
+             "Generic eacl/with cannot mutate EACL permission-schema storage; use eacl/with-schema."
+             {:type :eacl.speculative/schema-mutation
+              :eacl/error :eacl.speculative/schema-mutation
+              :attribute a
+              :operation :with
+              :use :with-schema}))
+
+           (transaction-datom? datom)
+           effects
+
+           (contains? relationship-storage/attributes a)
+           (let [relation-id (when (and (vector? v) (< 1 (count v)))
+                               (nth v 1))
+                 coordinate
+                 (or (when (false? added)
+                       (relation-coordinate api db-before relation-id))
+                     (relation-coordinate api db-after relation-id)
+                     (relation-coordinate api db-before relation-id))]
+             (if coordinate
+               (update effects :relationships conj coordinate)
+               (-> effects
+                   (assoc :complete? false)
+                   (update :other conj :unknown-relationship-coordinate))))
+
+           (= relation-version-attribute a)
+           (if-let [coordinate
+                    (or (when (false? added)
+                          (relation-coordinate api db-before e))
+                        (relation-coordinate api db-after e)
+                        (relation-coordinate api db-before e))]
+             (update effects :relationships conj coordinate)
+             (-> effects
+                 (assoc :complete? false)
+                 (update :other conj :unknown-relation-version-target)))
+
+           :else
+           ;; Application identity, existence, ordering, and externalization
+           ;; are deliberately not guessed from arbitrary attributes.
+           (-> effects
+               (assoc :complete? false)
+               (update :other conj :unclassified-application-datom)))))
+     (empty-speculative-effects)
+     tx-data)))
+
+(defn- validate-native-with-report!
+  [api report]
+  (when-not (and (map? report)
+                 (some? (:db-before report))
+                 (some? (:db-after report))
+                 (seqable? (:tx-data report)))
+    (throw
+     (ex-info
+      "Backend native-with returned an incomplete transaction report."
+      {:type :eacl/backend-contract-violation
+       :eacl/error :eacl/backend-contract-violation
+       :backend (:backend-id api)
+       :operation :native-with
+       :required #{:db-before :db-after :tx-data}})))
+  (update report :tx-data vec))
+
+(defn- speculative-snapshot-from-report
+  [snapshot report child-effects child-diagnostics]
+  (let [{:keys [runtime basis api]} snapshot
+        db-before (:db (backend/state (:adapter basis)))
+        _
+        (when-not (identical? db-before (:db-before report))
+          (throw
+           (ex-info
+            "Backend native-with changed the selected db-before identity."
+            {:type :eacl/backend-contract-violation
+             :eacl/error :eacl/backend-contract-violation
+             :backend (:backend-id api)
+             :operation :native-with
+             :obligation :selected-db-before})))
+        parent-speculative (:speculative basis)
+        parent-effects
+        (or (:effects parent-speculative) (empty-speculative-effects))
+        effects (union-speculative-effects parent-effects child-effects)
+        options (runtime-options runtime)
+        adapter
+        ((:basis-adapter api)
+         (:db-after report)
+         (select-keys options (:basis-adapter-config-keys api)))
+        parent-identity (:identity basis)
+        committed-root
+        (or (:committed-root parent-speculative) parent-identity)
+        root-schema-generation
+        (if parent-speculative
+          (:root-schema-generation parent-speculative)
+          (backend/invoke (:adapter basis) :schema-generation))
+        speculative-id (str (random-uuid))
+        identity
+        (assoc
+         (adapter-semantic-identity
+          adapter
+          (select-keys parent-identity [:source-id :branch])
+          (:source-lifecycle parent-identity))
+         :speculative-id speculative-id)
+        speculative
+        {:id speculative-id
+         :committed-root committed-root
+         :root-schema-generation root-schema-generation
+         :relation-coordinate-fn
+         (get-in api [:impl :relation-coordinate])
+         :effects effects
+         :diagnostics
+         (into (vec (:diagnostics parent-speculative)) child-diagnostics)}]
+    (when-not (and (map? committed-root)
+                   (or (nil? root-schema-generation)
+                       (integer? root-schema-generation))
+                   (fn? (:relation-coordinate-fn speculative))
+                   (map? effects)
+                   (vector? (:diagnostics speculative)))
+      (throw
+       (ex-info
+        "Speculative snapshot provenance is incomplete."
+        {:type :eacl/backend-contract-violation
+         :eacl/error :eacl/backend-contract-violation
+         :backend (:backend-id api)
+         :operation :speculative-snapshot-construction})))
+    (->Snapshot
+     runtime
+     (make-basis
+      {:adapter adapter
+       :selected-snapshot nil
+       :semantic-identity identity
+       :selection {:descriptor {:mode :minimize-latency}
+                   :speculative? true}
+       :execution-constraints (:execution-constraints basis)
+       :maximum-snapshot-retention-ms (:maximum-retention-ms basis)
+       :historical-basis? false
+       :speculative speculative})
+     api)))
+
+(defn speculative-with-snapshot
+  [snapshot tx-data]
+  (let [{:keys [basis api]} snapshot
+        _ (basis-open! basis)
+        native-with (:native-with api)]
+    (when-not (fn? native-with)
+      (speculative-capability! api :native-with))
+    (let [db-before (:db (backend/state (:adapter basis)))
+          report
+          (validate-native-with-report!
+           api (native-with db-before (vec tx-data)))
+          child-effects (emitted-effects api report)]
+      (speculative-snapshot-from-report
+       snapshot report child-effects []))))
+
+(defn speculative-with-schema-snapshot
+  [snapshot schema options]
+  (let [{:keys [runtime basis api]} snapshot
+        _ (basis-open! basis)
+        native-with (:native-with api)
+        plan-replacement (get-in api [:schema :plan-replacement])]
+    (when-not (fn? native-with)
+      (speculative-capability! api :native-with))
+    (when-not (ifn? plan-replacement)
+      (speculative-capability! api :with-schema))
+    (let [db-before (:db (backend/state (:adapter basis)))
+          plan
+          (plan-replacement
+           db-before schema
+           (merge
+            (select-keys (runtime-options runtime) [:expression-limits])
+            (or options {})))
+          tx-data (:speculative-tx-data plan)
+          _
+          (when-not (and (map? plan)
+                         (sequential? tx-data)
+                         (set? (:changed-schema-components plan))
+                         (set? (:affected-relationships plan))
+                         (set? (:removed-relations plan))
+                         (vector? (:diagnostics plan))
+                         (boolean? (:no-op? plan)))
+            (throw
+             (ex-info
+              "Backend schema planner returned an incomplete speculative plan."
+              {:type :eacl/backend-contract-violation
+               :eacl/error :eacl/backend-contract-violation
+               :backend (:backend-id api)
+               :operation :plan-schema-replacement})))
+          report
+          (validate-native-with-report!
+           api (native-with db-before (vec tx-data)))
+          effects
+          {:complete? true
+           :relationships (:affected-relationships plan)
+           :schema-components (:changed-schema-components plan)
+           :other #{}}]
+      (speculative-snapshot-from-report
+       snapshot report effects (:diagnostics plan)))))
+
+(defn snapshot-tx-relationship
+  [snapshot update]
+  (let [{:keys [basis api]} snapshot
+        _ (basis-open! basis)
+        db (:db (backend/state (:adapter basis)))
+        {:keys [operation relationship]}
+        (if (and (map? update) (contains? update :relationship))
+          update
+          {:operation (:operation update)
+           :relationship
+           (->Relationship (:subject update)
+                           (:relation update)
+                           (:resource update))})
+        validate-operation!
+        (get-in api [:impl :validate-relationship-operation!])
+        plan-update (get-in api [:impl :tx-update-relationship])
+        prepare (or (:prepare-relationship-tx api)
+                    (fn [_db tx]
+                      (relationship-commit-preconditions-first tx)))]
+    (when-not (and (ifn? validate-operation!)
+                   (ifn? plan-update))
+      (speculative-capability! api :tx-relationship))
+    (validate-operation! operation)
+    (let [schema ((get-in api [:schema :read-schema]) db)
+          _
+          (schema-errors/validate-relationship-write!
+           schema :write-relationships
+           {:resource-type (:type (:resource relationship))
+            :subject-type (:type (:subject relationship))
+            :relation (:relation relationship)})
+          internal-relationship
+          (spice-relationship->internal
+           db (runtime-options (:runtime snapshot)) relationship)
+          internal-update
+          (->RelationshipUpdate operation internal-relationship)
+          _ (relationship-mutations/validate-batch! [internal-update])
+          raw (some-> (plan-update db internal-update) vec)]
+      (if (seq raw)
+        (vec (prepare db raw))
+        []))))
 
 (defn- call-with-transient-snapshot
   "Selects one request basis, delegates to the ordinary Snapshot reader, and
@@ -2592,12 +3029,30 @@
       (->Snapshot
        runtime
        (make-basis
-        (select-request-basis api source opts consistency-value))
+       (select-request-basis api source opts consistency-value))
        (reader-api api))))
 
+  ISpeculativeAuthorization
+  (-with [this tx-data]
+    (let [parent (eacl/snapshot this)]
+      (try
+        (eacl/-with parent tx-data)
+        (finally
+          (eacl/release! parent)))))
+  (-with-schema [this schema options]
+    (let [parent (eacl/snapshot this)]
+      (try
+        (eacl/-with-schema parent schema options)
+        (finally
+          (eacl/release! parent)))))
+  (-tx-relationship [_ _update]
+    (typed-capability-error! :tx-relationship :acl))
+  (-speculative-diagnostics [_]
+    (typed-capability-error! :speculative-diagnostics :acl))
+
   IAuthorizationWriter
-  (-write-schema! [_ {:keys [schema]}]
-    (write-schema-through! (writable! writer) schema))
+  (-write-schema! [_ request]
+    (write-schema-through! (writable! writer) request))
   (-write-relationships! [_ {:keys [updates]}]
     (writer-write-relationships! (writable! writer) updates))
   (-delete-object! [_ {:keys [object]}]
@@ -2621,108 +3076,6 @@
       :basis-kind basis-kind}
      data)
     cause)))
-
-(defn direct-snapshot
-  "Pairs an admissible application-owned immutable database value with an
-  acl's runtime. This performs no source acquisition and never transfers
-  ownership of the native value to EACL."
-  [acl backend-id db]
-  (when-not (client? acl backend-id)
-    (unsupported-database-value!
-     backend-id :foreign-backend {:target :acl} nil))
-  (let [api (:api acl)
-        classify (:basis-kind api)
-        database-source-scope (:database-source-scope api)]
-    (when-not (ifn? classify)
-      (throw
-       (ex-info
-        "Backend API has no certified basis-kind classifier."
-        {:type :eacl/invalid-backend-role
-         :eacl/error :eacl/invalid-backend-role
-         :role :adapter
-         :backend backend-id
-         :operation :basis-kind})))
-    ;; Classification precedes access to runtime registries, cache state, token
-    ;; codecs, or source metadata. Inadmissible values therefore cannot create
-    ;; an identity or partially enter the execution pipeline.
-    (let [kind
-          (try
-            (classify db)
-            (catch #?(:clj Throwable :cljs :default) error
-              (unsupported-database-value!
-               backend-id :foreign-backend {} error)))]
-      (when-not (backend/admissible-basis-kind? kind)
-        (unsupported-database-value! backend-id kind {} nil))
-      (let [source (:source acl)
-            expected-scope (source/source-scope source)
-            actual-scope
-            (when (ifn? database-source-scope)
-              (database-source-scope db))]
-        (when-not (= expected-scope actual-scope)
-          (unsupported-database-value!
-           backend-id :foreign-source
-           {:database-basis-kind kind
-            :expected-source expected-scope
-            :actual-source actual-scope}
-           nil))
-        ;; Structural classification cannot distinguish a speculative
-        ;; transaction product from a committed value: it carries the same
-        ;; database identity and the next commit's revision. The source must
-        ;; witness committedness, or the value is refused before it can mint
-        ;; a basis identity or publish into shared cache tiers.
-        (let [witnessed (source/witness-committed-basis! source db kind)]
-          (when-not (true? witnessed)
-            (unsupported-database-value!
-             backend-id :speculative
-             {:classified-kind kind
-              :reason (if (nil? witnessed)
-                        :no-committedness-witness
-                        :committedness-not-witnessed)}
-             nil)))
-        (let [runtime (:runtime acl)
-              opts
-              (assoc (runtime-options runtime)
-                     :source-scope expected-scope)
-              adapter
-              (try
-                ((:basis-adapter api)
-                 db
-                 (select-keys opts (:basis-adapter-config-keys api)))
-                (catch #?(:clj Throwable :cljs :default) error
-                  (unsupported-database-value!
-                   backend-id kind {} error)))
-              adapter-kind (backend/basis-kind adapter)]
-          (when-not (= kind adapter-kind)
-            (throw
-             (ex-info
-              "Basis classifier and adapter disagree."
-              {:type :eacl/backend-contract-violation
-               :eacl/error :eacl/backend-contract-violation
-               :backend backend-id
-               :operation :basis-kind
-               :classified kind
-               :adapter-kind adapter-kind})))
-          (->Snapshot
-           runtime
-           (make-basis
-            {:adapter adapter
-             :selected-snapshot nil
-             :semantic-identity
-             (adapter-semantic-identity
-              adapter expected-scope
-              (or (some-> (get (runtime-options runtime)
-                               :source-lifecycle-state)
-                          deref)
-                  (:source-lifecycle (runtime-options runtime))))
-             :selection {:descriptor {:mode :minimize-latency}
-                         :direct? true}
-             :execution-constraints
-             (source/execution-constraints source)
-             :maximum-snapshot-retention-ms
-             (:maximum-snapshot-retention-ms
-              (runtime-options runtime))
-             :historical-basis? (= :as-of kind)})
-           (reader-api api)))))))
 
 (defn snapshot-db
   "Returns the native immutable value held by a backend-specific snapshot."

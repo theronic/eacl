@@ -49,11 +49,9 @@
 (defn basis-kind
   "Classifies one Datomic database value without touching an EACL runtime.
 
-  This is structural classification only. A speculative `d/with` product
-  answers every value-only probe (`isFiltered`/`isHistory`/`sinceT`/`asOfT`)
-  exactly like an ordinary committed value, so admissible-looking kinds must
-  additionally be witnessed against the connection by
-  `witness-committed-basis` before a public constructor may admit them."
+  This is structural classification only. It deliberately does not claim to
+  distinguish a speculative `d/with` product from committed state; public
+  EACL APIs never admit arbitrary native values."
   [db]
   (if-not (instance? datomic.Database db)
     :foreign-backend
@@ -63,32 +61,6 @@
       (some? (.sinceT ^datomic.Database db)) :since
       (some? (.asOfT ^datomic.Database db)) :as-of
       :else :ordinary)))
-
-(defn- transaction-instant
-  [db t]
-  (:db/txInstant (d/entity db (d/t->tx t))))
-
-(defn witness-committed-basis
-  "Proves that one admissible-looking Datomic value derives from committed
-  state reachable from `conn`.
-
-  `d/basis-t` reports the underlying basis through an as-of window, and
-  re-applying `d/as-of` at that basis replaces the window, so the value's own
-  latest transaction is always readable. That transaction must exist in the
-  committed head with the same `:db/txInstant`. A `d/with` product fails
-  either because its basis is ahead of the committed head, or because the
-  transaction it stamped at its basis disagrees with (or is absent from) the
-  transaction the log committed there."
-  [conn db kind]
-  (let [head (d/db conn)
-        head-t (d/basis-t head)
-        raw-t (d/basis-t db)]
-    (and (<= raw-t head-t)
-         (let [widened (if (= :as-of kind) (d/as-of db raw-t) db)
-               claimed (transaction-instant widened raw-t)
-               committed (transaction-instant head raw-t)]
-           (and (some? claimed)
-                (= claimed committed))))))
 
 (defn database-source-scope
   "Returns the durable Datomic database identity carried by `db`."
@@ -500,8 +472,6 @@
       :operations
       {:source-scope (constantly source-scope)
        :source-lifecycle source-lifecycle
-       :witness-committed-basis!
-       (fn [db kind] (witness-committed-basis conn db kind))
        :acquire-current! #(borrowed (d/db conn))
        :acquire-authoritative!
        (fn [timeout-ms]

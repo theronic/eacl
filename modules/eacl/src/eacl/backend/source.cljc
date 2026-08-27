@@ -27,18 +27,8 @@
     :release!})
 
 (def optional-source-operations
-  "Operations a source MAY provide.
-
-  `:witness-committed-basis!` proves that one application-supplied database
-  value derives from committed source state before a public snapshot
-  constructor admits it. Structural classification alone cannot make that
-  distinction: a speculative transaction product (Datomic `d/with`,
-  Datahike/DataScript `db-with`) answers every value-only probe like an
-  ordinary committed value while carrying the next commit's revision, so an
-  unwitnessed admission can publish uncommitted answers into cache tiers
-  shared with committed bases. Sources that cannot witness cause admissible
-  kinds to be refused fail-closed."
-  #{:witness-committed-basis!})
+  "Operations a source MAY provide beyond committed basis selection."
+  #{})
 
 (def source-obligations
   "Runtime-facing assumptions for basis selection and native lifecycle. These
@@ -304,20 +294,6 @@
   (when *source-op-stats*
     (swap! *source-op-stats* update operation-key (fnil inc 0)))
   (apply (operation source operation-key) args))
-
-(defn witness-committed-basis!
-  "Asks `source` to prove that database value `db`, classified as `kind`,
-  derives from committed source state.
-
-  Returns true when committedness is witnessed, false when the source refutes
-  it, and nil when the source provides no witness operation. Public snapshot
-  constructors must treat anything but true as inadmissible: a value whose
-  committedness cannot be proven may carry a committed revision's identity
-  while answering from uncommitted state."
-  [source db kind]
-  (let [source (require-source source)]
-    (when (get (::operations source) :witness-committed-basis!)
-      (boolean (invoke source :witness-committed-basis! db kind)))))
 
 (defn- virtual-thread?
   []

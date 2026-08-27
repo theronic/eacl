@@ -25,81 +25,13 @@
 (defn basis-kind
   "Classifies one DataScript database value without touching an EACL runtime.
 
-  This is structural classification only. A speculative `db-with` product is
-  an unfiltered database value, so admissible-looking kinds must additionally
-  be witnessed against the connection's committed-value registry before a
-  public constructor may admit them."
+  This is structural classification only. It cannot distinguish `db-with`
+  products; public EACL APIs therefore never admit arbitrary native values."
   [db]
   (cond
     (not (dsdb/db? db)) :foreign-backend
     (identical? db (dsdb/unfiltered-db db)) :ordinary
     :else :filtered))
-
-(def ^:private committed-basis-registry-key
-  :eacl.datascript/committed-basis-registry)
-
-(def ^:private committed-basis-retention
-  "How many committed database values the witness registry retains, newest
-  first by `:max-tx`. DataScript keeps no durable history, so an
-  application-captured value can only be proven committed by having been
-  observed as a committed state of this connection. Retained values share
-  structure with the live database; the bound caps how many superseded
-  generations stay reachable."
-  32)
-
-(defn committed-basis-registry
-  "Returns the connection's shared committed-value registry, installing an
-  empty one on first use.
-
-  It lives in the connection's metadata so concurrently constructed clients
-  share one registry, exactly like `connection-source-id`. The registry is
-  populated by the EACL writer's own transactions and by admission-time
-  observations of the current value; no DataScript listener is ever
-  installed, because v3 consistency is listener-free by design and cloned
-  connections must stay callback-independent."
-  [conn]
-  (or (committed-basis-registry-key (meta conn))
-      (committed-basis-registry-key
-       (alter-meta!
-        conn
-        (fn [metadata]
-          (if (committed-basis-registry-key metadata)
-            metadata
-            (assoc metadata committed-basis-registry-key (atom {}))))))))
-
-(defn- record-into-registry!
-  [registry db]
-  (swap! registry
-         (fn [entries]
-           (let [entries (assoc entries (:max-tx db) db)]
-             (if (<= (count entries) committed-basis-retention)
-               entries
-               (dissoc entries (reduce min (keys entries))))))))
-
-(defn record-committed-basis!
-  "Records one committed `:db-after` for `conn`'s committedness witness.
-  Called by the EACL writer after each of its own transactions."
-  [conn db]
-  (when db
-    (record-into-registry! (committed-basis-registry conn) db))
-  nil)
-
-(defn witness-committed-basis
-  "Proves that one admissible-looking DataScript value is a committed state
-  of `conn`.
-
-  A `db-with` product carries the next commit's `:max-tx` while no metadata
-  distinguishes it from a committed value, so committedness is decided by
-  identity: the value must be the connection's current database or a
-  registry-recorded committed state at its claimed revision. The registry is
-  consulted first so the common capture-then-admit case never reads the
-  connection head, and a successful head comparison records the value so it
-  stays witnessable after later writes."
-  [conn registry db]
-  (or (identical? db (get @registry (:max-tx db)))
-      (when (identical? db (ds/db conn))
-        (record-into-registry! registry db)
-        true)))
 
 (defn database-source-scope
   "Returns the source identity materialized by `eacl.datascript/create-conn`."
@@ -295,8 +227,7 @@
 (defn source
   "Builds the borrowed immutable-basis source for one DataScript conn."
   [conn opts]
-  (let [committed-registry (committed-basis-registry conn)
-        source-scope
+  (let [source-scope
         {:source-id {:connection-id (:native-source-id opts)}
          :branch nil}
         source-lifecycle
@@ -330,9 +261,6 @@
       :operations
       {:source-scope (constantly source-scope)
        :source-lifecycle source-lifecycle
-       :witness-committed-basis!
-       (fn [db _kind]
-         (witness-committed-basis conn committed-registry db))
        :acquire-current! #(borrowed (ds/db conn))
        :acquire-authoritative! (fn [_timeout-ms]
                                  (borrowed (ds/db conn)))

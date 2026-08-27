@@ -772,9 +772,7 @@
     (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-authorization-target-matrix!
      {:writable client
-      :read-only (datascript/make-client conn {:read-only? true})
-      :snapshot-db datascript/db
-      :direct-snapshot datascript/snapshot})
+      :read-only (datascript/make-client conn {:read-only? true})})
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))

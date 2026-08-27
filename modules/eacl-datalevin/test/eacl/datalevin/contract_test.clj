@@ -116,6 +116,18 @@
 
 (declare client-config)
 
+(deftest speculative-native-with-capabilities-fail-closed-test
+  (with-system
+    (fn [{:keys [conn client]}]
+      (seed! conn client)
+      (doseq [[capability invoke]
+              [[:native-with #(eacl/with client [])]
+               [:native-with
+                #(eacl/with-schema client schema-with-editor)]]]
+        (let [data (error-data invoke)]
+          (is (= :eacl/unsupported-capability (:type data)))
+          (is (= capability (:capability data))))))))
+
 (deftest maximum-snapshot-retention-is-validated-and-fails-closed-test
   (with-connection
     (fn [conn]
@@ -701,6 +713,24 @@
       (finally
         (d/close conn)
         (u/delete-files dir)))))
+
+(deftest protected-store-missing-schema-singleton-is-generation-unprepared-test
+  (with-connection
+    (fn [conn]
+      (datalevin/make-client conn (client-config))
+      (let [policy (d/write-policy conn)
+            token (:write-token (d/install-write-policy! conn policy))
+            schema-eid (d/entid (d/db conn) [:eacl/id "schema-string"])]
+        (d/transact!
+         conn
+         [[:db/retractEntity schema-eid]]
+         {:datalevin/write-token token})
+        (let [error
+              (error-data
+               #(datalevin/make-client conn (client-config)))]
+          (is (= :eacl.cache/generation-unprepared (:type error)))
+          (is (= :schema-singleton (:missing error)))
+          (is (= :datalevin (:backend error))))))))
 
 (deftest persisted-write-policy-drift-is-rejected-test
   (with-connection
@@ -1319,9 +1349,7 @@
          {:writable client
           :read-only
           (datalevin/make-client
-           conn (assoc client-options :read-only? true))
-          :snapshot-db datalevin/db
-          :direct-snapshot datalevin/snapshot})
+           conn (assoc client-options :read-only? true))})
         (contract/assert-unified-filter-validation! client)
         (contract/assert-v8-request-cache-controls! client store)
         (contract/assert-v8-cache-disabled!

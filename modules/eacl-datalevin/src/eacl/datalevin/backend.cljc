@@ -387,11 +387,6 @@
       :operations
       {:source-scope (constantly source-scope)
        :source-lifecycle source-lifecycle
-       ;; A Datalevin read snapshot is an open LMDB read transaction over
-       ;; committed store state; no speculative-transaction value satisfies
-       ;; `read-snapshot?`, so the value itself is the committedness witness.
-       :witness-committed-basis!
-       (fn [value _kind] (d/read-snapshot? value))
        :acquire-current! (fn [] (acquire-owned! conn adapter-options))
        :acquire-authoritative!
        (fn [_timeout-ms] (acquire-owned! conn adapter-options))

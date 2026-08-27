@@ -414,10 +414,13 @@
               :request-lineage request-lineage
               :derived-lineage derived-lineage})))
          base
-         {:lineage (or request-lineage derived-lineage)
-          :native-revision native-revision
-          :adapter-fingerprint (backend/fingerprint adapter)
-          :identity-contract (backend/identity-contract adapter)}
+         (cond->
+          {:lineage (or request-lineage derived-lineage)
+           :native-revision native-revision
+           :adapter-fingerprint (backend/fingerprint adapter)
+           :identity-contract (backend/identity-contract adapter)}
+           (some? (:speculative-id basis-identity))
+           (assoc :speculative-id (:speculative-id basis-identity)))
          relation-ids (some-> relation-ids vec)
          descriptor
          (when relation-ids
@@ -598,7 +601,9 @@
   [context]
   (secure/canonical-digest
    "eacl/cursor/execution-identity/v1"
-   (select-keys context [:lineage :adapter-fingerprint :identity-contract])))
+   (select-keys context
+                [:lineage :speculative-id
+                 :adapter-fingerprint :identity-contract])))
 
 (defn- identity-mismatch
   [current envelope]
@@ -612,6 +617,10 @@
           (secure/canonicalize
            (get-in envelope [:lineage :source-lifecycle])))
     :source-lifecycle
+
+    (not= (secure/canonicalize (:speculative-id current))
+          (secure/canonicalize (:speculative-id envelope)))
+    :speculative-provenance
 
     (not= (secure/canonicalize (:adapter-fingerprint current))
           (secure/canonicalize (:adapter-fingerprint envelope)))
@@ -708,6 +717,7 @@
 (def ^:private dependency-context-fields
   [:lineage
    :native-revision
+   :speculative-id
    :adapter-fingerprint
    :identity-contract
    :frame

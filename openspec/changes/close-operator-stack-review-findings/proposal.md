@@ -6,19 +6,15 @@ This change records exactly what was tested, what was found, and what must be fi
 
 ## What Changes
 
-- **BREAKING (fail-closed)** Public snapshot constructors reject database values that cannot be proven committed. Speculative values (Datomic `d/with`, Datahike/DataScript `db-with`) are currently classified `:ordinary` and admitted; a speculative snapshot then publishes into the shared exact-basis cache under an identity that collides with a real commit, so a later check at head returns the speculative answer. Confirmed end to end: with the speculative capture the live client answers `true` for a banned subject; without it the same fixture answers `false`.
+- **BREAKING (fail-closed)** Public authorization and snapshot APIs accept only EACL clients and EACL-created snapshots. Prospective state is created explicitly through `eacl/with` or `eacl/with-schema`; it cannot read the exact-basis tier and cannot publish into persistent cache tiers.
 - The v7→v8 permission migration verifies that a supplied replacement schema is semantically equivalent to the stored v7 permissions, instead of checking relation identities only.
-- Batched direct membership holds its density-bounded realization ceiling on **every** admissible basis kind. On Datahike as-of snapshots the dense kernel currently loses its lower bound and realizes and sorts the entire endpoint prefix per batch.
-- Registered mutation controls execute the production code they claim to mutate, and the manifest counts only controls whose kill assertion can actually fail. Four of the ten new operator controls are constant-function mutants whose kill compares two literals; the D13-required `active-recursion-as-false` control is absent and the production guard it would cover is untested.
-- The counterexample-replay CI step fails the build when the replayed suite fails. It currently reports success regardless of failures, because the replay command returns a test summary rather than throwing.
-- Non-authoritative relationship observation recording becomes opt-in (or lazily constructed) until a consumer exists; it is presently always-on, written per realized scan chunk, keyed by a basis watermark that changes on every write, and read by nothing in production.
-- The formal ledger stops overstating what is bound to production: the proven batch-growth rule is replaced by (or bound differentially to) the demand-clamped rule the engine actually runs, and `EaclKernel.dfy` is pinned by the enforced digest closure.
+- Batched direct membership holds its density-bounded realization ceiling on every admissible basis kind; wrapped Datahike snapshots select the exact-probe kernel.
+- Registered mutation controls execute their production consumers, and the manifest counts only controls with executable kill evidence.
+- Counterexample replay and mutation-control commands throw on test failures, with their failure paths covered by the gate self-test.
+- Relationship-observation recording is opt-in and allocates no store or request-path key work by default.
+- The formal ledger proves and differentially binds the demand-clamped batch schedule used by production, with the exported kernel included in the enforced digest closure.
 
 ## Capabilities
-
-### New Capabilities
-
-- `committed-basis-admission`: which application-supplied database values a public snapshot constructor may accept, and what a backend basis classifier must be able to prove before a value participates in shared cache tiers.
 
 ### Modified Capabilities
 
@@ -29,9 +25,9 @@ This change records exactly what was tested, what was found, and what must be fi
 
 ## Impact
 
-- **Authorization correctness (critical):** `eacl.client.orchestration/direct-snapshot`; `basis-kind` classifiers in `eacl.datomic.backend`, `eacl.datahike.backend`, `eacl.datascript.backend`; the exact-basis and managed cache tiers keyed by `{source-scope, revision}`.
+- **Authorization correctness (critical):** public snapshot boundaries, explicit speculative provenance, speculative effect certification, and read-only managed-cache reuse.
 - **Schema migration:** `eacl.datomic.schema/migrate-v7-permissions!` and the `v7_to_v8` qualification suite.
 - **Physical read path:** `eacl.datahike.direct-membership` dense kernel and `eacl.datahike.db/eavt-tuple-prefix`'s non-direct-DB fallback.
 - **Assurance:** `formal/mutations/registry.edn`, `eacl.formal.executed-mutation-controls`, `bin/formal counterexample-replay`, `.github/workflows/formal.yml`, `formal/verification/{manifest,operator-phase-a,operator-phase-b}.edn`, `formal/dafny/AdaptiveBatching.dfy`.
 - **Request-path performance:** `eacl.metrics`, `eacl.engine.physical/realize-chunk`, `eacl.backend.direct-membership/direct-match-many?`.
-- **No public API shape changes** beyond snapshot admission becoming stricter; operator semantics, order ABI, and cursor formats are unaffected.
+- **Public API:** raw native-database snapshot construction is removed; `eacl/with`, `eacl/with-schema`, `eacl/tx-relationship`, and speculative diagnostics are added. Operator semantics and the ordinary cursor wire format are unchanged.

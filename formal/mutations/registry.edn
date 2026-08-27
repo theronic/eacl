@@ -1,8 +1,8 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 130
+ :historical-mutant-count 132
  :historical-clojure-mutant-count 120
- :historical-model-mutant-count 10
+ :historical-model-mutant-count 12
  :mutants
  [{:id :wrong-arrow-direction
    :mechanism :executed-production
@@ -507,6 +507,22 @@
    :control {:kind :apalache
              :model "formal/tla/EaclManagedProjectionCache.tla"
              :config "formal/tla/mutations/EaclManagedProofBypass.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :speculative-cache-publication
+   :mechanism :executed-model
+   :mutation :retain-result-computed-from-speculative-snapshot
+   :control {:kind :apalache
+             :model "formal/tla/EaclSpeculativeCache.tla"
+             :config "formal/tla/mutations/EaclSpeculativePublication.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :speculative-exact-basis-hit
+   :mechanism :executed-model
+   :mutation :treat-colliding-native-basis-as-speculative-content-witness
+   :control {:kind :apalache
+             :model "formal/tla/EaclSpeculativeCache.tla"
+             :config "formal/tla/mutations/EaclSpeculativeExactHit.cfg"
              :length 4}
    :killed-by {:gate :apalache-mutation-control}}
   {:id :operator-vector-cancellation-publication

@@ -240,9 +240,10 @@
         (when-not existing-policy
           (when-not (ds/entid (ds/db conn) [:eacl/id "schema-string"])
             (ds/transact! conn [{:eacl/id "schema-string"}])))
-        (let [policy-result
+        (let [expected-policy (expected-write-policy conn)
+              policy-result
               (try
-                (fork/install-write-policy! conn (expected-write-policy conn))
+                (fork/install-write-policy! conn expected-policy)
                 (catch #?(:clj Throwable :cljs :default) error
                   (throw
                    (ex-info

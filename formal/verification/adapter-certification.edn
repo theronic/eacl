@@ -1,6 +1,6 @@
 {:schema-version 1
- :certification-version "eacl.adapter-certification/v5"
- :date "2026-08-23"
+ :certification-version "eacl.adapter-certification/v6"
+ :date "2026-08-27"
  :role-contracts
  {:basis-adapter
   {:formal-contract "formal/dafny/SnapshotOracle.dfy"
@@ -123,8 +123,8 @@
     :errors 0}
    :history
    {:namespace eacl.datalevin.contract-test
-    :tests 29
-    :assertions 922
+    :tests 31
+    :assertions 961
     :failures 0
     :errors 0
     :coverage
@@ -136,7 +136,7 @@
      :fork-capability-admission
      :unsafe-environment-rejection
      :persisted-policy-drift
-     :direct-snapshot-private-context
+     :public-raw-snapshot-boundary
      :direct-match-equivalence
      :aggregate-scan-and-enumerate]}
    :ordered-generations
@@ -190,37 +190,51 @@
    {:status :passed
     :report
     "formal/verification/datalevin-ordered-generation-benchmark.edn"}}}
- :committed-basis-admission
+ :public-snapshot-provenance
  {:status :passed
   :requirement
-  "Public snapshot constructors admit only database values whose committedness the source can witness. Ordinary and as-of values from the acl's own source are admitted; filtered, since, history, and speculative (d/with, db-with) values are refused with :eacl/unsupported-database-value before any basis identity, cache entry, or proof frame exists."
-  :witness-operation :witness-committed-basis!
+  "Public readers admit only EACL clients and EACL-created immutable snapshots. No public backend constructor accepts caller native database values. Speculation is structural provenance established by eacl/with or eacl/with-schema; EACL never attempts to infer committedness from native identity, basis, transaction instant, or content."
+  :forbidden-coherence-mechanisms
+  [:datomic-log :datomic-tx-range :transaction-log-drain
+   :transaction-listener :content-inference]
   :matrix
   {:namespace eacl.datomic.speculative-admission-test
-   :tests 6
-   :assertions 66
+   :tests 13
+   :assertions 101
    :failures 0
    :errors 0
    :coverage
-   [:speculative-refusal-and-committed-answer-integrity
-    :ordinary-admission
-    :as-of-admission
-    :filtered-since-history-refusal
-    :as-of-over-speculative-refusal]}
-  :witnesses
+   [:public-raw-constructor-absence
+    :same-t-same-instant-different-content-collision
+    :speculative-cursor-provenance-collision-rejection
+    :zero-speculative-cache-publication
+    :exact-tier-non-read
+    :committed-root-disjoint-managed-read-through
+    :unknown-effect-cache-free-fallback
+    :transaction-function-expanded-effects
+    :cumulative-effect-nonsubtraction
+    :speculative-schema-planning
+    :bounded-retain-inert-diagnostics
+    :immutable-lifecycle-and-root-token
+    :concurrent-sibling-isolation
+    :datascript-and-datahike-native-with-contract]}
+  :adapter-capabilities
   {:datomic
-   {:mechanism :committed-log-transaction-instant
-    :notes "d/basis-t reports the underlying basis through an as-of window; re-applying d/as-of at that basis replaces the window, so the value's latest claimed transaction is compared against the committed head's :db/txInstant."}
+   {:native-with :supported
+    :actual-emitted-datoms :supported
+    :schema-planner :shared-committed-and-speculative}
    :datahike
-   {:mechanism :committed-max-tx-transaction-instant
-    :notes "AsOfDB is witnessed through the :origin-db it carries whole; the origin's :max-tx transaction instant must match the committed head."}
+   {:native-with :supported
+    :actual-emitted-datoms :supported
+    :schema-planner :shared-committed-and-speculative}
    :datascript
-   {:mechanism :connection-committed-value-registry
-    :notes "No transaction metadata exists, so committedness is decided by identity against the connection's current value or its listener-recorded committed states (bounded, newest-first by :max-tx)."
-    :additional-refusal-suite eacl.datascript.snapshot-lifecycle-test}
+   {:native-with :supported
+    :actual-emitted-datoms :supported
+    :schema-planner :shared-committed-and-speculative}
    :datalevin
-   {:mechanism :read-snapshot-gate
-    :notes "A Datalevin read snapshot is an open LMDB read transaction over committed store state; no speculative-transaction value satisfies read-snapshot?, so the value itself is the witness. The pre-existing basis-kind gate already refused every other shape."}}}
+   {:native-with :unsupported-fail-closed
+    :actual-emitted-datoms :unavailable
+    :suite eacl.datalevin.contract-test/speculative-native-with-capabilities-fail-closed-test}}}
  :runtime-guards
  {:status :passed
   :namespace eacl.backend.v8-test

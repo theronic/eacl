@@ -75,20 +75,18 @@
 (declare normalize-permission-tree)
 
 (defn assert-authorization-target-matrix!
-  "Runs every public read over writable/read-only acls plus captured, selected,
-  and direct snapshots. `snapshot-db` and `direct-snapshot` are the backend's
-  native accessor and direct constructor."
-  [{:keys [writable read-only snapshot-db direct-snapshot]}]
+  "Runs every public read over writable/read-only acls plus EACL-captured and
+  explicitly selected snapshots. Caller native database values are absent by
+  construction from the public target matrix."
+  [{:keys [writable read-only]}]
   (let [captured (eacl/snapshot writable)
         selected
         (eacl/snapshot writable consistency/minimize-latency)
-        direct (direct-snapshot writable (snapshot-db captured))
         targets
         [[:writable-acl writable]
          [:read-only-acl read-only]
          [:captured-snapshot captured]
-         [:selected-snapshot selected]
-         [:direct-snapshot direct]]
+         [:selected-snapshot selected]]
         subject (->user "user-1")
         resource (->server "server-1")
         demand {:subject subject :permission :view :resource resource}
@@ -144,9 +142,8 @@
             (normalize-permission-tree (:tree-root result)))]]]
     (try
       (is (every? eacl/acl? [writable read-only]))
-      (is (every? eacl/snapshot? [captured selected direct]))
+      (is (every? eacl/snapshot? [captured selected]))
       (is (identical? (:runtime captured) (:runtime selected)))
-      (is (identical? (:runtime captured) (:runtime direct)))
       (doseq [[operation call project] operations]
         (testing (name operation)
           (let [observed
@@ -157,7 +154,6 @@
             (is (apply = (map second observed))
                 (pr-str observed)))))
       (finally
-        (eacl/release! direct)
         (eacl/release! selected)
         (eacl/release! captured)))))
 

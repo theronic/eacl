@@ -73,10 +73,9 @@
 (defn basis-kind
   "Classifies one Datahike database value without touching an EACL runtime.
 
-  This is structural classification only. A speculative `db-with` product is
-  a plain `DB` record, so admissible-looking kinds must additionally be
-  witnessed against the connection by `witness-committed-basis` before a
-  public constructor may admit them."
+  This is structural classification only. It cannot distinguish a speculative
+  `db-with` product from committed state; public EACL APIs therefore never
+  admit arbitrary native values."
   [db]
   (cond
     (instance? AsOfDB db) :as-of
@@ -85,31 +84,6 @@
     (instance? HistoricalDB db) :history
     (instance? DB db) :ordinary
     :else :foreign-backend))
-
-(defn- transaction-instant
-  [db tx]
-  (:v (first (d/datoms db {:index :eavt
-                           :components
-                           [tx (ddb/attr-repr db :db/txInstant)]}))))
-
-(defn witness-committed-basis
-  "Proves that one admissible-looking Datahike value derives from committed
-  state reachable from `conn`.
-
-  A `db-with` product is a plain `DB` record carrying the next commit's
-  `:max-tx` and its own `:db/txInstant` stamp, so structural classification
-  admits it. The witness compares the value's latest claimed transaction
-  against the committed head: it must exist there with the same transaction
-  instant. An `AsOfDB` is witnessed through the origin value the wrapper
-  carries whole. Both instants are absent only on a pristine store that has
-  never committed, which is itself committed state."
-  [conn db kind]
-  (let [origin (if (= :as-of kind) (:origin-db db) db)
-        head (d/db conn)
-        raw-tx (:max-tx origin)]
-    (and (<= raw-tx (:max-tx head))
-         (= (transaction-instant origin raw-tx)
-            (transaction-instant head raw-tx)))))
 
 (defn database-source-scope
   "Returns the durable store and branch identity carried by `db`."
@@ -428,8 +402,6 @@
       :operations
       {:source-scope (constantly source-scope)
        :source-lifecycle source-lifecycle
-       :witness-committed-basis!
-       (fn [db kind] (witness-committed-basis conn db kind))
        :acquire-current! #(borrowed (d/db conn) nil)
        :acquire-authoritative!
        (fn [_timeout-ms]

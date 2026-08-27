@@ -1022,3 +1022,74 @@
                          :cache-tier nil
                          :cache-basis cache-basis
                          :subproblem-store answer-store}))))))))))))
+
+(defn resolve-managed-read-only!
+  "Resolves a speculative operation only through the committed managed tier.
+
+  The caller supplies a proof descriptor certified against the speculative
+  snapshot's committed root after checking cumulative-effect disjointness.
+  Exact generations are neither selected nor inspected. A miss evaluates with
+  publication disabled while still allowing proof-keyed managed subproblem
+  reads from an already existing generation."
+  [store
+   {:keys [cache-lifecycle managed-key-fn managed-subproblem-key-fn
+           managed-subproblem-scope decision-kernel]}
+   semantic-key kind valid-value? compute]
+  (when-not (fn? compute)
+    (throw
+     (ex-info
+      "Managed read-only cache computation must be a function."
+      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
+  (if-not (basis-cache? store)
+    {:value (binding [subproblem/*populate?* false
+                      subproblem/*store* nil
+                      subproblem/*managed-store* nil
+                      subproblem/*managed-key-fn* nil
+                      subproblem/*managed-scope* nil
+                      subproblem/*decision-kernel*
+                      (or decision-kernel subproblem/*decision-kernel*)]
+              (subproblem/with-decision-memo compute))
+     :cached? false
+     :cache-tier nil
+     :cache-basis nil}
+    (let [lifecycle (or cache-lifecycle @(:lifecycle store))
+          {:keys [schema-generation dependency-stamp]}
+          (managed-descriptor store managed-key-fn)
+          generation
+          (when (some? schema-generation)
+            (select-managed-generation!
+             store lifecycle managed-subproblem-scope
+             schema-generation false))
+          managed-store (:subproblems generation)
+          entry-key
+          (when generation [semantic-key kind dependency-stamp])
+          answer-options
+          (assoc (answer-entry-options valid-value? nil) :populate? false)
+          entry
+          (when entry-key
+            (:value
+             (subproblem/lookup!
+              managed-store :answer entry-key answer-options)))]
+      (if entry
+        (do
+          (swap! (:metrics store) update :managed-hits inc)
+          {:value (:value entry)
+           :cached? true
+           :cache-tier :managed-current
+           :cache-basis (:cache-basis entry)
+           :subproblem-store nil})
+        (do
+          (swap! (:metrics store) update :bypasses inc)
+          {:value
+           (binding [subproblem/*populate?* false
+                     subproblem/*store* nil
+                     subproblem/*managed-store* managed-store
+                     subproblem/*managed-key-fn* managed-subproblem-key-fn
+                     subproblem/*managed-scope* managed-subproblem-scope
+                     subproblem/*decision-kernel*
+                     (or decision-kernel subproblem/*decision-kernel*)]
+             (subproblem/with-decision-memo compute))
+           :cached? false
+           :cache-tier nil
+           :cache-basis nil
+           :subproblem-store nil})))))
