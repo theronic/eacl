@@ -37,10 +37,11 @@
 (defrecord CursorCodecCache [state max-entries])
 
 (defn codec-cache
-  "Creates a bounded, client-private cache for non-expiring cursor codecs.
+  "Creates a bounded, client-private cache for cursor codecs.
 
   Tokens found here were authenticated when this exact client minted them.
-  Unknown tokens still pass through the authenticated decoder."
+  Expiring entries retain their authenticated expiry and are reused only while
+  unexpired. Unknown tokens still pass through the authenticated decoder."
   ([]
    (codec-cache {}))
   ([{:keys [max-entries]
@@ -461,29 +462,39 @@
   (let [{:keys [current-kid keyring]} (format-options options)
         kid (or current-kid :default)
         keyring (or keyring {:default secure/default-root-key})]
-    [kid (get keyring kid)]))
+    ;; TTL is part of the issuance policy. Keeping it in the private identity
+    ;; prevents a token minted under one policy from satisfying another
+    ;; policy's encode lookup, while authenticated decode remains compatible
+    ;; with retained keys and reads expiry from the protected payload.
+    [kid (get keyring kid) (:cursor-ttl-seconds options)]))
 
 (defn- memoizable-cache
-  [{:keys [cursor-codec-cache cursor-ttl-seconds]}]
-  (when (and cursor-codec-cache
-             (nil? cursor-ttl-seconds))
+  [{:keys [cursor-codec-cache]}]
+  (when cursor-codec-cache
     (when-not (instance? CursorCodecCache cursor-codec-cache)
       (throw (ex-info "Expected an EACL cursor codec cache."
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
     cursor-codec-cache))
 
 (defn- cached-token
-  [cache identity cursor]
-  (get-in @(:state cache) [:by-cursor [identity cursor]]))
+  [cache identity cursor now]
+  (let [state @(:state cache)
+        token (get-in state [:by-cursor [identity cursor]])
+        entry (get-in state [:by-token token])]
+    (when (and token
+               (= identity (:identity entry))
+               (or (nil? (:expires-at entry))
+                   (< now (:expires-at entry))))
+      token)))
 
 (defn- cached-cursor
   [cache identity token]
   (let [entry (get-in @(:state cache) [:by-token token])]
     (when (= identity (:identity entry))
-      (:cursor entry))))
+      entry)))
 
 (defn- remember-token!
-  [cache identity cursor token]
+  [cache identity cursor token issued-at expires-at]
   (swap!
    (:state cache)
    (fn [{:keys [order by-token by-cursor] :as state}]
@@ -494,7 +505,9 @@
              by-token'
              (assoc by-token token
                     {:identity identity
-                     :cursor cursor})
+                     :cursor cursor
+                     :issued-at issued-at
+                     :expires-at expires-at})
              by-cursor' (assoc by-cursor cursor-key token)
              overflow (- (count order') (:max-entries cache))
              evicted (when (pos? overflow)
@@ -509,11 +522,17 @@
               (let [{evicted-identity :identity
                      evicted-cursor :cursor}
                     (get-in current [:by-token evicted-token])]
-                (-> current
-                    (update :by-token dissoc evicted-token)
-                    (update :by-cursor
-                            dissoc
-                            [evicted-identity evicted-cursor]))))
+                (cond-> (update current :by-token dissoc evicted-token)
+                  ;; A later token for the same cursor may have replaced this
+                  ;; reverse entry before the older token reached FIFO
+                  ;; eviction. Never evict the newer mapping with the old one.
+                  (= evicted-token
+                     (get-in current
+                             [:by-cursor
+                              [evicted-identity evicted-cursor]]))
+                  (update :by-cursor
+                          dissoc
+                          [evicted-identity evicted-cursor]))))
             (assoc state
                    :order (vec (drop overflow order'))
                    :by-token by-token'
@@ -530,10 +549,14 @@
      (when-not (map? cursor)
        (cursor-error! :malformed {}))
      (let [cache (memoizable-cache options)
-           identity (when cache (codec-identity options))]
+           identity (when cache (codec-identity options))
+           ;; A TTL-bearing hit needs one clock read to prove the cached token
+           ;; remains inside the expiry protected by its payload. Preserve the
+           ;; clock-free non-expiring hit path.
+           current-time (when cursor-ttl-seconds (now-seconds options))]
        (or (when cache
-             (cached-token cache identity cursor))
-           (let [issued-at (now-seconds options)
+             (cached-token cache identity cursor current-time))
+           (let [issued-at (or current-time (now-seconds options))
                  expires-at (when cursor-ttl-seconds
                               (+ issued-at cursor-ttl-seconds))
                  token
@@ -545,7 +568,7 @@
                    :expires-at expires-at})]
              (if cache
                (remember-token!
-                cache identity cursor token)
+                cache identity cursor token issued-at expires-at)
                token)))))))
 
 (defn expired-cursor-error
@@ -577,13 +600,17 @@
      (let [cache (memoizable-cache options)
            identity (when cache (codec-identity options))]
        (or (when cache
-             ;; The codec cache holds only non-expiring tokens this client
-             ;; minted itself, so a hit is authenticated and unexpired.
-             (when-let [cursor (cached-cursor cache identity token)]
+             ;; The codec cache holds only tokens this client minted itself.
+             ;; Expiry is protected by the token payload and retained in the
+             ;; entry, so a hit skips crypto without skipping the TTL decision.
+             (when-let [{:keys [cursor expires-at]}
+                        (cached-cursor cache identity token)]
                {:cursor cursor
                 :authenticated? true
-                :expired? false
-                :expired-at nil}))
+                :expired? (boolean
+                           (and expires-at
+                                (>= (now-seconds options) expires-at)))
+                :expired-at expires-at}))
            (let [payload
                  (try
                    (decode-aead options token)
