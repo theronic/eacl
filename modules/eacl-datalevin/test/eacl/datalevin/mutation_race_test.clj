@@ -5,6 +5,7 @@
             [eacl.core :as eacl]
             [eacl.datalevin.backend :as backend]
             [eacl.datalevin.core :as datalevin]
+            [eacl.datalevin.schema :as physical-schema]
             [eacl.relationships.storage :as storage]
             [eacl.schema.model :as model])
   (:import [java.util.concurrent CountDownLatch TimeUnit]))
@@ -53,13 +54,14 @@
          {:source-lifecycle "race-lifecycle"
           :revision-watermark watermark
           :advance-revision-watermark! #(swap! watermark max %)
-          :datalevin-topology backend/certified-topology-declaration
           :security-key test-key})]
     (try
       (eacl/write-schema! client schema)
       (d/transact! conn [{:eacl/id "alice"}
                          {:eacl/id "document-1"}])
       (f {:conn conn
+          :dir dir
+          :watermark watermark
           :client client
           :alice (eacl/spice-object :user "alice")
           :document (eacl/spice-object :document "document-1")})
@@ -102,18 +104,19 @@
 (defn- coherence-state
   [conn]
   (let [db (d/db conn)]
-    {:schema-generation
-     (ref-value db [:eacl/id "schema-string"] :eacl/schema-generation)
+    {:max-tx (:max-tx db)
+     :schema-generation
+     (ref-value db [:eacl/id "schema-string"] :eacl.datalevin/schema-generation)
      :schema-write-fence
-     (ref-value db [:eacl/id "schema-string"] :eacl/schema-write-fence)
+     (ref-value db [:eacl/id "schema-string"] :eacl.datalevin/schema-write-fence)
      :viewer-version
      (ref-value db
                 [:eacl/id (model/->relation-id :document :viewer :user)]
-                :eacl/relation-version)
+                :eacl.datalevin/relation-generation)
      :editor-version
      (ref-value db
                 [:eacl/id (model/->relation-id :document :editor :user)]
-                :eacl/relation-version)}))
+                :eacl.datalevin/relation-generation)}))
 
 (defn- assert-advanced!
   [before after key]
@@ -122,7 +125,9 @@
     (is (integer? before-value) (str key " has a baseline value"))
     (is (integer? after-value) (str key " has a committed value"))
     (when (and (integer? before-value) (integer? after-value))
-      (is (< before-value after-value) (str key " advances")))))
+      (is (< before-value after-value) (str key " advances"))
+      (is (= (:max-tx after) after-value)
+          (str key " equals the committing max-tx")))))
 
 (defn- run-at-same-commit-boundary
   [intercept? left right]
@@ -185,6 +190,34 @@
                  #(eacl/delete-relationship! client rel))]
             (is (= [nil nil] results))
             (assert-paired! conn)))))))
+
+(deftest distinct-connections-to-one-environment-share-policy-serialization-test
+  (with-system
+    (fn [{:keys [conn dir watermark client] :as system}]
+      (let [second-conn (d/create-conn dir physical-schema/datalevin-schema)]
+        (try
+          (is (not (identical? conn second-conn)))
+          (let [second-client
+                (datalevin/make-client
+                 second-conn
+                 {:source-lifecycle "race-lifecycle"
+                  :revision-watermark watermark
+                  :advance-revision-watermark! #(swap! watermark max %)
+                  :security-key test-key})
+                rel (relationship system)
+                results
+                (run-at-same-commit-boundary
+                 relationship-transaction?
+                 #(eacl/create-relationship! client rel)
+                 #(eacl/create-relationship! second-client rel))]
+            (is (= 1 (count (filter nil? results))))
+            (is (= [:eacl/relationship-conflict]
+                   (keep :type results)))
+            (assert-paired! conn)
+            (is (= (:max-tx (d/db conn))
+                   (:viewer-version (coherence-state conn)))))
+          (finally
+            (d/close second-conn)))))))
 
 (deftest relation-removal-create-and-schema-schema-races-are-fenced-test
   (testing "relation removal and relationship creation cannot both commit"

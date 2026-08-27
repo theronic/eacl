@@ -10,6 +10,7 @@
             [eacl.cursor :as cursor]
             [eacl.datalevin.backend :as datalevin-backend]
             [eacl.datalevin.db :as ddb]
+            [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]
             [eacl.datalevin.schema :as schema]
             [eacl.relationships.storage :as relationship-storage]))
@@ -22,6 +23,13 @@
 
 (def ^:private prepared-native-source-id-key
   ::prepared-native-source-id)
+
+(def ^:private extra-client-opt-keys
+  #{:revision-watermark
+    :advance-revision-watermark!
+    :maximum-snapshot-retention-ms
+    prepared-native-source-id-key
+    datalevin-backend/prepared-schema-eid-key})
 
 (defn- relationship-retraction-count
   [_db tx-data]
@@ -42,20 +50,54 @@
           (recur #?(:clj (.getCause ^Throwable cause)
                     :cljs (ex-cause cause))))))))
 
+(defn- datalevin-failure-data
+  [throwable failure-type]
+  (loop [cause throwable]
+    (when cause
+      (let [data (ex-data cause)]
+        (if (= failure-type (:type data))
+          data
+          (recur #?(:clj (.getCause ^Throwable cause)
+                    :cljs (ex-cause cause))))))))
+
+(defn- stale-connection-contention?
+  [throwable]
+  (= :eacl.datalevin/stale-connection-generation
+     (:type (ex-data throwable))))
+
 (defn- transact-native!
-  [conn {:keys [tx-data]}]
+  [write-token conn {:keys [tx-data]}]
   (try
-    (ds/transact! conn (vec tx-data))
+    (ds/transact!
+     conn (vec tx-data)
+     {:datalevin/write-token write-token})
     (catch #?(:clj Throwable :cljs :default) throwable
-      (if-let [cause-data (cas-failure-data throwable)]
-        (throw
-         (ex-info
-          "A Datalevin relationship mutation lost a commit-time fence."
-          {:type :eacl/relationship-concurrent-write
-           :eacl/error :eacl/relationship-concurrent-write
-           :backend :datalevin
-           :datalevin-error cause-data}
-          throwable))
+      (cond
+        (cas-failure-data throwable)
+        (let [cause-data (cas-failure-data throwable)]
+          (throw
+           (ex-info
+            "A Datalevin relationship mutation lost a commit-time fence."
+            {:type :eacl/relationship-concurrent-write
+             :eacl/error :eacl/relationship-concurrent-write
+             :backend :datalevin
+             :datalevin-error cause-data}
+            throwable)))
+
+        (datalevin-failure-data throwable :datalevin/stale-generation)
+        (let [cause-data
+              (datalevin-failure-data throwable :datalevin/stale-generation)]
+          (fork/refresh-connection! conn)
+          (throw
+           (ex-info
+            "A shared Datalevin connection prepared from a stale generation."
+            {:type :eacl.datalevin/stale-connection-generation
+             :eacl/error :eacl.datalevin/stale-connection-generation
+             :backend :datalevin
+             :datalevin-error cause-data}
+            throwable)))
+
+        :else
         (throw throwable)))))
 
 (defn- derefable?
@@ -126,8 +168,10 @@
     snapshot-or-db
     #(impl/read-relationships % query kernel window-options))))
 
-(def ^:private api
+(def ^:private base-api
   {:backend-id :datalevin
+   :writer-max-attempts 8
+   :writer-contention? stale-connection-contention?
    :db ds/db
    :entid snapshot-entid
    :default-entid->object-id snapshot-object-id
@@ -145,13 +189,14 @@
    :native-source-id datalevin-backend/connection-source-id
    :prepared-native-source-id-key prepared-native-source-id-key
    :relationship-retraction-count relationship-retraction-count
-   :transact! transact-native!
+   ;; The per-open admission token is closed over by `api-for-write-token`.
+   :transact! nil
    ;; Vars, not values: late binding keeps instrumentation (with-redefs in
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
             :generation snapshot-schema-generation
-            :write-schema! #'schema/write-schema!}
+            :write-schema! nil}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
           :relationship-relation-id snapshot-relationship-relation-id
@@ -160,11 +205,31 @@
           :affected-relation-ids #'impl/affected-relation-ids
           :read-relationships snapshot-read-relationships}
    :extra-client-opt-keys
-   #{:datalevin-topology
-     :revision-watermark
-     :advance-revision-watermark!
-     :maximum-snapshot-retention-ms
-     prepared-native-source-id-key}})
+   extra-client-opt-keys})
+
+(defn- api-for-client-context
+  [write-token schema-eid]
+  (-> base-api
+      (assoc
+       ;; Direct public snapshots are constructed from the client's API after
+       ;; shared orchestration has reduced runtime options to backend-neutral
+       ;; state. Close the bootstrap-resolved singleton eid over the adapter
+       ;; constructor so that this path keeps the same one-probe generation
+       ;; lookup as provider-owned snapshots without accepting caller input.
+       :basis-adapter
+       (fn [snapshot opts]
+         (datalevin-backend/basis-adapter
+          snapshot
+          (assoc opts
+                 datalevin-backend/prepared-schema-eid-key schema-eid)))
+       :transact!
+       (fn [conn native-tx]
+         (transact-native! write-token conn native-tx)))
+      (assoc-in
+       [:schema :write-schema!]
+       (fn [conn schema-string options expected-generation]
+         (schema/write-schema!
+          conn schema-string options expected-generation write-token)))))
 
 (defn- require-datalevin-client!
   [client fn-name]
@@ -230,10 +295,11 @@
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
   - :cache - omitted creates a bounded client-private basis
     cache; eacl.cache/no-cache disables it; a config map bounds it.
-    Completed answers reuse only at the identical complete basis identity;
-    this adapter makes no ordered-generation proof claim. Certified schema
-    generation still reuses derived plans across relationship-only writes. Authorization
-    mutations must use EACL APIs or intact EACL-produced transaction data.
+    Exact lookup precedes proof-backed reuse. The adapter supplies certified
+    ordered schema/relation generations, so completed answers and managed
+    subproblems may lift across commits that leave their complete dependency
+    frame unchanged. Authorization mutations must use EACL APIs or intact
+    EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :maximum-snapshot-retention-ms - optional positive upper bound for an
     EACL snapshot wrapper. Once exceeded, the next access releases an owned
@@ -243,6 +309,17 @@
   Datalevin is current-basis-only across requests. It does not retain old DB
   values and rejects :at-exact-snapshot before cache access."
   [conn config-opts]
+  (let [known-keys
+        (into orchestration/base-client-opt-keys extra-client-opt-keys)]
+    (when-let [unknown-keys
+               (seq (remove known-keys (keys config-opts)))]
+      (throw
+       (ex-info
+        "EACL Config Error: unknown Datalevin make-client option."
+        {:type :eacl/invalid-config
+         :eacl/error :eacl/invalid-config
+         :unknown-keys (vec unknown-keys)
+         :known-keys known-keys}))))
   (when (contains? config-opts prepared-native-source-id-key)
     (throw
      (ex-info
@@ -250,6 +327,13 @@
       {:type :eacl/invalid-config
        :eacl/error :eacl/invalid-config
        :key prepared-native-source-id-key})))
+  (when (contains? config-opts datalevin-backend/prepared-schema-eid-key)
+    (throw
+     (ex-info
+      "Datalevin prepared schema identity is module-internal."
+      {:type :eacl/invalid-config
+       :eacl/error :eacl/invalid-config
+       :key datalevin-backend/prepared-schema-eid-key})))
   (when-not (contains? config-opts :source-lifecycle)
     (throw
      (ex-info
@@ -323,6 +407,7 @@
          :eacl/error :eacl/invalid-config
          :key :revision-watermark
          :value watermark})))
+    (datalevin-backend/validate-fork-capabilities! conn)
     (datalevin-backend/validate-topology! conn config-opts)
     (let [revision (:max-tx (ds/db conn))]
       (when (< revision watermark)
@@ -333,7 +418,18 @@
            :eacl/error :eacl.datalevin/revision-regression
            :revision revision
            :revision-watermark watermark})))))
-  (let [source-id (schema/ensure-physical-schema! conn)
+  (let [{:keys [source-id schema-eid write-token]}
+        (schema/ensure-physical-schema! conn)
+        validated-source-id (datalevin-backend/connection-source-id conn)
+        _ (when-not (= (str source-id) validated-source-id)
+            (throw
+             (ex-info
+              "Datalevin bootstrap and persisted source identities disagree."
+              {:type :eacl/invalid-source-identity
+               :eacl/error :eacl/invalid-source-identity
+               :backend :datalevin
+               :bootstrap-source-id source-id
+               :persisted-source-id validated-source-id})))
         native-revision
         {:revision (datalevin-backend/exact-natural!
                     :startup-revision (:max-tx (ds/db conn)))
@@ -342,8 +438,11 @@
     ;; covers every bootstrap transaction visible at this lifecycle.
     (advance-revision-watermark! native-revision config-opts)
     (orchestration/make-client
-     api conn (assoc config-opts prepared-native-source-id-key
-                     (str source-id)))))
+     (api-for-client-context write-token schema-eid)
+     conn
+     (assoc config-opts
+            prepared-native-source-id-key validated-source-id
+            datalevin-backend/prepared-schema-eid-key schema-eid))))
 
 (defn snapshot
   "Constructs a borrowed public snapshot over an open Datalevin read snapshot."

@@ -1,5 +1,5 @@
 {:schema-version 1
- :certification-version "eacl.adapter-certification/v4"
+ :certification-version "eacl.adapter-certification/v5"
  :date "2026-08-23"
  :role-contracts
  {:basis-adapter
@@ -123,17 +123,73 @@
     :errors 0}
    :history
    {:namespace eacl.datalevin.contract-test
-    :tests 24
-    :assertions 1134
+    :tests 29
+    :assertions 922
     :failures 0
     :errors 0
     :coverage
     [:explicit-reader-lifecycle
      :owner-thread
      :identical-basis-cache
-     :no-ordered-generation-claim
+     :durable-source-lifecycle
+     :watermark-regression
+     :fork-capability-admission
+     :unsafe-environment-rejection
+     :persisted-policy-drift
+     :direct-snapshot-private-context
      :direct-match-equivalence
-     :aggregate-scan-and-enumerate]}}}
+     :aggregate-scan-and-enumerate]}
+   :ordered-generations
+   {:suites
+    [{:namespace eacl.datalevin.ordered-generation-test
+      :tests 3 :assertions 20 :failures 0 :errors 0}
+     {:namespace eacl.datalevin.mutation-race-test
+      :tests 5 :assertions 67 :failures 0 :errors 0}
+     {:namespace eacl.datalevin.safe-retraction-test
+      :tests 2 :assertions 14 :failures 0 :errors 0}
+     {:namespace eacl.datalevin.differential-test
+      :tests 1 :assertions 3276 :failures 0 :errors 0}]
+    :coverage
+    [:exact-hit-zero-frame-probes
+     :schema-generation-one-exact-eav-probe
+     :unrelated-commit-managed-lift
+     :relevant-commit-invalidation
+     :missing-generation-unavailable
+     :above-ceiling-contract-violation
+     :provider-restart-token-and-cursor
+     :provider-restart-managed-lift
+     :same-process-distinct-connection-recovery
+     :atomic-create-delete-touch
+     :object-delete-relation-stamping
+     :schema-and-relation-removal-races
+     :safe-retraction-stamping
+     :randomized-cache-bypass-equivalence]}
+   :maintained-fork
+   {:repository "theronic/datalevin"
+    :commit "a7e29c25"
+    :pull-request 2
+    :base-pull-request 1
+    :tests 74
+    :assertions 398
+    :failures 0
+    :errors 0
+    :coverage
+    [:commit-generation-materialization
+     :max-eid-nonallocation
+     :post-expansion-policy-enforcement
+     :exact-stamp-selectors
+     :all-public-transaction-entry-points
+     :frozen-schema-and-admin-paths
+     :per-open-token-rotation
+     :policy-replacement-admission
+     :cross-process-max-tx-continuity
+     :write-unusable-after-continuity-failure
+     :shared-store-commit-state-adoption
+     :explicit-snapshot-regression]}
+   :performance
+   {:status :passed
+    :report
+    "formal/verification/datalevin-ordered-generation-benchmark.edn"}}}
  :runtime-guards
  {:status :passed
   :namespace eacl.backend.v8-test
@@ -151,4 +207,4 @@
   :establishes
   "Executable evidence for the named adapter obligations, including exact resolved/ranked permission paths, on the seeded and adversarial cases."
   :does-not-establish
-  "A proof of Datomic, DataScript, Datahike, Clojure, ClojureScript, storage engines, or arbitrary backend states."}}
+  "A proof of Datomic, DataScript, Datahike, Datalevin, Clojure, ClojureScript, storage engines, raw KV writes, direct file mutation, upstream artifacts, or arbitrary backend states."}}

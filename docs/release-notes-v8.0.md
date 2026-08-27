@@ -138,9 +138,10 @@ schemas, relationships, caches, and tokens require no rewrite.
   no EACL time-travel registry.
 - Datalevin supports minimize-latency, fully-consistent local head, and
   at-least-as-fresh revision-floor selection through fresh explicit readers.
-  It rejects exact selection. Its initial adapter advertises no ordered
-  generations and no proof frame, so it never lifts a cached answer across a
-  different revision.
+  It rejects exact historical selection. The maintained fork enforces scalar
+  commit-generation stamping, and the adapter advertises ordered generations,
+  so an exact miss may lift a completed answer across revisions when the
+  complete dependency frame is unchanged.
 - Low-level operations accepting an arbitrary `db`, including caller-created
   `d/as-of`, `d/with`, prospective, or filtered views, bypass completed-answer
   caching.
@@ -242,17 +243,19 @@ projections) under one relation-stamp framing:
   frontier; an unrelated write leaves it unchanged.
 - Missing/malformed stamps disable managed reuse rather than becoming a
   reusable zero value.
-- All proof-capable backends read the current physical `:eacl/relation-version` assertion;
-  a missing assertion is a fail-closed miss and has no fallback.
+- Datomic, Datahike, and DataScript read the current physical
+  `:eacl/relation-version`; Datalevin reads
+  `:eacl.datalevin/relation-generation`. A missing assertion is a fail-closed
+  miss and has no fallback.
 - Custom object-ID codecs remain exact-basis-only unless they supply the
   additional deterministic dependency contract.
 - Randomized cached-versus-cache-free differential oracles run with the
-  managed tier active on the three ordered-proof backends, interleaving EACL-API writes
+  managed tier active on all four ordered-proof backends, interleaving EACL-API writes
   with checks, lookups, and counts.
-- Datalevin maintains relation versions for mutation fencing and a future
-  proof-capable design, but does not expose those values through a proof frame:
-  persistent datom transaction identity is not certified as an ordered
-  generation.
+- Datalevin stores scalar relation generations because persistent datom
+  transaction identity is not available in EACL proof order. Its maintained
+  fork materializes and enforces those values from the committing `max-tx`,
+  and the adapter exposes them through a snapshot-bound proof frame.
 
 ### Cache operations
 

@@ -12,6 +12,7 @@
             [eacl.datalevin.backend :as datalevin-backend]
             [eacl.datalevin.core :as datalevin]
             [eacl.datalevin.db :as ddb]
+            [eacl.datalevin.fork :as datalevin-fork]
             [eacl.datalevin.schema :as datalevin-schema]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.request.counters :as request-counters]
@@ -69,8 +70,6 @@
              (merge
               watermark-config
               {:source-lifecycle "test-lifecycle"
-               :datalevin-topology
-               datalevin-backend/certified-topology-declaration
                :security-key test-key}))]
         (f {:dir dir
             :conn conn
@@ -158,7 +157,6 @@
         (str
          "(do "
          "(require '[eacl.core :as eacl] "
-         "         '[eacl.datalevin.backend :as backend] "
          "         '[eacl.datalevin.core :as datalevin]) "
          "(let [watermark (atom 0) "
          "      conn (datalevin/create-conn " (pr-str dir) ") "
@@ -170,8 +168,6 @@
          "               (fn [revision] "
          "                 (spit " (pr-str watermark-file) " (str revision)) "
          "                 (swap! watermark max revision)) "
-         "               :datalevin-topology "
-         "               backend/certified-topology-declaration "
          "               :security-key " (pr-str test-key) "})] "
          "  (eacl/write-schema! client " (pr-str schema) ") "
          "  (.halt (Runtime/getRuntime) 23)))")
@@ -201,8 +197,6 @@
    (merge
     (watermark-options)
     {:source-lifecycle "test-lifecycle"
-     :datalevin-topology
-     datalevin-backend/certified-topology-declaration
      :security-key test-key}
     overrides)))
 
@@ -398,35 +392,37 @@
            :mutated? @mutated?
            :observations @observations})))))
 
-(deftest construction-requires-certified-topology-and-monotonic-state-test
+(deftest construction-requires-runtime-safety-and-monotonic-state-test
   (with-connection
     (fn [conn]
       (let [before (d/active-read-snapshot-info)]
-        (testing "every unsupported declared topology fails closed"
-          (doseq [topology
-                  [(assoc datalevin-backend/certified-topology-declaration
-                          :deployment :remote)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :jvms 2)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :connections 2)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :writers 2)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :writer-ownership :external)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :commit-mode :wal)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :physical-schema :mutable)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :request-threads :virtual)
-                   (assoc datalevin-backend/certified-topology-declaration
-                          :wal true)]]
-            (is (= :eacl/unsupported-topology
-                   (:type
-                    (error-data
-                     #(datalevin/make-client
-                       conn (client-config {:datalevin-topology topology}))))))))
+        (testing "the removed advisory topology declaration is rejected"
+          (let [error
+                (error-data
+                 #(datalevin/make-client
+                   conn (client-config {:datalevin-topology {}})))]
+            (is (= :eacl/invalid-config (:type error)))
+            (is (= [:datalevin-topology] (:unknown-keys error)))))
+        (testing "the prepared schema singleton cannot be injected by callers"
+          (let [error
+                (error-data
+                 #(datalevin/make-client
+                   conn
+                   (client-config
+                    {datalevin-backend/prepared-schema-eid-key 1})))]
+            (is (= :eacl/invalid-config (:type error)))
+            (is (= datalevin-backend/prepared-schema-eid-key
+                   (:key error)))))
+        (testing "missing fork enforcement fails before bootstrap mutation"
+          (let [before-revision (:max-tx (d/db conn))
+                error
+                (with-redefs
+                  [datalevin-fork/write-policy-capabilities (constantly nil)]
+                  (error-data
+                   #(datalevin/make-client conn (client-config))))]
+            (is (= :eacl/unsupported-capability (:type error)))
+            (is (= :ordered-generations (:capability error)))
+            (is (= before-revision (:max-tx (d/db conn))))))
         (testing "watermark is mandatory, bounded, exact, and monotonic"
           (is (= :eacl/invalid-config
                  (:type
@@ -514,8 +510,6 @@
                   :ok (swap! watermark max revision)
                   :no-op nil
                   :throw (throw (ex-info "injected" {:mode :throw}))))
-              :datalevin-topology
-              datalevin-backend/certified-topology-declaration
               :security-key test-key})]
         (try
           (reset! mode failure-mode)
@@ -542,8 +536,6 @@
         {:source-lifecycle lifecycle
          :revision-watermark watermark
          :advance-revision-watermark! #(swap! watermark max %)
-         :datalevin-topology
-         datalevin-backend/certified-topology-declaration
          :security-key test-key}
         conn (datalevin/create-conn dir)]
     (try
@@ -626,8 +618,6 @@
                     (fn [revision]
                       (spit watermark-file (str revision))
                       (swap! watermark max revision))
-                    :datalevin-topology
-                    datalevin-backend/certified-topology-declaration
                     :security-key test-key})]
               (is (pos? persisted))
               (is (<= persisted @watermark))
@@ -676,7 +666,8 @@
 (deftest actual-wal-and-unsafe-lmdb-flags-are-rejected-test
   (doseq [[label store-options]
           [[:wal {:wal? true :wal-durability-profile :strict}]
-           [:unsafe-flags {:kv-opts {:flags #{:nosync}}}]]]
+           [:unsafe-flags {:kv-opts {:flags #{:nosync}}}]
+           [:nolock {:kv-opts {:flags #{:nolock}}}]]]
     (testing (name label)
       (let [dir (u/tmp-dir (str "eacl-datalevin-unsafe-" (random-uuid)))
             conn (datalevin/create-conn dir nil store-options)]
@@ -684,8 +675,14 @@
           (let [error (error-data
                        #(datalevin/make-client conn (client-config)))]
             (is (= :eacl/unsupported-topology (:type error)))
-            (when (= label :unsafe-flags)
-              (is (= #{:nosync} (:unsafe-env-flags error)))))
+            (case label
+              :unsafe-flags
+              (is (= #{:nosync} (:unsafe-env-flags error)))
+
+              :nolock
+              (is (= #{:nolock} (:unsafe-env-flags error)))
+
+              nil))
           (finally
             (d/close conn)
             (u/delete-files dir)))))))
@@ -705,13 +702,29 @@
         (d/close conn)
         (u/delete-files dir)))))
 
+(deftest persisted-write-policy-drift-is-rejected-test
+  (with-connection
+    (fn [conn]
+      (datalevin/make-client conn (client-config))
+      (let [policy (d/write-policy conn)
+            token (:write-token (d/install-write-policy! conn policy))]
+        (d/install-write-policy!
+         conn
+         (assoc policy :guarded-write-hint "tampered policy")
+         {:datalevin/write-token token})
+        (is (= :eacl.datalevin/write-policy-drift
+               (:type
+                (error-data
+                 #(datalevin/make-client conn (client-config))))))))))
+
 (deftest exact-integer-domain-is-enforced-at-every-adapter-boundary-test
   (with-connection
     (fn [conn]
       (let [too-large 9007199254740992
             snapshot (d/open-read-snapshot conn)
             info (d/read-snapshot-revision-info snapshot)
-            adapter-opts {}]
+            adapter-opts
+            {datalevin-backend/prepared-schema-eid-key 0}]
         (try
           (doseq [field [:max-tx :max-eid]]
             (is (= :eacl/numeric-domain-error
@@ -1289,8 +1302,6 @@
              (watermark-options)
              {:cache store
               :security-key test-key
-              :datalevin-topology
-              datalevin-backend/certified-topology-declaration
               :source-lifecycle "shared-contract"})
             client
             (datalevin/make-client conn client-options)]
@@ -1320,8 +1331,6 @@
            (watermark-options)
            {:cache cache/no-cache
             :security-key test-key
-            :datalevin-topology
-            datalevin-backend/certified-topology-declaration
             :source-lifecycle "shared-contract"})))
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
@@ -1337,8 +1346,6 @@
               (watermark-options)
               {:cache store
                :security-key test-key
-               :datalevin-topology
-               datalevin-backend/certified-topology-declaration
                :source-lifecycle "aggregate-lifecycle"}))
             user-1 (contract/->user "user-1")
             user-2 (contract/->user "user-2")
@@ -1441,13 +1448,15 @@
                      (d/active-read-snapshot-info))
                   (name label)))))
 
-        (testing "cache reuse is identical-basis-only without ordered generations"
+        (testing "source capabilities remain role-pure and relevant writes invalidate"
           (let [capabilities
                 (source/capabilities
                  (:source client))]
             (is (= "aggregate-lifecycle"
                    (source/source-lifecycle
                     (:source client))))
+            ;; Ordered-generation evidence belongs to each selected immutable
+            ;; adapter, not to the source role that performs basis acquisition.
             (is (not (contains? (:cache-proofs capabilities)
                                 :ordered-generations)))
             (doseq [[label invoke]
@@ -1526,8 +1535,6 @@
              (merge
               (watermark-options)
               {:security-key test-key
-               :datalevin-topology
-               datalevin-backend/certified-topology-declaration
                :source-lifecycle "plan-reuse"}))]
         (eacl/write-schema! client contract/smoke-schema)
         (d/transact!
@@ -1550,8 +1557,6 @@
              (merge
               (watermark-options)
               {:security-key test-key
-               :datalevin-topology
-               datalevin-backend/certified-topology-declaration
                :source-lifecycle "one-hundred-checks"}))
             original-seal sealed-plan/seal-plan
             seals (atom 0)]
@@ -1619,8 +1624,6 @@
              (merge
               (watermark-options)
               {:security-key test-key
-               :datalevin-topology
-               datalevin-backend/certified-topology-declaration
                :source-lifecycle "recursive-contract"}))]
         (eacl/write-schema! client contract/recursive-schema)
         (d/transact!

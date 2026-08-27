@@ -37,12 +37,12 @@ Yes.
 | [Datomic Pro](https://www.datomic.com/)             | [eacl-datomic](https://clojars.org/dev.eacl/eacl-datomic)       | DynamoDB (recommended), Cassandra or SQL                                 |
 | [Datahike](https://datahike.io/)                    | [eacl-datahike](https://clojars.org/dev.eacl/eacl-datahike)     | DynamoDB, S3 (cheaper, but slower), LMDB, SQL, Redis, GCS or IndexedDB.  |
 | [DataScript](https://github.com/tonsky/datascript/) | [eacl-datascript](https://clojars.org/dev.eacl/eacl-datascript) | In-memory, but can persist to disk or add a SQL adapter. No time-travel. |
-| [Datalevin](https://datalevin.org/)                 | [`eacl-datalevin`](modules/eacl-datalevin) — implemented, publication pending | Embedded LMDB; certified sole-writer topology only.                       |
+| [Datalevin](https://datalevin.org/)                 | [`eacl-datalevin`](modules/eacl-datalevin) — implemented, publication pending | Embedded LMDB; storage-enforced write policy and ordered generations.      |
 
 
 S3-backed Datahike is attractive for infrequently-accessed apps, because you can trade latency for reduced storage cost, and it supports [serverless](https://github.com/replikativ/datahike-serverless) to reduce running Peer / Transactor costs.
 
-*Note:* DataScript and Datalevin have no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots. Datalevin additionally omits ordered-generation cache proofs, so completed answers only reuse at the identical selected revision; its certified schema generation still reuses schema-derived plans across relationship-only revisions.
+*Note:* DataScript and Datalevin have no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots. Datalevin uses scalar ordered-generation proofs from the maintained fork, so completed answers may reuse across unrelated forward revisions without historical selection.
 
 ## Overview of EACL
 
@@ -515,7 +515,7 @@ But you will probably forget one day, so there are helpers to fined & clean up g
 - `:eacl.relation/relation-name`
 - `:eacl.relation/subject-type`
 - `:eacl.relation/resource-type+relation-name+subject-type`
-- `:eacl/relation-version` tracks cache coherence – it gets bumped on relevant Relationship writes that affect this Relation to prevent stale cache answers.
+- `:eacl/relation-version` tracks cache coherence in Datomic, Datahike, and DataScript. Datalevin uses the scalar `:eacl.datalevin/relation-generation`; each is advanced by relevant Relationship writes.
 
 ### Permissions
 
@@ -538,7 +538,7 @@ But you will probably forget one day, so there are helpers to fined & clean up g
 - `:eacl/id` uniquely identifies Relations & Permissions. It's a string to match SpiceDB IDs, but you can also use it for external ID. Like in SpiceDB, Some IDs are reserved by EACL internals (todo: document EACL ID prefixes).
 - `:eacl/schema-string` stores a valid schema string was written via `eacl/write-schema!`.
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
-- `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike, DataScript, and Datalevin.
+- `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript. Datalevin uses scalar `:eacl.datalevin/schema-generation` and `:eacl.datalevin/schema-write-fence` values in its native `max-tx` domain.
 - `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
 - `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
@@ -643,7 +643,7 @@ Java 26; source builds may target Java 8 through Java 26, subject to their
 backend and application dependencies. See [formal/README.md](formal/README.md)
 for tool versions and the full verification commands.
 
-For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup, mandatory topology/lifecycle/watermark inputs, and publication status are documented in the [`eacl-datalevin` module README](modules/eacl-datalevin/README.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source migration guide](docs/v8-snapshot-provider-migration.md).
+For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup, mandatory lifecycle/watermark inputs, write-policy boundary, and publication status are documented in the [`eacl-datalevin` module README](modules/eacl-datalevin/README.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source migration guide](docs/v8-snapshot-provider-migration.md).
 
 ### Schema & Relationships
 

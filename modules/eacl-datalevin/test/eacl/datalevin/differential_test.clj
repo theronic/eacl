@@ -65,8 +65,6 @@
         {:source-lifecycle (str "differential-" seed)
          :revision-watermark watermark
          :advance-revision-watermark! #(swap! watermark max %)
-         :datalevin-topology
-         datalevin-backend/certified-topology-declaration
          :security-key key})
        :transact! #(datalevin-native/transact! datalevin-conn %)}
       {:backend :datahike
@@ -182,6 +180,26 @@
       (is (= expected actual)
           (str "seed=" seed " phase=" phase " backend=" backend))))))
 
+(defn- assert-cached-bypass-equal!
+  [seed phase systems users folders permissions]
+  (doseq [{:keys [backend client]} systems
+          permission permissions
+          user users
+          folder folders]
+    (let [request {:subject user
+                   :permission permission
+                   :resource folder}
+          cached (eacl/check-permission client request)
+          bypass (eacl/check-permission
+                  client (assoc request :cache? false))]
+      (is (= (:allowed? bypass) (:allowed? cached))
+          (str "seed=" seed
+               " phase=" phase
+               " backend=" backend
+               " permission=" permission
+               " user=" (:id user)
+               " folder=" (:id folder))))))
+
 (deftest randomized-public-api-differential-test
   (doseq [seed [41 820084 20260822]]
     (testing (str "seed " seed)
@@ -199,6 +217,8 @@
             (eacl/create-relationships! client relationships))
           (assert-equal-observations!
            seed :initial systems users folders)
+          (assert-cached-bypass-equal!
+           seed :initial systems users folders [:view])
 
           (let [deletions (vec (take-nth 3 relationships))
                 touches (vec (take-nth 4 (drop 1 relationships)))]
@@ -208,16 +228,22 @@
                client
                (mapv #(eacl/->RelationshipUpdate :touch %) touches)))
             (assert-equal-observations!
-             seed :mutated systems users folders))
+             seed :mutated systems users folders)
+            (assert-cached-bypass-equal!
+             seed :mutated systems users folders [:view]))
 
           (doseq [{:keys [client]} systems]
             (eacl/write-schema! client schema-with-inspect))
           (assert-equal-observations!
            seed :schema-changed systems users folders [:view :inspect])
+          (assert-cached-bypass-equal!
+           seed :schema-changed systems users folders [:view :inspect])
 
           (doseq [{:keys [client]} systems]
             (eacl/delete-object! client (first folders)))
           (assert-equal-observations!
+           seed :object-deleted systems users folders [:view :inspect])
+          (assert-cached-bypass-equal!
            seed :object-deleted systems users folders [:view :inspect])
           (finally
             (close-systems! fixture)))))))

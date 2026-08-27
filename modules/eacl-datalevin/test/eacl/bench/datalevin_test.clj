@@ -111,8 +111,6 @@
          {:source-lifecycle "benchmark-lifecycle"
           :revision-watermark watermark
           :advance-revision-watermark! #(swap! watermark max %)
-          :datalevin-topology
-          datalevin-backend/certified-topology-declaration
           :security-key test-key})]
     (try
       (eacl/write-schema! client schema)

@@ -331,8 +331,6 @@
      {:source-lifecycle "authorization-amplification-baseline"
       :revision-watermark watermark
       :advance-revision-watermark! #(swap! watermark max %)
-      :datalevin-topology
-      datalevin-backend/certified-topology-declaration
       :security-key test-key})))
 
 (defn- fixture-relationships

@@ -162,18 +162,19 @@ backend/source/lifecycle scope; exact selection additionally establishes the
 exact locator. Source replacement requires lifecycle rotation before cached or
 token-bearing traffic resumes.
 
-Datalevin demonstrates the conservative capability policy: its persistent
-datoms do not expose the original transaction in a form certified for EACL's
-proof order. The adapter therefore omits `:ordered-generations` and the
-`:proof-frame` operation. It may reuse completed answers only for the same
-complete basis identity and never interprets a datom `:tx` as a
-relation generation. Independently, its one-probe `:schema-generation`
-operation lets schema-derived plans survive relationship-only revisions. Its
-owned-snapshot acquisition reads only the maintained fork's revision bounds;
-it does not enumerate or fingerprint physical schema. Each reader is owned by
-the acquiring platform thread, cannot escape or cross threads, and is closed
-exactly once after the complete response (including cursor/cache publication)
-or after any failure. Datalevin makes no ordered-generation claim.
+Datalevin demonstrates why a capability claim must be backed by executable
+storage invariants. Persistent Datalevin datoms do not expose their original
+transaction in EACL's proof order, so the adapter never interprets datom `:tx`.
+Instead, the maintained fork materializes scalar generation values from the
+committing `max-tx`, enforces complete schema/relation stamping after transaction
+expansion, and rejects discontinuous or unadmitted protected writes. The
+adapter advertises `:ordered-generations`; its `:proof-frame` performs one exact
+EAV probe per requested relation and its independent `:schema-generation`
+operation performs one probe. Owned-snapshot acquisition reads only the fork's
+revision bounds; it does not enumerate or fingerprint physical schema. Each
+reader is owned by the acquiring platform thread, cannot escape or cross
+threads, and is closed exactly once after the complete response (including
+cursor/cache publication) or after any failure.
 
 ## Assurance ownership
 

@@ -36,7 +36,7 @@
                'com.rpl/specter
                'dev.eacl/datalevin-embedded-eacl}
              (set (keys dependencies))))
-      (is (= {:mvn/version "1.0.2-eacl.1"}
+      (is (= {:mvn/version "1.0.2-eacl.2"}
              (get dependencies
                   'dev.eacl/datalevin-embedded-eacl)))
       (is (not-any?

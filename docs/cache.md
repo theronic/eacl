@@ -26,6 +26,18 @@ transaction data or directly changing authorization schema, relationship
 tuples, permissioned identity, or entity liveness is unsupported and can leave
 a managed entry stale.
 
+The maintained Datalevin fork makes this mutation contract executable for its
+datom transaction and administrative APIs. A persisted store policy guards and
+freezes every physical EACL attribute except application identity, verifies
+schema and relation stamps after transaction-function and `retractEntity`
+expansion, materializes each stamp from the committing `max-tx`, and requires a
+per-open token held by the EACL writer. Consequently an unadmitted protected
+write, including direct retraction of an entity that owns relationship tuples,
+aborts instead of silently invalidating proof. Use `delete-object!` or
+`eacl.datalevin.safe-retraction/transact-retract-entity!` for those deletions.
+Raw KV writes, direct file modification, and opening the directory with an
+upstream artifact that lacks the policy remain outside the trusted boundary.
+
 Caching does not alter results:
 
 - `eacl.cache/no-cache` disables it for a client;
@@ -61,9 +73,9 @@ relationship clauses, page direction/demand, candidate window, and selected
 snapshot. Proof-backed aggregate reuse additionally binds every direct
 relationship dependency used by the filter. A request-local repeated decision
 may remove work inside one aggregate but is not reported as a durable
-`:cached? true` result. Datalevin can hit an aggregate page only at the
-identical selected revision because it deliberately omits ordered-generation
-proofs; its certified schema generation still reuses validation and plans.
+`:cached? true` result. Datalevin applies the same exact-first, proof-backed
+aggregate rules as the other ordered-generation adapters: an unrelated commit
+may reuse a complete aggregate page, while a changed dependency frame misses.
 
 ## Certified schema generation
 
@@ -71,8 +83,8 @@ Every bundled adapter implements the independent `:schema-generation`
 operation. It reads EACL's transactionally maintained schema stamp with at
 most one index probe, and the selected adapter memoizes that result. A managed
 schema write advances the stamp; a relationship-only or unrelated write does
-not. This operation is available on Datalevin even though Datalevin does not
-advertise ordered relationship-generation proofs.
+not. Datalevin reads this scalar stamp and each requested scalar relation stamp
+from the same owned immutable reader used by the authorization request.
 
 A certified stamp selects one bounded, client-owned derived generation. Its
 key contains the engine ABI, backend and adapter identity, source scope,
