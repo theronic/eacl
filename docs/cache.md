@@ -58,8 +58,8 @@ Caching does not alter results:
 | Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
 | Sealed plan | Same source scope, lifecycle, schema generation, and permission root | Reuses the compiled stable-discovery plan across requests and unrelated transactions; `expire-cache!` drops it |
 | Schema-derived generation | Same engine ABI, adapter/source scope, lifecycle, and certified schema generation | Shares parsed validation catalogs, permission roots and paths, dependency closures, routing analysis, direct-grant relations, cycle guards, and sealed plans |
-| Latest checkpoint | One authenticated query, exact snapshot, page size, and boundary | Resumes a continued page from the retained engine state plus its lookahead segment without publishing incomplete traversal as an answer |
-| Visited page | One authenticated query and immutable snapshot | Reuses an already-externalized page (and learns the adjacent opposite-direction page) |
+| Latest checkpoint | One client, query, lineage, complete plan frame, plan fingerprint, traversal, anchor, page size, and authenticated boundary | Resumes history-free reducer state plus its lookahead on the same or an equal-frame basis; native revision is not part of the key |
+| Visited page | One authenticated query and exact immutable basis | Reuses an already-externalized page (and learns the adjacent opposite-direction page); external identity rendering is not covered by frame equality |
 
 Completed-answer keys include the normalized operation, principal, permission,
 query, bounds, evaluation mode, and result shape. Public IDs and metadata are
@@ -453,7 +453,10 @@ historical evaluation is always authoritative.
 Each backend exposes `cache-stats`, including exact/proof-backed hits, misses,
 bypasses, proof-unavailable reasons, sticky proof-contract violations, puts,
 expirations, admission rejections, evictions, live weights, and avoided backend
-work. Lookup and count responses
+work. Its `:continuations` section reports checkpoint hits, publications,
+replacements, occupancy, and miss reasons (`:absent`, `:evicted`,
+`:boundary-mismatch`, `:overweight`, `:plan-mismatch`, and
+`:population-disabled`). Lookup and count responses
 also expose `:cached?` and `:cache-basis`; `can?` returns only a Boolean.
 
 The cache-free evaluator is the behavioral oracle. Differential and randomized

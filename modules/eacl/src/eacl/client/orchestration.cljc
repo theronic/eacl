@@ -511,6 +511,11 @@
                    :operation :cursor-recovery}))))
             historical-basis?
             (= :as-of (:basis-kind page-semantic-identity))
+            accepted-cursor-frame
+            (when (and page-selected-snapshot
+                       (proof-frame/descriptor?
+                        (:frame continuation-context)))
+              (:frame continuation-context))
             page-opts
             (assoc
              (cursor-options
@@ -521,6 +526,7 @@
               resource-type permission relationship-dependency)
              :snapshot-semantic-identity page-semantic-identity
              :cursor-dependency-context continuation-context
+             :accepted-cursor-frame accepted-cursor-frame
              :historical-basis? historical-basis?
              :completed-cache?
              (:completed-cache-request? opts))]
@@ -576,12 +582,30 @@
           (if complete-candidate-state?
             candidate-schema-cache
             (:schema-cache detached-state)))
+        request-relation-ids
+        (delay
+          (if-let [resolve-dependency-ids
+                   (:cursor-dependency-relation-ids-fn opts)]
+            (resolve-dependency-ids
+             adapter (:snapshot-semantic-identity opts))
+            (some-> (:cursor-dependency-relation-ids opts) force)))
+        request-frame-descriptor
+        (delay
+          (or (:accepted-cursor-frame opts)
+              (when-let [relation-ids @request-relation-ids]
+                (proof-frame/descriptor
+                 (proof-frame/resolve!
+                  request-proof-frame relation-ids)))))
         evaluate
         #(do
            (execution/check! contract :schema-plan)
            (let [value
                  (binding [engine/*schema-cache* @schema-cache
                            engine/*proof-frame* request-proof-frame
+                           engine/*request-lineage*
+                           (:request-lineage opts)
+                           engine/*request-frame*
+                           request-frame-descriptor
                            engine/*recursive-traversal-limits*
                            (:recursive-traversal-limits opts)
                            engine/*service-admission*
@@ -617,13 +641,7 @@
                         (permission-dependencies
                          adapter resource-type permission))
                       page-deps
-                      (if-let [resolve-dependency-ids
-                               (:cursor-dependency-relation-ids-fn opts)]
-                        (resolve-dependency-ids
-                         adapter (:snapshot-semantic-identity opts))
-                        (when-let [dependency-ids
-                                   (:cursor-dependency-relation-ids opts)]
-                          @dependency-ids))
+                      @request-relation-ids
                       relation-ids
                       (->> (concat (:relation-ids permission-deps)
                                    page-deps)
@@ -729,6 +747,7 @@
       :recursive-traversal-limits
       (:recursive-traversal-limits opts)}
      {:request-proof-frame (:request-proof-frame opts)
+      :request-lineage (:request-lineage opts)
       :populate-cache? (:populate-cache-request? opts true)})))
 
 (defn- request-schema

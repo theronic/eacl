@@ -23,6 +23,16 @@
   "The request-scoped ordered-generation frame, or nil for raw evaluation."
   nil)
 
+(def ^:dynamic *request-lineage*
+  "The request context's canonical source-scope/lifecycle lineage."
+  nil)
+
+(def ^:dynamic *request-frame*
+  "The request context's canonical complete frame descriptor, or a delay of
+  it. The descriptor covers the full public query closure and is shared with
+  cursor and answer-cache decisions."
+  nil)
+
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
 (def ^:private projection-key-version 2)
@@ -982,7 +992,7 @@
    (sealed-plan/seal-plan db root-node)
    (permission-relationship-eids db resource-type permission)))
 
-(defn- stable-plan
+(defn ^:no-doc stable-plan
   "Seals each normalized root once in the bound generation-owned cache. An
   uncertified request receives the same behavior in its request-local floor;
   an unbound raw engine call seals without publishing."
@@ -1247,7 +1257,7 @@
   [thunk]
   (physical/with-admission *service-admission* thunk))
 
-(defn- stable-checkpoints
+(defn ^:no-doc stable-checkpoints
   "Accepts a stable-page checkpoint store (raw atom) or the client's scoped
   continuation context (fn-map with its own bounds and eviction); anything
   else degrades to deterministic replay."
@@ -1255,7 +1265,10 @@
   (cond
     (and (map? cache)
          (true? (:opaque-values? cache))
+         (fn? (:peek cache))
          (fn? (:get cache))
+         (fn? (:hit! cache))
+         (fn? (:miss! cache))
          (fn? (:put! cache)))
     cache
 
@@ -1265,6 +1278,26 @@
          (map? @cache)
          (contains? @cache :entries))
     cache))
+
+(defn checkpoint-key
+  "Returns the frame-scoped private checkpoint identity for a sealed plan.
+
+  A key exists only when the request owns both its canonical lineage and a
+  complete ordered-generation frame over every relation the reducer may read.
+  Native revision is deliberately absent: equal frames in one lineage denote
+  equal plan slices and therefore equal history-free reducer state. An
+  unavailable frame disables acceleration and leaves deterministic replay as
+  the correctness path."
+  [plan traversal subject-type anchor-eid page-size]
+  (when (and *request-lineage* *request-frame*)
+    (when-let [frame (force *request-frame*)]
+      [*request-lineage*
+       frame
+       (:fingerprint plan)
+       traversal
+       subject-type
+       anchor-eid
+       page-size])))
 
 (defn- stable-items
   [plan traversal result-type start-ordinal eids]
@@ -1506,11 +1539,11 @@
             ((if least-path? least-path-fetch-fn stable-fetch-fn) db)
             cache (when-not least-path?
                     (when cache-fn (cache-fn)))
+            checkpoints (stable-checkpoints cache)
             checkpoint-key
-            (when-not least-path?
-              [(:fingerprint plan)
-               (backend/invoke db :native-revision)
-               traversal subject-type anchor-eid size])
+            (when checkpoints
+              (checkpoint-key
+               plan traversal subject-type anchor-eid size))
             fetch-exclusive
             (fn [candidate-bound limit]
               (if least-path?
@@ -1588,7 +1621,7 @@
                                     :before (when (= :desc direction) edge)
                                     :last-window?
                                     (and (= :desc direction) (nil? edge))
-                                    :checkpoints (stable-checkpoints cache)
+                                    :checkpoints checkpoints
                                     :service-admission *service-admission*
                                     :checkpoint-key checkpoint-key})))))))
                       items
@@ -1644,6 +1677,7 @@
   [db plan traversal query {:keys [direction size bound]} cache-fn
    result-type anchor subject-type]
   (let [cache (when cache-fn (cache-fn))
+        checkpoints (stable-checkpoints cache)
         ;; A bare :last window on a recursive schema exhausts a
         ;; data-dependent traversal; that cost stays opt-in via
         ;; :evaluation :complete-denotation (public v8 contract).
@@ -1679,12 +1713,13 @@
                              :after (when (= :asc direction) edge)
                              :before (when (and (= :desc direction) edge) edge)
                              :last-window? (and (= :desc direction) (nil? edge))
-                             :checkpoints (stable-checkpoints cache)
+                             :checkpoints checkpoints
                              :service-admission *service-admission*
-                             :checkpoint-key [(:fingerprint plan)
-                                              (backend/invoke db :native-revision)
-                                              traversal subject-type anchor-eid
-                                              size]})))))))]
+                             :checkpoint-key
+                             (when checkpoints
+                               (checkpoint-key
+                                plan traversal subject-type anchor-eid
+                                size))})))))))]
     (report-adapter-attempts! attempts)
     (page-response
      {:items (stable-items plan traversal result-type

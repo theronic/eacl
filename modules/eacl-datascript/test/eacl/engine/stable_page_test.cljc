@@ -5,16 +5,28 @@
   resource-exhaustion cliff, and the remaining continuation mutation
   controls (checkpoint regression, missing lookahead segment, stale
   basis)."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [#?(:clj clojure.test :cljs cljs.test)
+             :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
-            [eacl.baseline.capture :as capture]
+            #?(:clj [eacl.baseline.capture :as capture])
             [eacl.datascript.backend :as datascript-backend]
+            [eacl.engine.checkpoint-fixtures :as portable]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-page :as page]
             [eacl.engine.stable-reducer :as reducer]))
 
 (def ^:private security-key "stable-page-test-key-0123456789abcdef")
+
+(defn- fixture-for
+  [fixture-key]
+  #?(:clj ((get capture/fixtures fixture-key))
+     :cljs (portable/fixture fixture-key)))
+
+(defn- seed-fixture-client!
+  [fixture]
+  #?(:clj (capture/seed-client! fixture)
+     :cljs (portable/seed-client! fixture)))
 
 (defn- basis-identity
   [adapter source-id source-lifecycle]
@@ -29,8 +41,8 @@
 
 (defn- seeded
   [fixture-key]
-  (let [fixture ((get capture/fixtures fixture-key))
-        {:keys [conn]} (capture/seed-client! fixture)
+  (let [fixture (fixture-for fixture-key)
+        {:keys [conn]} (seed-fixture-client! fixture)
         db (ds/db conn)
         source-id (str (random-uuid))
         source-lifecycle (str (random-uuid))
@@ -140,8 +152,8 @@
             fresh-store (page/make-checkpoint-store)
             fresh-options (assoc options :checkpoints fresh-store)
             _ (page/page fresh-options)
-            key (#'page/checkpoint-key
-                 (#'page/execution-binding options))
+            key (page/checkpoint-key
+                 (page/execution-binding options))
             _ (swap! fresh-store update-in [:entries key]
                      (fn [entry] (assoc entry :pending [])))
             corrupted-ordinal (:ordinal (get-in @fresh-store [:entries key]))
@@ -193,7 +205,8 @@
         cursor (get-in page-1 [:page-info :end-cursor])
         error-of (fn [options]
                    (try (page/page options) nil
-                        (catch clojure.lang.ExceptionInfo e
+                        (catch #?(:clj clojure.lang.ExceptionInfo
+                                  :cljs cljs.core.ExceptionInfo) e
                           (:eacl/error (ex-data e)))))]
     (testing "tampered payloads are rejected"
       (is (= :eacl.page/invalid-cursor
@@ -241,8 +254,44 @@
       (is (= :eacl.page/resource-exhausted
              (try (page/page (assoc options :after cursor :max-commands 1))
                   nil
-                  (catch clojure.lang.ExceptionInfo e
+                  (catch #?(:clj clojure.lang.ExceptionInfo
+                            :cljs cljs.core.ExceptionInfo) e
                     (:eacl/error (ex-data e)))))))))
+
+(deftest resumed-checkpoint-enforces-cumulative-limits-like-replay-test
+  (let [env (seeded :folder-chain)
+        store (page/make-checkpoint-store)
+        options (base-options env {:page-size 3 :checkpoints store})
+        page-1 (page/page options)
+        cursor (get-in page-1 [:page-info :end-cursor])
+        key (page/checkpoint-key (page/execution-binding options))
+        admissions (get-in @store [:entries key :state :admissions])
+        error-data
+        (fn [candidate]
+          (try (page/page candidate) nil
+               (catch #?(:clj clojure.lang.ExceptionInfo
+                         :cljs cljs.core.ExceptionInfo) error
+                 (ex-data error))))
+        via-checkpoint
+        (error-data (assoc options :after cursor
+                           :max-admissions admissions))
+        via-replay
+        (error-data (-> options
+                        (dissoc :checkpoints)
+                        (assoc :after cursor
+                               :max-admissions admissions)))]
+    (is (pos-int? admissions))
+    (is (= :eacl.page/resource-exhausted
+           (:eacl/error via-checkpoint)
+           (:eacl/error via-replay)))
+    (is (= :max-admissions (:limit via-checkpoint) (:limit via-replay)))
+    (is (= (select-keys via-replay
+                        [:limit :maximum :admissions :transitions
+                         :commands :discovered])
+           (select-keys via-checkpoint
+                        [:limit :maximum :admissions :transitions
+                         :commands :discovered]))
+        "checkpoint resume carries cumulative counters exactly as replay")))
 
 (deftest reverse-direction-pagination-test
   (let [env (seeded :explorer-acyclic)
@@ -270,8 +319,8 @@
         options (base-options env {:page-size 3 :checkpoints store})
         page-1 (page/page options)
         key-at (fn [adapter]
-                 (#'page/checkpoint-key
-                  (#'page/execution-binding (assoc options :adapter adapter))))
+                 (page/checkpoint-key
+                  (page/execution-binding (assoc options :adapter adapter))))
         _ (ds/transact! (:conn env) [{:db/id -1 :eacl/id "basis-mover"}])
         moved (datascript-backend/basis-adapter
                (ds/db (:conn env))

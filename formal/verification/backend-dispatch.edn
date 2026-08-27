@@ -9,12 +9,16 @@
   "modules/eacl-datalevin/src"]
  :runtime-passes
  {:clj
-  {;; 82 -> 52 (2026-08-23): source selection and lifecycle operations moved
-   ;; out of the immutable adapter dispatch surface into eacl.backend.source.
-   ;; The new :basis-kind observation closes exact identity without granting
-   ;; the adapter source authority. Both reader passes retain the same closed
-   ;; basis-adapter operation set.
-   :invoke-call-count 52
+   {;; 82 -> 52 (2026-08-23): source selection and lifecycle operations moved
+    ;; out of the immutable adapter dispatch surface into eacl.backend.source.
+    ;; The new :basis-kind observation closes exact identity without granting
+    ;; the adapter source authority. Both reader passes retain the same closed
+    ;; basis-adapter operation set.
+    ;; 52 -> 49 (2026-08-24): stable checkpoint keys moved from native
+    ;; revisions to proof-equivalent authorization frames, removing three
+    ;; request-path revision observations without changing the closed operation
+    ;; set.
+    :invoke-call-count 49
    :operations
    #{:snapshot-id
      :basis-kind
@@ -32,7 +36,7 @@
      :schema-generation
      :proof-frame}}
   :cljs
-  {:invoke-call-count 52
+  {:invoke-call-count 49
    :operations
    #{:snapshot-id
      :basis-kind

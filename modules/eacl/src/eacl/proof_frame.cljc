@@ -268,6 +268,14 @@
   [proof]
   (= :complete (:status proof)))
 
+(defn descriptor?
+  "True only for the canonical constant-size managed-reuse descriptor."
+  [value]
+  (and (map? value)
+       (= #{:schema-generation :dependency-stamp} (set (keys value)))
+       (generation? (:schema-generation value))
+       (generation? (:dependency-stamp value))))
+
 (defn descriptor
   "Returns the constant-size completed-cache identity for a complete proof."
   [proof]

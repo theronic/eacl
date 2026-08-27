@@ -70,12 +70,23 @@ type, fixed page size, the boundary result's one-based ordinal and
 external identity, and optional expiry (domain `eacl/stable-page/v1`,
 domain-separated key derivation, constant-time tag comparison).
 
-Continuation resolves through a **latest-only in-process checkpoint**
-(complete history-free reducer state plus the undelivered lookahead
-segment and constant-size boundary identity, replaced only on a strictly
-greater scalar transition ordinal, bounded by entry count and per-entry
-weight with overweight drop) or **governed deterministic replay** that
-validates the boundary ordinal and identity before any page publishes.
+After the public cursor has authenticated, selected and accepted its basis,
+continuation resolves through a **latest-only client-private checkpoint** or
+**governed deterministic replay**. The checkpoint key is
+`[lineage frame plan-fingerprint traversal subject-type anchor page-size]`;
+native revision is intentionally absent. The frame covers every relation the
+sealed reducer may scan, so an equal frame in one lineage excludes the
+changed-slice hazard and makes the history-free state reusable across an
+unrelated write. The entry contains complete history-free reducer state, the
+undelivered lookahead segment, and the authenticated boundary identity. It is
+replaced only by strictly greater transition progress and remains bounded by
+entry count and weight. A miss always replays and validates the boundary before
+publishing a page.
+
+`:populate-cache? false` permits checkpoint lookup but suppresses publication;
+the next page replays correctly. Visited public pages remain exact-basis-keyed
+because external identifier rendering is outside the frame. The standalone
+`eacl_sd1.` token and its private checkpoint key also remain exact-basis-bound.
 
 Rejection classes (all typed, never silent). Public clients surface them
 under the `:eacl.pagination/*` and `:eacl.recursive-traversal/*` keys;
@@ -184,9 +195,11 @@ transitions, logical scan commands, values fetched, logical admissions,
 results discovered, maximum stack, and retained-buffer high-water marks —
 plus adapter attempts when the counting retry wrapper is installed.
 Storage-layer counters (node-cache hits/misses, remote GETs/PUTs) are
-observed at the storage layer and never inferred. Checkpoint stores
-report entry count and per-entry admission weight; overweight publication
-drops are silent by contract (the request itself is unaffected).
+observed at the storage layer and never inferred. Checkpoint stores report
+hits, publications, replacements, entry count, live weight, and classified
+misses (`:absent`, `:evicted`, `:boundary-mismatch`, `:overweight`,
+`:plan-mismatch`, `:population-disabled`). Overweight publication affects only
+acceleration; the request and subsequent deterministic replay remain correct.
 
 ## Topology qualification
 

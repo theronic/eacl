@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated
   :source-files 80
   :public-roots 70
-  :reachable-definitions 1677
+  :reachable-definitions 1691
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -399,6 +399,53 @@
    :ci [:generated-production-kernel
         :cross-runtime-vectors
         :cross-adapter-state-trace]}
+  {:operation :frame-keyed-checkpoint-resume
+   :entry-points ['eacl.engine.v8/checkpoint-key
+                  'eacl.engine.stable-page/state-at-boundary
+                  'eacl.engine.stable-page/checkpoint-put!
+                  'eacl.engine.stable-reducer/history-free
+                  'eacl.engine.stable-reducer/resume]
+   :theorems
+   [:checkpoint-is-history-free-state-plus-undelivered-lookahead
+    :checkpoint-resume-equals-same-basis-replay
+    :sealed-plan-descriptors-stay-inside-certified-closure
+    :equal-scalar-frame-preserves-every-closure-slice
+    :equal-frame-resume-preserves-next-page-state-boundary-and-resource-outcome
+    :native-revision-is-not-checkpoint-semantic-identity
+    :visited-public-pages-remain-exact-basis-keyed]
+   :dafny
+   ["formal/stable-discovery/ReducerCheckpoint.dfy"
+    "formal/stable-discovery/RuntimeCheckpointComposition.dfy"
+    "formal/stable-discovery/ReducerReadScope.dfy"
+    "formal/dafny/ScalarFrontierCoherence.dfy"]
+   :premises
+   [:same-lineage
+    :equal-certified-schema-generation-and-scalar-frontier
+    :complete-canonical-plan-relation-closure
+    :sealed-plan-read-scope-guard-passed
+    :equal-sealed-plan-fingerprint-and-order-abi
+    :authenticated-boundary-ordinal-and-identity
+    :closed-history-free-state-and-lookahead
+    :cumulative-resource-counters-retained]
+   :adapter-obligations
+   [:immutable-snapshot
+    :durable-source-lineage-truthfulness
+    :supported-writer-ordered-generation-stamping
+    :ordered-generation-proof-completeness
+    :deterministic-complete-exclusive-scans]
+   :runtime-targets [:clj-java :cljs-javascript]
+   :production-authoritative
+   {:checkpoint-key :frame-keyed-host-control-mutation-controlled
+    :resume :history-free-host-runtime-formally-composed
+    :public-cursor-order :checkpoint-subordinate-after-acceptance}
+   :remaining
+   [:mechanized-host-checkpoint-key-source-refinement
+    :backend-proof-construction-refinement
+    :independent-review]
+   :ci [:stable-discovery
+        :mutation-control
+        :cross-backend-checkpoint-conformance
+        :datascript-cljs-test]}
   {:operation :acyclic-frontier-alias-canonicalization
    :entry-points ['eacl.engine.v8/frontier-permission-paths]
    :theorems
