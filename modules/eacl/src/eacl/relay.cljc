@@ -8,6 +8,7 @@
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
+            [eacl.request.context :as request-context]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
@@ -100,28 +101,6 @@
               (public-consistency/descriptor (:consistency query))
               [:mode]))))
 
-(defn- request-schema-stamp
-  "The selected snapshot's schema stamp for one request.
-
-  Callers may share the stamp they already resolved for the request's
-  derived-schema cache through `:cursor-schema-stamp` (an
-  `{:adapter a :stamp delay}` pair); the pair is honored only for the very
-  adapter it was resolved against, so recovery-path adapters read their own
-  ordered-generation frame."
-  [adapter opts]
-  (let [shared (:cursor-schema-stamp opts)]
-    (if (and shared (identical? (:adapter shared) adapter))
-      (force (:stamp shared))
-      (let [frame
-            (let [candidate (:request-proof-frame opts)]
-              (if (and candidate
-                       (identical? adapter (:adapter candidate)))
-                candidate
-                (proof-frame/request-frame adapter)))
-            proof (proof-frame/resolve! frame [])]
-        (when (proof-frame/complete? proof)
-          (:schema-generation proof))))))
-
 (defn- plain-scope-object
   [object]
   (when object
@@ -138,19 +117,6 @@
     (update-in [:resource/relationship :subject] plain-scope-object)
     (get-in query [:subject/relationship :resource])
     (update-in [:subject/relationship :resource] plain-scope-object)))
-
-(defn- legacy-cursor-scope
-  "Version-11 query scope retained so existing cursors continue while their
-  current schema generation remains unchanged. Version 12 moves the schema
-  proof out of query identity so exact historical recovery can run."
-  [adapter opts operation query]
-  (secure/canonical-digest
-   "eacl/cursor/query-scope/v7"
-   [cursor-emission-order-version
-    operation
-    {:schema-stamp (request-schema-stamp adapter opts)
-     :recursive-traversal-limits (:recursive-traversal-limits opts)}
-    (scoped-query-form query)]))
 
 (defn- cursor-scope
   "Digest of immutable operation/query/principal/configuration identity.
@@ -199,7 +165,7 @@
     operation
     (scoped-query-form query)]))
 
-(defn- local-basis-scope
+(defn- local-lineage
   "Fail-closed identity for a raw, unmanaged adapter.
 
   Public Acl/Snapshot execution always supplies complete basis identity. A
@@ -207,9 +173,10 @@
   pinned to this exact adapter value instead of consulting removed source
   operations."
   [adapter]
-  {:backend (backend/backend-id adapter)
-   :source-id {:unmanaged-basis (backend/invoke adapter :snapshot-id)}
-   :branch nil
+  {:source-scope
+   {:backend (backend/backend-id adapter)
+    :source-id {:unmanaged-basis (backend/invoke adapter :snapshot-id)}
+    :branch nil}
    :source-lifecycle nil})
 
 (defn- page-generation
@@ -219,7 +186,9 @@
      :source-scope
      (if basis
        (select-keys basis [:backend :source-id :branch :source-lifecycle])
-       (local-basis-scope adapter))
+       (let [{:keys [source-scope source-lifecycle]}
+             (local-lineage adapter)]
+         (assoc source-scope :source-lifecycle source-lifecycle)))
      :native-revision
      (if basis
        (select-keys basis [:revision :exact-locator])
@@ -389,9 +358,9 @@
                state)))))))
   page)
 
-(def ^:private exact-snapshot-scope-digest
+(def ^:private exact-snapshot-closure-digest
   (secure/canonical-digest
-   "eacl/cursor/dependency-scope/v4"
+   "eacl/cursor/relation-closure/v1"
    {:mode :exact-snapshot}))
 
 (defn- dependency-proof-descriptor
@@ -408,18 +377,33 @@
 (defn- build-dependency-context
   ([adapter request-proof-frame relation-ids]
    (build-dependency-context
-    adapter request-proof-frame relation-ids nil nil))
+    adapter request-proof-frame relation-ids nil nil nil))
   ([adapter request-proof-frame relation-ids codec-cache]
    (build-dependency-context
-    adapter request-proof-frame relation-ids codec-cache nil))
+    adapter request-proof-frame relation-ids codec-cache nil nil))
   ([adapter request-proof-frame relation-ids codec-cache basis-identity]
+   (build-dependency-context
+    adapter request-proof-frame relation-ids codec-cache basis-identity nil))
+  ([adapter request-proof-frame relation-ids codec-cache basis-identity
+    request-lineage]
    (let [native-revision (consistency/native-revision adapter)
+         derived-lineage
+         (if basis-identity
+           (request-context/lineage-for-basis basis-identity)
+           (local-lineage adapter))
+         _
+         (when (and request-lineage
+                    (not= (secure/canonicalize request-lineage)
+                          (secure/canonicalize derived-lineage)))
+           (throw
+            (ex-info
+             "Request lineage differs from the selected immutable basis."
+             {:type :eacl/backend-contract-violation
+              :eacl/error :eacl/backend-contract-violation
+              :request-lineage request-lineage
+              :derived-lineage derived-lineage})))
          base
-         {:source-scope
-          (if basis-identity
-            (select-keys basis-identity
-                         [:backend :source-id :branch :source-lifecycle])
-            (local-basis-scope adapter))
+         {:lineage (or request-lineage derived-lineage)
           :native-revision native-revision
           :adapter-fingerprint (backend/fingerprint adapter)
           :identity-contract (backend/identity-contract adapter)}
@@ -433,31 +417,30 @@
            (if request-proof-frame
              (proof-frame/snapshot-id request-proof-frame)
              (backend/invoke adapter :snapshot-id)))
+         frame
+         (or descriptor
+             ;; An unavailable ordered-generation frame is exact-basis-bound.
+             ;; This tagged internal frame prevents cross-basis equality while
+             ;; retaining the one canonical [lineage frame closure] decision
+             ;; input. It is not proof of cross-basis semantic equivalence.
+             {:mode :exact-basis
+              :snapshot-id snapshot-id
+              :native-revision native-revision})
+         closure-digest
+         (if relation-ids
+           (secure/canonical-digest
+            "eacl/cursor/relation-closure/v1"
+            relation-ids)
+           exact-snapshot-closure-digest)
          context-key
          [:cursor-dependency-context
-          1 base relation-ids descriptor snapshot-id]]
+          2 base frame closure-digest]]
      (cursor/memoized-context!
       codec-cache
       context-key
-      (fn []
-        (if descriptor
-          (assoc base
-                 :dependency-scope-digest
-                 (secure/canonical-digest
-                  "eacl/cursor/dependency-scope/v4"
-                  {:mode :relation-dependencies
-                   :relation-ids relation-ids})
-                 :proof-digest
-                 (secure/canonical-digest
-                  "eacl/cursor/dependency-proof/v1"
-                  descriptor))
-          (assoc base
-                 :dependency-scope-digest exact-snapshot-scope-digest
-                 :proof-digest
-                 (secure/canonical-digest
-                  "eacl/cursor/exact-snapshot/v4"
-                  {:snapshot-id snapshot-id
-                   :native-revision native-revision}))))))))
+      #(assoc base
+              :frame frame
+              :closure-digest closure-digest)))))
 
 (defn dependency-context
   "Builds bounded continuation metadata for one immutable snapshot.
@@ -465,7 +448,7 @@
   Without `relation-ids` the proof pins the exact snapshot identity
   (relationship-index cursors keep this arity). With a sorted vector of
   relation-definition eids — the query's compiled dependency closure — the
-  proof becomes the schema stamp plus the scalar dependency frontier, so a
+  frame becomes the schema generation plus the scalar dependency frontier, so a
   transaction touching no relation in the closure leaves the proof equal and
   the continuation reusable. Unreadable stamps fall back to the
   exact-snapshot proof."
@@ -500,10 +483,12 @@
              {:basis-identity (:snapshot-semantic-identity opts)}))]
       (build-dependency-context
        adapter frame relation-ids (:cursor-codec-cache opts)
-       (:snapshot-semantic-identity opts)))
+       (:snapshot-semantic-identity opts)
+       (:request-lineage opts)))
     (build-dependency-context
      adapter nil nil (:cursor-codec-cache opts)
-     (:snapshot-semantic-identity opts))))
+     (:snapshot-semantic-identity opts)
+     (:request-lineage opts))))
 
 (defn- transform-edge-ids
   ;; :stable-edge edges carry only the boundary :result-eid; engine
@@ -539,7 +524,7 @@
     (let [token
           (cursor/cursor->token
            (merge
-            {:v 12
+            {:v 13
              :scope scope
              :edge (transform-edge-ids
                     #(do
@@ -581,7 +566,7 @@
                error)))
           envelope (:cursor decoded)
           _ (execution/check! (:execution-contract opts) :cursor-decoded)]
-      (when-not (and (contains? #{11 12} (:v envelope))
+      (when-not (and (= 13 (:v envelope))
                      (map? (:edge envelope)))
         (invalid-cursor! "Invalid Relay cursor envelope."
                          {:reason :invalid-envelope}
@@ -591,29 +576,35 @@
              :cursor/expired? (boolean (:expired? decoded))
              :cursor/expired-at (:expired-at decoded)
              :cursor/scope-matches?
-             (= ((if (= 11 (:v envelope))
-                   legacy-cursor-scope
-                   cursor-scope)
-                 adapter opts operation query)
+             (= (cursor-scope adapter opts operation query)
                 (:scope envelope))))))
-
-(def ^:private execution-identity-fields
-  [:source-scope :adapter-fingerprint :identity-contract])
 
 (defn- execution-identity
   [context]
   (secure/canonical-digest
    "eacl/cursor/execution-identity/v1"
-   (select-keys context execution-identity-fields)))
+   (select-keys context [:lineage :adapter-fingerprint :identity-contract])))
 
 (defn- identity-mismatch
   [current envelope]
-  (some
-   (fn [field]
-     (when-not (= (secure/canonicalize (get current field))
-                  (secure/canonicalize (get envelope field)))
-       field))
-   execution-identity-fields))
+  (cond
+    (not= (secure/canonicalize (get-in current [:lineage :source-scope]))
+          (secure/canonicalize (get-in envelope [:lineage :source-scope])))
+    :source-scope
+
+    (not= (secure/canonicalize
+           (get-in current [:lineage :source-lifecycle]))
+          (secure/canonicalize
+           (get-in envelope [:lineage :source-lifecycle])))
+    :source-lifecycle
+
+    (not= (secure/canonicalize (:adapter-fingerprint current))
+          (secure/canonicalize (:adapter-fingerprint envelope)))
+    :adapter-fingerprint
+
+    (not= (secure/canonicalize (:identity-contract current))
+          (secure/canonicalize (:identity-contract envelope)))
+    :identity-contract))
 
 (defn- revision-code
   "Native-revision code in the numbering shared by one continuation decision:
@@ -636,22 +627,17 @@
 
 (defn- continuation-proof
   [context]
-  (secure/canonical-digest
-   "eacl/cursor/continuation-proof/v1"
-   [(:dependency-scope-digest context)
-    (:proof-digest context)]))
+  (secure/encode-canonical
+   [(:lineage context)
+    (:frame context)
+    (:closure-digest context)]))
 
 (defn- continuation-decision
-  [opts current envelope exact]
+  [opts current envelope]
   (let [source (execution-identity current)
         cursor-source (execution-identity envelope)
         current-proof (continuation-proof current)
-        cursor-proof (continuation-proof envelope)
-        exact-decision
-        (when exact
-          {:graph (revision-code current envelope exact)
-           :source (execution-identity exact)
-           :proof (continuation-proof exact)})]
+        cursor-proof (continuation-proof envelope)]
     (verified/decide
      (or (:decision-kernel opts)
          subproblem/*decision-kernel*)
@@ -664,7 +650,7 @@
       :current-proof current-proof
       :cursor-proof cursor-proof
       :cursor-graph (revision-code current envelope envelope)
-      :exact exact-decision})))
+      :exact nil})))
 
 (defn- stale-context!
   [message reason]
@@ -684,10 +670,37 @@
      :eacl/error :eacl.consistency/basis-conflict
      :source :cursor})))
 
-(defn- history-capable?
+(defn- exact-selection-capable?
   [basis-source]
   (or (source/supports? basis-source :snapshots :historical)
       (source/supports? basis-source :snapshots :exact)))
+
+(defn- exact-selection-context
+  [adapter basis-identity]
+  {:lineage (request-context/lineage-for-basis basis-identity)
+   :native-revision
+   (select-keys basis-identity [:revision :exact-locator])
+   :adapter-fingerprint (backend/fingerprint adapter)
+   :identity-contract (backend/identity-contract adapter)})
+
+(defn- exact-selection-matches-cursor?
+  [exact envelope]
+  (and (= (execution-identity exact)
+          (execution-identity envelope))
+       (= (secure/canonicalize (:native-revision exact))
+          (secure/canonicalize (:native-revision envelope)))))
+
+(def ^:private dependency-context-fields
+  [:lineage
+   :native-revision
+   :adapter-fingerprint
+   :identity-contract
+   :frame
+   :closure-digest])
+
+(defn- envelope-dependency-context
+  [envelope]
+  (select-keys envelope dependency-context-fields))
 
 (defn- ensure-cursor-satisfies-request!
   [opts envelope]
@@ -744,20 +757,13 @@
          {:reason :query-mismatch}
          nil)))
 
-    :conflict
-    (consistency/cursor-conflict!
-     {:cursor-revision
-      (get-in envelope [:native-revision :revision])
-      :selected-revision
-      (get-in current [:native-revision :revision])})
-
     :snapshot-unavailable
     (stale-context!
      "Relay cursor dependency proof changed."
-     (if (= (:dependency-scope-digest current)
-            (:dependency-scope-digest envelope))
-       :dependency-proof-changed
-       :dependency-scope-changed))
+     (if (= (:closure-digest current)
+            (:closure-digest envelope))
+       :frame-changed
+       :relation-closure-changed))
 
     :history-divergence
     (throw
@@ -776,14 +782,16 @@
   (request-dependency-context adapter opts))
 
 (defn- validate-context!
-  [adapter opts envelope]
-  (let [current (current-context adapter opts)]
-    (apply-continuation-decision!
-     adapter
-     current
-     envelope
-     (continuation-decision opts current envelope nil))
-    true))
+  ([adapter opts envelope]
+   (validate-context! adapter opts envelope nil))
+  ([adapter opts envelope known-context]
+   (let [current (or known-context (current-context adapter opts))]
+     (apply-continuation-decision!
+      adapter
+      current
+      envelope
+      (continuation-decision opts current envelope))
+     true)))
 
 (defn- select-envelope-context
   [adapter opts envelope]
@@ -791,7 +799,7 @@
     {:adapter adapter}
     (let [current (current-context adapter opts)
           initial
-          (continuation-decision opts current envelope nil)]
+          (continuation-decision opts current envelope)]
       (case initial
         :snapshot-unavailable
         (do
@@ -802,10 +810,11 @@
           (when-not (and (= :acl (:authorization-target-kind opts))
                          *acl-cursor-recovery-source*)
             (snapshot-cursor-conflict!))
-          (when-not (history-capable? *acl-cursor-recovery-source*)
+          (when-not (exact-selection-capable?
+                     *acl-cursor-recovery-source*)
             (stale-context!
-             "The backend cannot reconstruct the cursor's changed proof."
-             :dependency-proof-changed))
+             "The backend cannot reconstruct the cursor's changed frame."
+             :frame-changed))
           (let [source *acl-cursor-recovery-source*
                 revision
                 {:revision
@@ -833,19 +842,27 @@
                         {:type :eacl.consistency/snapshot-expired
                          :eacl/error
                          :eacl.consistency/snapshot-expired})))
-                    exact-opts
-                    (assoc opts
-                           :snapshot-semantic-identity
-                           (source/semantic-identity selected))
                     exact-context
-                    (request-dependency-context exact exact-opts)
-                    decision
-                    (continuation-decision
-                     opts current envelope exact-context)]
-                (apply-continuation-decision!
-                 exact exact-context envelope decision)
+                    (exact-selection-context
+                     exact (source/semantic-identity selected))]
+                (when-not (exact-selection-matches-cursor?
+                           exact-context envelope)
+                  (throw
+                   (ex-info
+                    "The cursor exact locator resolved to another immutable basis."
+                    {:type :eacl.consistency/history-divergence
+                     :eacl/error :eacl.consistency/history-divergence
+                     :cursor-native-revision (:native-revision envelope)
+                     :selected-native-revision
+                     (:native-revision exact-context)})))
                 {:adapter exact
-                 :selected-snapshot selected})
+                 :selected-snapshot selected
+                 ;; Exact selection proves that this is the cursor's original
+                 ;; immutable basis. Preserve its authenticated context when
+                 ;; minting the next page cursor: acceptance and re-minting do
+                 ;; not read an unavailable historical proof frame.
+                 :continuation-context
+                 (envelope-dependency-context envelope)})
               (catch #?(:clj Throwable :cljs :default) error
                 (when selected
                   (source/release! selected))
@@ -854,7 +871,8 @@
         (do
           (apply-continuation-decision!
            adapter current envelope initial)
-          {:adapter adapter})))))
+          {:adapter adapter
+           :continuation-context current})))))
 
 (defn select-continuation-adapter
   "Uses an equal current proof or a verified exact historical fallback."
@@ -930,7 +948,9 @@
                  (assoc query field nil)
                  (do
                    (when-not (identical? envelope primary-envelope)
-                     (validate-context! page-adapter opts envelope))
+                     (validate-context!
+                      page-adapter opts envelope
+                      (:continuation-context page-context)))
                    (assoc query field
                           (internalize-continued-edge
                            page-adapter (:edge envelope))))))
@@ -938,6 +958,7 @@
              envelopes)]
         {:adapter page-adapter
          :selected-snapshot selected
+         :continuation-context (:continuation-context page-context)
          :query prepared-query})
       (catch #?(:clj Throwable :cljs :default) error
         (when selected
@@ -964,7 +985,10 @@
 
 (defn- externalize-page-cursors
   [adapter opts operation query page]
-  (let [context (delay (request-dependency-context adapter opts))
+  (let [context
+        (delay
+          (or (:cursor-dependency-context opts)
+              (request-dependency-context adapter opts)))
         scope (cursor-scope adapter opts operation query)
         encode-edge
         (fn [edge]

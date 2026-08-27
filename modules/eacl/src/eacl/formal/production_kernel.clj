@@ -693,7 +693,6 @@
       :invalid-authentication
       (.is_ScopeMismatch (.dtor_reason decision)) :scope-mismatch
       (.is_CursorExpired (.dtor_reason decision)) :expired
-      (.is_CursorConflict (.dtor_reason decision)) :conflict
       (.is_SnapshotUnavailable (.dtor_reason decision))
       :snapshot-unavailable
       :else :history-divergence)))

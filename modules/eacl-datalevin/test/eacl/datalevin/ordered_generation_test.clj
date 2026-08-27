@@ -4,6 +4,7 @@
             [datalevin.util :as u]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
+            [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datalevin.core :as datalevin]
             [eacl.proof-frame :as proof-frame]
@@ -185,6 +186,14 @@
               token (:zed/token write-response)
               _ (eacl/check-permission first-client demand)
               first-page (eacl/lookup-resources first-client page-query)
+              oracle-stream
+              (:data
+               (eacl/lookup-resources
+                first-client
+                (assoc page-query
+                       :first 10
+                       :cache? false
+                       :populate-cache? false)))
               cursor (get-in first-page [:page-info :end-cursor])]
           (is (string? token))
           (is (string? cursor))
@@ -199,12 +208,12 @@
                          second-client alice :view document-1
                          (consistency/at-least-as-fresh token))))))
                 (testing "the pre-restart cursor resumes on the same revision"
-                  (let [second-page
-                        (eacl/lookup-resources
-                         second-client (assoc page-query :after cursor))]
-                    (is (= 1 (count (:data second-page))))
-                    (is (not= (mapv :id (:data first-page))
-                              (mapv :id (:data second-page))))))
+                  (contract/assert-cursor-source-transition!
+                   {:client second-client
+                    :query page-query
+                    :first-page first-page
+                    :oracle-stream oracle-stream
+                    :durability :durable}))
                 (testing "managed reuse remains enabled after reopen"
                   (eacl/create-relationship! second-client editor)
                   (let [before (:managed-hits

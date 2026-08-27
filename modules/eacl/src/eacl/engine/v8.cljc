@@ -953,6 +953,35 @@
   []
   nil)
 
+(defn certify-plan-read-scope!
+  "Rejects a compiled plan that can read outside its permission closure.
+
+  The closure and the sealed rules are derived independently from the schema.
+  This executable guard is the implementation witness for
+  `ReducerReadScope.dfy`: an equal ordered-generation frame covers every
+  relation slice that can influence the reducer's transitions or stream."
+  [plan relation-ids]
+  (let [closure (set relation-ids)
+        plan-relations (sealed-plan/relation-ids plan)
+        outside (vec (remove closure plan-relations))]
+    (when (seq outside)
+      (throw
+       (ex-info
+        "Sealed plan reads outside its certified relation closure."
+        {:type :eacl.plan/compile-error
+         :eacl/error :eacl.plan/compile-error
+         :reason :relation-outside-dependency-closure
+         :outside-relation-ids outside
+         :plan-relation-ids plan-relations
+         :dependency-relation-ids (vec relation-ids)})))
+    plan))
+
+(defn- seal-and-certify-plan
+  [db [resource-type permission :as root-node]]
+  (certify-plan-read-scope!
+   (sealed-plan/seal-plan db root-node)
+   (permission-relationship-eids db resource-type permission)))
+
 (defn- stable-plan
   "Seals each normalized root once in the bound generation-owned cache. An
   uncertified request receives the same behavior in its request-local floor;
@@ -963,7 +992,7 @@
           (delay
             (request-counters/add! :definition-reads)
             (request-counters/add! :seals)
-            (sealed-plan/seal-plan db root-node))
+            (seal-and-certify-plan db root-node))
           selected
           (get
            (swap! plans
@@ -975,7 +1004,7 @@
     (do
       (request-counters/add! :definition-reads)
       (request-counters/add! :seals)
-      (sealed-plan/seal-plan db root-node))))
+      (seal-and-certify-plan db root-node))))
 
 (defn- stable-edge
   [plan traversal ordinal eid]

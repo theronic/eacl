@@ -373,6 +373,24 @@
          (map (fn [[node bucket]] [node (by-rank-then-ordinal bucket)]))
          (group-by :node rules))})
 
+(defn relation-ids
+  "Returns the canonical relation-definition ids named by a sealed plan.
+
+  This is the executable read-scope projection: every storage descriptor the
+  stable or least-path reducer can issue originates in one of these rule
+  fields. The engine checks it against the independently derived permission
+  dependency closure before routing the plan."
+  [plan]
+  (->> (:rules plan)
+       (mapcat
+        (fn [rule]
+          (keep rule [:relation-eid
+                      :via-relation-eid
+                      :target-relation-eid])))
+       distinct
+       sort
+       vec))
+
 (defn- plan-records
   "Complete canonical record sequence for the composite fingerprint. Record
   order is contractual."

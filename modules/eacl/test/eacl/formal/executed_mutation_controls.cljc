@@ -5,6 +5,8 @@
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.engine.v8 :as engine]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as request-context]
             [eacl.verified-kernel :as verified]))
@@ -586,6 +588,49 @@
                        :collided-live-source))]
         (separated?))))))
 
+(defn plan-read-scope-escape-killed?
+  []
+  (let [adapter
+        (backend/make-adapter
+         {:id :mutation-control
+          :capabilities backend/empty-capabilities
+          :operations
+          (merge
+           (operation-map)
+           {:permission-defs
+            (fn [resource-type permission]
+              (when (= [:document :view]
+                       [resource-type permission])
+                [{:source-relation-name :self
+                  :target-type :relation
+                  :target-name :viewer}]))
+            :relation-defs
+            (fn [resource-type relation]
+              (when (= [:document :viewer]
+                       [resource-type relation])
+                [{:relation-id 1 :subject-type :user}]))})})
+        compiled (sealed-plan/seal-plan adapter [:document :view])
+        escaped
+        (update compiled :rules conj
+                {:rule :relation
+                 :node [:document :view]
+                 :resource-type :document
+                 :permission :view
+                 :relation-eid 2
+                 :subject-type :user
+                 :ordinal 1
+                 :rank 1})
+        admitted?
+        (fn [plan]
+          (try
+            (identical?
+             plan (engine/certify-plan-read-scope! plan [1]))
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) _
+              false)))]
+    (and (admitted? compiled)
+         (false? (admitted? escaped)))))
+
 (defn aggregate-counter-reset-killed?
   []
   (let [args [{:advanced-datoms 0 :queued-work 0 :fetched-values 0}
@@ -668,6 +713,7 @@
    :adapter-generation-ceiling adapter-generation-ceiling-killed?
    :non-durable-live-source-id-collision
    non-durable-live-source-id-collision-killed?
+   :plan-read-scope-escape plan-read-scope-escape-killed?
    :aggregate-counter-reset aggregate-counter-reset-killed?
    :batch-cross-demand-contamination batch-cross-demand-contamination-killed?
    :aggregate-deadline-renewal aggregate-deadline-renewal-killed?})

@@ -247,7 +247,7 @@ two violations as proof equality.
 Built-in `:eacl/id` conversion is deterministic and proof-eligible. A custom
 `:entid->object-id`/`:object-id->lookup-ref` codec receives an opaque
 client-local fingerprint and exact caching by default. It gains cross-snapshot
-proof-backed reuse only when the client supplies both:
+proof-backed completed-answer reuse only when the client supplies both:
 
 ```clojure
 {:adapter-fingerprint [:my-app/id-codec 1]
@@ -255,10 +255,20 @@ proof-backed reuse only when the client supplies both:
 ```
 
 The application must certify that the codec is deterministic, injective, and
-round-trips every permissioned identity. Processes that exchange cursors must
-use the same portable fingerprint and codec. Without the explicit contract,
-another client rejects the cursor even when token keys and source lifecycle
-match.
+round-trips every permissioned identity. Proof-equivalent cursor continuation
+has the stronger requirement that one internal object's public identity never
+changes within a source lineage; custom codecs must additionally set
+`:identity-immutable? true`. Without that explicit immutability contract,
+cursors remain exact-basis-bound even when managed completed answers are
+enabled. Processes that exchange cursors must use the same portable
+fingerprint, codec, and identity contract.
+
+The built-in codec defaults to `:identity-immutable? true`. This is a supported
+writer premise, not a property enforced by Datomic, Datahike, or DataScript's
+physical schema: applications MUST treat `:eacl/id` as immutable for an
+entity's lifetime. Set `:identity-immutable? false` when that premise does not
+hold; EACL then rejects cross-basis cursors instead of risking a hybrid public
+stream after an ID reassignment.
 
 ## Capacity, concurrency, and configuration
 
@@ -379,18 +389,50 @@ lifecycle provides no safety across concurrent history destruction.
 
 ## Cursors and time travel
 
-Cursors are authenticated and scoped to operation, normalized query, adapter,
-source lifecycle, ordering, and snapshot/proof identity. A proof-equivalent
-current value may continue a walk. Otherwise, a history-capable backend may
-reconstruct the authenticated exact snapshot; if it cannot, the cursor fails
-closed. DataScript does not emulate history with hidden retained database
-values.
+Cursors authenticate the operation, normalized query, engine and ordering ABI,
+adapter and identity contracts, native revision and exact locator, boundary,
+and one continuation context: `lineage`, `frame`, and `closure-digest`.
+Lineage is the source scope plus source lifecycle. The frame is the certified
+schema generation plus the scalar frontier over the complete canonical
+relation closure; the closure itself is represented by a domain-separated
+digest. Cursor validation, answer lookup, checkpoint lookup, and cursor
+re-minting consume the same request-owned frame, so each relation generation
+is read at most once per closure in one request.
+
+A later basis may continue the boundary only inside the same lineage with an
+equal frame and closure digest. Transactions outside the closure therefore do
+not invalidate forward or reverse pagination. A schema write or mutation of a
+relation inside the closure changes the frame and can never continue on the
+changed basis. The sealed-plan read-scope guard rejects a compiled reducer that
+could scan a relation outside that closure.
+
+After a changed or unavailable frame, an `acl` may select the cursor's original
+immutable basis only when its source advertises exact selection and the
+request's freshness floor permits it. Acceptance then compares authenticated
+source scope, lifecycle, revision, and exact locator; it does not read a proof
+frame from the historical value. Datomic and appropriately configured
+Datahike sources provide this fallback. DataScript and Datalevin are
+current-only and return `:eacl.pagination/stale-cursor` with reason
+`:frame-changed` when the current frame differs. No backend emulates history
+with a hidden retained-value registry.
+
+Cursor lifetime follows source identity, not process lifetime. Reopening the
+same durable Datomic database, durable Datahike store, or Datalevin store keeps
+the lineage and accepts an equal-frame cursor. Recreating a DataScript
+connection, an in-memory Datahike store, or an independent Datomic memory
+database mints a fresh live-source id; an old cursor is rejected with
+`:source-scope` before any frame read, even with identical data, the default
+constant lifecycle, and shared token keys. Restore, reset, purge, excision, or
+branch replacement requires lifecycle rotation.
 
 Cursors carry no expiry unless a positive `:cursor-ttl-seconds` is configured.
 Cache TTL, answer eviction, page-navigation eviction, and checkpoint eviction
 do not limit cursor age; they only cause deterministic replay. An old cursor
 continues the original historical enumeration. Consumers that require current
 authorization at object-consumption time must make a separate current check.
+`:populate-cache? false` is excluded from cursor identity and does not change
+validation or page contents; it suppresses checkpoint and visited-page
+publication for that request.
 
 Datalevin also exposes `eacl.datalevin.core/clear-answer-cache!` for an
 operational answer-cache clear that preserves its persisted source lifecycle

@@ -234,8 +234,16 @@
 (deftest one-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
         default-client (datascript/make-client conn {})
+        mutable-identity-client
+        (datascript/make-client conn {:identity-immutable? false})
         default-selection
         (get-in default-client [:runtime :decision-kernel])
+        identity-option-error
+        (try
+          (datascript/make-client conn {:identity-immutable? :assumed})
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
+            (ex-data exception)))
         error
         (try
           (datascript/make-client conn {:engine-selection :anything})
@@ -244,6 +252,14 @@
             (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
     (is (true? (get-in default-client [:runtime :managed-cache-enabled?])))
+    (is (true? (get-in default-client
+                       [:runtime :proof-equivalent-cursors?])))
+    (is (= :selected-internal/immutable-external-injective-v3
+           (get-in default-client [:runtime :identity-contract])))
+    (is (false? (get-in mutable-identity-client
+                        [:runtime :proof-equivalent-cursors?])))
+    (is (= :eacl/invalid-config (:type identity-option-error)))
+    (is (= :identity-immutable? (:key identity-option-error)))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
@@ -433,7 +449,8 @@
              (custom-codec-options
               stable-observations
               {:adapter-fingerprint {:codec :eacl-id :version 1}
-               :adapter-deterministic? true}))
+               :adapter-deterministic? true
+               :identity-immutable? true}))
             query {:subject user
                    :permission :view
                    :resource/type :document
@@ -441,6 +458,8 @@
             first-page (eacl/lookup-resources stable-client query)
             before (datascript/cache-stats stable-client)]
         (is (true? (get-in stable-client [:runtime :managed-cache-enabled?])))
+        (is (true? (get-in stable-client
+                           [:runtime :proof-equivalent-cursors?])))
         (is (= #{"codec-document-1" "codec-document-2"}
                (set (map :id (:data first-page)))))
         (ds/transact! conn [{:application/unrelated :two}])
@@ -590,7 +609,7 @@
         (is (some? error)
             "a cursor from another schema generation must not resume the walk")
         (is (= :eacl.pagination/stale-cursor (:type (ex-data error))))
-        (is (= :dependency-proof-changed (:reason (ex-data error))))
+        (is (= :frame-changed (:reason (ex-data error))))
         (let [fresh-error
               (try
                 (eacl/lookup-resources client query)
@@ -973,7 +992,7 @@
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 12 (:v envelope)))
+      (is (= 13 (:v envelope)))
       (is (= :least-path-edge
              (get-in envelope [:edge :kind])))
       (is (= :progress (get-in envelope [:edge :anchor])))

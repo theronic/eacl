@@ -1,7 +1,7 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 110
- :historical-clojure-mutant-count 106
+ :historical-mutant-count 111
+ :historical-clojure-mutant-count 107
  :historical-model-mutant-count 4
  :mutants
  [{:id :wrong-arrow-direction
@@ -172,6 +172,13 @@
    :detector "non-durable-live-source-id-collision-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by {:test :non-durable-live-source-identity-control}}
+  {:id :plan-read-scope-escape
+   :mechanism :executed-production
+   :mutation :admit-sealed-plan-relation-outside-certified-closure
+   :target-symbol "engine/certify-plan-read-scope!"
+   :detector "plan-read-scope-escape-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :plan-read-scope-closure-control}}
   {:id :aggregate-counter-reset
    :mechanism :executed-production
    :mutation :reset-cumulative-work-at-each-window

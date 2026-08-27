@@ -22,20 +22,58 @@
 (defn- seeded-caching-client
   "Public DataScript client with default caching (the production shape:
   answer cache on, continuation store present)."
-  [fixture-key]
-  (let [{:keys [schema objects relationships] :as fixture}
-        ((get capture/fixtures fixture-key))
-        conn (datascript/create-conn)
-        client (datascript/make-client conn {})]
-    (eacl/write-schema! client schema)
-    (ds/transact! conn
-                  (vec (map-indexed
-                        (fn [index {:keys [id]}]
-                          {:db/id (- (inc index)) :eacl/id id})
-                        objects)))
-    (doseq [batch (partition-all 500 relationships)]
-      (eacl/create-relationships! client (vec batch)))
-    {:fixture fixture :conn conn :client client}))
+  ([fixture-key]
+   (seeded-caching-client fixture-key {}))
+  ([fixture-key client-options]
+   (let [{:keys [schema objects relationships] :as fixture}
+         ((get capture/fixtures fixture-key))
+         conn (datascript/create-conn)
+         client (datascript/make-client conn client-options)]
+     (eacl/write-schema! client schema)
+     (ds/transact! conn
+                   (vec (map-indexed
+                         (fn [index {:keys [id]}]
+                           {:db/id (- (inc index)) :eacl/id id})
+                         objects)))
+     (doseq [batch (partition-all 500 relationships)]
+       (eacl/create-relationships! client (vec batch)))
+     {:fixture fixture :conn conn :client client})))
+
+(deftest mutable-identity-contract-keeps-cursors-exact-basis-bound-test
+  (let [{:keys [fixture conn client]}
+        (seeded-caching-client
+         :folder-chain
+         {:security-key "mutable-identity-cursor-test-key"
+          :identity-immutable? false})
+        query {:subject (get-in fixture [:principals :alice])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)
+               :first 3}
+        page-1 (eacl/lookup-resources client query)
+        first-eid (ds/entid (ds/db conn) [:eacl/id "f-01"])
+        future-eid (ds/entid (ds/db conn) [:eacl/id "f-10"])
+        _ (ds/transact!
+           conn
+           [[:db/retract first-eid :eacl/id "f-01"]
+            [:db/retract future-eid :eacl/id "f-10"]
+            [:db/add first-eid :eacl/id "f-10"]
+            [:db/add future-eid :eacl/id "f-01"]])
+        outcome
+        (try
+          {:value
+           (eacl/lookup-resources
+            client
+            (assoc query :after (get-in page-1 [:page-info :end-cursor])))}
+          (catch clojure.lang.ExceptionInfo error
+            {:error (ex-data error)}))]
+    (is (false? (get-in client [:runtime :proof-equivalent-cursors?])))
+    (is (= :selected-internal/current-external-injective-v2
+           (get-in client [:runtime :identity-contract])))
+    (is (nil? (:value outcome)))
+    (is (= :eacl.pagination/stale-cursor
+           (get-in outcome [:error :type])))
+    (is (= :frame-changed (get-in outcome [:error :reason]))
+        "identity churn cannot produce a hybrid cross-basis public stream")))
 
 (deftest repeated-pagination-reuses-checkpoints-test
   ;; Checkpoints belong to RECURSIVE plans (order ABI v2:

@@ -12,10 +12,12 @@
 (deftest unstamped-values-seal-each-root-once-per-request-test
   (let [stable-plan @#'engine/stable-plan
         seals (atom 0)]
-    (with-redefs [sealed-plan/seal-plan
+    (with-redefs [engine/permission-relationship-eids
+                  (fn [& _] [])
+                  sealed-plan/seal-plan
                   (fn [_db _root]
                     (swap! seals inc)
-                    (Object.))]
+                    {:rules []})]
       (testing "one request-local floor returns one plan instance"
         (binding [engine/*schema-cache* (unstamped-request-cache)]
           (let [first-plan (stable-plan :unstamped [:document :view])
