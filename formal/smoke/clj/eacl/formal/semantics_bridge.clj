@@ -351,30 +351,3 @@
                (fn [items]
                  (filterv #(= subject-type (:type %)) items)))
        outcome))))
-
-(defn dependency-scope
-  [fixture resource-type permission]
-  (let [{:keys [objects permissions definitions]}
-        (formal-inputs fixture)
-        scope
-        (CacheKernel.__default/CalculatedDependencyScope
-         (permission-node [resource-type permission])
-         objects
-         permissions
-         definitions)]
-    {:permission-nodes
-     (into
-      #{}
-      (map
-       (fn [node]
-         [(dafny-string->keyword (.dtor_resourceType node))
-          (dafny-string->keyword (.dtor_permissionName node))]))
-      (.Elements (.dtor_permissionNodes scope)))
-     :relations
-     (into
-      #{}
-      (map
-       (fn [relation]
-         [(dafny-string->keyword (.dtor_resourceType relation))
-          (dafny-string->keyword (.dtor_relationName relation))]))
-      (.Elements (.dtor_relations scope)))}))

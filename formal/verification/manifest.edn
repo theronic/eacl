@@ -99,19 +99,11 @@
    :generated-java-and-javascript-production-boundaries-routed
    :claim
    :conditional-public-normalization-finite-selection-decision-and-logical-call-bound}
-  :cache-decision-kernel
-  {:status :passed
-   :verified-obligations 17
-   :source "formal/dafny/CacheKernel.dfy"
-   :report "formal/verification/cache-kernel.edn"
-   :classification :proof-only-model
-   :integration-status :no-runtime-operation
-   :production-assurance-contribution :none}
   :basis-first-cache
   {:status :passed
    :verified-obligations 32
    :source "formal/dafny/CurrentCache.dfy"
-   :report "formal/verification/cache-kernel.edn"
+   :report "formal/verification/basis-first-cache.edn"
    :integration-status
    :generated-selection-routed-and-all-three-backends-regression-passed
    :claim :conditional-basis-first-cache-refinement}
@@ -155,7 +147,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8811
+   :verified-obligations 8794
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -325,8 +317,18 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 96
-  :registered 96}
+  :killed 33
+  :registered 33
+  :retired-invalid-controls 74}
+ :source-closure
+ {:report "formal/verification/public-source-closure.json"
+  :source-files 79
+  :public-roots 70
+  :reachable-definitions 1641}
+ :stable-discovery
+ {:gate "formal/stable-discovery/verify-fast.sh"
+  :dafny-leaves 46
+  :verified-obligations 631}
  :generated-semantic-campaign
  {:status :passed
   :report "formal/verification/campaign-run-2026-08-02.edn"
@@ -336,11 +338,7 @@
  {:status :target-authorities-routing-passed
   :report "formal/verification/generated-boundary.edn"
   :complete-public-routing true}
- :proof-only-exclusions
- [{:source "formal/dafny/CacheKernel.dfy"
-   :runtime-operation :none
-   :reason :proof-only-model
-   :production-assurance-contribution :none}]
+ :proof-only-exclusions []
  :release-gate
  {:verified-status-allowed? false
   :decision :refused

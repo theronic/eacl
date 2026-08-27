@@ -1,10 +1,19 @@
-include "CacheKernel.dfy"
 include "SnapshotOracle.dfy"
 
 module CurrentCache {
   import Semantics
-  import CacheKernel
   import SnapshotOracle
+
+  datatype RelationDependency = RelationDependency(
+    resourceType: string,
+    relationName: string
+  )
+
+  function ObjectTypes(
+    objects: seq<Semantics.ObjectRef>
+  ): set<string> {
+    set item <- objects :: item.typeName
+  }
 
   datatype BasisClass =
     | OrdinaryBasis
@@ -351,11 +360,11 @@ module CurrentCache {
   function RuleDependencies(
     rule: Semantics.NormalizedRule,
     objectTypes: set<string>
-  ): set<CacheKernel.RelationDependency> {
+  ): set<RelationDependency> {
     match rule
     case DirectRelationRule(head, relationName, _) =>
       {
-        CacheKernel.RelationDependency(
+        RelationDependency(
           head.resourceType,
           relationName
         )
@@ -369,16 +378,16 @@ module CurrentCache {
       _
       ) =>
       {
-        CacheKernel.RelationDependency(
+        RelationDependency(
           head.resourceType,
           viaRelation
         )
       } +
       set typeName <- objectTypes ::
-        CacheKernel.RelationDependency(typeName, targetRelation)
+        RelationDependency(typeName, targetRelation)
     case ArrowPermissionRule(head, viaRelation, _) =>
       {
-        CacheKernel.RelationDependency(
+        RelationDependency(
           head.resourceType,
           viaRelation
         )
@@ -388,7 +397,7 @@ module CurrentCache {
   function RulesDependencies(
     rules: seq<Semantics.NormalizedRule>,
     objectTypes: set<string>
-  ): set<CacheKernel.RelationDependency>
+  ): set<RelationDependency>
     decreases |rules|
   {
     if |rules| == 0 then
@@ -427,12 +436,12 @@ module CurrentCache {
   }
 
   ghost predicate RelevantProjectionEqual(
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>
   ) {
     forall relationship: Semantics.Relationship |
-      CacheKernel.RelationDependency(
+      RelationDependency(
         relationship.resource.typeName,
         relationship.relationName
       ) in dependencies ::
@@ -440,7 +449,7 @@ module CurrentCache {
   }
 
   lemma HasRelationshipFrame(
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     resource: Semantics.ObjectRef,
@@ -448,7 +457,7 @@ module CurrentCache {
     subject: Semantics.ObjectRef
   )
     requires RelevantProjectionEqual(dependencies, left, right)
-    requires CacheKernel.RelationDependency(
+    requires RelationDependency(
                resource.typeName,
                relationName
              ) in dependencies
@@ -468,13 +477,13 @@ module CurrentCache {
   }
 
   lemma RelationshipMembershipFrame(
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     relationship: Semantics.Relationship
   )
     requires RelevantProjectionEqual(dependencies, left, right)
-    requires CacheKernel.RelationDependency(
+    requires RelationDependency(
                relationship.resource.typeName,
                relationship.relationName
              ) in dependencies
@@ -484,7 +493,7 @@ module CurrentCache {
 
   lemma RuleDerivationFrame(
     objects: seq<Semantics.ObjectRef>,
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     grants: set<Semantics.Grant>,
@@ -496,7 +505,7 @@ module CurrentCache {
     requires RelevantProjectionEqual(dependencies, left, right)
     requires RuleDependencies(
                rule,
-               CacheKernel.ObjectTypes(objects)
+               ObjectTypes(objects)
              ) <= dependencies
     ensures Semantics.RuleDerives(
               rule,
@@ -551,7 +560,7 @@ module CurrentCache {
           );
           assert Semantics.ContainsObject(objects, via.subject);
           assert via.subject.typeName in
-                   CacheKernel.ObjectTypes(objects);
+                   ObjectTypes(objects);
           HasRelationshipFrame(
             dependencies,
             left,
@@ -580,7 +589,7 @@ module CurrentCache {
           );
           assert Semantics.ContainsObject(objects, via.subject);
           assert via.subject.typeName in
-                   CacheKernel.ObjectTypes(objects);
+                   ObjectTypes(objects);
           HasRelationshipFrame(
             dependencies,
             left,
@@ -622,7 +631,7 @@ module CurrentCache {
     objects: seq<Semantics.ObjectRef>,
     permissions: seq<Semantics.PermissionNode>,
     rules: seq<Semantics.NormalizedRule>,
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     grants: set<Semantics.Grant>
@@ -632,7 +641,7 @@ module CurrentCache {
     requires RelevantProjectionEqual(dependencies, left, right)
     requires RulesDependencies(
                rules,
-               CacheKernel.ObjectTypes(objects)
+               ObjectTypes(objects)
              ) <= dependencies
     ensures Semantics.ImmediateConsequences(
               objects,
@@ -679,7 +688,7 @@ module CurrentCache {
       {
         RuleDependenciesAreIncluded(
           rules,
-          CacheKernel.ObjectTypes(objects),
+          ObjectTypes(objects),
           index
         );
         RuleDerivationFrame(
@@ -699,7 +708,7 @@ module CurrentCache {
     objects: seq<Semantics.ObjectRef>,
     permissions: seq<Semantics.PermissionNode>,
     rules: seq<Semantics.NormalizedRule>,
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     leftRelationships: seq<Semantics.Relationship>,
     rightRelationships: seq<Semantics.Relationship>,
     leftGrants: set<Semantics.Grant>,
@@ -714,7 +723,7 @@ module CurrentCache {
              )
     requires RulesDependencies(
                rules,
-               CacheKernel.ObjectTypes(objects)
+               ObjectTypes(objects)
              ) <= dependencies
     requires leftGrants <=
              Semantics.GrantUniverse(objects, permissions)

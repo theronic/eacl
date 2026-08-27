@@ -20,7 +20,7 @@
   :source-closure-sha256
   "5d2f89f29b81b423eef933127caf40873d62da570d251d507ec41f352a587685"
   :public-roots 70
-  :source-files 64
+  :source-files 78
   :reachable-definitions 1639
   :definitions-by-source
   {"modules/eacl/src/eacl/subproblem_cache.cljc" 42
@@ -38,7 +38,7 @@
   :datascript-exact-snapshot-registry-source-occurrences 0}
  :delta
  {:public-roots 7
-  :source-files 9
+  :source-files 23
   :reachable-definitions 215
   :root-set-comparable? false
   :root-set-change :public-reader-writer-source-and-snapshot-entry-points-added

@@ -299,31 +299,6 @@
                (set (:items generated))
                production))))))
 
-(deftest generated-cache-dependency-scope-covers-recursive-semantics
-  (is (= {:permission-nodes
-          #{[:folder :read]
-            [:folder :write]}
-          :relations
-          #{[:folder :reader]
-            [:folder :editor]
-            [:folder :parent]}}
-         (formal/dependency-scope
-          recursive-fixture
-          :folder
-          :read)))
-  (is (= {:permission-nodes
-          #{[:folder :duplicate]
-            [:folder :read]
-            [:folder :write]}
-          :relations
-          #{[:folder :reader]
-            [:folder :editor]
-            [:folder :parent]}}
-         (formal/dependency-scope
-          recursive-fixture
-          :folder
-          :duplicate))))
-
 (defn- apply-window
   [values cursor-or-options]
   (let [{:keys [direction bound-eid inclusive-bound?]}

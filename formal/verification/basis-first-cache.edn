@@ -1,0 +1,46 @@
+{:schema-version 1
+ :semantics-version 1
+ :status :conditional-basis-first-cache-refinement
+ :classification :proof-and-production-regression
+ :proof
+ {:source "formal/dafny/CurrentCache.dfy"
+  :verified-obligations 32
+  :claims
+  [:cache-eligibility-does-not-select-engine-authority
+   :generated-current-cache-stage-selection
+   :current-cache-hit-requires-available-entry
+   :exact-only-hit-requires-available-entry
+   :exact-only-miss-computes-without-managed-fallback
+   :numeric-revision-alone-cannot-establish-exact-identity
+   :current-cache-bypass-requires-ineligible-or-inactive-generation
+   :cache-computation-requires-selected-basis-miss
+   :inadmissible-basis-bypass-and-complete-identity-admission
+   :exact-basis-hit-is-same-selected-basis
+   :late-publication-is-unreachable-after-lifecycle-expiry
+   :forward-relevant-write-raises-scalar-dependency-stamp
+   :relevant-relationship-projection-frame
+   :direct-self-and-arrow-rule-derivation-frame
+   :least-fixed-point-managed-cache-frame
+   :selected-snapshot-public-result-rendering]}
+ :production-regression
+ {:namespaces
+  [eacl.cache-test
+   eacl.datomic.cache-test
+   eacl.datomic.cache-review-regressions-test
+   eacl.datomic.cache-differential-test
+   eacl.datomic.consistency-cache-test
+   eacl.datomic.lookup-cache-test
+   eacl.datomic.recursive-cache-test]
+  :status :passed}
+ :state-trace-differential
+ {:runner eacl.formal.differential-runner
+  :namespace eacl.formal.state-trace-differential-test
+  :adapters [:datomic :datascript :datahike]
+  :cache-modes [:enabled :disabled]
+  :status :passed}
+ :removed-proof-only-predecessor
+ {:source "formal/dafny/CacheKernel.dfy"
+  :reason :superseded-graph-ancestry-model-with-no-production-consumer
+  :replacement
+  ["formal/dafny/CurrentCache.dfy"
+   "formal/dafny/ScalarFrontierCoherence.dfy"]}}

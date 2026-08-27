@@ -12,4 +12,4 @@
  "The final v8 cache removes the external proof-provider resolution surface. Current-generation and managed native cache paths own their bounded proof reads; the deleted eacl.cache/resolve! provider callback path cannot abort authorization."
  :closing-evidence
  ["eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"
-  "formal/dafny/CacheKernel.dfy ProviderFailed branch"]}
+  "eacl.formal.executed-mutation-controls/cache-fail-open-killed?"]}

@@ -1,6 +1,5 @@
 include "Semantics.dfy"
 include "AcyclicEngine.dfy"
-include "CacheKernel.dfy"
 include "ConsistencyDecision.dfy"
 include "CurrentCache.dfy"
 include "IndexedTraversal.dfy"

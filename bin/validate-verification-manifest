@@ -42,21 +42,131 @@
     :cursor-codec-cost-model
     :recursive-engine-cost-model
     :snapshot-consistency-decision
-    :cache-decision-kernel
     :basis-first-cache
     :subproblem-cache
     :indexed-recursive-public-engine
     :complete-public-engine})
 
+(def invalid-evidence-exit 2)
+(def assurance-withheld-exit 3)
+
 (defn fail!
-  [message data]
-  (binding [*out* *err*]
-    (println message)
-    (prn data))
-  (System/exit 1))
+  ([message data]
+   (fail! invalid-evidence-exit message data))
+  ([exit-code message data]
+   (binding [*out* *err*]
+     (println message)
+     (prn data))
+   (System/exit exit-code)))
+
+(defn count-mismatch
+  [claim recorded actual source]
+  (when (not= recorded actual)
+    {:claim claim
+     :recorded recorded
+     :actual actual
+     :source source}))
+
+(defn source-files-under
+  [path suffix]
+  (->> (file-seq (repo-file path))
+       (filter #(.isFile %))
+       (filter #(str/ends-with? (.getName %) suffix))))
 
 (let [manifest
       (read-edn manifest-path)
+      mutation-registry
+      (read-edn "formal/mutations/registry.edn")
+      mutation-ledger
+      (read-edn "formal/verification/mutation-control.edn")
+      source-closure
+      (json/parse-string
+       (slurp (repo-file "formal/verification/public-source-closure.json"))
+       true)
+      assurance-matrix
+      (read-edn "formal/verification/assurance-matrix.edn")
+      stable-script
+      (slurp (repo-file "formal/stable-discovery/verify-fast.sh"))
+      stable-obligations
+      (some->> stable-script
+               (re-find #"expected_dafny_obligations=([0-9]+)")
+               second
+               parse-long)
+      stable-leaves
+      (count (source-files-under "formal/stable-discovery" ".dfy"))
+      closure-counts
+      {:source-files (count (:sources source-closure))
+       :public-roots (get-in source-closure [:scope :rootCount])
+       :reachable-definitions
+       (get-in source-closure [:scope :unionInternalDefinitionCount])}
+      registered-mutants (count (:mutants mutation-registry))
+      retired-mutants
+      (count (mapcat :ids (:retired-mutant-groups mutation-registry)))
+      count-mismatches
+      (vec
+       (remove
+        nil?
+        (concat
+         [(count-mismatch
+           :mutation-control/registered
+           (get-in manifest [:mutation-control :registered])
+           registered-mutants
+           "formal/mutations/registry.edn")
+          (count-mismatch
+           :mutation-control/killed
+           (get-in manifest [:mutation-control :killed])
+           (:killed mutation-ledger)
+           "formal/verification/mutation-control.edn")
+          (count-mismatch
+           :mutation-control/ledger-registered
+           (:mutants mutation-ledger)
+           registered-mutants
+           "formal/mutations/registry.edn")
+          (count-mismatch
+           :mutation-control/retired-invalid-controls
+           (get-in manifest
+                   [:mutation-control :retired-invalid-controls])
+           retired-mutants
+           "formal/mutations/registry.edn")]
+         (mapcat
+          (fn [field]
+            [(count-mismatch
+              (keyword "manifest-source-closure" (name field))
+              (get-in manifest [:source-closure field])
+              (get closure-counts field)
+              "formal/verification/public-source-closure.json")
+             (count-mismatch
+              (keyword "assurance-matrix-source-closure" (name field))
+              (get-in assurance-matrix [:source-closure field])
+              (get closure-counts field)
+              "formal/verification/public-source-closure.json")])
+          [:source-files :public-roots :reachable-definitions])
+         [(count-mismatch
+           :stable-discovery/dafny-leaves
+           (get-in manifest [:stable-discovery :dafny-leaves])
+           stable-leaves
+           "formal/stable-discovery/*.dfy")
+          (count-mismatch
+           :stable-discovery/verified-obligations
+           (get-in manifest [:stable-discovery :verified-obligations])
+           stable-obligations
+           "formal/stable-discovery/verify-fast.sh")]
+         (mapcat
+          (fn [path]
+            (let [text (slurp (repo-file path))]
+              [(when-not
+                 (str/includes? text (str stable-leaves " Dafny leaves"))
+                 {:claim :stable-discovery/prose-dafny-leaves
+                  :recorded :missing
+                  :actual stable-leaves
+                  :source path})
+               (when-not
+                 (str/includes? text (str stable-obligations " obligations"))
+                 {:claim :stable-discovery/prose-verified-obligations
+                  :recorded :missing
+                  :actual stable-obligations
+                  :source path})]))
+          ["formal/README.md" "docs/formal-verification.md"]))))
       dafny-report
       (json/parse-string (slurp (repo-file dafny-report-path)) true)
       dafny-counts
@@ -68,7 +178,7 @@
       report
       (read-edn
        (get-in manifest [:adapter-certification :report]))
-      adapters [:datomic :datascript :datahike]
+      adapters [:datomic :datascript :datahike :datalevin]
       missing-certifications
       (filterv
        (fn [adapter]
@@ -192,6 +302,10 @@
     (fail!
      "Verification manifest refuses :verified: the release gate is closed."
      {:release-gate (:release-gate manifest)}))
+  (when (seq count-mismatches)
+    (fail!
+     "Verification manifest or assurance ledger counts disagree with their owning evidence."
+     {:count-mismatches count-mismatches}))
   (when (seq incomplete-theorems)
     (fail!
      "Verification status is withheld: theorem results are incomplete."
@@ -228,6 +342,7 @@
      {:adapter-certification (:adapters report)}))
   (when (seq unmet)
     (fail!
+     assurance-withheld-exit
      "Verification status is withheld: required obligations are unmet."
      {:assurance-status (:assurance-status manifest)
       :verified-status-allowed? allowed?
