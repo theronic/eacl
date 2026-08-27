@@ -61,8 +61,10 @@ process may instead supply `{:schema schema-string :expression-limits {...}}`.
 Datahike migration requires exact relation identities and exact permission
 denotation: it is a storage conversion, not an authorization policy change.
 It reads and rewrites only schema-definition rows, never enumerates or rewrites
-relationship tuples, and commits the permission swap behind the existing
-schema-write fence. On released-v7 rows, ordinary construction fails with
+relationship tuples, and commits the expression rows plus version stamp behind
+the existing schema-write fence. Legacy flat entities remain inert to avoid
+S3 persistent-index deletion amplification. On released-v7 rows, ordinary
+construction fails with
 `:eacl/permission-storage-version`; `{:auto-migrate-v7 true}` explicitly opts
 one writer into the same migration. Prefer a single maintenance writer over
 automatic migration when several processes can start concurrently.

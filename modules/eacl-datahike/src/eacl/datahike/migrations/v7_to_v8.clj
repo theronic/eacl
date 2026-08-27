@@ -7,7 +7,10 @@
   (:require [datahike.api :as d]
             [eacl.datahike.schema :as schema]))
 
-(def permission-storage-version 8)
+(def permission-storage-version schema/permission-storage-version)
+
+(def stamped-permission-storage-version
+  schema/stamped-permission-storage-version)
 
 (defn migrate!
   "Upgrades released-v7 flat permissions to canonical v8 expressions.

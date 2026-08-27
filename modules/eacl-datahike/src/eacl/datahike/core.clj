@@ -90,6 +90,7 @@
         schema-attribute?
         (or (= a :eacl/schema-string)
             (= a :eacl/schema-generation)
+            (= a :eacl/permission-storage-version)
             (= attribute-namespace "eacl.relation")
             (= attribute-namespace "eacl.permission")
             (and (= a :eacl/id)

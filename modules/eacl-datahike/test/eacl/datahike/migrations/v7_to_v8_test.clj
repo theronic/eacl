@@ -13,7 +13,9 @@
 
 (def ^:private released-v7-schema
   (vec
-   (remove #(= :eacl.permission/expression-payload (:db/ident %))
+   (remove #(contains? #{:eacl.permission/expression-payload
+                         :eacl/permission-storage-version}
+                       (:db/ident %))
            schema/datahike-schema)))
 
 (def ^:private schema-string
@@ -104,6 +106,8 @@
         (try
           (populate-v7! conn)
           (let [before (relationship-content (d/db conn))
+                legacy-ids (mapv :eacl/id
+                                 (schema/read-permissions (d/db conn)))
                 relationship-index-reads (atom 0)
                 original-datoms d/datoms
                 report
@@ -116,14 +120,21 @@
                     (apply original-datoms db args))]
                   (migration/migrate! conn))]
             (is (= :migrated (:status report)))
-            (is (= 2 (:permission-retractions report)))
+            (is (= 2 (:legacy-permissions-retained report)))
             (is (= 1 (:permission-additions report)))
             (is (zero? (:relationships-touched report)))
             (is (zero? @relationship-index-reads))
             (is (= before (relationship-content (d/db conn))))
             (is (= :expression
                    (schema/permission-storage-shape (d/db conn))))
+            (is (= 8 (migration/stamped-permission-storage-version
+                      (d/db conn))))
             (is (= 1 (count (schema/read-permissions (d/db conn)))))
+            (is (every? #(contains?
+                          (d/entity (d/db conn) [:eacl/id %])
+                          :eacl.permission/target-name)
+                        legacy-ids)
+                "released-v7 rows remain inert instead of forcing S3 index deletions")
             (let [client (datahike/make-client conn {})]
               (is (true?
                    (eacl/can? client
@@ -158,6 +169,8 @@
         (is (= :flat (schema/permission-storage-shape (d/db conn))))
         (is (= before (schema/read-permissions (d/db conn))))
         (is (nil? (ddb/entid
-                   (d/db conn) :eacl.permission/expression-payload))))
+                   (d/db conn) :eacl.permission/expression-payload)))
+        (is (nil? (ddb/entid
+                   (d/db conn) :eacl/permission-storage-version))))
       (finally
         (release-and-delete! conn)))))

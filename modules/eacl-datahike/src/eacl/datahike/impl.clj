@@ -40,9 +40,16 @@
 
 (defn find-permission-defs
   [db resource-type permission-name]
-  (->> (ddb/avet-datoms db schema/permission-key-attr [resource-type permission-name])
-       (map :e)
-       (mapv #(d/pull db permission-def-pull %))))
+  (let [definitions
+        (->> (ddb/avet-datoms
+              db schema/permission-key-attr [resource-type permission-name])
+             (map :e)
+             (mapv #(d/pull db permission-def-pull %)))]
+    (if (= schema/permission-storage-version
+           (schema/stamped-permission-storage-version db))
+      (filterv #(contains? % :eacl.permission/expression-payload)
+               definitions)
+      definitions)))
 
 (defn all-relation-defs
   [db]

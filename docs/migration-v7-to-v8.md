@@ -57,11 +57,12 @@ Both migrations first read and validate the bounded definition rows, validate
 the released v7 permission representation, parse and resolve the candidate,
 enforce expression and stratification limits, check authoritative attribute
 shapes, and reject relation additions or retractions. They then install missing
-additive authoritative permission attributes. One final transaction retracts
-the flat permission entities, writes canonical expression entities, and
-updates the schema text and generation. Datomic additionally stamps
-`:eacl/permission-storage-version` as `8`; Datahike's strict row-shape gate is
-the storage-version authority.
+additive authoritative permission attributes. Datomic's final transaction
+retracts flat entities and writes canonical expressions. Datahike avoids
+remote persistent-index deletion amplification: its final transaction writes
+canonical expressions and stamps `:eacl/permission-storage-version` as `8`,
+after which the flat entities remain inert history. Both update the schema text
+and generation atomically with the active permission representation.
 
 `:expression-limits` is optional client/maintenance-process configuration. It
 is merged with EACL's calibrated defaults and applies during preflight and the
@@ -71,7 +72,8 @@ process that accepts the schema.
 
 A parse, reference, limit, negative-cycle, attribute-conflict, transaction, or
 CAS failure leaves the old permission rows active. Datomic does not publish the
-v8 permission-storage stamp; Datahike continues to classify the rows as flat.
+v8 permission-storage stamp; Datahike likewise leaves the version stamp absent
+and continues to classify the rows as flat.
 Additive attribute definitions installed before a failed final transaction are
 inert for v7 readers. Mixed flat/expression storage is rejected rather than
 guessed or repaired.

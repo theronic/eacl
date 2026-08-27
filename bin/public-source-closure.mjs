@@ -101,6 +101,7 @@ const roots = [
   "eacl.datahike.core/restore-cache-snapshot!",
   "eacl.datahike.core/cache-content-revision",
   "eacl.datahike.migrations.v7-to-v8/migrate!",
+  "eacl.datahike.migrations.v7-to-v8/stamped-permission-storage-version",
   "eacl.datahike.schema/migrate-v7-permissions!",
   "eacl.datahike.schema/permission-storage-shape",
   "eacl.datascript.core/make-client",
