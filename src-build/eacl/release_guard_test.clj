@@ -10,12 +10,16 @@
    :branch-sha "abc123"
    :supplied-version nil})
 
-(deftest ordinary-branch-derives-an-immutable-version
+(deftest versioned-branch-derives-an-immutable-version
   (is (= "8.1.0" (guard/ordinary-version ordinary-context)))
+  (is (= "8.0.0-SNAPSHOT"
+         (guard/ordinary-version
+          (assoc ordinary-context :ref "refs/heads/v8.0.0-SNAPSHOT"))))
   (doseq [context
           [(assoc ordinary-context :ref "refs/heads/main")
            (assoc ordinary-context :ref "refs/heads/release/v8.0")
            (assoc ordinary-context :ref "refs/heads/feature/v8.1.0")
+           (assoc ordinary-context :ref "refs/heads/v8.0-SNAPSHOT")
            (assoc ordinary-context :ref "refs/tags/v8.1.0"
                                    :ref-type "tag")
            (assoc ordinary-context :event-name "pull_request")

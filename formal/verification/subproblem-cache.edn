@@ -22,6 +22,15 @@
   :lifecycle
   {:replacement :atomic-generation-detachment
    :late-old-generation-publication :unreachable}
+  :portable-snapshot
+  {:format :versioned-closed-data
+   :selection :bounded-mru-with-stable-tier-priority
+   :excluded
+   [:backend-snapshots :process-identity-tokens :metrics :continuations
+    :cursors]
+   :restore :validate-before-atomic-lifecycle-replacement
+   :external-envelope-responsibility
+   [:authentication :encoded-byte-bound-before-deserialization]}
   :partial-semantic-state-answering false}
  :dafny
  {:source "formal/dafny/SubproblemCache.dfy"
@@ -89,6 +98,11 @@
   :production-state-machine-tests
   [eacl.subproblem-cache-test
    eacl.cache-test]
+  :portable-snapshot-tests
+  [eacl.subproblem-cache-test/process-neutral-snapshot-round-trip-test
+   eacl.subproblem-cache-test/malformed-subproblem-snapshot-is-rejected-test
+   eacl.cache-test/portable-basis-cache-round-trip-test
+   eacl.cache-test/cache-content-revision-advances-on-expiry-test]
   :adversarial-trace-test
   eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test}
  :negative-source-assertions

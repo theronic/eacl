@@ -37,6 +37,38 @@ Proof-equivalent cursors additionally require `:identity-immutable? true`;
 otherwise they remain exact-basis-bound. The built-in `:eacl/id` codec assumes
 IDs never change for an entity; configure `false` if reassignment is allowed.
 
+Serverless hosts may persist completed authorization entries with
+`export-cache-snapshot`, `restore-cache-snapshot!`, and
+`cache-content-revision`. The host owns authentication and the encoded-byte
+bound before decoding; the EACL bounds describe retained cache weight and
+entry count. Snapshots exclude Datahike database values and process-local
+identity. Restore validates before atomically replacing the visible cache.
+
+### Released-v7 permission migration
+
+EACL v8 rejects released-v7 flat permission rows at client construction. Run
+the explicit, bounded maintenance migration before starting ordinary v8
+clients:
+
+```clojure
+(require '[eacl.datahike.migrations.v7-to-v8 :as v7-to-v8])
+
+(v7-to-v8/migrate! conn)
+```
+
+The stored `:eacl/schema-string` is authoritative by default. A maintenance
+process may instead supply `{:schema schema-string :expression-limits {...}}`.
+Datahike migration requires exact relation identities and exact permission
+denotation: it is a storage conversion, not an authorization policy change.
+It reads and rewrites only schema-definition rows, never enumerates or rewrites
+relationship tuples, and commits the expression rows plus version stamp behind
+the existing schema-write fence. Legacy flat entities remain inert to avoid
+S3 persistent-index deletion amplification. On released-v7 rows, ordinary
+construction fails with
+`:eacl/permission-storage-version`; `{:auto-migrate-v7 true}` explicitly opts
+one writer into the same migration. Prefer a single maintenance writer over
+automatic migration when several processes can start concurrently.
+
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:
 

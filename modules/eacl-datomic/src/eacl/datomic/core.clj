@@ -153,6 +153,13 @@
     :read-relationships impl/read-relationships}
    :extra-client-opt-keys #{}})
 
+(defn- require-datomic-client!
+  [client fn-name]
+  (when-not (orchestration/client? client :datomic)
+    (throw (ex-info (str fn-name " requires a Datomic EACL client.")
+                    {:type :eacl/invalid-client
+                     :eacl/error :eacl/invalid-client}))))
+
 (defn make-client
   "Builds a shared EACL `Acl` over a Datomic connection.
 
@@ -187,6 +194,28 @@
 (defn cache-stats
   [acl]
   (orchestration/cache-stats acl))
+
+(defn export-cache-snapshot
+  "Exports reusable authorization-cache entries as a bounded immutable value.
+
+  Hosts persisting external bytes must authenticate and encoded-size-bound the
+  envelope before deserialization. The value contains neither a Datomic DB nor
+  process-local cache identity."
+  [acl bounds]
+  (require-datomic-client! acl "export-cache-snapshot")
+  (orchestration/export-cache-snapshot acl bounds))
+
+(defn restore-cache-snapshot!
+  "Atomically restores one trusted, authenticated cache snapshot value."
+  [acl snapshot bounds]
+  (require-datomic-client! acl "restore-cache-snapshot!")
+  (orchestration/restore-cache-snapshot! acl snapshot bounds))
+
+(defn cache-content-revision
+  "Returns this client's process-local reusable-cache content revision."
+  [acl]
+  (require-datomic-client! acl "cache-content-revision")
+  (orchestration/cache-content-revision acl))
 
 (defn refresh-metrics!
   ([acl] (orchestration/refresh-metrics! acl))

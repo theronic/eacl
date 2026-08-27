@@ -39,10 +39,13 @@
     (reject! "Ordinary release versions are derived, never supplied."
              :eacl.release/version-override context))
   (let [[_ version]
-        (re-matches #"refs/heads/v([0-9]+\.[0-9]+\.[0-9]+)" ref)]
+        (re-matches
+         #"refs/heads/v([0-9]+\.[0-9]+\.[0-9]+(?:-SNAPSHOT)?)"
+         ref)]
     (when-not version
       (reject!
-       "Ordinary release branch must exactly match vMAJOR.MINOR.PATCH."
+       (str "Ordinary release branch must exactly match "
+            "vMAJOR.MINOR.PATCH or vMAJOR.MINOR.PATCH-SNAPSHOT.")
        :eacl.release/invalid-version-branch
        context))
     (assert-branch-head! context)
