@@ -174,6 +174,28 @@
   (require-datahike-client! client "cache-stats")
   (orchestration/cache-stats client))
 
+(defn export-cache-snapshot
+  "Exports reusable authorization-cache entries as a bounded immutable value.
+
+  Hosts persisting external bytes must authenticate and encoded-size-bound the
+  envelope before deserialization. The value contains neither a Datahike DB nor
+  process-local cache identity."
+  [client bounds]
+  (require-datahike-client! client "export-cache-snapshot")
+  (orchestration/export-cache-snapshot client bounds))
+
+(defn restore-cache-snapshot!
+  "Atomically restores one trusted, authenticated cache snapshot value."
+  [client snapshot bounds]
+  (require-datahike-client! client "restore-cache-snapshot!")
+  (orchestration/restore-cache-snapshot! client snapshot bounds))
+
+(defn cache-content-revision
+  "Returns this client's process-local reusable-cache content revision."
+  [client]
+  (require-datahike-client! client "cache-content-revision")
+  (orchestration/cache-content-revision client))
+
 (defn refresh-metrics!
   "Evicts cache-only metrics; optionally recomputes structural metrics now."
   ([client]

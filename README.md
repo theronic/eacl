@@ -1481,6 +1481,30 @@ Inspect or expire a client through its backend API:
 (eacl.datalevin.core/refresh-metrics! acl)
 ```
 
+Datomic and Datahike can export the reusable authorization cache for a durable
+host such as a Lambda deployment:
+
+```clojure
+(def bounds {:max-weight (* 16 1024 1024) :max-entries 5000})
+(def revision (eacl.datahike.core/cache-content-revision acl))
+(def snapshot (eacl.datahike.core/export-cache-snapshot acl bounds))
+
+;; After loading and authenticating the external envelope:
+(eacl.datahike.core/restore-cache-snapshot! acl snapshot bounds)
+```
+
+The snapshot is versioned process-neutral data. It excludes database values,
+cursors, continuations, metrics, and process-local identity tokens. `max-weight`
+is EACL's cache-capacity unit, not an encoded byte limit. A host that persists
+the value must authenticate the envelope and enforce an encoded-byte limit
+before deserializing it. Restore validates the snapshot shape, capacity, and
+cache contracts, then atomically replaces the visible cache lifecycle;
+malformed or incompatible snapshots leave the current cache intact.
+`cache-content-revision` advances on
+reusable-content changes but not on hits or LRU touches, so hosts can avoid
+redundant uploads. The equivalent Datomic functions live in
+`eacl.datomic.core`.
+
 Metric refresh is cache-only. By default it clears structural and relationship
 observations and performs no relationship scan. Pass
 `{:scope :structural :eager? true}` to reread the bounded permission schema.

@@ -85,10 +85,18 @@
     :denotation :exact-denotation
     :answer :exact-answer))
 
-(declare positive-weight!)
+(declare positive-weight! publication-weight-ceiling)
 
 (defrecord SubproblemStore
-           [state metrics budgets managed-proof-max-atoms])
+           [state metrics budgets managed-proof-max-atoms content-revision])
+
+(def snapshot-format
+  "Version identifier for the process-neutral subproblem snapshot value."
+  :eacl.subproblem-cache/snapshot-v1)
+
+(def snapshot-tier-priority
+  "Stable tier priority used by bounded cache snapshots."
+  [:answer :projection :denotation])
 
 (defn- lifecycle-token
   []
@@ -119,14 +127,17 @@
   ceiling of one quarter of its budget; a heavier completed answer is
   rejected and counted under `:oversized-rejections`."
   ([]
-   (store {}))
+   (store {} nil))
+  ([options]
+   (store options nil))
   ([{:keys [projection-max-weight denotation-max-weight answer-max-weight
             managed-proof-max-atoms]
      :or {projection-max-weight default-projection-max-weight
           denotation-max-weight default-denotation-max-weight
           answer-max-weight default-answer-max-weight
           managed-proof-max-atoms default-managed-proof-max-atoms}
-     :as options}]
+     :as options}
+    content-revision]
    (let [unknown-keys (seq (sort (remove option-keys (keys options))))
          _
          (when unknown-keys
@@ -188,11 +199,18 @@
              :avoided-backend-operations 0
              :fetched-projection-values 0})
       budgets
-      managed-proof-max-atoms))))
+      managed-proof-max-atoms
+      content-revision))))
 
 (defn store?
   [value]
   (instance? SubproblemStore value))
+
+(defn- record-content-change!
+  [store]
+  (when-let [revision (:content-revision store)]
+    (swap! revision inc))
+  nil)
 
 (defn- validate-tier!
   [store tier]
@@ -231,18 +249,22 @@
     (throw (ex-info "Expected an EACL subproblem store."
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :store store})))
-  (reset! (:state store)
-          (assoc
-           (into {}
-                 (map (fn [tier]
-                        [tier {:entries {}
-                               :lru []
-                               :lru-head 0
-                               :weight 0
-                               :clock 0}]))
-                 known-tiers)
-           lifecycle-key
-           (lifecycle-token)))
+  (let [changed? (some (comp seq :entries val)
+                       (select-keys @(:state store) known-tiers))]
+    (reset! (:state store)
+            (assoc
+             (into {}
+                   (map (fn [tier]
+                          [tier {:entries {}
+                                 :lru []
+                                 :lru-head 0
+                                 :weight 0
+                                 :clock 0}]))
+                   known-tiers)
+             lifecycle-key
+             (lifecycle-token)))
+    (when changed?
+      (record-content-change! store)))
   nil)
 
 (defn record-avoided-backend-operation!
@@ -267,6 +289,8 @@
                        (update-in [tier :entries] dissoc key)
                        (update-in [tier :weight] - (:weight entry))))
                  state))))
+    (when @removed?
+      (record-content-change! store))
     @removed?))
 
 (defn- current-lru-record?
@@ -465,6 +489,7 @@
                        (swap! (:metrics store) update :evictions + evictions))
                      (when (pos? probes)
                        (swap! (:metrics store) update :eviction-probes + probes))
+                     (record-content-change! store)
                      {:published? true :reason :published})
 
                    (< attempt maximum-attempts)
@@ -475,6 +500,203 @@
                      (swap! (:metrics store)
                             update :publication-contention inc)
                      {:published? false :reason :contention})))))))))))
+
+(defn snapshot-tier-entries
+  "Returns one tier's process-neutral entries in most-recently-used order.
+
+  This is the immutable selection surface used by the basis-cache exporter.
+  Runtime tokens, validation flags, and access ticks are deliberately omitted."
+  [store tier]
+  (validate-tier! store tier)
+  (let [entries (get-in @(:state store) [tier :entries])]
+    (->> entries
+         (sort-by (fn [[key entry]]
+                    [(- (:access entry)) (pr-str key)]))
+         (mapv (fn [[key {:keys [value weight]}]]
+                 {:key key :value value :weight weight})))))
+
+(defn snapshot-value
+  "Builds one versioned subproblem snapshot from already bounded tier entries."
+  [store tier->entries]
+  (when-not (store? store)
+    (throw (ex-info "Expected an EACL subproblem store."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :store store})))
+  (let [tiers (into {}
+                    (map (fn [tier]
+                           [tier (vec (get tier->entries tier []))]))
+                    snapshot-tier-priority)
+        entries (mapcat val tiers)]
+    {:format snapshot-format
+     :budgets (:budgets store)
+     :managed-proof-max-atoms (:managed-proof-max-atoms store)
+     :tiers tiers
+     :entry-count (count entries)
+     :retained-weight (reduce + 0 (map :weight entries))}))
+
+(defn- positive-snapshot-bound!
+  [option value]
+  (when-not (and (integer? value) (pos? value))
+    (throw
+     (ex-info "Cache snapshot bounds must be positive integers."
+              {:type :eacl/invalid-bound :eacl/error :eacl/invalid-bound
+               :option option :value value})))
+  value)
+
+(defn export-snapshot
+  "Exports one store under caller-supplied represented-weight and entry bounds.
+
+  Entries are considered in answer, projection, and denotation priority and in
+  most-recently-used order within each tier. An entry that does not fit is
+  skipped so later smaller entries can still use the remaining capacity."
+  [store {:keys [max-weight max-entries]}]
+  (positive-snapshot-bound! :max-weight max-weight)
+  (positive-snapshot-bound! :max-entries max-entries)
+  (let [{:keys [selected]}
+        (reduce
+         (fn [{:keys [weight count] :as acc} tier]
+           (reduce
+            (fn [inner entry]
+              (if (and (< (:count inner) max-entries)
+                       (<= (+ (:weight inner) (:weight entry)) max-weight))
+                (-> inner
+                    (update-in [:selected tier] (fnil conj []) entry)
+                    (update :weight + (:weight entry))
+                    (update :count inc))
+                inner))
+            acc
+            (snapshot-tier-entries store tier)))
+         {:selected {} :weight 0 :count 0}
+         snapshot-tier-priority)]
+    (snapshot-value store selected)))
+
+(defn- incompatible-snapshot!
+  [message data]
+  (throw
+   (ex-info message
+            (merge {:type :eacl/cache-snapshot-incompatible
+                    :eacl/error :eacl/cache-snapshot-incompatible}
+                   data))))
+
+(defn- closed-map?
+  [value expected-keys]
+  (and (map? value) (= expected-keys (set (keys value)))))
+
+(defn- validate-snapshot-entry!
+  [store tier entry]
+  (when-not (closed-map? entry #{:key :value :weight})
+    (incompatible-snapshot! "Malformed cache snapshot entry."
+                            {:tier tier :entry entry}))
+  (when-not (and (integer? (:weight entry))
+                 (pos? (:weight entry))
+                 (<= (:weight entry)
+                     (publication-weight-ceiling store tier)))
+    (incompatible-snapshot! "Cache snapshot entry exceeds its tier contract."
+                            {:tier tier :weight (:weight entry)}))
+  entry)
+
+(defn restore-store
+  "Constructs a fresh store from one already authenticated snapshot value.
+
+  The caller MUST authenticate and encoded-size-bound external bytes before
+  deserializing them. This function validates the decoded closed data model,
+  then creates fresh lifecycle and entry identity tokens."
+  ([snapshot options]
+   (restore-store snapshot options nil))
+  ([snapshot options content-revision]
+   (let [destination (store options content-revision)
+         top-keys #{:format :budgets :managed-proof-max-atoms :tiers
+                    :entry-count :retained-weight}]
+     (when-not (closed-map? snapshot top-keys)
+       (incompatible-snapshot! "Malformed subproblem cache snapshot."
+                               {:snapshot-keys (some-> snapshot keys set)}))
+     (when-not (= snapshot-format (:format snapshot))
+       (incompatible-snapshot! "Unsupported subproblem cache snapshot format."
+                               {:format (:format snapshot)}))
+     (when-not (closed-map? (:tiers snapshot) known-tiers)
+       (incompatible-snapshot! "Malformed subproblem cache snapshot tiers."
+                               {:tiers (some-> snapshot :tiers keys set)}))
+     (when-not (= (:managed-proof-max-atoms destination)
+                  (:managed-proof-max-atoms snapshot))
+       (incompatible-snapshot! "Incompatible managed proof cache contract."
+                               {:snapshot (:managed-proof-max-atoms snapshot)
+                                :destination
+                                (:managed-proof-max-atoms destination)}))
+     (when-not (and (closed-map? (:budgets snapshot) known-tiers)
+                    (every? (fn [tier]
+                              (let [source (get-in snapshot [:budgets tier])
+                                    destination-budget
+                                    (get (:budgets destination) tier)]
+                                (and (integer? source) (pos? source)
+                                     (<= source destination-budget))))
+                            known-tiers))
+       (incompatible-snapshot! "Destination cache budgets are incompatible."
+                               {:snapshot-budgets (:budgets snapshot)
+                                :destination-budgets (:budgets destination)}))
+     (let [validated
+           (into {}
+                 (map
+                  (fn [tier]
+                    (let [entries (get-in snapshot [:tiers tier])]
+                      (when-not (vector? entries)
+                        (incompatible-snapshot!
+                         "Cache snapshot tier entries must be vectors."
+                         {:tier tier}))
+                      (doseq [entry entries]
+                        (validate-snapshot-entry! destination tier entry))
+                      (when-not (= (count entries)
+                                   (count (set (map :key entries))))
+                        (incompatible-snapshot!
+                         "Cache snapshot contains duplicate entry keys."
+                         {:tier tier}))
+                      (let [weight (reduce + 0 (map :weight entries))]
+                        (when (> weight (get (:budgets destination) tier))
+                          (incompatible-snapshot!
+                           "Cache snapshot tier exceeds destination capacity."
+                           {:tier tier :weight weight
+                            :max-weight (get (:budgets destination) tier)})))
+                      [tier entries])))
+                 snapshot-tier-priority)
+           all-entries (mapcat val validated)
+           entry-count (count all-entries)
+           retained-weight (reduce + 0 (map :weight all-entries))]
+       (when-not (and (= entry-count (:entry-count snapshot))
+                      (= retained-weight (:retained-weight snapshot)))
+         (incompatible-snapshot! "Cache snapshot totals do not match entries."
+                                 {:declared-entry-count (:entry-count snapshot)
+                                  :actual-entry-count entry-count
+                                  :declared-retained-weight
+                                  (:retained-weight snapshot)
+                                  :actual-retained-weight retained-weight}))
+       (reset!
+        (:state destination)
+        (assoc
+         (into {}
+               (map
+                (fn [tier]
+                  (let [mru-entries (get validated tier)
+                        chronological (vec (reverse mru-entries))
+                        entries
+                        (into {}
+                              (map-indexed
+                               (fn [index {:keys [key value weight]}]
+                                 [key {:token (lifecycle-token)
+                                       :value value
+                                       :weight weight
+                                       :validated? true
+                                       :access (inc index)}]))
+                              chronological)]
+                    [tier {:entries entries
+                           :lru (mapv (fn [index {:keys [key]}]
+                                        [(inc index) key])
+                                      (range)
+                                      chronological)
+                           :lru-head 0
+                           :weight (reduce + 0 (map :weight chronological))
+                           :clock (count chronological)}])))
+               snapshot-tier-priority)
+         lifecycle-key (lifecycle-token)))
+       destination))))
 
 (defn resolve-independent!
   "Looks up a completed value or computes independently and races publication.

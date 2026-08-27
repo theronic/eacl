@@ -1,8 +1,53 @@
 (ns eacl.subproblem-cache-test
   #?(:cljs (:require-macros [cljs.test :refer [deftest is testing]]))
   (:require [eacl.subproblem-cache :as subproblem]
+            [eacl.core :as eacl]
             #?(:clj [clojure.test :refer [deftest is testing]]
                :cljs [cljs.test])))
+
+(deftest process-neutral-snapshot-round-trip-test
+  (let [revision (atom 0)
+        options {:projection-max-weight 8
+                 :denotation-max-weight 8
+                 :answer-max-weight 8}
+        original (subproblem/store options revision)
+        record-value (eacl/spice-object "document" "alpha")]
+    (subproblem/publish! original :projection :older {} :older)
+    (subproblem/publish! original :projection :hot {} nil)
+    (subproblem/lookup! original :projection :hot {})
+    (subproblem/publish! original :answer :record {} record-value)
+    (let [snapshot (subproblem/export-snapshot
+                    original {:max-weight 2 :max-entries 2})
+          restored (subproblem/restore-store snapshot options (atom 0))]
+      (is (= subproblem/snapshot-format (:format snapshot)))
+      (is (= [:record] (mapv :key (get-in snapshot [:tiers :answer]))))
+      (is (= [:hot] (mapv :key (get-in snapshot [:tiers :projection]))))
+      (is (= record-value
+             (:value (subproblem/lookup! restored :answer :record {}))))
+      (is (contains? (subproblem/lookup! restored :projection :hot {})
+                     :value)
+          "a cached nil remains distinguishable from a miss")
+      (is (nil? (subproblem/lookup! restored :projection :older {})))
+      (is (= 3 @revision)
+          "publication changes content, while the lookup-only touch does not"))))
+
+(deftest malformed-subproblem-snapshot-is-rejected-test
+  (let [options {:projection-max-weight 8
+                 :denotation-max-weight 8
+                 :answer-max-weight 8}
+        original (subproblem/store options)
+        _ (subproblem/publish! original :projection :entry {} :value)
+        snapshot (subproblem/export-snapshot
+                  original {:max-weight 8 :max-entries 8})]
+    (is (= :eacl/cache-snapshot-incompatible
+           (try
+             (subproblem/restore-store
+              (assoc snapshot :retained-weight 0) options)
+             nil
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo)
+                    error
+               (:type (ex-data error))))))))
 
 (deftest weighted-tier-isolation-test
   (let [store (subproblem/store

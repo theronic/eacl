@@ -43,6 +43,18 @@
   (eacl/with-snapshot [snapshot (eacl/snapshot client)]
     (select-keys (eacl/basis snapshot) [:backend :source-id :branch])))
 
+(deftest portable-cache-api-round-trip-test
+  (let [conn (datahike/create-conn)
+        client (datahike/make-client conn {})
+        bounds {:max-weight 8192 :max-entries 64}
+        before (datahike/cache-content-revision client)
+        snapshot (datahike/export-cache-snapshot client bounds)
+        restored (datahike/restore-cache-snapshot! client snapshot bounds)]
+    (is (= :eacl.cache/basis-snapshot-v1 (:format snapshot)))
+    (is (zero? (:entry-count snapshot)))
+    (is (true? (:restored? restored)))
+    (is (> (datahike/cache-content-revision client) before))))
+
 (deftest native-speculative-contract-test
   (is (nil? (ns-resolve 'eacl.datahike.core 'snapshot)))
   (let [conn (datahike/create-conn nil {})

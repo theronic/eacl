@@ -43,6 +43,67 @@
    :cache-basis revision
    :managed-subproblem-scope test-lineage})
 
+(deftest portable-basis-cache-round-trip-test
+  (let [options {:retained-bases 2
+                 :subproblem-cache {:projection-max-weight 64
+                                    :denotation-max-weight 64
+                                    :answer-max-weight 4096}}
+        original (cache/basis-cache options)
+        restored (cache/basis-cache options)
+        key (basis-key 7)
+        answer (eacl/spice-object "document" "alpha")
+        resolve
+        (fn [store computed]
+          (cache/resolve-exact!
+           store
+           {:snapshot (snapshot-object)
+            :snapshot-order 7
+            :exact-basis-key key
+            :cache-basis {:basis-t 7}}
+           [:check :alpha] :decision (constantly true)
+           (constantly computed)))
+        before (cache/cache-content-revision original)]
+    (is (= answer (:value (resolve original answer))))
+    (let [after-publication (cache/cache-content-revision original)]
+      (is (> after-publication before))
+      (is (true? (:cached? (resolve original :wrong))))
+      (is (= after-publication (cache/cache-content-revision original))
+          "exact hits and LRU touches do not dirty persistent content"))
+    (let [snapshot (cache/export-basis-snapshot
+                    original {:max-weight 8192 :max-entries 64})]
+      (is (= cache/basis-snapshot-format (:format snapshot)))
+      (is (= 1 (get-in snapshot [:generation-counts :exact])))
+      (is (= 1 (:entry-count snapshot)))
+      (is (nil? (get-in snapshot [:exact 0 :snapshot]))
+          "backend snapshots are absent from the public value")
+      (is (true? (:restored?
+                  (cache/restore-basis-snapshot!
+                   restored snapshot {:max-weight 8192 :max-entries 64}))))
+      (is (= answer (:value (resolve restored :wrong)))
+          "a matching exact basis can reuse the restored record value")
+      (is (true? (:cached? (resolve restored :wrong))))
+      (let [revision-before-failure (cache/cache-content-revision restored)]
+        (is (= :eacl/cache-snapshot-incompatible
+               (try
+                 (cache/restore-basis-snapshot!
+                  restored (assoc snapshot :entry-count 0)
+                  {:max-weight 8192 :max-entries 64})
+                 nil
+                 (catch #?(:clj clojure.lang.ExceptionInfo
+                           :cljs cljs.core.ExceptionInfo)
+                        error
+                   (:type (ex-data error))))))
+        (is (= revision-before-failure
+               (cache/cache-content-revision restored)))
+        (is (true? (:cached? (resolve restored :wrong)))
+            "failed validation leaves the visible lifecycle intact")))))
+
+(deftest cache-content-revision-advances-on-expiry-test
+  (let [store (cache/basis-cache)
+        before (cache/cache-content-revision store)]
+    (cache/expire-basis-cache! store)
+    (is (> (cache/cache-content-revision store) before))))
+
 (deftest basis-cache-is-client-private-test
   (let [native-cache (cache/basis-cache)]
     (is (= :client-private-cache-reuse

@@ -37,6 +37,13 @@ Proof-equivalent cursors additionally require `:identity-immutable? true`;
 otherwise they remain exact-basis-bound. The built-in `:eacl/id` codec assumes
 IDs never change for an entity; configure `false` if reassignment is allowed.
 
+Serverless hosts may persist completed authorization entries with
+`export-cache-snapshot`, `restore-cache-snapshot!`, and
+`cache-content-revision`. The host owns authentication and the encoded-byte
+bound before decoding; the EACL bounds describe retained cache weight and
+entry count. Snapshots exclude Datahike database values and process-local
+identity. Restore validates before atomically replacing the visible cache.
+
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:
 
