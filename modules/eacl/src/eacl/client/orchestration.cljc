@@ -3161,6 +3161,61 @@
       (assoc :continuations
              (continuation/stats continuation-store)))))
 
+(defn- require-cache-client-options!
+  [client operation]
+  (when-not (instance? Acl client)
+    (throw
+     (ex-info (str operation " requires an EACL client.")
+              {:type :eacl/invalid-client
+               :eacl/error :eacl/invalid-client})))
+  (client-options client))
+
+(defn export-cache-snapshot
+  "Exports a bounded process-neutral authorization-cache value.
+
+  The host MUST authenticate and encoded-size-bound any externally persisted
+  representation. The returned retained weight is a cache capacity unit, not
+  measured JVM bytes. Continuations, cursors, metrics, backend snapshots, and
+  process-local identity tokens are excluded."
+  [client bounds]
+  (let [opts (require-cache-client-options! client "export-cache-snapshot")]
+    (if-let [store (:basis-cache-store opts)]
+      (cache/export-basis-snapshot store bounds)
+      {:type :eacl/cache-disabled
+       :eacl/error :eacl/cache-disabled
+       :disabled? true
+       :entry-count 0
+       :retained-weight 0})))
+
+(defn restore-cache-snapshot!
+  "Atomically restores an already authenticated and decoded cache snapshot.
+
+  External bytes MUST be authenticated and encoded-size-bound before decoding
+  because this function's first argument is a trusted immutable value. Restore
+  never selects a backend basis or alters source freshness."
+  [client snapshot bounds]
+  (let [opts (require-cache-client-options! client "restore-cache-snapshot!")]
+    (if-let [store (:basis-cache-store opts)]
+      (cache/restore-basis-snapshot! store snapshot bounds)
+      {:type :eacl/cache-disabled
+       :eacl/error :eacl/cache-disabled
+       :disabled? true
+       :restored? false})))
+
+(defn cache-content-revision
+  "Returns a process-local revision for reusable authorization-cache content.
+
+  It advances for publication, eviction, clear, generation replacement, and
+  restore, but not for lookup-only metrics or LRU touches. Values are not
+  comparable across processes."
+  [client]
+  (let [opts (require-cache-client-options! client "cache-content-revision")]
+    (if-let [store (:basis-cache-store opts)]
+      (cache/cache-content-revision store)
+      {:type :eacl/cache-disabled
+       :eacl/error :eacl/cache-disabled
+       :disabled? true})))
+
 (defn refresh-metrics!
   "Forces cache-only metric refresh without mutating backend data.
 

@@ -90,7 +90,12 @@
                                    admit-on-repeat? subproblem-options
                                    retained-bases managed-lifting-disabled?
                                    reported-contract-violations
+                                   content-revision
                                    proof-contract-reporter])
+
+(def basis-snapshot-format
+  "Version identifier for process-neutral basis-cache snapshot values."
+  :eacl.cache/basis-snapshot-v1)
 
 (defn- new-lifecycle
   [subproblem-options]
@@ -316,27 +321,30 @@
                       :subproblem-cache subproblem-cache})))
    ;; Validate budgets before a request attempts to install a generation.
    (subproblem/store (dissoc subproblem-cache :enabled?))
-   (->BasisCache
-    (atom (new-lifecycle subproblem-cache))
-    (atom {:exact-hits 0
-           :managed-hits 0
-           :misses 0
-           :bypasses 0
-           :stamp-failures 0
-           :proof-unavailable 0
-           :proof-unavailable-reasons {}
-           :proof-contract-violations 0
-           :proof-contract-violation-reasons {}
-           :puts 0
-           :expirations 0})
-    max-entries
-    (atom empty-answer-sightings)
-    admit-on-repeat?
-    subproblem-cache
-    retained-bases
-    (atom false)
-    (atom #{})
-    proof-contract-reporter)))
+   (let [content-revision (atom 0)]
+     (->BasisCache
+      (atom (new-lifecycle subproblem-cache))
+      (atom {:exact-hits 0
+             :managed-hits 0
+             :misses 0
+             :bypasses 0
+             :stamp-failures 0
+             :proof-unavailable 0
+             :proof-unavailable-reasons {}
+             :proof-contract-violations 0
+             :proof-contract-violation-reasons {}
+             :puts 0
+             :expirations 0
+             :restores 0})
+      max-entries
+      (atom empty-answer-sightings)
+      admit-on-repeat?
+      subproblem-cache
+      retained-bases
+      (atom false)
+      (atom #{})
+      content-revision
+      proof-contract-reporter))))
 
 (defn basis-cache?
   [value]
@@ -448,7 +456,8 @@
         (delay
           (subproblem/stats
            (subproblem/store
-            (dissoc (:subproblem-options store) :enabled?))))]
+            (dissoc (:subproblem-options store) :enabled?)
+            (:content-revision store))))]
     (assoc @(:metrics store)
            :managed-lifting-disabled?
            @(:managed-lifting-disabled? store)
@@ -557,6 +566,15 @@
                        :cache store})))
     @(:lifecycle store)))
 
+(defn cache-content-revision
+  "Returns the monotonic process-local reusable-content revision."
+  [store]
+  (when-not (basis-cache? store)
+    (throw (ex-info "Expected an EACL basis cache."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :cache store})))
+  @(:content-revision store))
+
 (defn expire-basis-cache!
   "Atomically makes every exact and managed entry unreachable.
 
@@ -572,6 +590,7 @@
   (reset! (:managed-lifting-disabled? store) false)
   (reset! (:reported-contract-violations store) #{})
   (swap! (:metrics store) update :expirations inc)
+  (swap! (:content-revision store) inc)
   nil)
 
 (defn- install-exact-generation!
@@ -579,18 +598,21 @@
   [store lifecycle basis-key snapshot order]
   (if-not (valid-exact-basis-key? basis-key)
     {:generation nil :active? false}
-    (let [selected (volatile! nil)]
+    (let [selected (volatile! nil)
+          changed? (volatile! false)]
       (swap!
        (:bases lifecycle)
        (fn [{:keys [tick generations]}]
          (let [tick (inc tick)
+               existing (get generations basis-key)
                generation
-               (if-let [existing (get generations basis-key)]
+               (if existing
                  (assoc existing :last-used tick)
                  (->ExactGeneration
                   snapshot order
                   (subproblem/store
-                   (dissoc (:subproblem-options store) :enabled?))
+                   (dissoc (:subproblem-options store) :enabled?)
+                   (:content-revision store))
                   tick))
                generations (assoc generations basis-key generation)
                overflow (- (count generations) (:retained-bases store))
@@ -606,7 +628,10 @@
                              (apply dissoc generations victims)
                              generations)]
            (vreset! selected generation)
+           (vreset! changed? (or (nil? existing) (seq victims)))
            {:tick tick :generations generations})))
+      (when @changed?
+        (swap! (:content-revision store) inc))
       {:generation @selected :active? true})))
 
 (defn- select-exact-generation!
@@ -644,19 +669,22 @@
   [store lifecycle lineage schema-generation]
   (when-let [generation-key
              (managed-generation-key lineage schema-generation)]
-    (let [selected (volatile! nil)]
+    (let [selected (volatile! nil)
+          changed? (volatile! false)]
       (swap!
        (:managed lifecycle)
        (fn [{:keys [tick generations]}]
          (let [tick (inc tick)
+               existing (get generations generation-key)
                generation
-               (if-let [existing (get generations generation-key)]
+               (if existing
                  (assoc existing :last-used tick)
                  (->ManagedGeneration
                   generation-key
                   schema-generation
                   (subproblem/store
-                   (dissoc (:subproblem-options store) :enabled?))
+                   (dissoc (:subproblem-options store) :enabled?)
+                   (:content-revision store))
                   tick))
                generations (assoc generations generation-key generation)
                overflow (- (count generations) (:retained-bases store))
@@ -672,7 +700,10 @@
                              (apply dissoc generations victims)
                              generations)]
            (vreset! selected generation)
+           (vreset! changed? (or (nil? existing) (seq victims)))
            {:tick tick :generations generations})))
+      (when @changed?
+        (swap! (:content-revision store) inc))
       @selected)))
 
 (defn- select-managed-generation!
@@ -685,6 +716,270 @@
     (when-let [generation-key
                (managed-generation-key lineage schema-generation)]
       (get-in @(:managed lifecycle) [:generations generation-key]))))
+
+(defn- positive-snapshot-bound!
+  [option value]
+  (when-not (and (integer? value) (pos? value))
+    (throw
+     (ex-info "Cache snapshot bounds must be positive integers."
+              {:type :eacl/invalid-bound :eacl/error :eacl/invalid-bound
+               :option option :value value})))
+  value)
+
+(defn- generation-order
+  [state]
+  (->> (:generations state)
+       (sort-by (fn [[key generation]]
+                  [(- (:last-used generation)) (pr-str key)]))
+       vec))
+
+(defn- select-snapshot-entries
+  [exact managed max-weight max-entries]
+  (reduce
+   (fn [selection tier]
+     (reduce
+      (fn [selection [kind generation-key generation]]
+        (reduce
+         (fn [selection entry]
+           (if (and (< (:entry-count selection) max-entries)
+                    (<= (+ (:retained-weight selection) (:weight entry))
+                        max-weight))
+             (-> selection
+                 (update-in [:entries [kind generation-key] tier]
+                            (fnil conj []) entry)
+                 (update :entry-count inc)
+                 (update :retained-weight + (:weight entry)))
+             selection))
+         selection
+         (subproblem/snapshot-tier-entries (:subproblems generation) tier)))
+      selection
+      (concat
+       (map (fn [[key generation]] [:exact key generation]) exact)
+       (map (fn [[key generation]] [:managed key generation]) managed))))
+   {:entries {} :entry-count 0 :retained-weight 0}
+   subproblem/snapshot-tier-priority))
+
+(defn export-basis-snapshot
+  "Exports reusable exact and managed entries as one bounded immutable value.
+
+  The result contains no backend snapshots, atoms, metrics, continuations,
+  cursors, or process-local identity tokens. Represented weight is a cache
+  capacity unit, not a measured JVM byte count."
+  [store {:keys [max-weight max-entries]}]
+  (when-not (basis-cache? store)
+    (throw (ex-info "Expected an EACL basis cache."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :cache store})))
+  (positive-snapshot-bound! :max-weight max-weight)
+  (positive-snapshot-bound! :max-entries max-entries)
+  (let [lifecycle @(:lifecycle store)
+        exact (generation-order @(:bases lifecycle))
+        managed (generation-order @(:managed lifecycle))
+        {:keys [entries entry-count retained-weight]}
+        (select-snapshot-entries exact managed max-weight max-entries)
+        exact-snapshots
+        (into []
+              (keep
+               (fn [[basis-key generation]]
+                 (when-let [tier->entries (get entries [:exact basis-key])]
+                   {:basis-key basis-key
+                    :order (:order generation)
+                    :subproblems
+                    (subproblem/snapshot-value
+                     (:subproblems generation) tier->entries)})))
+              exact)
+        managed-snapshots
+        (into []
+              (keep
+               (fn [[generation-key generation]]
+                 (when-let [tier->entries (get entries
+                                               [:managed generation-key])]
+                   {:generation-key generation-key
+                    :schema-generation (:schema-generation generation)
+                    :subproblems
+                    (subproblem/snapshot-value
+                     (:subproblems generation) tier->entries)})))
+              managed)]
+    {:format basis-snapshot-format
+     :contract {:retained-bases (:retained-bases store)}
+     :exact exact-snapshots
+     :managed managed-snapshots
+     :generation-counts {:exact (count exact-snapshots)
+                         :managed (count managed-snapshots)}
+     :entry-count entry-count
+     :retained-weight retained-weight}))
+
+(defn- incompatible-snapshot!
+  [message data]
+  (throw
+   (ex-info message
+            (merge {:type :eacl/cache-snapshot-incompatible
+                    :eacl/error :eacl/cache-snapshot-incompatible}
+                   data))))
+
+(defn- closed-map?
+  [value expected-keys]
+  (and (map? value) (= expected-keys (set (keys value)))))
+
+(defn- validate-basis-snapshot-shape!
+  [store snapshot max-weight max-entries]
+  (when-not
+   (closed-map? snapshot
+                #{:format :contract :exact :managed :generation-counts
+                  :entry-count :retained-weight})
+    (incompatible-snapshot! "Malformed basis cache snapshot."
+                            {:snapshot-keys (some-> snapshot keys set)}))
+  (when-not (= basis-snapshot-format (:format snapshot))
+    (incompatible-snapshot! "Unsupported basis cache snapshot format."
+                            {:format (:format snapshot)}))
+  (when-not (closed-map? (:contract snapshot) #{:retained-bases})
+    (incompatible-snapshot! "Malformed basis cache snapshot contract."
+                            {:contract (:contract snapshot)}))
+  (when-not (and (integer? (get-in snapshot [:contract :retained-bases]))
+                 (pos? (get-in snapshot [:contract :retained-bases])))
+    (incompatible-snapshot! "Invalid retained-bases snapshot contract."
+                            {:contract (:contract snapshot)}))
+  (when-not (and (vector? (:exact snapshot))
+                 (vector? (:managed snapshot)))
+    (incompatible-snapshot! "Basis cache generations must be vectors." {}))
+  (when (or (> (count (:exact snapshot)) (:retained-bases store))
+            (> (count (:managed snapshot)) (:retained-bases store)))
+    (incompatible-snapshot! "Snapshot exceeds retained generation capacity."
+                            {:retained-bases (:retained-bases store)}))
+  (when-not
+   (= {:exact (count (:exact snapshot))
+       :managed (count (:managed snapshot))}
+      (:generation-counts snapshot))
+    (incompatible-snapshot! "Snapshot generation totals do not match."
+                            {:generation-counts (:generation-counts snapshot)}))
+  (when-not (and (integer? (:entry-count snapshot))
+                 (not (neg? (:entry-count snapshot)))
+                 (<= (:entry-count snapshot) max-entries)
+                 (integer? (:retained-weight snapshot))
+                 (not (neg? (:retained-weight snapshot)))
+                 (<= (:retained-weight snapshot) max-weight))
+    (incompatible-snapshot! "Snapshot exceeds restore bounds."
+                            {:entry-count (:entry-count snapshot)
+                             :retained-weight (:retained-weight snapshot)
+                             :max-entries max-entries
+                             :max-weight max-weight})))
+
+(defn- restore-exact-descriptor
+  [store descriptor]
+  (when-not (closed-map? descriptor #{:basis-key :order :subproblems})
+    (incompatible-snapshot! "Malformed exact cache generation."
+                            {:descriptor descriptor}))
+  (when-not (and (valid-exact-basis-key? (:basis-key descriptor))
+                 (integer? (:order descriptor)))
+    (incompatible-snapshot! "Invalid exact cache generation identity."
+                            {:basis-key (:basis-key descriptor)
+                             :order (:order descriptor)}))
+  (assoc descriptor
+         :store
+         (subproblem/restore-store
+          (:subproblems descriptor)
+          (dissoc (:subproblem-options store) :enabled?)
+          (:content-revision store))))
+
+(defn- restore-managed-descriptor
+  [store descriptor]
+  (when-not
+   (closed-map? descriptor
+                #{:generation-key :schema-generation :subproblems})
+    (incompatible-snapshot! "Malformed managed cache generation."
+                            {:descriptor descriptor}))
+  (let [generation-key (:generation-key descriptor)
+        schema-generation (:schema-generation descriptor)]
+    (when-not (and (subproblem/proof-stamp? schema-generation)
+                   (= generation-key
+                      (managed-generation-key
+                       (:lineage generation-key) schema-generation)))
+      (incompatible-snapshot! "Invalid managed cache generation identity."
+                              {:generation-key generation-key
+                               :schema-generation schema-generation})))
+  (assoc descriptor
+         :store
+         (subproblem/restore-store
+          (:subproblems descriptor)
+          (dissoc (:subproblem-options store) :enabled?)
+          (:content-revision store))))
+
+(defn- restored-generation-state
+  [descriptors key-fn generation-fn]
+  (let [generation-count (count descriptors)]
+    {:tick generation-count
+     :generations
+     (into {}
+           (map-indexed
+            (fn [index descriptor]
+              (let [last-used (- generation-count index)]
+                [(key-fn descriptor)
+                 (generation-fn descriptor last-used)])))
+           descriptors)}))
+
+(defn restore-basis-snapshot!
+  "Atomically replaces one basis-cache lifecycle from a trusted snapshot value.
+
+  A host reading external bytes MUST authenticate and encoded-size-bound the
+  envelope before deserialization. Any structural or compatibility failure
+  leaves the currently visible lifecycle unchanged."
+  [store snapshot {:keys [max-weight max-entries]}]
+  (when-not (basis-cache? store)
+    (throw (ex-info "Expected an EACL basis cache."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :cache store})))
+  (positive-snapshot-bound! :max-weight max-weight)
+  (positive-snapshot-bound! :max-entries max-entries)
+  (validate-basis-snapshot-shape! store snapshot max-weight max-entries)
+  (let [exact (mapv #(restore-exact-descriptor store %) (:exact snapshot))
+        managed
+        (mapv #(restore-managed-descriptor store %) (:managed snapshot))
+        exact-keys (mapv :basis-key exact)
+        managed-keys (mapv :generation-key managed)]
+    (when-not (= (count exact-keys) (count (set exact-keys)))
+      (incompatible-snapshot! "Duplicate exact cache generation identity." {}))
+    (when-not (= (count managed-keys) (count (set managed-keys)))
+      (incompatible-snapshot! "Duplicate managed cache generation identity." {}))
+    (let [actual-entry-count
+          (reduce + 0
+                  (map #(get-in % [:subproblems :entry-count])
+                       (concat exact managed)))
+          actual-retained-weight
+          (reduce + 0
+                  (map #(get-in % [:subproblems :retained-weight])
+                       (concat exact managed)))]
+      (when-not (and (= actual-entry-count (:entry-count snapshot))
+                     (= actual-retained-weight (:retained-weight snapshot)))
+        (incompatible-snapshot! "Basis snapshot totals do not match entries."
+                                {:declared-entry-count (:entry-count snapshot)
+                                 :actual-entry-count actual-entry-count
+                                 :declared-retained-weight
+                                 (:retained-weight snapshot)
+                                 :actual-retained-weight
+                                 actual-retained-weight})))
+    (let [lifecycle
+          (->CacheLifecycle
+           (atom
+            (restored-generation-state
+             exact :basis-key
+             (fn [{:keys [order store]} last-used]
+               (->ExactGeneration nil order store last-used))))
+           (atom
+            (restored-generation-state
+             managed :generation-key
+             (fn [{:keys [generation-key schema-generation store]} last-used]
+               (->ManagedGeneration
+                generation-key schema-generation store last-used)))))]
+      (reset! (:lifecycle store) lifecycle)
+      (reset! (:admissions store) empty-answer-sightings)
+      (reset! (:managed-lifting-disabled? store) false)
+      (reset! (:reported-contract-violations store) #{})
+      (swap! (:metrics store) update :restores inc)
+      (swap! (:content-revision store) inc)
+      {:restored? true
+       :generation-counts (:generation-counts snapshot)
+       :entry-count (:entry-count snapshot)
+       :retained-weight (:retained-weight snapshot)})))
 
 (defn- valid-managed-descriptor?
   [descriptor]

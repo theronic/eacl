@@ -16,6 +16,18 @@
 (def ^:private test-security-key
   "0123456789abcdef0123456789abcdef")
 
+(deftest portable-cache-api-round-trip-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client conn {})
+          bounds {:max-weight 8192 :max-entries 64}
+          before (core/cache-content-revision client)
+          snapshot (core/export-cache-snapshot client bounds)
+          restored (core/restore-cache-snapshot! client snapshot bounds)]
+      (is (= :eacl.cache/basis-snapshot-v1 (:format snapshot)))
+      (is (zero? (:entry-count snapshot)))
+      (is (true? (:restored? restored)))
+      (is (> (core/cache-content-revision client) before)))))
+
 (deftest eacl-config-tests
   (testing ""
     (with-mem-conn [conn schema/v7-schema]

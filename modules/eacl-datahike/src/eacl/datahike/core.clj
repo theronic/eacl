@@ -12,8 +12,10 @@
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
+            [eacl.datahike.migrations.v7-to-v8 :as v7-to-v8]
             [eacl.datahike.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.expression-policy :as expression-policy]))
 
 (def cursor->token cursor/cursor->token)
 (def token->cursor cursor/token->cursor)
@@ -88,6 +90,7 @@
         schema-attribute?
         (or (= a :eacl/schema-string)
             (= a :eacl/schema-generation)
+            (= a :eacl/permission-storage-version)
             (= attribute-namespace "eacl.relation")
             (= attribute-namespace "eacl.permission")
             (and (= a :eacl/id)
@@ -174,6 +177,28 @@
   (require-datahike-client! client "cache-stats")
   (orchestration/cache-stats client))
 
+(defn export-cache-snapshot
+  "Exports reusable authorization-cache entries as a bounded immutable value.
+
+  Hosts persisting external bytes must authenticate and encoded-size-bound the
+  envelope before deserialization. The value contains neither a Datahike DB nor
+  process-local cache identity."
+  [client bounds]
+  (require-datahike-client! client "export-cache-snapshot")
+  (orchestration/export-cache-snapshot client bounds))
+
+(defn restore-cache-snapshot!
+  "Atomically restores one trusted, authenticated cache snapshot value."
+  [client snapshot bounds]
+  (require-datahike-client! client "restore-cache-snapshot!")
+  (orchestration/restore-cache-snapshot! client snapshot bounds))
+
+(defn cache-content-revision
+  "Returns this client's process-local reusable-cache content revision."
+  [client]
+  (require-datahike-client! client "cache-content-revision")
+  (orchestration/cache-content-revision client))
+
 (defn refresh-metrics!
   "Evicts cache-only metrics; optionally recomputes structural metrics now."
   ([client]
@@ -185,6 +210,10 @@
 
 (defn make-client
   "Builds an EACL acl over a datahike conn.
+
+  `:auto-migrate-v7` is consumed by the explicit permission-storage
+  compatibility gate. Every remaining option belongs to the uniform EACL
+  client contract.
 
   Options (unknown keys throw :eacl/invalid-config - a silently ignored key
   means silently wrong ID coercion, audit 5):
@@ -203,7 +232,16 @@
     Custom codecs must set true explicitly to enable proof-equivalent cursors.
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn config-opts]
-  (orchestration/make-client api conn config-opts))
+  (let [expression-limits
+        (expression-policy/normalize-client-limits
+         (:expression-limits config-opts))]
+    (v7-to-v8/assert-permission-storage-compatible!
+     conn {:auto-migrate-v7 (:auto-migrate-v7 config-opts)
+           :expression-limits expression-limits})
+    (orchestration/make-client
+     api conn (-> config-opts
+                  (dissoc :auto-migrate-v7)
+                  (assoc :expression-limits expression-limits)))))
 
 (defn db
   "Returns the immutable Datahike DB held by an EACL-created snapshot."
