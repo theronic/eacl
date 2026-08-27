@@ -53,6 +53,13 @@
   (-decide [_ operation input]
     (f operation input)))
 
+(deftest normalized-kernel-selection-is-reused
+  (let [selection
+        {:kernel (->FunctionKernel (fn [_ _] :use-exact-entry))}]
+    (is (identical? selection (verified/normalize-selection selection)))
+    (is (= selection
+           (verified/normalize-selection (:kernel selection))))))
+
 (deftest routing-certificate-result-is-bound-to-its-input
   (let [accepted
         {:status :accepted

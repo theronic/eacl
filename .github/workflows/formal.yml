@@ -81,6 +81,7 @@ jobs:
           sh bin/ci-nrepl-eval 7788 \
             "(do
                (require 'eacl.formal.java-round-trip-test :reload)
+               (require 'eacl.formal.operator-decision-test :reload)
                (require 'eacl.formal.wire-format-bridge-test :reload)
                (require 'eacl.formal.semantics-bridge-test :reload)
                (require 'eacl.formal.page-window-bridge-test :reload)
@@ -90,6 +91,7 @@ jobs:
                (let [result
                      (clojure.test/run-tests
                       'eacl.formal.java-round-trip-test
+                      'eacl.formal.operator-decision-test
                       'eacl.formal.wire-format-bridge-test
                       'eacl.formal.semantics-bridge-test
                       'eacl.formal.page-window-bridge-test
@@ -433,8 +435,12 @@ jobs:
 
       - name: Assert verified status remains withheld while gates are unmet
         run: |
-          if bin/formal manifest; then
-            echo "manifest unexpectedly allowed verified status" >&2
+          set +e
+          bin/formal manifest
+          manifest_status="$?"
+          set -e
+          if [ "$manifest_status" -ne 3 ]; then
+            echo "expected declared-obligation withholding status 3; got $manifest_status" >&2
             exit 1
           fi
 
@@ -529,6 +535,7 @@ jobs:
         uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+          bb: '1.12.213'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -580,6 +587,10 @@ jobs:
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"generator/mutation controls failed\" result)))
                  result))"
+
+      - name: Verify the nREPL gate failure path can fail this build
+        run: |
+          EACL_NREPL_PORT=7788 bin/formal gate-selftest
 
       - name: Replay minimized counterexample corpus
         run: |

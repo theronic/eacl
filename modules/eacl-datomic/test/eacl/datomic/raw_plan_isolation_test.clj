@@ -12,6 +12,7 @@
   everything else compiles per call."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
@@ -19,7 +20,11 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as schema]
-            [eacl.engine.v8 :as engine]))
+            [eacl.engine.v8 :as engine]
+            [eacl.schema.expression :as expression]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]
+            [eacl.schema.expression-resolver :as expression-resolver]))
 
 (def ^:private stamped-schema
   "definition user {}
@@ -33,33 +38,47 @@ definition doc {
   permission view = owner + org->view
 }")
 
+(def ^:private operator-schema
+  "definition user {}
+definition group {
+  relation member: user
+  permission view = member
+}
+definition doc {
+  relation owner: user
+  relation group: group
+  relation banned: user
+  permission view = (owner + group->view) - banned
+}")
+
+(defn- permission-entity
+  [schema-source]
+  (-> (expression-resolver/validate-schema schema-source)
+      expression-persistence/candidate-schema
+      :permissions
+      first))
+
 (deftest filtered-view-never-shares-plans-with-the-plain-database-test
   ;; A filter that hides the owner permission arm changes the sealed plan
   ;; but not the schema stamp, the database id, or the basis. Whichever
   ;; view seals first must not answer for the other.
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:cache cache/no-cache})
+    (let [acl (core/make-client conn {:cache shared-cache/no-cache})
           _ (eacl/write-schema! acl stamped-schema)
           _ @(d/transact conn [{:eacl/id "alice"} {:eacl/id "doc1"}])
           _ (eacl/create-relationship!
              acl (->Relationship (spice-object :user "alice")
                                  :owner (spice-object :doc "doc1")))
           db (d/db conn)
-          owner-arm-eids
+          view-expression-eids
           (into #{}
-                (comp (map :e)
-                      (filter (fn [eid]
-                                (= :owner
-                                   (:eacl.permission/target-name
-                                    (d/pull db
-                                            [:eacl.permission/target-name]
-                                            eid))))))
+                (map :e)
                 (d/datoms db :avet
                           :eacl.permission/resource-type+permission-name
                           [:doc :view]))
-          _ (is (= 1 (count owner-arm-eids)))
+          _ (is (= 1 (count view-expression-eids)))
           filtered (d/filter db (fn [_ datom]
-                                  (not (contains? owner-arm-eids
+                                  (not (contains? view-expression-eids
                                                   (:e datom)))))
           alice (spice-object :user "alice")
           doc (spice-object :doc "doc1")]
@@ -79,14 +98,28 @@ definition doc {
   ;; with the NEXT committed transaction. A speculative extra permission
   ;; arm must not answer for the committed database at the same basis.
   (with-mem-conn [conn schema/v7-schema]
-    (let [_ @(d/transact conn [(base/Relation :doc :owner :user)
+    (let [owner-schema
+          "definition user {}
+           definition doc {
+             relation owner: user
+             relation editor: user
+             permission view = owner
+           }"
+          owner+editor-schema
+          "definition user {}
+           definition doc {
+             relation owner: user
+             relation editor: user
+             permission view = owner + editor
+           }"
+          _ @(d/transact conn [(base/Relation :doc :owner :user)
                                (base/Relation :doc :editor :user)
-                               (base/Permission :doc :view {:relation :owner})])
+                               (permission-entity owner-schema)])
           _ @(d/transact conn [{:eacl/id "alice"} {:eacl/id "doc1"}])
           db0 (d/db conn)
           speculative
           (:db-after
-           (d/with db0 [(base/Permission :doc :view {:relation :editor})
+           (d/with db0 [(permission-entity owner+editor-schema)
                         [:db/add [:eacl/id "alice"]
                          :eacl.v7.relationship/subject-type+relation+resource-type+resource
                          [:user (d/entid db0 [:eacl/id
@@ -121,3 +154,38 @@ definition doc {
             "the speculative view grants through its extra editor arm")
         (is (false? (impl/can? committed alice :view doc))
             "the committed schema grants only through :owner")))))
+
+(deftest raw-facade-amortizes-expression-decodes-within-one-request-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [acl (core/make-client conn {:cache shared-cache/no-cache})
+          _ (eacl/write-schema! acl operator-schema)
+          _ @(d/transact conn [{:eacl/id "alice"} {:eacl/id "doc1"}])
+          _ (eacl/create-relationship!
+             acl (->Relationship (spice-object :user "alice")
+                                 :owner (spice-object :doc "doc1")))
+          db (d/db conn)
+          alice (spice-object :user "alice")
+          doc (spice-object :doc "doc1")
+          payload-decodes (atom 0)
+          limit-normalizations (atom 0)
+          decode expression/decode
+          normalize-limits expression-policy/normalize-client-limits
+          allowed?
+          (with-redefs
+            [expression/decode
+             (fn [& args]
+               ;; The one-argument entry delegates through the public
+               ;; two-argument var, so count the actual codec invocation only.
+               (when (= 2 (count args))
+                 (swap! payload-decodes inc))
+               (apply decode args))
+             expression-policy/normalize-client-limits
+             (fn [limits]
+               (swap! limit-normalizations inc)
+               (normalize-limits limits))]
+            (impl/can? db alice :view doc))]
+      (is (true? allowed?) "instrumentation preserves the decision")
+      (is (= 2 @payload-decodes)
+          "the two immutable permission entities decode once each per request")
+      (is (zero? @limit-normalizations)
+          "the raw facade does not re-normalize its complete default profile"))))

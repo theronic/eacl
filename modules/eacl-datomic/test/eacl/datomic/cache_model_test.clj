@@ -1,6 +1,7 @@
 (ns eacl.datomic.cache-model-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
@@ -77,15 +78,16 @@
         (let [random (java.util.Random. seed)
               cached (core/make-client
                       conn
-                      {:cache {:max-weight (* 8 1024 1024)
-                               :max-entry-weight (* 2 1024 1024)
-                               :max-entries 2048
-                               :remember-answers true}})
-              uncached (atom (core/make-client conn {:cache cache/no-cache}))
+                      {:cache {:max-entries 2048
+                               :subproblem-cache
+                               {:projection-max-weight (* 8 1024 1024)
+                                :denotation-max-weight (* 8 1024 1024)
+                                :answer-max-weight (* 2 1024 1024)}}})
+              uncached (atom (core/make-client conn {:cache shared-cache/no-cache}))
               user-ids (mapv #(str "user-" %) (range 8))
               account-ids (mapv #(str "account-" %) (range 8))]
           (eacl/write-schema! cached owner-schema)
-          (reset! uncached (core/make-client conn {:cache cache/no-cache}))
+          (reset! uncached (core/make-client conn {:cache shared-cache/no-cache}))
           @(d/transact
             conn
             (mapv (fn [id] {:eacl/id id})
@@ -94,7 +96,7 @@
             (when (= 25 step)
               (eacl/write-schema! cached owner-and-auditor-schema)
               ;; Other clients are deliberately not polled for schema changes.
-              (reset! uncached (core/make-client conn {:cache cache/no-cache})))
+              (reset! uncached (core/make-client conn {:cache shared-cache/no-cache})))
             (let [user-id (nth user-ids (.nextInt random (count user-ids)))
                   account-id (nth account-ids
                                   (.nextInt random (count account-ids)))

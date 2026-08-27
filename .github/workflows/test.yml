@@ -75,6 +75,7 @@ jobs:
         uses: DeLaGuardo/setup-clojure@13.6.1
         with:
           cli: latest
+          bb: '1.12.213'
 
       - name: Set up Node
         uses: actions/setup-node@v4
@@ -157,6 +158,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # eacl-datalevin joins this matrix only after its maintained fork is
+        # published from an immutable public source commit.
         module: [eacl, eacl-datomic, eacl-datascript, eacl-datahike]
     runs-on: ubuntu-latest
     steps:
@@ -224,7 +227,7 @@ jobs:
                          [\"test\"]
                          [\"test\" \"../eacl/test\"])
                        :patterns
-                       [\"^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.]).*-test$\"]
+                       [\"^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]operator-engine[.]cross-backend-operator-test$)(?!eacl[.]formal[.]).*-test$\"]
                        :excludes [:benchmark]})]
                  (when (pos? (+ (:fail result 0) (:error result 0)))
                    (throw (ex-info \"isolated nREPL tests failed\" result)))

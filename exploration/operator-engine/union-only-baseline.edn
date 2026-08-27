@@ -1,0 +1,62 @@
+{:format-version 1
+ :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+ :captured-at "2026-08-25T13:19:53Z"
+ :behavior
+ {:digest-domain "eacl.operator-engine/union-only-baseline-v1"
+  :coverage
+  [:denotations
+   :least-path-and-recursive-result-order
+   :forward-and-reverse-pages
+   :point-checks
+   :counts
+   :cursor-replay
+   :cancellation
+   :stale-basis]
+  :fixture-digests
+  {:broad-union "ZZ8vCZpctKRJMZjJKy6Nd6x-y6R9DW2YYnzgWlEqIak"
+   :cyclic-data "vGJ2rT4FcB5dvqQtW_PRgsQmWQY9xUhcW5huh8QphXA"
+   :explorer-acyclic "RyBNofWE8y7yNuKUOGpi4Ob5VW0l6eI6kpDCj-rH11I"
+   :explorer-recursive "p65waORt-hZEyCvywbV8KUejAxoRyrayrT1aJ0N_7VU"
+   :folder-chain "LmYS10GRNwwqbP8MILP7hXoRiT-0tVdpYzwR-_6__DU"
+   :group-star "Bu7pixkVOkMCqoy8TXeCxf1r8CHc3Ewu3x9-QYCkMvY"
+   :mutual-mixed "gvCIqErd91ewV6M7cT22IxsST3nEnfu10k-ZSjSI0ms"}}
+ :decoded-cursor-payloads
+ {:path "exploration/operator-engine/union-only-cursor-payloads.edn"
+  :sha256
+  "a904abfc7e96c346a53ad7a6b82c66270fb91ed1f2aa369f0a2a6f93906affc4"
+  :coverage [:acyclic-forward :acyclic-reverse
+             :recursive-forward :recursive-reverse]
+  :ciphertext-excluded-because :fresh-encryption-nonce}
+ :matched-host-performance
+ {:path "exploration/baselines/perf-clj-datascript.edn"
+  :sha256
+  "8ad0956689e2c7e6098174d191f7aff33cc6268c55c4127d6534f6e9d4f35ec0"
+  :environment
+  {:java-version "26.0.2"
+   :os "Mac OS X 26.4.1"
+   :architecture "aarch64"
+   :processors 14
+   :clojure "1.11.4"}
+  :coverage [:warm-median-latency
+             :warm-p90-and-maximum-latency
+             :median-thread-allocation
+             :fresh-client-deterministic-work-counters
+             :acyclic-2k-server-shape
+             :populated-recursive-shape]}
+ :historical-vector-artifacts
+ {"exploration/baselines/broad-union.edn"
+  "951fa61f783e49badff4f156a4b1edf216f1a51fc0b7d796780f4980ebfe80c9"
+  "exploration/baselines/cyclic-data.edn"
+  "ab74c2d068fe72900804986f8ced64ee8debd093b81b36810c1bfd6ab57976ca"
+  "exploration/baselines/explorer-acyclic.edn"
+  "b98b2c49e0b71faafa6e54c4b730b4edadc8ccaa099cde80b0f0543a0aa61ede"
+  "exploration/baselines/explorer-recursive.edn"
+  "d1c0be26553ae9cd49b59c4e4e89d1fa2bf21773abec6afe627a8799724c8aa5"
+  "exploration/baselines/folder-chain.edn"
+  "e8c5a93f94154c72d16031d1aa0222cc0b7896d4889cb7489adf16aae49bba02"
+  "exploration/baselines/group-star.edn"
+  "7ff1795ac0fc33368ecd4d3ddb0b91f0e3e111f170d1153ee9fc870f86bf4f1b"
+  "exploration/baselines/mutual-mixed.edn"
+  "5c00ce0b3c82d38a89b2d6f3144e14e83a7ba731f8de57a293ecb9e8a17857c7"}
+ :verification-command
+ "clj-nrepl-eval -p 7788 \"(do (require 'eacl.operator-engine.union-only-baseline-test :reload) (clojure.test/run-tests 'eacl.operator-engine.union-only-baseline-test))\""}

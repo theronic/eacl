@@ -1,6 +1,8 @@
 (ns eacl.datomic.schema-error-contract-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
+            [eacl.backend.source :as source]
             [eacl.core :as eacl]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
@@ -40,11 +42,39 @@
 
 (defn- client!
   [conn]
-  (let [client (core/make-client conn {:cache cache/no-cache})]
+  (let [client (core/make-client conn {:cache shared-cache/no-cache})]
     (eacl/write-schema! client permission-schema)
     @(d/transact conn [{:eacl/id "u1"}
                        {:eacl/id "d1"}])
     client))
+
+(deftest relationship-contention-reacquires-replans-and-releases-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (client! conn)
+          user (eacl/spice-object :user "u1")
+          document (eacl/spice-object :document "d1")
+          native-transact d/transact
+          submissions (atom 0)
+          source-ops (atom {})
+          response
+          (with-redefs
+           [d/transact
+            (fn [candidate tx-data]
+              (if (= 1 (swap! submissions inc))
+                (throw
+                 (ex-info "injected Datomic CAS loser"
+                          {:db/error :db.error/cas-failed}))
+                (native-transact candidate tx-data)))]
+            (binding [source/*source-op-stats* source-ops]
+              (eacl/create-relationship!
+               client user :reader document)))]
+      (is (string? (:zed/token response)))
+      (is (= 2 @submissions))
+      (is (= 2 (:acquire-current! @source-ops 0))
+          "every contention attempt selects a fresh planning basis")
+      (is (= 2 (:release! @source-ops 0))
+          "every failed or successful planning basis is released")
+      (is (true? (eacl/can? client user :view document))))))
 
 (deftest public-operations-report-unknown-schema-names-test
   (with-mem-conn [conn schema/v7-schema]
@@ -53,7 +83,7 @@
           document (eacl/spice-object :document "d1")]
       (testing "unknown permissions never collapse into false, empty, or zero"
         (doseq [[operation call]
-                [[:can?
+                [[:check-permission
                   #(eacl/can? client user :missing document)]
                  [:check-permission
                   #(eacl/check-permission
@@ -92,7 +122,7 @@
       (testing "unknown endpoint definitions identify their role"
         (let [data
               (assert-error!
-               :eacl/unknown-definition :can?
+               :eacl/unknown-definition :check-permission
                #(eacl/can? client
                            (eacl/spice-object :ghost "u1")
                            :view document))]
@@ -147,7 +177,7 @@
 
 (deftest schema-validation-uses-the-selected-snapshot-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:cache cache/no-cache})
+    (let [client (core/make-client conn {:cache shared-cache/no-cache})
           old-token (:zed/token (eacl/write-schema! client permission-schema))
           user (eacl/spice-object :user "absent-user")
           document (eacl/spice-object :document "absent-document")]
@@ -283,9 +313,11 @@
                                                    relation reader: user
                                                    permission view = missing
                                                  }"))]
-          (is (= :eacl.schema/invalid-reference (:type data)))
-          (is (= :eacl.schema/invalid-reference (:eacl/error data)))
-          (is (seq (:errors data)))))
+          (is (= :eacl.schema/expression-resolution-failed (:type data)))
+          (is (= :eacl.schema/expression-resolution-failed
+                 (:eacl/error data)))
+          (is (some #(= :missing-reference (:type %))
+                    (:errors data)))))
       (testing "an undefined relation subject type is rejected like SpiceDB does"
         (let [data (error-data
                     #(eacl/write-schema! client "definition user {}
@@ -293,8 +325,9 @@
                                                    relation reader: nobody
                                                    permission view = reader
                                                  }"))]
-          (is (= :eacl.schema/invalid-reference (:type data)))
-          (is (some #(= :undefined-subject-type (:type %)) (:errors data)))))
+          (is (= :eacl.schema/expression-resolution-failed (:type data)))
+          (is (some #(= :type-invalid-reference (:type %))
+                    (:errors data)))))
       (testing "unsupported schema features carry a category"
         (let [data (error-data
                     #(eacl/write-schema! client "definition user {}

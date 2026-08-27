@@ -482,7 +482,6 @@
   (cond
     (.-is_UseCurrent decision) :current
     (.-is_UseExact decision) :exact
-    (.-is_CursorConflict (.-dtor_reason decision)) :conflict
     (.-is_CursorExpired (.-dtor_reason decision)) :expired
     (.-is_HistoryDivergence (.-dtor_reason decision)) :divergence
     (.-is_SnapshotUnavailable (.-dtor_reason decision))

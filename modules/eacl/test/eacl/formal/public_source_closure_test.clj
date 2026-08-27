@@ -96,12 +96,14 @@
                  (count calls)))
           (is (= (:operations expected)
                  observed))
-          (is (= (conj backend/required-snapshot-operations :proof-frame)
+          (is (= (into
+                  (conj backend/required-snapshot-operations :proof-frame)
+                  backend/optional-snapshot-operations)
                  observed))
           (is (empty?
                (set/difference
                  observed
-                 (set (keys backend/adapter-obligations))))))))))
+                 (set (keys backend/basis-adapter-obligations))))))))))
 
 (deftest external-certification-gate-names-every-open-refinement-test
   (let [root (repository-root)
@@ -135,11 +137,7 @@
                   (get-in manifest
                           [:external-certification :procedure]))))
     (is (set/subset? required-open-obligations unmet))
-    (is (= {:source "formal/dafny/CacheKernel.dfy"
-            :runtime-operation :none
-            :reason :proof-only-model
-            :production-assurance-contribution :none}
-           (first (:proof-only-exclusions manifest))))
+    (is (empty? (:proof-only-exclusions manifest)))
     (is (not (some #{:cache-validation}
                    (:production-routed-decisions generated-boundary))))
     (is (empty? (:proof-only-generated-decisions generated-boundary)))

@@ -81,6 +81,49 @@
         (is (= :before-command (:stage data)))
         (is (= {:backend-commands 2} (:consumed-work data)))))))
 
+(deftest nested-contract-refinement-never-renews-the-request-budget-test
+  (let [clock-calls (atom 0)
+        token (execution/cancellation-token)
+        options {:execution-timeout-ms 100
+                 :aggregate-limits {:candidate-window 20}}
+        outer
+        (binding [execution/*monotonic-nanos*
+                  #(do (swap! clock-calls inc) 1000)]
+          (execution/normalize
+           options :with-snapshot
+           {:cancellation-token token
+            :aggregate-limits {:candidate-window 10}}))
+        nested
+        (binding [execution/*monotonic-nanos*
+                  #(throw (ex-info "deadline renewed" {}))]
+          (execution/refine
+           outer options :lookup-resources
+           {:first 2
+            :aggregate-limits {:candidate-window 3}}))
+        cannot-loosen
+        (execution/refine
+         outer options :lookup-resources
+         {:first 2
+          :aggregate-limits {:candidate-window 15}})]
+    (is (= 1 @clock-calls))
+    (is (= (:started-nanos outer) (:started-nanos nested)))
+    (is (= (:deadline-nanos outer) (:deadline-nanos nested)))
+    (is (identical? token (:cancellation-token nested)))
+    (is (= :lookup-resources (:operation nested)))
+    (is (= {:kind :page :direction :forward :size 2 :bounded? true}
+           (:demand nested)))
+    (is (= 3 (get-in nested [:aggregate-limits :candidate-window])))
+    (is (= 10
+           (get-in cannot-loosen [:aggregate-limits :candidate-window])))
+    (is (= :request-control-fixed
+           (:reason
+            (caught-data
+             #(execution/refine
+               outer options :lookup-resources
+               {:first 2
+                :cancellation-token
+                (execution/cancellation-token)})))))))
+
 (deftest cooperative-cancellation-token-test
   (let [clock (atom 0)
         token (execution/cancellation-token)

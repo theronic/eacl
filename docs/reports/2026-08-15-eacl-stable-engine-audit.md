@@ -505,19 +505,23 @@ minutes) and the full formal workflow, not with the unit battery. Sizes:
 
 ## 4. Optimizations (all keep the proven semantics)
 
-### 4.1 Key the sealed-plan cache on the schema generation, not the native revision
+### 4.1 Key the sealed-plan cache on the schema generation, not the native revision — **Implemented (`eliminate-authorization-request-amplification` tasks 2.1–2.6, 2026-08-22)**
 
-`v8/stable-plan` keys plans on `[backend-id source-scope source-lifecycle
-native-revision root]`, so every transaction — including ones that touch no
-schema — invalidates every plan and the next request of each root re-reads
-its permission/relation definitions, re-encodes every rule canonically
-(`secure-format/encode-canonical` calls `edn/read-string` per keyword during
-validation), re-runs the 0/1 BFS, and re-digests the plan. Plan compilation
-"consults no relationship data" by construction, so the plan is a pure
-function of the schema generation. Key on the proof-frame schema stamp
-(`v8/schema-version`) when it is complete, falling back to the native revision
-when it is not. Cursor fingerprints are unaffected (they never included the
-basis).
+The adapter boundary now exposes an independent, memoized
+`:schema-generation` operation with an at-most-one-index-probe contract. A
+bounded client-owned registry keys sealed plans, validation catalogs,
+permission paths, dependency closures, routing analysis, direct-grant
+relations, and cycle guards by engine ABI, adapter/source identity, lifecycle,
+and certified schema generation. It neither depends on the ordered proof
+frame nor falls back to native revision. An unstamped snapshot gets a
+request-local floor containing the same artifacts.
+
+All four backend contracts now prove identical plan reuse across two native
+bases of one generation, replacement after a managed schema write, and stale
+plan rejection. Cache-disabled requests also reuse the generation registry;
+the Datalevin fixture performs one hundred checks with one seal while its
+completed answers remain identical-revision-only because Datalevin still does
+not advertise ordered relationship generations.
 
 ### 4.2 Point checks (`can?`) scan every subject at the leaf level
 

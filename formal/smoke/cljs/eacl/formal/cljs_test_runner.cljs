@@ -4,6 +4,7 @@
    [cljs.test :as t]
    [eacl.formal.indexed-semantics-bridge-test]
    [eacl.formal.js-round-trip-test]
+   [eacl.formal.operator-decision-test]
    [eacl.formal.production-kernel-test]
    [eacl.verified-kernel-test]))
 
@@ -24,6 +25,7 @@
   (t/run-tests
    'eacl.formal.indexed-semantics-bridge-test
    'eacl.formal.js-round-trip-test
+   'eacl.formal.operator-decision-test
    'eacl.formal.production-kernel-test
    'eacl.verified-kernel-test))
 

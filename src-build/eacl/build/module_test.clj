@@ -22,6 +22,21 @@
     (.writeShort output 0)
     (.writeShort output major)))
 
+(defn- write-entry!
+  [root entry]
+  (let [file (io/file root entry)]
+    (.mkdirs (.getParentFile file))
+    (spit file "fixture")
+    file))
+
+(defn- error-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
 (deftest generated-bytecode-target-defaults-to-java-26-and-allows-older-java
   (let [directory (temporary-directory)
         class-file (io/file directory "Generated.class")]
@@ -49,5 +64,36 @@
         (is (true? (module/assert-generated-bytecode!
                     (.getPath directory)
                     {:java-release 8}))))
+      (finally
+        (b/delete {:path (.getPath directory)})))))
+
+(deftest datalevin-adapter-jar-cannot-bundle-backends-or-native-runtime
+  (let [directory (temporary-directory)
+        classes (io/file directory "classes")
+        jar-file (io/file directory "adapter.jar")]
+    (try
+      (write-entry! classes "eacl/datalevin/core.cljc")
+      (b/jar {:class-dir (.getPath classes)
+              :jar-file (.getPath jar-file)})
+      (is (true?
+           (module/assert-adapter-jar-isolation!
+            :eacl-datalevin (.getPath jar-file))))
+      (doseq [forbidden-entry
+              ["eacl/datomic/core.clj"
+               "eacl/datahike/core.clj"
+               "eacl/datascript/core.cljc"
+               "datalevin/dtlvnative/linux-arm64/libdtlv.so"
+               "org/bytedeco/javacpp.class"]]
+        (b/delete {:path (.getPath classes)})
+        (write-entry! classes "eacl/datalevin/core.cljc")
+        (write-entry! classes forbidden-entry)
+        (b/jar {:class-dir (.getPath classes)
+                :jar-file (.getPath jar-file)})
+        (let [failure
+              (error-data
+               #(module/assert-adapter-jar-isolation!
+                 :eacl-datalevin (.getPath jar-file)))]
+          (is (= :eacl.build/backend-isolation-failed (:type failure)))
+          (is (= [forbidden-entry] (:entries failure)))))
       (finally
         (b/delete {:path (.getPath directory)})))))

@@ -1,0 +1,36 @@
+{:paths ["src"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.4"}
+        dev.eacl/eacl {:local/root "../eacl"}
+        com.rpl/specter {:mvn/version "1.1.4"}
+        ;; Development resolves the maintained snapshot-API fork checkout.
+        ;; Release metadata replaces this local root with the published
+        ;; dev.eacl/datalevin-embedded-eacl coordinate pinned by the change.
+        dev.eacl/datalevin-embedded-eacl
+        {:local/root "../../../datalevin"}}
+ :aliases
+ {:build {:extra-paths ["."]
+          :ns-default build
+          :extra-deps {eacl/build-tools {:local/root "../../src-build"}}}
+  :test {:extra-paths ["test" "../eacl/test"]
+         :jvm-opts ["--add-opens=java.base/java.lang=ALL-UNNAMED"
+                    "--add-opens=java.base/java.nio=ALL-UNNAMED"
+                    "--add-opens=java.base/java.util=ALL-UNNAMED"
+                    "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+                    "--enable-native-access=ALL-UNNAMED"]
+         :extra-deps
+         {dev.eacl/eacl-datahike {:local/root "../eacl-datahike"}
+          dev.eacl/eacl-datascript {:local/root "../eacl-datascript"}
+         io.github.cognitect-labs/test-runner
+          {:git/tag "v0.5.1" :git/sha "dfb30dd"}}
+         :exec-fn cognitect.test-runner.api/test
+         :exec-args {:dirs ["test" "../eacl/test"]
+                     :patterns ["^(?!eacl[.]bench[.])(?!eacl[.]characterization-fixture-test$)(?!eacl[.]formal[.]).*-test$"]
+                     :excludes [:benchmark]}}
+  :nrepl {:extra-paths ["test" "../eacl/test"]
+          :jvm-opts ["--add-opens=java.base/java.lang=ALL-UNNAMED"
+                     "--add-opens=java.base/java.nio=ALL-UNNAMED"
+                     "--add-opens=java.base/java.util=ALL-UNNAMED"
+                     "--add-opens=java.base/sun.nio.ch=ALL-UNNAMED"
+                     "--enable-native-access=ALL-UNNAMED"]
+          :extra-deps {nrepl/nrepl {:mvn/version "1.3.1"}}
+          :main-opts ["-m" "nrepl.cmdline"]}}}

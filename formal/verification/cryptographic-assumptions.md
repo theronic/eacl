@@ -81,13 +81,15 @@ and relationship.
 
 - `eacl.engine.v8/permission-schema-nodes` and
   `eacl.engine.v8/permission-relationship-eids` compute reachable
-  permission-node and relation dependencies;
-  `formal/dafny/CacheKernel.dfy` proves completeness for the normalized formal
-  schema.
-- Each certified adapter's `proof-frame` operation reads the schema assertion
-  generation and one native committed generation for every relation in the
-  complete canonical dependency closure. Missing or invalid evidence forces
-  exact-only evaluation.
+  permission-node and relation dependencies. `formal/dafny/CurrentCache.dfy`
+  proves the normalized-rule dependency frame consumed by the basis-first
+  cache; `ScalarFrontierCoherence.dfy` proves the supported scalar-frontier
+  lifting condition.
+- Each certified adapter's independent `schema-generation` operation reads the
+  schema assertion generation, while `proof-frame` reads one native committed
+  generation for every relation in the complete canonical dependency closure.
+  Missing evidence forces exact-only evaluation; malformed or above-revision
+  evidence disables managed lifting for the runtime lifecycle.
 - `eacl.cache` keeps completed entries client-private and requires lifecycle,
   semantic request, schema generation, and scalar dependency-frontier
   agreement before returning a managed value.
@@ -101,10 +103,10 @@ and relationship.
   scope for Datomic, DataScript CLJ/CLJS, and Datahike.
 - Cache differential, recursive-cache, consistency-cache, and
   cache-review-regression suites compare enabled and disabled behavior.
-- `CacheKernel` proves exact, causal, future, sibling, incomplete-scope,
-  no-proof, unauthenticated, abstract read-failure, and mismatch properties.
-  It exposes no runtime decision operation and contributes no production
-  assurance.
+- `CurrentCache` proves exact-basis isolation and the normalized-rule
+  dependency frame; `ScalarFrontierCoherence` proves equal complete scalar
+  proofs preserve deterministic denotation. The removed `CacheKernel` graph
+  ancestry model had no production consumer and contributes no release claim.
 
 **Residual trust.** Deterministic complete dependency extraction, adapter proof
 truthfulness, globally ordered transaction generations, atomic mutation

@@ -23,6 +23,18 @@ uses complete ordered-generation proofs to reuse completed answers across
 unrelated forward transactions. Missing, malformed, oversized, or exceptional
 proof data falls back to exact evaluation.
 
+## Prospective snapshots
+
+The public adapter does not wrap caller-owned Datomic database values. Use
+`eacl/tx-relationship` with `eacl/with` for composable relationship/application
+transactions and `eacl/with-schema` for prospective permission-schema changes.
+These EACL-created snapshots are immutable readers: they may reuse only a
+complete committed proof for disjoint dependencies and publish no speculative
+cache data. `:orphan-policy :retain-inert` is available only to
+`with-schema`; diagnostics report bounded presence without counting tuples.
+Calling implementation namespaces to inject raw `d/with` or `d/filter` values
+forfeits coherence guarantees.
+
 Every authorization-relevant mutation must use EACL APIs or EACL-produced
 transaction data/functions transacted intact. After unsupported raw mutation,
 quiesce callers, repair the data, and call
@@ -32,7 +44,10 @@ second argument. Expiry never repairs ghost tuples.
 
 Custom object-ID codecs are exact-only and client-local unless configured with
 a portable `:adapter-fingerprint`, `:adapter-deterministic? true`, and an
-application-certified injective round trip.
+application-certified injective round trip. Proof-equivalent cursors further
+require `:identity-immutable? true`; without it they remain exact-basis-bound.
+The built-in `:eacl/id` codec assumes IDs never change for an entity. Set
+`:identity-immutable? false` if the application permits reassignment.
 
 `expand-permission-tree` routes Datomic's selected immutable DB through the
 same portable shallow-expansion kernel used by DataScript and Datahike. The

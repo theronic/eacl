@@ -507,7 +507,6 @@ module PageWindow {
     | InvalidAuthentication
     | ScopeMismatch
     | CursorExpired
-    | CursorConflict
     | SnapshotUnavailable
     | HistoryDivergence
 

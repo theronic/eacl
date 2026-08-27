@@ -1,22 +1,29 @@
 (ns eacl.datahike.backend
   "Datahike storage operations for the shared v8 authorization engine."
   (:require [datahike.api :as d]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.direct-membership :as direct-membership]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.schema :as schema])
-  (:import [java.util UUID]))
+            [eacl.datahike.schema :as schema]
+            [eacl.schema.expression-persistence :as expression-persistence])
+  (:import [datahike.db AsOfDB DB FilteredDB HistoricalDB SinceDB]
+           [java.util UUID]))
 
-(def capabilities
+(def adapter-capabilities
+  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
+   :direct-membership-batch #{backend/direct-membership-batch-capability}
+   :runtime #{:clj}})
+
+(def source-capabilities
   {:consistency #{:minimize-latency
                   :fully-consistent
                   :at-least-as-fresh
                   :at-exact-snapshot}
    :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
-   :cursor #{:forward :reverse :opaque}
-   :transactions #{:schema :relationships :object-deletion}
-   :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
 (def ^:private db-config ddb/db-config)
@@ -36,8 +43,56 @@
   credentials for jdbc/s3 stores) and must not leak into snapshot ids,
   cache bases, or cursor digests."
   [db]
-  (let [{:keys [backend id]} (:store (db-config db))]
-    {:backend backend :id (str id)}))
+  (let [config (db-config db)
+        {:keys [backend id]} (:store config)
+        id (if (= :memory backend)
+             (get config schema/live-source-id-key)
+             id)]
+    {:backend backend :id (some-> id str)}))
+
+(defn- connection-live-source-id
+  "Returns one random identity for the lifetime of a memory connection.
+
+  EACL-created connections carry it in their non-durable runtime config so
+  their immutable DB values can be admitted as direct snapshots. For an
+  externally created memory connection, attach it to the connection's private
+  listener carrier; direct DB values from that unsupported construction remain
+  unkeyable rather than falling back to a caller-supplied store id."
+  [conn db]
+  (or (get (db-config db) schema/live-source-id-key)
+      (when-let [carrier (:listeners (meta conn))]
+        (or (::live-source-id (meta carrier))
+            (::live-source-id
+             (alter-meta!
+              carrier
+              (fn [metadata]
+                (if (::live-source-id metadata)
+                  metadata
+                  (assoc metadata ::live-source-id (random-uuid))))))))))
+
+(defn basis-kind
+  "Classifies one Datahike database value without touching an EACL runtime.
+
+  This is structural classification only. It cannot distinguish a speculative
+  `db-with` product from committed state; public EACL APIs therefore never
+  admit arbitrary native values."
+  [db]
+  (cond
+    (instance? AsOfDB db) :as-of
+    (instance? FilteredDB db) :filtered
+    (instance? SinceDB db) :since
+    (instance? HistoricalDB db) :history
+    (instance? DB db) :ordinary
+    :else :foreign-backend))
+
+(defn database-source-scope
+  "Returns the durable store and branch identity carried by `db`."
+  [db]
+  (when (contains? #{:ordinary :as-of} (basis-kind db))
+    (let [{:keys [backend id]} (store-identity db)]
+      (when id
+        {:source-id {:store-backend backend :store-id id}
+         :branch (:branch (db-config db))}))))
 
 (defn- exact-reconstruction?
   [db]
@@ -141,81 +196,64 @@
             (Thread/sleep 2)
             (recur)))))))
 
-(defn- normalized-permission
+(defn- normalized-permissions
   [permission]
-  {:permission-id (:db/id permission)
-   :resource-type (:eacl.permission/resource-type permission)
-   :permission-name (:eacl.permission/permission-name permission)
-   :source-relation-name
-   (:eacl.permission/source-relation-name permission)
-   :target-type (:eacl.permission/target-type permission)
-   :target-name (:eacl.permission/target-name permission)})
+  (expression-persistence/union-compatible-definitions
+   (:db/id permission)
+   (expression-persistence/decode-entity permission)))
+
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (impl/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
-  {:schema-stamp
-   (when-let [schema-eid (ddb/entid db [:eacl/id "schema-string"])]
-     (some-> (first (ddb/eavt-datoms
-                     db schema-eid :eacl/schema-generation))
-             :tx))
-   :relation-stamps
-   (mapv
-    (fn [relation-id]
-      [relation-id
-       (some-> (first (ddb/eavt-datoms
-                       db relation-id :eacl/relation-version))
-               :tx)])
-    relation-ids)})
+  (mapv
+   (fn [relation-id]
+     [relation-id
+      (some-> (first (ddb/eavt-datoms
+                      db relation-id :eacl/relation-version))
+              :tx)])
+   relation-ids))
 
-(defn snapshot-adapter
+(defn- certified-schema-generation
+  [db]
+  (when (ddb/entid db :eacl/schema-generation)
+    (some-> (first (ddb/avet-datoms db :eacl/schema-generation))
+            :tx)))
+
+(def adapter-config-keys
+  #{:object-id->entid :entid->object-id
+    :selected-order-hint :selected-exact-locator
+    :adapter-fingerprint :adapter-deterministic? :identity-contract})
+
+(defn basis-adapter
   "Creates a v8 adapter bound to one immutable Datahike db value."
-  [db {:keys [object-id->entid entid->object-id conn
+  [db {:keys [object-id->entid entid->object-id
               selected-order-hint selected-exact-locator]
        :as opts}]
-  (let [source-lifecycle
-        (or (some-> (:source-lifecycle-state opts) deref)
-            (:source-lifecycle opts)
-            (str (UUID/randomUUID)))
-        source-scope
-        (or (:source-scope opts)
-            (let [{:keys [backend id]} (store-identity db)]
-              {:source-id
-               {:store-backend backend
-                :store-id id}
-               :branch (:branch (db-config db))}))
-        opts' (-> opts
-                  (dissoc :source-lifecycle-state)
-                  (assoc :source-lifecycle source-lifecycle
-                         :source-scope source-scope))]
-    (backend/make-adapter
+  (backend/validate-adapter-config! :datahike adapter-config-keys opts)
+  (let [kind (basis-kind db)]
+    (when-not (contains? #{:ordinary :as-of} kind)
+      (throw
+       (ex-info
+        "Datahike EACL adapters require an ordinary or as-of database value."
+        {:type :eacl/unsupported-topology
+         :eacl/error :eacl/unsupported-topology
+         :backend :datahike
+         :basis-kind kind}))))
+  (backend/make-adapter
      {:id :datahike
       :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
       :deterministic? (:adapter-deterministic? opts)
+      :operator-physical-policy direct-membership/physical-policy-identity
       :identity-contract
       (:identity-contract opts
                           :selected-internal/current-external-injective-v2)
-      :capabilities
-      (cond-> capabilities
-        (exact-reconstruction? db)
-        (update :snapshots conj :exact)
-
-        (temporal-history? db)
-        (update :snapshots conj :durable-history)
-
-        (exact-commits? db)
-        (update :snapshots conj :conditional-exact)
-
-        (or (nil? conn)
-            (not (direct-writer? db)))
-        (update :consistency disj :fully-consistent)
-
-        (nil? conn)
-        (update :consistency disj :at-least-as-fresh)
-
-        (or (nil? conn)
-            (not (exact-reconstruction? db)))
-        (update :consistency disj :at-exact-snapshot))
+      :capabilities adapter-capabilities
       :state {:db db
               :commit-id (commit-locator db)
               :parent-commit-ids (parent-locators db)}
@@ -227,11 +265,8 @@
                             (:attribute-refs? (db-config db)))
           :basis-t (or (db-revision db) selected-order-hint)})
 
-       :source-scope
-       (fn [] source-scope)
-
-       :source-lifecycle
-       (fn [] source-lifecycle)
+       :basis-kind
+       (fn [] (basis-kind db))
 
        :native-revision
        (fn []
@@ -241,81 +276,12 @@
 
        :order-hint (fn [] (or (db-revision db) selected-order-hint))
 
-       :select-current
+       :schema-generation
        (fn []
-         (snapshot-adapter (if conn (d/db conn) db) opts'))
-
-       :select-authoritative
-       (fn [_timeout-ms]
-         (when-not (direct-writer? db)
-           (throw
-            (ex-info
-             "Datahike source has no authoritative branch-head barrier."
-             {:type :eacl/unsupported-capability
-              :eacl/error :eacl/unsupported-capability
-              :backend :datahike
-              :capability :consistency
-              :requested :fully-consistent})))
-         (snapshot-adapter (if conn (d/db conn) db) opts'))
-
-       :select-at-least
-       (fn [token-data timeout-ms]
-         (snapshot-adapter
-          (await-revision-db conn db token-data timeout-ms)
-          opts'))
+         (certified-schema-generation db))
 
        :exact-locator
        (fn [] (or (commit-locator db) selected-exact-locator))
-
-       :select-exact
-       (fn [token-data _timeout-ms]
-         (when (and conn
-                    (or (:exact-locator token-data)
-                        (and (temporal-history? db)
-                             (integer? (:revision token-data)))))
-           (let [commit-db
-                 (when (exact-commits? db)
-                   (load-exact-commit
-                    conn (:exact-locator token-data) token-data))
-                 temporal-db
-                 (when (and (nil? commit-db)
-                            (temporal-history? db)
-                            (integer? (:revision token-data)))
-                   (try
-                     ;; A revision above the local head is reported unavailable
-                     ;; immediately rather than waited for. Datahike has no
-                     ;; `d/sync` (replikativ/datahike#958), so the only ways to
-                     ;; wait are unbounded polling or a fixed N-second timeout,
-                     ;; and neither can distinguish a revision that is merely
-                     ;; late from one that will never arrive. Failing closed
-                     ;; keeps the caller's deadline theirs to spend. Datahike
-                     ;; also caches connections per store config in-process, so
-                     ;; for a direct writer this local head is authoritative.
-                     (let [current (d/db conn)]
-                       (when (<= (:revision token-data) (:max-tx current))
-                         (d/as-of current (:revision token-data))))
-                     (catch InterruptedException interrupt
-                       (.interrupt (Thread/currentThread))
-                       (throw
-                        (ex-info
-                         "Datahike temporal reconstruction was interrupted."
-                         {:type :eacl.basis/selection-failure
-                          :eacl/error :eacl.basis/selection-failure
-                          :classification :cancelled
-                          :phase :exact-temporal
-                          :requested-revision (:revision token-data)}
-                         interrupt)))
-                     (catch Exception failure
-                       (selection-failure!
-                        "Datahike temporal reconstruction failed."
-                        :exact-temporal token-data failure))))]
-             (when-let [selected-db (or commit-db temporal-db)]
-               (snapshot-adapter
-                selected-db
-                (assoc opts'
-                       :selected-order-hint (:revision token-data)
-                       :selected-exact-locator
-                       (:exact-locator token-data)))))))
 
        :object-id->internal
        (fn [object-id]
@@ -338,9 +304,13 @@
 
        :permission-defs
        (fn [resource-type permission-name]
-         (mapv normalized-permission
-               (impl/find-permission-defs
-                db resource-type permission-name)))
+         (vec (mapcat normalized-permissions
+                      (impl/find-permission-defs
+                       db resource-type permission-name))))
+
+       :permission-expression
+       (fn [resource-type permission-name]
+         (permission-expression db resource-type permission-name))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
@@ -358,6 +328,10 @@
           db subject-type subject-id relation-id
           resource-type resource-id))
 
+       :direct-match-many?
+       (fn [request]
+         (direct-membership/direct-match-many? db request))
+
        :all-permission-nodes
        (fn []
          (->> (ddb/avet-datoms db schema/permission-key-attr)
@@ -366,4 +340,122 @@
 
        :proof-frame
        (fn [relation-ids]
-         (ordered-generation-frame db relation-ids))}})))
+         (ordered-generation-frame db relation-ids))}}))
+
+(defn source
+  "Builds the borrowed immutable-basis source for one Datahike conn."
+  [conn opts]
+  (let [;; Dereferencing a Datahike connection reads its already-resident
+        ;; immutable value without a branch-head store operation. Construction
+        ;; consumes only configuration needed for the source's static profile.
+        static-db @conn
+        {:keys [backend id]} (store-identity static-db)
+        id (if (= :memory backend)
+             (some-> (connection-live-source-id conn static-db) str)
+             id)
+        source-scope
+        {:source-id {:store-backend backend :store-id id}
+         :branch (:branch (db-config static-db))}
+        source-lifecycle
+        (fn []
+          (or (some-> (:source-lifecycle-state opts) deref)
+              (:source-lifecycle opts)))
+        adapter-options (select-keys opts adapter-config-keys)
+        borrowed
+        (fn [db token-data]
+          {:adapter
+           (basis-adapter
+            db
+            (cond-> adapter-options
+              token-data
+              (assoc :selected-order-hint (:revision token-data)
+                     :selected-exact-locator
+                     (:exact-locator token-data))))
+           :ownership :borrowed
+           :release-token nil})
+        effective-source-capabilities
+        (cond-> source-capabilities
+          (exact-reconstruction? static-db)
+          (update :snapshots conj :exact)
+
+          (temporal-history? static-db)
+          (update :snapshots conj :durable-history)
+
+          (exact-commits? static-db)
+          (update :snapshots conj :conditional-exact)
+
+          (not (direct-writer? static-db))
+          (update :consistency disj :fully-consistent)
+
+          (not (exact-reconstruction? static-db))
+          (update :consistency disj :at-exact-snapshot))]
+    (source/make-source
+     {:id :datahike
+      :capabilities effective-source-capabilities
+      :traversal-execution backend/strict-sequential-traversal-execution
+      :topology {:deployment :embedded
+                 :snapshot-values :immutable}
+      :execution-constraints source/default-execution-constraints
+      :basis-ownership :borrowed
+      :fingerprint (:adapter-fingerprint opts)
+      :deterministic? (:adapter-deterministic? opts)
+      :operations
+      {:source-scope (constantly source-scope)
+       :source-lifecycle source-lifecycle
+       :acquire-current! #(borrowed (d/db conn) nil)
+       :acquire-authoritative!
+       (fn [_timeout-ms]
+         (when-not (direct-writer? static-db)
+           (throw
+            (ex-info
+             "Datahike source has no authoritative branch-head barrier."
+             {:type :eacl/unsupported-capability
+              :eacl/error :eacl/unsupported-capability
+              :backend :datahike
+              :capability :consistency
+              :requested :fully-consistent})))
+         (borrowed (d/db conn) nil))
+       :acquire-at-least!
+       (fn [token-data timeout-ms]
+         (borrowed
+          (await-revision-db conn nil token-data timeout-ms) token-data))
+       :acquire-exact!
+       (fn [token-data _timeout-ms]
+         (let [commit-db
+               (when (and (exact-commits? static-db)
+                          (:exact-locator token-data))
+                 (load-exact-commit
+                  conn (:exact-locator token-data) token-data))
+               temporal-db
+               (when (and (nil? commit-db)
+                          (temporal-history? static-db)
+                          (integer? (:revision token-data)))
+                 (try
+                   (let [current (d/db conn)]
+                     (when (<= (:revision token-data) (:max-tx current))
+                       (d/as-of current (:revision token-data))))
+                   (catch InterruptedException interrupt
+                     (.interrupt (Thread/currentThread))
+                     (throw
+                      (ex-info
+                       "Datahike temporal reconstruction was interrupted."
+                       {:type :eacl.basis/selection-failure
+                        :eacl/error :eacl.basis/selection-failure
+                        :classification :cancelled
+                        :phase :exact-temporal
+                        :requested-revision (:revision token-data)}
+                       interrupt)))
+                   (catch Exception failure
+                     (selection-failure!
+                      "Datahike temporal reconstruction failed."
+                      :exact-temporal token-data failure))))
+               selected-db (or commit-db temporal-db)]
+           (if selected-db
+             (borrowed selected-db token-data)
+             (throw
+              (ex-info
+               "The requested Datahike snapshot is unavailable."
+               {:type :eacl.consistency/exact-snapshot-unavailable
+                :eacl/error :eacl.consistency/exact-snapshot-unavailable
+                :backend :datahike})))))
+       :release! (constantly nil)}})))

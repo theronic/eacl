@@ -1,609 +1,655 @@
-{:schema-version 2
+{:schema-version 3
  :required-score 1.0
+ :historical-mutant-count 132
+ :historical-clojure-mutant-count 120
+ :historical-model-mutant-count 12
  :mutants
  [{:id :wrong-arrow-direction
-   :mechanism :swap-arrow-resource-and-subject
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :swap-arrow-resource-and-subject
+   :target-symbol "portable/decide"
+   :detector "wrong-arrow-direction-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :compiled-path-denotation
-    :test :wrong-arrow-direction-control}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :premature-cycle-cut
-   :mechanism :treat-recursive-node-visit-as-complete
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :treat-recursive-node-visit-as-complete
+   :target-symbol "portable/decide"
+   :detector "premature-cycle-cut-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :recursive-worklist-completeness
-    :test :premature-cycle-cut-control}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :missing-de-duplication
-   :mechanism :emit-every-semantic-path
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :emit-every-semantic-path
+   :target-symbol "portable/decide"
+   :detector "missing-de-duplication-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :unique-deterministic-sequence
-    :test :missing-de-duplication-control}}
-  {:id :set-equality-as-sequence-equality
-   :mechanism :route-acyclic-union-through-worklist-discovery-order
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :set-equality-does-not-establish-ordered-page-refinement
-    :test :acyclic-interleaved-order-counterexample}}
-  {:id :wrong-frontier
-   :mechanism :resume-from-inclusive-after-bound
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :exclusive-inclusive-frontier-laws
-    :test :wrong-frontier-control}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :incomplete-dependency
-   :mechanism :omit-reachable-relation-from-proof-scope
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :omit-reachable-relation-from-proof-scope
+   :target-symbol "portable/decide"
+   :detector "incomplete-dependency-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :calculated-scope-semantically-complete
-    :test :incomplete-dependency-control}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :numeric-ancestry
-   :mechanism :treat-lower-order-sibling-as-ancestor
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :reject-lower-order-equal-frame-as-not-an-ancestor
+   :target-symbol "cache/resolve-basis!"
+   :detector "numeric-ancestry-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:model :forward-only-proof-lifting
-    :test :numeric-ancestry-control}}
-  {:id :cursor-scope
-   :mechanism :ignore-operation-and-query-scope
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :cursor-scope-before-influence
-    :test :cursor-scope-control}}
-  {:id :cache-fail-open
-   :mechanism :return-candidate-on-provider-failure
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :provider-failure-fails-closed
-    :test :cache-fail-open-control}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :continuation-race
-   :mechanism :return-concurrently-replaced-unvalidated-entry
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :retain-publication-after-ticket-replacement
+   :target-symbol "portable/decide"
+   :detector "continuation-race-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :telemetry-cas-does-not-change-value
-    :test :continuation-race-control}}
-  {:id :immediate-reverse-consumer-registration
-   :mechanism :install-self-permission-consumer-without-queued-fifo-work
-   :control {:kind :clojure}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :wrong-frontier
+   :mechanism :executed-production
+   :mutation :resume-from-inclusive-after-bound
+   :target-symbol "portable/decide"
+   :detector "wrong-frontier-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :dimensionally-exact-reverse-transition-accounting
-    :test :recursive-shadow-resource-counter-control}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :cursor-scope
+   :mechanism :executed-production
+   :mutation :ignore-operation-and-query-scope
+   :target-symbol "portable/decide"
+   :detector "cursor-scope-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :cache-fail-open
+   :mechanism :executed-production
+   :mutation :return-incomplete-candidate
+   :target-symbol "portable/decide"
+   :detector "cache-fail-open-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :current-cache-missing-entry-hit
-   :mechanism :select-exact-hit-when-the-validated-entry-is-missing
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :select-exact-hit-when-entry-is-missing
+   :target-symbol "portable/decide"
+   :detector "current-cache-missing-entry-hit-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :current-cache-hit-requires-available-entry
-    :test :current-cache-stage-boundary-control}}
-  {:id :snapshot-exact-key-omits-lifecycle
-   :mechanism :identify-two-replacement-histories-by-equal-numeric-revision
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :numeric-revision-alone-cannot-establish-exact-identity
-    :test :snapshot-exact-completed-answer-cache-test}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :mismatched-indexed-request-scope-response
-   :mechanism :accept-scan-response-with-matching-local-id-but-different-traversal-scope
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :accept-response-from-another-request-scope
+   :target-symbol "portable/decide"
+   :detector "mismatched-indexed-request-scope-response-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :indexed-response-requires-pending-traversal-scope
-    :test :generated-indexed-scan-response-boundary}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :ordered-merge-wrong-comparator
-   :mechanism :take-the-larger-head-in-an-ascending-merge
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :ascending-merge-step-refines-definition
-    :test :optimized-host-ordered-merge-refines-generated-chunks}}
-  {:id :leapfrog-equal-head-skipped
-   :mechanism :advance-past-a-shared-head-instead-of-returning-intersection
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :leapfrog-sorted-eids-intersection-is-set-intersection
-    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
-  {:id :leapfrog-reseek-target-excluded
-   :mechanism :resume-a-leapfrog-reseek-strictly-after-the-target
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :drop-eids-before-retains-an-equal-target
-    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
-  {:id :leapfrog-probe-limit-off-by-one
-   :mechanism :walk-seventeen-below-target-heads-before-reseeking
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :advance-head-examinations-at-most-linear-probe-limit-plus-one
-    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
-  {:id :leapfrog-reseek-wrong-target
-   :mechanism
-   :reseek-the-correct-stream-at-a-nearby-but-incorrect-target
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :advance-reseek-trace-records-exact-side-and-target
-    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
-  {:id :leapfrog-reseek-wrong-side
-   :mechanism
-   :reseek-the-opposite-stream-at-the-correct-target
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :advance-reseek-trace-records-exact-side-and-target
-    :test :optimized-host-leapfrog-intersection-refines-bounded-proof}}
-  {:id :arrow-empty-stream-enters-wide-path
-   :mechanism
-   :run-direct-intersection-setup-when-the-resource-side-has-no-intermediates
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :zero-or-one-intermediate-skips-direct-intersection
-    :test :acyclic-arrow-path-refines-source-control}}
-  {:id :arrow-singleton-enters-wide-path
-   :mechanism
-   :run-direct-intersection-setup-for-a-single-resource-side-intermediate
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :zero-or-one-intermediate-skips-direct-intersection
-    :test :acyclic-arrow-path-refines-source-control}}
-  {:id :arrow-direct-hit-runs-full-fallback
-   :mechanism
-   :ignore-a-sound-positive-direct-intersection-and-probe-full-candidates
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :sound-direct-intersection-positive-is-authoritative
-    :test :acyclic-arrow-path-refines-source-control}}
-  {:id :arrow-exhaustive-miss-runs-full-fallback
-   :mechanism
-   :probe-full-candidates-after-an-exhaustive-direct-intersection-miss
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :exhaustive-direct-intersection-equals-full-evaluation
-    :test :acyclic-arrow-path-refines-source-control}}
-  {:id :arrow-nonexhaustive-miss-skips-full-fallback
-   :mechanism
-   :return-false-after-a-nonexhaustive-direct-intersection-miss
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :nonexhaustive-miss-refines-complete-far-side-evaluation
-    :test :acyclic-arrow-path-refines-source-control}}
-  {:id :path-materialization-omits-expanded-relation
-   :mechanism
-   :emit-only-one-path-when-a-relation-name-has-multiple-typed-definitions
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :raw-relation-expansion-preserves-every-matching-definition
-    :test :permission-path-materialization-refines-source}}
-  {:id :path-materialization-admits-missing-target
-   :mechanism
-   :emit-an-arrow-relation-with-no-target-relation-definition
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :arrow-relation-without-targets-materializes-no-path
-    :test :permission-path-materialization-refines-source}}
-  {:id :path-materialization-skips-cost-ranking
-   :mechanism :retain-backend-definition-order-instead-of-static-cost-order
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :materialized-paths-are-partitioned-by-source-rank
-    :test :permission-path-materialization-refines-source}}
-  {:id :direct-summary-includes-other-subject-type
-   :mechanism
-   :include-a-direct-relation-id-whose-declared-subject-type-does-not-match
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :direct-grant-relation-ids-filter-subject-type
-    :test :permission-path-materialization-refines-source}}
-  {:id :direct-summary-ignores-nonrelation-path
-   :mechanism :claim-exhaustiveness-when-a-nonrelation-path-exists
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :direct-grant-exhaustive-iff-every-materialized-path-is-a-relation
-    :test :permission-path-materialization-refines-source}}
-  {:id :acyclic-visited-state-evaluates-path
-   :mechanism :evaluate-a-permission-path-after-the-recursion-guard-matches
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :visited-acyclic-state-performs-zero-path-and-callback-checks
-    :test :acyclic-path-fold-refines-source-control}}
-  {:id :acyclic-mismatched-direct-invokes-probe
-   :mechanism
-   :invoke-the-direct-backend-probe-when-the-declared-subject-type-does-not-match
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :mismatched-direct-path-has-no-callback-event
-    :test :acyclic-path-fold-refines-source-control}}
-  {:id :acyclic-path-fold-does-not-short-circuit
-   :mechanism :evaluate-later-permission-paths-after-the-first-positive
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :path-checks-stop-at-the-first-effective-positive
-    :test :acyclic-path-fold-refines-source-control}}
-  {:id :acyclic-self-permission-routed-as-direct
-   :mechanism :route-a-self-permission-path-through-the-direct-probe-callback
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :callback-trace-preserves-materialized-path-kind
-    :test :acyclic-path-fold-refines-source-control}}
-  {:id :acyclic-arrow-callback-skipped
-   :mechanism :return-an-arrow-result-without-evaluating-the-arrow-path
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :callback-trace-records-every-evaluated-arrow-path
-    :test :acyclic-path-fold-refines-source-control}}
-  {:id :adapter-negative-eid-admitted
-   :mechanism :treat-any-signed-exact-integer-as-a-formal-engine-eid
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :adapter-and-generated-eid-domains-are-safe-natural
-    :test :runtime-guards-reject-negative-internal-eids}}
-  {:id :ordered-merge-sentinel-collides-with-domain
-   :mechanism :represent-no-previous-value-with-the-maximum-valid-eid
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :no-last-never-suppresses
-    :test :descending-merge-retains-maximum-eid}}
-  {:id :generic-ordered-merge-nil-sentinel-collides-with-domain
-   :mechanism :represent-no-previous-key-with-a-valid-nil-sort-key
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :no-last-never-suppresses
-    :test :generic-merge-retains-nil-key}}
-  {:id :projection-key-omits-inclusive-bound
-   :mechanism :remove-inclusive-bound-from-the-projection-semantic-key
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :equal-projection-keys-separate-every-field
-    :test :generated-certified-projection-traces-match-cache-free-results}}
-  {:id :inclusive-bound-treated-exclusive
-   :mechanism :drop-the-boundary-value-from-an-inclusive-ordered-scan
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :ascending-exclusive-equals-inclusive-successor
-    :test :datascript-bounded-scan-parity}}
-  {:id :incomplete-managed-proof-atoms
-   :mechanism :accept-a-derived-proof-when-only-its-first-atom-matches
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :equal-bounded-proofs-establish-complete-dependency-frame
-    :test :bounded-derived-proof-reuses-complete-managed-denotation}}
-  {:id :stale-endpoint-stamp-accepted
-   :mechanism :ignore-the-relation-stamp-in-an-endpoint-local-managed-proof
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :changed-managed-relation-slice-requires-changed-stamp
-    :test :managed-projection-reuse-is-relation-stamp-scoped}}
-  {:id :over-budget-publication
-   :mechanism :retain-a-positive-completed-entry-with-weight-above-its-tier-budget
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :retained-publication-is-current-complete-valid-and-bounded
-    :test :admission-and-publication-keep-weight-continuously-bounded}}
-  {:id :datomic-subproblem-config-dropped
-   :mechanism :construct-the-shared-current-cache-without-the-user-supplied-subproblem-limits
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :all-backends-forward-one-shared-subproblem-cache-configuration
-    :test :shared-subproblem-cache-config-is-forwarded-and-validated}}
-  {:id :datomic-facade-restores-default-traversal-limits
-   :mechanism :rebind-the-generated-engine-to-facade-defaults-after-the-public-boundary-selected-caller-limits
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :every-execution-boundary-forwards-identical-traversal-limits
-    :test :recursive-traversal-limits-are-configurable}}
-  {:id :shadow-typed-error-omits-limit
-   :mechanism :compare-only-keyword-valued-error-data-and-drop-the-configured-numeric-limit
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :shadow-comparison-preserves-public-typed-limit-data
-    :test :recursive-shadow-compares-complete-public-results}}
-  {:id :shadow-generated-stale-cursor-adds-direction
-   :mechanism :add-generated-only-direction-to-the-established-stale-cursor-error-shape
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :generated-and-legacy-stale-cursor-errors-have-the-same-public-shape
-    :test :recursive-shadow-compares-stale-cursor-error-shape}}
-  {:id :materialized-queue-limit-counts-cumulative-enqueues
-   :mechanism :sum-each-fixed-point-round-queue-instead-of-bounding-instantaneous-pending-work
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :max-queued-work-bounds-the-instantaneous-queue-gauge
-    :test :generated-materialized-queue-limit-is-instantaneous}}
-  {:id :materialized-resource-counter-promoted-to-production
-   :mechanism :treat-whole-closure-model-work-as-query-local-indexed-production-work
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :resource-evidence-requires-identical-scope-and-unit
-    :test :recursive-shadow-queue-limit-is-query-local}}
-  {:id :generated-artifact-gate-uses-stale-baseline
-   :mechanism :mark-size-passed-without-measuring-the-current-rebuilt-full-kernel
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :generated-artifact-size-gate-measures-current-rebuilt-files
-    :test :quantitative-performance-gates-are-well-formed-test}}
-  {:id :generated-artifact-gate-runtime-not-installed
-   :mechanism :invoke-the-babashka-artifact-gate-without-installing-babashka
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :formal-ci-installs-every-gate-runtime-before-use
-    :test :quantitative-performance-gates-are-well-formed-test}}
-  {:id :counterexample-ledger-values-unvalidated
-   :mechanism :check-required-field-presence-without-validating-the-declared-value-schema
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :counterexample-ledger-values-conform-to-committed-schema
-    :test :counterexample-corpus-is-complete-and-closed-test}}
-  {:id :generated-stale-cursor-leaks-render-details
-   :mechanism :retain-generated-render-error-while-legacy-retains-bound-and-actual-cursor-maps
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :stale-recursive-cursor-public-data-is-identical-and-minimal
-    :test :recursive-shadow-compares-stale-cursor-error-shape}}
-  {:id :shadow-typed-error-omits-page-size
-   :mechanism :drop-numeric-page-size-from-generated-vs-legacy-error-comparison
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :shadow-comparison-preserves-page-size-error-data
-    :test :recursive-shadow-compares-complete-public-results}}
-  {:id :shadow-typed-error-drops-portable-values
-   :mechanism :compare-only-keyword-and-integer-error-fields-and-ignore-string-boolean-vector-and-map-fields
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :shadow-comparison-preserves-complete-portable-exception-data
-    :test :shadow-error-comparison-covers-complete-portable-ex-data}}
-  {:id :revision-identity-includes-client-local-exact-locator
-   :mechanism :treat-client-local-exact-reconstruction-handle-as-native-revision-identity
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :revision-identity-includes-the-client-local-exact-locator
-    :test :public-shadow-compares-cache-provenance-and-selected-revision}}
-  {:id :formal-cljs-smoke-terminates-agent-executors
-   :mechanism :invoke-cljs-main-cli-lifecycle-inside-persistent-nrepl-and-call-shutdown-agents
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :formal-cljs-compile-preserves-persistent-nrepl-executors
-    :test :formal-cljs-smoke-preserves-persistent-nrepl-executors-test}}
-  {:id :generated-java-boundary-restores-reflection
-   :mechanism :remove-concrete-generated-java-type-hints-from-ffi-conversion-and-result-calls
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :generated-java-boundary-has-no-reflective-invocation
-    :test :generated-java-boundary-is-reflection-free-test}}
-  {:id :generated-authority-bypasses-cache-cutover
-   :mechanism :return-generated-recursive-results-without-denotation-page-or-frontier-cache-integration
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :verified-authority-preserves-production-cache-and-continuation-semantics
-    :test :verified-authority-full-suite-and-generated-page-continuation}}
-  {:id :routing-node-identity-drops-resource-type
-   :mechanism :resolve-arrow-permission-targets-by-permission-name-alone
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :typed-routing-edge-preserves-complete-permission-node
-    :test :generated-runtime-classifies-production-recursive-routing}}
-  {:id :routing-only-recursive-component-members
-   :mechanism :route-only-nodes-inside-a-recursive-scc-through-traversal
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :routing-traversal-includes-every-acyclic-ancestor
-    :test :generated-runtime-classifies-production-recursive-routing}}
-  {:id :routing-singleton-self-loop-ignored
-   :mechanism :classify-recursion-only-when-an-scc-has-more-than-one-node
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :singleton-self-edge-is-a-recursive-component
-    :test :generated-runtime-classifies-production-recursive-routing}}
-  {:id :routing-dependency-direction-reversed
-   :mechanism :follow-permission-dependencies-from-target-to-head
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :routing-reachability-follows-head-to-target
-    :test :generated-runtime-classifies-production-recursive-routing}}
-  {:id :routing-certificate-splits-one-scc
-   :mechanism :claim-mutually-reachable-nodes-as-distinct-components
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :component-ranks-preclude-cross-component-cycles
-    :test :generated-runtime-rejects-mutated-routing-certificates}}
-  {:id :routing-certificate-reverses-parent-edge
-   :mechanism :use-an-edge-that-does-not-end-at-the-forward-tree-child
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :forward-parent-forest-proves-root-to-member-reachability
-    :test :generated-runtime-rejects-mutated-routing-certificates}}
-  {:id :routing-certificate-omits-multi-member-witness
-   :mechanism :claim-a-multi-node-component-without-a-distinct-member
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :recursive-component-witness-is-exact
-    :test :generated-runtime-rejects-mutated-routing-certificates}}
-  {:id :routing-certificate-hides-recursive-traversal
-   :mechanism :mark-a-recursive-component-as-non-traversal
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :accepted-routing-classification-is-complete
-    :test :generated-runtime-rejects-mutated-routing-certificates}}
-  {:id :routing-certificate-result-length-unbound
-   :mechanism :accept-a-generated-traversal-vector-shorter-than-node-count
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :generated-routing-vector-length-equals-validated-node-count
-    :test :routing-certificate-result-is-bound-to-its-input}}
-  {:id :routing-certificate-result-counters-unbound
-   :mechanism :accept-generated-routing-counters-that-contradict-the-request
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :accepted-checker-counters-are-exactly-two-v-and-e
-    :test :routing-certificate-result-is-bound-to-its-input}}
-  {:id :routing-permission-path-omits-dependency-edge
-   :mechanism :translate-a-self-or-arrow-permission-path-as-non-dependent
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :accepted-routing-edges-equal-derived-permission-path-edges
-    :test :generated-runtime-rejects-mutated-routing-path-derivation}}
-  {:id :routing-relation-path-invents-dependency-edge
-   :mechanism :translate-a-direct-or-arrow-relation-path-as-a-permission-edge
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :relation-paths-emit-no-routing-dependency
-    :test :generated-runtime-accepts-nondependency-paths-without-extra-edges}}
-  {:id :routing-path-edge-order-unbound
-   :mechanism :accept-a-permutation-of-derived-routing-edges
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :accepted-routing-edges-equal-derived-path-edges-in-order
-    :test :generated-runtime-rejects-mutated-routing-path-derivation}}
-  {:id :consistency-malformed-exact-treated-absent
-   :mechanism :report-a-present-malformed-exact-selection-as-unavailable
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :present-malformed-selection-is-not-snapshot-absence
-    :test :malformed-present-exact-selection-is-invalid-adapter}}
-  {:id :consistency-at-least-revision-floor-ignored
-   :mechanism :accept-an-at-least-selection-below-the-requested-native-revision
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :at-least-acceptance-requires-revision-floor
-    :test :consistency-boundaries-are-total-and-strict}}
-  {:id :consistency-exact-revision-ignored
-   :mechanism :accept-an-exact-locator-resolving-to-a-different-native-revision
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :exact-acceptance-requires-exact-revision
-    :test :consistency-boundaries-are-total-and-strict}}
-  {:id :consistency-unsupported-exact-becomes-generic
-   :mechanism :map-missing-exact-reconstruction-capability-to-a-generic-head-barrier
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :unsupported-exact-plan-is-exact-snapshot-unavailable
-    :test :production-plan-observations-refine-the-complete-formal-matrix}}
-  {:id :indexed-scan-validator-restores-pairwise-runtime
-   :mechanism :evaluate-the-pairwise-quantified-ordering-contract-in-generated-runtime
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :pairwise-strict-order-is-equivalent-to-linear-adjacent-order
-    :test :formal-source-routes-executable-validation-through-adjacent-order}}
-  {:id :generated-target-collections-restore-quadratic
-   :mechanism :restore-copying-set-union-array-map-or-sparse-array-sequence-views
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :generated-target-runtime-uses-reviewed-persistent-representations
-    :test :runtime-patch-sources-and-scaling-gates}}
-  {:id :enumeration-route-forces-recursive
-   :mechanism :dispatch-a-certified-acyclic-root-through-the-recursive-engine
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :enumeration-route-is-the-certificate-classification
-    :test :generated-route-and-recursive-counter-isolation}}
-  {:id :inactive-recursive-data-forces-fixed-point
-   :mechanism :ignore-empty-cycle-guards-and-enter-the-recursive-fixed-point-engine
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :inactive-cycle-guard-eliminates-recursive-contribution
-    :test :recursive-schema-with-empty-cycle-guards-stays-page-bounded}}
-  {:id :completed-acyclic-artifact-keeps-fixed-point-order
-   :mechanism :cache-fixed-point-discovery-order-as-certified-acyclic-public-order
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :completed-artifact-contract-binds-certified-public-order
-    :test :complete-acyclic-denotation-preserves-demand-order}}
-  {:id :active-recursive-data-forces-acyclic
-   :mechanism :ignore-a-populated-cycle-guard-and-enter-the-acyclic-engine
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :active-recursive-data-selects-the-recursive-route
-    :test :populated-cycle-guard-restores-recursive-routing}}
+   :mechanism :executed-production
+   :mutation :take-larger-head-in-ascending-merge
+   :target-symbol "portable/decide"
+   :detector "ordered-merge-wrong-comparator-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :acyclic-merge-emits-overlap-twice
-   :mechanism :emit-equal-heads-from-two-authorized-index-streams
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :emit-equal-heads-twice
+   :target-symbol "portable/decide"
+   :detector "acyclic-merge-emits-overlap-twice-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :acyclic-enumeration-is-ordered-and-duplicate-free
-    :test :explorer-overlapping-path-denotational-differential}}
-  {:id :acyclic-continuation-context-disconnected
-   :mechanism :drop-the-client-private-continuation-context-at-a-backend-entry-point
-   :control {:kind :clojure}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :adapter-negative-eid-admitted
+   :mechanism :executed-production
+   :mutation :accept-negative-internal-eid
+   :target-symbol "portable/decide"
+   :detector "adapter-negative-eid-admitted-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :continuation-resume-equals-authenticated-deterministic-replay
-    :test :backend-adjacent-page-continuation-hit-and-work-bound}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :over-budget-publication
+   :mechanism :executed-production
+   :mutation :retain-over-budget-completed-entry
+   :target-symbol "portable/decide"
+   :detector "over-budget-publication-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :enumeration-route-forces-recursive
+   :mechanism :executed-production
+   :mutation :force-recursive-route-without-active-recursive-data
+   :target-symbol "portable/decide"
+   :detector "enumeration-route-forces-recursive-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :acyclic-work-allows-recursive-budget
-   :mechanism :accept-acyclic-work-although-recursive-fixed-point-work-is-positive
-   :control {:kind :clojure}
+   :mechanism :executed-production
+   :mutation :accept-positive-recursive-work-on-acyclic-route
+   :target-symbol "portable/decide"
+   :detector "acyclic-work-allows-recursive-budget-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:proof :certified-acyclic-work-has-zero-recursive-work
-    :test :acyclic-recursive-counter-and-limit-isolation}}
-  {:id :partial-denotation-hit
-   :mechanism :allow-partial-denotation-as-cache-hit
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclTieredSubproblemCache.tla"
-    :config "formal/tla/mutations/EaclTieredPartialHit.cfg"
-    :length 4}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :consistency-malformed-exact-treated-absent
+   :mechanism :executed-production
+   :mutation :map-malformed-present-exact-to-unavailable
+   :target-symbol "portable/decide"
+   :detector "consistency-malformed-exact-treated-absent-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:model :partial-recursive-denotation-never-hits
-    :test :apalache-counterexample}}
-  {:id :late-orphan-publication
-   :mechanism :publish-an-expired-lifecycle-callback
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclTieredSubproblemCache.tla"
-    :config "formal/tla/mutations/EaclTieredOrphanPublication.cfg"
-   :length 4}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :consistency-at-least-revision-floor-ignored
+   :mechanism :executed-production
+   :mutation :accept-selection-below-requested-floor
+   :target-symbol "portable/decide"
+   :detector "consistency-at-least-revision-floor-ignored-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:model :late-publication-cannot-reach-active-generation
-    :test :apalache-counterexample}}
-  {:id :coupled-tier-budgets
-   :mechanism :borrow-denotation-capacity-for-projection-admission
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclTieredSubproblemCache.tla"
-    :config "formal/tla/mutations/EaclTieredCoupledBudgets.cfg"
-    :length 4}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :consistency-unsupported-exact-becomes-generic
+   :mechanism :executed-production
+   :mutation :map-unsupported-exact-to-generic-head-barrier
+   :target-symbol "portable/decide"
+   :detector "consistency-unsupported-exact-becomes-generic-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
-   {:model :separate-tier-weight-bounds
-    :test :apalache-counterexample}}
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :exact-basis-key-omits-lifecycle
+   :mechanism :executed-production
+   :mutation :omit-source-lifecycle-from-exact-basis-key
+   :target-symbol "cache/exact-basis-key"
+   :detector "exact-basis-key-omits-lifecycle-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :adapter-generation-domain
+   :mechanism :executed-production
+   :mutation :accept-non-numeric-relation-generation-as-proof-evidence
+   :target-symbol "proof-frame/generation?"
+   :consumer-symbol "proof-frame/resolve!"
+   :detector "adapter-generation-domain-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :adapter-generation-ceiling
+   :mechanism :executed-production
+   :mutation :validate-relation-generation-against-an-inflated-revision
+   :target-symbol "proof-frame/revision"
+   :consumer-symbol "proof-frame/resolve!"
+   :detector "adapter-generation-ceiling-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :non-durable-live-source-id-collision
+   :mechanism :executed-production
+   :mutation :collapse-distinct-live-source-identities-in-managed-lineage
+   :target-symbol "request-context/lineage-for-basis"
+   :detector "non-durable-live-source-id-collision-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :plan-read-scope-escape
+   :mechanism :executed-production
+   :mutation :admit-sealed-plan-relation-outside-certified-closure
+   :target-symbol "engine/certify-plan-read-scope!"
+   :detector "plan-read-scope-escape-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :checkpoint-native-revision-key
+   :mechanism :executed-production
+   :mutation :restore-native-revision-to-frame-checkpoint-key
+   :target-symbol "engine/checkpoint-key"
+   :detector "checkpoint-native-revision-key-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :checkpoint-admissions-counter-drop
+   :mechanism :executed-production
+   :mutation :remove-accumulated-admissions-from-history-free-state
+   :target-symbol "stable-reducer/history-free"
+   :detector "checkpoint-admissions-counter-drop-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :aggregate-counter-reset
+   :mechanism :executed-production
+   :mutation :reset-cumulative-work-at-each-window
+   :target-symbol "batch/aggregate-counters"
+   :detector "aggregate-counter-reset-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :batch-cross-demand-contamination
+   :mechanism :executed-production
+   :mutation :reuse-one-demand-key-for-another-demand
+   :target-symbol "batch/demand-key"
+   :detector "batch-cross-demand-contamination-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :aggregate-deadline-renewal
+   :mechanism :executed-production
+   :mutation :drop-request-wide-absolute-deadline
+   :target-symbol "batch/scalar-contract"
+   :detector "aggregate-deadline-renewal-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+
+  {:id :operator-wrong-precedence
+   :mechanism :executed-production
+   :mutation :parse-intersection-before-union
+   :target-symbol "parser/parse-schema"
+   :consumer-symbol "operator-evaluator/check-eids"
+   :detector "operator-wrong-precedence-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-swapped-exclusion
+   :mechanism :executed-production
+   :mutation :swap-exclusion-left-and-right
+   :target-symbol "parser/parse-schema"
+   :consumer-symbol "operator-evaluator/check-eids"
+   :detector "operator-swapped-exclusion-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-unsigned-dependency
+   :mechanism :executed-production
+   :mutation :erase-negative-edge-sign
+   :target-symbol "expression-graph/signed-dependencies"
+   :consumer-symbol "expression-graph/build-certificate"
+   :detector "operator-unsigned-dependency-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-missing-join-slot
+   :mechanism :executed-production
+   :mutation :drop-one-required-intersection-slot
+   :target-symbol "operator-recursive/update-join"
+   :consumer-symbol "operator-recursive/join-complete?"
+   :detector "operator-missing-join-slot-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-duplicate-satisfaction-count
+   :mechanism :executed-production
+   :mutation :increment-satisfied-count-for-duplicate-slot
+   :target-symbol "operator-recursive/update-join"
+   :consumer-symbol "operator-recursive/evaluate-many"
+   :detector "operator-duplicate-satisfaction-count-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-partial-negative
+   :mechanism :executed-production
+   :mutation :authorize-from-left-presence-ignoring-negative-component
+   :target-symbol "operator-recursive/exclusion-decision"
+   :consumer-symbol "operator-recursive/evaluate-many"
+   :detector "operator-partial-negative-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-vector-misalignment
+   :mechanism :executed-production
+   :mutation :reverse-physical-membership-decisions-before-scatter
+   :target-symbol "direct/direct-match-many?"
+   :consumer-symbol "direct/dispatch"
+   :detector "operator-vector-misalignment-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-overread-cursor-advance
+   :mechanism :executed-production
+   :mutation :advance-resume-to-physical-overread-coordinate
+   :target-symbol "operator-lookup/resume-coordinate"
+   :consumer-symbol "operator-lookup/lookup-page"
+   :detector "operator-overread-cursor-advance-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-any-child-allocation
+   :mechanism :executed-production
+   :mutation :allocate-parent-join-state-on-nonanchor-fact
+   :target-symbol "operator-recursive/join-transition-action"
+   :consumer-symbol "operator-recursive/evaluate-many"
+   :detector "operator-any-child-allocation-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-cache-selected-generator
+   :mechanism :executed-production
+   :mutation :select-generator-from-observed-cache-state
+   :target-symbol "operator-plan/select-intersection-anchor"
+   :consumer-symbol "operator-plan/seal-plan"
+   :detector "operator-cache-selected-generator-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :operator-active-recursion-as-false
+   :mechanism :executed-production
+   :mutation :treat-active-recursion-as-false-decision
+   :target-symbol "operator-evaluator/active-recursion-outcome"
+   :consumer-symbol "operator-evaluator/check-eids"
+   :detector "operator-active-recursion-as-false-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+
   {:id :cljs-default-restores-generated-kernel
-   :mechanism :route-the-cljs-production-default-back-through-generated-javascript
-   :control {:kind :clojure}
+   :mechanism :source-text
+   :mutation :require-the-retired-generated-javascript-default
+   :structural-fact :namespace-dependency
+   :source-assertions
+   [{:file "modules/eacl/src/eacl/client/orchestration.cljc"
+     :required ["eacl.formal.production-kernel-cljs :as production-kernel"]
+     :forbidden ["eacl.formal.production-kernel-js :as production-kernel"]}]
+   :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-   {:invariant :cljs-production-default-is-portable-cljc
-    :test :cljs-default-restores-generated-kernel-control}}
-  {:id :cljs-scan-scope-check-removed
-   :mechanism :accept-a-scan-response-from-another-request-scope
-   :control {:kind :clojure}
-   :killed-by
-   {:proof :scan-response-scope-and-request-identity-match
-    :test :cljs-scan-scope-check-removed-control}}
-  {:id :cljs-lookahead-continuation-dropped
-   :mechanism :discard-the-persistent-page-end-state-before-consuming-lookahead
-   :control {:kind :clojure}
-   :killed-by
-   {:invariant :page-continuation-resumes-at-the-retained-page-end-state
-    :test :cljs-forward-and-reverse-lookahead-continuation-controls}}
+    {:test
+     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
   {:id :cljs-generated-browser-payload-restored
-   :mechanism :ship-the-bignumber-generated-browser-iife-in-the-production-module
-   :control {:kind :clojure}
+   :mechanism :source-text
+   :mutation :restore-generated-browser-payload-to-published-module
+   :structural-fact :published-classpath-membership
+   :source-assertions
+   [{:file "modules/eacl/build.clj"
+     :required []
+     :forbidden ["EaclKernel.browser.js"]}
+    {:file "modules/eacl/deps.edn"
+     :required []
+     :forbidden ["target/formal/browser"]}
+    {:file "formal/smoke/cljs/eacl/formal/production_kernel_js.cljs"
+     :required ["(ns eacl.formal.production-kernel-js"]
+     :forbidden []}]
+   :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-   {:invariant :generated-browser-oracle-is-formal-classpath-only
-    :test :cljs-generated-browser-payload-restored-control}}
-  {:id :pure-permission-alias-keeps-duplicate-frontier
-   :mechanism
-   :deduplicate-arrow-frontiers-before-canonicalizing-an-exact-pure-alias
-   :control {:kind :clojure}
+    {:test
+     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+  {:id :generated-java-boundary-restores-reflection
+   :mechanism :source-text
+   :mutation :remove-concrete-generated-java-type-hints
+   :structural-fact :static-interop-type-hints
+   :source-assertions
+   [{:file "modules/eacl/src/eacl/formal/production_kernel.clj"
+     :required
+     ["^ObjectRef object" "^LimitKind kind" "^WorkCounters counters"
+      "^SequenceOutcome outcome" "^BooleanOutcome outcome"
+      "^CountOutcome outcome" "^PageError error" "^Tuple2 result"
+      "^NormalizedPageRequest normalized" "^Page page" "^Direction"
+      "^ConsistencyError error" "^MergeChunk chunk" "^ScanError error"
+      "^PlanCertificationError error" "^IndexedLimitKind kind"
+      "^RenderError error" "^OptionalEid bound" "^Projection projection"
+      "^ScanCommand command" "^ResourceCounters counters"
+      "^ForwardInit outcome" "^ReverseInit outcome"
+      "^ForwardBatchStep outcome" "^ReverseBatchStep outcome"
+      "^ForwardBatchState state" "^ReverseBatchState state"
+      "^ForwardResume outcome" "^ReverseResume outcome"
+      "^PageContinuationError error" "^ForwardPageContinuation outcome"
+      "^ReversePageContinuation outcome" "^ForwardState state"
+      "^ReverseState state" "^PublicRenderResult result"]
+     :forbidden []}]
+   :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-   {:proof :canonical-frontier-deduplication-cannot-add-traversal-streams
-    :test :pure-permission-aliases-share-one-acyclic-frontier-test}}
-  {:id :fuel-cut-wave-rolls-back-original-state
-   :mechanism
-   :return-the-quantum-input-state-and-discard-nonempty-pending-scans-at-fuel-exhaustion
-   :control {:kind :clojure}
+    {:test
+     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+  {:id :indexed-scan-validator-restores-pairwise-runtime
+   :mechanism :source-text
+   :mutation :restore-pairwise-quantified-runtime-validator
+   :structural-fact :generated-model-algorithm-selection
+   :source-assertions
+   [{:file "formal/dafny/IndexedTraversal.dfy"
+     :required ["lemma StrictlyIncreasingIffAdjacent"
+                "if !AdjacentStrictlyIncreasing(response.values) {"]
+     :forbidden ["if !StrictlyIncreasing(response.values) {"]}]
+   :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-   {:proof :fuel-cut-wave-publishes-current-progress-without-request-loss
-    :test :generated-portable-and-public-fanout-fuel-cut-regressions}}
-  {:id :page-scan-wave-is-host-selectable
-   :mechanism
-   :let-the-host-pass-a-multi-command-scan-wave-for-page-rendering
-   :control {:kind :clojure}
+    {:test
+     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+  {:id :generated-target-collections-restore-quadratic
+   :mechanism :source-text
+   :mutation :restore-copying-generated-target-collections
+   :structural-fact :generated-runtime-data-structure
+   :source-assertions
+   [{:file "formal/runtime/java/dafny/DafnySet.java"
+     :required ["PersistentHashSet"]
+     :forbidden []}
+    {:file "formal/runtime/js/dafny-set.js"
+     :required ["Immutable.Map"]
+     :forbidden []}
+    {:file "formal/runtime/js/dafny-seq.js"
+     :required ["super();" "return target._logicalLength"]
+     :forbidden ["super(length);"]}]
+   :control {:kind :clojure :runtimes [:clj]}
    :killed-by
-   {:proof :page-scan-scheduling-is-independent-of-requested-size
-    :test :generated-portable-and-public-page-order-regressions}}
+    {:test
+     :eacl.formal.mutation-control-test/registry-mechanisms-name-and-execute-their-targets-test}}
+
+  {:id :partial-denotation-hit
+   :mechanism :executed-model
+   :mutation :allow-partial-denotation-as-cache-hit
+   :control {:kind :apalache
+             :model "formal/tla/EaclTieredSubproblemCache.tla"
+             :config "formal/tla/mutations/EaclTieredPartialHit.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :late-orphan-publication
+   :mechanism :executed-model
+   :mutation :publish-expired-lifecycle-callback
+   :control {:kind :apalache
+             :model "formal/tla/EaclTieredSubproblemCache.tla"
+             :config "formal/tla/mutations/EaclTieredOrphanPublication.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :coupled-tier-budgets
+   :mechanism :executed-model
+   :mutation :borrow-denotation-capacity-for-projection
+   :control {:kind :apalache
+             :model "formal/tla/EaclTieredSubproblemCache.tla"
+             :config "formal/tla/mutations/EaclTieredCoupledBudgets.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
   {:id :managed-proof-bypass
-   :mechanism :reuse-managed-projection-with-mismatched-relation-proof
-   :control
-   {:kind :apalache
-    :model "formal/tla/EaclManagedProjectionCache.tla"
-    :config "formal/tla/mutations/EaclManagedProofBypass.cfg"
-    :length 4}
-   :killed-by
-   {:model :managed-hit-requires-complete-proof-match
-    :test :apalache-counterexample}}]}
+   :mechanism :executed-model
+   :mutation :reuse-managed-projection-with-mismatched-proof
+   :control {:kind :apalache
+             :model "formal/tla/EaclManagedProjectionCache.tla"
+             :config "formal/tla/mutations/EaclManagedProofBypass.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :speculative-cache-publication
+   :mechanism :executed-model
+   :mutation :retain-result-computed-from-speculative-snapshot
+   :control {:kind :apalache
+             :model "formal/tla/EaclSpeculativeCache.tla"
+             :config "formal/tla/mutations/EaclSpeculativePublication.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :speculative-exact-basis-hit
+   :mechanism :executed-model
+   :mutation :treat-colliding-native-basis-as-speculative-content-witness
+   :control {:kind :apalache
+             :model "formal/tla/EaclSpeculativeCache.tla"
+             :config "formal/tla/mutations/EaclSpeculativeExactHit.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :operator-vector-cancellation-publication
+   :mechanism :executed-model
+   :mutation :publish-vector-after-subgroup-cancellation
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorVectorCancellation.cfg"
+             :length 3}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :operator-partial-vector-publication
+   :mechanism :executed-model
+   :mutation :publish-before-all-physical-subgroups-complete
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPartialVector.cfg"
+             :length 3}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :operator-physical-overread-cursor
+   :mechanism :executed-model
+   :mutation :checkpoint-physical-instead-of-logical-boundary
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPhysicalCursor.cfg"
+             :length 2}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :operator-wrong-checkpoint-resume
+   :mechanism :executed-model
+   :mutation :resume-before-authenticated-logical-checkpoint
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorWrongResume.cfg"
+             :length 3}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :operator-stale-cache-lifecycle
+   :mechanism :executed-model
+   :mutation :retain-cache-entry-across-lifecycle-expiry
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorStaleLifecycle.cfg"
+             :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :operator-partial-negative-authorization
+   :mechanism :executed-model
+   :mutation :authorize-before-negative-subproblem-completes
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPartialNegative.cfg"
+             :length 2}
+   :killed-by {:gate :apalache-mutation-control}}]
+
+ :retired-mutant-groups
+ [{:reason :pre-change-detector-had-no-named-executable-mutation-target
+   :disposition
+   "Removed from the scored registry instead of preserving a literal-only or decision-by-source-text false kill. Reintroduction requires a named target and an executed detector."
+   :ids
+   [:set-equality-as-sequence-equality
+    :immediate-reverse-consumer-registration
+    :leapfrog-equal-head-skipped
+    :leapfrog-reseek-target-excluded
+    :leapfrog-probe-limit-off-by-one
+    :leapfrog-reseek-wrong-target
+    :leapfrog-reseek-wrong-side
+    :arrow-empty-stream-enters-wide-path
+    :arrow-singleton-enters-wide-path
+    :arrow-direct-hit-runs-full-fallback
+    :arrow-exhaustive-miss-runs-full-fallback
+    :arrow-nonexhaustive-miss-skips-full-fallback
+    :path-materialization-omits-expanded-relation
+    :path-materialization-admits-missing-target
+    :path-materialization-skips-cost-ranking
+    :direct-summary-includes-other-subject-type
+    :direct-summary-ignores-nonrelation-path
+    :acyclic-visited-state-evaluates-path
+    :acyclic-mismatched-direct-invokes-probe
+    :acyclic-path-fold-does-not-short-circuit
+    :acyclic-self-permission-routed-as-direct
+    :acyclic-arrow-callback-skipped
+    :ordered-merge-sentinel-collides-with-domain
+    :generic-ordered-merge-nil-sentinel-collides-with-domain
+    :projection-key-omits-inclusive-bound
+    :inclusive-bound-treated-exclusive
+    :incomplete-managed-proof-atoms
+    :stale-endpoint-stamp-accepted
+    :datomic-subproblem-config-dropped
+    :datomic-facade-restores-default-traversal-limits
+    :shadow-typed-error-omits-limit
+    :shadow-generated-stale-cursor-adds-direction
+    :materialized-queue-limit-counts-cumulative-enqueues
+    :materialized-resource-counter-promoted-to-production
+    :generated-artifact-gate-uses-stale-baseline
+    :generated-artifact-gate-runtime-not-installed
+    :counterexample-ledger-values-unvalidated
+    :generated-stale-cursor-leaks-render-details
+    :shadow-typed-error-omits-page-size
+    :shadow-typed-error-drops-portable-values
+    :revision-identity-includes-client-local-exact-locator
+    :formal-cljs-smoke-terminates-agent-executors
+    :generated-authority-bypasses-cache-cutover
+    :routing-node-identity-drops-resource-type
+    :routing-only-recursive-component-members
+    :routing-singleton-self-loop-ignored
+    :routing-dependency-direction-reversed
+    :routing-certificate-splits-one-scc
+    :routing-certificate-reverses-parent-edge
+    :routing-certificate-omits-multi-member-witness
+    :routing-certificate-hides-recursive-traversal
+    :routing-certificate-result-length-unbound
+    :routing-certificate-result-counters-unbound
+    :routing-permission-path-omits-dependency-edge
+    :routing-relation-path-invents-dependency-edge
+    :routing-path-edge-order-unbound
+    :consistency-exact-revision-ignored
+    :inactive-recursive-data-forces-fixed-point
+    :completed-acyclic-artifact-keeps-fixed-point-order
+    :active-recursive-data-forces-acyclic
+    :acyclic-continuation-context-disconnected
+    :aggregate-snapshot-mixing
+    :aggregate-output-reordered-or-deduplicated
+    :candidate-failure-as-denial
+    :authorized-cursor-proof-omission
+    :window-boundary-skip-or-duplicate
+    :per-candidate-plan-sealing
+    :enumerate-permission-reevaluation
+    :aggregate-release-imbalance
+    :cljs-scan-scope-check-removed
+    :cljs-lookahead-continuation-dropped
+    :pure-permission-alias-keeps-duplicate-frontier
+    :fuel-cut-wave-rolls-back-original-state
+    :page-scan-wave-is-host-selectable]}]}

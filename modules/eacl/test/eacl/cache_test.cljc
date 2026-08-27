@@ -10,22 +10,55 @@
   #?(:clj (Object.)
      :cljs (js-obj)))
 
-(deftest current-generation-cache-is-client-private-test
-  (let [native-cache (cache/current-cache)]
+(def ^:private test-source-scope
+  {:backend :test
+   :source-id :source
+   :branch nil})
+
+(def ^:private test-lineage
+  {:source-scope test-source-scope
+   :source-lifecycle :lifecycle-a})
+
+(defn- basis-key
+  ([revision]
+   (basis-key :lifecycle-a revision :ordinary))
+  ([lifecycle revision basis-kind]
+   {:key-version 2
+    :backend :test
+    :basis-identity
+    (assoc test-source-scope
+           :source-lifecycle lifecycle
+           :basis-kind basis-kind
+           :revision revision
+           :exact-locator revision
+           :backend-snapshot-id {:basis-t revision})
+    :adapter-fingerprint :adapter-v1
+    :identity-contract :identity-v1}))
+
+(defn- basis-context
+  [snapshot revision]
+  {:snapshot snapshot
+   :snapshot-order revision
+   :exact-basis-key (basis-key revision)
+   :cache-basis revision
+   :managed-subproblem-scope test-lineage})
+
+(deftest basis-cache-is-client-private-test
+  (let [native-cache (cache/basis-cache)]
     (is (= :client-private-cache-reuse
            (try
-             (cache/current-cache-for-option native-cache)
+             (cache/basis-cache-for-option native-cache)
              nil
              (catch #?(:clj clojure.lang.ExceptionInfo
                        :cljs cljs.core.ExceptionInfo)
                     error
                (:reason (ex-data error))))))
-    (is (not (identical? (cache/current-cache-for-option nil)
-                         (cache/current-cache-for-option nil)))
+    (is (not (identical? (cache/basis-cache-for-option nil)
+                         (cache/basis-cache-for-option nil)))
         "each client option normalization creates a distinct native cache")))
 
-(deftest current-generation-cache-test
-  (let [store (cache/current-cache {:max-entries 32})
+(deftest basis-cache-test
+  (let [store (cache/basis-cache {:max-entries 32})
         snapshot-1 (snapshot-object)
         snapshot-2 (snapshot-object)
         snapshot-3 (snapshot-object)
@@ -34,19 +67,16 @@
         stamp-reads (atom 0)
         answer (atom true)
         context
-        (fn [snapshot order schema-stamp dependency-stamp]
-          {:snapshot snapshot
-           :snapshot-order order
-           :same-snapshot? identical?
-           :cache-basis order
-           :managed-key-fn
-           (fn []
-             (swap! stamp-reads inc)
-             {:schema-stamp schema-stamp
-              :dependency-stamp dependency-stamp})})
+        (fn [snapshot order schema-generation dependency-stamp]
+          (assoc (basis-context snapshot order)
+                 :managed-key-fn
+                 (fn []
+                   (swap! stamp-reads inc)
+                   {:schema-generation schema-generation
+                    :dependency-stamp dependency-stamp})))
         resolve
         (fn [current-context]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store current-context
            [:can? :query] :decision boolean?
            (fn []
@@ -61,7 +91,7 @@
                  10
                  20))
               [:value :cached? :cache-tier])))
-      (is (= {:value true :cached? true :cache-tier :exact-current}
+      (is (= {:value true :cached? true :cache-tier :exact-basis}
              (select-keys
               (resolve
                (context
@@ -83,7 +113,7 @@
               [:value :cached? :cache-tier])))
       (is (= 1 @computations))
       (is (= 2 @stamp-reads))
-      (is (= :exact-current
+      (is (= :exact-basis
              (:cache-tier
               (resolve
                (context
@@ -113,36 +143,30 @@
     (testing "explicit bypass neither reads nor publishes"
       (let [before-stamps @stamp-reads
             bypass-context
-            {:snapshot snapshot-4
-             :snapshot-order 4
-             :same-snapshot? identical?
-             :cache-basis 4
-             :cacheable? false
-             :managed-key-fn
-             #(throw (ex-info "must not read stamps" {}))}]
+            (assoc (basis-context snapshot-4 4)
+                   :cacheable? false
+                   :managed-key-fn
+                   #(throw (ex-info "must not read stamps" {})))]
         (is (false? (:cached? (resolve bypass-context))))
         (is (= before-stamps @stamp-reads))
         (is (= 4 @computations))))))
 
-(deftest current-generation-late-publication-test
-  (let [store (cache/current-cache)
+(deftest basis-generation-late-publication-test
+  (let [store (cache/basis-cache)
         old-snapshot (snapshot-object)
         new-snapshot (snapshot-object)
         key [:can? :late-publication]
         context
         (fn [snapshot order]
-          {:snapshot snapshot
-           :snapshot-order order
-           :same-snapshot? identical?
-           :cache-basis order})
+          (basis-context snapshot order))
         nested? (atom false)
         old-answer
-        (cache/resolve-current!
+        (cache/resolve-basis!
          store (context old-snapshot 1)
          key :decision boolean?
          (fn []
            (when (compare-and-set! nested? false true)
-             (cache/resolve-current!
+             (cache/resolve-basis!
               store (context new-snapshot 2)
               key :decision boolean?
               (constantly false)))
@@ -150,166 +174,206 @@
     (is (true? (:value old-answer)))
     (is (false?
          (:value
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store (context new-snapshot 2)
            key :decision boolean?
            (constantly true))))
         "old publication cannot repopulate the installed newer generation")
-    (is (= :exact-current
+    (is (= :exact-basis
            (:cache-tier
-            (cache/resolve-current!
+            (cache/resolve-basis!
              store (context new-snapshot 2)
              key :decision boolean?
              (constantly true)))))))
 
-(deftest snapshot-exact-completed-answer-cache-test
-  (let [store (cache/current-cache)
+(deftest exact-basis-completed-answer-cache-test
+  (let [store (cache/basis-cache)
         current-snapshot (snapshot-object)
         semantic-key {:operation :can? :query [:alice :read :document]}
-        snapshot-key
-        (fn [lifecycle revision]
-          {:key-version 1
-           :backend :test
-           :source-scope {:source-id :source
-                          :branch nil
-                          :source-lifecycle lifecycle
-                          :backend :test}
-           :native-revision {:revision revision :exact-locator revision}
-           :exact-locator revision
-           :view-kind :ordinary-exact
-           :snapshot-id {:basis-t revision}
-           :adapter-fingerprint :adapter-v1
-           :identity-contract :identity-v1})
-        key-1 (snapshot-key :lifecycle-a 1)
-        key-2 (snapshot-key :lifecycle-a 2)
-        key-1-replaced (snapshot-key :lifecycle-b 1)
+        key-1 (basis-key :lifecycle-a 1 :ordinary)
+        key-2 (basis-key :lifecycle-a 2 :ordinary)
+        key-1-replaced (basis-key :lifecycle-b 1 :ordinary)
         computations (atom 0)
-        exact
-        (fn [snapshot-key value]
+        resolve-exact
+        (fn [exact-basis-key value]
           (cache/resolve-exact!
            store
-           {:snapshot-exact-key snapshot-key
-            :cache-basis (:snapshot-id snapshot-key)}
+           {:snapshot (:basis-identity exact-basis-key)
+            :exact-basis-key exact-basis-key
+            :cache-basis
+            (get-in exact-basis-key
+                    [:basis-identity :backend-snapshot-id])}
            semantic-key :decision boolean?
            (fn []
              (swap! computations inc)
              value)))]
     (testing "a current answer seeds the matching authenticated exact tier"
-      (cache/resolve-current!
+      (cache/resolve-basis!
        store
-       {:snapshot current-snapshot
-        :snapshot-order 1
-        :same-snapshot? identical?
-        :snapshot-exact-key key-1
-        :cache-basis {:basis-t 1}}
+       (assoc (basis-context current-snapshot 1)
+              :exact-basis-key key-1
+              :cache-basis {:basis-t 1})
        semantic-key :decision boolean? (constantly true))
-      (let [answer (exact key-1 false)]
+      (let [answer (resolve-exact key-1 false)]
         (is (true? (:value answer)))
         (is (true? (:cached? answer)))
-        (is (= :snapshot-exact (:cache-tier answer)))
+        (is (= :exact-basis (:cache-tier answer)))
         (is (zero? @computations))))
 
     (testing "different revisions and repeated numbers after lifecycle rotation cannot collide"
-      (is (false? (:value (exact key-2 false))))
-      (is (false? (:cached? (exact key-1-replaced false))))
+      (is (false? (:value (resolve-exact key-2 false))))
+      (is (false? (:cached? (resolve-exact key-1-replaced false))))
       (is (= 2 @computations))
-      (is (true? (:value (exact key-1 false)))
+      (is (true? (:value (resolve-exact key-1 false)))
           "the older retained snapshot remains independently addressable")
-      (is (false? (:value (exact key-2 true)))
+      (is (false? (:value (resolve-exact key-2 true)))
           "the newer retained snapshot keeps its own completed answer"))
 
     (testing "explicit cache lifecycle expiry detaches every historical answer"
-      (cache/expire-current! store)
-      (is (false? (:cached? (exact key-1 false))))
-      (is (false? (:value (exact key-1 false))))
+      (cache/expire-basis-cache! store)
+      (is (false? (:cached? (resolve-exact key-1 false))))
+      (is (false? (:value (resolve-exact key-1 false))))
       (is (= 3 @computations)))))
 
 (defn- ordinary-exact-key
   [revision]
-  {:key-version 1
-   :backend :test
-   :source-scope {:source-id :source
-                  :branch nil
-                  :source-lifecycle :lifecycle-a
-                  :backend :test}
-   :native-revision {:revision revision :exact-locator revision}
-   :exact-locator revision
-   :view-kind :ordinary-exact
-   :snapshot-id {:basis-t revision}
-   :adapter-fingerprint :adapter-v1
-   :identity-contract :identity-v1})
+  (basis-key revision))
 
-(deftest snapshot-exact-retention-does-not-republish-on-every-hit-test
-  (let [store (cache/current-cache)
+(deftest exact-basis-does-not-republish-on-every-hit-test
+  (let [store (cache/basis-cache)
         snapshot (snapshot-object)
         semantic-key {:operation :can? :query [:alice :read :document]}
         current
         (fn []
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store
-           {:snapshot snapshot
-            :snapshot-order 1
-            :same-snapshot? identical?
-            :snapshot-exact-key (ordinary-exact-key 1)
-            :cache-basis {:basis-t 1}}
+           (assoc (basis-context snapshot 1)
+                  :cache-basis {:basis-t 1})
            semantic-key :decision boolean? (constantly true)))]
     (dotimes [_ 8] (current))
-    (let [stats (get-in (cache/current-cache-stats store)
-                        [:snapshot-exact :tiers :answer])
-          races (:publication-races
-                 (get (cache/current-cache-stats store) :snapshot-exact))]
+    (let [stats (get-in (cache/basis-cache-stats store)
+                        [:subproblems :tiers :answer])
+          races (get-in (cache/basis-cache-stats store)
+                        [:subproblems :publication-races])]
       (is (= 1 (:entries stats))
-          "the first computation still seeds the snapshot-exact tier")
+          "the first computation seeds exactly one basis generation")
       (is (zero? (or races 0))
           "a cache hit must not republish an answer the tier already holds"))))
 
-(deftest snapshot-exact-bypasses-an-unkeyable-adapter-test
-  (let [store (cache/current-cache)
+(deftest exact-basis-bypasses-an-unkeyable-identity-test
+  (let [store (cache/basis-cache)
         computations (atom 0)
         resolve-with
         (fn [snapshot-key]
           (cache/resolve-exact!
            store
-           {:snapshot-exact-key snapshot-key :cache-basis {:basis-t 1}}
+           {:exact-basis-key snapshot-key :cache-basis {:basis-t 1}}
            {:operation :can?} :decision boolean?
            (fn [] (swap! computations inc) true)))]
     (testing "a view that cannot mint a canonical identity computes uncached"
       (doseq [unkeyable [nil
                          (dissoc (ordinary-exact-key 1) :adapter-fingerprint)
                          (assoc (ordinary-exact-key 1)
-                                :view-kind :filtered-view)]]
+                                :basis-identity
+                                (assoc (:basis-identity
+                                        (ordinary-exact-key 1))
+                                       :basis-kind :filtered))]]
         (let [answer (resolve-with unkeyable)]
           (is (true? (:value answer)))
           (is (false? (:cached? answer)))
           (is (nil? (:cache-tier answer))
               "an unkeyable snapshot bypasses the tier instead of failing"))))
     (is (= 3 @computations))
-    (is (= 3 (:bypasses (cache/current-cache-stats store))))))
+    (is (= 3 (:bypasses (cache/basis-cache-stats store))))))
 
-(deftest snapshot-exact-hit-reports-the-selected-basis-test
-  (let [store (cache/current-cache)
+(deftest exact-basis-hit-reports-the-selected-basis-test
+  (let [store (cache/basis-cache)
         snapshot (snapshot-object)
         semantic-key {:operation :can? :query [:alice :read :document]}
         key-1 (ordinary-exact-key 1)]
     ;; Seed the tier from a current answer whose recorded basis is deliberately
     ;; older than the basis a later exact request selects, as a proof-lifted
     ;; managed answer would be.
-    (cache/resolve-current!
+    (cache/resolve-basis!
      store
-     {:snapshot snapshot
-      :snapshot-order 1
-      :same-snapshot? identical?
-      :snapshot-exact-key key-1
-      :cache-basis {:basis-t :stale-origin}}
+     (assoc (basis-context snapshot 1)
+            :cache-basis {:basis-t :stale-origin})
      semantic-key :decision boolean? (constantly true))
     (let [answer
           (cache/resolve-exact!
            store
-           {:snapshot-exact-key key-1 :cache-basis {:basis-t 1}}
+           {:snapshot (:basis-identity key-1)
+            :exact-basis-key key-1
+            :cache-basis {:basis-t 1}}
            semantic-key :decision boolean? (constantly false))]
       (is (true? (:cached? answer)))
       (is (= {:basis-t 1} (:cache-basis answer))
           "cache basis is rebuilt from the selected snapshot, not copied"))))
+
+(deftest exact-basis-generations-use-bounded-lru-retention-test
+  (let [store (cache/basis-cache {:retained-bases 2})
+        computations (atom {})
+        resolve
+        (fn [revision]
+          (cache/resolve-basis!
+           store (basis-context (snapshot-object) revision)
+           :same-query :decision integer?
+           (fn []
+             (swap! computations update revision (fnil inc 0))
+             revision)))]
+    (resolve 1)
+    (resolve 2)
+    (is (= :exact-basis (:cache-tier (resolve 1)))
+        "touching an older basis makes it most recently used")
+    (resolve 3)
+    (is (= 2 (:retained-bases (cache/basis-cache-stats store))))
+    (is (false? (:cached? (resolve 2)))
+        "the least-recently-used basis recomputes after eviction")
+    (is (= {1 1, 2 2, 3 1} @computations))))
+
+(deftest basis-kind-is-part-of-exact-cache-identity-test
+  (let [store (cache/basis-cache)
+        ordinary (basis-key :lifecycle-a 7 :ordinary)
+        as-of (basis-key :lifecycle-a 7 :as-of)
+        resolve
+        (fn [key value]
+          (cache/resolve-exact!
+           store
+           {:snapshot (:basis-identity key)
+            :exact-basis-key key
+            :cache-basis
+            (get-in key [:basis-identity :backend-snapshot-id])}
+           :same-query :decision boolean? (constantly value)))]
+    (is (true? (:value (resolve ordinary true))))
+    (is (false? (:value (resolve as-of false)))
+        "ordinary and as-of values at the same revision cannot collide")
+    (is (true? (:value (resolve ordinary false))))
+    (is (false? (:value (resolve as-of true))))
+    (is (= 2 (:retained-bases (cache/basis-cache-stats store))))))
+
+(deftest managed-lifting-is-revision-direction-agnostic-test
+  (let [store (cache/basis-cache)
+        computations (atom 0)
+        context
+        (fn [revision]
+          (assoc (basis-context (snapshot-object) revision)
+                 :managed-key-fn
+                 (constantly {:schema-generation 10
+                              :dependency-stamp 20})))
+        resolve
+        (fn [revision value]
+          (cache/resolve-basis!
+           store (context revision)
+           :same-query :decision boolean?
+           (fn []
+             (swap! computations inc)
+             value)))]
+    (is (true? (:value (resolve 2 true))))
+    (let [older (resolve 1 false)]
+      (is (true? (:value older))
+          "equal complete proofs preserve the answer at an older basis")
+      (is (= :managed-current (:cache-tier older))))
+    (is (= 1 @computations))))
 
 (deftest nested-answers-weigh-more-than-scalar-answers-test
   (let [snapshot (snapshot-object)
@@ -319,51 +383,43 @@
                                      (range 200))}}
         weight-of
         (fn [value]
-          (let [store (cache/current-cache)]
-            (cache/resolve-current!
+          (let [store (cache/basis-cache)]
+            (cache/resolve-basis!
              store
-             {:snapshot snapshot
-              :snapshot-order 1
-              :same-snapshot? identical?
-              :cache-basis {:basis-t 1}}
+             (assoc (basis-context snapshot 1)
+                    :cache-basis {:basis-t 1})
              {:operation :expand-permission-tree} :permission-tree
              map? (constantly value))
-            (get-in (cache/current-cache-stats store)
+            (get-in (cache/basis-cache-stats store)
                     [:subproblems :tiers :answer :weight])))]
     (is (> (weight-of tree) (weight-of {:leaf {:subjects []}}))
         "a large nested answer must not weigh the same as an empty one")
     (is (> (weight-of tree) (* 100 128))
         "weight scales with the retained subjects, not a flat floor")))
 
-(deftest current-generation-expiry-test
-  (let [store (cache/current-cache)
+(deftest basis-generation-expiry-test
+  (let [store (cache/basis-cache)
         snapshot (snapshot-object)
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1}
+        context (basis-context snapshot 1)
         calls (atom 0)
         resolve
-        #(cache/resolve-current!
+        #(cache/resolve-basis!
           store context :key :decision boolean?
           (fn [] (swap! calls inc) true))]
     (is (false? (:cached? (resolve))))
     (is (true? (:cached? (resolve))))
-    (cache/expire-current! store)
+    (cache/expire-basis-cache! store)
     (is (false? (:cached? (resolve))))
     (is (= 2 @calls))))
 
 (deftest exact-generation-subproblem-lifecycle-test
-  (let [store (cache/current-cache)
+  (let [store (cache/basis-cache)
         snapshot (snapshot-object)
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1}
+        context (basis-context snapshot 1)
         projection-calls (atom 0)
         resolve
         (fn [top-level-key]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store context top-level-key :decision integer?
            (fn []
              (:value
@@ -376,29 +432,26 @@
       (is (= 42 (:value (resolve :top-level-a))))
       (is (= 42 (:value (resolve :top-level-b))))
       (is (= 1 @projection-calls))
-      (is (zero? (:exact-hits (cache/current-cache-stats store)))
+      (is (zero? (:exact-hits (cache/basis-cache-stats store)))
           "different top-level keys must not be counted as final-answer hits")
-      (is (= 1 (get-in (cache/current-cache-stats store)
+      (is (= 1 (get-in (cache/basis-cache-stats store)
                        [:subproblems :projection-hits]))))
     (testing "expiry replaces the complete subproblem generation"
-      (cache/expire-current! store)
+      (cache/expire-basis-cache! store)
       (is (= 42 (:value (resolve :top-level-c))))
       (is (= 2 @projection-calls))
-      (is (zero? (get-in (cache/current-cache-stats store)
+      (is (zero? (get-in (cache/basis-cache-stats store)
                          [:subproblems :projection-hits]))))))
 
 (deftest completed-answer-bypass-still-shares-current-subproblems-test
-  (let [store (cache/current-cache)
+  (let [store (cache/basis-cache)
         snapshot (snapshot-object)
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1
-                 :remember-answer? false}
+        context (assoc (basis-context snapshot 1)
+                       :remember-answer? false)
         top-level-calls (atom 0)
         projection-calls (atom 0)
         resolve
-        #(cache/resolve-current!
+        #(cache/resolve-basis!
           store context :same-top-level-key :decision integer?
           (fn []
             (swap! top-level-calls inc)
@@ -413,28 +466,25 @@
     (is (= 2 @top-level-calls)
         "remember-answer? false never reuses the completed answer")
     (is (= 1 @projection-calls)
-        "the current-generation subproblem remains reusable")
-    (let [stats (cache/current-cache-stats store)]
+        "the exact-basis subproblem remains reusable")
+    (let [stats (cache/basis-cache-stats store)]
       (is (zero? (:exact-entries stats)))
       (is (= 2 (:bypasses stats)))
       (is (= 1 (get-in stats [:subproblems :projection-hits]))))))
 
 #?(:clj
    (deftest delayed-subproblem-publication-cannot-resurrect-expired-generation-test
-     (let [store (cache/current-cache)
+     (let [store (cache/basis-cache)
            snapshot-1 (snapshot-object)
            snapshot-2 (snapshot-object)
            context
            (fn [snapshot order]
-             {:snapshot snapshot
-              :snapshot-order order
-              :same-snapshot? identical?
-              :cache-basis order})
+             (basis-context snapshot order))
            started (promise)
            release (promise)
            old
            (future
-             (cache/resolve-current!
+             (cache/resolve-basis!
               store (context snapshot-1 1) :old :decision integer?
               (fn []
                 (:value
@@ -445,10 +495,10 @@
                     @release
                     41))))))
            _ @started]
-       (cache/expire-current! store)
+       (cache/expire-basis-cache! store)
        (is (= 42
               (:value
-               (cache/resolve-current!
+               (cache/resolve-basis!
                 store (context snapshot-2 2) :new-a :decision integer?
                 (fn []
                   (:value
@@ -460,7 +510,7 @@
            "the already selected request may finish on its old snapshot")
        (is (= 42
               (:value
-               (cache/resolve-current!
+               (cache/resolve-basis!
                 store (context snapshot-2 2) :new-b :decision integer?
                 (fn []
                   (:value
@@ -468,20 +518,17 @@
                     :projection :shared {}
                     (constantly 99)))))))
            "late work remains reachable only from the expired lifecycle")
-       (is (= 1 (get-in (cache/current-cache-stats store)
+       (is (= 1 (get-in (cache/basis-cache-stats store)
                         [:subproblems :projection-hits]))))))
 
 (deftest request-boundary-capture-prevents-pre-lookup-expiry-reattachment-test
-  (let [store (cache/current-cache)
-        captured (cache/capture-current-lifecycle store)
-        context {:snapshot 7
-                 :snapshot-order 7
-                 :same-snapshot? =
-                 :cache-basis 7}
+  (let [store (cache/basis-cache)
+        captured (cache/capture-cache-lifecycle store)
+        context (basis-context 7 7)
         resolve-projection
         (fn [request-context top-level-key value]
           (:value
-           (cache/resolve-current!
+           (cache/resolve-basis!
             store request-context top-level-key :decision integer?
             (fn []
               (:value
@@ -489,9 +536,9 @@
                 :projection :shared-projection {}
                 (constantly value)))))))]
     ;; Model expiry after a request selected its source snapshot but before it
-    ;; reached resolve-current!.  Reusing the numeric revision after a restore
+    ;; reached resolve-basis!.  Reusing the numeric revision after a restore
     ;; must not let that old request populate the replacement lifecycle.
-    (cache/expire-current! store)
+    (cache/expire-basis-cache! store)
     (is (= 41
            (resolve-projection
             (assoc context :cache-lifecycle captured)
@@ -505,20 +552,17 @@
 
 #?(:clj
    (deftest generation-expiry-detaches-old-publication-without-blocking-test
-     (let [store (cache/current-cache)
+     (let [store (cache/basis-cache)
            context
            (fn [snapshot order]
-             {:snapshot snapshot
-              :snapshot-order order
-              :same-snapshot? identical?
-              :cache-basis order})
+             (basis-context snapshot order))
            old-started (promise)
            release-old (promise)
            new-started (promise)
            new-snapshot (snapshot-object)
            old-work
            (future
-             (cache/resolve-current!
+             (cache/resolve-basis!
               store (context (snapshot-object) 1) :old :decision keyword?
               (fn []
                 (:value
@@ -529,10 +573,10 @@
                     @release-old
                     :old))))))
            _ @old-started
-           _ (cache/expire-current! store)
+           _ (cache/expire-basis-cache! store)
            new-work
            (future
-             (cache/resolve-current!
+             (cache/resolve-basis!
               store (context new-snapshot 2) :new :decision keyword?
               (fn []
                 (:value
@@ -547,17 +591,14 @@
        (is (= :old (:value @old-work)))
        (is (= :new
               (:value
-               (cache/resolve-current!
+               (cache/resolve-basis!
                 store (context new-snapshot 2)
                 :new :decision keyword? (constantly :wrong))))))))
 
 (deftest cache-disabled-request-bypasses-subproblem-store-test
-  (let [store (cache/current-cache)
+  (let [store (cache/basis-cache)
         snapshot (snapshot-object)
-        cached-context {:snapshot snapshot
-                        :snapshot-order 1
-                        :same-snapshot? identical?
-                        :cache-basis 1}
+        cached-context (basis-context snapshot 1)
         projection-calls (atom 0)
         projection
         #(subproblem/resolve-bound!
@@ -567,31 +608,28 @@
             7))
         top-level
         (fn [key context]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store context key :decision integer?
            #(-> (projection) :value)))]
     (is (= 7 (:value (top-level :cached cached-context))))
-    (let [before (:subproblems (cache/current-cache-stats store))]
+    (let [before (:subproblems (cache/basis-cache-stats store))]
       (is (= 7 (:value
                 (top-level :disabled
                            (assoc cached-context :cacheable? false)))))
       (is (= 2 @projection-calls))
       (is (= before
-             (:subproblems (cache/current-cache-stats store)))))))
+             (:subproblems (cache/basis-cache-stats store)))))))
 
 (deftest completed-answer-only-cache-option-test
   (let [store
-        (cache/current-cache
+        (cache/basis-cache
          {:subproblem-cache {:enabled? false}})
         snapshot (snapshot-object)
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1}
+        context (basis-context snapshot 1)
         calls (atom 0)
         resolve
         (fn [key]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store context key :decision integer?
            (fn []
              (:value
@@ -603,28 +641,25 @@
     (is (= 9 (:value (resolve :a))))
     (is (= 9 (:value (resolve :b))))
     (is (= 2 @calls))
-    (is (zero? (get-in (cache/current-cache-stats store)
+    (is (zero? (get-in (cache/basis-cache-stats store)
                        [:subproblems :projection-hits])))))
 
 (deftest managed-descriptor-is-lazy-after-exact-lookup-test
-  (let [store (cache/current-cache)
+  (let [store (cache/basis-cache)
         snapshot-1 (snapshot-object)
         snapshot-2 (snapshot-object)
         descriptor-reads (atom 0)
         context
         (fn [snapshot order]
-          {:snapshot snapshot
-           :snapshot-order order
-           :same-snapshot? identical?
-           :cache-basis order
-           :managed-key-fn
-           (fn []
-             (swap! descriptor-reads inc)
-             {:schema-stamp 10
-              :dependency-stamp 20})})
+          (assoc (basis-context snapshot order)
+                 :managed-key-fn
+                 (fn []
+                   (swap! descriptor-reads inc)
+                   {:schema-generation 10
+                    :dependency-stamp 20})))
         resolve
         (fn [semantic-key current-context]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store current-context semantic-key :decision integer?
            (constantly 7)))]
     (resolve :query-a (context snapshot-1 1))
@@ -641,19 +676,16 @@
         "a new immutable snapshot must revalidate its proof")))
 
 (deftest unavailable-proof-cannot-reuse-or-publish-managed-answer-test
-  (let [store (cache/current-cache)
+  (let [store (cache/basis-cache)
         snapshot-1 (snapshot-object)
         snapshot-2 (snapshot-object)
         compute-calls (atom 0)
         resolve
         (fn [snapshot order managed-key value]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store
-           {:snapshot snapshot
-            :snapshot-order order
-            :same-snapshot? identical?
-            :cache-basis order
-            :managed-key-fn (constantly managed-key)}
+           (assoc (basis-context snapshot order)
+                  :managed-key-fn (constantly managed-key))
            :proof-fallback
            :decision
            boolean?
@@ -661,7 +693,7 @@
              (swap! compute-calls inc)
              value)))]
     (is (true? (:value (resolve snapshot-1 1
-                               {:schema-stamp 10
+                               {:schema-generation 10
                                 :dependency-stamp 20}
                                true))))
     (let [fallback (resolve snapshot-2 2 nil false)]
@@ -674,28 +706,140 @@
         "the exact result computed during fallback remains reusable")))
 
 (deftest proof-unavailable-diagnostics-are-typed-telemetry-test
-  (let [store (cache/current-cache)]
+  (let [store (cache/basis-cache)]
     (cache/record-proof-unavailable!
      store {:status :unavailable :reason :missing-generation})
     (cache/record-proof-unavailable!
      store {:status :unavailable :reason :provider-failure})
     (cache/record-proof-unavailable!
      store {:status :unavailable :reason :missing-generation})
-    (let [stats (cache/current-cache-stats store)]
+    (let [stats (cache/basis-cache-stats store)]
       (is (= 3 (:proof-unavailable stats)))
       (is (= {:missing-generation 2 :provider-failure 1}
              (:proof-unavailable-reasons stats))))))
 
-(deftest current-generation-two-hit-admission-test
-  (let [store (cache/current-cache {:admit-on-repeat? true})
+(deftest read-without-publication-preserves-lookups-and-suppresses-writes-test
+  (let [store (cache/basis-cache)
+        first-snapshot (snapshot-object)
+        second-snapshot (snapshot-object)
+        computations (atom 0)
+        publication-view
+        (fn []
+          (let [stats (cache/basis-cache-stats store)]
+            {:puts (:puts stats)
+             :exact-entries (:exact-entries stats)
+             :retained-bases (:retained-bases stats)
+             :managed-entries (:managed-entries stats)
+             :managed-generations (:managed-generations stats)
+             :exact-subproblem-puts
+             (get-in stats [:exact-subproblems :puts])
+             :managed-subproblem-puts
+             (get-in stats [:managed-subproblems :puts])}))
+        resolve
+        (fn [snapshot revision semantic-key populate? value]
+          (cache/resolve-basis!
+           store
+           (assoc (basis-context snapshot revision)
+                  :populate-cache? populate?
+                  :managed-key-fn
+                  (constantly
+                   {:schema-generation 10 :dependency-stamp 20}))
+           semantic-key
+           :decision
+           boolean?
+           (fn []
+             (swap! computations inc)
+             value)))]
+    (is (false? (:cached?
+                 (resolve first-snapshot 1 :answer true true))))
+    (let [after-warm (publication-view)
+          exact-hit (resolve first-snapshot 1 :answer false false)]
+      (is (true? (:cached? exact-hit)))
+      (is (= :exact-basis (:cache-tier exact-hit)))
+      (is (= after-warm (publication-view))
+          "an exact read-only hit publishes and installs nothing"))
+    (let [before-managed-read (publication-view)
+          managed-hit (resolve second-snapshot 2 :answer false false)]
+      (is (true? (:cached? managed-hit)))
+      (is (= :managed-current (:cache-tier managed-hit)))
+      (is (= before-managed-read (publication-view))
+          "a managed read-only hit is neither promoted nor generation-creating"))
+    (let [before-misses (publication-view)
+          first-miss (resolve second-snapshot 2 :unseen false false)
+          second-miss (resolve second-snapshot 2 :unseen false true)]
+      (is (false? (:cached? first-miss)))
+      (is (false? (:cached? second-miss)))
+      (is (= [false true] [(:value first-miss) (:value second-miss)]))
+      (is (= before-misses (publication-view))
+          "read-only misses evaluate independently without publication"))
+    (is (= 3 @computations)
+        "the warm request and both read-only misses compute")))
+
+(deftest proof-contract-violation-disables-only-managed-lifting-test
+  (let [reports (atom [])
+        store
+        (cache/basis-cache
+         {:proof-contract-reporter #(swap! reports conj %)})
+        first-snapshot (snapshot-object)
+        second-snapshot (snapshot-object)
+        third-snapshot (snapshot-object)
+        descriptor-reads (atom 0)
+        computations (atom 0)
+        resolve
+        (fn [snapshot revision value]
+          (cache/resolve-basis!
+           store
+           (assoc
+            (basis-context snapshot revision)
+            :managed-key-fn
+            (fn []
+              (swap! descriptor-reads inc)
+              {:schema-generation 10 :dependency-stamp 20}))
+           :contract-violation
+           :decision
+           boolean?
+           (fn []
+             (swap! computations inc)
+             value)))]
+    (is (true? (:value (resolve first-snapshot 1 true))))
+    (is (= 1 @descriptor-reads))
+    (cache/record-proof-diagnostic!
+     store
+     {:status :contract-violation
+      :reason :relation-generation-above-revision})
+    (cache/record-proof-diagnostic!
+     store
+     {:status :contract-violation
+      :reason :relation-generation-above-revision})
+    (let [fallback (resolve second-snapshot 2 false)]
+      (is (false? (:value fallback)))
+      (is (false? (:cached? fallback)))
+      (is (= 1 @descriptor-reads)
+          "sticky disablement skips all subsequent managed proof reads"))
+    (is (false? (:value (resolve second-snapshot 2 true)))
+        "exact-basis cache hits remain available while lifting is disabled")
+    (is (= 2 @computations))
+    (let [stats (cache/basis-cache-stats store)]
+      (is (true? (:managed-lifting-disabled? stats)))
+      (is (= 2 (:proof-contract-violations stats)))
+      (is (= {:relation-generation-above-revision 2}
+             (:proof-contract-violation-reasons stats))))
+    (is (= 1 (count @reports))
+        "the reporter runs once per reason in a lifecycle")
+    (cache/expire-basis-cache! store)
+    (is (false? (:managed-lifting-disabled?
+                 (cache/basis-cache-stats store))))
+    (is (true? (:value (resolve third-snapshot 3 true))))
+    (is (= 2 @descriptor-reads)
+        "expiry restores managed proof acquisition")))
+
+(deftest basis-generation-two-hit-admission-test
+  (let [store (cache/basis-cache {:admit-on-repeat? true})
         snapshot (snapshot-object)
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1}
+        context (basis-context snapshot 1)
         calls (atom 0)
         resolve
-        #(cache/resolve-current!
+        #(cache/resolve-basis!
           store context :key :decision boolean?
           (fn [] (swap! calls inc) true))]
     (is (false? (:cached? (resolve)))
@@ -704,11 +848,11 @@
         "the second sighting demonstrates reuse and is retained")
     (is (true? (:cached? (resolve))))
     (is (= 2 @calls))
-    (is (= 1 (:exact-entries (cache/current-cache-stats store))))
-    (cache/expire-current! store)
+    (is (= 1 (:exact-entries (cache/basis-cache-stats store))))
+    (cache/expire-basis-cache! store)
     (is (false? (:cached? (resolve)))
         "explicit expiry also resets admission history")
-    (is (= 0 (:exact-entries (cache/current-cache-stats store))))))
+    (is (= 0 (:exact-entries (cache/basis-cache-stats store))))))
 
 (deftest authenticated-page-query-identity-ignores-signed-transport-test
   (let [base-public
@@ -735,9 +879,11 @@
          (assoc base-public
                 :after "signed-snapshot-b"
                 :cache? true
+                :populate-cache? false
                 :cancellation-token (eacl/cancellation-token))
          (assoc base-internal
                 :after boundary
+                :populate-cache? true
                 :cancellation-token (eacl/cancellation-token)))]
     (is (= original recovered)
         "signed transport bytes are not page semantics")
@@ -760,25 +906,23 @@
   ;; completed-answer map evicted in hash-iteration order, so a repeatedly
   ;; accessed key was as likely to die as any cold key. The weighted
   ;; :answer tier evicts least-recently-used.
-  (let [store (cache/current-cache
+  (let [store (cache/basis-cache
                {:subproblem-cache {:answer-max-weight 4096}})
         snapshot (snapshot-object)
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1
+        context (assoc
+                 (basis-context snapshot 1)
                  ;; Fixed per-answer weight: the tier retains 8 answers.
-                 :answer-weight-fn (constantly 512)}
+                 :answer-weight-fn (constantly 512))
         resolve
         (fn [key]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store context key :decision boolean? (constantly true)))]
     (resolve :hot)
     (dotimes [i 64]
       (resolve [:cold i])
       (is (true? (:cached? (resolve :hot)))
           "the repeatedly accessed answer stays resident through churn"))
-    (let [tier (get-in (cache/current-cache-stats store)
+    (let [tier (get-in (cache/basis-cache-stats store)
                        [:subproblems :tiers :answer])]
       (is (<= (:weight tier) 4096)
           "retained answer weight never exceeds the configured budget")
@@ -790,24 +934,21 @@
   ;; deleted answer map was entry-bounded only (weight fn accepted and
   ;; ignored), measured at 95.5 MB retained. The :answer tier is
   ;; weight-bounded with a budget/4 per-entry ceiling.
-  (let [store (cache/current-cache
+  (let [store (cache/basis-cache
                {:subproblem-cache {:answer-max-weight 8192}})
         snapshot (snapshot-object)
         page (fn [n] {:data (vec (range n))})
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1}
+        context (basis-context snapshot 1)
         resolve
         (fn [key value]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store context key :lookup-resources map?
            (fn [] value)))]
     ;; Saturate with page answers under the default row-count weight
     ;; (512 + 128/row: 1792 each, so at most four fit).
     (dotimes [i 32]
       (resolve [:page i] (page 10)))
-    (let [tier (get-in (cache/current-cache-stats store)
+    (let [tier (get-in (cache/basis-cache-stats store)
                        [:subproblems :tiers :answer])]
       (is (pos? (:entries tier)))
       (is (<= (:weight tier) 8192)
@@ -815,7 +956,7 @@
     ;; One answer heavier than budget/4 is rejected at publication and
     ;; recomputed on the next request instead of retained unbounded.
     (resolve :oversized (page 100))
-    (is (pos? (get-in (cache/current-cache-stats store)
+    (is (pos? (get-in (cache/basis-cache-stats store)
                       [:subproblems :oversized-rejections])))
     (is (false? (:cached? (resolve :oversized (page 100))))
         "an oversized answer is never served from cache")))
@@ -827,17 +968,14 @@
   ;; The first-in-first-out sighting window forgets oldest first sightings,
   ;; so admission tracks access recency at any keyspace size.
   (let [window 64
-        store (cache/current-cache
+        store (cache/basis-cache
                {:max-entries window
                 :admit-on-repeat? true})
         snapshot (snapshot-object)
-        context {:snapshot snapshot
-                 :snapshot-order 1
-                 :same-snapshot? identical?
-                 :cache-basis 1}
+        context (basis-context snapshot 1)
         resolve
         (fn [key]
-          (cache/resolve-current!
+          (cache/resolve-basis!
            store context key :decision boolean? (constantly true)))]
     ;; Churn 50x the window in distinct single-sighting keys.
     (dotimes [i (* 50 window)]
@@ -863,5 +1001,5 @@
     (resolve :forgotten)
     (is (false? (:cached? (resolve :forgotten)))
         "a sighting spaced past the window restarts admission")
-    (is (<= (:admission-entries (cache/current-cache-stats store)) window)
+    (is (<= (:admission-entries (cache/basis-cache-stats store)) window)
         "sighting state stays bounded by the window at 50x keyspace")))

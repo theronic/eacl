@@ -1,16 +1,166 @@
 (ns eacl.datascript.contract-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
+            [eacl.datascript.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
+            [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
+
+(deftest native-speculative-contract-test
+  #?(:clj
+     (is (nil? (ns-resolve 'eacl.datascript.core 'snapshot)))
+     :cljs
+     (is true))
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (contract/assert-speculative-contract!
+     client
+     #(ds/transact! conn [{:eacl/id "speculative-user"}
+                          {:eacl/id "speculative-account"}]))))
+
+(deftest missing-anchor-validation-reuses-derived-schema-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        missing-user (contract/->user "missing")
+        missing-server (contract/->server "missing")
+        reads (atom 0)
+        original-read-schema schema/read-schema
+        exercise!
+        (fn []
+          (is (= []
+                 (:data
+                  (eacl/lookup-resources
+                   client {:subject missing-user
+                           :permission :view
+                           :resource/type :server
+                           :first 20
+                           :cache? false}))))
+          (is (= 0
+                 (:count
+                  (eacl/count-resources
+                   client {:subject missing-user
+                           :permission :view
+                           :resource/type :server
+                           :cache? false}))))
+          (is (false?
+               (eacl/can? client {:subject missing-user
+                                  :permission :view
+                                  :resource missing-server
+                                  :cache? false}))))]
+    (eacl/write-schema! client contract/smoke-schema)
+    #?(:clj
+       (with-redefs [schema/read-schema
+                     (fn [db & format]
+                       (swap! reads inc)
+                       (apply original-read-schema db format))]
+         (exercise!)
+         (is (= 1 @reads)
+             "missing-anchor validation decodes one immutable schema generation"))
+       :cljs
+       (exercise!))))
+
+(deftest cache-only-metrics-refresh-preserves-results-and-cursors-test
+  (let [conn (datascript/create-conn)
+        ;; Relationship observations are opt-in; this contract exercises the
+        ;; recording and refresh machinery, so it is the consumer.
+        client (datascript/make-client
+                conn {:security-key
+                      "metrics-refresh00000000000000000"
+                      :relationship-observations? true})
+        alice (eacl/spice-object :user "metrics-alice")
+        documents (mapv #(eacl/spice-object
+                          :document (str "metrics-d" %))
+                        (range 6))
+        query {:subject alice
+               :permission :view
+               :resource/type :document
+               :first 2
+               :cache? false}]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation reader: user
+        permission view = reader
+      }")
+    (ds/transact!
+     conn
+     (into [{:eacl/id (:id alice)}]
+           (map (fn [document] {:eacl/id (:id document)}) documents)))
+    (eacl/create-relationships!
+     client
+     (mapv #(eacl/->Relationship alice :reader %) documents))
+    (let [cold (eacl/lookup-resources client query)
+          cold-stats (datascript/cache-stats client)]
+      (is (= (subvec documents 0 2) (:data cold)))
+      (is (pos? (get-in cold-stats
+                        [:relationship-observations :entry-count])))
+      (is (pos? (get-in cold-stats
+                        [:structural-metrics :entry-count])))
+
+      (testing "default refresh performs no backend read and keeps cursors valid"
+        (let [observed (atom [])
+              refresh-report
+              (binding [backend/*invoke-observer* #(swap! observed conj %)]
+                (datascript/refresh-metrics!
+                 client {:scope :relationships}))]
+          (is (empty? @observed))
+          (is (= 0 (get-in refresh-report
+                           [:relationship-observations :entry-count])))
+          (let [continued
+                (eacl/lookup-resources
+                 client (assoc query :after
+                               (get-in cold [:page-info :end-cursor])))]
+            (is (= (subvec documents 2 4) (:data continued))))))
+
+      (testing "an explicit bounded read-through repopulates organically"
+        (let [report
+              (datascript/refresh-metrics!
+               client
+               {:scope :relationships
+                :read-through {:operation :lookup-resources
+                               :request (dissoc query :cache?)}})]
+          (is (= (:data cold)
+                 (get-in report [:read-through-result :data])))
+          (is (pos? (get-in report
+                            [:relationship-observations :entry-count]))))
+        (let [report
+              (datascript/refresh-metrics!
+               client
+               {:scope :relationships
+                :read-through
+                {:operation :count-resources
+                 :request (dissoc query :first :cache?)}})]
+          (is (= 6 (get-in report [:read-through-result :count])))
+          (is (pos? (get-in report
+                            [:relationship-observations
+                             :exact-entry-count])))))
+
+      (testing "a new database high-watermark gets a distinct observation"
+        (let [before (get-in (datascript/cache-stats client)
+                             [:relationship-observations :entry-count])]
+          (ds/transact! conn [{:eacl/id "metrics-unrelated"}])
+          (is (= (:data cold)
+                 (:data (eacl/lookup-resources client query))))
+          (is (> (get-in (datascript/cache-stats client)
+                         [:relationship-observations :entry-count])
+                 before))))
+
+      (testing "eager structural refresh derives metrics without durable data"
+        (let [report (datascript/refresh-metrics!
+                      client {:scope :structural :eager? true})]
+          (is (:structural-refreshed? report))
+          (is (pos? (get-in (datascript/cache-stats client)
+                            [:structural-metrics :entry-count]))))))))
 
 (def ^:private permission-tree-schema
   "definition user {}
@@ -28,6 +178,37 @@
      permission base = viewer
      permission view = base + parent->view
    }")
+
+(deftest default-source-lifecycle-is-cross-client-constant-test
+  (let [conn (datascript/create-conn)
+        key "01234567890123456789012345678901"
+        client-a (datascript/make-client conn {:security-key key})
+        client-b (datascript/make-client conn {:security-key key})
+        snapshot-a (eacl/snapshot client-a)
+        snapshot-b (eacl/snapshot client-b)]
+    (try
+      (is (= "eacl/initial"
+             (get-in client-a [:runtime :source-lifecycle])
+             (get-in client-b [:runtime :source-lifecycle])
+             (:source-lifecycle (eacl/basis snapshot-a))
+             (:source-lifecycle (eacl/basis snapshot-b))))
+      (finally
+        (eacl/release! snapshot-a)
+        (eacl/release! snapshot-b)))
+    (eacl/write-schema! client-a contract/smoke-schema)
+    (ds/transact!
+     conn
+     (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))
+    (let [token
+          (:zed/token
+           (eacl/create-relationship!
+            client-a (first contract/smoke-relationships)))]
+      (is (true?
+           (eacl/can?
+            client-b
+            (contract/->user "user-1") :admin
+            (contract/->account "account-1")
+            (consistency/at-least-as-fresh token)))))))
 
 (defn- seed-permission-tree!
   [conn client]
@@ -122,7 +303,7 @@
                     [:tree-root :intermediate :children 0 :leaf :subjects])
             token-data
             (causal-token/token-data
-             (get-in client [:opts :format-options])
+             (get-in client [:runtime :format-options])
              (:expanded-at captured))]
         (is (= [(eacl/spice-object :user "alice")] first-subjects))
         (is (< (:revision token-data) (:max-tx (ds/db conn))))
@@ -201,8 +382,16 @@
 (deftest one-authority-is-the-only-production-engine-test
   (let [conn (datascript/create-conn)
         default-client (datascript/make-client conn {})
+        mutable-identity-client
+        (datascript/make-client conn {:identity-immutable? false})
         default-selection
-        (get-in default-client [:opts :decision-kernel])
+        (get-in default-client [:runtime :decision-kernel])
+        identity-option-error
+        (try
+          (datascript/make-client conn {:identity-immutable? :assumed})
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
+            (ex-data exception)))
         error
         (try
           (datascript/make-client conn {:engine-selection :anything})
@@ -210,7 +399,15 @@
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
             (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
-    (is (true? (get-in default-client [:opts :managed-cache-enabled?])))
+    (is (true? (get-in default-client [:runtime :managed-cache-enabled?])))
+    (is (true? (get-in default-client
+                       [:runtime :proof-equivalent-cursors?])))
+    (is (= :selected-internal/immutable-external-injective-v3
+           (get-in default-client [:runtime :identity-contract])))
+    (is (false? (get-in mutable-identity-client
+                        [:runtime :proof-equivalent-cursors?])))
+    (is (= :eacl/invalid-config (:type identity-option-error)))
+    (is (= :identity-immutable? (:key identity-option-error)))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
@@ -353,14 +550,14 @@
     (ds/transact! conn [{:eacl/id (:id user)}
                         {:eacl/id (:id document)}])
     (let [default-stats (atom {})]
-      (binding [backend/*backend-op-stats* default-stats]
+      (binding [source/*source-op-stats* default-stats]
         (eacl/check-permission client demand))
-      (is (zero? (get @default-stats :select-authoritative 0))))
+      (is (zero? (get @default-stats :acquire-authoritative! 0))))
     (let [explicit-stats (atom {})]
-      (binding [backend/*backend-op-stats* explicit-stats]
+      (binding [source/*source-op-stats* explicit-stats]
         (eacl/check-permission
          client (assoc demand :consistency :fully-consistent)))
-      (is (pos? (get @explicit-stats :select-authoritative 0))))))
+      (is (pos? (get @explicit-stats :acquire-authoritative! 0))))))
 
 (deftest custom-codec-cache-isolation-and-selected-snapshot-rendering-test
   (let [conn (datascript/create-conn)
@@ -381,8 +578,8 @@
      local-client [relationship-1 relationship-2])
 
     (testing "an unfingerprinted codec keeps safe client-local exact caching"
-      (is (false? (get-in local-client [:opts :managed-cache-enabled?])))
-      (is (some? (get-in local-client [:opts :current-cache-store])))
+      (is (false? (get-in local-client [:runtime :managed-cache-enabled?])))
+      (is (some? (get-in local-client [:runtime :basis-cache-store])))
       (is (true? (:allowed? (eacl/check-permission local-client demand))))
       (is (true? (:cached? (eacl/check-permission local-client demand))))
       (let [before (datascript/cache-stats local-client)]
@@ -400,14 +597,17 @@
              (custom-codec-options
               stable-observations
               {:adapter-fingerprint {:codec :eacl-id :version 1}
-               :adapter-deterministic? true}))
+               :adapter-deterministic? true
+               :identity-immutable? true}))
             query {:subject user
                    :permission :view
                    :resource/type :document
                    :first 10}
             first-page (eacl/lookup-resources stable-client query)
             before (datascript/cache-stats stable-client)]
-        (is (true? (get-in stable-client [:opts :managed-cache-enabled?])))
+        (is (true? (get-in stable-client [:runtime :managed-cache-enabled?])))
+        (is (true? (get-in stable-client
+                           [:runtime :proof-equivalent-cursors?])))
         (is (= #{"codec-document-1" "codec-document-2"}
                (set (map :id (:data first-page)))))
         (ds/transact! conn [{:application/unrelated :two}])
@@ -425,9 +625,9 @@
       (let [db (ds/db conn)
             eids (mapv #(ds/entid db [:eacl/id %])
                        [(:id user) (:id document-1) (:id document-2)])
-            externalize (get-in local-client [:opts :entid->object-id])
+            externalize (get-in local-client [:runtime :entid->object-id])
             external-ids (mapv #(externalize db %) eids)
-            internalize (get-in local-client [:opts :object-id->entid])]
+            internalize (get-in local-client [:runtime :object-id->entid])]
         (is (= (count external-ids) (count (distinct external-ids))))
         (is (= eids (mapv #(internalize db %) external-ids)))))))
 
@@ -557,7 +757,7 @@
         (is (some? error)
             "a cursor from another schema generation must not resume the walk")
         (is (= :eacl.pagination/stale-cursor (:type (ex-data error))))
-        (is (= :dependency-proof-changed (:reason (ex-data error))))
+        (is (= :frame-changed (:reason (ex-data error))))
         (let [fresh-error
               (try
                 (eacl/lookup-resources client query)
@@ -582,9 +782,20 @@
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
     (contract/assert-v8-permission-tree-contract! client)
+    (contract/assert-authorization-target-matrix!
+     {:writable client
+      :read-only (datascript/make-client conn {:read-only? true})})
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))
+
+(deftest datascript-certified-generation-plan-reuse-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (eacl/write-schema! client contract/smoke-schema)
+    (seed-objects! conn)
+    (eacl/create-relationships! client contract/smoke-relationships)
+    (contract/assert-certified-generation-plan-reuse! client)))
 
 (deftest datascript-recursive-v8-contract-test
   (let [conn (datascript/create-conn)
@@ -810,6 +1021,48 @@
     (catch #?(:clj Exception :cljs :default) ex
       (ex-data ex))))
 
+(deftest expression-admission-limits-are-client-local-test
+  (let [schema-source
+        "definition user {}
+         definition document {
+           relation reader: user
+           permission view = reader
+         }"
+        conn (datascript/create-conn)
+        permissive
+        (datascript/make-client
+         conn {:security-key "client-limits-permissive00000000"})]
+    (eacl/write-schema! permissive schema-source)
+    ;; Warm the permissive client's derived generation before constructing a
+    ;; stricter peer. The caches are client-owned and cannot cross this boundary.
+    (is (= 1 (count (:permissions (eacl/read-schema permissive)))))
+    (let [strict
+          (datascript/make-client
+           conn {:security-key "client-limits-strict000000000000"
+                 :expression-limits {:maximum-source-nodes 0}})
+          failure (thrown-data #(eacl/read-schema strict))]
+      (is (= :eacl.schema/expression-limit (:type failure)))
+      (is (= :node-count (:dimension failure)))
+      (is (= 0 (:maximum failure)))
+      (is (= 1 (:actual failure))))
+    (is (= 1 (count (:permissions (eacl/read-schema permissive))))))
+  (let [conn (datascript/create-conn)
+        strict
+        (datascript/make-client
+         conn {:security-key "client-limits-writer000000000000"
+               :expression-limits {:maximum-source-nodes 0}})
+        failure
+        (thrown-data
+         #(eacl/write-schema!
+           strict
+           "definition user {}
+            definition document {
+              relation reader: user
+              permission view = reader
+            }"))]
+    (is (= :eacl.schema/expression-limit (:type failure)))
+    (is (empty? (:permissions (schema/read-schema (ds/db conn)))))))
+
 (deftest v7-3-parser-hardening-test
   (testing "identifiers that merely start with reserved words remain legal"
     (let [client (datascript/make-client (datascript/create-conn) {})
@@ -919,15 +1172,22 @@
                                              :after
                                              (get-in page-2
                                                      [:page-info :end-cursor])))]
-    (testing "v8 acyclic cursors carry only the stable result boundary"
+    (testing "v8 acyclic cursors carry only the least-path boundary coords"
+      ;; Order ABI v2 (acyclic-keyset-pagination): an acyclic root's
+      ;; cursor is the boundary result's per-scan coordinate sequence —
+      ;; self-contained, no ordinal, no checkpoint reference. Coordinates
+      ;; stay INTERNAL inside the authenticated, basis-pinned envelope.
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 12 (:v envelope)))
-      (is (= :stable-edge
+      (is (= 13 (:v envelope)))
+      (is (= :least-path-edge
              (get-in envelope [:edge :kind])))
-      (is (= "server-1"
-             (get-in envelope [:edge :result-eid])))
+      (is (= :progress (get-in envelope [:edge :anchor])))
+      (is (vector? (get-in envelope [:edge :coords])))
+      (is (every? integer? (get-in envelope [:edge :coords])))
+      (is (nil? (get-in envelope [:edge :ordinal])))
+      (is (nil? (get-in envelope [:edge :result-eid])))
       (is (nil? (get-in envelope [:edge :direction])))
       (is (nil? (get-in envelope [:edge :path-frontiers])))
       (is (nil? (get-in envelope [:edge :heads]))))

@@ -1,0 +1,208 @@
+{:format-version 2
+ :seed 8675309
+ :random-cases 1000
+ :signed-graph-seed 2718281
+ :signed-graph-random-cases 1000
+ :cases
+ [{:input {:candidate-count 0
+           :first-eid 0
+           :last-eid 0
+           :maximum-span 1000
+           :density-multiplier 4
+           :demand 0
+           :physical-cap 256
+           :candidate-window 1000
+           :previous-width 1
+           :physical-decisions []}
+   :expected {:strategy :empty
+              :span-valid true
+              :inclusive-span 1
+              :initial-width 0
+              :grown-width 2
+              :logical-candidates 0
+              :physical-candidates 0
+              :physical-overread 0}}
+  {:input {:candidate-count 256
+           :first-eid 100
+           :last-eid 355
+           :maximum-span 1000000
+           :density-multiplier 4
+           :demand 3
+           :physical-cap 256
+           :candidate-window 1000
+           :previous-width 3
+           :physical-decisions [false true false true true false true]}
+   :expected {:strategy :dense-prefix
+              :span-valid true
+              :inclusive-span 256
+              :initial-width 3
+              :grown-width 6
+              :logical-candidates 5
+              :physical-candidates 7
+              :physical-overread 2}}
+  {:input {:candidate-count 256
+           :first-eid 1
+           :last-eid 1000000
+           :maximum-span 2000000
+           :density-multiplier 4
+           :demand 2
+           :physical-cap 256
+           :candidate-window 40
+           :previous-width 32
+           :physical-decisions [false false true false]}
+   :expected {:strategy :sparse-exact
+              :span-valid true
+              :inclusive-span 1000000
+              :initial-width 2
+              :grown-width 40
+              :logical-candidates 4
+              :physical-candidates 4
+              :physical-overread 0}}
+  {:input {:candidate-count 8
+           :first-eid 100
+           :last-eid 20
+           :maximum-span 1000
+           :density-multiplier 4
+           :demand 1
+           :physical-cap 16
+           :candidate-window 8
+           :previous-width 8
+           :physical-decisions [true false false]}
+   :expected {:strategy :sparse-exact
+              :span-valid false
+              :inclusive-span 0
+              :initial-width 1
+              :grown-width 8
+              :logical-candidates 1
+              :physical-candidates 3
+              :physical-overread 2}}
+  {:input {:candidate-count 8
+           :first-eid 0
+           :last-eid 999
+           :maximum-span 999
+           :density-multiplier 4
+           :demand 8
+           :physical-cap 4
+           :candidate-window 3
+           :previous-width 2
+           :physical-decisions [false false false]}
+   :expected {:strategy :sparse-exact
+              :span-valid false
+              :inclusive-span 0
+              :initial-width 3
+              :grown-width 3
+              :logical-candidates 3
+              :physical-candidates 3
+              :physical-overread 0}}
+  {:input {:candidate-count 10
+           :first-eid 1
+           :last-eid 10
+           :maximum-span 100
+           :density-multiplier 4
+           :demand 5
+           :physical-cap 0
+           :candidate-window 10
+           :previous-width 3
+           :physical-decisions []}
+   :expected {:strategy :dense-prefix
+              :span-valid true
+              :inclusive-span 10
+              :initial-width 0
+              :grown-width 0
+              :logical-candidates 0
+              :physical-candidates 0
+              :physical-overread 0}}
+  {:input {:candidate-count 10
+           :first-eid 1
+           :last-eid 10
+           :maximum-span 100
+           :density-multiplier 4
+           :demand 5
+           :physical-cap 256
+           :candidate-window 0
+           :previous-width 3
+           :physical-decisions []}
+   :expected {:strategy :dense-prefix
+              :span-valid true
+              :inclusive-span 10
+              :initial-width 0
+              :grown-width 0
+              :logical-candidates 0
+              :physical-candidates 0
+              :physical-overread 0}}
+  {:input {:candidate-count 10
+           :first-eid 1
+           :last-eid 10
+           :maximum-span 100
+           :density-multiplier 0
+           :demand 1
+           :physical-cap 256
+           :candidate-window 10
+           :previous-width 1
+           :physical-decisions [true]}
+   :expected {:strategy :sparse-exact
+              :span-valid true
+              :inclusive-span 10
+              :initial-width 1
+              :grown-width 2
+              :logical-candidates 1
+              :physical-candidates 1
+              :physical-overread 0}}
+  {:input {:candidate-count 1
+           :first-eid 7
+           :last-eid 7
+           :maximum-span 0
+           :density-multiplier 4
+           :demand 1
+           :physical-cap 1
+           :candidate-window 1
+           :previous-width 1
+           :physical-decisions [false]}
+   :expected {:strategy :sparse-exact
+              :span-valid false
+              :inclusive-span 0
+              :initial-width 1
+              :grown-width 1
+              :logical-candidates 1
+              :physical-candidates 1
+              :physical-overread 0}}]
+ :signed-graph-cases
+ [{:input {:vertices []
+           :edges []
+           :components []}
+   :expected {:status :accepted}}
+  {:input {:vertices [0 1]
+           :edges [{:source 0 :target 1 :sign :positive}]
+           :components [[0] [1]]}
+   :expected {:status :accepted}}
+  {:input {:vertices [0]
+           :edges [{:source 0 :target 0 :sign :negative}]
+           :components [[0]]}
+   :expected {:status :negative-cycle
+              :edge-index 0
+              :source 0
+              :target 0}}
+  {:input {:vertices [0 1]
+           :edges [{:source 0 :target 1 :sign :negative}
+                   {:source 1 :target 0 :sign :positive}]
+           :components [[0] [1]]}
+   :expected {:status :invalid-component-certificate}}
+  {:input {:vertices [0 1]
+           :edges [{:source 1 :target 0 :sign :positive}
+                   {:source 0 :target 1 :sign :positive}]
+           :components [[0 1]]}
+   :expected {:status :noncanonical-edge-sequence}}
+  {:input {:vertices [0 1]
+           :edges []
+           :components [[0] [0 1]]}
+   :expected {:status :invalid-component-certificate}}
+  {:input {:vertices [0 1 2]
+           :edges [{:source 0 :target 1 :sign :positive}
+                   {:source 1 :target 0 :sign :positive}
+                   {:source 1 :target 2 :sign :negative}
+                   {:source 2 :target 1 :sign :positive}]
+           :components [[2 1 0]]}
+   :expected {:status :negative-cycle
+              :edge-index 2
+              :source 1
+              :target 2}}]}

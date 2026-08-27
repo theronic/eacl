@@ -44,7 +44,7 @@
 
 (defn- assert-stale-proof! [data]
   (is (= :eacl.pagination/stale-cursor (:type data)))
-  (is (= :dependency-proof-changed (:reason data))))
+  (is (= :frame-changed (:reason data))))
 
 (deftest order-perturbing-write-rejects-current-only-cursor-test
   (let [{:keys [conn client]} (seed!)

@@ -145,7 +145,8 @@
   :backend-capability-regression :EACL-FORMAL-054
   :plan-cases 16
   :well-formed-post-selection-cases 48
-  :generated-logical-work-paths 5
+  :generated-logical-work-paths 4
+  :generated-plan-only-work-vector true
   :generated-logical-work-response-token-states 2
   :generated-java-exhaustive true
   :generated-javascript-exhaustive true
@@ -159,20 +160,23 @@
    :selection-shapes
    [:absent :malformed :identical :same-scope-revision-pass
     :same-scope-revision-fail :different-scope]}
-  :production-callers [:datomic :datahike :datascript]
-  :captured-current-specialization
+  :production-callers [:datomic :datahike :datascript :datalevin]
+  :minimize-latency-plan-only-vector
   {:generated-plan-decisions 1
    :generated-post-selection-decisions 0
-   :backend-selection-calls 0
-   :same-source-scope :identity-reflexivity}
+   :backend-selection-calls 0}
   :direct-selected-current-path
   {:generated-plan-decisions 1
    :generated-post-selection-decisions 1
    :backend-selection-calls 1
-   :source-scope-reads-at-most 3
+   :source-scope-reads 2
    :native-revision-reads 1
    :order-hint-reads 1
-   :exact-locator-reads 1}
+   :exact-locator-reads 1
+   :source-lifecycle-reads 2
+   :snapshot-id-reads 1
+   :basis-kind-reads 1}
+  :response-token-additional-source-or-adapter-reads 0
   :logical-work-report
   "formal/verification/consistency-decision.edn"
   :performance-report "formal/verification/performance-gates.edn"
@@ -347,7 +351,7 @@
     [:source-scope :snapshot-id :native-revision :exact-locator]
     :client-local-exact-locator-included true}
    :current-cache-generated-selection true
-   :snapshot-exact-generated-selection true
+   :exact-basis-generated-selection true
    :tests 7 :assertions 192 :status :passed}
   :cljs-public-state-trace
   {:namespace eacl.formal.production-kernel-test
@@ -385,6 +389,32 @@
   eacl.engine.v8/can?
   :jvm-public-client-root-lookups-per-call 1
   :clj-cljs-result-suites :passed
+  :status :passed}
+ :operator-phase-b
+ {:generated-entry-point
+  "EaclKernel.__default/DecideOperatorRecursiveCommand"
+  :generated-policy
+  "formal/dafny/OperatorRecursiveGeneratedPolicy.dfy"
+  :proof-refinement
+  "formal/dafny/OperatorRecursiveGeneratedPolicyRefinement.dfy"
+  :production-refinement
+  "formal/verification/operator-phase-b.edn"
+  :java {:tests 3 :assertions 20 :status :passed}
+  :javascript
+  {:full-suite-tests 50 :full-suite-assertions 11993 :status :passed}
+  :whole-tree {:modules 48 :verified-obligations 9361 :status :passed}
+  :artifact-size
+  {:java-source 2294075
+   :java-classes-with-runtime 2041834
+   :javascript-with-runtime 1030862
+   :browser-iife 632867
+   :status :passed-under-existing-reviewed-maxima}
+  :production-direct-call false
+  :binding
+  :digest-closed-executable-differential-and-production-mutation-refinement
+  :public-routing :enabled-after-performance-and-release-gates-passed
+  :public-operator-expression-writes
+  :enabled-after-performance-and-release-gates-passed
   :status :passed}
  :remaining
  [:production-adapter-trace-refinement

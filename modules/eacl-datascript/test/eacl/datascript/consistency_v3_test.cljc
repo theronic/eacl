@@ -4,6 +4,7 @@
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -56,6 +57,47 @@
            error
       (ex-data error))))
 
+(deftest recreated-connection-rejects-prior-source-token-test
+  (let [first-conn (datascript/create-conn)
+        first-client (managed-client first-conn {})
+        _ (seed! first-conn first-client)
+        document-2 (eacl/spice-object :document "document-2")
+        relationship-2 (eacl/->Relationship user :reader document-2)
+        _ (ds/transact! first-conn [{:eacl/id "document-2"}])
+        old-token
+        (:zed/token
+         (eacl/create-relationship! first-client relationship))
+        _ (eacl/create-relationship! first-client relationship-2)
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 1}
+        first-page (eacl/lookup-resources first-client query)
+        oracle-stream
+        (:data
+         (eacl/lookup-resources
+          first-client
+          (assoc query :first 10 :cache? false :populate-cache? false)))
+        second-conn (datascript/create-conn)
+        second-client (managed-client second-conn {})
+        _ (seed! second-conn second-client)
+        _ (ds/transact! second-conn [{:eacl/id "document-2"}])
+        _ (eacl/create-relationships!
+           second-client [relationship relationship-2])]
+    (is (= :eacl.consistency/incomparable-scope
+           (:type
+            (error-data
+             #(eacl/can?
+               second-client
+               user :view document
+               (consistency/at-least-as-fresh old-token))))))
+    (contract/assert-cursor-source-transition!
+     {:client second-client
+      :query query
+      :first-page first-page
+      :oracle-stream oracle-stream
+      :durability :non-durable})))
+
 (deftest map-can-rejects-malformed-consistency-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})
@@ -75,12 +117,63 @@
   (let [conn (datascript/create-conn)
         authorization (managed-client conn {})
         adapter
-        (datascript-backend/snapshot-adapter
+        (datascript-backend/basis-adapter
          (ds/db conn)
-         (dissoc (:opts authorization) :conn))]
+         (select-keys (:runtime authorization)
+                      datascript-backend/adapter-config-keys))]
     (is (not
          (backend/supports?
           adapter :consistency :fully-consistent)))))
+
+(deftest proof-contract-violation-degrades-to-available-exact-authorization-test
+  (let [conn (datascript/create-conn)
+        reports (atom [])
+        client
+        (managed-client
+         conn {:proof-contract-reporter #(swap! reports conj %)})
+        _ (seed! conn client)
+        _ (eacl/create-relationship! client relationship)
+        original datascript-backend/basis-adapter
+        violating-adapter
+        (fn [db options]
+          (assoc-in
+           (original db options)
+           [:eacl.backend.v8/operations :proof-frame]
+           (fn [relation-ids]
+             (mapv (fn [relation-id]
+                     [relation-id (inc (:max-tx db))])
+                   relation-ids))))]
+    (with-redefs [datascript-backend/basis-adapter violating-adapter]
+      (let [first-decision
+            (eacl/check-permission
+             client {:subject user :permission :view :resource document})
+            repeated-decision
+            (eacl/check-permission
+             client {:subject user :permission :view :resource document})]
+        (is (true? (:allowed? first-decision)))
+        (is (false? (:cached? first-decision)))
+        (is (true? (:allowed? repeated-decision)))
+        (is (true? (:cached? repeated-decision))
+            "exact-basis caching remains available after disablement"))
+      (ds/transact! conn [{:eacl/id "unrelated-after-violation"}])
+      (is (true?
+           (eacl/can?
+            client
+            {:subject user :permission :view :resource document})))
+      (let [snapshot (eacl/snapshot client)]
+        (try
+          (is (string? (eacl/basis-token snapshot))
+              "revision-token issuance does not depend on managed proofs")
+          (finally
+            (eacl/release! snapshot))))
+      (let [stats (datascript/cache-stats client)]
+        (is (true? (:managed-lifting-disabled? stats)))
+        (is (= 1 (:proof-contract-violations stats)))
+        (is (= {:relation-generation-above-revision 1}
+               (:proof-contract-violation-reasons stats))))
+      (is (= 1 (count @reports)))
+      (is (= :relation-generation-above-revision
+             (:reason (first @reports)))))))
 
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
   (let [conn (datascript/create-conn)
@@ -156,7 +249,7 @@
       (let [data (error-data
                   #(eacl/lookup-resources authorization page-2-query))]
         (is (= :eacl.pagination/stale-cursor (:type data)))
-        (is (= :dependency-proof-changed (:reason data)))))))
+        (is (= :frame-changed (:reason data)))))))
 
 (deftest unrelated-write-preserves-authenticated-page-cache-identity-test
   (let [conn (datascript/create-conn)
@@ -260,7 +353,7 @@
                   :cache? false}
         resource-count (dissoc resources :first)
         subject-count (dissoc subjects :first)]
-    (with-redefs [cache/resolve-current!
+    (with-redefs [cache/resolve-basis!
                   (fn [& _]
                     (throw
                      (ex-info "cache resolution must be unreachable" {})))]
@@ -354,31 +447,17 @@
     (is (= :eacl/invalid-config (:type removed-option-error)))
     (is (= [:exact-snapshot-registry-size]
            (:unknown-keys removed-option-error)))
-    (is (= :eacl/unsupported-capability (:type exact-error)))
-    (is (= :consistency (:capability exact-error)))
-    (is (= :at-exact-snapshot (:requested exact-error)))
+    (is (= :eacl.consistency/exact-snapshot-unavailable
+           (:type exact-error)))
+    (is (= :exact-snapshot-unavailable (:reason exact-error)))
     (is (= before after)
         "unsupported exact selection must fail before cache access")))
 
-(deftest low-level-db-entry-point-bypasses-completed-cache-test
-  (let [conn (datascript/create-conn)
-        client (managed-client conn {})
-        _ (seed! conn client)
-        _ (eacl/create-relationship! client relationship)
-        before (datascript/cache-stats client)]
-    (is (true?
-         (datascript/datascript-can?
-          (ds/db conn) (:opts client)
-          user :view document consistency/fully-consistent)))
-    (is (true?
-         (datascript/datascript-can?
-          (ds/db conn) (:opts client)
-          user :view document consistency/fully-consistent)))
-    (let [after (datascript/cache-stats client)]
-      (is (= (+ 2 (:bypasses before))
-             (:bypasses after)))
-      (is (= (:exact-hits before)
-             (:exact-hits after))))))
+#?(:clj
+   (deftest raw-db-entry-points-are-removed-test
+     (is (nil? (ns-resolve 'eacl.datascript.core 'datascript-can?)))
+     (is (nil? (ns-resolve 'eacl.datascript.core
+                           'datascript-read-relationships)))))
 
 (deftest cloned-connections-are-distinct-sources-and-listener-independent-test
   (let [original-listen! ds/listen!
@@ -464,7 +543,7 @@
          (:cached?
           (eacl/lookup-resources authorization query))))
     (eacl/delete-relationship! authorization relationship)
-    (is (= :eacl/unsupported-capability
+    (is (= :eacl.consistency/exact-snapshot-unavailable
            (:type
             (error-data
              #(eacl/can?
@@ -478,8 +557,10 @@
         _ (seed! conn authorization)
         _ (eacl/create-relationship! authorization relationship)
         before-adapter
-        (datascript-backend/snapshot-adapter
-         (ds/db conn) (:opts authorization))
+        (datascript-backend/basis-adapter
+         (ds/db conn)
+         (select-keys (:runtime authorization)
+                      datascript-backend/adapter-config-keys))
         relation-id
         (:relation-id
          (first
@@ -493,8 +574,7 @@
          (ds/datoms
           (ds/db conn) :eavt document-eid
           relationship-storage/reverse-attribute))]
-    (is (integer? (:schema-stamp before-proof)))
-    (is (= relation-id (ffirst (:relation-stamps before-proof))))
+    (is (= relation-id (ffirst before-proof)))
     (testing "unsupported raw mutation leaves the managed proof unchanged"
       (ds/transact!
        conn
@@ -503,8 +583,10 @@
          relationship-storage/reverse-attribute
          (:v reverse-datom)]])
       (let [half-changed-adapter
-            (datascript-backend/snapshot-adapter
-             (ds/db conn) (:opts authorization))]
+            (datascript-backend/basis-adapter
+             (ds/db conn)
+             (select-keys (:runtime authorization)
+                          datascript-backend/adapter-config-keys))]
         (is (= before-proof
                (backend/invoke
                 half-changed-adapter :proof-frame [relation-id]))))
@@ -516,11 +598,13 @@
         :resource document})
       (let [after-proof
             (backend/invoke
-             (datascript-backend/snapshot-adapter
-              (ds/db conn) (:opts authorization))
+             (datascript-backend/basis-adapter
+              (ds/db conn)
+              (select-keys (:runtime authorization)
+                           datascript-backend/adapter-config-keys))
              :proof-frame [relation-id])]
-        (is (< (second (first (:relation-stamps before-proof)))
-               (second (first (:relation-stamps after-proof)))))))))
+        (is (< (second (first before-proof))
+               (second (first after-proof))))))))
 
 (deftest relationship-cursor-changed-proof-is-stale-test
   (let [conn (datascript/create-conn)
@@ -549,7 +633,7 @@
                authorization
                (assoc query :after cursor)))]
         (is (= :eacl.pagination/stale-cursor (:type data)))
-        (is (= :dependency-proof-changed (:reason data)))))
+        (is (= :frame-changed (:reason data)))))
     (let [fresh-page-1
           (eacl/read-relationships authorization query)
           fresh-cursor
@@ -566,7 +650,7 @@
                  authorization
                  (assoc query :after fresh-cursor)))]
           (is (= :eacl.pagination/stale-cursor (:type data)))
-          (is (= :dependency-proof-changed (:reason data)))))
+          (is (= :frame-changed (:reason data)))))
       (testing "a changed consistency contract is a different query scope"
         (is (= :eacl.pagination/invalid-cursor
                (:type

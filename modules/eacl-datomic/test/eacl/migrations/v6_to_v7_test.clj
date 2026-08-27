@@ -22,14 +22,51 @@
 (def v7-only-attr-idents
   "Attributes in v7-schema that did not exist in a v6 database."
   #{:eacl/schema-version
+    :eacl/permission-storage-version
     :eacl/storage-version
+    :eacl.permission/expression-payload
+    :eacl.permission/resource-type+permission-name
     relationship-storage/forward-attribute
     relationship-storage/reverse-attribute})
 
+(def legacy-permission-index-schema
+  "Composite permission attributes installed by released pre-expression
+  Datomic schemas. They remain installed after migration and derive nil-filled
+  tuples from the resource/permission fields on expression entities."
+  [{:db/ident
+    :eacl.permission/resource-type+source-relation-name+target-type+permission-name
+    :db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/permission-name]
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+   {:db/ident
+    :eacl.permission/resource-type+source-relation-name+target-type+target-name
+    :db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/target-name]
+    :db/cardinality :db.cardinality/one
+    :db/index true}
+   {:db/ident
+    :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
+    :db/valueType :db.type/tuple
+    :db/tupleAttrs [:eacl.permission/resource-type
+                    :eacl.permission/source-relation-name
+                    :eacl.permission/target-type
+                    :eacl.permission/target-name
+                    :eacl.permission/permission-name]
+    :db/cardinality :db.cardinality/one
+    :db/unique :db.unique/identity}])
+
 (def v6-schema
-  "A faithful v6 database schema: the shared attribute definitions (identical
-  in v6 & v7) plus the v6 relationship-entity attributes."
+  "A faithful v6 database schema: shared definitions, legacy permission
+  indices, and the v6 relationship-entity attributes."
   (vec (concat (remove #(contains? v7-only-attr-idents (:db/ident %)) schema/v7-schema)
+               legacy-permission-index-schema
                mig/v6-relationship-schema)))
 
 (def schema-str
@@ -105,11 +142,13 @@
         (is (= 0 (:normalized-schema-entity-ids report)))
         (is (= 2 (:v6-entities-retracted report)))
         (is (true? (get-in report [:verify :complete?])))
-        (testing "re-asserting an unchanged schema is a zero-delta no-op"
+        (testing "logical relations retain identity while flat permissions are replaced"
           (is (empty? (get-in report [:schema-deltas :relations :additions])))
           (is (empty? (get-in report [:schema-deltas :relations :retractions])))
-          (is (empty? (get-in report [:schema-deltas :permissions :additions])))
-          (is (empty? (get-in report [:schema-deltas :permissions :retractions]))))))
+          (is (= 3 (count (get-in report
+                                  [:schema-deltas :permissions :additions]))))
+          (is (= 3 (count (get-in report
+                                  [:schema-deltas :permissions :retractions])))))))
 
     (testing "migration converges to tuple-only storage and stamps it"
       (is (= :v7 (mig/detect-storage-version (d/db conn))))

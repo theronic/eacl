@@ -1,6 +1,8 @@
 (ns eacl.datomic.fixtures
-  (:require [datomic.api :as d]
+  (:require [clojure.java.io :as io]
+            [datomic.api :as d]
             [eacl.core :refer [spice-object]]
+            [eacl.datomic.schema :as schema]
             [eacl.datomic.impl :as impl :refer [Relation Relationship Permission]]))
 
 ; These are helpers specific to CA (todo move out):
@@ -17,6 +19,17 @@
 (def ->backup (partial spice-object :backup))
 (def ->backup-schedule (partial spice-object :backup_schedule))
 (def ->host (partial spice-object :host))
+
+(def expression-schema-string
+  "The canonical expression-only form of the historical Datomic fixture."
+  (slurp (io/resource "eacl/fixtures.schema")))
+
+(defn install-expression-schema!
+  "Installs the normal fixture through the public v8 schema writer.  The
+  historical `relations+permissions` value remains available only to tests
+  that deliberately exercise raw flat-storage rejection or legacy internals."
+  [conn]
+  (schema/write-schema! conn expression-schema-string))
 
 (def relations+permissions
   [;; Schema

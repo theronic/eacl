@@ -1,0 +1,116 @@
+{:format-version 1
+ :captured-at "2026-08-26"
+ :purpose :production-operator-million-resource-datomic-qualification
+ :environment
+ {:uri-prefix "datomic:dev://localhost:4334/eacl-operator-experiment-"
+  :datomic-peer "1.0.7705"
+  :datomic-transactor "1.0.7705"
+  :transactor-heap-bytes 4294967296
+  :branch "agent/design-operator-engine-performance"
+  :qualified-parent-head "f295cf5c15b790f56aa10db075aecfce7934a23d"
+  :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+  :java "26.0.2"
+  :os "Darwin 25.4.0 arm64"}
+ :command
+ "clj-nrepl-eval -p 7800 \"(eacl.operator-engine.datomic-experiments/start! {:host \\\"localhost\\\" :port 4334 :resource-count 1000000 :batch-size 2000})\""
+ :source
+ "modules/eacl-datomic/test/eacl/operator_engine/datomic_experiments.clj"
+ :source-sha256
+ "0a1e3bd6788590747df814b03ee64c3555bb13af1c912ff1ffade5f7fe78764d"
+ :fixture
+ {:resources 1000000
+  :candidate-relationships 1000000
+  :selective-relationships 250000
+  :forward-tuple-datoms 1250000
+  :reverse-tuple-datoms 1250000
+  :transaction-batches 500
+  :batch-size 2000
+  :final-basis-t 999511}
+ :run
+ {:database-uri
+  "datomic:dev://localhost:4334/eacl-operator-experiment-ae1899fa-824c-4958-86b3-6164027a4332"
+  :database-deleted true
+  :database-absence-confirmed true
+  :total-elapsed-ms 52414.843209
+  :public
+  {:present-check {:median-nanos 185667 :p95-nanos 262791}
+   :missing-check {:median-nanos 137584 :p95-nanos 177625}
+   :union-first-page
+   {:items 20 :median-nanos 624458 :p95-nanos 815500}
+   :intersection-first-page
+   {:items 20
+    :median-nanos 8075875
+    :p95-nanos 9246959
+    :ids
+    ["r-0000000" "r-0000004" "r-0000008" "r-0000012"
+     "r-0000016" "r-0000020" "r-0000024" "r-0000028"
+     "r-0000032" "r-0000036" "r-0000040" "r-0000044"
+     "r-0000048" "r-0000052" "r-0000056" "r-0000060"
+     "r-0000064" "r-0000068" "r-0000072" "r-0000076"]}
+   :exclusion-first-page
+   {:items 20
+    :median-nanos 7786625
+    :p95-nanos 17184917
+    :ids
+    ["r-0000001" "r-0000002" "r-0000003" "r-0000005"
+     "r-0000006" "r-0000007" "r-0000009" "r-0000010"
+     "r-0000011" "r-0000013" "r-0000014" "r-0000015"
+     "r-0000017" "r-0000018" "r-0000019" "r-0000021"
+     "r-0000022" "r-0000023" "r-0000025" "r-0000026"]}
+   :adjacent-pages {:first-items 20 :second-items 20 :overlap 0}
+   :bounded-counts
+   {:union
+    {:limit 1000 :result-count 1000 :truncated true
+     :median-nanos 3691041 :p95-nanos 5482625}
+    :intersection
+    {:limit 1000 :result-count 1000 :truncated true
+     :median-nanos 7895834 :p95-nanos 8323125}
+    :exclusion
+    {:limit 1000 :result-count 1000 :truncated true
+     :median-nanos 5576500 :p95-nanos 5938375}}
+   :default-exact-count
+   {:nanos 275437292
+    :outcome :limit-exceeded
+    :limit-kind :advanced-datoms
+    :limit 100000}
+   :qualified-exact-counts
+   {:limits {:max-derived-grants 2000000
+             :max-advanced-datoms 2000000
+             :max-queued-work 2000000}
+    :union {:nanos 3045270375 :result-count 1000000}
+    :intersection {:nanos 1811759416 :result-count 250000}
+    :exclusion {:nanos 4287375375 :result-count 750000}}}
+  :physical-prototype
+  {:dense
+   {:candidate-count 256
+    :eid-span 256
+    :accepted 64
+    :equal-decisions true
+    :exact-nanos 973916
+    :prefix-nanos 226000
+    :prefix-values-realized 64}
+   :sparse
+   {:candidate-count 256
+    :eid-span 1000499
+    :accepted 63
+    :equal-decisions true
+    :exact-nanos 1370916
+    :prefix-nanos 78072417
+    :prefix-values-realized 250000}
+   :adaptive-demand
+   {:logical-demand 21
+    :physical-candidates 147
+    :batches 3
+    :accepted 21}}}
+ :qualification
+ {:status :passed
+  :automatic-invariants 12
+  :public-operator-routing-default true
+  :public-expression-write-default true
+  :intersection-count 250000
+  :exclusion-count 750000
+  :bounded-and-exhaustive-measurements-separated true
+  :default-production-limit-preserved true
+  :dense-prefix-scalar-equivalent true
+  :sparse-wide-prefix-rejected-by-evidence true
+  :original-demo-database-modified false}}

@@ -56,70 +56,101 @@
     (catch Exception error
       (throw (or (typed-transaction-error error) error)))))
 
+(defn- native-with
+  [db tx-data]
+  (d/with db (vec tx-data)))
+
+(defn- datom-attribute
+  [db-before db-after attribute]
+  (if (keyword? attribute)
+    attribute
+    (or (:db/ident (d/entity db-after attribute))
+        (:db/ident (d/entity db-before attribute)))))
+
+(defn- normalize-report-datom
+  [db-before db-after datom]
+  {:e (:e datom)
+   :a (datom-attribute db-before db-after (:a datom))
+   :v (:v datom)
+   :tx (:tx datom)
+   :added (boolean (:added datom))})
+
+(defn- schema-entity?
+  [db entity-id]
+  (let [entity (d/entity db entity-id)]
+    (or (= "schema-string" (:eacl/id entity))
+        (some? (:eacl.relation/relation-name entity))
+        (some? (:eacl.permission/permission-name entity)))))
+
+(defn- schema-storage-datom?
+  [db-before db-after {:keys [e a]}]
+  (let [attribute-namespace (namespace a)
+        schema-attribute?
+        (or (= a :eacl/schema-string)
+            (= a :eacl/schema-generation)
+            (= attribute-namespace "eacl.relation")
+            (= attribute-namespace "eacl.permission")
+            (and (= a :eacl/id)
+                 (or (schema-entity? db-before e)
+                     (schema-entity? db-after e))))]
+    (and schema-attribute?
+         (not= (get (d/entity db-before e) a)
+               (get (d/entity db-after e) a)))))
+
+(defn- relation-coordinate
+  [db relation-id]
+  (when relation-id
+    (let [entity (d/entity db relation-id)
+          resource-type (:eacl.relation/resource-type entity)
+          relation-name (:eacl.relation/relation-name entity)
+          subject-type (:eacl.relation/subject-type entity)]
+      (when (and resource-type relation-name subject-type)
+        [:relation resource-type relation-name subject-type]))))
+
 (def ^:private api
   {:backend-id :datahike
    :db d/db
    :entid ddb/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))
-   :snapshot-adapter datahike-backend/snapshot-adapter
+   :basis-adapter datahike-backend/basis-adapter
+   :basis-adapter-config-keys datahike-backend/adapter-config-keys
+   :source datahike-backend/source
+   :basis-kind datahike-backend/basis-kind
+   :database-source-scope datahike-backend/database-source-scope
+   :db-native-revision
+   (fn [db]
+     {:revision (:max-tx db)
+      :exact-locator
+      (some-> (get-in db [:meta :datahike/commit-id]) str)})
    :relationship-retraction-count relationship-retraction-count
+   :native-with native-with
+   :normalize-report-datom normalize-report-datom
+   :transaction-datom? #(= :db/txInstant (:a %))
+   :schema-storage-datom? schema-storage-datom?
+   :relation-version-attribute :eacl/relation-version
    :transact! transact-native!
    ;; Vars, not values: late binding keeps instrumentation (with-redefs in
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :generation #'schema/current-schema-generation
+            :plan-replacement #'schema/plan-schema-replacement
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
           :relationship-relation-id #'impl/relationship-relation-id
+          :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship
           :tx-delete-object #'impl/tx-delete-object
           :affected-relation-ids #'impl/affected-relation-ids
           :read-relationships #'impl/read-relationships}
    :extra-client-opt-keys #{}})
 
-(defn datahike-read-relationships
-  [db opts filters]
-  (orchestration/read-relationships api db opts filters))
-
-(defn datahike-write-relationships!
-  [conn opts updates]
-  (orchestration/write-relationships! api conn opts updates))
-
-(defn datahike-delete-object!
-  [conn opts object]
-  (orchestration/delete-object! api conn opts object))
-
-(defn datahike-check-permission
-  [db opts subject permission resource consistency]
-  (orchestration/check-permission
-   api db opts subject permission resource consistency))
-
-(defn datahike-can?
-  [db opts subject permission resource consistency]
-  (orchestration/can? api db opts subject permission resource consistency))
-
-(defn datahike-lookup-resources
-  [db opts query]
-  (orchestration/lookup-resources api db opts query))
-
-(defn datahike-count-resources
-  [db opts query]
-  (orchestration/count-resources api db opts query))
-
-(defn datahike-lookup-subjects
-  [db opts query]
-  (orchestration/lookup-subjects api db opts query))
-
-(defn datahike-count-subjects
-  [db opts query]
-  (orchestration/count-subjects api db opts query))
-
 (defn- require-datahike-client!
   [client fn-name]
   (when-not (orchestration/client? client :datahike)
     (throw (ex-info (str fn-name " requires a Datahike EACL client.")
-                    {:type :eacl/invalid-client}))))
+                    {:type :eacl/invalid-client :eacl/error :eacl/invalid-client}))))
 
 (defn expire-cache!
   "Rotates one Datahike client's local cache/token lifecycle."
@@ -143,22 +174,41 @@
   (require-datahike-client! client "cache-stats")
   (orchestration/cache-stats client))
 
+(defn refresh-metrics!
+  "Evicts cache-only metrics; optionally recomputes structural metrics now."
+  ([client]
+   (require-datahike-client! client "refresh-metrics!")
+   (orchestration/refresh-metrics! client))
+  ([client opts]
+   (require-datahike-client! client "refresh-metrics!")
+   (orchestration/refresh-metrics! client opts)))
+
 (defn make-client
-  "Builds an IAuthorization client over a datahike conn.
+  "Builds an EACL acl over a datahike conn.
 
   Options (unknown keys throw :eacl/invalid-config - a silently ignored key
   means silently wrong ID coercion, audit 5):
   - :entid->object-id  (fn [db eid] external-id) - canonical.
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
-  - :cache - omitted creates a bounded client-private current-generation
+  - :cache - omitted creates a bounded client-private basis
     cache; eacl.cache/no-cache disables it; a config map bounds it.
-    Exact hits are snapshot-local; complete native generation proofs let
-    unchanged answers survive unrelated forward transactions. Authorization
+    Exact hits require complete basis identity; complete native generation
+    proofs may lift unchanged answers between ordinary bases in the same
+    lifecycle in either revision direction. Authorization
     mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
+  - :identity-immutable? - whether one internal object's public identity is
+    immutable for this source lifecycle. The built-in :eacl/id codec defaults
+    true; set false when IDs may be reassigned so cursors stay exact-basis-bound.
+    Custom codecs must set true explicitly to enable proof-equivalent cursors.
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides."
   [conn config-opts]
   (orchestration/make-client api conn config-opts))
+
+(defn db
+  "Returns the immutable Datahike DB held by an EACL-created snapshot."
+  [snapshot]
+  (orchestration/snapshot-db snapshot :datahike))
 
 (defn create-conn
   "A datahike connection carrying EACL's schema. See

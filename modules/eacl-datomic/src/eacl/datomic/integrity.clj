@@ -3,31 +3,33 @@
 
   Nothing in this namespace runs on EACL's authorization hot path. Callers
   choose when to pay for a database scan or a schema-version read."
-  (:require [datomic.api :as d]
+  (:require [eacl.client.orchestration :as orchestration]
+            [eacl.core :as eacl]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as indexed]))
 
 (defn client-schema-status
-  "Reads the connection's current :eacl/schema-version once and compares it
-  with the diagnostic generation captured when `client` was created (or last
-  changed through that client's write-schema!).
+  "Captures one current client basis and reports whether it carries EACL's
+  certified schema generation.
 
-  This is an explicit diagnostic for detecting out-of-band schema writes. EACL
-  deliberately does not perform this read for every authorization operation.
-  Authorization correctness does not depend on this diagnostic: each request
-  derives its proof-keyed schema generation from its selected immutable DB."
+  The shared Acl has no construction-time schema generation to become stale:
+  every read derives schema state from its selected immutable basis and the
+  runtime registry is generation-keyed. Consequently the old :outdated state
+  is intentionally gone. This explicit diagnostic performs one ordinary
+  source acquisition and never runs on an authorization hot path."
   [client]
-  (let [cached-version  (some-> client :opts :diagnostic-schema-version deref)
-        current-version (some-> client :conn d/db indexed/schema-version)
-        status          (cond
-                          (and (nil? cached-version) (nil? current-version)) :unstamped
-                          (= cached-version current-version) :current
-                          :else :outdated)]
-    {:status status
-     :current? (= :current status)
-     :cache-enabled? (some? cached-version)
-     :client-schema-version (some-> cached-version str)
-     :database-schema-version (some-> current-version str)}))
+  (let [selected (eacl/snapshot client)]
+    (try
+      (let [db (orchestration/snapshot-db selected :datomic)
+            generation (indexed/schema-version db)
+            status (if (some? generation) :current :unstamped)]
+        {:status status
+         :current? (= :current status)
+         :cache-enabled? (some? generation)
+         :client-schema-version (some-> generation str)
+         :database-schema-version (some-> generation str)})
+      (finally
+        (eacl/release! selected)))))
 
 (defn dangling-relationship-halves
   "Returns a lazy sequence of relationship halves whose matching peer half is
@@ -45,7 +47,7 @@
   ([db {:keys [sample-size] :or {sample-size 20}}]
    (when-not (and (integer? sample-size) (not (neg? sample-size)))
      (throw (ex-info ":sample-size must be a non-negative integer."
-                     {:type :eacl.integrity/invalid-options
+                     {:type :eacl.integrity/invalid-options :eacl/error :eacl.integrity/invalid-options
                       :sample-size sample-size})))
    (let [{:keys [count by-half sample]}
          (reduce (fn [{:keys [count] :as report} half]
@@ -95,7 +97,7 @@
   ([db {:keys [batch-size] :or {batch-size 1000}}]
    (when-not (and (integer? batch-size) (pos? batch-size))
      (throw (ex-info ":batch-size must be a positive integer."
-                     {:type :eacl.integrity/invalid-options
+                     {:type :eacl.integrity/invalid-options :eacl/error :eacl.integrity/invalid-options
                       :batch-size batch-size})))
    (map #(impl/guard-schema-version db (repair-tx-data %))
         (partition-all batch-size (dangling-relationship-halves db)))))

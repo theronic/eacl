@@ -25,7 +25,8 @@
   This is the direct width-one path: the only effectful call is the adapter
   scan at the canonical head (`fetch-values`), which is the preserved seam
   for any future concurrency change."
-  (:require [eacl.backend.v8 :as backend]))
+  (:require [eacl.backend.v8 :as backend]
+            [eacl.request.counters :as request-counters]))
 
 (def default-physical-chunk-size 64)
 (def default-sidecar-cap 16)
@@ -118,7 +119,7 @@
                           :discovered (:discovered state)}
                          detail))))
 
-(defn- schedule
+(defn ^:no-doc schedule
   "Admits fresh work exactly once and pushes it after the residual: the
   residual is pushed first, then new work reversed onto the right edge, so
   successors run depth-first in canonical order before the residual resumes.
@@ -287,6 +288,8 @@
   [adapter]
   (fn [{:keys [operation bound-eid] :as descriptor}]
     (let [options (cond-> {:direction :asc}
+                    (:limit descriptor)
+                    (assoc :limit (:limit descriptor))
                     bound-eid (assoc :bound-eid bound-eid
                                      :inclusive-bound? false))]
       (case operation
@@ -557,13 +560,27 @@
 (def ^:dynamic *observer-stats*
   "When bound to an atom, each completed run bulk-reports its work deltas
   under the public counter names (:derived-grants for logical admissions,
-  :advanced-datoms for physical commands, :queued-work for transitions).
+  :advanced-datoms for physical commands, :queued-work for transitions, and
+  :fetched-values for values consumed from adapters).
   The default nil costs nothing on the hot path — one check per run."
+  nil)
+
+(def ^:dynamic *aggregate-work-stats*
+  "Request-owned cumulative work meter used by aggregate resource contracts.
+  Unlike *observer-stats*, this state may be consulted by orchestration after
+  a semantic quantum completes."
   nil)
 
 (defn- report-run!
   [before final-state]
-  (when-let [stats *observer-stats*]
+  (request-counters/add!
+   :commands
+   (- (:commands final-state) (:commands before 0)))
+  (request-counters/add!
+   :fetched-values
+   (- (:fetched-values final-state) (:fetched-values before 0)))
+  (doseq [stats (distinct (remove nil? [*observer-stats*
+                                        *aggregate-work-stats*]))]
     (swap! stats
            (fn [counters]
              (-> (or counters {})
@@ -575,7 +592,10 @@
                             (:commands before 0)))
                  (update :queued-work (fnil + 0)
                          (- (:transitions final-state)
-                            (:transitions before 0)))))))
+                            (:transitions before 0)))
+                 (update :fetched-values (fnil + 0)
+                         (- (:fetched-values final-state)
+                            (:fetched-values before 0)))))))
   final-state)
 
 (defn resume
@@ -593,7 +613,9 @@
                   (assoc :admitted (transient (:admitted checkpoint-state))
                          :results (transient [])
                          :base-discovered (:discovered checkpoint-state)))
-        before (select-keys state [:admissions :commands :transitions])]
+        before (select-keys state
+                            [:admissions :commands :transitions
+                             :fetched-values])]
     (report-run! before (finish (run-loop context state target cut-point!)))))
 
 (defn run-forward

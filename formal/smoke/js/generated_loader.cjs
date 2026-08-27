@@ -18,6 +18,7 @@ vm.runInNewContext(
   `${source}
 module.exports = {
   EaclKernel,
+  SignedDependencyStratification,
   Semantics,
   AcyclicEngine,
   ConsistencyDecision,
@@ -27,6 +28,7 @@ module.exports = {
   IndexedRefinement,
   IndexedTraversal,
   OrderedMerge,
+  OperatorRecursiveGeneratedPolicy,
   PageWindow,
   RecursiveEngine,
   RoutingCertificate,

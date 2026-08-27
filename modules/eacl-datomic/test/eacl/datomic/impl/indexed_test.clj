@@ -370,7 +370,7 @@
                (vec (sort-by relationship-sort-key (:data page)))))
         (is (= :relationship-index
                (get-in page [:page-info :start-cursor :kind])))
-        (is (= #{:kind :v :scan-index :subject-id :resource-id}
+        (is (= #{:kind :v :anchor :scan-index :subject-id :resource-id}
                (set (keys (get-in page [:page-info :start-cursor])))))))))
 
 (deftest lookup-subjects-tests
@@ -420,8 +420,12 @@
                resources))
         (testing "end cursor should be the last resource"
           (is page1-end-cursor)
-          (let [last-resource-ent
-                (d/entity db (:result-eid page1-end-cursor))
+          (let [;; ABI v2: acyclic cursors carry coordinates; the boundary
+                ;; result's eid is the deepest coordinate
+                ;; (acyclic-keyset-pagination).
+                boundary-eid (or (:result-eid page1-end-cursor)
+                                 (peek (:coords page1-end-cursor)))
+                last-resource-ent (d/entity db boundary-eid)
                 last-resource-internal (spice-object :server (:eacl/id last-resource-ent))]
             (is (= (spice-object :server "account2-server1") last-resource-internal))))))
 
@@ -781,11 +785,20 @@
   ;; Audit §2: the old [:a]..[:z] index-range made relations whose subject-type
   ;; keyword collates outside that window invisible to permission evaluation.
   (with-mem-conn [conn schema/v7-schema]
-    @(d/transact conn [(Relation :zone :owner :zebra)       ; sorts after :z
-                       (Relation :zone :editor :Admin)      ; sorts before :a
+    (schema/write-schema! conn
+                          "definition zebra {}
+
+                           definition zone {
+                             relation owner: zebra
+                             permission admin = owner
+                           }")
+    ;; These deliberately bypass the DSL because this test covers Datomic's
+    ;; complete keyword collation domain, including names the SpiceDB grammar
+    ;; does not accept.  The permission itself remains canonical expression
+    ;; storage.
+    @(d/transact conn [(Relation :zone :editor :Admin)      ; sorts before :a
                        (Relation :zone :viewer :my.app/user) ; namespaced
-                       (Relation :zone :ownerx :user)       ; prefix-isolation foil for :owner
-                       (Permission :zone :admin {:relation :owner})])
+                       (Relation :zone :ownerx :user)])      ; prefix-isolation foil for :owner
     @(d/transact conn [{:db/id "z1" :eacl/id "zebra-1"}
                        {:db/id "zone1" :eacl/id "zone-1"}])
     @(d/transact conn (impl/tx-relationship (d/db conn)
@@ -1202,31 +1215,46 @@
 
 (deftest reproduce-infinite-recursion-test
   (testing "lookup-resources should handle cyclic permissions without throwing"
-    ;; Introduce a dependency cycle:
-    ;; server/view -> server/admin -> account/admin -> server/view
-    @(d/transact *conn*
-                 [;; 1. Relation for account to have a primary server
-                  (Relation :account :server-cycle :server)
-        ;; 2. Permission making account/admin depend on server/view, completing the cycle.
-                  (Permission :account :admin {:arrow :server-cycle :permission :view})])
+    (with-mem-conn [conn schema/v7-schema]
+      (schema/write-schema!
+       conn
+       "definition user {}
 
-    ;; 3. Create a relationship connecting a specific account and server.
-    @(d/transact *conn*
-                 (impl/tx-relationship (d/db *conn*)
-                                       (Relationship (->server :test/server1) :server-cycle (->account :test/account1))))
-    (let [db' (d/db *conn*)]
-      ;; This call will trigger the infinite recursion in get-permission-paths
-      ;; when checking for :view on a :server. The expected behavior is an exception,
-      ;; which this test confirms. A proper fix would involve adding cycle detection
-      ;; to get-permission-paths.
+        definition account {
+          relation owner: user
+          relation server_cycle: server
+          permission admin = owner + server_cycle->view
+        }
 
-      ; this causes infinite loop because we do not guard against loops yet.
-      ; this should be prevented at schema write time, not runtime.
-      (testing "cycles should not throw (we return empty), as they should be prevented at schema write time"
-        (is (lookup-resources db'
-                              {:subject (->user :test/user1)
-                               :permission :view
-                               :resource/type :server}))))))
+        definition server {
+          relation account: account
+          permission view = account->admin
+        }")
+      @(d/transact conn [{:db/id "user" :eacl/id "user"}
+                         {:db/id "account" :eacl/id "account"}
+                         {:db/id "server" :eacl/id "server"}])
+      @(d/transact
+        conn
+        (into []
+              (mapcat #(impl/tx-relationship (d/db conn) %))
+              [(Relationship (spice-object :user "user")
+                             :owner
+                             (spice-object :account "account"))
+               (Relationship (spice-object :account "account")
+                             :account
+                             (spice-object :server "server"))
+               (Relationship (spice-object :server "server")
+                             :server_cycle
+                             (spice-object :account "account"))]))
+      (testing "a cross-permission cycle reaches its base grant without looping"
+        (is (= [(spice-object :server "server")]
+               (paginated->spice
+                (d/db conn)
+                (lookup-resources
+                 (d/db conn)
+                 {:subject (spice-object :user [:eacl/id "user"])
+                  :permission :view
+                  :resource/type :server}))))))))
 
 (deftest permission-paths-caching-test
   (let [db (d/db *conn*)]
@@ -1278,9 +1306,9 @@
 (deftest permission-paths-cache-is-scoped-per-database-test
   (with-mem-conn [conn1 schema/v7-schema]
     (with-mem-conn [conn2 schema/v7-schema]
-      @(d/transact conn1 fixtures/relations+permissions)
+      (fixtures/install-expression-schema! conn1)
       @(d/transact conn1 fixtures/entity-fixtures)
-      @(d/transact conn2 fixtures/relations+permissions)
+      (fixtures/install-expression-schema! conn2)
       @(d/transact conn2 fixtures/entity-fixtures)
 
       (let [db1 (d/db conn1)

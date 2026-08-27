@@ -5,7 +5,7 @@
   orchestration remains responsible for authenticated decoding, immutable
   snapshot selection, and backend calls, but it cannot use a cursor or cache
   candidate that an authoritative kernel rejected."
-  (:require [eacl.backend.v8 :as backend]))
+  (:require [eacl.exact-integer :as exact-integer]))
 
 (def ^:dynamic *kernel-crossing-stats*
   "Optional atom counting generated-kernel invocations by operation keyword.
@@ -118,9 +118,9 @@
    #?(:clj (integer? value)
       :cljs (and (number? value)
                  (js/Number.isSafeInteger value)))
-   (<= backend/minimum-exact-integer
+   (<= exact-integer/minimum
        value
-       backend/maximum-exact-integer)))
+       exact-integer/maximum)))
 
 (defn- safe-natural?
   [value]
@@ -334,7 +334,7 @@
     input))
 
 (def ^:private current-cache-stages
-  #{:eligibility :generation :exact-entry :snapshot-exact-entry
+  #{:eligibility :generation :exact-entry :exact-only-entry
     :managed-entry})
 
 (def ^:private current-cache-actions
@@ -343,9 +343,8 @@
     :use-exact-entry
     :probe-managed-entry
     :use-managed-entry
-    :compute-current-value
-    :use-snapshot-exact-entry
-    :compute-snapshot-exact-value})
+    :compute-selected-value
+    :compute-exact-value})
 
 (defn- validate-current-cache-input!
   [input]
@@ -1721,7 +1720,6 @@
     :invalid-authentication
     :scope-mismatch
     :expired
-    :conflict
     :snapshot-unavailable
     :history-divergence})
 
@@ -1887,15 +1885,15 @@
       :use-exact-entry
       :probe-managed-entry)
 
-    :snapshot-exact-entry
+    :exact-only-entry
     (if available?
-      :use-snapshot-exact-entry
-      :compute-snapshot-exact-value)
+      :use-exact-entry
+      :compute-exact-value)
 
     :managed-entry
     (if available?
       :use-managed-entry
-      :compute-current-value)))
+      :compute-selected-value)))
 
 (defn- expected-enumeration-route
   [{:keys [schema-identity certificate-schema-identity
@@ -2336,6 +2334,12 @@
   [selection]
   (let [selection
         (cond
+          ;; Production callers retain the normalized `{:kernel ...}` map.
+          ;; Recognize that closed configuration shape before protocol
+          ;; satisfaction: on the JVM, a negative `satisfies?` probe against a
+          ;; persistent map walks protocol extension metadata and dominated
+          ;; small generated decisions such as completed-cache hits.
+          (and (map? selection) (contains? selection :kernel)) selection
           (kernel? selection) {:kernel selection}
           (map? selection) selection
           :else
@@ -2354,7 +2358,7 @@
       (boundary-error!
        "EACL v8 requires a generated DecisionKernel."
        {:kernel-type (str (type kernel))}))
-    {:kernel kernel}))
+    selection))
 
 (defn- invoke-kernel
   [kernel operation input]

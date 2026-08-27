@@ -38,10 +38,9 @@
          backend/required-snapshot-operations)
    :proof-frame
    (fn [relation-ids]
-     {:schema-stamp 1
-      :relation-stamps (mapv (fn [relation-id]
-                               [relation-id 1])
-                             relation-ids)})))
+     (mapv (fn [relation-id]
+             [relation-id 1])
+           relation-ids))))
 
 (defn- test-adapter []
   (backend/make-adapter
@@ -67,12 +66,10 @@
     (assoc (operation-map)
            :proof-frame
            (fn [relation-ids]
-             {:schema-stamp generation
-              :relation-stamps
-              (mapv (fn [relation-id]
-                      [relation-id generation])
-                    relation-ids)})
-           :source-scope (constantly {:source-id :one}))}))
+             (mapv (fn [relation-id]
+                     [relation-id generation])
+                   relation-ids))
+           :schema-generation (constantly generation))}))
 
 (defn- error-data [f]
   (try
@@ -80,6 +77,25 @@
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
+
+(deftest basis-adapter-configuration-is-closed-test
+  (is (= {:converter identity}
+         (backend/validate-adapter-config!
+          :test #{:converter} {:converter identity})))
+  (doseq [[config operation]
+          [[nil :configure]
+           [{:conn ::connection} :conn]
+           [{:source ::source} :source]
+           [{:writer ::writer} :writer]
+           [{:source-lifecycle "leaked"} :source-lifecycle]]]
+    (let [data
+          (error-data
+           #(backend/validate-adapter-config!
+             :test #{:converter} config))]
+      (is (= :eacl/invalid-backend-role (:type data)))
+      (is (= (:type data) (:eacl/error data)))
+      (is (= :adapter (:role data)))
+      (is (= operation (:operation data))))))
 
 (deftest descending-merge-retains-maximum-eid-test
   (let [maximum-eid #?(:clj Long/MAX_VALUE
@@ -124,8 +140,9 @@
     (is (= {:mode :fully-consistent}
            (backend/require-consistency!
             adapter consistency/fully-consistent)))
-    (is (= {:schema-stamp 1 :relation-stamps []}
+    (is (= []
            (backend/invoke adapter :proof-frame [])))
+    (is (nil? (backend/invoke adapter :schema-generation)))
     (testing "unsupported guarantees fail before execution"
       (is (= {:type :eacl/unsupported-capability
               :capability :consistency
@@ -150,14 +167,54 @@
     (doseq [generation (range 100)]
       (let [cache
             (engine/schema-cache-for!
-             registry (generation-adapter generation))]
+             registry
+             (generation-adapter generation)
+             {:backend :test
+              :source-id :one
+              :branch nil
+              :source-lifecycle "test/initial"
+              :basis-kind :ordinary
+              :revision generation
+              :exact-locator generation
+              :backend-snapshot-id {:generation generation}}
+             generation)]
         (is (= generation (:schema-version cache)))))
     (is (= 64 (count @registry)))
     (is (every? #(= :one (get-in % [3 :source-id]))
                 (keys @registry)))))
 
+(deftest unavailable-proof-uses-a-fresh-request-local-schema-cache-test
+  (let [registry (atom {})
+        adapter
+        (backend/make-adapter
+         {:id :test
+          :capabilities
+          {:consistency #{:fully-consistent}
+           :snapshots #{:current}
+           :cursor #{:forward :reverse}
+           :transactions #{}
+           :cache-proofs #{:snapshot-bound}
+           :runtime #{#?(:clj :clj :cljs :cljs)}}
+          :operations (operation-map)})
+        first-cache (engine/schema-cache-for! registry adapter)
+        second-cache (engine/schema-cache-for! registry adapter)]
+    (is (true? (:request-local? first-cache)))
+    (is (nil? (:schema-version first-cache)))
+    (is (some? (:parsed-schema first-cache)))
+    (is (not (identical? first-cache second-cache)))
+    (is (empty? @registry))))
+
+(deftest schema-generation-resolution-does-not-read-proof-frame-test
+  (let [stats (atom {})
+        adapter (generation-adapter 11)]
+    (is (= 11
+           (binding [backend/*backend-op-stats* stats]
+             (engine/schema-version adapter))))
+    (is (= 1 (get @stats :schema-generation)))
+    (is (zero? (get @stats :proof-frame 0)))))
+
 (deftest invalid-v8-adapter-test
-  (is (= :eacl/invalid-backend-adapter
+  (is (= :eacl/invalid-backend-role
          (:type
           (error-data
            #(backend/make-adapter
@@ -170,17 +227,115 @@
            #(backend/make-adapter
              {:id :broken
               :capabilities {:consistency #{:eventually-maybe}}
-              :operations (operation-map)}))))))
+              :operations (operation-map)})))))
+  (is (= {:type :eacl/invalid-backend-adapter
+          :operation :schema-generation}
+         (select-keys
+          (error-data
+           #(backend/make-adapter
+             {:id :broken
+              :capabilities {}
+              :operations
+              (assoc (operation-map) :schema-generation :not-callable)}))
+          [:type :operation]))))
 
 (deftest adapter-obligation-registry-test
-  (is (= (conj backend/required-snapshot-operations :proof-frame)
+  (is (= (into (conj backend/required-snapshot-operations :proof-frame)
+               backend/optional-snapshot-operations)
          (set
           (keys
            (backend/certification-obligations)))))
   (is (contains?
        (backend/certification-obligations
         :subject->resources)
-       :strict-order)))
+       :strict-order))
+  (is (= #{:schema-generation :direct-match-many?}
+         backend/optional-snapshot-operations))
+  (is (every?
+       (backend/certification-obligations :schema-generation)
+       [:at-most-one-index-probe
+        :memoized-per-selected-adapter
+        :independent-of-ordered-generations
+        :nil-when-uncertified])))
+
+(deftest operator-capability-pairing-is-closed-test
+  (testing "canonical expressions are structurally required"
+    (let [data
+          (error-data
+           #(backend/make-adapter
+             {:id :missing-expression
+              :capabilities {}
+              :operations (dissoc (operation-map)
+                                  :permission-expression)}))]
+      (is (= :eacl/invalid-backend-role (:type data)))
+      (is (= :permission-expression (:operation data)))))
+  (testing "native batch capability and operation are inseparable"
+    (doseq [config
+            [{:capabilities
+              {:direct-membership-batch
+               #{backend/direct-membership-batch-capability}}
+              :operations (operation-map)}
+             {:capabilities {}
+              :operations
+              (assoc (operation-map)
+                     :direct-match-many? (constantly []))}]]
+      (let [data
+            (error-data
+             #(backend/make-adapter
+               (merge {:id :mismatched-batch} config)))]
+        (is (= :eacl/invalid-backend-adapter (:type data)))
+        (is (= :direct-match-many? (:operation data))))))
+  (let [scalar (backend/make-adapter
+                {:id :scalar
+                 :capabilities {}
+                 :operations (operation-map)})
+        native (backend/make-adapter
+                {:id :native
+                 :capabilities
+                 {:direct-membership-batch
+                  #{backend/direct-membership-batch-capability}}
+                 :operator-physical-policy
+                 {:id :test-batch-policy-v1 :parameters {}}
+                 :operations
+                 (assoc (operation-map)
+                        :direct-match-many? (constantly []))})]
+    (is (= {:permission-expression
+            backend/permission-expression-capability
+            :direct-membership
+            {:mode :certified-scalar-fallback-v1
+             :maximum-width
+             backend/maximum-direct-membership-batch-width
+             :physical-policy
+             {:id :certified-scalar-fallback-v1 :parameters {}}}}
+           (backend/operator-capability-identity scalar)))
+    (is (= backend/direct-membership-batch-capability
+           (get-in (backend/operator-capability-identity native)
+                   [:direct-membership :mode])))
+    (is (= {:id :test-batch-policy-v1 :parameters {}}
+           (get-in (backend/operator-capability-identity native)
+                   [:direct-membership :physical-policy])))))
+
+(deftest schema-generation-is-optional-independent-and-memoized-test
+  (let [reads (atom 0)
+        adapter
+        (backend/make-adapter
+         {:id :schema-generation-only
+          :capabilities
+          {:cache-proofs #{:snapshot-bound}}
+          :operations
+          (assoc (dissoc (operation-map) :proof-frame)
+                 :schema-generation
+                 (fn []
+                   (swap! reads inc)
+                   7))})]
+    (is (= 7 (backend/invoke adapter :schema-generation)))
+    (is (= 7 (backend/invoke adapter :schema-generation)))
+    (is (= 1 @reads))
+    (is (not (backend/supports?
+              adapter :cache-proofs :ordered-generations)))
+    (is (= :eacl/unsupported-capability
+           (:type
+            (error-data #(backend/invoke adapter :proof-frame [])))))))
 
 (deftest optional-runtime-guards-fail-closed-test
   (let [operations
@@ -250,8 +405,12 @@
                  [:order-hint
                   (fn [& _] (dec backend/minimum-exact-integer))
                   [] :exact-integer]
+                 [:basis-kind
+                  (fn [& _] :foreign-backend)
+                  [] :known-basis-kind]
+                 [:schema-generation
+                  (fn [& _] -1) [] :exact-natural-or-nil]
                  [:snapshot-id (fn [& _] :not-a-map) [] :map-shape]
-                 [:source-scope (fn [& _] nil) [] :map-shape]
                  [:native-revision (fn [& _] []) [] :map-shape]
                  [:relation-defs (fn [& _] [:not-a-map])
                   [:document :reader] :finite-definition-sequence]
@@ -260,15 +419,7 @@
                  [:all-permission-nodes (fn [& _] [])
                   [] :finite-node-set]
                  [:direct-match? (fn [& _] nil)
-                  [:user 1 2 :document 3] :boolean-result]
-                 [:select-current (fn [& _] {})
-                  [] :adapter-or-unavailable]
-                 [:select-authoritative (fn [& _] :snapshot)
-                  [100] :adapter-or-unavailable]
-                 [:select-at-least (fn [& _] false)
-                  [{} 100] :adapter-or-unavailable]
-                 [:select-exact (fn [& _] [])
-                  [{} 100] :adapter-or-unavailable]]]
+                  [:user 1 2 :document 3] :boolean-result]]]
           (is (= obligation
                  (:obligation
                   (violation operation implementation args)))
@@ -354,17 +505,9 @@
         (merge
          (operation-map)
          {:snapshot-id (fn [] {:database-id :test :basis-t 1})
-          ;; A real store mints one lifecycle per source; a constant here
-          ;; would alias every test adapter into one plan-cache identity.
-          :source-lifecycle
-          (let [lifecycle (str (gensym "compiled-once-store-"))]
-            (fn [] lifecycle))
-          :source-scope (fn [] {:source-id :test :branch nil})
           :proof-frame
           (fn [relation-ids]
-            {:schema-stamp 1
-             :relation-stamps
-             (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
+            (mapv (fn [relation-id] [relation-id 1]) relation-ids))
           :object-id->internal identity
           :internal-id->object identity
           :permission-defs
@@ -448,14 +591,13 @@
                          :cache-proofs #{:ordered-generations
                                          :snapshot-bound}
                          :runtime #{#?(:clj :clj :cljs :cljs)}}
-                        :operations
-                        (assoc operations
-                               :source-lifecycle
-                               (let [lifecycle
-                                     (str (gensym "compiled-once-other-"))]
-                                 (fn [] lifecycle)))})]
-            (is (= [] (:data (engine/lookup-resources
-                              other (query 1003)))))
+                        :operations operations})]
+            (is (= []
+                   (:data
+                    (binding [engine/*schema-cache*
+                              (engine/make-schema-cache other 1)]
+                      (engine/lookup-resources
+                       other (query 1003))))))
             (is (= 2 @seals)
                 "a distinct source never shares another store's plan")))))))
 
@@ -510,7 +652,7 @@
                        adapter :user 1 10 :document nil)))))
         (is (= 1 (:subject->resources-scans @work)))
         (is (= 0 (:fetched-projection-values
-                   (subproblem/stats store)))))
+                  (subproblem/stats store)))))
       (testing "a distinct consumer issues the same exact adapter request"
         (is (= (vec (range 1 21))
                (vec

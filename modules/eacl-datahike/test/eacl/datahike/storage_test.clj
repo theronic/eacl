@@ -1,13 +1,19 @@
 (ns eacl.datahike.storage-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.set]
+            [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
             [eacl.datahike.integrity :as integrity]
+            [eacl.datahike.schema :as schema]
             [eacl.relationships.storage :as relationship-storage]
-            [eacl.schema.model :as model]))
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.model :as model])
+  (:import [java.nio.file CopyOption FileVisitOption Files Path
+            StandardCopyOption]
+           [java.nio.file.attribute FileAttribute]))
 
 (def ^:private relationship-schema
   "definition user {}
@@ -21,9 +27,268 @@
      relation peer: node
    }")
 
+(def ^:private operator-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = base & reader - banned
+   }")
+
+(def ^:private replacement-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = reader - banned
+   }")
+
+(def ^:private no-permission-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+   }")
+
+(def ^:private invalid-negative-cycle-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     permission a = reader - b
+     permission b = a
+   }")
+
 (def ^:private modes
   {"attributes as keywords" false
    "attributes as numeric refs" true})
+
+(deftest derived-expression-metrics-are-not-schema-attributes-test
+  (let [idents (set (map :db/ident schema/datahike-schema))]
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/retired-expression-attributes)))))
+
+(defn- exception-data [thunk]
+  (try
+    (thunk)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(deftest expression-admission-limits-are-client-local-test
+  (let [conn (datahike/create-conn)]
+    (try
+      (schema/write-schema! conn relationship-schema)
+      (let [permissive (datahike/make-client conn {})
+            strict (datahike/make-client
+                    conn {:expression-limits {:maximum-source-nodes 0}})]
+        (is (= 1 (count (:permissions (eacl/read-schema permissive)))))
+        (let [failure (exception-data #(eacl/read-schema strict))]
+          (is (= :eacl.schema/expression-limit (:type failure)))
+          (is (= :node-count (:dimension failure)))
+          (is (= 0 (:maximum failure))))
+        (is (= 1 (count (:permissions (eacl/read-schema permissive))))))
+      (finally
+        (d/release conn))))
+  (let [conn (datahike/create-conn)]
+    (try
+      (let [failure
+            (exception-data
+             #(schema/write-schema!
+               conn relationship-schema
+               {:expression-limits {:maximum-source-nodes 0}}))]
+        (is (= :eacl.schema/expression-limit (:type failure)))
+        (is (empty? (:permissions (schema/read-schema (d/db conn))))))
+      (finally
+        (d/release conn)))))
+
+(defn- copy-tree! [^Path source ^Path target]
+  (with-open [paths (Files/walk source (make-array FileVisitOption 0))]
+    (doseq [^Path path (iterator-seq (.iterator paths))]
+      (let [destination (.resolve target (.relativize source path))]
+        (if (Files/isDirectory path (make-array java.nio.file.LinkOption 0))
+          (Files/createDirectories destination (make-array FileAttribute 0))
+          (Files/copy
+           path destination
+           (into-array
+            CopyOption
+            [StandardCopyOption/REPLACE_EXISTING
+             StandardCopyOption/COPY_ATTRIBUTES])))))))
+
+(defn- delete-tree! [^Path root]
+  (when (Files/exists root (make-array java.nio.file.LinkOption 0))
+    (with-open [paths (Files/walk root (make-array FileVisitOption 0))]
+      (doseq [^Path path (reverse (vec (iterator-seq (.iterator paths))))]
+        (Files/deleteIfExists path)))))
+
+(defn- expression-storage-projection [db]
+  {:schema (schema/read-schema db)
+   :permissions
+   (->> (schema/read-permissions db)
+        (map #(select-keys % expression-persistence/expression-attributes))
+        (sort-by :eacl/id)
+        vec)})
+
+(deftest permission-storage-is-expression-only-and-replaceable-test
+  (doseq [[label attribute-refs?] modes]
+    (testing label
+      (let [conn (datahike/create-conn nil
+                                       {:attribute-refs? attribute-refs?})]
+        (try
+          (schema/write-schema! conn operator-storage-schema)
+          (let [before-db (d/db conn)
+                before (schema/read-permissions before-db)
+                view-id
+                (expression-persistence/->expression-id :document :view)
+                view-eid (ddb/entid before-db [:eacl/id view-id])
+                before-payload
+                (:eacl.permission/expression-payload
+                 (first (filter #(= view-id (:eacl/id %)) before)))]
+            (is (= 2 (count before)))
+            (is (every? #(not-any? (fn [attribute]
+                                     (contains? % attribute))
+                                   expression-persistence/legacy-flat-attributes)
+                        before))
+            (is (nil? (ddb/entid before-db :eacl.permission/full-key)))
+            (schema/write-schema! conn replacement-storage-schema)
+            (let [after-db (d/db conn)
+                  after (schema/read-permissions after-db)
+                  view (first (filter #(= view-id (:eacl/id %)) after))]
+              (is (= view-eid (ddb/entid after-db [:eacl/id view-id])))
+              (is (= 2 (count after)))
+              (is (not= before-payload
+                        (:eacl.permission/expression-payload view)))
+              (is (= :exclusion
+                     (:op (:root
+                           (expression-persistence/decode-entity view))))))
+            (let [stable-db (d/db conn)
+                  stable-schema (schema/read-schema stable-db)
+                  stable-generation
+                  (schema/current-schema-generation stable-db)
+                  data
+                  (exception-data
+                   #(schema/write-schema! conn
+                                          invalid-negative-cycle-schema))
+                  after-failure (d/db conn)]
+              (is (= :eacl.schema/unstratified-exclusion (:type data)))
+              (is (= stable-generation
+                     (schema/current-schema-generation after-failure)))
+              (is (= stable-schema (schema/read-schema after-failure))))
+            (schema/write-schema! conn no-permission-storage-schema)
+            (is (empty? (schema/read-permissions (d/db conn))))
+            (is (= 2 (count (schema/read-permissions before-db)))))
+          (finally
+            (d/release conn)))))))
+
+(deftest permission-storage-rejects-flat-mixed-and-duplicate-rows-test
+  (testing "flat-only"
+    (let [conn (datahike/create-conn)]
+      (try
+        (d/transact
+         conn
+         [{:eacl/id "flat"
+           :eacl.permission/resource-type :document
+           :eacl.permission/permission-name :view
+           :eacl.permission/source-relation-name :self
+           :eacl.permission/target-type :relation
+           :eacl.permission/target-name :reader}])
+        (is (= :flat-only-representation
+               (:reason
+                (exception-data #(schema/read-schema (d/db conn))))))
+        (finally
+          (d/release conn)))))
+  (testing "mixed"
+    (let [conn (datahike/create-conn)]
+      (try
+        (schema/write-schema! conn relationship-schema)
+        (let [permission (first (schema/read-permissions (d/db conn)))]
+          (d/transact conn [[:db/add [:eacl/id (:eacl/id permission)]
+                             :eacl.permission/target-type :relation]])
+          (is (= :mixed-flat-and-expression
+                 (:reason
+                  (exception-data #(schema/read-schema (d/db conn)))))))
+        (finally
+          (d/release conn)))))
+  (testing "duplicate"
+    (let [conn (datahike/create-conn)]
+      (try
+        (schema/write-schema! conn relationship-schema)
+        (let [permission (first (schema/read-permissions (d/db conn)))]
+          (d/transact conn [(assoc permission :eacl/id "duplicate")])
+          (is (= :duplicate-expression
+                 (:reason
+                  (exception-data #(schema/read-schema (d/db conn)))))))
+        (finally
+          (d/release conn))))))
+
+(deftest expression-storage-export-import-and-file-backup-restore-test
+  (doseq [[label attribute-refs?] modes]
+    (testing label
+      (let [source-root
+            (Files/createTempDirectory
+             "eacl-datahike-expression-source-"
+             (make-array FileAttribute 0))
+            backup-root
+            (Files/createTempDirectory
+             "eacl-datahike-expression-backup-"
+             (make-array FileAttribute 0))
+            restore-root
+            (Files/createTempDirectory
+             "eacl-datahike-expression-restore-"
+             (make-array FileAttribute 0))
+            source-path (.resolve source-root "db")
+            backup-path (.resolve backup-root "db")
+            restore-path (.resolve restore-root "db")
+            source
+            (datahike/create-conn
+             nil {:store {:backend :file :path (str source-path)}
+                  :attribute-refs? attribute-refs?})
+            source-config (atom nil)
+            restored (atom nil)]
+        (try
+          (schema/write-schema! source operator-storage-schema)
+          (let [source-db (d/db source)
+                expected (expression-storage-projection source-db)
+                exported-source
+                (:eacl/schema-string
+                 (d/entity source-db [:eacl/id "schema-string"]))
+                imported
+                (datahike/create-conn
+                 nil {:attribute-refs? attribute-refs?})]
+            (try
+              (schema/write-schema! imported exported-source)
+              (is (= expected
+                     (expression-storage-projection (d/db imported)))
+                  "source export/import preserves canonical expressions")
+              (finally
+                (let [config (:config (d/db imported))]
+                  (d/release imported)
+                  (d/delete-database config))))
+            (reset! source-config (:config source-db))
+            (d/release source)
+            (copy-tree! source-path backup-path)
+            (copy-tree! backup-path restore-path)
+            (let [restored-config
+                  (assoc-in @source-config [:store :path] (str restore-path))
+                  restore-conn (d/connect restored-config)]
+              (reset! restored restore-conn)
+              (is (= expected
+                     (expression-storage-projection (d/db restore-conn)))
+                  "closed file-store backup/restore preserves expression rows")))
+          (finally
+            (when-let [restore-conn @restored]
+              (d/release restore-conn))
+            (try
+              (d/release source)
+              (catch Exception _))
+            (doseq [root [source-root backup-root restore-root]]
+              (delete-tree! root))))))))
 
 (defn- walk-relationship-pages
   [client query]

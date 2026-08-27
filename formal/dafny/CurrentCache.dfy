@@ -1,15 +1,24 @@
-include "CacheKernel.dfy"
 include "SnapshotOracle.dfy"
 
 module CurrentCache {
   import Semantics
-  import CacheKernel
   import SnapshotOracle
 
-  datatype RequestClass =
-    | CurrentSnapshot
-    | ExactSnapshot
-    | ArbitraryDatabaseValue
+  datatype RelationDependency = RelationDependency(
+    resourceType: string,
+    relationName: string
+  )
+
+  function ObjectTypes(
+    objects: seq<Semantics.ObjectRef>
+  ): set<string> {
+    set item <- objects :: item.typeName
+  }
+
+  datatype BasisClass =
+    | OrdinaryBasis
+    | HistoricalBasis
+    | InadmissibleBasis
 
   datatype EngineAuthority =
     | LegacyAuthority
@@ -18,7 +27,7 @@ module CurrentCache {
 
   function EvaluationAuthority(
     configured: EngineAuthority,
-    requestClass: RequestClass,
+    basisClass: BasisClass,
     completedAnswerCacheEnabled: bool
   ): EngineAuthority
   {
@@ -27,13 +36,13 @@ module CurrentCache {
 
   lemma CacheEligibilityDoesNotSelectEngineAuthority(
     configured: EngineAuthority,
-    requestClass: RequestClass,
+    basisClass: BasisClass,
     completedAnswerCacheEnabled: bool
   )
     ensures
       EvaluationAuthority(
         configured,
-        requestClass,
+        basisClass,
         completedAnswerCacheEnabled
       ) == configured
   {
@@ -43,7 +52,7 @@ module CurrentCache {
     | EligibilityStage
     | GenerationStage
     | ExactEntryStage
-    | SnapshotExactEntryStage
+    | ExactOnlyEntryStage
     | ManagedEntryStage
 
   datatype CurrentCacheAction =
@@ -52,9 +61,8 @@ module CurrentCache {
     | UseExactEntry
     | ProbeManagedEntry
     | UseManagedEntry
-    | ComputeCurrentValue
-    | UseSnapshotExactEntry
-    | ComputeSnapshotExactValue
+    | ComputeSelectedValue
+    | ComputeExactValue
 
   function DecideCurrentCache(
     stage: CurrentCacheStage,
@@ -67,10 +75,10 @@ module CurrentCache {
       if available then ProbeExactEntry else BypassCurrentCache
     case ExactEntryStage =>
       if available then UseExactEntry else ProbeManagedEntry
-    case SnapshotExactEntryStage =>
-      if available then UseSnapshotExactEntry else ComputeSnapshotExactValue
+    case ExactOnlyEntryStage =>
+      if available then UseExactEntry else ComputeExactValue
     case ManagedEntryStage =>
-      if available then UseManagedEntry else ComputeCurrentValue
+      if available then UseManagedEntry else ComputeSelectedValue
   }
 
   lemma CurrentCacheHitRequiresAvailableEntry(
@@ -78,11 +86,10 @@ module CurrentCache {
     available: bool
   )
     ensures DecideCurrentCache(stage, available).UseExactEntry? ==>
-              stage.ExactEntryStage? && available
+              (stage.ExactEntryStage? || stage.ExactOnlyEntryStage?) &&
+              available
     ensures DecideCurrentCache(stage, available).UseManagedEntry? ==>
               stage.ManagedEntryStage? && available
-    ensures DecideCurrentCache(stage, available).UseSnapshotExactEntry? ==>
-              stage.SnapshotExactEntryStage? && available
   {
   }
 
@@ -96,47 +103,44 @@ module CurrentCache {
   {
   }
 
-  lemma CurrentCacheComputationRequiresManagedMiss(
+  lemma CacheComputationRequiresASelectedBasisMiss(
     stage: CurrentCacheStage,
     available: bool
   )
-    ensures DecideCurrentCache(stage, available).ComputeCurrentValue? ==>
+    ensures DecideCurrentCache(stage, available).ComputeSelectedValue? ==>
               stage.ManagedEntryStage? && !available
-    ensures DecideCurrentCache(stage, available).ComputeSnapshotExactValue? ==>
-              stage.SnapshotExactEntryStage? && !available
+    ensures DecideCurrentCache(stage, available).ComputeExactValue? ==>
+              stage.ExactOnlyEntryStage? && !available
   {
   }
 
   datatype CurrentCacheDecision<T> =
-    | CurrentMiss
-    | ExactCurrentHit(value: T)
-    | ManagedCurrentHit(value: T)
+    | SelectedBasisMiss
+    | ExactBasisHit(value: T)
+    | ManagedLiftedHit(value: T)
 
-  predicate CompletedAnswerCacheable(
-    requestClass: RequestClass,
-    canonicalExactSnapshotSelected: bool
+  predicate ExactTierEligible(
+    basisClass: BasisClass,
+    completeBasisIdentity: bool
   ) {
-    requestClass.CurrentSnapshot? ||
-    (requestClass.ExactSnapshot? && canonicalExactSnapshotSelected)
+    completeBasisIdentity &&
+    (basisClass.OrdinaryBasis? || basisClass.HistoricalBasis?)
   }
 
-  lemma ArbitraryDatabaseValuesBypassCompletedAnswers(
-    canonicalExactSnapshotSelected: bool
+  lemma InadmissibleValuesBypassCompletedAnswers(
+    completeBasisIdentity: bool
   )
-    ensures !CompletedAnswerCacheable(
-              ArbitraryDatabaseValue,
-              canonicalExactSnapshotSelected
+    ensures !ExactTierEligible(
+              InadmissibleBasis,
+              completeBasisIdentity
             )
   {
   }
 
-  lemma ExactRequestsRequireCanonicalSnapshotIdentity(
-    canonicalExactSnapshotSelected: bool
+  lemma EveryAdmittedBasisRequiresCompleteIdentity(
+    basisClass: BasisClass
   )
-    ensures CompletedAnswerCacheable(
-              ExactSnapshot,
-              canonicalExactSnapshotSelected
-            ) == canonicalExactSnapshotSelected
+    ensures !ExactTierEligible(basisClass, false)
   {
   }
 
@@ -217,8 +221,8 @@ module CurrentCache {
   {
   }
 
-  datatype SnapshotExactIdentity =
-    | SnapshotExactIdentity(
+  datatype ExactBasisIdentity =
+    | ExactBasisIdentity(
         sourceScope: string,
         sourceLifecycle: string,
         nativeRevision: string,
@@ -229,34 +233,34 @@ module CurrentCache {
       )
 
   predicate ExactGenerationMatches(
-    selectedSnapshot: SnapshotExactIdentity,
-    generationSnapshot: SnapshotExactIdentity
+    selectedBasis: ExactBasisIdentity,
+    generationBasis: ExactBasisIdentity
   ) {
-    selectedSnapshot == generationSnapshot
+    selectedBasis == generationBasis
   }
 
-  lemma ExactGenerationHitIsSameSnapshot(
-    selectedSnapshot: SnapshotExactIdentity,
-    generationSnapshot: SnapshotExactIdentity
+  lemma ExactGenerationHitIsSameBasis(
+    selectedBasis: ExactBasisIdentity,
+    generationBasis: ExactBasisIdentity
   )
     requires ExactGenerationMatches(
-               selectedSnapshot,
-               generationSnapshot
+               selectedBasis,
+               generationBasis
              )
-    ensures selectedSnapshot == generationSnapshot
+    ensures selectedBasis == generationBasis
   {
   }
 
   lemma NumericRevisionAloneCannotEstablishExactIdentity(
-    selectedSnapshot: SnapshotExactIdentity,
-    generationSnapshot: SnapshotExactIdentity
+    selectedBasis: ExactBasisIdentity,
+    generationBasis: ExactBasisIdentity
   )
-    requires selectedSnapshot.nativeRevision ==
-             generationSnapshot.nativeRevision
-    requires selectedSnapshot != generationSnapshot
+    requires selectedBasis.nativeRevision ==
+             generationBasis.nativeRevision
+    requires selectedBasis != generationBasis
     ensures !ExactGenerationMatches(
-              selectedSnapshot,
-              generationSnapshot
+              selectedBasis,
+              generationBasis
             )
   {
   }
@@ -356,11 +360,11 @@ module CurrentCache {
   function RuleDependencies(
     rule: Semantics.NormalizedRule,
     objectTypes: set<string>
-  ): set<CacheKernel.RelationDependency> {
+  ): set<RelationDependency> {
     match rule
     case DirectRelationRule(head, relationName, _) =>
       {
-        CacheKernel.RelationDependency(
+        RelationDependency(
           head.resourceType,
           relationName
         )
@@ -374,16 +378,16 @@ module CurrentCache {
       _
       ) =>
       {
-        CacheKernel.RelationDependency(
+        RelationDependency(
           head.resourceType,
           viaRelation
         )
       } +
       set typeName <- objectTypes ::
-        CacheKernel.RelationDependency(typeName, targetRelation)
+        RelationDependency(typeName, targetRelation)
     case ArrowPermissionRule(head, viaRelation, _) =>
       {
-        CacheKernel.RelationDependency(
+        RelationDependency(
           head.resourceType,
           viaRelation
         )
@@ -393,7 +397,7 @@ module CurrentCache {
   function RulesDependencies(
     rules: seq<Semantics.NormalizedRule>,
     objectTypes: set<string>
-  ): set<CacheKernel.RelationDependency>
+  ): set<RelationDependency>
     decreases |rules|
   {
     if |rules| == 0 then
@@ -432,12 +436,12 @@ module CurrentCache {
   }
 
   ghost predicate RelevantProjectionEqual(
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>
   ) {
     forall relationship: Semantics.Relationship |
-      CacheKernel.RelationDependency(
+      RelationDependency(
         relationship.resource.typeName,
         relationship.relationName
       ) in dependencies ::
@@ -445,7 +449,7 @@ module CurrentCache {
   }
 
   lemma HasRelationshipFrame(
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     resource: Semantics.ObjectRef,
@@ -453,7 +457,7 @@ module CurrentCache {
     subject: Semantics.ObjectRef
   )
     requires RelevantProjectionEqual(dependencies, left, right)
-    requires CacheKernel.RelationDependency(
+    requires RelationDependency(
                resource.typeName,
                relationName
              ) in dependencies
@@ -473,13 +477,13 @@ module CurrentCache {
   }
 
   lemma RelationshipMembershipFrame(
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     relationship: Semantics.Relationship
   )
     requires RelevantProjectionEqual(dependencies, left, right)
-    requires CacheKernel.RelationDependency(
+    requires RelationDependency(
                relationship.resource.typeName,
                relationship.relationName
              ) in dependencies
@@ -489,7 +493,7 @@ module CurrentCache {
 
   lemma RuleDerivationFrame(
     objects: seq<Semantics.ObjectRef>,
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     grants: set<Semantics.Grant>,
@@ -501,7 +505,7 @@ module CurrentCache {
     requires RelevantProjectionEqual(dependencies, left, right)
     requires RuleDependencies(
                rule,
-               CacheKernel.ObjectTypes(objects)
+               ObjectTypes(objects)
              ) <= dependencies
     ensures Semantics.RuleDerives(
               rule,
@@ -556,7 +560,7 @@ module CurrentCache {
           );
           assert Semantics.ContainsObject(objects, via.subject);
           assert via.subject.typeName in
-                   CacheKernel.ObjectTypes(objects);
+                   ObjectTypes(objects);
           HasRelationshipFrame(
             dependencies,
             left,
@@ -585,7 +589,7 @@ module CurrentCache {
           );
           assert Semantics.ContainsObject(objects, via.subject);
           assert via.subject.typeName in
-                   CacheKernel.ObjectTypes(objects);
+                   ObjectTypes(objects);
           HasRelationshipFrame(
             dependencies,
             left,
@@ -627,7 +631,7 @@ module CurrentCache {
     objects: seq<Semantics.ObjectRef>,
     permissions: seq<Semantics.PermissionNode>,
     rules: seq<Semantics.NormalizedRule>,
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     left: seq<Semantics.Relationship>,
     right: seq<Semantics.Relationship>,
     grants: set<Semantics.Grant>
@@ -637,7 +641,7 @@ module CurrentCache {
     requires RelevantProjectionEqual(dependencies, left, right)
     requires RulesDependencies(
                rules,
-               CacheKernel.ObjectTypes(objects)
+               ObjectTypes(objects)
              ) <= dependencies
     ensures Semantics.ImmediateConsequences(
               objects,
@@ -684,7 +688,7 @@ module CurrentCache {
       {
         RuleDependenciesAreIncluded(
           rules,
-          CacheKernel.ObjectTypes(objects),
+          ObjectTypes(objects),
           index
         );
         RuleDerivationFrame(
@@ -704,7 +708,7 @@ module CurrentCache {
     objects: seq<Semantics.ObjectRef>,
     permissions: seq<Semantics.PermissionNode>,
     rules: seq<Semantics.NormalizedRule>,
-    dependencies: set<CacheKernel.RelationDependency>,
+    dependencies: set<RelationDependency>,
     leftRelationships: seq<Semantics.Relationship>,
     rightRelationships: seq<Semantics.Relationship>,
     leftGrants: set<Semantics.Grant>,
@@ -719,7 +723,7 @@ module CurrentCache {
              )
     requires RulesDependencies(
                rules,
-               CacheKernel.ObjectTypes(objects)
+               ObjectTypes(objects)
              ) <= dependencies
     requires leftGrants <=
              Semantics.GrantUniverse(objects, permissions)

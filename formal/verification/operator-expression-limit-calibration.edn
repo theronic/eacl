@@ -1,0 +1,138 @@
+{:format-version 1
+ :source-commit "563290788f191e23257434ead34d36e188972dfa"
+ :command
+ "clj-nrepl-eval -p <core2-port> \"(do (require 'eacl.schema.expression-limit-calibration :reload) (eacl.schema.expression-limit-calibration/run! {:warmups 20 :samples 50}))\""
+ :algorithm :height-ordered-shallow-record-interning
+ :policy-digest "-M2O117LH_9noJ7AMLb_ktCAQwn_-LDH7XQIfuUL3M4"
+ :policy
+ {:format :eacl.permission-expression-policy/v1
+  :operator-plan-format :eacl.operator-plan/v1
+  :expression-format :eacl.permission-expression/v1
+  :normalized-dag-format :eacl.permission-expression-dag/v1
+  :codec-limits
+  {:maximum-size 1048576
+   :maximum-depth 256
+   :maximum-entries 262144}
+  :schema-limits {:maximum-schema-source-bytes 1048576}
+  :per-permission-limits
+  {:maximum-type-partitions 256
+   :maximum-direct-fan-in 128
+   :maximum-source-nodes 512
+   :maximum-checkpoint-weight 131072
+   :maximum-expression-bytes 131072
+   :maximum-child-slots 1024
+   :maximum-source-depth 64
+   :maximum-normalized-nodes 512
+   :maximum-words 1024}
+  :aggregate-limits
+  {:maximum-permissions 1024
+   :maximum-aggregate-source-nodes 16384
+   :maximum-aggregate-normalized-nodes 16384
+   :maximum-aggregate-child-slots 32768
+   :maximum-aggregate-words 32768
+   :maximum-aggregate-checkpoint-weight 8388608
+   :maximum-aggregate-expression-bytes 16777216}}
+ :fixtures
+ {:wide-direct-fan-in-128
+  {:expression-bytes 8997
+   :normalized
+   {:node-count 129
+    :child-slot-count 256
+    :word-count 137
+    :checkpoint-weight 3703}}
+  :arrow-type-partitions-256
+  {:expression-bytes 17459
+   :normalized
+   {:node-count 1
+    :child-slot-count 256
+    :word-count 9
+    :checkpoint-weight 17380}}
+  :exclusion-depth-64
+  {:expression-bytes 7590
+   :normalized
+   {:node-count 127
+    :child-slot-count 190
+    :word-count 131
+    :checkpoint-weight 2868}}
+  :balanced-nodes-511
+  {:expression-bytes 29467
+   :normalized
+   {:node-count 511
+    :child-slot-count 766
+    :word-count 527
+    :checkpoint-weight 11941}}}
+ :measurement
+ {:warmups 20
+  :samples 50
+  :environment
+  {:os "Mac OS X"
+   :os-version "26.4.1"
+   :architecture "aarch64"
+   :java-version "26.0.2"
+   :java-vendor "Eclipse Adoptium"
+   :maximum-heap-bytes 9663676416
+   :available-processors 14}
+  :results
+  {:wide-direct-fan-in-128
+   {:latency-us
+    {:min 1387.959
+     :p50 1437.25
+     :p95 1702.25
+     :max 3875.542
+     :mean 1512.0699800000002}
+    :allocated-bytes
+    {:min 6448824
+     :p50 6448824
+     :p95 6448824
+     :max 6448824
+     :mean 6448824.0}}
+   :arrow-type-partitions-256
+   {:latency-us
+    {:min 3484.084
+     :p50 3594.5
+     :p95 3775.583
+     :max 4197.291
+     :mean 3632.0025199999986}
+    :allocated-bytes
+    {:min 16022128
+     :p50 16022128
+     :p95 16022128
+     :max 16022128
+     :mean 1.6022128E7}}
+   :exclusion-depth-64
+   {:latency-us
+    {:min 1425.625
+     :p50 1472.292
+     :p95 1657.708
+     :max 3661.917
+     :mean 1534.7416800003}
+    :allocated-bytes
+    {:min 7500720
+     :p50 7500720
+     :p95 7500720
+     :max 7500720
+     :mean 7500720.0}}
+   :balanced-nodes-511
+   {:latency-us
+    {:min 4926.042
+     :p50 5032.875
+     :p95 5627.458
+     :max 18069.0
+     :mean 5368.318459999999}
+    :allocated-bytes
+    {:min 24747088
+     :p50 24747088
+     :p95 24747088
+     :max 24747088
+     :mean 2.4747088E7}}}}
+ :selection
+ {:per-permission-node-envelope
+  :balanced-511-is-the-largest-full-binary-fixture-under-512
+  :depth-envelope :exact-source-depth-64
+  :direct-fan-in-envelope :exact-128
+  :typed-partition-envelope :exact-256
+  :aggregate-node-envelope
+  :at-most-32-permission-maximal-node-dags-or-more-smaller-permissions
+  :allocation-scope
+  :caller-thread-transient-schema-admission-not-query-evaluation
+  :query-path-effect :none}}
