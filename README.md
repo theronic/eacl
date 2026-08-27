@@ -831,10 +831,11 @@ All schema changes must use `eacl/write-schema!`. If an application changes
 the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
 
-Datomic consumers upgrading a released v7 database must run the explicit
-permission-only v7-to-v8 migration before constructing an ordinary v8 client.
-It reuses the existing relationship tuple attributes and datoms without a
-relationship rebuild. See the [v7-to-v8 migration guide](docs/migration-v7-to-v8.md).
+Datomic and Datahike consumers upgrading a released v7 database must run the
+backend's explicit permission-only v7-to-v8 migration before constructing an
+ordinary v8 client. Both reuse the existing relationship tuple attributes and
+datoms without a relationship rebuild. See the
+[v7-to-v8 migration guide](docs/migration-v7-to-v8.md).
 
 ### Permission-tree expansion
 

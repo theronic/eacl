@@ -1,5 +1,6 @@
 (ns eacl.datahike.schema
-  (:require [datahike.api :as d]
+  (:require [clojure.set :as set]
+            [datahike.api :as d]
             [eacl.datahike.db :as ddb]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
@@ -181,6 +182,25 @@
     :eacl.permission/target-name
     :eacl.permission/expression-payload])
 
+(def ^:private legacy-permission-pull
+  (vec (remove #{:eacl.permission/expression-payload} permission-pull)))
+
+(defn- physical-permissions
+  "Migration-aware permission rows, including their physical entity ids.
+
+  A released-v7 database does not have the expression attribute at all. Avoid
+  asking Datahike to pull an unknown attribute on every row: apart from noisy
+  warnings, that work would make the bounded startup compatibility gate look
+  more expensive than it is."
+  [db]
+  (let [pull-pattern
+        (into [:db/id]
+              (if (ddb/entid db :eacl.permission/expression-payload)
+                permission-pull
+                legacy-permission-pull))]
+    (mapv #(d/pull db pull-pattern (:e %))
+          (ddb/avet-datoms db permission-key-attr))))
+
 (defn read-relations
   "Every relation definition. Enumerated from the relation key index rather than
    by query: the index is the engine's own view of the schema, so a relation
@@ -191,8 +211,27 @@
 
 (defn read-permissions
   [db]
-  (mapv #(d/pull db permission-pull (:e %))
-        (ddb/avet-datoms db permission-key-attr)))
+  (mapv #(dissoc % :db/id) (physical-permissions db)))
+
+(defn permission-storage-shape
+  "Classifies only bounded permission-definition rows.
+
+  `:flat` is the released-v7 representation. Ordinary v8 reads accept only
+  `:expression` or `:none`; `:mixed` is evidence of an interrupted or external
+  rewrite and is never guessed through. Relationship tuples are not read."
+  [db]
+  (let [permissions (physical-permissions db)
+        flat? (some #(not (contains?
+                           % :eacl.permission/expression-payload))
+                    permissions)
+        expression? (some #(contains?
+                            % :eacl.permission/expression-payload)
+                          permissions)]
+    (cond
+      (and flat? expression?) :mixed
+      expression? :expression
+      flat? :flat
+      :else :none)))
 
 (defn read-schema
   [db & [_format]]
@@ -647,3 +686,218 @@
      (assoc (:deltas plan)
             :eacl.schema/db-after (:db-after report)
             :eacl.schema/no-op? (boolean (:no-op? report))))))
+
+(defn- flat-permission-coordinate
+  [permission]
+  [(:eacl.permission/resource-type permission)
+   (:eacl.permission/permission-name permission)
+   (:eacl.permission/source-relation-name permission)
+   (:eacl.permission/target-type permission)
+   (:eacl.permission/target-name permission)])
+
+(defn- candidate-flat-denotation
+  [permissions]
+  (into
+   #{}
+   (mapcat
+    (fn [permission]
+      (let [resolved (expression-persistence/decode-entity permission)]
+        (map
+         (juxt :resource-type :permission-name :source-relation-name
+               :target-type :target-name)
+         (expression-persistence/union-compatible-definitions
+          (:eacl/id permission) resolved)))))
+   permissions))
+
+(defn- assert-migration-equivalent!
+  [relations legacy-permissions candidate]
+  (model/validate-schema-references
+   {:relations relations :permissions legacy-permissions})
+  (let [stored-relations (set relations)
+        candidate-relations (set (:relations candidate))
+        relation-additions
+        (vec (sort-by pr-str
+                      (set/difference candidate-relations stored-relations)))
+        relation-retractions
+        (vec (sort-by pr-str
+                      (set/difference stored-relations candidate-relations)))]
+    (when (or (seq relation-additions) (seq relation-retractions))
+      (throw
+       (ex-info
+        "The Datahike v7->v8 permission upgrade cannot change relation identities."
+        {:type :eacl.migration/relation-schema-change
+         :eacl/error :eacl.migration/relation-schema-change
+         :relation-additions relation-additions
+         :relation-retractions relation-retractions}))))
+  (let [stored-arms (mapv flat-permission-coordinate legacy-permissions)
+        stored-denotation (set stored-arms)
+        candidate-denotation
+        (candidate-flat-denotation (:permissions candidate))]
+    (when-not (= (count stored-arms) (count stored-denotation))
+      (throw
+       (ex-info
+        "Released-v7 Datahike permission storage contains duplicate arms."
+        {:type :eacl.schema/corrupt-expression-storage
+         :eacl/error :eacl.schema/corrupt-expression-storage
+         :reason :duplicate-flat-permission})))
+    (when-not (= stored-denotation candidate-denotation)
+      (throw
+       (ex-info
+        "The Datahike v7->v8 permission upgrade must preserve permission semantics exactly."
+        {:type :eacl.migration/permission-semantic-change
+         :eacl/error :eacl.migration/permission-semantic-change
+         :missing-from-candidate
+         (vec (sort-by pr-str
+                       (set/difference stored-denotation
+                                       candidate-denotation)))
+         :added-by-candidate
+         (vec (sort-by pr-str
+                       (set/difference candidate-denotation
+                                       stored-denotation)))})))))
+
+(def ^:private expression-payload-attribute-definition
+  (first (filter #(= :eacl.permission/expression-payload (:db/ident %))
+                 component-schema)))
+
+(defn- ensure-expression-payload-attribute!
+  [conn]
+  (let [db (d/db conn)
+        attribute :eacl.permission/expression-payload
+        expected (select-keys expression-payload-attribute-definition
+                              [:db/ident :db/valueType :db/cardinality])]
+    (if-let [eid (ddb/entid db attribute)]
+      (let [actual (select-keys (d/entity db eid)
+                                [:db/ident :db/valueType :db/cardinality])]
+        (when-not (= expected actual)
+          (throw
+           (ex-info
+            "The existing Datahike expression-payload attribute is incompatible with EACL v8."
+            {:type :eacl.migration/attribute-conflict
+             :eacl/error :eacl.migration/attribute-conflict
+             :attribute attribute
+             :expected expected
+             :actual actual})))
+        false)
+      (do
+        (d/transact conn [expression-payload-attribute-definition])
+        true))))
+
+(defn migrate-v7-permissions!
+  "Atomically replaces released-v7 flat permission definitions with v8
+  expression definitions.
+
+  This is a schema-row migration only. It proves exact relation and permission
+  denotation before installing the one additive v8 attribute, then swaps all
+  permission entities behind the existing schema-write fence. Relationship
+  tuples are neither enumerated nor rewritten. `schema-string` may be nil when
+  the database's schema singleton contains the authoritative source text."
+  ([conn schema-string]
+   (migrate-v7-permissions! conn schema-string nil))
+  ([conn schema-string expression-limit-overrides]
+   (let [expression-limits
+         (expression-policy/normalize-client-limits
+          expression-limit-overrides)
+         db (d/db conn)
+         shape (permission-storage-shape db)]
+     (case shape
+       :mixed
+       (throw
+        (ex-info
+         "EACL permission storage contains mixed flat and expression rows."
+         {:type :eacl/permission-storage-version
+          :eacl/error :eacl/permission-storage-version
+          :detected :mixed
+          :required-version 8}))
+
+       (:expression :none)
+       {:status :already-v8
+        :permission-storage-shape shape
+        :relationships-touched 0}
+
+       :flat
+       (let [schema-eid (ddb/entid db [:eacl/id "schema-string"])
+             schema-generation (current-schema-generation db)
+             schema-write-fence (current-schema-write-fence db)
+             stored-schema-string
+             (some-> (d/entity db [:eacl/id "schema-string"])
+                     :eacl/schema-string)
+             schema-text (or schema-string stored-schema-string)
+             legacy-permissions (physical-permissions db)
+             relations (read-relations db)]
+         (when-not (and schema-eid schema-generation schema-write-fence)
+           (throw
+            (ex-info
+             "The Datahike v7->v8 migration requires prepared schema generations."
+             {:type :eacl.cache/generation-unprepared
+              :eacl/error :eacl.cache/generation-unprepared
+              :backend :datahike})))
+         (when-not (string? schema-text)
+           (throw
+            (ex-info
+             "The Datahike v7->v8 migration requires stored or supplied schema text."
+             {:type :eacl.migration/schema-required
+              :eacl/error :eacl.migration/schema-required})))
+         (binding [expression-persistence/*expression-limits*
+                   expression-limits]
+           (let [candidate
+                 (expression-persistence/candidate-schema
+                  (expression-resolver/validate-schema
+                   schema-text expression-limits))]
+             ;; Everything capable of failing on input must run before the
+             ;; additive attribute transaction.
+             (assert-migration-equivalent!
+              relations legacy-permissions candidate)
+             (ensure-expression-payload-attribute! conn)
+             (let [prepared-db (d/db conn)
+                   current-permissions (physical-permissions prepared-db)
+                   current-relations (read-relations prepared-db)]
+               (when-not (and (= schema-generation
+                                 (current-schema-generation prepared-db))
+                              (= schema-write-fence
+                                 (current-schema-write-fence prepared-db))
+                              (= legacy-permissions current-permissions)
+                              (= relations current-relations))
+                 (throw
+                  (ex-info
+                   "The EACL schema changed while preparing the Datahike v7->v8 migration."
+                   {:type :eacl.schema/concurrent-write
+                    :eacl/error :eacl.schema/concurrent-write
+                    :expected-generation schema-generation
+                    :actual-generation
+                    (current-schema-generation prepared-db)})))
+               (let [tx-data
+                     (vec
+                      (concat
+                       [[:db.fn/cas schema-eid
+                         (ddb/attr-repr prepared-db
+                                        :eacl/schema-write-fence)
+                         schema-write-fence schema-write-fence]]
+                       (map (fn [permission]
+                              [:db/retractEntity (:db/id permission)])
+                            legacy-permissions)
+                       (:permissions candidate)
+                       [{:db/id schema-eid
+                         :eacl/id "schema-string"
+                         :eacl/schema-string schema-text}
+                        [:db/add schema-eid :eacl/schema-generation
+                         :db/current-tx]
+                        [:db/add schema-eid :eacl/schema-write-fence
+                         :db/current-tx]]))
+                     report
+                     (transact-schema!
+                      conn tx-data schema-generation)
+                     db-after (:db-after report)]
+                 (when-not (= :expression
+                              (permission-storage-shape db-after))
+                   (throw
+                    (ex-info
+                     "The Datahike v7->v8 permission swap did not produce expression storage."
+                     {:type :eacl.migration/postcondition-failed
+                      :eacl/error :eacl.migration/postcondition-failed})))
+                 {:status :migrated
+                  :permission-storage-shape :expression
+                  :relationships-touched 0
+                  :permission-additions (count (:permissions candidate))
+                  :permission-retractions (count legacy-permissions)
+                  :schema-generation
+                  (current-schema-generation db-after)})))))))))
