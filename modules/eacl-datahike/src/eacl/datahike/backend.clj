@@ -15,7 +15,7 @@
                   :at-exact-snapshot}
    :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
-   :cursor #{:forward :reverse :opaque}
+   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :transactions #{:schema :relationships :object-deletion}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
@@ -168,6 +168,12 @@
                :tx)])
     relation-ids)})
 
+(defn- certified-schema-generation
+  [db]
+  (when (ddb/entid db :eacl/schema-generation)
+    (some-> (first (ddb/avet-datoms db :eacl/schema-generation))
+            :tx)))
+
 (defn snapshot-adapter
   "Creates a v8 adapter bound to one immutable Datahike db value."
   [db {:keys [object-id->entid entid->object-id conn
@@ -241,6 +247,10 @@
                              selected-exact-locator)})
 
        :order-hint (fn [] (or (db-revision db) selected-order-hint))
+
+       :schema-generation
+       (fn []
+         (certified-schema-generation db))
 
        :select-current
        (fn []

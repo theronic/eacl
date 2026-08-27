@@ -27,6 +27,11 @@
   (count-subjects [_ _] nil)
   (expand-permission-tree [_ _] nil))
 
+(defrecord BatchedAuthorization [response]
+  eacl/IBatchedAuthorization
+  (-check-permissions [_ request]
+    [response request]))
+
 (deftest detailed-permission-fallback-test
   (testing "existing IAuthorization implementations need no new protocol methods"
     (let [demand {:subject {:type :user :id "user-1"}
@@ -45,4 +50,19 @@
               (->LegacyAuthorization false)
               (:subject demand)
               (:permission demand)
-              (:resource demand)))))))
+             (:resource demand)))))))
+
+(deftest batched-permission-dispatch-test
+  (let [request {:checks []}]
+    (is (= [:ok request]
+           (eacl/check-permissions
+            (->BatchedAuthorization :ok) request)))
+    (let [data
+          (try
+            (eacl/check-permissions
+             (->LegacyAuthorization true) request)
+            nil
+            (catch #?(:clj Exception :cljs :default) error
+              (ex-data error)))]
+      (is (= :eacl/unsupported-capability (:type data)))
+      (is (= :check-permissions (:capability data))))))

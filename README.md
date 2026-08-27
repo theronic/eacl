@@ -42,7 +42,7 @@ Yes.
 
 S3-backed Datahike is attractive for infrequently-accessed apps, because you can trade latency for reduced storage cost, and it supports [serverless](https://github.com/replikativ/datahike-serverless) to reduce running Peer / Transactor costs.
 
-*Note:* DataScript and Datalevin have no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots. Datalevin additionally omits ordered-generation cache proofs and only reuses answers at the identical selected revision.
+*Note:* DataScript and Datalevin have no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots. Datalevin additionally omits ordered-generation cache proofs, so completed answers only reuse at the identical selected revision; its certified schema generation still reuses schema-derived plans across relationship-only revisions.
 
 ## Overview of EACL
 
@@ -646,6 +646,23 @@ All list APIs use the v8 Relay pagination contract:
 - Backward: pass `:last` and optionally `:before`.
 - Responses include `:page-info` with `:start-cursor`, `:end-cursor`, `:has-next-page?`, and `:has-previous-page?`.
 - Lookup cursors paginate in the sealed plan's stable first-discovery order; a page size change is rejected as an incompatible cursor rather than silently re-windowed.
+
+### Aggregate authorization
+
+Use `eacl/check-permissions` for an ordered vector of point decisions that must
+share one snapshot and one request budget. For permission-filtered relationship
+pages, use `read-relationships` with `:authorization` when the relationship set
+is smaller, or `lookup-resources`/`lookup-subjects` with a direct
+`:relationship` filter when the authorized set is smaller. Both routes use
+bounded candidate windows, so a valid page may be short with
+`:has-next-page? true` and `:bounded? true`; continue with its confidential,
+query-scoped cursor.
+
+See [Aggregate authorization](docs/aggregate-authorization.md) for the batch
+contract, complete query examples, route-selection cost table, window and
+cursor rules, cache provenance, schema-generation reuse, and performance
+qualification. The checked-in host-class measurements are not a universal
+sub-millisecond SLA.
 
 ### Deadlines and cooperative cancellation
 
@@ -1373,9 +1390,14 @@ verification keys on every instance that accepts the same tokens:
     :zed-token-kid :zed-2026-07}))
 ```
 
-Retain old verification keys for the intended token lifetime during key
-rotation. The default keys are client-local, so default cursors and tokens do
-not survive restarts or load balancing.
+Portable cursors use the confidential `eacl_c5_` envelope: independently
+derived AES-256-CTR and HMAC-SHA-256 keys, a random 96-bit nonce, and
+authentication before payload parsing. Rotate a cursor authenticated-encryption
+key before 2^32 cursor encryptions. Install the new key id for issuance first,
+retain old keys for verification through the intended token lifetime, and then
+retire them. EACL does not count per-key encryptions for you. The default keys
+are client-local, so default cursors and tokens do not survive restarts or load
+balancing.
 
 See the [backend guide](docs/v8-backend-modules-and-upgrade.md) for exact
 capabilities, synchronization timeouts, checkpoints, key rotation, and

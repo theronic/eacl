@@ -36,9 +36,11 @@ Backends supply the validated operation map consumed through
 cache-proof, and runtime capabilities and implements normalized operations for
 snapshot identity, source scope/lifecycle, native revision and order hint,
 snapshot selection, exact locators, object ID conversion, schema definitions,
-ordered adjacency scans, direct matches, permission nodes, and
-ordered-generation proof frames. An adapter without certified proof support
-remains a correct exact-current adapter.
+ordered adjacency scans, direct matches, permission nodes, the independent
+memoized `:schema-generation` read, and ordered-generation proof frames. An
+adapter without certified proof support remains a correct
+exact-current adapter; a nil schema generation limits derived-plan reuse to
+one request.
 
 The contract uses logical types and identifiers. Datoms, attribute ids,
 database values, and raw index tuples stay inside each adapter. See the
@@ -52,6 +54,17 @@ The shared contract fixture is
 API and recursive/cache behavior for Datomic, DataScript, Datahike, and
 Datalevin, and compares authorization sets with independent semantic oracles. Those oracles
 are test code, not selectable production engines.
+
+## Aggregate reads
+
+Shared orchestration implements ordered `eacl/check-permissions` batches,
+`read-relationships` with an `:authorization` clause, and relationship-filtered
+`lookup-resources`/`lookup-subjects`. One request context owns the snapshot,
+deadline, cancellation token, schema/root memos, cumulative limits, cursor
+state, and release. Backend modules supply only their ordinary certified
+operations, including `:schema-generation` and exact direct relationship
+membership; they must not add private aggregate evaluators. See [aggregate
+authorization](../../docs/aggregate-authorization.md).
 
 ## Permission-tree expansion
 

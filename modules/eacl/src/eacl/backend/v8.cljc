@@ -5,15 +5,15 @@
   pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 7)
+(def adapter-version 8)
 (def maximum-exact-integer 9007199254740991)
 (def minimum-exact-integer (- maximum-exact-integer))
 
 (def ^:dynamic *backend-op-stats*
   "Optional atom counting backend adapter invocations by operation keyword.
 
-  Includes the `:proof-frame` operation and index scans. Observation-only:
-  counters never influence dispatch or guard behavior."
+  Includes `:schema-generation`, `:proof-frame`, and index scans.
+  Observation-only: counters never influence dispatch or guard behavior."
   nil)
 
 (def ^:dynamic *invoke-observer*
@@ -50,6 +50,11 @@
     :resource->subjects
     :direct-match?
     :all-permission-nodes})
+
+(def optional-snapshot-operations
+  "Snapshot operations with fail-closed defaults. They remain visible to the
+  certification boundary without making an uncertified snapshot invalid."
+  #{:schema-generation})
 
 (def adapter-obligations
   "Runtime-facing statement of the assumptions made by
@@ -98,6 +103,13 @@
      :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
+   :schema-generation
+   #{:snapshot-bound :transactionally-persisted-eacl-generation
+     :at-most-one-index-probe :memoized-per-selected-adapter
+     :independent-of-ordered-generations
+     :advances-with-managed-schema-writes
+     :unchanged-by-relationship-only-writes
+     :nil-when-uncertified}
    :proof-frame
    #{:snapshot-bound :initialized-schema-generation
      :complete-canonical-relation-generations
@@ -301,6 +313,13 @@
     (invalid-adapter! "Backend :operations must be a map."
                       {:backend id
                        :operations operations}))
+  (when (and (contains? operations :schema-generation)
+             (not (fn? (:schema-generation operations))))
+    (invalid-adapter!
+     "Backend :schema-generation operation must be a function when supplied."
+     {:backend id
+      :operation :schema-generation
+      :value (:schema-generation operations)}))
   (let [missing (seq (remove #(fn? (get operations %))
                              required-snapshot-operations))]
     (when missing
@@ -310,7 +329,16 @@
                          :required-operations required-snapshot-operations})))
   (let [normalized (normalize-capabilities id capabilities)
         traversal-execution
-        (normalize-traversal-execution id traversal-execution)]
+        (normalize-traversal-execution id traversal-execution)
+        schema-generation
+        (when-let [read-generation (:schema-generation operations)]
+          (delay (read-generation)))
+        operations
+        (assoc operations
+               :schema-generation
+               (if schema-generation
+                 (fn [] @schema-generation)
+                 (constantly nil)))]
     (when (and (contains? (:cache-proofs normalized) :ordered-generations)
                (not (fn? (:proof-frame operations))))
       (invalid-adapter!
@@ -475,6 +503,11 @@
   (and (exact-integer? value)
        (not (neg? value))))
 
+(defn schema-generation?
+  "True for a portable certified schema-generation value."
+  [value]
+  (exact-natural? value))
+
 (defn- within-bound?
   [direction bound inclusive? value]
   (if (= :desc direction)
@@ -549,6 +582,13 @@
         (when-not (exact-natural? value)
           (contract-violation!
            backend-id operation-key :nonnegative value))
+        value)
+
+      :schema-generation
+      (do
+        (when-not (or (nil? value) (schema-generation? value))
+          (contract-violation!
+           backend-id operation-key :exact-natural-or-nil value))
         value)
 
       (:snapshot-id :source-scope :native-revision)

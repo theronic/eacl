@@ -10,7 +10,7 @@
    (adapter backend-id traversal-execution {}))
   ([backend-id traversal-execution
     {:keys [source-id branch lifecycle revision exact-locator
-            schema-identity snapshot-database-id]
+            snapshot-database-id]
      :or {source-id ::source
           branch nil
           lifecycle ::lifecycle
@@ -28,9 +28,8 @@
             backend/required-snapshot-operations)
       {:snapshot-id
        (constantly
-        (cond-> {:database-id (or snapshot-database-id backend-id)
-                 :basis-t revision}
-          schema-identity (assoc :schema-identity schema-identity)))
+        {:database-id (or snapshot-database-id backend-id)
+         :basis-t revision})
        :source-scope
        (constantly {:source-id source-id :branch branch})
        :source-lifecycle (constantly lifecycle)
@@ -159,7 +158,6 @@
             :source-lifecycle ::lifecycle
             :revision 1
             :exact-locator 1
-            :schema-identity nil
             :backend-snapshot-id {:database-id :test :basis-t 1}}
            (provider/semantic-identity selected)))
     (is (false? (provider/released? selected)))
@@ -214,8 +212,7 @@
              [:branch {:branch "other-branch"}]
              [:lifecycle {:lifecycle ::other-lifecycle}]
              [:revision {:revision 2 :exact-locator 2}]
-             [:exact-locator {:exact-locator :other-locator}]
-             [:schema {:schema-identity "other-schema"}]]]
+             [:exact-locator {:exact-locator :other-locator}]]]
       (testing (name field)
         (is (not= baseline (identity overrides)))))))
 

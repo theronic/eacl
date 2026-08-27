@@ -47,9 +47,10 @@
                 (let [adapter (snapshot-provider/adapter selected)
                       report
                       (certification/certify
-                       {:adapter adapter
+                      {:adapter adapter
                         :fixture fixture
                         :runtime :clj})]
+                  (is (some? (v8/invoke adapter :schema-generation)))
                   (is (:passed? report) (pr-str (:checks report)))
                   (testing "persistent Datalevin transaction IDs are not exposed as proof generations"
                     (is (= #{:snapshot-bound :database-visible}

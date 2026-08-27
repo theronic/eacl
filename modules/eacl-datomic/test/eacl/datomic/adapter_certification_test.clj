@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.adapter-certification :as certification]
+            [eacl.backend.v8 :as v8]
             [eacl.core :as eacl]
             [eacl.datomic.backend :as datomic-backend]
             [eacl.datomic.core :as datomic]
@@ -41,5 +42,6 @@
                  {:adapter adapter
                   :fixture fixture
                   :runtime :clj})]
+            (is (some? (v8/invoke adapter :schema-generation)))
             (is (:passed? report)
                 (pr-str (:checks report)))))))))

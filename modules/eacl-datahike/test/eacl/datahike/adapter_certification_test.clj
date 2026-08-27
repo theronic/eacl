@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datahike.api :as d]
             [eacl.adapter-certification :as certification]
+            [eacl.backend.v8 :as v8]
             [eacl.core :as eacl]
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.core :as datahike]))
@@ -38,11 +39,13 @@
            ["numeric attribute refs" {:attribute-refs? true}]]
           fixture (certification/coherent-fixtures [820084])]
     (testing (str label ", seed " (:seed fixture))
-      (let [report
+      (let [adapter (seed-adapter fixture config)
+            report
             (certification/certify
-             {:adapter (seed-adapter fixture config)
+             {:adapter adapter
               :fixture fixture
               :runtime :clj})]
+        (is (some? (v8/invoke adapter :schema-generation)))
         (is (:passed? report)
             (pr-str (:checks report)))))))
 

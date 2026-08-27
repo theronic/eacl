@@ -150,7 +150,8 @@
 (deftest keyset-cursor-is-strictly-validated-test
   (let [scan-fn (scanner (atom 0))
         valid-edge {:kind :relationship-index
-                    :v 1
+                    :v relationships/relationship-cursor-version
+                    :anchor :progress
                     :scan-index 0
                     :subject-id 11
                     :resource-id 101}]
@@ -169,6 +170,16 @@
                nil
                (catch #?(:clj Exception :cljs :default) error
                  (:eacl/error (ex-data error)))))))))
+
+(deftest keyset-progress-anchor-need-not-be-an-emitted-row-test
+  (let [examined-but-not-emitted (second (get rows-by-spec 0))
+        progress (relationships/progress-edge examined-but-not-emitted)
+        page
+        (relationships/execute-page
+         scan-specs {:first 2 :after progress} (scanner (atom 0)))]
+    (is (= :progress (:anchor progress)))
+    (is (= [:r-0-2 :r-2-0] (:data page))
+        "continuation starts strictly after the last examined candidate")))
 
 (deftest keyset-pagination-rejects-present-nil-cursors-test
   (doseq [query [{:first 1 :after nil}

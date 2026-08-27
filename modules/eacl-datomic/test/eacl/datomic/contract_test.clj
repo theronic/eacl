@@ -43,6 +43,15 @@
       (contract/assert-v8-permission-tree-contract! client)
       (contract/assert-unified-filter-validation! client))))
 
+(deftest datomic-certified-generation-plan-reuse-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (datomic/make-client
+                  conn {:page-token-key "datomic-plan-reuse"})]
+      (eacl/write-schema! client contract/smoke-schema)
+      (seed-objects! conn)
+      (eacl/create-relationships! client contract/smoke-relationships)
+      (contract/assert-certified-generation-plan-reuse! client))))
+
 (deftest datomic-pinned-spicedb-permission-tree-golden-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (datomic/make-client conn {})]

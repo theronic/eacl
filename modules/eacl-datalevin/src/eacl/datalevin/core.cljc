@@ -115,8 +115,12 @@
   (ddb/with-db snapshot-or-db #(impl/tx-delete-object % object-eid)))
 
 (defn- snapshot-read-relationships
-  [snapshot-or-db query kernel]
-  (ddb/with-db snapshot-or-db #(impl/read-relationships % query kernel)))
+  ([snapshot-or-db query kernel]
+   (snapshot-read-relationships snapshot-or-db query kernel nil))
+  ([snapshot-or-db query kernel window-options]
+   (ddb/with-db
+    snapshot-or-db
+    #(impl/read-relationships % query kernel window-options))))
 
 (def ^:private api
   {:backend-id :datalevin
@@ -227,6 +231,17 @@
   This does not detect or repair earlier unsupported unstamped mutations and
   is not a cache flush."
   schema/prepare-cache-coherence!)
+
+(defn clear-answer-cache!
+  "Evicts completed answers and resumable page state without rotating the
+  persisted Datalevin source lifecycle or discarding schema-derived plans.
+
+  This is an operational cache clear, not recovery from restore, rollback, or
+  unsupported mutation. Those events still require durable lifecycle and
+  watermark rotation followed by client recreation."
+  [client]
+  (require-datalevin-client! client "clear-answer-cache!")
+  (orchestration/clear-answer-cache! client))
 
 (defn cache-stats
   "Returns private completed-cache counters for one Datalevin EACL client."

@@ -24,7 +24,8 @@
     silent cap. An order-insensitive specialization remains permitted only
     behind an independent denotation-equivalence proof (none exists yet)."
   (:require [eacl.backend.v8 :as backend]
-            [eacl.engine.stable-reducer :as reducer]))
+            [eacl.engine.stable-reducer :as reducer]
+            [eacl.request.counters :as request-counters]))
 
 (def exhaustion-target
   "Alias of `eacl.engine.stable-reducer/exhaustion-target`: exhaustive routes
@@ -225,14 +226,24 @@
                        (every? #(= :relation (:rule %)) rules))
               rules)))
         report! (fn []
-                  (when-let [stats reducer/*observer-stats*]
-                    (let [{:keys [admissions commands transitions]} @counters]
+                  (request-counters/add! :commands (:commands @counters))
+                  (request-counters/add! :fetched-values
+                                         (:fetched-values @counters))
+                  (doseq [stats
+                          (distinct
+                           (remove nil?
+                                   [reducer/*observer-stats*
+                                    reducer/*aggregate-work-stats*]))]
+                    (let [{:keys [admissions commands transitions
+                                  fetched-values]} @counters]
                       (swap! stats
                              (fn [c]
                                (-> (or c {})
                                    (update :derived-grants (fnil + 0) admissions)
                                    (update :advanced-datoms (fnil + 0) commands)
-                                   (update :queued-work (fnil + 0) transitions)))))))]
+                                   (update :queued-work (fnil + 0) transitions)
+                                   (update :fetched-values (fnil + 0)
+                                           fetched-values)))))))]
     (loop [stack [[(or (:start-node options) (:root plan)) resource-eid]]
            visited (transient #{})]
       (if (empty? stack)

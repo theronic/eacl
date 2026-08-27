@@ -314,7 +314,7 @@
                      {:ordinal ordinal}))
       {:state (reducer/history-free replayed) :pending []})))
 
-(declare deliver-page)
+(declare deliver-page deliver-raw-page)
 
 (defn edge-page
   "Engine-facing pagination over internal-eid boundaries: `after`/`before`
@@ -326,7 +326,8 @@
   service-edge admission, replays (checkpoint misses, backward runs and last
   windows) run under its replay ledger keyed by `:checkpoint-key`."
   [{:keys [plan direction anchor-eid subject-type page-size
-           after before last-window? checkpoints checkpoint-key]
+           after before last-window? checkpoints checkpoint-key
+           raw-candidates?]
     :as options}]
   {:pre [(some? plan) (contains? #{:forward :reverse} direction)
          (keyword? subject-type) (pos-int? page-size)
@@ -373,11 +374,17 @@
             {:state nil :pending []})
           {:keys [page-ids lookahead end-state]}
           (if state
-            (deliver-page options state pending page-size)
+            (if raw-candidates?
+              (deliver-raw-page options state pending page-size)
+              (deliver-page options state pending page-size))
             (let [run (guard-exhaustion
-                       #(run-fresh options anchor-eid (inc page-size)))]
+                       #(run-fresh
+                         options anchor-eid
+                         (if raw-candidates? page-size (inc page-size))))]
               {:page-ids (vec (take page-size (:results run)))
-               :lookahead (vec (drop page-size (:results run)))
+               :lookahead (if raw-candidates?
+                            []
+                            (vec (drop page-size (:results run))))
                :end-state (reducer/history-free run)}))
           delivered (+ ordinal (count page-ids))]
       (when (and (seq page-ids) checkpoints checkpoint-key)
@@ -391,6 +398,21 @@
        :start-ordinal ordinal
        :has-next? (boolean (seq lookahead))
        :has-previous? (pos? ordinal)})))
+
+(defn- deliver-raw-page
+  "Continues a checkpoint by exactly `page-size` candidates, with no
+  lookahead. Filtered lookup orchestration owns its sentinel and budget, so
+  fetching an extra authorized candidate here would cross that boundary."
+  [options state pending page-size]
+  (let [pending (vec (take page-size pending))
+        needed (- page-size (count pending))
+        continued
+        (when (pos? needed)
+          (guard-exhaustion
+           #(run-resume options state (+ (:discovered state) needed))))]
+    {:page-ids (into pending (when continued (:results continued)))
+     :lookahead []
+     :end-state (if continued (reducer/history-free continued) state)}))
 
 (defn- deliver-page
   "Runs from `state`+`pending` (whose scalar `:discovered` count is the

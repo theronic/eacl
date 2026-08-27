@@ -71,6 +71,15 @@
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
+  :filtered-pagination
+  {:status :passed
+   :verified-obligations 16
+   :source "formal/dafny/FilteredPagination.dfy"
+   :report "formal/verification/filtered-pagination.edn"
+   :integration-status
+   :scan-and-enumerate-routes-cross-backend-and-cross-runtime-passed
+   :claim
+   :conditional-filter-then-window-composition-sentinel-budget-and-deadline-model}
   :cursor-codec-cost-model
   {:status :passed
    :verified-obligations 7
@@ -146,7 +155,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8793
+   :verified-obligations 8809
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -156,9 +165,10 @@
    :clj-cljs-orchestration-adapters-cryptography-and-host-runtime-remain-trusted-boundaries}}
  :adapter-certification
  {:report "formal/verification/adapter-certification.edn"
-  :datomic :certification-suite-passed
+ :datomic :certification-suite-passed
   :datascript :certification-suite-passed
-  :datahike :certification-suite-passed}
+  :datahike :certification-suite-passed
+  :datalevin :certification-suite-passed}
  :runtime-targets
  {:clj-java
   {:boundary-smoke :passed

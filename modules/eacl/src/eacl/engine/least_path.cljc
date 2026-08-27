@@ -1053,15 +1053,21 @@
                              :max-admissions :max-stack :cut-point!])})
 
 (defn- run-page
-  [env level next-fn page-size]
+  [env level next-fn page-size raw-candidates?]
   (loop [level level
          emissions []]
-    (if (= (count emissions) (inc page-size))
-      {:emissions (subvec emissions 0 page-size)
-       :has-more? true}
+    (if (= (count emissions)
+           (if raw-candidates? page-size (inc page-size)))
+      (if raw-candidates?
+        {:emissions emissions
+         :has-more? nil
+         :exhausted? false}
+        {:emissions (subvec emissions 0 page-size)
+         :has-more? true
+         :exhausted? false})
       (let [[emission level'] (next-fn env level)]
         (if (nil? emission)
-          {:emissions emissions :has-more? false}
+          {:emissions emissions :has-more? false :exhausted? true}
           (do (vswap! (:counters (:ctx env)) update :emissions inc)
               (recur level' (conj emissions emission))))))))
 
@@ -1089,7 +1095,8 @@
                 after-coords (fwd-resume-level env root (vec after-coords))
                 before-coords (fwd-resume-level env root (vec before-coords))
                 :else (fwd-mk-level env root))]
-    (assoc (run-page env level fwd-level-next page-size)
+    (assoc (run-page env level fwd-level-next page-size
+                     (:raw-candidates? options))
            :counters @(:counters ctx))))
 
 (defn reverse-page
@@ -1108,5 +1115,6 @@
                 before-coords (rev-resume-level env root resource-eid
                                                 (vec before-coords))
                 :else (rev-mk-level env root resource-eid))]
-    (assoc (run-page env level rev-level-next page-size)
+    (assoc (run-page env level rev-level-next page-size
+                     (:raw-candidates? options))
            :counters @(:counters ctx))))

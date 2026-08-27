@@ -59,15 +59,14 @@
 
 (def semantic-identity-keys
   "Closed equality identity for all EACL-visible state of one selected
-  snapshot. `:schema-identity` is nil unless the backend certifies a schema
-  dimension independent of its revision."
+  snapshot. Schema generation keys derived artifacts and is not a basis
+  identity dimension."
   #{:backend
     :source-id
     :branch
     :source-lifecycle
     :revision
     :exact-locator
-    :schema-identity
     :backend-snapshot-id})
 
 (def ^:dynamic *provider-op-stats*
@@ -385,13 +384,17 @@
       (invalid-selected-snapshot!
        "Selected adapter returned an invalid snapshot identity."
        {:backend backend-id :snapshot-id snapshot-id}))
+    (when (contains? snapshot-id :schema-identity)
+      (invalid-selected-snapshot!
+       "Selected adapter advertised the removed physical schema identity."
+       {:backend backend-id
+        :field :schema-identity}))
     {:backend backend-id
      :source-id (:source-id scope)
      :branch (:branch scope)
      :source-lifecycle lifecycle
      :revision revision
      :exact-locator (:exact-locator native-revision)
-     :schema-identity (:schema-identity snapshot-id)
      :backend-snapshot-id snapshot-id}))
 
 (defn- selected-snapshot

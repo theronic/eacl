@@ -7,8 +7,8 @@ Exact snapshot pinning remains available on history-capable backends; DataScript
 is deliberately current-only and rejects `at-exact-snapshot`. These are
 deliberate pre-release breaking changes.
 
-V8 uses database-visible native schema/relation generations and authenticated
-v4 native-revision tokens/cursors, and moves the DataScript/Datahike ports to
+V8 uses database-visible native schema/relation generations, authenticated
+native-revision tokens, and confidential authenticated-encryption cursors, and moves the DataScript/Datahike ports to
 the v8 Relay list/count contract. The earlier v8 candidate's mutation graph,
 random mutation records, anchor membership, and global graph-head CAS are
 superseded and are not installed on new databases. The relationship storage
@@ -57,11 +57,42 @@ cache; this is a breaking request/response change from their v7 ports. See the
 Published module dependency maps do not select Logback or another logging
 implementation. Applications own their logging backend and configuration.
 
-It adds physical schema/relation generations and commit-time endpoint identity
+It adds certified schema/relation generations and commit-time endpoint identity
 guards. No authorization answers are persisted in the application database.
 A managed relationship mutation stamps every distinct affected relation in the
 same transaction, so answers survive writes outside their complete dependency
 closure without a listener, transaction-log read, or database-global CAS.
+
+## Aggregate authorization
+
+`eacl/check-permissions` evaluates an ordered vector of point demands with one
+selected snapshot, request context, absolute deadline, cancellation token, and
+cumulative aggregate budget. Its decisions retain scalar order, cardinality,
+value, evaluation mode, and cache provenance. Any demand failure rejects the
+whole batch with its index; there is no partial publication.
+
+Permission-filtered relationship pagination has two explicit shared-core
+routes. `read-relationships` accepts an `:authorization` clause and scans the
+matching relationship set. `lookup-resources` and `lookup-subjects` accept a
+direct `:relationship` filter, enumerate the authorized set, and use one
+certified direct-match probe per candidate without re-evaluating permission.
+Callers choose the smaller side; EACL does not make an adaptive cardinality
+guess.
+
+Both routes stop at physical exhaustion, the accepted-row sentinel, or the
+configured `:aggregate-limits {:candidate-window ...}`. A window boundary may
+return a valid short page with `:has-next-page? true` and `:bounded? true`.
+Encrypted cursors bind the route, complete clause, direction, page demand,
+window, source/lifecycle/basis, schema generation, dependency proof, and order
+ABI; scan and enumerate cursors are not interchangeable. Aggregate pages use
+ordinary exact/proof-backed cache provenance. See [Aggregate
+authorization](aggregate-authorization.md) for examples and the route cost
+table.
+
+The performance qualification uses paired core series, deterministic
+amplification counters, retained-resource gates, and a separately reported
+loopback HTTP no-op control. Absolute ceilings are host-class-specific and do
+not establish a portable sub-millisecond SLA.
 
 ## Consistency
 
@@ -123,7 +154,7 @@ permission check.
 ## Mutation discipline
 
 - Client construction does not install or migrate a mutation journal.
-- `write-schema!` publishes the physical schema generation and initializes
+- `write-schema!` publishes the certified schema generation and initializes
   every added relation generation in the same transaction as the schema delta.
 - Every supported relationship writer atomically publishes the physical
   relation generations used by the cache; proof-backed reuse is automatic and
@@ -173,9 +204,8 @@ backend time travel.
 - Datahike uses immutable DB object identity.
 - DataScript uses a private opaque identity handle for the immutable DB object,
   avoiding numeric `max-tx` collisions after reset.
-- Datalevin uses backend/source/lifecycle/revision plus an independently
-  captured physical-schema fingerprint. It performs exact selected-revision
-  reuse only.
+- Datalevin uses backend/source/lifecycle/revision identity and performs exact
+  selected-revision reuse only. It does not fingerprint physical schema.
 - A transaction replaces the exact generation. No schema/relationship proof
   calculation occurs on an exact hit.
 - Publication captures the generation/lifecycle. A delayed computation cannot
@@ -274,8 +304,8 @@ required.
 
 ## Cursor redesign
 
-Portable cursor payloads are v12 inside the compact `eacl_c4_` authenticated
-frame. Cursors bind the backend/source, operation, complete semantic query
+Portable cursor payloads are v12 inside the compact `eacl_c5_` authenticated
+and encrypted frame. Cursors bind the backend/source, operation, complete semantic query
 (including principal and consistency), result kind, semantic/configuration
 identity, source lifecycle, native revision, and exact snapshot locator. Relay window size and
 direction remain caller-controlled so the same boundary supports forward and
@@ -326,12 +356,13 @@ compatible existing envelopes.
 - Relationship cursors follow the same graph rule: equal proof may continue
   on current; changed proof requires verified exact reconstruction or fails
   closed.
-- Portable cursors use HMAC authenticity, not encryption. Datomic retains its
-  compact AES-GCM codec for cursor-content confidentiality. The GCM codec
-  uses random 96-bit nonces from `SecureRandom`; per NIST SP 800-38D,
-  random-nonce GCM keys must be rotated before 2^32 encryptions. At high
-  cursor volume plan key rotation accordingly (`:security-keyring`
-  supports staged rotation); EACL does not count invocations for you.
+- Portable cursors use AES-256-CTR with a random 96-bit nonce and
+  encrypt-then-HMAC-SHA-256 under independently domain-derived keys. The key
+  id, nonce, and ciphertext are authenticated before the payload is decrypted
+  or parsed. Datomic retains its compact AES-GCM codec. Rotate either kind of
+  authenticated-encryption key before 2^32 cursor encryptions. At high cursor
+  volume plan key rotation accordingly (`:security-keyring` supports staged
+  rotation); EACL does not count invocations for you.
 - Constructing a client without explicit token key material warns at
   startup: defaulted keys are process-local and random, so cursors and
   tokens do not survive restarts and are not portable across peers or

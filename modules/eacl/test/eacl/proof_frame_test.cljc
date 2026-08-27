@@ -6,8 +6,10 @@
 
 (defn- adapter
   ([provider]
-   (adapter provider true))
+   (adapter provider true nil))
   ([provider supported?]
+   (adapter provider supported? nil))
+  ([provider supported? schema-generation]
    (backend/make-adapter
     {:id :proof-test
      :capabilities
@@ -21,6 +23,8 @@
        true
        (assoc :snapshot-id (constantly {:basis 9})
               :source-lifecycle (constantly "lifecycle-a"))
+       (some? schema-generation)
+       (assoc :schema-generation (constantly schema-generation))
        supported?
        (assoc :proof-frame provider))})))
 
@@ -59,6 +63,29 @@
     (is (= :complete (:status proof)))
     (is (= {:schema-stamp 4 :dependency-stamp 0}
            (proof-frame/descriptor proof)))))
+
+(deftest proof-frame-rejects-certified-schema-generation-mismatch
+  (let [failure
+        (try
+          (proof-frame/resolve!
+           (proof-frame/request-frame
+            (adapter
+             (constantly {:schema-stamp 4 :relation-stamps []})
+             true
+             5))
+           [])
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+            (ex-data error)))]
+    (is (= {:type :eacl/backend-integrity-error
+            :eacl/error :eacl/backend-integrity-error
+            :reason :schema-generation-mismatch
+            :proof-schema-generation 4
+            :certified-schema-generation 5}
+           (select-keys
+            failure
+            [:type :eacl/error :reason :proof-schema-generation
+             :certified-schema-generation])))))
 
 (deftest every-incomplete-proof-shape-fails-closed
   (doseq [[label provider expected-reason]

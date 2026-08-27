@@ -96,7 +96,9 @@
                  (count calls)))
           (is (= (:operations expected)
                  observed))
-          (is (= (conj backend/required-snapshot-operations :proof-frame)
+          (is (= (into
+                  (conj backend/required-snapshot-operations :proof-frame)
+                  backend/optional-snapshot-operations)
                  observed))
           (is (empty?
                (set/difference

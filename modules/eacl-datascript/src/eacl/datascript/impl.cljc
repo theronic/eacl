@@ -394,6 +394,8 @@
   ([db filters]
    (read-relationships db filters nil))
   ([db filters decision-kernel]
+   (read-relationships db filters decision-kernel nil))
+  ([db filters decision-kernel window-options]
   ;; The unified filter contract shared by every backend
   ;; (backend-unification 9.1).
   (relationship-filters/validate! filters)
@@ -418,10 +420,13 @@
                   (spice-object (:resource-type spec) resource-id))})
               (normalized-cursor [cursor]
                 (when cursor
-                  {:subject-id (or (:subject-id cursor)
-                                   (:subject cursor))
-                   :resource-id (or (:resource-id cursor)
-                                    (:resource cursor))}))
+                  (cond->
+                   {:subject-id (or (:subject-id cursor)
+                                    (:subject cursor))
+                    :resource-id (or (:resource-id cursor)
+                                     (:resource cursor))}
+                    (:resume-inclusive? cursor)
+                    (assoc :resume-inclusive? true))))
               (drop-until-beyond-cursor [spec cursor direction rows]
                 (drop-while
                  #(not
@@ -535,12 +540,15 @@
         (let [scan-specs
               (relationship-engine/plan-scans
                (all-relation-defs db) filters')]
-          (if-not (or (contains? filters' :limit)
-                      (contains? filters' :cursor))
-            (relationship-engine/execute-page
-             scan-specs filters' decision-kernel scan-spec)
-            (relationship-engine/execute-plan
-             scan-specs filters' scan-spec))))))))
+          (if window-options
+            (relationship-engine/execute-filtered-window
+             scan-specs filters' decision-kernel scan-spec window-options)
+            (if-not (or (contains? filters' :limit)
+                        (contains? filters' :cursor))
+              (relationship-engine/execute-page
+               scan-specs filters' decision-kernel scan-spec)
+              (relationship-engine/execute-plan
+               scan-specs filters' scan-spec)))))))))
 
 (defn- relation-triples
   [db]

@@ -586,6 +586,14 @@
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))
 
+(deftest datascript-certified-generation-plan-reuse-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})]
+    (eacl/write-schema! client contract/smoke-schema)
+    (seed-objects! conn)
+    (eacl/create-relationships! client contract/smoke-relationships)
+    (contract/assert-certified-generation-plan-reuse! client)))
+
 (deftest datascript-recursive-v8-contract-test
   (let [conn (datascript/create-conn)
         client
@@ -930,6 +938,7 @@
       (is (= 12 (:v envelope)))
       (is (= :least-path-edge
              (get-in envelope [:edge :kind])))
+      (is (= :progress (get-in envelope [:edge :anchor])))
       (is (vector? (get-in envelope [:edge :coords])))
       (is (every? integer? (get-in envelope [:edge :coords])))
       (is (nil? (get-in envelope [:edge :ordinal])))

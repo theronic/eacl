@@ -370,7 +370,7 @@
                (vec (sort-by relationship-sort-key (:data page)))))
         (is (= :relationship-index
                (get-in page [:page-info :start-cursor :kind])))
-        (is (= #{:kind :v :scan-index :subject-id :resource-id}
+        (is (= #{:kind :v :anchor :scan-index :subject-id :resource-id}
                (set (keys (get-in page [:page-info :start-cursor])))))))))
 
 (deftest lookup-subjects-tests

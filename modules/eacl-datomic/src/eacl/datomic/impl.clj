@@ -52,10 +52,9 @@
   the stamped generation (a d/with that writes definition datoms without
   the stamp is outside the supported contract on the committed path too).
 
-  Otherwise the adapter carries the facade's process-stable lifecycle and
-  the request-local context carries the snapshot's schema version (one
-  direct datom read, not a proof-frame operation), so the engine's sealed
-  plans are reused across raw calls and across unrelated transactions.
+  Otherwise the adapter carries the facade's process-stable lifecycle. The
+  request-local derived cache prepares each root once without publishing it
+  across raw calls.
 
   A caller-supplied schema cache (the public client, or a v7-compat caller
   binding impl.indexed/*schema-cache*) keeps the pre-existing contract: no
@@ -66,18 +65,13 @@
   [[adapter-sym db] & body]
   `(let [db# ~db
          bound-cache# impl.indexed/*schema-cache*
-         schema-identity# (when (and (nil? bound-cache#)
-                                     (backend/ordinary-view? db#))
-                            (impl.indexed/schema-version db#))
          ~adapter-sym (backend/snapshot-adapter
-                       db# (if (or bound-cache# schema-identity#)
+                       db# (if bound-cache#
                              {:source-lifecycle raw-engine-lifecycle}
                              {}))]
      (binding [engine/*schema-cache*
                (or bound-cache#
-                   (engine/request-schema-cache
-                    ~adapter-sym
-                    {:schema-identity schema-identity#}))
+                   (engine/request-schema-cache ~adapter-sym))
                engine/*recursive-traversal-limits*
                impl.indexed/*recursive-traversal-limits*
                engine/*recursive-traversal-stats*
@@ -428,6 +422,8 @@
   ([db filters]
    (read-relationships db filters nil))
   ([db filters decision-kernel]
+   (read-relationships db filters decision-kernel nil))
+  ([db filters decision-kernel window-options]
    ;; The unified filter contract shared by every backend
    ;; (backend-unification 9.1). Value-presence anchor semantics: a
    ;; present-but-nil anchor throws instead of widening the read.
@@ -567,13 +563,17 @@
                    (scan-forward-partial spec cursor direction)
 
                    (scan-reverse-partial spec cursor direction)))]
-         (relationship-engine/execute-page
-          (relationship-engine/plan-scans
-           (mapv relation-def relations)
-           normalized-filters)
-          normalized-filters
-          decision-kernel
-          scan-spec))))))
+         (let [scan-specs
+               (relationship-engine/plan-scans
+                (mapv relation-def relations)
+                normalized-filters)]
+           (if window-options
+             (relationship-engine/execute-filtered-window
+              scan-specs normalized-filters decision-kernel scan-spec
+              window-options)
+             (relationship-engine/execute-page
+              scan-specs normalized-filters decision-kernel
+              scan-spec))))))))
 
 ;; --- Object deletion --------------------------------------------------------
 ;;

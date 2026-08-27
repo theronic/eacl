@@ -81,6 +81,12 @@
   :complete-portable-error-comparison]
  :qualification
  {:authorization-decisions :generated
+  :filtered-pagination
+  {:model "formal/dafny/FilteredPagination.dfy"
+   :production
+   [eacl.engine.relationships/execute-filtered-window
+    eacl.engine.v8/execute-filtered-lookup-window]
+   :classification :proof-only-host-control-model-cross-checked}
   :conversion-code :trusted-ffi-boundary
   :cross-runtime-function-presence :machine-checked
   :semantic-evidence

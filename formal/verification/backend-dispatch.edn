@@ -16,7 +16,13 @@
    ;; 75 -> 77 (2026-08-22): the synchronous composed-snapshot view captures
    ;; its fixed provider's source scope and lifecycle through the same literal,
    ;; guarded dispatch boundary; again, no new operation keys are introduced.
-   :invoke-call-count 77
+   ;; 77 -> 76 (2026-08-22): certified schema generation adds its independent
+   ;; literal operation while removal of duplicated proof/schema identity reads
+   ;; reduces the total static call sites by one.
+   ;; 76 -> 82 (2026-08-23): aggregate scan/enumerate cache provenance adds
+   ;; six literal direct-match and relation-observation sites. Both reader
+   ;; passes retain the same closed certified operation set.
+   :invoke-call-count 82
    :operations
    #{:snapshot-id
      :source-scope
@@ -36,9 +42,10 @@
      :resource->subjects
      :direct-match?
      :all-permission-nodes
+     :schema-generation
      :proof-frame}}
   :cljs
-  {:invoke-call-count 77
+  {:invoke-call-count 82
    :operations
    #{:snapshot-id
      :source-scope
@@ -58,10 +65,11 @@
      :resource->subjects
      :direct-match?
      :all-permission-nodes
+     :schema-generation
      :proof-frame}}}
  :requirements
  {:every-invoke-operation-is-a-literal-keyword true
-  :observed-equals-required-snapshot-operations true
+  :observed-equals-certified-snapshot-operations true
   :make-adapter-requires-callable-operation-implementations true}
  :remaining
  [:backend-operation-semantics-remain-adapter-obligations

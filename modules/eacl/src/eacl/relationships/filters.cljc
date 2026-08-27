@@ -18,11 +18,18 @@
   rather than something to ignore."
   (into known-anchor-keys
         [:first :last :after :before :cursor :limit
-         :page/basis :consistency :cache? :timeout-ms
-         :cancellation-token]))
+         :page/basis :consistency :cache? :evaluation :timeout-ms
+         :cancellation-token :aggregate-limits :authorization]))
 
 (defn validate!
   [filters]
+  (when-not (map? filters)
+    (throw
+     (ex-info
+      "read-relationships requires a filter map."
+      {:type :eacl.filters/invalid-filter
+       :eacl/error :eacl.filters/invalid-filter
+       :value filters})))
   (doseq [[unsupported-key hint]
           [[:resource/id-prefix
             "Filter on :resource/id, or filter external ids client-side."]

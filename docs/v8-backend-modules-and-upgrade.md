@@ -7,13 +7,13 @@ depend on one adapter module; backend authors depend on core.
 
 ## Choose a module
 
-| Module | Runtime | Consistency and snapshots | Cursors |
-| --- | --- | --- | --- |
-| `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, targeted catch-up plus exact `d/as-of T` | authenticated; proof-equivalent current continuation or full-history exact reconstruction |
-| `eacl-datahike` | Clojure/JVM | current connection DB; durable temporal history when enabled, otherwise conditional retained-commit selection | authenticated; proof-equivalent current continuation or configuration-honest exact reconstruction |
-| `eacl-datascript` | Clojure and ClojureScript | current connection DB; no arbitrary exact selection | authenticated proof-equivalent current continuation |
-| `eacl-datalevin` | Clojure/JVM | fresh owned native read snapshot at the local embedded head; causal-floor polling; no historical exact selection | authenticated revision-bound continuation; no ordered-proof lifting |
-| `eacl` | Clojure and ClojureScript | supplied by an adapter | shared protocol, engine, proof, and cache implementation |
+| Module | Runtime | Consistency and snapshots | Derived schema | Cursors |
+| --- | --- | --- | --- | --- |
+| `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, targeted catch-up plus exact `d/as-of T` | certified generation reuse | authenticated; proof-equivalent current continuation or full-history exact reconstruction |
+| `eacl-datahike` | Clojure/JVM | current connection DB; durable temporal history when enabled, otherwise conditional retained-commit selection | certified generation reuse | authenticated; proof-equivalent current continuation or configuration-honest exact reconstruction |
+| `eacl-datascript` | Clojure and ClojureScript | current connection DB; no arbitrary exact selection | certified generation reuse | authenticated proof-equivalent current continuation |
+| `eacl-datalevin` | Clojure/JVM | fresh owned native read snapshot at the local embedded head; causal-floor polling; no historical exact selection | certified generation reuse | authenticated revision-bound continuation; no ordered-proof lifting |
+| `eacl` | Clojure and ClojureScript | supplied by an adapter | shared generation registry and request-local fallback | shared protocol, engine, proof, and cache implementation |
 
 Capabilities are configuration-specific and are validated before
 authorization. Ordinary calls select one current immutable snapshot and do not
@@ -27,12 +27,31 @@ public SCM revisions.
 
 ## Consistency matrix
 
-| Backend | Minimize latency | Fully consistent | At least as fresh | Exact snapshot | Ordered-generation cache proof |
-| --- | --- | --- | --- | --- | --- |
-| Datomic Pro | current Peer value | bounded `d/sync` then current | targeted catch-up | `d/as-of T` | yes |
-| Datahike | current connection value | qualified writer head | revision/commit catch-up | durable with temporal history; otherwise retained-commit conditional | yes |
-| DataScript | serialized current value | serialized current head | waits for connection revision | unsupported | yes, in the in-process mutation topology |
-| Datalevin | fresh explicit native reader | same local sole-writer head guarantee | retries fresh readers to the authenticated revision floor | unsupported | no; exact selected-revision reuse only |
+| Backend | Minimize latency | Fully consistent | At least as fresh | Exact snapshot | Certified schema generation | Ordered-generation cache proof |
+| --- | --- | --- | --- | --- | --- | --- |
+| Datomic Pro | current Peer value | bounded `d/sync` then current | targeted catch-up | `d/as-of T` | yes | yes |
+| Datahike | current connection value | qualified writer head | revision/commit catch-up | durable with temporal history; otherwise retained-commit conditional | yes | yes |
+| DataScript | serialized current value | serialized current head | waits for connection revision | unsupported | yes | yes, in the in-process mutation topology |
+| Datalevin | fresh explicit native reader | same local sole-writer head guarantee | retries fresh readers to the authenticated revision floor | unsupported | yes, one snapshot-bound index probe | no; completed answers use exact selected-revision reuse only |
+
+## Aggregate capability matrix
+
+Batch evaluation and both authorized relationship-page routes live in shared
+core; adapters do not implement private loops or page evaluators.
+
+| Backend | `check-permissions` | Authorized scan route | Enumerate direct-match certificate | Request snapshot lifecycle |
+| --- | --- | --- | --- | --- |
+| Datomic Pro | yes | yes | yes | borrowed immutable Peer DB value |
+| Datahike | yes | yes | yes | borrowed or configuration-qualified historical value |
+| DataScript | yes, CLJ/CLJS | yes, CLJ/CLJS | yes, CLJ/CLJS | borrowed serialized immutable DB value |
+| Datalevin | yes | yes | yes, one snapshot-bound index probe | owned explicit reader, acquiring platform thread only, deterministic close |
+
+Every adapter must certify that `:direct-match?` denotes membership of exactly
+one `(subject, relation, resource)` triple on the selected snapshot. The shared
+enumerate route reuses this certificate and performs one probe per authorized
+candidate; it does not re-evaluate the permission. Every bundled adapter also
+implements the independent one-probe `:schema-generation` operation. This is a
+separate obligation from ordered-generation proof support.
 
 Datalevin's fully-consistent mode is not a replica barrier. The certified
 topology has one embedded connection and one direct synchronous writer, so a
@@ -61,6 +80,15 @@ disabled:
                              ;; signing, and topology options
                              })
 ```
+
+Every bundled adapter also certifies EACL's schema generation independently
+of ordered relationship-generation proofs. The selected adapter memoizes the
+one-probe read. A bounded generation registry reuses validation catalogs,
+permission paths, dependency closures, routing analysis, direct-grant
+relations, and sealed plans across relationship-only revisions. This applies
+to Datalevin even though its completed answers cannot lift across revisions.
+An uncertified third-party adapter receives the same reuse within one request
+only; native revision is not used as a derived-state fallback.
 
 Exact immutable-snapshot lookup is always first. After an exact miss, complete
 proof-backed reuse across unrelated forward transactions is automatic when the
@@ -152,8 +180,9 @@ damage whose former eid is unknown.
 ## Recursive permissions and safety controls
 
 All adapters use the same stable-discovery engine: one sealed plan per
-permission root and one width-one deterministic reducer that admits each
-(node, entity) exactly once. Each client accepts positive
+permission root and certified schema generation (or per request when the
+generation is unavailable), and one width-one deterministic reducer that
+admits each (node, entity) exactly once. Each client accepts positive
 `:recursive-traversal-limits` overrides:
 
 ```clojure
@@ -245,13 +274,16 @@ loops should call `eacl.execution/check!` at bounded internal checkpoints.
 
 The adapter operation map validates snapshot/source identity, consistency,
 object conversion, schema definitions, adjacency, direct matches, recursive
-nodes, transaction behavior, cursor identity, and optional ordered-generation
-proof capability. A third-party adapter without certified proof support remains
-a correct exact-current adapter.
+nodes, transaction behavior, cursor identity, the independent
+`:schema-generation` operation, and optional ordered-generation proof
+capability. A third-party adapter without certified proof support remains a
+correct exact-current adapter. Returning nil for schema generation also
+disables cross-request derived-state reuse while preserving request-local
+reuse.
 
 Backend authors should follow the [adapter boundary
 inventory](v8-backend-adapter-boundary.md) and run the shared public API,
-recursive, cache, mutation, and independent-oracle contracts.
+recursive, aggregate, cache, mutation, and independent-oracle contracts.
 
 Adapters over live or closeable database handles must also implement the
 [snapshot-provider lifecycle](v8-snapshot-provider-migration.md). A borrowed
@@ -259,3 +291,14 @@ provider is correct only for an already immutable value. An owned reader must
 declare its thread/runtime restrictions, keep the handle inside the complete
 request scope, eagerly realize all returned data, and release every accepted
 and rejected candidate deterministically.
+
+## Downstream adapter recut
+
+The separate `eacl-spicedb` repository must be recut against this core before
+it can claim v8 compatibility. Its reader boundary must implement or explicitly
+reject the new `:schema-generation` and certified `:direct-match?` obligations,
+wire `check-permissions` and both authorized pagination query shapes through
+the shared contracts where its topology permits, adopt the current encrypted
+cursor ABI, and pass the aggregate conformance suite. An older published
+`eacl-spicedb` artifact is not source- or wire-compatible merely because scalar
+operations still compile.

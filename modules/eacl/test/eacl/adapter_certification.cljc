@@ -8,7 +8,7 @@
             [eacl.core :as eacl]
             [eacl.engine.v8 :as engine]))
 
-(def certification-version "eacl.adapter-certification/v2")
+(def certification-version "eacl.adapter-certification/v3")
 
 (def certification-schema
   "definition user {}
@@ -464,6 +464,7 @@
         source (backend/invoke adapter :source-scope)
         lifecycle (backend/invoke adapter :source-lifecycle)
         revision (backend/invoke adapter :native-revision)
+        schema-generation (backend/invoke adapter :schema-generation)
         relation-ids (vec (sort (map :relation-id (vals relations))))
         ordered-generations?
         (backend/supports? adapter :cache-proofs :ordered-generations)
@@ -482,6 +483,13 @@
             "Current selection changed source lifecycle.")
     (demand (= revision (backend/invoke adapter :native-revision))
             "Native revision changed on an immutable adapter.")
+    (demand (or (nil? schema-generation)
+                (backend/schema-generation? schema-generation))
+            "Certified schema generation must be an exact natural or nil."
+            {:schema-generation schema-generation})
+    (demand (= schema-generation
+               (backend/invoke adapter :schema-generation))
+            "Schema generation changed on an immutable adapter.")
     (demand (= (:revision revision) (backend/invoke adapter :order-hint))
             "Native revision disagreed with the order hint.")
     (demand (= (:exact-locator revision)
@@ -517,6 +525,7 @@
      :source-scope source
      :source-lifecycle lifecycle
      :native-revision revision
+     :schema-generation schema-generation
      :ordered-generation-proof? ordered-generations?
      :exact-selection?
      (backend/supports?
@@ -537,7 +546,9 @@
             (let [declared
                   (set (keys (backend/certification-obligations)))]
               (demand
-               (= (conj backend/required-snapshot-operations :proof-frame)
+               (= (into
+                   (conj backend/required-snapshot-operations :proof-frame)
+                   backend/optional-snapshot-operations)
                   declared)
                "Adapter obligation registry is incomplete."
                {:required backend/required-snapshot-operations

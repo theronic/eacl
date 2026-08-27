@@ -2336,6 +2336,12 @@
   [selection]
   (let [selection
         (cond
+          ;; Production callers retain the normalized `{:kernel ...}` map.
+          ;; Recognize that closed configuration shape before protocol
+          ;; satisfaction: on the JVM, a negative `satisfies?` probe against a
+          ;; persistent map walks protocol extension metadata and dominated
+          ;; small generated decisions such as completed-cache hits.
+          (and (map? selection) (contains? selection :kernel)) selection
           (kernel? selection) {:kernel selection}
           (map? selection) selection
           :else
@@ -2354,7 +2360,7 @@
       (boundary-error!
        "EACL v8 requires a generated DecisionKernel."
        {:kernel-type (str (type kernel))}))
-    {:kernel kernel}))
+    selection))
 
 (defn- invoke-kernel
   [kernel operation input]

@@ -170,21 +170,28 @@
           :conn conn}
          extra))
 
-(deftest plan-cache-survives-snapshot-rewraps-test
-  ;; Two adapter wraps of the same source at the same basis are distinct JVM
-  ;; objects; the sealed plan must be shared between them.
+(deftest generation-plan-registry-survives-snapshot-rewraps-test
+  ;; Two adapter wraps of distinct bases in one certified schema generation
+  ;; are distinct JVM objects; the runtime registry must return one plan.
   (let [{:keys [conn]} (capture/seed-client!
                         ((get capture/fixtures :explorer-acyclic)))
         opts (adapter-opts conn {:source-lifecycle "plan-rewrap-test"})
         stable-plan @#'v8/stable-plan
-        plan-1 (stable-plan (datascript-backend/snapshot-adapter
-                             (ds/db conn) opts)
-                            [:server :view])
-        plan-2 (stable-plan (datascript-backend/snapshot-adapter
-                             (ds/db conn) opts)
-                            [:server :view])]
+        registry (atom {})
+        adapter-1 (datascript-backend/snapshot-adapter (ds/db conn) opts)
+        cache-1 (v8/schema-cache-for! registry adapter-1)
+        plan-1 (binding [v8/*schema-cache* cache-1]
+                 (stable-plan adapter-1 [:server :view]))
+        _ (ds/transact! conn [{:eacl/id "unrelated-new-basis"}])
+        adapter-2 (datascript-backend/snapshot-adapter (ds/db conn) opts)
+        cache-2 (v8/schema-cache-for! registry adapter-2)
+        plan-2 (binding [v8/*schema-cache* cache-2]
+                 (stable-plan adapter-2 [:server :view]))]
+    (is (= (:schema-version cache-1) (:schema-version cache-2)))
+    (is (identical? cache-1 cache-2)
+        "two bases of one generation select the same derived cache")
     (is (identical? plan-1 plan-2)
-        "re-wrapping the same source at the same basis must hit the plan cache")))
+        "re-wrapping the source at another basis must hit the plan registry")))
 
 (deftest fixture-stores-mint-distinct-lifecycles-test
   ;; Distinct stores sharing one caller-fixed lifecycle violated the adapter

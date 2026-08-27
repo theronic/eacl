@@ -5,8 +5,7 @@
             [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.backend.v8 :as backend]
             [eacl.datalevin.db :as ddb]
-            [eacl.datalevin.impl :as impl]
-            [eacl.secure-format :as secure-format]))
+            [eacl.datalevin.impl :as impl]))
 
 (def capabilities
   {:consistency #{:minimize-latency
@@ -14,7 +13,7 @@
                   :at-least-as-fresh}
    :snapshots #{:current :authoritative :causal}
    :source #{:stable-scope :source-lifecycle :native-revision :order-hint}
-   :cursor #{:forward :reverse :opaque}
+   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :transactions #{:schema :relationships :object-deletion}
    ;; Datalevin persistent datoms do not expose their original transaction.
    ;; No ordered-generation proof is claimed by the initial adapter.
@@ -67,7 +66,7 @@
    :target-type (:eacl.permission/target-type permission)
    :target-name (:eacl.permission/target-name permission)})
 
-(defn- snapshot-info
+(defn- snapshot-revision-info
   [snapshot]
   (when-not (d/read-snapshot? snapshot)
     (throw
@@ -76,44 +75,18 @@
       {:type :eacl/invalid-selected-snapshot
        :eacl/error :eacl/invalid-selected-snapshot
        :backend :datalevin})))
-  (let [info (d/read-snapshot-info snapshot)]
+  (let [info (d/read-snapshot-revision-info snapshot)]
     (exact-natural! :revision (:max-tx info))
     (exact-natural! :max-eid (:max-eid info))
     info))
-
-(defn- physical-schema-fingerprint
-  [info fingerprint-cache]
-  (let [schema (:schema info)
-        cached (when fingerprint-cache @fingerprint-cache)]
-    (if (= schema (:schema cached))
-      (:fingerprint cached)
-      (let [fingerprint
-            (secure-format/canonical-digest
-             "eacl.datalevin.physical-schema.v1"
-             schema)]
-        (if-not fingerprint-cache
-          fingerprint
-          (:fingerprint
-           (swap! fingerprint-cache
-                  (fn [current]
-                    ;; Structural equality, rather than a hash-only lookup,
-                    ;; makes this memo safe across a physical schema change.
-                    ;; Concurrent readers may compute the digest twice but can
-                    ;; never receive a digest for a different schema value.
-                    (if (= schema (:schema current))
-                      current
-                      {:schema schema :fingerprint fingerprint})))))))))
 
 (defn snapshot-adapter
   "Creates an immutable v8 adapter around one open Datalevin read snapshot.
   The provider retains ownership; every operation binds the snapshot's one
   explicit native reader and eagerly realizes its result before returning."
   [snapshot {:keys [object-id->entid entid->object-id] :as opts}]
-  (let [info (snapshot-info snapshot)
+  (let [info (snapshot-revision-info snapshot)
         revision (:max-tx info)
-        schema-identity
-        (physical-schema-fingerprint
-         info (:physical-schema-fingerprint-cache opts))
         source-lifecycle
         (or (some-> (:source-lifecycle-state opts) deref)
             (:source-lifecycle opts))
@@ -145,20 +118,25 @@
       :runtime-guards? true
       :state {:db snapshot
               :revision revision
-              :max-eid (:max-eid info)
-              :schema-identity schema-identity}
+              :max-eid (:max-eid info)}
       :operations
       {:snapshot-id
        (fn []
          {:database-id :datalevin
-          :basis-t revision
-          :schema-identity schema-identity})
+          :basis-t revision})
 
        :source-scope (constantly source-scope)
        :source-lifecycle (constantly source-lifecycle)
        :native-revision
        (fn [] {:revision revision :exact-locator nil})
        :order-hint (constantly revision)
+       :schema-generation
+       (fn []
+         (ddb/with-db
+           snapshot
+           #(some-> (first (ddb/avet-datoms
+                            % :eacl/schema-generation))
+                    :v)))
 
        ;; These adapter-level operations exist for the closed v8 contract.
        ;; Provider-based public orchestration owns cross-request acquisition.
@@ -344,9 +322,7 @@
   [conn opts]
   (let [_ (validate-topology! conn opts)
         source-scope {:source-id (:native-source-id opts) :branch nil}
-        opts (assoc opts
-                    :source-scope source-scope
-                    :physical-schema-fingerprint-cache (atom nil))
+        opts (assoc opts :source-scope source-scope)
         source-lifecycle
         (fn []
           (or (some-> (:source-lifecycle-state opts) deref)
