@@ -109,6 +109,14 @@
      {:basis-identity basis-identity
       :expected-keys source/semantic-identity-keys})))
 
+(defn lineage-for-basis
+  "Returns the one history witness used by every cross-basis artifact."
+  [basis-identity]
+  (validate-basis-identity! basis-identity)
+  {:source-scope
+   (select-keys basis-identity [:backend :source-id :branch])
+   :source-lifecycle (:source-lifecycle basis-identity)})
+
 (defn- release-after-construction-failure!
   [selected ledger error]
   (when selected
@@ -184,6 +192,7 @@
               (source/semantic-identity selected))
             basis-identity (or basis-identity selected-identity)
             _ (validate-basis-identity! basis-identity)
+            lineage (lineage-for-basis basis-identity)
             _
             (when (and selected-identity
                        (not= selected-identity basis-identity))
@@ -231,6 +240,7 @@
                            (source/ownership selected)
                            :borrowed)
               :basis-identity basis-identity
+              :lineage lineage
               :schema-generation-delay schema-generation-delay
               :contract contract
               :proof-frame request-proof-frame
@@ -261,6 +271,10 @@
 (defn basis-identity
   [context]
   (:basis-identity (state-of (assert-open! context))))
+
+(defn lineage
+  [context]
+  (:lineage (state-of (assert-open! context))))
 
 (defn contract
   [context]

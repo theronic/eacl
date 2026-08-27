@@ -36,8 +36,8 @@ callback. It provides:
   operations;
 - one `:schema-generation` operation returning EACL's certified schema stamp
   or nil; and
-- when advertised, one `:proof-frame` operation returning schema generation
-  plus a complete canonical vector of requested relation generations.
+- when advertised, one `:proof-frame` operation returning only the complete
+  canonical vector `[[relation-id generation] ...]` requested by core.
 
 The adapter capability map declares only facts the immutable value can
 establish. Source consistency and writer transaction capabilities live on
@@ -56,9 +56,13 @@ does not perform a second permission evaluation. Construction/certification
 must fail with `:eacl/unsupported-capability` or an adapter-contract error when
 this denotation cannot be supplied.
 
-The runtime proof validator rejects missing, malformed, duplicate,
-non-canonical, oversized, or partial evidence. The adapter does not choose a
-coherence or proof mode.
+The runtime proof validator distinguishes absence from defect. Missing
+generations, an unsupported operation, bounded closure overflow, or transient
+provider failure make proof unavailable for that request. Malformed shape,
+wrong cardinality, duplicate/non-canonical ids, non-integer generations, or a
+generation above the selected revision are contract violations: exact
+authorization continues, but managed lifting is disabled for that client
+lifecycle. The adapter does not choose a coherence or proof mode.
 
 ## Basis source
 
@@ -68,6 +72,12 @@ scope, and lifecycle—must be readable without acquiring a basis. It implements
 current, authoritative, at-least, and exact-by-locator acquisition and returns
 exactly `{:adapter ... :ownership ... :release-token ...}`. Unsupported modes
 fail through the closed capability contract.
+
+The source scope must identify one database history. A durable backend persists
+and reuses its source id across reopen. A backend that cannot persist identity
+must mint a fresh id once per live source, regardless of a caller-supplied
+configuration id. Combined with `:source-lifecycle`, this scope is the lineage
+prefix for every proof-backed artifact.
 
 Exact-by-locator acquisition must not acquire current first. Owned sources must
 close rejected causal candidates and release on success, typed or foreign
@@ -105,9 +115,10 @@ backend/adapter identity, source scope, lifecycle, and this generation. Parsed
 validation catalogs, permission paths, dependency closures, routing analysis,
 direct-grant relations, cycle guards, and sealed plans are owned by that
 generation. Nil disables cross-request reuse and installs a request-local
-floor instead; native revision is never a fallback key. When an ordered proof
-frame is also available, its schema stamp must agree with this independent
-value or the adapter fails with a backend-integrity error.
+floor instead; native revision is never a fallback key. Ordered proof frames do
+not repeat the schema value; core reads this independent operation once and
+combines it with the relation frame after validating both against the selected
+revision.
 
 ## Ordered-generation certification
 
@@ -115,6 +126,10 @@ Shared cache proofs assume that:
 
 - snapshots are immutable and ordered inside one source lifecycle;
 - schema and every declared relation have initialized generations;
+- native revision, schema generation, and relation generations use one
+  portable exact-natural numeric domain;
+- every generation visible at a selected value is at or below that value's
+  native revision;
 - every supported authorization mutation atomically commits data changes and
   stamps each affected relation with its native committed transaction;
 - that transaction is later than every generation visible before commit; and
@@ -124,8 +139,12 @@ Shared cache proofs assume that:
 Dafny proves the scalar-frontier cache theorem from those assumptions. The
 database engines and adapter implementations are not mechanized; bundled
 adapter certification and randomized cache-versus-bypass tests establish the
-runtime trusted boundary. A third-party adapter must run the same contract and
-certification suites before advertising ordered generations.
+runtime trusted boundary. The certification suite executes a supported
+relationship mutation, asserts that every affected relation equals the
+committed revision, checks all generation ceilings, and opens distinct or
+reopened sources to certify the source-id durability rule. A third-party
+adapter must run the same contract and certification suites before advertising
+ordered generations.
 
 ## Capability policy
 

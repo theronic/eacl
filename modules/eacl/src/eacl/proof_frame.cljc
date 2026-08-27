@@ -56,6 +56,10 @@
     :snapshot-id-delay (delay (backend/invoke adapter :snapshot-id))
     :source-lifecycle-delay
     (delay (:source-lifecycle basis-identity))
+    :revision-delay
+    (delay
+      (or (:revision basis-identity)
+          (:revision (backend/invoke adapter :native-revision))))
     :schema-generation-delay
     (delay
       (if schema-generation-fn
@@ -77,17 +81,17 @@
   [frame]
   (force (:schema-generation-delay frame)))
 
-(defn- schema-generation-mismatch!
-  [frame proof-generation certified-generation]
-  (throw
-   (ex-info
-    "Ordered-generation proof disagrees with the certified schema generation."
-    {:type :eacl/backend-integrity-error
-     :eacl/error :eacl/backend-integrity-error
-     :backend (backend/backend-id (:adapter frame))
-     :reason :schema-generation-mismatch
-     :proof-schema-generation proof-generation
-     :certified-schema-generation certified-generation})))
+(defn revision
+  [frame]
+  (force (:revision-delay frame)))
+
+(defn- diagnose!
+  [frame result]
+  (when-let [diagnostic-fn (:diagnostic-fn frame)]
+    (try
+      (diagnostic-fn result)
+      (catch #?(:clj Throwable :cljs :default) _)))
+  result)
 
 (defn- unavailable
   [frame reason details]
@@ -96,63 +100,120 @@
          :reason reason
          :backend (backend/backend-id (:adapter frame))
          :details details}]
-    (when-let [diagnostic-fn (:diagnostic-fn frame)]
-      (try
-        (diagnostic-fn result)
-        (catch #?(:clj Throwable :cljs :default) _)))
-    result))
+    (diagnose! frame result)))
+
+(defn- contract-violation
+  [frame reason details]
+  (diagnose!
+   frame
+   {:status :contract-violation
+    :reason reason
+    :backend (backend/backend-id (:adapter frame))
+    :operation :proof-frame
+    :details details}))
+
+(defn contract-violation?
+  [proof]
+  (= :contract-violation (:status proof)))
+
+(defn- duplicate-value
+  [values]
+  (loop [seen #{}
+         remaining (seq values)]
+    (when remaining
+      (let [value (first remaining)]
+        (if (contains? seen value)
+          value
+          (recur (conj seen value) (next remaining)))))))
 
 (defn- complete-result
   [frame relation-ids raw]
-  (let [expected-keys #{:schema-stamp :relation-stamps}
-        relation-stamps (:relation-stamps raw)]
+  (let [selected-revision (revision frame)
+        certified-generation (schema-generation frame)
+        entries? (and (vector? raw)
+                      (every? #(and (vector? %) (= 2 (count %))) raw))
+        returned-ids (when entries? (mapv first raw))
+        generations (when entries? (mapv second raw))
+        duplicate-id (when returned-ids (duplicate-value returned-ids))]
     (cond
-      (not (map? raw))
-      (unavailable frame :malformed-proof {:value raw})
-
-      (not= expected-keys (set (keys raw)))
+      (not (generation? selected-revision))
       (unavailable
-       frame :malformed-proof
-       {:expected-keys expected-keys :actual-keys (set (keys raw))})
+       frame :revision-unavailable {:revision selected-revision})
 
-      (not (generation? (:schema-stamp raw)))
+      (nil? certified-generation)
       (unavailable
-       frame :malformed-schema-generation
-       {:value (:schema-stamp raw)})
+       frame :schema-generation-unavailable {})
 
-      (not (and (vector? relation-stamps)
-                (= relation-ids (mapv first relation-stamps))
-                (every?
-                 (fn [entry]
-                   (and (vector? entry)
-                        (= 2 (count entry))
-                        (generation? (first entry))
-                        (generation? (second entry))))
-                 relation-stamps)))
+      (not (generation? certified-generation))
+      (contract-violation
+       frame :invalid-schema-generation
+       {:schema-generation certified-generation
+        :revision selected-revision})
+
+      (> certified-generation selected-revision)
+      (contract-violation
+       frame :schema-generation-above-revision
+       {:schema-generation certified-generation
+        :revision selected-revision})
+
+      (not entries?)
+      (contract-violation
+       frame :malformed-shape
+       {:relation-generations raw})
+
+      (not= (count relation-ids) (count raw))
+      (contract-violation
+       frame :wrong-cardinality
+       {:expected-count (count relation-ids)
+        :actual-count (count raw)})
+
+      duplicate-id
+      (contract-violation
+       frame :duplicate-relation-id
+       {:relation-id duplicate-id
+        :relation-ids returned-ids})
+
+      (not= relation-ids returned-ids)
+      (contract-violation
+       frame :noncanonical-relation-ids
+       {:expected relation-ids :actual returned-ids})
+
+      (some nil? generations)
       (unavailable
-       frame :incomplete-or-noncanonical-generations
-       {:relation-ids relation-ids :relation-stamps relation-stamps})
+       frame :relation-generation-unavailable
+       {:relation-id
+        (first
+         (keep-indexed
+          (fn [index generation]
+            (when (nil? generation) (nth relation-ids index)))
+          generations))})
+
+      (not-every? generation? generations)
+      (contract-violation
+       frame :invalid-relation-generation
+       {:relation-generations raw})
+
+      (some #(> % selected-revision) generations)
+      (contract-violation
+       frame :relation-generation-above-revision
+       {:revision selected-revision
+        :relation-generations raw})
 
       :else
-      (let [proof-generation (:schema-stamp raw)
-            certified-generation (schema-generation frame)]
-        (when (and (some? certified-generation)
-                   (not= certified-generation proof-generation))
-          (schema-generation-mismatch!
-           frame proof-generation certified-generation))
-        {:status :complete
-         :snapshot-id (snapshot-id frame)
-         :source-lifecycle (source-lifecycle frame)
-         :schema-stamp proof-generation
-         :relation-ids relation-ids
-         :relation-stamps relation-stamps
-         :relation-stamp-map (into {} relation-stamps)
-         :dependency-stamp
-         (reduce
-          (fn [frontier [_ generation]]
-            (max frontier generation))
-          0
-          relation-stamps)}))))
+      {:status :complete
+       :snapshot-id (snapshot-id frame)
+       :source-lifecycle (source-lifecycle frame)
+       :revision selected-revision
+       :schema-generation certified-generation
+       :relation-ids relation-ids
+       :relation-generations raw
+       :relation-generation-map (into {} raw)
+       :dependency-stamp
+       (reduce
+        (fn [frontier [_ generation]]
+          (max frontier generation))
+        0
+        raw)})))
 
 (defn- acquire
   [frame relation-ids]
@@ -177,9 +238,12 @@
        relation-ids
        (backend/invoke (:adapter frame) :proof-frame relation-ids))
       (catch #?(:clj Throwable :cljs :default) error
-        (if (= :eacl/backend-integrity-error
+        (if (= :eacl/backend-contract-violation
                (:type (ex-data error)))
-          (throw error)
+          (contract-violation
+           frame :adapter-runtime-guard
+           (select-keys (ex-data error)
+                        [:backend :operation :obligation :value]))
           (unavailable
            frame :proof-provider-failure
            {:error-class #?(:clj (.getName (class error))
@@ -208,7 +272,7 @@
   "Returns the constant-size completed-cache identity for a complete proof."
   [proof]
   (when (complete? proof)
-    (select-keys proof [:schema-stamp :dependency-stamp])))
+    (select-keys proof [:schema-generation :dependency-stamp])))
 
 (defn subset-descriptor
   "Derives a subset frontier only from a complete request proof.
@@ -221,10 +285,10 @@
                      (if (vector? relation-ids)
                        relation-ids
                        [relation-ids]))
-          stamps (:relation-stamp-map proof)]
+          stamps (:relation-generation-map proof)]
       (when (and canonical
                  (every? #(contains? stamps %) canonical))
-        {:schema-stamp (:schema-stamp proof)
+        {:schema-generation (:schema-generation proof)
          :dependency-stamp
          (reduce
           (fn [frontier relation-id]

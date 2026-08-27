@@ -1,5 +1,5 @@
 {:schema-version 1
- :certification-version "eacl.adapter-certification/v3"
+ :certification-version "eacl.adapter-certification/v4"
  :date "2026-08-23"
  :role-contracts
  {:basis-adapter
@@ -33,7 +33,9 @@
   :snapshot-bound-relation-prefix-population
   :forward-reverse-scans
   :direct-match-equivalence
-  :immutable-snapshot]
+  :immutable-snapshot
+  :ordered-generation-transition
+  :live-source-identity]
  :adapters
  {:datomic
   {:status :passed
@@ -41,8 +43,8 @@
    :representations [:attribute-refs]
    :static
    {:namespace eacl.datomic.adapter-certification-test
-    :tests 1
-    :assertions 2
+    :tests 2
+    :assertions 4
     :failures 0
     :errors 0}
    :history
@@ -65,7 +67,7 @@
    :representations [:numeric-eid]
    :static
    {:namespace eacl.datascript.adapter-certification-test
-    :clj {:tests 2 :assertions 5 :failures 0 :errors 0}
+    :clj {:tests 5 :assertions 9 :failures 0 :errors 0}
     :cljs-in-full-suite
     {:tests 258 :assertions 7953 :failures 0 :errors 0}}
    :history
@@ -88,8 +90,8 @@
    :representations [:attribute-keywords :attribute-refs]
    :static
    {:namespace eacl.datahike.adapter-certification-test
-    :tests 2
-    :assertions 7
+    :tests 4
+    :assertions 9
     :failures 0
     :errors 0}
    :history
@@ -115,8 +117,8 @@
    :representations [:numeric-eid :explicit-owned-reader]
    :static
    {:namespace eacl.datalevin.adapter-certification-test
-    :tests 1
-    :assertions 5
+    :tests 2
+    :assertions 7
     :failures 0
     :errors 0}
    :history

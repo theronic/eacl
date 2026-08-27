@@ -40,8 +40,32 @@
   credentials for jdbc/s3 stores) and must not leak into snapshot ids,
   cache bases, or cursor digests."
   [db]
-  (let [{:keys [backend id]} (:store (db-config db))]
-    {:backend backend :id (str id)}))
+  (let [config (db-config db)
+        {:keys [backend id]} (:store config)
+        id (if (= :memory backend)
+             (get config schema/live-source-id-key)
+             id)]
+    {:backend backend :id (some-> id str)}))
+
+(defn- connection-live-source-id
+  "Returns one random identity for the lifetime of a memory connection.
+
+  EACL-created connections carry it in their non-durable runtime config so
+  their immutable DB values can be admitted as direct snapshots. For an
+  externally created memory connection, attach it to the connection's private
+  listener carrier; direct DB values from that unsupported construction remain
+  unkeyable rather than falling back to a caller-supplied store id."
+  [conn db]
+  (or (get (db-config db) schema/live-source-id-key)
+      (when-let [carrier (:listeners (meta conn))]
+        (or (::live-source-id (meta carrier))
+            (::live-source-id
+             (alter-meta!
+              carrier
+              (fn [metadata]
+                (if (::live-source-id metadata)
+                  metadata
+                  (assoc metadata ::live-source-id (random-uuid))))))))))
 
 (defn basis-kind
   "Classifies one Datahike database value without touching an EACL runtime."
@@ -59,8 +83,9 @@
   [db]
   (when (contains? #{:ordinary :as-of} (basis-kind db))
     (let [{:keys [backend id]} (store-identity db)]
-      {:source-id {:store-backend backend :store-id id}
-       :branch (:branch (db-config db))})))
+      (when id
+        {:source-id {:store-backend backend :store-id id}
+         :branch (:branch (db-config db))}))))
 
 (defn- exact-reconstruction?
   [db]
@@ -176,19 +201,13 @@
 
 (defn- ordered-generation-frame
   [db relation-ids]
-  {:schema-stamp
-   (when-let [schema-eid (ddb/entid db [:eacl/id "schema-string"])]
-     (some-> (first (ddb/eavt-datoms
-                     db schema-eid :eacl/schema-generation))
-             :tx))
-   :relation-stamps
-   (mapv
-    (fn [relation-id]
-      [relation-id
-       (some-> (first (ddb/eavt-datoms
-                       db relation-id :eacl/relation-version))
-               :tx)])
-    relation-ids)})
+  (mapv
+   (fn [relation-id]
+     [relation-id
+      (some-> (first (ddb/eavt-datoms
+                      db relation-id :eacl/relation-version))
+              :tx)])
+   relation-ids))
 
 (defn- certified-schema-generation
   [db]
@@ -304,6 +323,9 @@
         ;; consumes only configuration needed for the source's static profile.
         static-db @conn
         {:keys [backend id]} (store-identity static-db)
+        id (if (= :memory backend)
+             (some-> (connection-live-source-id conn static-db) str)
+             id)
         source-scope
         {:source-id {:store-backend backend :store-id id}
          :branch (:branch (db-config static-db))}

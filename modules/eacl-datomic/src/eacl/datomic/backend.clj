@@ -266,25 +266,21 @@
 
 (defn- ordered-generation-frame
   [db relation-ids]
-  {:schema-stamp
-   (when-let [schema-eid (d/entid db [:eacl/id "schema-string"])]
-     (some-> (first (d/datoms db :eavt schema-eid
-                              :eacl/schema-version))
-             :tx))
-   :relation-stamps
-   (mapv
-    (fn [relation-id]
-      [relation-id
-       (some-> (first (d/datoms db :eavt relation-id
-                                :eacl/relation-version))
-               :tx)])
-    relation-ids)})
+  (mapv
+   (fn [relation-id]
+     [relation-id
+      (some-> (first (d/datoms db :eavt relation-id
+                               :eacl/relation-version))
+              :tx
+              d/tx->t)])
+   relation-ids))
 
 (defn- certified-schema-generation
   [db]
   (when (d/entid db :eacl/schema-version)
     (some-> (first (d/datoms db :avet :eacl/schema-version))
-            :tx)))
+            :tx
+            d/tx->t)))
 
 (def adapter-config-keys
   #{:entid->object-id :object-id->entid :object-eid-fn

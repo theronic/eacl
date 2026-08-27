@@ -23,8 +23,12 @@ Its 25 transitions cover:
 
 The model checks these safety properties:
 
-1. cache reuse is exact-snapshot or forward-only from a causal ancestor with
-   matching authenticated source, query, scope, and proof;
+1. within this current-head temporal submodel, cache reuse is exact-snapshot or
+   from a causal ancestor with matching authenticated source, query, scope, and
+   proof; direction-agnostic reuse by a retained older selected snapshot is the
+   separate scalar-frontier obligation proved by
+   `EqualScalarProofAlsoPreservesAnOlderSelectedSnapshot` in
+   `formal/dafny/ScalarFrontierCoherence.dfy`;
 2. authenticated query-scoped cursors continue on current only when its
    dependency proof equals the cursor proof, otherwise continue on the
    retained exact graph when available and freshness-compatible, or fail

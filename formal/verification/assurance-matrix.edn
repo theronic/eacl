@@ -6,7 +6,7 @@
   :status :named-public-roots-enumerated
   :source-files 79
   :public-roots 70
-  :reachable-definitions 1641
+  :reachable-definitions 1653
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
@@ -560,10 +560,14 @@
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot
                          :truthful-complete-exact-basis-key
+                         :complete-source-scope-plus-lifecycle-lineage
+                         :fresh-source-id-per-non-durable-live-source
                          :durable-history-when-advertised
                          :targeted-sync-and-exact-as-of-effects
                          :provider-future-cancellation
                          :complete-compiled-dependencies
+                         :proof-generations-share-native-revision-domain
+                         :proof-generations-at-or-below-selected-revision
                          :atomic-relation-stamped-writer-contract
                          :selected-snapshot-rendering
                          :source-fingerprint

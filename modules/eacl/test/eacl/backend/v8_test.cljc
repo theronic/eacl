@@ -38,10 +38,9 @@
          backend/required-snapshot-operations)
    :proof-frame
    (fn [relation-ids]
-     {:schema-stamp 1
-      :relation-stamps (mapv (fn [relation-id]
-                               [relation-id 1])
-                             relation-ids)})))
+     (mapv (fn [relation-id]
+             [relation-id 1])
+           relation-ids))))
 
 (defn- test-adapter []
   (backend/make-adapter
@@ -67,11 +66,9 @@
     (assoc (operation-map)
            :proof-frame
            (fn [relation-ids]
-             {:schema-stamp generation
-              :relation-stamps
-              (mapv (fn [relation-id]
-                      [relation-id generation])
-                    relation-ids)})
+             (mapv (fn [relation-id]
+                     [relation-id generation])
+                   relation-ids))
            :schema-generation (constantly generation))}))
 
 (defn- error-data [f]
@@ -143,7 +140,7 @@
     (is (= {:mode :fully-consistent}
            (backend/require-consistency!
             adapter consistency/fully-consistent)))
-    (is (= {:schema-stamp 1 :relation-stamps []}
+    (is (= []
            (backend/invoke adapter :proof-frame [])))
     (is (nil? (backend/invoke adapter :schema-generation)))
     (testing "unsupported guarantees fail before execution"
@@ -453,9 +450,7 @@
          {:snapshot-id (fn [] {:database-id :test :basis-t 1})
           :proof-frame
           (fn [relation-ids]
-            {:schema-stamp 1
-             :relation-stamps
-             (mapv (fn [relation-id] [relation-id 1]) relation-ids)})
+            (mapv (fn [relation-id] [relation-id 1]) relation-ids))
           :object-id->internal identity
           :internal-id->object identity
           :permission-defs

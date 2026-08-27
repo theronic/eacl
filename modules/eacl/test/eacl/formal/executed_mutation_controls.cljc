@@ -5,6 +5,8 @@
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.proof-frame :as proof-frame]
+            [eacl.request.context :as request-context]
             [eacl.verified-kernel :as verified]))
 
 (defn- production-decision
@@ -186,7 +188,10 @@
 (def audit-source-scope
   {:backend :mutation-control
    :source-id :source
-   :branch nil
+   :branch nil})
+
+(def audit-lineage
+  {:source-scope audit-source-scope
    :source-lifecycle :lifecycle})
 
 (defn- audit-basis-key
@@ -195,6 +200,7 @@
    :backend :mutation-control
    :basis-identity
    (assoc audit-source-scope
+          :source-lifecycle :lifecycle
           :basis-kind :ordinary
           :revision revision
           :exact-locator revision
@@ -208,9 +214,9 @@
    :snapshot-order revision
    :exact-basis-key (audit-basis-key revision)
    :cache-basis revision
-   :managed-subproblem-scope audit-source-scope
+   :managed-subproblem-scope audit-lineage
    :managed-key-fn
-   (constantly {:schema-stamp 10 :dependency-stamp 20})})
+   (constantly {:schema-generation 10 :dependency-stamp 20})})
 
 (defn numeric-ancestry-killed?
   "Kills the obsolete order-as-ancestry rule against the replacement contract:
@@ -491,6 +497,95 @@
                        :source-lifecycle))]
         (separated?))))))
 
+(defn- ordered-generation-adapter
+  [revision provider]
+  (backend/make-adapter
+   {:id :mutation-control
+    :capabilities {:cache-proofs #{:ordered-generations}}
+    :operations
+    (merge
+     (operation-map)
+     {:snapshot-id (constantly {:revision revision})
+      :basis-kind (constantly :ordinary)
+      :native-revision
+      (constantly {:revision revision :exact-locator revision})
+      :order-hint (constantly revision)
+      :exact-locator (constantly revision)
+      :schema-generation (constantly 0)
+      :proof-frame provider})}))
+
+(defn adapter-generation-domain-killed?
+  []
+  (let [adapter
+        (ordered-generation-adapter 5 (constantly [[1 "not-a-generation"]]))
+        gate
+        #(= :contract-violation
+            (:status
+             (proof-frame/resolve!
+              (proof-frame/request-frame adapter) [1])))
+        original proof-frame/generation?]
+    (and
+     (gate)
+     (false?
+      (with-redefs [proof-frame/generation? (constantly true)]
+        (gate)))
+     (fn? original))))
+
+(defn adapter-generation-ceiling-killed?
+  []
+  (let [adapter (ordered-generation-adapter 5 (constantly [[1 6]]))
+        gate
+        #(= :contract-violation
+            (:status
+             (proof-frame/resolve!
+              (proof-frame/request-frame adapter) [1])))
+        original proof-frame/revision]
+    (and
+     (gate)
+     (false?
+      (with-redefs [proof-frame/revision (constantly 6)]
+        (gate)))
+     (fn? original))))
+
+(defn non-durable-live-source-id-collision-killed?
+  []
+  (let [first-adapter
+        (ordered-generation-adapter 5 (constantly []))
+        second-adapter
+        (assoc-in first-adapter
+                  [:eacl.backend.v8/operations :snapshot-id]
+                  (constantly {:revision 5 :source-id :second-live-source}))
+        first-adapter
+        (assoc-in first-adapter
+                  [:eacl.backend.v8/operations :snapshot-id]
+                  (constantly {:revision 5 :source-id :first-live-source}))
+        identity
+        (fn [adapter]
+          {:backend (backend/backend-id adapter)
+           :source-id (:source-id (backend/invoke adapter :snapshot-id))
+           :branch nil
+           :source-lifecycle "eacl/initial"
+           :basis-kind :ordinary
+           :revision 5
+           :exact-locator 5
+           :backend-snapshot-id (backend/invoke adapter :snapshot-id)})
+        separated?
+        #(not= (request-context/lineage-for-basis
+                (identity first-adapter))
+               (request-context/lineage-for-basis
+                (identity second-adapter)))
+        original request-context/lineage-for-basis]
+    (and
+     (separated?)
+     (false?
+      (with-redefs [request-context/lineage-for-basis
+                    (fn [basis-identity]
+                      (assoc-in
+                       (original basis-identity)
+                       [:source-scope :source-id]
+                       :collided-live-source))]
+        (separated?))))))
+
 (defn aggregate-counter-reset-killed?
   []
   (let [args [{:advanced-datoms 0 :queued-work 0 :fetched-values 0}
@@ -569,6 +664,10 @@
    :consistency-unsupported-exact-becomes-generic
    consistency-unsupported-exact-becomes-generic-killed?
    :exact-basis-key-omits-lifecycle exact-basis-key-omits-lifecycle-killed?
+   :adapter-generation-domain adapter-generation-domain-killed?
+   :adapter-generation-ceiling adapter-generation-ceiling-killed?
+   :non-durable-live-source-id-collision
+   non-durable-live-source-id-collision-killed?
    :aggregate-counter-reset aggregate-counter-reset-killed?
    :batch-cross-demand-contamination batch-cross-demand-contamination-killed?
    :aggregate-deadline-renewal aggregate-deadline-renewal-killed?})

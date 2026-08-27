@@ -13,7 +13,10 @@
 (def ^:private test-source-scope
   {:backend :test
    :source-id :source
-   :branch nil
+   :branch nil})
+
+(def ^:private test-lineage
+  {:source-scope test-source-scope
    :source-lifecycle :lifecycle-a})
 
 (defn- basis-key
@@ -38,7 +41,7 @@
    :snapshot-order revision
    :exact-basis-key (basis-key revision)
    :cache-basis revision
-   :managed-subproblem-scope test-source-scope})
+   :managed-subproblem-scope test-lineage})
 
 (deftest basis-cache-is-client-private-test
   (let [native-cache (cache/basis-cache)]
@@ -64,12 +67,12 @@
         stamp-reads (atom 0)
         answer (atom true)
         context
-        (fn [snapshot order schema-stamp dependency-stamp]
+        (fn [snapshot order schema-generation dependency-stamp]
           (assoc (basis-context snapshot order)
                  :managed-key-fn
                  (fn []
                    (swap! stamp-reads inc)
-                   {:schema-stamp schema-stamp
+                   {:schema-generation schema-generation
                     :dependency-stamp dependency-stamp})))
         resolve
         (fn [current-context]
@@ -355,7 +358,7 @@
         (fn [revision]
           (assoc (basis-context (snapshot-object) revision)
                  :managed-key-fn
-                 (constantly {:schema-stamp 10
+                 (constantly {:schema-generation 10
                               :dependency-stamp 20})))
         resolve
         (fn [revision value]
@@ -652,7 +655,7 @@
                  :managed-key-fn
                  (fn []
                    (swap! descriptor-reads inc)
-                   {:schema-stamp 10
+                   {:schema-generation 10
                     :dependency-stamp 20})))
         resolve
         (fn [semantic-key current-context]
@@ -690,7 +693,7 @@
              (swap! compute-calls inc)
              value)))]
     (is (true? (:value (resolve snapshot-1 1
-                               {:schema-stamp 10
+                               {:schema-generation 10
                                 :dependency-stamp 20}
                                true))))
     (let [fallback (resolve snapshot-2 2 nil false)]
@@ -714,6 +717,121 @@
       (is (= 3 (:proof-unavailable stats)))
       (is (= {:missing-generation 2 :provider-failure 1}
              (:proof-unavailable-reasons stats))))))
+
+(deftest read-without-publication-preserves-lookups-and-suppresses-writes-test
+  (let [store (cache/basis-cache)
+        first-snapshot (snapshot-object)
+        second-snapshot (snapshot-object)
+        computations (atom 0)
+        publication-view
+        (fn []
+          (let [stats (cache/basis-cache-stats store)]
+            {:puts (:puts stats)
+             :exact-entries (:exact-entries stats)
+             :retained-bases (:retained-bases stats)
+             :managed-entries (:managed-entries stats)
+             :managed-generations (:managed-generations stats)
+             :exact-subproblem-puts
+             (get-in stats [:exact-subproblems :puts])
+             :managed-subproblem-puts
+             (get-in stats [:managed-subproblems :puts])}))
+        resolve
+        (fn [snapshot revision semantic-key populate? value]
+          (cache/resolve-basis!
+           store
+           (assoc (basis-context snapshot revision)
+                  :populate-cache? populate?
+                  :managed-key-fn
+                  (constantly
+                   {:schema-generation 10 :dependency-stamp 20}))
+           semantic-key
+           :decision
+           boolean?
+           (fn []
+             (swap! computations inc)
+             value)))]
+    (is (false? (:cached?
+                 (resolve first-snapshot 1 :answer true true))))
+    (let [after-warm (publication-view)
+          exact-hit (resolve first-snapshot 1 :answer false false)]
+      (is (true? (:cached? exact-hit)))
+      (is (= :exact-basis (:cache-tier exact-hit)))
+      (is (= after-warm (publication-view))
+          "an exact read-only hit publishes and installs nothing"))
+    (let [before-managed-read (publication-view)
+          managed-hit (resolve second-snapshot 2 :answer false false)]
+      (is (true? (:cached? managed-hit)))
+      (is (= :managed-current (:cache-tier managed-hit)))
+      (is (= before-managed-read (publication-view))
+          "a managed read-only hit is neither promoted nor generation-creating"))
+    (let [before-misses (publication-view)
+          first-miss (resolve second-snapshot 2 :unseen false false)
+          second-miss (resolve second-snapshot 2 :unseen false true)]
+      (is (false? (:cached? first-miss)))
+      (is (false? (:cached? second-miss)))
+      (is (= [false true] [(:value first-miss) (:value second-miss)]))
+      (is (= before-misses (publication-view))
+          "read-only misses evaluate independently without publication"))
+    (is (= 3 @computations)
+        "the warm request and both read-only misses compute")))
+
+(deftest proof-contract-violation-disables-only-managed-lifting-test
+  (let [reports (atom [])
+        store
+        (cache/basis-cache
+         {:proof-contract-reporter #(swap! reports conj %)})
+        first-snapshot (snapshot-object)
+        second-snapshot (snapshot-object)
+        third-snapshot (snapshot-object)
+        descriptor-reads (atom 0)
+        computations (atom 0)
+        resolve
+        (fn [snapshot revision value]
+          (cache/resolve-basis!
+           store
+           (assoc
+            (basis-context snapshot revision)
+            :managed-key-fn
+            (fn []
+              (swap! descriptor-reads inc)
+              {:schema-generation 10 :dependency-stamp 20}))
+           :contract-violation
+           :decision
+           boolean?
+           (fn []
+             (swap! computations inc)
+             value)))]
+    (is (true? (:value (resolve first-snapshot 1 true))))
+    (is (= 1 @descriptor-reads))
+    (cache/record-proof-diagnostic!
+     store
+     {:status :contract-violation
+      :reason :relation-generation-above-revision})
+    (cache/record-proof-diagnostic!
+     store
+     {:status :contract-violation
+      :reason :relation-generation-above-revision})
+    (let [fallback (resolve second-snapshot 2 false)]
+      (is (false? (:value fallback)))
+      (is (false? (:cached? fallback)))
+      (is (= 1 @descriptor-reads)
+          "sticky disablement skips all subsequent managed proof reads"))
+    (is (false? (:value (resolve second-snapshot 2 true)))
+        "exact-basis cache hits remain available while lifting is disabled")
+    (is (= 2 @computations))
+    (let [stats (cache/basis-cache-stats store)]
+      (is (true? (:managed-lifting-disabled? stats)))
+      (is (= 2 (:proof-contract-violations stats)))
+      (is (= {:relation-generation-above-revision 2}
+             (:proof-contract-violation-reasons stats))))
+    (is (= 1 (count @reports))
+        "the reporter runs once per reason in a lifecycle")
+    (cache/expire-basis-cache! store)
+    (is (false? (:managed-lifting-disabled?
+                 (cache/basis-cache-stats store))))
+    (is (true? (:value (resolve third-snapshot 3 true))))
+    (is (= 2 @descriptor-reads)
+        "expiry restores managed proof acquisition")))
 
 (deftest basis-generation-two-hit-admission-test
   (let [store (cache/basis-cache {:admit-on-repeat? true})
@@ -761,9 +879,11 @@
          (assoc base-public
                 :after "signed-snapshot-b"
                 :cache? true
+                :populate-cache? false
                 :cancellation-token (eacl/cancellation-token))
          (assoc base-internal
                 :after boundary
+                :populate-cache? true
                 :cancellation-token (eacl/cancellation-token)))]
     (is (= original recovered)
         "signed transport bytes are not page semantics")

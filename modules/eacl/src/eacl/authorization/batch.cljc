@@ -27,6 +27,7 @@
     :timeout-ms
     :cancellation-token
     :cache?
+    :populate-cache?
     :evaluation
     :aggregate-limits})
 
@@ -37,6 +38,7 @@
     :timeout-ms
     :cancellation-token
     :cache?
+    :populate-cache?
     :evaluation
     :aggregate-limits
     :recursive-traversal-limits

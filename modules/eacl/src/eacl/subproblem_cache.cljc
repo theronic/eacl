@@ -26,7 +26,7 @@
   nil)
 
 (def ^:dynamic *managed-key-fn*
-  "Returns a same-snapshot `{:schema-stamp n :dependency-stamp n}` descriptor
+  "Returns a same-snapshot `{:schema-generation n :dependency-stamp n}` descriptor
   for one relation dependency, or nil when managed reuse is unavailable."
   nil)
 
@@ -37,6 +37,11 @@
 (def ^:dynamic *publication-attempt-limit*
   "Maximum best-effort CAS publication attempts for the owning request."
   4)
+
+(def ^:dynamic *populate?*
+  "False for a read-only cache request. Lookups and request-local memoization
+  remain active, but no completed subproblem is published."
+  true)
 
 (def ^:dynamic *decision-kernel*
   "Generated-kernel selection inherited from the enclosing public client.
@@ -482,10 +487,13 @@
     (if-let [hit (lookup! store tier key options)]
       hit
       (let [value (compute)
+            populate? (get options :populate? *populate?*)
             publication
-            (publish!
-             store tier key options value *publication-attempt-limit*
-             lifecycle)]
+            (if populate?
+              (publish!
+               store tier key options value *publication-attempt-limit*
+               lifecycle)
+              {:published? false :reason :suppressed})]
         (swap! (:metrics store) update :misses inc)
         {:value value
          :cached? false
@@ -518,7 +526,7 @@
 (defn- valid-managed-descriptor?
   [descriptor]
   (and (map? descriptor)
-       (proof-stamp? (:schema-stamp descriptor))
+       (proof-stamp? (:schema-generation descriptor))
        (proof-stamp? (:dependency-stamp descriptor))))
 
 (defn- dependency-atom-count
@@ -576,7 +584,7 @@
    key
    options
    (fn []
-     (if-let [{:keys [schema-stamp dependency-stamp]}
+     (if-let [{:keys [schema-generation dependency-stamp]}
               (managed-descriptor dependency)]
        (let [managed
              (resolve-independent!
@@ -585,7 +593,7 @@
               [:managed-subproblem
                2
                *managed-scope*
-               schema-stamp
+               schema-generation
                dependency
                dependency-stamp
                tier

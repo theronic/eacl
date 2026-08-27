@@ -85,10 +85,11 @@ and relationship.
   proves the normalized-rule dependency frame consumed by the basis-first
   cache; `ScalarFrontierCoherence.dfy` proves the supported scalar-frontier
   lifting condition.
-- Each certified adapter's `proof-frame` operation reads the schema assertion
-  generation and one native committed generation for every relation in the
-  complete canonical dependency closure. Missing or invalid evidence forces
-  exact-only evaluation.
+- Each certified adapter's independent `schema-generation` operation reads the
+  schema assertion generation, while `proof-frame` reads one native committed
+  generation for every relation in the complete canonical dependency closure.
+  Missing evidence forces exact-only evaluation; malformed or above-revision
+  evidence disables managed lifting for the runtime lifecycle.
 - `eacl.cache` keeps completed entries client-private and requires lifecycle,
   semantic request, schema generation, and scalar dependency-frontier
   agreement before returning a managed value.

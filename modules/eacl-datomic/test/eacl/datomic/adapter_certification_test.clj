@@ -42,4 +42,47 @@
                   :runtime :clj})]
             (is (some? (v8/invoke adapter :schema-generation)))
             (is (:passed? report)
-                (pr-str (:checks report)))))))))
+                (pr-str (:checks report)))
+            (let [relation-ids
+                  (->> (:relations fixture)
+                       (mapcat
+                        (fn [{:keys [resource-type relation-name]}]
+                          (v8/invoke
+                           adapter :relation-defs
+                           resource-type relation-name)))
+                       (map :relation-id)
+                       sort
+                       vec)
+                  affected-relation-id
+                  (:relation-id
+                   (first
+                    (v8/invoke adapter :relation-defs :group :member)))]
+              (eacl/delete-relationship!
+               client (first (:relationships fixture)))
+              (let [after
+                    (datomic-backend/basis-adapter
+                     (d/db conn)
+                     {:entid->object-id
+                      (fn [snapshot internal-id]
+                        (:eacl/id (d/entity snapshot internal-id)))})]
+                (is (= :certified
+                       (:status
+                        (certification/certify-ordered-generation-transition!
+                         {:before-adapter adapter
+                          :after-adapter after
+                          :relation-ids relation-ids
+                          :affected-relation-ids
+                          [affected-relation-id]}))))))))))))
+
+(deftest datomic-memory-live-source-identity-certification-test
+  (with-mem-conn [first-conn schema/v7-schema]
+    (with-mem-conn [second-conn schema/v7-schema]
+      (is (= :certified
+             (:status
+              (certification/certify-live-source-identity!
+               {:backend :datomic
+                :durability :non-durable
+                :first-scope
+                (datomic-backend/database-source-scope (d/db first-conn))
+                :second-scope
+                (datomic-backend/database-source-scope (d/db second-conn))})))))))

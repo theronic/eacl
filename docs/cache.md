@@ -30,6 +30,9 @@ Caching does not alter results:
 
 - `eacl.cache/no-cache` disables it for a client;
 - `:cache? false` bypasses lookup and publication for one operation;
+- `:populate-cache? false` keeps lookup and request-local memoization enabled
+  while suppressing completed-answer, managed-subproblem, checkpoint, and
+  visited-page publication for one operation;
 - failed, timed-out, partial, malformed, or unproved work is never published
   as a completed result; and
 - cache data is never written to the application database.
@@ -38,8 +41,8 @@ Caching does not alter results:
 
 | Layer | Reuse scope | Purpose |
 | --- | --- | --- |
-| Exact completed answer | Same semantic operation and canonical ordinary immutable snapshot | Skips the complete operation with no proof read; retained historical generations share one bounded composite-key tier |
-| Proof-backed completed answer | Same semantic operation, lifecycle, schema generation, and dependency frontier | Survives unrelated forward transactions |
+| Exact completed answer | Same semantic operation and complete immutable basis identity | Skips the complete operation with no proof read; ordinary and retained historical generations share one bounded composite-key tier |
+| Proof-backed completed answer | Same semantic operation, lineage, schema generation, and dependency frontier | Reuses across either revision direction when the selected basis has a readable complete frame |
 | Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
 | Sealed plan | Same source scope, lifecycle, schema generation, and permission root | Reuses the compiled stable-discovery plan across requests and unrelated transactions; `expire-cache!` drops it |
 | Schema-derived generation | Same engine ABI, adapter/source scope, lifecycle, and certified schema generation | Shares parsed validation catalogs, permission roots and paths, dependency closures, routing analysis, direct-grant relations, cycle guards, and sealed plans |
@@ -109,8 +112,10 @@ and identity contract, engine/order ABI, normalized semantic request, result
 kind, demand, and every answer-affecting limit. Equal numeric revisions alone
 are insufficient. Each retained basis owns its exact answers and subproblem
 store. A historical miss evaluates on the already selected immutable adapter
-and never probes managed proof-backed entries. Public tokens, cursor envelopes,
-cache basis, external IDs, and selected-basis metadata are rebuilt on every hit.
+and may probe managed proof-backed entries when that historical value can read
+a complete contract-valid frame in the native revision domain. An unreadable
+historical frame remains exact-only. Public tokens, cursor envelopes, cache
+basis, external IDs, and selected-basis metadata are rebuilt on every hit.
 
 Caller-constructed database values are not accepted as source bases and cannot
 enter the completed-answer cache. Basis admission requires the source adapter's
@@ -120,15 +125,36 @@ publication.
 
 ## Automatic proof-backed coherence
 
-Every deterministic, cacheable, ordinary current request is automatically
-eligible after its exact miss.
+Every deterministic cacheable request on an admissible basis is automatically
+eligible after its exact miss when its complete frame is readable.
 
-For selected snapshots `S <= T`, a reusable completed answer must have equal:
+Lineage is the complete source scope paired with the operator lifecycle:
 
-- adapter/source lifecycle;
+```clojure
+{:source-scope {:backend backend :source-id source-id :branch branch}
+ :source-lifecycle lifecycle}
+```
+
+For any two selected values in one lineage, a reusable completed answer must
+have equal:
+
+- lineage;
 - normalized semantic operation and result shape;
 - schema assertion generation; and
 - scalar dependency frontier.
+
+Revision order is not a reuse predicate. The formal history orders values to
+reason about intervening commits, but its equality conclusion is symmetric.
+An older retained basis can therefore reuse a newer answer, and a newer basis
+can reuse an older answer, when their lineage and complete proof are equal.
+`EqualScalarProofAlsoPreservesAnOlderSelectedSnapshot` states the older-selected
+case explicitly.
+
+Durable backends persist source identity across reopen. Non-durable sources
+mint one fresh identity per live source—DataScript per connection, Datahike
+memory stores even when the caller supplies a fixed store id, and Datomic
+`mem` databases through their generated database id. A configuration label is
+never accepted as lineage for a recreated non-durable source.
 
 The dependency set is the complete canonical set of relationship relations
 that can affect the normalized request under the selected schema. Its frontier
@@ -136,7 +162,7 @@ is the maximum stored native transaction generation over that set, or `0` for
 an empty set. The constant-size cache descriptor is therefore:
 
 ```clojure
-{:schema-stamp schema-generation
+{:schema-generation schema-generation
  :dependency-stamp maximum-dependency-generation}
 ```
 
@@ -161,26 +187,28 @@ relation; unrelated relations share no EACL coordination point.
 
 ## Proof frame and unavailability
 
-Each request owns one lazy proof frame bound to its exact adapter, source
-lifecycle, and immutable database value. Equal dependency closures share their
-resolved evidence. The frame validates the complete canonical
-`[relation-id generation]` set, derives the scalar frontier, and can derive
-subset frontiers only from relations already in the proved closure. The
-proof's schema stamp must agree with the independent certified schema
-generation when both are available. The frame never combines evidence from
-another adapter, lifecycle, or snapshot.
+Each request owns one lazy proof frame bound to its exact adapter, lineage, and
+immutable database value. Equal dependency closures share their resolved
+evidence. The adapter's `:proof-frame` operation returns only the canonical
+vector `[[relation-id generation] ...]`; the independent certified
+`:schema-generation` operation supplies the schema component. Core requires
+the selected revision, schema generation, and every relation generation to be
+portable non-negative exact integers in one domain, and requires schema and
+relation generations to be at or below the selected revision. It then derives
+the scalar frontier and can derive subset frontiers only from relations already
+in the proved closure. The frame never combines evidence from another adapter,
+lineage, or snapshot.
 
 Proof is unavailable when:
 
 - the adapter does not advertise certified ordered generations;
-- schema or relation generations are missing, malformed, partial,
-  duplicated, or non-canonical;
+- schema or relation generations are absent;
 - dependency extraction is incomplete or non-canonical;
 - the complete closure exceeds 4,096 relations, or a managed subproblem
   exceeds its configured `:managed-proof-max-atoms` bound;
 - the provider throws;
-- the request uses an arbitrary historical, filtered, speculative, or
-  caller-constructed database value;
+- the selected value cannot read the historical generations it names;
+- the request uses a filtered, speculative, or caller-constructed value;
 - caching is disabled, the response is incomplete, or the operation is not
   deterministic; or
 - a custom identity codec lacks its stable deterministic contract.
@@ -190,6 +218,17 @@ or authorization error and never uses partial evidence or substitutes an
 initial generation. A complete changed proof is a normal managed miss, not
 proof unavailability. `cache-stats` reports `:proof-unavailable` and
 `:proof-unavailable-reasons`.
+
+Malformed shape, wrong cardinality, duplicate or non-canonical relation ids,
+non-integer generations, and generations above the selected revision are
+adapter contract violations, not ordinary unavailability. The request still
+evaluates authoritatively on its exact selected basis; exact caching and token
+issuance continue. The client atomically disables managed lifting until
+`expire-cache!`. `cache-stats` exposes the sticky flag and violation counts by
+reason. An optional `:proof-contract-reporter` runs once per reason per
+lifecycle. Cursor validation treats violated evidence as unavailable and
+therefore uses exact fallback or returns a typed stale outcome; it never treats
+two violations as proof equality.
 
 ## Custom identity codecs
 
@@ -266,6 +305,22 @@ Bypass one call:
  {:subject subject :permission :view :resource resource :cache? false})
 ```
 
+Read existing cache state without publishing cross-request state:
+
+```clojure
+(eacl/check-permission
+ acl
+ {:subject subject
+  :permission :view
+  :resource resource
+  :populate-cache? false})
+```
+
+Every cache-capable public read accepts this option, including batch, count,
+relationship, permission-tree, and paginated operations. It is excluded from
+cache, cursor, and continuation identities. With `:cache? false` it is accepted
+but irrelevant because lookup and publication are both bypassed.
+
 Use the bypass as a semantic oracle and measure representative workloads before
 tuning for latency.
 
@@ -332,16 +387,19 @@ and bounded-cache administration; it is deliberately weaker than lifecycle
 expiry and is not valid recovery after restore, rollback, or unsupported
 mutation.
 
-EACL does not promise proof-backed cache availability for `as-of`, `since`,
-filtered, speculative, or caller-constructed database values. Exact historical
-evaluation remains authoritative. Reusing older cache segments for arbitrary
-time travel is an optional optimization, not part of the coherence contract.
+An admissible `as-of` value can use proof-backed reuse when it can read the
+schema and relation generations visible at that value and they pass the same
+domain and ceiling checks. Datomic retains relation-version history for this
+purpose; Datahike requires readable retained history. `since`, filtered,
+speculative, and caller-constructed values remain outside managed reuse. Exact
+historical evaluation is always authoritative.
 
 ## Metrics and evidence
 
 Each backend exposes `cache-stats`, including exact/proof-backed hits, misses,
-bypasses, proof-unavailable reasons, puts, expirations, admission rejections,
-evictions, live weights, and avoided backend work. Lookup and count responses
+bypasses, proof-unavailable reasons, sticky proof-contract violations, puts,
+expirations, admission rejections, evictions, live weights, and avoided backend
+work. Lookup and count responses
 also expose `:cached?` and `:cache-basis`; `can?` returns only a Boolean.
 
 The cache-free evaluator is the behavioral oracle. Differential and randomized

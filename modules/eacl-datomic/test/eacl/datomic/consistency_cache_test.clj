@@ -10,7 +10,7 @@
             [eacl.datomic.backend :as datomic-backend]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
-            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn with-mem-conns]]
             [eacl.datomic.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.spicedb.consistency :as consistency]))
@@ -68,6 +68,73 @@
     nil
     (catch clojure.lang.ExceptionInfo e
       (ex-data e))))
+
+(deftest readable-as-of-basis-lifts-from-a-newer-equal-proof-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (cached-client conn)
+          old-token (:zed/token (seed! conn client))
+          alice (spice-object :user "alice")
+          account (spice-object :account "acct")]
+      @(d/transact conn [{:eacl/id "newer-unrelated"}])
+      (let [newer (eacl/check-permission client alice :admin account)
+            older
+            (eacl/check-permission
+             client
+             {:subject alice
+              :permission :admin
+              :resource account
+              :consistency (consistency/at-exact-snapshot old-token)})]
+        (is (true? (:allowed? newer)))
+        (is (false? (:cached? newer)))
+        (is (true? (:allowed? older)))
+        (is (true? (:cached? older))
+            "a readable equal as-of proof lifts in the older direction")))))
+
+(deftest readable-as-of-basis-misses-when-its-proof-differs-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (cached-client conn)
+          old-token (:zed/token (seed! conn client))
+          alice (spice-object :user "alice")
+          account (spice-object :account "acct")
+          relationship
+          (->Relationship alice :owner account)]
+      (eacl/delete-relationship! client relationship)
+      (let [newer (eacl/check-permission client alice :admin account)
+            older
+            (eacl/check-permission
+             client
+             {:subject alice
+              :permission :admin
+              :resource account
+              :consistency (consistency/at-exact-snapshot old-token)})]
+        (is (false? (:allowed? newer)))
+        (is (false? (:cached? newer)))
+        (is (true? (:allowed? older)))
+        (is (false? (:cached? older))
+            "different complete proofs cannot lift across revisions")))))
+
+(deftest reader-peer-cache-survives-token-change-across-unrelated-write-test
+  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+    (let [writer (cached-client writer-conn)
+          reader (cached-client reader-conn)
+          _ (seed! writer-conn writer)
+          alice (spice-object :user "alice")
+          account (spice-object :account "acct")
+          seeded (eacl/check-permission reader alice :admin account)]
+      (is (true? (:allowed? seeded)))
+      (is (false? (:cached? seeded)))
+      @(d/transact writer-conn [{:eacl/id "peer-unrelated"}])
+      (let [token (core/current-zed-token writer)
+            refreshed
+            (eacl/check-permission
+             reader
+             {:subject alice
+              :permission :admin
+              :resource account
+              :consistency (consistency/at-least-as-fresh token)})]
+        (is (true? (:allowed? refreshed)))
+        (is (true? (:cached? refreshed))
+            "the reader Peer preserves its managed generation across tokens")))))
 
 (deftest explicit-cache-expiry-installs-a-fresh-lifecycle-test
   (with-mem-conn [conn schema/v7-schema]
@@ -151,26 +218,26 @@
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 3 @calls)
-                "as-of and ordinary bases remain distinct cache classes"))
+            (is (= 2 @calls)
+                "the readable historical proof lifts the matching answer"))
 
           (testing "fully-consistent observes the relationship deletion"
             (is (false? (eacl/can? client alice :admin account)))
-            (is (= 3 @calls)
+            (is (= 2 @calls)
                 "the exact-basis deletion result is reused"))
 
           (testing "at-least-as-fresh accepts the current cached revision"
             (is (false? (eacl/can? client alice :admin account
                                    (consistency/at-least-as-fresh
                                     deleted-token))))
-            (is (= 3 @calls)))
+            (is (= 2 @calls)))
 
           (testing "and repeated exact selection remains snapshot-correct"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 3 @calls)
-                "repeated exact requests hit only the matching snapshot tier")))))))
+            (is (= 2 @calls)
+                "the promoted exact entry remains snapshot-correct")))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
   (with-mem-conn [conn schema/v7-schema]

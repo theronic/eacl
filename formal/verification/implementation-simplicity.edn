@@ -18,41 +18,41 @@
  :current-worktree
  {:source-closure "formal/verification/public-source-closure.json"
   :source-closure-sha256
-  "5d2f89f29b81b423eef933127caf40873d62da570d251d507ec41f352a587685"
+  "224ff0932355d2d10dd0c1966ad411ccad5bdd85fff149afce08d522ff4a2b5e"
   :public-roots 70
   :source-files 78
-  :reachable-definitions 1639
+  :reachable-definitions 1651
   :definitions-by-source
-  {"modules/eacl/src/eacl/subproblem_cache.cljc" 42
+  {"modules/eacl/src/eacl/subproblem_cache.cljc" 43
    "modules/eacl-datomic/src/eacl/datomic/core.clj" 13
    "modules/eacl/src/eacl/engine/v8.cljc" 90
    "modules/eacl/src/eacl/execution.cljc" 27
-   "modules/eacl/src/eacl/proof_frame.cljc" 15
+   "modules/eacl/src/eacl/proof_frame.cljc" 18
    "modules/eacl/src/eacl/core.cljc" 56
    "modules/eacl/src/eacl/client/orchestration.cljc" 90
    "modules/eacl/src/eacl/backend/source.cljc" 43
    "modules/eacl/src/eacl/backend/writer.cljc" 13
-   "modules/eacl/src/eacl/cache.cljc" 40}
+   "modules/eacl/src/eacl/cache.cljc" 43}
   :forbidden-coordination-source-occurrences 0
   :datomic-client-schema-state-occurrences 0
   :datascript-exact-snapshot-registry-source-occurrences 0}
  :delta
  {:public-roots 7
   :source-files 23
-  :reachable-definitions 215
+  :reachable-definitions 227
   :root-set-comparable? false
   :root-set-change :public-reader-writer-source-and-snapshot-entry-points-added
-  :subproblem-cache-definitions -25
+  :subproblem-cache-definitions -24
   :datomic-cache-definitions -35
   :datomic-core-definitions -115
   :shared-engine-definitions -119
   :normalized-execution-contract-definitions 27
-  :proof-frame-definitions 15
+  :proof-frame-definitions 18
   :shared-public-core-definitions 56
   :shared-orchestration-definitions 90
   :source-role-definitions 43
   :writer-role-definitions 13
-  :basis-cache-definitions 40
+  :basis-cache-definitions 43
   :forbidden-coordination-source-occurrences -22
   :datomic-schema-state-source-occurrences -38
   :datascript-exact-snapshot-registry-source-occurrences -11}

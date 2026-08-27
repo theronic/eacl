@@ -120,7 +120,7 @@ partition. It derives direct relation EIDs only from relation paths matching the
 query subject type and proves that a direct positive is sound; if every path is
 a relation, the direct result is complete. Generated Java and JavaScript match
 the actual CLJ/CLJS materializer and direct summary on 99 fixtures each.
-Adapter certification v2 checks the composed path maps against real relation
+Adapter certification v4 checks the composed path maps against real relation
 IDs on Datomic, Datahike, and DataScript. Clojure language semantics and
 arbitrary backend implementation correctness remain explicit trusted
 obligations.

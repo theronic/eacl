@@ -144,19 +144,26 @@
    ;; declares that as intentional rather than leaving datahike to warn about it.
    :max-string-length  0})
 
+(def live-source-id-key
+  "Connection-local lineage identity carried by non-durable store configs."
+  :eacl.datahike/live-source-id)
+
 (defn create-conn
   "A datahike connection carrying EACL's schema.
 
   `config` is merged over `default-config`; temporal history is enabled unless
   the caller explicitly passes `{:keep-history? false}`. Pass
   `{:attribute-refs? true}` to get Datomic's numeric attribute representation.
-  A memory store gets a fresh id per connection unless one is supplied, so two
-  calls do not collide."
+  A memory store gets a fresh lineage id per created live source even when the
+  caller supplies a fixed store id."
   ([] (create-conn nil nil))
   ([extra-schema] (create-conn extra-schema nil))
   ([extra-schema config]
    (let [cfg (-> (merge default-config config)
-                 (update :store #(merge {:id (random-uuid)} %)))]
+                 (update :store #(merge {:id (random-uuid)} %)))
+         cfg (cond-> cfg
+               (= :memory (get-in cfg [:store :backend]))
+               (assoc live-source-id-key (random-uuid)))]
      (d/create-database cfg)
      (let [conn (d/connect cfg)]
        (d/transact conn (merge-schema extra-schema))

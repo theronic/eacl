@@ -102,7 +102,8 @@
      :unchanged-by-relationship-only-writes
      :nil-when-uncertified}
    :proof-frame
-   #{:snapshot-bound :initialized-schema-generation
+   #{:snapshot-bound :relation-generations-only
+     :same-domain-as-native-revision :generation-at-or-below-revision
      :complete-canonical-relation-generations
      :globally-ordered-committed-generations
      :atomic-with-supported-mutations}})

@@ -103,6 +103,31 @@
     (is (zero? @calls))
     (is (= 1 (:lookup-misses (subproblem/stats store))))))
 
+(deftest read-without-publication-still-looks-up-and-memoizes-locally-test
+  (let [store (subproblem/store)
+        calls (atom 0)]
+    (is (= :warm
+           (:value
+            (subproblem/resolve-independent!
+             store :denotation :warm {} (constantly :warm)))))
+    (let [puts-before (:puts (subproblem/stats store))]
+      (is (= :warm
+             (:value
+              (binding [subproblem/*populate?* false]
+                (subproblem/resolve-independent!
+                 store :denotation :warm {}
+                 #(do (swap! calls inc) :wrong))))))
+      (is (zero? @calls) "the existing entry remains readable")
+      (is (= :computed
+             (:value
+              (binding [subproblem/*populate?* false]
+                (subproblem/resolve-independent!
+                 store :denotation :cold {}
+                 #(do (swap! calls inc) :computed))))))
+      (is (nil? (subproblem/lookup! store :denotation :cold {})))
+      (is (= puts-before (:puts (subproblem/stats store)))
+          "the cold result was not published"))))
+
 (deftest malformed-private-entry-is-non-answering-test
   (let [store (subproblem/store)]
     (swap! (:state store)
@@ -187,7 +212,7 @@
                     subproblem/*managed-scope* {:source-id :primary}
                     subproblem/*managed-key-fn*
                     (fn [_]
-                      {:schema-stamp 7
+                      {:schema-generation 7
                        :dependency-stamp @dependency-stamp})]
             (:value
              (subproblem/resolve-layered-bound!

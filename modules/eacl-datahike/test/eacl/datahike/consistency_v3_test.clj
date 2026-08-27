@@ -56,6 +56,62 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
+(deftest readable-as-of-db-lifts-from-a-newer-equal-proof-test
+  (let [conn (datahike/create-conn nil {:commit-graph? false
+                                        :keep-history? true})
+        authorization (client conn)]
+    (try
+      (seed! conn authorization)
+      (let [old-token
+            (:zed/token
+             (eacl/create-relationship! authorization relationship))]
+        (d/transact conn [{:eacl/id "newer-unrelated"}])
+        (let [newer
+              (eacl/check-permission authorization user :view document)
+              older
+              (eacl/check-permission
+               authorization
+               {:subject user
+                :permission :view
+                :resource document
+                :consistency
+                (consistency/at-exact-snapshot old-token)})]
+          (is (true? (:allowed? newer)))
+          (is (false? (:cached? newer)))
+          (is (true? (:allowed? older)))
+          (is (true? (:cached? older))
+              "the readable AsOfDB frame lifts in the older direction")))
+      (finally
+        (d/release conn)))))
+
+(deftest readable-as-of-db-misses-when-its-proof-differs-test
+  (let [conn (datahike/create-conn nil {:commit-graph? false
+                                        :keep-history? true})
+        authorization (client conn)]
+    (try
+      (seed! conn authorization)
+      (let [old-token
+            (:zed/token
+             (eacl/create-relationship! authorization relationship))]
+        (eacl/delete-relationship! authorization relationship)
+        (let [newer
+              (eacl/check-permission authorization user :view document)
+              older
+              (eacl/check-permission
+               authorization
+               {:subject user
+                :permission :view
+                :resource document
+                :consistency
+                (consistency/at-exact-snapshot old-token)})]
+          (is (false? (:allowed? newer)))
+          (is (false? (:cached? newer)))
+          (is (true? (:allowed? older)))
+          (is (false? (:cached? older))
+              "different complete AsOfDB proofs cannot lift")))
+      (finally
+        (d/release conn)))))
+
 (deftest map-can-rejects-malformed-consistency-test
   (let [conn (datahike/create-conn)
         authorization (client conn)
@@ -477,8 +533,7 @@
         (backend/invoke before-adapter :proof-frame [relation-id])
         document-eid
         (ddb/entid (d/db conn) [:eacl/id "document"])]
-    (is (integer? (:schema-stamp before-proof)))
-    (is (= relation-id (ffirst (:relation-stamps before-proof))))
+    (is (= relation-id (ffirst before-proof)))
     (let [reverse
           (first
            (ddb/eavt-datoms
@@ -515,8 +570,8 @@
                            datahike-backend/adapter-config-keys))
              :proof-frame
              [relation-id])]
-        (is (< (second (first (:relation-stamps before-proof)))
-               (second (first (:relation-stamps after-proof))))
+        (is (< (second (first before-proof))
+               (second (first after-proof)))
             "the supported repair advances the committed relation generation")))
     (d/release conn)))
 

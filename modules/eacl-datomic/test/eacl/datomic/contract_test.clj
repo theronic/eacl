@@ -19,6 +19,43 @@
               :eacl/id id})
        contract/smoke-objects)))
 
+(defn- error-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(deftest recreated-memory-database-rejects-prior-source-token-test
+  (let [key "01234567890123456789012345678901"]
+    (with-mem-conn [first-conn schema/v7-schema]
+      (let [first-client (datomic/make-client first-conn {:security-key key})]
+        (eacl/write-schema! first-client contract/smoke-schema)
+        (seed-objects! first-conn)
+        (let [old-token
+              (:zed/token
+               (eacl/create-relationship!
+                first-client
+                (first contract/smoke-relationships)))]
+          (with-mem-conn [second-conn schema/v7-schema]
+            (let [second-client
+                  (datomic/make-client second-conn {:security-key key})]
+              (eacl/write-schema! second-client contract/smoke-schema)
+              (seed-objects! second-conn)
+              (eacl/create-relationship!
+               second-client
+               (first contract/smoke-relationships))
+              (is (= :eacl.consistency/incomparable-scope
+                     (:type
+                      (error-data
+                       #(eacl/can?
+                         second-client
+                         (contract/->user "user-1")
+                         :admin
+                         (contract/->account "account-1")
+                         (consistency/at-least-as-fresh old-token)))))))))))))
+
 (deftest default-source-lifecycle-is-cross-client-constant-test
   (with-mem-conn [conn schema/v7-schema]
     (let [key "01234567890123456789012345678901"
@@ -79,7 +116,12 @@
          conn {:security-key security-key :read-only? true})
         :snapshot-db datomic/db
         :direct-snapshot datomic/snapshot})
-      (contract/assert-unified-filter-validation! client))))
+      (contract/assert-unified-filter-validation! client)
+      (contract/assert-v8-request-cache-controls! client {})
+      (contract/assert-v8-cache-disabled!
+       (datomic/make-client
+        conn {:security-key security-key
+              :cache shared-cache/no-cache})))))
 
 (deftest datomic-certified-generation-plan-reuse-test
   (with-mem-conn [conn schema/v7-schema]
@@ -118,7 +160,7 @@
                (:tree-root repeated-exact)))
         (is (= (inc (:exact-hits before))
                (:exact-hits after))
-            "the first as-of request is basis-kind isolated; its repeat hits")))))
+            "a lifted as-of answer is promoted; its repeat hits exactly")))))
 
 (deftest datomic-permission-tree-schema-mutation-snapshot-test
   (with-mem-conn [conn schema/v7-schema]

@@ -1,7 +1,7 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 107
- :historical-clojure-mutant-count 103
+ :historical-mutant-count 110
+ :historical-clojure-mutant-count 106
  :historical-model-mutant-count 4
  :mutants
  [{:id :wrong-arrow-direction
@@ -151,6 +151,27 @@
    :detector "exact-basis-key-omits-lifecycle-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by {:test :exact-basis-key-control}}
+  {:id :adapter-generation-domain
+   :mechanism :executed-production
+   :mutation :accept-non-numeric-relation-generation-as-proof-evidence
+   :target-symbol "proof-frame/generation?"
+   :detector "adapter-generation-domain-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :adapter-generation-domain-control}}
+  {:id :adapter-generation-ceiling
+   :mechanism :executed-production
+   :mutation :validate-relation-generation-against-an-inflated-revision
+   :target-symbol "proof-frame/revision"
+   :detector "adapter-generation-ceiling-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :adapter-generation-ceiling-control}}
+  {:id :non-durable-live-source-id-collision
+   :mechanism :executed-production
+   :mutation :collapse-distinct-live-source-identities-in-managed-lineage
+   :target-symbol "request-context/lineage-for-basis"
+   :detector "non-durable-live-source-id-collision-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :non-durable-live-source-identity-control}}
   {:id :aggregate-counter-reset
    :mechanism :executed-production
    :mutation :reset-cumulative-work-at-each-window

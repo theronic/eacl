@@ -72,6 +72,66 @@
              (answer (eacl/count-subjects cached (dissoc reverse-query :first))))
           (str label " count-subjects")))))
 
+(defn- assert-retained-publication-order!
+  [conn cached user-id account-id seed step newer-first?]
+  (let [request {:subject (spice-object :user user-id)
+                 :permission :admin
+                 :resource (spice-object :account account-id)}
+        answer #(select-keys % [:allowed?])
+        older (eacl/snapshot cached)]
+    (try
+      (ds/transact!
+       conn [{:eacl/id (str "application-" seed "-" step)}])
+      (let [newer (eacl/snapshot cached)]
+        (try
+          (let [[older-result newer-result]
+                #?(:clj
+                   (let [delayed-target (if newer-first? older newer)
+                         immediate-target (if newer-first? newer older)
+                         started (promise)
+                         release (promise)
+                         delayed
+                         (future
+                           (deliver started true)
+                           @release
+                           (answer
+                            (eacl/check-permission
+                             delayed-target request)))]
+                     @started
+                     (let [immediate
+                           (answer
+                            (eacl/check-permission
+                             immediate-target request))]
+                       (deliver release true)
+                       (if newer-first?
+                         [@delayed immediate]
+                         [immediate @delayed])))
+                   :cljs
+                   (if newer-first?
+                     (let [newer-result
+                           (answer
+                            (eacl/check-permission newer request))
+                           older-result
+                           (answer
+                            (eacl/check-permission older request))]
+                       [older-result newer-result])
+                     [(answer (eacl/check-permission older request))
+                      (answer (eacl/check-permission newer request))]))]
+            (is (= older-result
+                   (answer
+                    (eacl/check-permission
+                     older (assoc request :cache? false))))
+                (str "retained older basis, seed " seed ", step " step))
+            (is (= newer-result
+                   (answer
+                    (eacl/check-permission
+                     newer (assoc request :cache? false))))
+                (str "newer basis, seed " seed ", step " step)))
+          (finally
+            (eacl/release! newer))))
+      (finally
+        (eacl/release! older)))))
+
 (deftest randomized-cache-and-mutation-differential-test
   (doseq [seed (range 5)]
     (testing (str "automatic managed coherence, seed " seed)
@@ -115,8 +175,9 @@
             ;; Unrelated application basis churn alongside relationship
             ;; no-ops and relevant dependency changes.
             (when (zero? (mod step 7))
-              (ds/transact!
-               conn [{:eacl/id (str "application-" seed "-" step)}]))
+              (assert-retained-publication-order!
+               conn cached user-id account-id seed step
+               (zero? (next-int! 2))))
             (dotimes [sample 2]
               (let [sample-user
                     (nth user-ids (next-int! (count user-ids)))

@@ -96,19 +96,19 @@
   (alength (.getBytes (pr-str value) "UTF-8")))
 
 (defn- full-vector-key
-  [{:keys [schema-stamp relation-stamps]}]
-  {:schema-stamp schema-stamp
-   :relation-stamps relation-stamps})
+  [{:keys [schema-generation relation-generations]}]
+  {:schema-generation schema-generation
+   :relation-generations relation-generations})
 
 (defn- scalar-frontier-key
-  [{:keys [schema-stamp relation-stamps]}]
-  {:schema-stamp schema-stamp
+  [{:keys [schema-generation relation-generations]}]
+  {:schema-generation schema-generation
    :dependency-stamp
    (reduce
     (fn [frontier [_ generation]]
       (max frontier generation))
     0
-    relation-stamps)})
+    relation-generations)})
 
 (defn- proof-key-sample
   [adapter relation-ids mode]
@@ -120,7 +120,11 @@
      proof-calls-per-sample
      (fn []
        (dotimes [_ proof-calls-per-sample]
-         (let [proof (backend/invoke adapter :proof-frame relation-ids)
+         (let [proof
+               {:schema-generation
+                (backend/invoke adapter :schema-generation)
+                :relation-generations
+                (backend/invoke adapter :proof-frame relation-ids)}
                key (key-fn proof)]
            (vswap! sink bit-xor (hash key))))
        @sink))))
@@ -296,7 +300,8 @@
    (first (backend/invoke adapter :relation-defs :document relation-name))))
 
 (defn- exercise-backend!
-  [{:keys [label client transact-var transact-objects! adapter close!]}]
+  [{:keys [label client transact-var transact-objects! adapter
+           relation-generation-history-size close!]}]
   (let [reader (eacl/spice-object :user (str (name label) "-reader"))
         target (eacl/spice-object :document (str (name label) "-target"))
         relationship (eacl/->Relationship reader :reader target)
@@ -304,7 +309,10 @@
     (try
       (eacl/write-schema! client (benchmark-schema))
       (transact-objects! [reader target])
-      (let [[create-tx delete-tx]
+      (let [history-size-before
+            (when relation-generation-history-size
+              (relation-generation-history-size))
+            [create-tx delete-tx]
             (capture-transaction-shapes!
              transact-var
              #(do
@@ -326,14 +334,26 @@
                        label client demand transact-objects!)
               relevant (relevant-miss-measurement
                         client demand relationship)
+              history-size-after
+              (when relation-generation-history-size
+                (relation-generation-history-size))
               result
-              {:backend label
-               :create-committed-datom-events (count create-tx)
-               :delete-committed-datom-events (count delete-tx)
-               :proof-cardinalities proof-results
-               :exact-hit exact
-               :managed-hit-after-unrelated-commit managed
-               :relevant-proof-miss relevant}]
+              (cond->
+               {:backend label
+                :create-committed-datom-events (count create-tx)
+                :delete-committed-datom-events (count delete-tx)
+                :proof-cardinalities proof-results
+                :exact-hit exact
+                :managed-hit-after-unrelated-commit managed
+                :relevant-proof-miss relevant}
+                relation-generation-history-size
+                (assoc
+                 :relation-generation-history-datoms-before
+                 history-size-before
+                 :relation-generation-history-datoms-after
+                 history-size-after
+                 :relation-generation-history-datom-growth
+                 (- history-size-after history-size-before)))]
           (is (pos? (:create-committed-datom-events result)))
           (is (pos? (:delete-committed-datom-events result)))
           (is (zero? (get-in exact [:backend-operations :proof-frame] 0))
@@ -376,6 +396,14 @@
                 (d/db connection)
                 (select-keys (:runtime client)
                              datomic-backend/adapter-config-keys))
+     :relation-generation-history-size
+     #(count
+       (iterator-seq
+        (.iterator
+         ^java.lang.Iterable
+         (d/datoms (d/history (d/db connection))
+                   :aevt
+                   :eacl/relation-version))))
      :close! #(d/delete-database uri)}))
 
 (defn- datahike-fixture
@@ -486,19 +514,29 @@
 
 (defn- compact-performance-result
   [{:keys [backend proof-cardinalities exact-hit
-           managed-hit-after-unrelated-commit relevant-proof-miss]}]
-  {:backend backend
-   :proof-cardinalities
-   (mapv
-    (fn [{:keys [dependency-count scalar full-vector backend-operations]}]
-      {:dependency-count dependency-count
-       :scalar scalar
-       :full-vector full-vector
-       :proof-frame-calls (:proof-frame backend-operations)})
-    proof-cardinalities)
-   :exact-hit exact-hit
-   :managed-hit-after-unrelated-commit managed-hit-after-unrelated-commit
-   :relevant-proof-miss relevant-proof-miss})
+           managed-hit-after-unrelated-commit relevant-proof-miss]
+    :as result}]
+  (cond->
+   {:backend backend
+    :proof-cardinalities
+    (mapv
+     (fn [{:keys [dependency-count scalar full-vector backend-operations]}]
+       {:dependency-count dependency-count
+        :scalar scalar
+        :full-vector full-vector
+        :proof-frame-calls (:proof-frame backend-operations)})
+     proof-cardinalities)
+    :exact-hit exact-hit
+    :managed-hit-after-unrelated-commit managed-hit-after-unrelated-commit
+    :relevant-proof-miss relevant-proof-miss}
+    (contains? result :relation-generation-history-datom-growth)
+    (assoc
+     :relation-generation-history-datoms-before
+     (:relation-generation-history-datoms-before result)
+     :relation-generation-history-datoms-after
+     (:relation-generation-history-datoms-after result)
+     :relation-generation-history-datom-growth
+     (:relation-generation-history-datom-growth result))))
 
 (deftest ^:benchmark cross-backend-scalar-frontier-and-request-cost-test
   (testing "scalar-frontier keys and complete request paths"

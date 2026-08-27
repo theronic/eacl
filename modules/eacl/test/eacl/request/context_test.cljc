@@ -35,9 +35,8 @@
          generation)
        :proof-frame
        (fn [relation-ids]
-         {:schema-stamp 3
-          :relation-stamps (mapv (fn [relation-id] [relation-id 5])
-                                 relation-ids)})})})))
+         (mapv (fn [relation-id] [relation-id 5])
+               relation-ids))})})))
 
 (defn- test-provider
   ([adapter release-fn]

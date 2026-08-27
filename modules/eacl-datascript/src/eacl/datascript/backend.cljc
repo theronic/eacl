@@ -107,19 +107,13 @@
 
 (defn- ordered-generation-frame
   [db relation-ids]
-  {:schema-stamp
-   (when-let [schema-eid (ds/entid db [:eacl/id "schema-string"])]
-     (some-> (first (ds/datoms db :eavt schema-eid
-                                :eacl/schema-generation))
-             :tx))
-   :relation-stamps
-   (mapv
-    (fn [relation-id]
-      [relation-id
-       (some-> (first (ds/datoms db :eavt relation-id
-                                  :eacl/relation-version))
-               :tx)])
-    relation-ids)})
+  (mapv
+   (fn [relation-id]
+     [relation-id
+      (some-> (first (ds/datoms db :eavt relation-id
+                                 :eacl/relation-version))
+              :tx)])
+   relation-ids))
 
 (defn- certified-schema-generation
   [db]

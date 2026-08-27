@@ -14,7 +14,7 @@
 
 (def ^:private query-keys
   #{:resource :permission :consistency :timeout-ms
-    :cancellation-token})
+    :cancellation-token :cache? :populate-cache?})
 
 (defn- portable-positive-integer?
   [value]

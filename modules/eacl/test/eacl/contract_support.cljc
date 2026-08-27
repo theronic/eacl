@@ -1284,13 +1284,13 @@
               :permission :reboot})))))
 
   (testing "request validation is identical before backend reads"
-    (is (= :eacl.permission-tree/invalid-request
-           (error-category
-            #(eacl/expand-permission-tree
-              client
-              {:resource (->server "server-1")
-               :permission :reboot
-               :cache? false}))))
+    (is (map?
+         (eacl/expand-permission-tree
+          client
+          {:resource (->server "server-1")
+           :permission :reboot
+           :cache? false}))
+        "the permission-tree read accepts the common cache control")
     (is (= :eacl.execution/invalid-contract
            (error-category
             #(eacl/expand-permission-tree
@@ -1714,6 +1714,9 @@
         {:subject (->user "user-1")
          :permission :reboot
          :resource (->server "server-1")}
+        permission-tree-query
+        {:resource (->server "server-1")
+         :permission :view}
         store (:basis-cache-store (:runtime client))
         clear! #(cache/expire-basis-cache! store)
         stats #(cache/basis-cache-stats store)]
@@ -1740,6 +1743,45 @@
         (is (true? (:cached? retained-hit)))
         (is (= (:data miss) (:data bypass) (:data retained-hit)))))
 
+    (testing "read-without-publication hits existing answers without promoting or writing"
+      (clear!)
+      (let [miss (eacl/check-permission client demand)
+            before-read (stats)
+            hit (eacl/check-permission
+                 client (assoc demand :populate-cache? false))
+            after-read (stats)]
+        (is (false? (:cached? miss)))
+        (is (true? (:cached? hit)))
+        (is (= (:allowed? miss) (:allowed? hit)))
+        (is (= (select-keys before-read
+                            [:puts :exact-entries :managed-entries
+                             :retained-bases :managed-generations])
+               (select-keys after-read
+                            [:puts :exact-entries :managed-entries
+                             :retained-bases :managed-generations]))
+            "a read-only hit does not publish or install a generation")))
+
+    (testing "read-without-publication misses evaluate exactly and remain misses"
+      (clear!)
+      (let [before-misses (stats)
+            first-miss
+            (eacl/check-permission
+             client (assoc demand :populate-cache? false))
+            second-miss
+            (eacl/check-permission
+             client (assoc demand :populate-cache? false))
+            after-misses (stats)]
+        (is (false? (:cached? first-miss)))
+        (is (false? (:cached? second-miss)))
+        (is (= (:allowed? first-miss) (:allowed? second-miss)))
+        (is (= (select-keys before-misses
+                            [:puts :exact-entries :managed-entries
+                             :retained-bases :managed-generations])
+               (select-keys after-misses
+                            [:puts :exact-entries :managed-entries
+                             :retained-bases :managed-generations]))
+            "read-only misses do not create completed or managed storage")))
+
     (testing "cache execution control is excluded from cursor identity"
       (let [first-page
             (eacl/lookup-resources
@@ -1751,6 +1793,24 @@
                     :cache? false
                     :after (get-in first-page
                                    [:page-info :end-cursor])))]
+        (is (= [(->server "server-2")] (:data second-page)))))
+
+    (testing "publication control is excluded from authenticated cursor identity"
+      (let [first-page
+            (eacl/lookup-resources
+             client
+             (assoc resource-query
+                    :evaluation :complete-denotation
+                    :populate-cache? false))
+            second-page
+            (eacl/lookup-resources
+             client
+             (assoc resource-query
+                    :evaluation :complete-denotation
+                    :populate-cache? true
+                    :after (get-in first-page
+                                   [:page-info :end-cursor])))]
+        (is (= [(->server "server-1")] (:data first-page)))
         (is (= [(->server "server-2")] (:data second-page)))))
 
     (testing "relationship reads expose miss, hit, bypass, and retained reuse"
@@ -1796,38 +1856,67 @@
                (:bypasses after-bypass)))
         (is (boolean? (eacl/can? client demand)))))
 
-    (testing "all cache-aware request maps reject non-Boolean :cache?"
-      (doseq [[operation call]
+    (testing "cache bypass dominates either publication-control value"
+      (let [before (stats)
+            first-result
+            (eacl/check-permission
+             client (assoc demand :cache? false :populate-cache? true))
+            middle (stats)
+            second-result
+            (eacl/check-permission
+             client (assoc demand :cache? false :populate-cache? false))
+            after (stats)]
+        (is (false? (:cached? first-result)))
+        (is (false? (:cached? second-result)))
+        (is (= (:allowed? first-result) (:allowed? second-result)))
+        (is (= (dissoc before :bypasses)
+               (dissoc middle :bypasses)
+               (dissoc after :bypasses))
+            "cache bypass neither looks up nor publishes under either value")
+        (is (= (+ 2 (:bypasses before)) (:bypasses after)))))
+
+    (testing "all cache-aware request maps reject non-Boolean controls"
+      (doseq [control [:cache? :populate-cache?]
+              [operation call]
               [[:can
-                #(eacl/can? client (assoc demand :cache? :invalid))]
+                #(eacl/can? client (assoc demand control :invalid))]
                [:check-permission
                 #(eacl/check-permission
-                  client (assoc demand :cache? :invalid))]
+                  client (assoc demand control :invalid))]
+               [:check-permissions
+                #(eacl/check-permissions
+                  client {:checks [demand] control :invalid})]
+               [:empty-check-permissions
+                #(eacl/check-permissions
+                  client {:checks [] control :invalid})]
                [:lookup-resources
                 #(eacl/lookup-resources
-                  client (assoc resource-query :cache? :invalid))]
+                  client (assoc resource-query control :invalid))]
                [:count-resources
                 #(eacl/count-resources
                   client
                   (assoc (dissoc resource-query :first)
-                         :cache? :invalid))]
+                         control :invalid))]
                [:lookup-subjects
                 #(eacl/lookup-subjects
-                  client (assoc subject-query :cache? :invalid))]
+                  client (assoc subject-query control :invalid))]
                [:count-subjects
                 #(eacl/count-subjects
                   client
                   (assoc (dissoc subject-query :first)
-                         :cache? :invalid))]
+                         control :invalid))]
                [:read-relationships
                 #(eacl/read-relationships
-                  client (assoc relationship-query :cache? :invalid))]]]
+                  client (assoc relationship-query control :invalid))]
+               [:expand-permission-tree
+                #(eacl/expand-permission-tree
+                  client (assoc permission-tree-query control :invalid))]]]
         (is (= :eacl/invalid-request (error-category call))
-            (str operation " should reject an invalid :cache?"))
-        (is (= :cache?
+            (str operation " should reject an invalid " control))
+        (is (= control
                (try
                  (call)
                  nil
                  (catch #?(:clj Exception :cljs :default) error
                    (:key (ex-data error)))))
-            (str operation " should identify :cache?"))))))
+            (str operation " should identify " control))))))

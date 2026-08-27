@@ -317,14 +317,14 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 33
-  :registered 33
+  :killed 36
+  :registered 36
   :retired-invalid-controls 74}
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :source-files 79
   :public-roots 70
-  :reachable-definitions 1641}
+  :reachable-definitions 1653}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 46
