@@ -7,13 +7,14 @@
   envelope."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
-            [eacl.datomic.impl.indexed :as impl.indexed]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]))
 
 (def ^:private acyclic-schema
   "definition user {}
@@ -30,7 +31,7 @@ definition doc {
 
 (defn- seed!
   [conn n-docs]
-  (let [acl (core/make-client conn {:cache cache/no-cache})]
+  (let [acl (core/make-client conn {:cache shared-cache/no-cache})]
     (eacl/write-schema! acl acyclic-schema)
     @(d/transact conn [{:eacl/id "org1"} {:eacl/id "alice"}])
     (doseq [batch (partition-all 500 (range n-docs))]
@@ -113,7 +114,7 @@ definition doc {
     (let [acl (seed! conn 60)
           alice (spice-object :user "alice")
           stats (atom {})
-          page (binding [impl.indexed/*recursive-traversal-stats* stats]
+          page (binding [engine/*recursive-traversal-stats* stats]
                  (eacl/lookup-resources
                   acl {:subject alice :permission :view
                        :resource/type :doc :first 20}))]
@@ -127,7 +128,7 @@ definition doc {
 (deftest lookup-subjects-least-path-round-trip-test
   (with-mem-conn [conn schema/v7-schema]
     (let [acl (seed! conn 40)
-          _ (let [raw (core/make-client conn {:cache cache/no-cache})]
+          _ (let [raw (core/make-client conn {:cache shared-cache/no-cache})]
               (doseq [u ["bob" "carol" "dave"]]
                 @(d/transact conn [{:eacl/id u}])
                 (eacl/create-relationship!

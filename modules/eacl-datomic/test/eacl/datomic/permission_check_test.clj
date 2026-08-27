@@ -11,6 +11,7 @@
   timing benchmark would catch."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
@@ -19,7 +20,7 @@
             [eacl.datomic.schema :as schema]))
 
 (defn- client! [conn schema-string]
-  (let [acl (core/make-client conn {:cache cache/no-cache})]
+  (let [acl (core/make-client conn {:cache shared-cache/no-cache})]
     (eacl/write-schema! acl schema-string)
     acl))
 

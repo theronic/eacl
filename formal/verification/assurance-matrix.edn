@@ -48,7 +48,7 @@
               'eacl.subproblem-cache]}
   {:source "formal/dafny/CurrentCache.dfy"
    :class :generated-production
-   :consumer ['eacl.cache/current-generation-decision]}
+   :consumer ['eacl.cache]}
   {:source "formal/dafny/ExecutionContract.dfy"
    :class :proof-only-host-control-model
    :consumer ['eacl.execution/normalize
@@ -318,14 +318,15 @@
   {:operation :snapshot-consistency-selection
    :entry-points
    ['eacl.consistency/selection-plan
-    'eacl.consistency/captured-current-selection
+    'eacl.consistency/select-from-source
     'eacl.consistency/select]
    :theorems
    [:unsupported-exact-plan-is-exact-snapshot-unavailable
     :at-least-acceptance-requires-ancestor
     :exact-acceptance-requires-pinned-graph
     :present-malformed-selection-is-not-snapshot-absence
-    :captured-current-needs-no-post-selection-decision
+    :selection-plan-needs-no-acquisition-or-validation
+    :response-token-uses-closed-selected-identity
     :selected-current-has-one-selection-and-validation
     :successful-selection-logical-work-is-constant-bounded]
    :dafny ["formal/dafny/ConsistencyDecision.dfy"
@@ -532,16 +533,18 @@
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]
-   :theorems [:exact-current-same-snapshot
-              :snapshot-exact-hit-requires-available-entry
-              :snapshot-exact-miss-computes-without-managed-fallback
+   :theorems [:exact-basis-hit-is-same-selected-basis
+              :exact-only-hit-requires-available-entry
+              :exact-only-miss-computes-without-managed-fallback
               :numeric-revision-alone-cannot-establish-exact-identity
               :managed-atomic-relation-projection-frame
               :managed-source-schema-scalar-frontier-key-separation
+              :equal-scalar-proof-preserves-every-deterministic-denotation
+              :equal-scalar-proof-also-preserves-an-older-selected-snapshot
               :changed-relation-slice-requires-changed-stamp
               :forward-scalar-stamp-invalidation
               :late-publication-unreachable
-              :arbitrary-db-bypass-and-canonical-exact-admission
+              :inadmissible-basis-bypass-and-complete-identity-admission
               :projection-chunk-concatenation
               :equal-root-rule-bodies-have-equal-semantic-denotations
               :acyclic-subproblem-call-stack-independence
@@ -557,10 +560,11 @@
            "formal/dafny/CurrentCache.dfy"
            "formal/dafny/RootDenotation.dfy"
            "formal/dafny/IndexedRootDenotation.dfy"
+           "formal/dafny/ScalarFrontierCoherence.dfy"
            "formal/dafny/SubproblemCache.dfy"
            "formal/dafny/TemporalSafety.dfy"]
    :adapter-obligations [:immutable-snapshot
-                         :truthful-canonical-snapshot-exact-key
+                         :truthful-complete-exact-basis-key
                          :durable-history-when-advertised
                          :targeted-sync-and-exact-as-of-effects
                          :provider-future-cancellation

@@ -16,14 +16,13 @@
 
 (defn- fake-adapter
   [{:keys [objects relations permissions scans internal->external
-           runtime-guards? codec-counts scan-error token-error]
+           runtime-guards? codec-counts scan-error]
     :or {objects {}
          relations {}
          permissions {}
          scans {}
          internal->external {}}}]
-  (let [holder (atom nil)
-        adapter
+  (let [adapter
         (backend/make-adapter
          {:id :permission-tree-test
           :capabilities backend/empty-capabilities
@@ -31,18 +30,10 @@
           :state {:db :immutable-test-snapshot}
           :operations
           {:snapshot-id (fn [] {:snapshot :one})
-           :source-scope (fn []
-                           (if token-error
-                             (throw token-error)
-                             {:source-id "test" :branch nil}))
-           :source-lifecycle (fn [] "test-lifecycle")
+           :basis-kind (constantly :ordinary)
            :native-revision (fn [] {:revision 1 :exact-locator nil})
            :order-hint (fn [] 1)
-           :select-current (fn [] @holder)
-           :select-authoritative (fn [_] @holder)
-           :select-at-least (fn [_ _] @holder)
            :exact-locator (constantly nil)
-           :select-exact (fn [_ _] nil)
            :object-id->internal (fn [external-id]
                                   (get objects external-id))
            :internal-id->object (fn [internal-id]
@@ -66,7 +57,6 @@
            :direct-match? (fn [& _] false)
            :relation-populated? (fn [& _] false)
            :all-permission-nodes (fn [] #{})}})]
-    (reset! holder adapter)
     adapter))
 
 (defn- relation
@@ -116,9 +106,10 @@
             :permission :view}
            {:resource (eacl/spice-object :document "d1")
             :permission :qualified/view}]]
-    (is (= :eacl/invalid-request
-           (:type (thrown-data
-                   #(permission-tree/validate-request! request)))))))
+    (let [data (thrown-data
+                #(permission-tree/validate-request! request))]
+      (is (= :eacl.permission-tree/invalid-request (:type data)))
+      (is (= (:type data) (:eacl/error data))))))
 
 (deftest limit-configuration-is-strict-and-portable
   (is (= (assoc permission-tree/default-limits :max-depth 3)
@@ -518,19 +509,27 @@
                     (tree-seq coll? seq data))))))
 
 (deftest selected-token-errors-are-redacted
-  (let [adapter
-        (fake-adapter
-         {:token-error
-          (ex-info "secret-internal-id"
-                   {:type :eacl.permission-tree/limit-exceeded
-                    :internal-id 424242})})
+  (let [secret-id #?(:clj (Object.) :cljs (js-obj))
         data
         (thrown-data
-         #(permission-tree/selected-adapter-token adapter {}))]
+         #(permission-tree/selected-basis-token
+           {:snapshot-semantic-identity
+            {:backend :test
+             :source-id secret-id
+             :branch nil
+             :source-lifecycle "test-lifecycle"
+             :basis-kind :ordinary
+             :revision 1
+             :exact-locator nil
+             :backend-snapshot-id {:snapshot :one}}
+            :format-options
+            {:current-kid :test
+             :keyring {:test (vec (range 32))}
+             :token-ttl-seconds 60}}))]
     (is (= :eacl.permission-tree/adapter-contract-violation
            (:type data)))
     (is (= :adapter-operation-failed (:reason data)))
-    (is (not-any? #{424242}
+    (is (not-any? #{secret-id}
                   (tree-seq coll? seq data)))))
 
 (deftest noncanonical-custom-external-ids-are-not-sorted-or-encoded

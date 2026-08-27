@@ -41,8 +41,6 @@
      {:id :synthetic
       :capabilities {:consistency #{:minimize-latency}
                      :snapshots #{:current}
-                     :source #{:stable-scope :source-lifecycle
-                               :native-revision :order-hint}
                      :cursor #{:forward :reverse}
                      :transactions #{}
                      :cache-proofs #{}
@@ -50,16 +48,10 @@
       :identity-contract :synthetic-test
       :operations
       {:snapshot-id (fn [] {:database-id "synthetic" :basis-t 1})
-       :source-scope (fn [] {:source-id {:database-id "synthetic"}
-                             :branch nil})
-       :source-lifecycle (fn [] "synthetic-lifecycle")
+       :basis-kind (constantly :ordinary)
        :native-revision (fn [] {:revision 1 :exact-locator 1})
        :order-hint (fn [] 1)
        :exact-locator (fn [] 1)
-       :select-current (fn [] nil)
-       :select-authoritative (fn [_] nil)
-       :select-at-least (fn [_ _] nil)
-       :select-exact (fn [_ _] nil)
        :object-id->internal (fn [id] id)
        :internal-id->object (fn [id] id)
        :relation-defs

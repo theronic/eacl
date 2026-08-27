@@ -25,7 +25,7 @@
      (throw
       (ex-info
        ":sample-size must be a non-negative integer."
-       {:type :eacl.integrity/invalid-options
+       {:type :eacl.integrity/invalid-options :eacl/error :eacl.integrity/invalid-options
         :sample-size sample-size})))
    (let [{:keys [count by-half sample]}
          (reduce

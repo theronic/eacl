@@ -3,11 +3,13 @@
 
   This is the sole production backend boundary for recursive traversal, Relay
   pagination, deletion, consistency selection, and ordered-generation proofs."
-  (:require [eacl.spicedb.consistency :as consistency]))
+  (:require [eacl.exact-integer :as exact-integer]
+            [eacl.request.counters :as request-counters]
+            [eacl.spicedb.consistency :as consistency]))
 
 (def adapter-version 8)
-(def maximum-exact-integer 9007199254740991)
-(def minimum-exact-integer (- maximum-exact-integer))
+(def maximum-exact-integer exact-integer/maximum)
+(def minimum-exact-integer exact-integer/minimum)
 
 (def ^:dynamic *backend-op-stats*
   "Optional atom counting backend adapter invocations by operation keyword.
@@ -33,15 +35,10 @@
 
 (def required-snapshot-operations
   #{:snapshot-id
-    :source-scope
-    :source-lifecycle
+    :basis-kind
     :native-revision
     :order-hint
-    :select-current
-    :select-authoritative
-    :select-at-least
     :exact-locator
-    :select-exact
     :object-id->internal
     :internal-id->object
     :relation-defs
@@ -56,7 +53,11 @@
   certification boundary without making an uncertified snapshot invalid."
   #{:schema-generation})
 
-(def adapter-obligations
+(def ^:private source-authority-operation-keys
+  #{:select-current :select-authoritative :select-at-least :select-exact
+    :source-scope :source-lifecycle})
+
+(def basis-adapter-obligations
   "Runtime-facing statement of the assumptions made by
   `formal/dafny/SnapshotOracle.dfy`.
 
@@ -66,24 +67,14 @@
   evidence for each named obligation."
   {:snapshot-id
    #{:stable-for-immutable-snapshot :source-and-revision-identity}
-   :source-scope
-   #{:stable-source-identity :branch-identity}
-   :source-lifecycle
-   #{:bounded-canonical-identity :rotated-on-source-replacement}
+   :basis-kind
+   #{:stable-for-immutable-snapshot :complete-identity}
    :native-revision
    #{:selected-native-revision :monotone-order-hint :exact-locator-identity}
    :order-hint
    #{:selected-snapshot-order :exact-integer}
-   :select-current
-   #{:returns-immutable-snapshot :same-source}
-   :select-authoritative
-   #{:returns-immutable-snapshot :same-source :authoritative-or-fails-closed}
-   :select-at-least
-   #{:returns-immutable-snapshot :same-source :native-revision-at-least-requested}
    :exact-locator
    #{:stable-for-immutable-snapshot}
-   :select-exact
-   #{:same-source :exact-locator-match :unavailable-or-immutable}
    :object-id->internal
    #{:visible-object-total :injective :nonnegative :snapshot-bound}
    :internal-id->object
@@ -121,6 +112,17 @@
     :fully-consistent
     :at-least-as-fresh
     :at-exact-snapshot})
+
+(def basis-kinds
+  "Closed classification of database views at the adapter boundary. Only
+  ordinary and exact as-of values are admissible public authorization bases."
+  #{:ordinary :as-of :filtered :since :history :speculative})
+
+(def admissible-basis-kinds #{:ordinary :as-of})
+
+(defn admissible-basis-kind?
+  [kind]
+  (contains? admissible-basis-kinds kind))
 
 (def empty-capabilities
   {:consistency #{}
@@ -169,6 +171,34 @@
                          :type :eacl/invalid-backend-adapter
                          :eacl/error :eacl/invalid-backend-adapter))))
 
+(defn validate-adapter-config!
+  "Certifies that a basis adapter receives only immutable-value conversion
+  configuration declared by its backend. Connection, source, writer, and
+  request/runtime option leakage is rejected before adapter construction."
+  [backend-id allowed-keys config]
+  (when-not (map? config)
+    (throw
+     (ex-info
+      "Basis adapter configuration must be a map."
+      {:type :eacl/invalid-backend-role
+       :eacl/error :eacl/invalid-backend-role
+       :role :adapter
+       :backend backend-id
+       :operation :configure
+       :value config})))
+  (when-let [unknown (seq (remove allowed-keys (keys config)))]
+    (throw
+     (ex-info
+      "Basis adapter received state outside its closed configuration."
+      {:type :eacl/invalid-backend-role
+       :eacl/error :eacl/invalid-backend-role
+       :role :adapter
+       :backend backend-id
+       :operation (first unknown)
+       :unknown-keys (vec unknown)
+       :allowed-keys allowed-keys})))
+  config)
+
 (defn- contract-violation!
   [backend-id operation obligation value]
   (throw
@@ -187,13 +217,13 @@
   "Returns the declared proof assumptions for one operation, or the complete
   operation-to-obligations map when called without an argument."
   ([]
-   adapter-obligations)
+   basis-adapter-obligations)
   ([operation-key]
-   (or (get adapter-obligations operation-key)
+   (or (get basis-adapter-obligations operation-key)
        (invalid-adapter!
         "Unknown backend operation in certification request."
         {:operation operation-key
-         :known-operations (set (keys adapter-obligations))}))))
+         :known-operations (set (keys basis-adapter-obligations))}))))
 
 (defn- unsupported!
   [backend-id capability requested supported]
@@ -313,6 +343,18 @@
     (invalid-adapter! "Backend :operations must be a map."
                       {:backend id
                        :operations operations}))
+  (when-let [forbidden
+             (seq (filter source-authority-operation-keys
+                          (keys operations)))]
+    (throw
+     (ex-info
+      "Basis adapter contains source-selection authority."
+      {:type :eacl/invalid-backend-role
+       :eacl/error :eacl/invalid-backend-role
+       :role :adapter
+       :backend id
+       :operation (first forbidden)
+       :forbidden-operations (vec forbidden)})))
   (when (and (contains? operations :schema-generation)
              (not (fn? (:schema-generation operations))))
     (invalid-adapter!
@@ -320,13 +362,19 @@
      {:backend id
       :operation :schema-generation
       :value (:schema-generation operations)}))
-  (let [missing (seq (remove #(fn? (get operations %))
+  (let [missing (seq (remove #(ifn? (get operations %))
                              required-snapshot-operations))]
     (when missing
-      (invalid-adapter! "Backend is missing required snapshot operations."
-                        {:backend id
-                         :missing-operations (vec missing)
-                         :required-operations required-snapshot-operations})))
+      (throw
+       (ex-info
+        "Basis adapter is missing required operations."
+        {:type :eacl/invalid-backend-role
+         :eacl/error :eacl/invalid-backend-role
+         :role :adapter
+         :backend id
+         :operation (first missing)
+         :missing-operations (vec missing)
+         :required-operations required-snapshot-operations}))))
   (let [normalized (normalize-capabilities id capabilities)
         traversal-execution
         (normalize-traversal-execution id traversal-execution)
@@ -490,6 +538,17 @@
                   operation-key
                   (set (keys (::operations adapter))))))
 
+(declare invoke)
+
+(defn basis-kind
+  "Returns the certified database-view classification for one adapter."
+  [adapter]
+  (let [kind (invoke adapter :basis-kind)]
+    (when-not (contains? basis-kinds kind)
+      (contract-violation!
+       (backend-id adapter) :basis-kind :known-basis-kind kind))
+    kind))
+
 (defn- exact-integer?
   [value]
   (and
@@ -584,6 +643,13 @@
            backend-id operation-key :nonnegative value))
         value)
 
+      :basis-kind
+      (do
+        (when-not (contains? basis-kinds value)
+          (contract-violation!
+           backend-id operation-key :known-basis-kind value))
+        value)
+
       :schema-generation
       (do
         (when-not (or (nil? value) (schema-generation? value))
@@ -591,7 +657,7 @@
            backend-id operation-key :exact-natural-or-nil value))
         value)
 
-      (:snapshot-id :source-scope :native-revision)
+      (:snapshot-id :native-revision)
       (do
         (when-not (map? value)
           (contract-violation!
@@ -622,20 +688,12 @@
            backend-id operation-key :boolean-result value))
         value)
 
-      (:select-current :select-authoritative
-       :select-at-least :select-exact)
-      (do
-        (when-not (or (nil? value) (adapter? value))
-          (contract-violation!
-           backend-id operation-key :adapter-or-unavailable value))
-        value)
-
       ;; These values are intentionally opaque at this boundary. Their
       ;; semantic obligations (round trip, locator identity, and complete
       ;; proofs) require paired/global certification rather than a local shape
       ;; predicate. They still pass through this dispatch so an added callback
       ;; cannot silently bypass the runtime-guard review.
-      (:internal-id->object :exact-locator :source-lifecycle :proof-frame)
+      (:internal-id->object :exact-locator :proof-frame)
       value
 
       (contract-violation!
@@ -643,6 +701,7 @@
 
 (defn invoke
   [adapter operation-key & args]
+  (request-counters/add! :adapter-reads)
   (when *backend-op-stats*
     (swap! *backend-op-stats* update operation-key (fnil inc 0)))
   (observe-invocation! :before adapter operation-key)
@@ -666,6 +725,7 @@
    {:keys [before-realize! after-realize! step]
     :or {before-realize! (constantly nil)
          after-realize! (constantly nil)}}]
+  (request-counters/add! :adapter-reads)
   (when-not (contains? #{:relation-defs :permission-defs} operation-key)
     (invalid-adapter! "Incremental definition reduction requires a schema operation."
                       {:operation operation-key}))
@@ -709,6 +769,7 @@
    {:keys [before-realize! after-realize! step]
     :or {before-realize! (constantly nil)
          after-realize! (constantly nil)}}]
+  (request-counters/add! :adapter-reads)
   (when-not (contains? #{:subject->resources :resource->subjects}
                        operation-key)
     (invalid-adapter! "Incremental reduction requires an ordered scan operation."

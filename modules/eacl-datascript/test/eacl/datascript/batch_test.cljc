@@ -1,17 +1,17 @@
 (ns eacl.datascript.batch-test
+  #?(:cljs (:require-macros [eacl.core :as eacl]))
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [clojure.string :as str]
             [datascript.core :as ds]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.execution :as execution]
-            [eacl.request.counters :as request-counters]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.request.counters :as request-counters]))
 
 (def ^:private batch-schema
   "definition user {}
@@ -93,7 +93,7 @@
                               (when (identical? conn candidate)
                                 (swap! db-calls inc))
                               (original-db candidate))]
-          (binding [snapshot-provider/*provider-op-stats* provider-calls]
+          (binding [source/*source-op-stats* provider-calls]
             (f)))]
     {:value value
      :provider-calls @provider-calls
@@ -283,17 +283,15 @@
          (demand bob :view folder-2)
          (demand alice :view document)]
         result
-        (eacl/with-snapshot
-          client
-          (fn [view]
+        (eacl/with-snapshot [snapshot (eacl/snapshot client)]
             (let [oracle
                   (mapv #(eacl/check-permission
-                          view (assoc % :cache? false))
+                          snapshot (assoc % :cache? false))
                         checks)
                   actual
                   (eacl/check-permissions
-                   view {:checks checks :cache? false})]
-              {:oracle oracle :actual actual})))]
+                   snapshot {:checks checks :cache? false})]
+              {:oracle oracle :actual actual}))]
     (is (= (:oracle result) (:actual result)))
     (is (= [true true false false false true true]
            (mapv :allowed? (:actual result))))
@@ -323,13 +321,11 @@
           (binding [request-counters/*ledger* ledger]
             (observed-call
              conn
-             #(eacl/with-snapshot
-                client
-                (fn [view]
+             #(eacl/with-snapshot [snapshot (eacl/snapshot client)]
                   (eacl/check-permissions
-                   view
+                   snapshot
                    {:checks [(demand alice :view document)]
-                    :cache? false})))))
+                    :cache? false}))))
           counts (request-counters/snapshot ledger)]
       (is (true? (get-in observation [:value 0 :allowed?])))
       (is (= 1 (:acquire-current! (:provider-calls observation) 0)))
@@ -566,26 +562,25 @@
       (is (= 1 (get-in backend-data
                        [:aggregate-counters :output-units]))))))
 
-(deftest completed-artifacts-before-publication-failure-remain-independent-test
+(deftest completed-artifacts-before-later-backend-failure-remain-independent-test
   (let [{:keys [client alice carol document]} (fixture)
         first-demand (demand alice :view document)
         second-demand (demand carol :view document)
-        original-publish subproblem/publish!
-        answer-attempts (atom 0)
+        backend-calls (atom 0)
         error
-        (with-redefs
-         [subproblem/publish!
-          (fn [& args]
-            (when (and (= :answer (second args))
-                       (= 3 (swap! answer-attempts inc)))
+        (binding
+         [backend/*invoke-observer*
+          (fn [{:keys [phase operation]}]
+            (when (and (= :before phase)
+                       (= :object-id->internal operation)
+                       (= 3 (swap! backend-calls inc)))
               (throw
-               (ex-info "injected publication failure"
-                        {:type :test/publication-failure})))
-            (apply original-publish args))]
+               (ex-info "injected backend failure"
+                        {:type :test/backend-failure}))))]
          (caught
           #(eacl/check-permissions
             client {:checks [first-demand second-demand]})))]
-    (is (= :test/publication-failure (:type (ex-data error))))
+    (is (= :test/backend-failure (:type (ex-data error))))
     (is (= 1 (:demand-index (ex-data error))))
     (is (true? (:cached?
                 (eacl/check-permission client first-demand))))))

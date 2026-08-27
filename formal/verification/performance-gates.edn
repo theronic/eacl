@@ -344,7 +344,7 @@
 
  :consistency-selection-boundary
  {:scope
-  :successful-captured-current-public-backend-selection
+  :minimize-latency-source-selection-plan
   :formal-model "formal/dafny/ConsistencyDecision.dfy"
   :production-source "modules/eacl/src/eacl/consistency.cljc"
   :runners
@@ -362,37 +362,47 @@
    :revision-validation-calls 0
    :native-revision-reads 0
    :order-hint-reads 0
-   :exact-locator-reads 0}
+   :exact-locator-reads 0
+   :source-lifecycle-reads 0
+   :snapshot-id-reads 0
+   :basis-kind-reads 0}
   :source-correspondence
-  {:captured-adapter-is-identical-to-selected-adapter true
-   :same-source-scope-by-reflexivity true
+  {:source-static-capability-observation true
+   :source-acquisition-required false
    :post-selection-generated-decision-required false
    :direct-selected-current-path
    {:backend-selection-calls 1
     :validation-decisions 1
-    :source-scope-reads-at-most 3
+    :source-scope-reads 2
     :native-revision-reads 1
     :order-hint-reads 1
-    :exact-locator-reads 1}
+    :exact-locator-reads 1
+    :source-lifecycle-reads 2
+    :snapshot-id-reads 1
+    :basis-kind-reads 1}
    :all-other-successful-paths
    {:plan-decisions 1
     :validation-decisions 1
     :backend-selection-calls-at-most 1
     :authentication-attempts-at-most 1
-    :source-scope-reads-at-most 4
+    :source-scope-reads 2
     :revision-validation-calls-at-most 1
-    :native-revision-reads-at-most 2
-    :order-hint-reads-at-most 2
-    :exact-locator-reads-at-most 2}
+    :native-revision-reads 1
+    :order-hint-reads 1
+    :exact-locator-reads 1
+    :source-lifecycle-reads 2
+    :snapshot-id-reads 1
+    :basis-kind-reads 1
+    :response-token-additional-source-or-adapter-reads 0}
    :executable-evidence
-   eacl.consistency-test/consistency-selection-logical-work-matches-formal-path-bounds}
+   eacl.consistency-source-test/successful-selection-logical-work-matches-formal-path-counts}
   :required
   {:clj-java
    {:maximum-median-p95-ns 15000.0}
    :cljs-javascript
    {:maximum-median-p95-ns 30000.0}}
   :observed
-  {:date "2026-08-06"
+  {:date "2026-08-24"
    :fixture
    {:repetitions 2000
     :warmup 10
@@ -400,10 +410,10 @@
     :independent-trials 5
     :aggregation :median-of-trial-percentiles}
    :clj-java
-   {:median-p95-ns 6705.917
+   {:median-p95-ns 378.292
     :status :passed}
    :cljs-javascript
-   {:median-p95-ns 2023.458000000005
+   {:median-p95-ns 1375.562500000001
     :status :passed}}
   :resource-qualification
   {:logical-counters

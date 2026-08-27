@@ -1,5 +1,5 @@
 {:schema-version 1
- :status :source-derived-structural-reduction-passed
+ :status :source-derived-structural-change-reviewed
  :claim-id :EACL-V8-IMPLEMENTATION-SIMPLICITY-001
  :baseline
  {:commit "05ff5f7dd253192abfa41ab436210ae5ee200efc"
@@ -18,30 +18,41 @@
  :current-worktree
  {:source-closure "formal/verification/public-source-closure.json"
   :source-closure-sha256
-  "73115b8decc4cd0841bcbd506df25b289f91955dcfb0c064567ceb33cc2dabea"
-  :public-roots 63
-  :source-files 57
-  :reachable-definitions 1380
+  "5d2f89f29b81b423eef933127caf40873d62da570d251d507ec41f352a587685"
+  :public-roots 70
+  :source-files 64
+  :reachable-definitions 1639
   :definitions-by-source
-  {"modules/eacl/src/eacl/subproblem_cache.cljc" 48
-   "modules/eacl-datomic/src/eacl/datomic/cache.clj" 4
-   "modules/eacl-datomic/src/eacl/datomic/core.clj" 122
-   "modules/eacl/src/eacl/engine/v8.cljc" 231
-   "modules/eacl/src/eacl/execution.cljc" 21
-   "modules/eacl/src/eacl/proof_frame.cljc" 13}
+  {"modules/eacl/src/eacl/subproblem_cache.cljc" 42
+   "modules/eacl-datomic/src/eacl/datomic/core.clj" 13
+   "modules/eacl/src/eacl/engine/v8.cljc" 90
+   "modules/eacl/src/eacl/execution.cljc" 27
+   "modules/eacl/src/eacl/proof_frame.cljc" 15
+   "modules/eacl/src/eacl/core.cljc" 56
+   "modules/eacl/src/eacl/client/orchestration.cljc" 90
+   "modules/eacl/src/eacl/backend/source.cljc" 43
+   "modules/eacl/src/eacl/backend/writer.cljc" 13
+   "modules/eacl/src/eacl/cache.cljc" 40}
   :forbidden-coordination-source-occurrences 0
-  :datomic-schema-state-source-occurrences 0
+  :datomic-client-schema-state-occurrences 0
   :datascript-exact-snapshot-registry-source-occurrences 0}
  :delta
- {:public-roots 0
-  :source-files 2
-  :reachable-definitions -44
-  :subproblem-cache-definitions -19
-  :datomic-cache-definitions -31
-  :datomic-core-definitions -6
-  :shared-engine-definitions 22
-  :normalized-execution-contract-definitions 21
-  :proof-frame-definitions 13
+ {:public-roots 7
+  :source-files 9
+  :reachable-definitions 215
+  :root-set-comparable? false
+  :root-set-change :public-reader-writer-source-and-snapshot-entry-points-added
+  :subproblem-cache-definitions -25
+  :datomic-cache-definitions -35
+  :datomic-core-definitions -115
+  :shared-engine-definitions -119
+  :normalized-execution-contract-definitions 27
+  :proof-frame-definitions 15
+  :shared-public-core-definitions 56
+  :shared-orchestration-definitions 90
+  :source-role-definitions 43
+  :writer-role-definitions 13
+  :basis-cache-definitions 40
   :forbidden-coordination-source-occurrences -22
   :datomic-schema-state-source-occurrences -38
   :datascript-exact-snapshot-registry-source-occurrences -11}
@@ -51,17 +62,31 @@
  ["modules/eacl/src"
   "modules/eacl-datomic/src"
   "modules/eacl-datahike/src"
-  "modules/eacl-datascript/src"]
+  "modules/eacl-datascript/src"
+  "modules/eacl-datalevin/src"]
  :interpretation
- {:public-entry-surface :unchanged
-  :proof-only-runtime-code
-  {:execution-contract-verification :independent
-   :generated-eacl-kernel-inclusion :removed
-   :generated-artifact-byte-delta
-   {:java-source -14992
-    :java-classes -12169
-    :javascript -8457
-    :browser-iife -4931}}
+ {:public-entry-surface
+  :breaking-capability-split-with-one-shared-reader-and-writer-dispatch
+  :added-control-branches
+  [:authorization-target-dispatch
+   :retained-snapshot-consistency-assertions
+   :owned-basis-release-and-thread-affinity
+   :separate-adapter-source-writer-certification]
+  :removed-mechanisms
+  [:datomic-duplicate-authorization-orchestration
+   :datomic-private-cursor-codec-and-page-cache
+   :monotone-single-current-cache-generation
+   :separate-snapshot-exact-answer-tier
+   :datascript-selection-special-case
+   :detailed-authorization-fallback]
+  :registry-ownership
+  {:exact-generations :runtime
+   :managed-tier :runtime
+   :sealed-plans :runtime
+   :derived-schema :runtime
+   :continuations :runtime
+   :visited-pages :runtime
+   :process-global-authorization-registries :none}
   :cache-attempt-controls
   {:live [:evaluation-reserve-ms :maximum-atomic-attempts]
    :deleted-decorative
@@ -69,14 +94,16 @@
     :maximum-encoded-bytes
     :maximum-decoded-weight
     :maximum-candidates]}
-  :net-reachable-definition-count :reduced-despite-explicit-execution-contract-and-demand-page-machinery
+  :reachable-definition-delta
+  :not-comparable-because-the-root-set-now-includes-the-public-capability-surface
   :portable-counter-state-updates :one-counter-map-replacement-per-logical-update
   :pure-permission-alias-frontier
   :one-cycle-guarded-canonicalizer-replaces-duplicate-traversal-streams
   :caller-waiting-cache-coordination :deleted
   :eacl-schema-read-locking :deleted
   :datascript-history-retention :deleted
-  :cache-hit-miss-bypass-semantic-authority :one-shared-engine}
+  :cache-hit-miss-bypass-semantic-authority :one-shared-engine
+  :backend-orchestration-authority :one-shared-acl-and-snapshot-pipeline}
  :reproduction
  {:current-closure ["bin/public-source-closure.mjs write"
                     "bin/formal source-closure"]

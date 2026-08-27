@@ -100,6 +100,10 @@
    snapshot-or-db
    #(some-> (ddb/eavt-datoms % eid :eacl/id) first :v)))
 
+(defn- snapshot-schema-generation
+  [snapshot-or-db]
+  (ddb/with-db snapshot-or-db schema/current-schema-generation))
+
 (defn- snapshot-relationship-relation-id
   [snapshot-or-db relationship]
   (ddb/with-db
@@ -127,8 +131,11 @@
    :db ds/db
    :entid snapshot-entid
    :default-entid->object-id snapshot-object-id
-   :snapshot-adapter datalevin-backend/snapshot-adapter
-   :snapshot-provider datalevin-backend/provider
+   :basis-adapter datalevin-backend/basis-adapter
+   :basis-adapter-config-keys datalevin-backend/adapter-config-keys
+   :source datalevin-backend/source
+   :basis-kind datalevin-backend/basis-kind
+   :database-source-scope datalevin-backend/database-source-scope
    :db-native-revision
    (fn [db]
      {:revision (datalevin-backend/exact-natural!
@@ -143,6 +150,7 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :generation snapshot-schema-generation
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
@@ -155,50 +163,14 @@
    #{:datalevin-topology
      :revision-watermark
      :advance-revision-watermark!
+     :maximum-snapshot-retention-ms
      prepared-native-source-id-key}})
-
-(defn datalevin-read-relationships
-  [db opts filters]
-  (orchestration/read-relationships api db opts filters))
-
-(defn datalevin-write-relationships!
-  [conn opts updates]
-  (orchestration/write-relationships! api conn opts updates))
-
-(defn datalevin-delete-object!
-  [conn opts object]
-  (orchestration/delete-object! api conn opts object))
-
-(defn datalevin-check-permission
-  [db opts subject permission resource consistency]
-  (orchestration/check-permission
-   api db opts subject permission resource consistency))
-
-(defn datalevin-can?
-  [db opts subject permission resource consistency]
-  (orchestration/can? api db opts subject permission resource consistency))
-
-(defn datalevin-lookup-resources
-  [db opts query]
-  (orchestration/lookup-resources api db opts query))
-
-(defn datalevin-count-resources
-  [db opts query]
-  (orchestration/count-resources api db opts query))
-
-(defn datalevin-lookup-subjects
-  [db opts query]
-  (orchestration/lookup-subjects api db opts query))
-
-(defn datalevin-count-subjects
-  [db opts query]
-  (orchestration/count-subjects api db opts query))
 
 (defn- require-datalevin-client!
   [client fn-name]
   (when-not (orchestration/client? client :datalevin)
     (throw (ex-info (str fn-name " requires a Datalevin EACL client.")
-                    {:type :eacl/invalid-client}))))
+                    {:type :eacl/invalid-client :eacl/error :eacl/invalid-client}))))
 
 (defn expire-cache!
   "Datalevin lifecycle rotation is an external durability operation.
@@ -250,18 +222,22 @@
   (orchestration/cache-stats client))
 
 (defn make-client
-  "Builds an IAuthorization client over a Datalevin conn.
+  "Builds an EACL acl over a Datalevin conn.
 
   Options (unknown keys throw :eacl/invalid-config - a silently ignored key
   means silently wrong ID coercion, audit 5):
   - :entid->object-id  (fn [db eid] external-id) - canonical.
   - :object-id->lookup-ref (fn [external-id] lookup-ref). Default: [:eacl/id id].
-  - :cache - omitted creates a bounded client-private current-generation
+  - :cache - omitted creates a bounded client-private basis
     cache; eacl.cache/no-cache disables it; a config map bounds it.
-    Exact hits are snapshot-local; complete native generation proofs let
-    unchanged answers survive unrelated forward transactions. Authorization
+    Completed answers reuse only at the identical complete basis identity;
+    this adapter makes no ordered-generation proof claim. Certified schema
+    generation still reuses derived plans across relationship-only writes. Authorization
     mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
+  - :maximum-snapshot-retention-ms - optional positive upper bound for an
+    EACL snapshot wrapper. Once exceeded, the next access releases an owned
+    Datalevin reader and fails with :eacl/snapshot-retention-exceeded.
   - :internal-cursor->spice / :spice-cursor->internal - advanced cursor coercion overrides.
 
   Datalevin is current-basis-only across requests. It does not retain old DB
@@ -319,6 +295,22 @@
       {:type :eacl/invalid-config
        :eacl/error :eacl/invalid-config
        :key :advance-revision-watermark!})))
+  (when (and
+         (contains? config-opts :maximum-snapshot-retention-ms)
+         (not
+          (and
+           (integer? (:maximum-snapshot-retention-ms config-opts))
+           (pos? (:maximum-snapshot-retention-ms config-opts))
+           (<= (:maximum-snapshot-retention-ms config-opts)
+               9007199254740991))))
+    (throw
+     (ex-info
+      "Datalevin :maximum-snapshot-retention-ms must be a positive portable exact integer."
+      {:type :eacl/invalid-config
+       :eacl/error :eacl/invalid-config
+       :key :maximum-snapshot-retention-ms
+       :value (:maximum-snapshot-retention-ms config-opts)
+       :maximum 9007199254740991})))
   (let [watermark-value (:revision-watermark config-opts)
         watermark @watermark-value]
     (when-not (and (integer? watermark)
@@ -352,6 +344,16 @@
     (orchestration/make-client
      api conn (assoc config-opts prepared-native-source-id-key
                      (str source-id)))))
+
+(defn snapshot
+  "Constructs a borrowed public snapshot over an open Datalevin read snapshot."
+  [acl read-snapshot]
+  (orchestration/direct-snapshot acl :datalevin read-snapshot))
+
+(defn db
+  "Returns the open Datalevin read snapshot wrapped by `snapshot`."
+  [snapshot]
+  (orchestration/snapshot-db snapshot :datalevin))
 
 (defn create-conn
   "A Datalevin connection carrying EACL's schema. See

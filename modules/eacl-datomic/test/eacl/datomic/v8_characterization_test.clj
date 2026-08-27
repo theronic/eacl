@@ -3,7 +3,9 @@
   from the Datomic adapter."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.core :as eacl]
+            [eacl.contract-support :as contract]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -48,15 +50,15 @@
 
 (deftest extraction-preserves-public-v8-behavior-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "v8-extraction-characterization"
+    (let [token-key "v8-extraction-characterization00"
           client (core/make-client
                   conn
-                  {:page-token-key token-key
-                   :cache {:remember-answers true}})
+                  {:security-key token-key
+                   :cache {}})
           uncached-client (core/make-client
                            conn
-                           {:page-token-key token-key
-                            :cache cache/no-cache})
+                           {:security-key token-key
+                            :cache shared-cache/no-cache})
           query {:subject (user "user-1")
                  :permission :read
                  :resource/type :folder}]
@@ -152,3 +154,15 @@
                                :read
                                (folder "folder-3"))))
         (is (= 3 (:count (eacl/count-resources client query))))))))
+
+(deftest public-api-arity-characterization-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [client (core/make-client
+                  conn
+                  {:security-key "v8-public-api-arity-characterization"})]
+      (eacl/write-schema! client contract/smoke-schema)
+      @(d/transact conn
+                   (mapv (fn [{:keys [id]}] {:eacl/id id})
+                         contract/smoke-objects))
+      (eacl/create-relationships! client contract/smoke-relationships)
+      (contract/assert-public-api-arity-contract! client))))

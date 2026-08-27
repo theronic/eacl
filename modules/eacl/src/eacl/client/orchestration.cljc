@@ -11,8 +11,9 @@
     :db                         (fn [conn] db) - current immutable value
     :entid                      (fn [db lookup-ref-or-eid] eid-or-nil)
     :default-entid->object-id   (fn [db eid] external-id-or-nil)
-    :snapshot-adapter           (fn [db opts] v8-adapter), for raw DB helpers
-    :snapshot-provider          (fn [conn opts] long-lived provider)
+    :basis-adapter              (fn [db closed-config] v8 basis adapter)
+    :basis-adapter-config-keys  closed set of conversion/configuration keys
+    :source                     (fn [conn opts] long-lived basis source)
     :db-native-revision         (fn [db] committed native revision map)
     :native-source-id           optional (fn [conn] stable source identity)
     :prepared-native-source-id-key optional private config key populated by
@@ -32,17 +33,19 @@
   (:require [com.rpl.specter :as S]
             [eacl.authorization.batch :as batch]
             [eacl.authorization.filters :as authorization-filters]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
+            [eacl.backend.writer :as backend-writer]
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
             [eacl.cursor :as cursor]
-            [eacl.core :as eacl :refer [IAuthorization
+            [eacl.core :as eacl :refer [IAuthorizationReader
+                                        IAuthorizationWriter
                                         IBatchedAuthorization
-                                        IDetailedAuthorization
-                                        ISnapshotAuthorization
+                                        ISnapshotSource
+                                        IAuthorizationSnapshot
                                         spice-object
                                         ->Relationship
                                         ->RelationshipUpdate]]
@@ -73,8 +76,8 @@
         (cond-> opts
           (nil? (:cache-lifecycle opts))
           (assoc :cache-lifecycle
-                 (cache/capture-current-lifecycle
-                  (:current-cache-store opts))))]
+                 (cache/capture-cache-lifecycle
+                  (:basis-cache-store opts))))]
     (assoc opts :execution-contract
            (if-let [contract (:execution-contract opts)]
              (execution/refine contract opts operation request)
@@ -137,14 +140,15 @@
         (:subject cursor) (S/transform [:subject :id] #(object-id->entid db %) cursor)))))
 
 (defn- adapter-semantic-identity
-  [adapter]
-  (let [scope (consistency-v3/source-scope adapter)
+  [adapter scope lifecycle]
+  (let [scope (select-keys scope [:source-id :branch])
         revision (consistency-v3/native-revision adapter)
         snapshot-id (backend/invoke adapter :snapshot-id)]
     {:backend (backend/backend-id adapter)
      :source-id (:source-id scope)
      :branch (:branch scope)
-     :source-lifecycle (:source-lifecycle scope)
+     :source-lifecycle lifecycle
+     :basis-kind (backend/basis-kind adapter)
      :revision (:revision revision)
      :exact-locator (:exact-locator revision)
      :backend-snapshot-id snapshot-id}))
@@ -156,7 +160,7 @@
   [selected error]
   (when selected
     (try
-      (snapshot-provider/release! selected)
+      (source/release! selected)
       (catch #?(:clj Throwable :cljs :default) release-error
         (throw
          (ex-info
@@ -168,30 +172,9 @@
   (throw error))
 
 (defn- select-request-basis
-  [api source opts consistency-value]
+  [_api source opts consistency-value]
   (let [contract (:execution-contract opts)
         _ (execution/check! contract :consistency-selection)
-        descriptor (consistency/descriptor consistency-value)
-        provider? (snapshot-provider/provider? source)
-        source-adapter (when-not provider?
-                         ((:snapshot-adapter api) source opts))
-        _ (when (and (not provider?)
-                     (= :datascript (backend/backend-id source-adapter))
-                     (= :at-exact-snapshot (:mode descriptor)))
-            (throw
-             (ex-info
-              "DataScript is current-basis-only and does not retain exact historical snapshots."
-              {:type :eacl.consistency/exact-snapshot-unavailable
-               :eacl/error :eacl.consistency/exact-snapshot-unavailable
-               :reason :exact-snapshot-unavailable
-               :backend :datascript
-               :capability :consistency
-               :requested :at-exact-snapshot
-               :supported (:consistency (backend/capabilities source-adapter))
-               :migration
-               {:use :at-least-as-fresh
-                :alternative
-                "Evaluate an application-owned immutable DataScript DB value directly."}})))
         selection-options
         {:format-options (:format-options opts)
          :decision-kernel (:decision-kernel opts)
@@ -206,37 +189,30 @@
                 (execution/remaining-millis contract))
            (:consistency-sync-timeout-ms opts))}
         selection
-        (if provider?
-          (consistency-v3/select
-           source consistency-value selection-options)
-          (if (= :minimize-latency (:mode descriptor))
-            (consistency-v3/captured-current-selection
-             source-adapter consistency-value selection-options)
-            (consistency-v3/select
-             source-adapter consistency-value selection-options)))
+        (consistency-v3/select
+         source consistency-value selection-options)
         adapter (:adapter selection)
-        selected (:selected-snapshot selection)
-        _ (when selected
-            (request-counters/add! :acquisitions))]
+        selected (:selected-snapshot selection)]
     (try
       (execution/check! contract :consistency-selected)
       (let [semantic-identity
-            (if selected
-              (snapshot-provider/semantic-identity selected)
-              (adapter-semantic-identity adapter))
-            snapshot-exact?
-            (= :at-exact-snapshot
-               (get-in selection [:descriptor :mode]))
+            (source/semantic-identity selected)
+            ;; Cache class follows the immutable value, not the route used to
+            ;; select it. An ordinary value loaded by exact locator may use
+            ;; proof-backed lifting; an as-of value is exact-basis only.
+            historical-basis? (= :as-of (:basis-kind semantic-identity))
             completed-cache?
-            (and (:completed-cache-request? opts)
-                 (or (not snapshot-exact?)
-                     (backend/deterministic? adapter)))]
+            (:completed-cache-request? opts)]
         {:adapter adapter
          :db (:db (backend/state adapter))
          :selection selection
          :selected-snapshot selected
          :semantic-identity semantic-identity
-         :snapshot-exact? snapshot-exact?
+         :execution-constraints
+         (source/execution-constraints source)
+         :historical-basis? historical-basis?
+         :maximum-snapshot-retention-ms
+         (:maximum-snapshot-retention-ms opts)
          :completed-cache? completed-cache?})
       (catch #?(:clj Throwable :cljs :default) error
         (release-selected-after-error! selected error)))))
@@ -244,12 +220,12 @@
 (defn- selected-context
   [api source opts consistency-value]
   (let [{:keys [adapter selected-snapshot semantic-identity selection
-                snapshot-exact? completed-cache?]}
+                historical-basis? completed-cache?]}
         (select-request-basis api source opts consistency-value)
         runtime
         (assoc opts
                ::selection selection
-               ::snapshot-exact? snapshot-exact?
+               ::historical-basis? historical-basis?
                ::completed-cache? completed-cache?)]
     (request-context/make-context
      {:runtime runtime
@@ -260,10 +236,11 @@
       :derived-registry (:derived-schema-caches opts)
       :counter-ledger (:request-counter-ledger opts)
       :proof-diagnostic-fn
-      (fn [diagnostic]
-        (cache/record-proof-unavailable!
-         (:current-cache-store opts)
-         diagnostic))})))
+      (when (:completed-cache-request? opts)
+        (fn [diagnostic]
+          (cache/record-proof-unavailable!
+           (:basis-cache-store opts)
+           diagnostic)))})))
 
 (defn- with-selected-basis
   [api source opts consistency-value f]
@@ -272,7 +249,7 @@
       (f basis)
       (finally
         (when-let [selected (:selected-snapshot basis)]
-          (snapshot-provider/release! selected))))))
+          (source/release! selected))))))
 
 (defn- with-selected-context
   [api source opts consistency-value f]
@@ -291,7 +268,38 @@
        (fn []
          (request-counters/add! :public-entries)
          (request-counters/add! :contract-normalizations)
-         (let [context (selected-context api source opts consistency-value)]
+         (let [retained-basis (::retained-basis opts)
+               context
+               (if retained-basis
+                 (let [selected (:selected-snapshot retained-basis)
+                       _ (when selected
+                           (source/assert-open! selected))
+                       adapter (:adapter retained-basis)
+                       identity (:identity retained-basis)
+                       runtime
+                       (assoc opts
+                              ::selection (:selection retained-basis)
+                              ::historical-basis?
+                              (:historical-basis? retained-basis)
+                              ::completed-cache?
+                              (:completed-cache-request? opts))]
+                   ;; A per-read context borrows the retained basis. Ownership
+                   ;; remains with the public Snapshot until eacl/release!.
+                   (request-context/make-context
+                    {:runtime runtime
+                     :adapter adapter
+                     :selected-snapshot nil
+                     :basis-identity identity
+                     :contract (:execution-contract opts)
+                     :derived-registry (:derived-schema-caches opts)
+                     :counter-ledger ledger
+                     :proof-diagnostic-fn
+                     (when (:completed-cache-request? opts)
+                       (fn [diagnostic]
+                         (cache/record-proof-unavailable!
+                          (:basis-cache-store opts)
+                          diagnostic)))}))
+                 (selected-context api source opts consistency-value))]
            (try
              (request-context/call-with-context context f)
              (finally
@@ -311,14 +319,12 @@
 
 (defn- selected-cache-options
   [opts context]
-  (let [snapshot-exact? (::snapshot-exact? (context-runtime context))]
+  (let [historical-basis?
+        (::historical-basis? (context-runtime context))]
     (assoc opts
            :completed-cache?
-           (and (:completed-cache-request? opts)
-                (or (not snapshot-exact?)
-                    (backend/deterministic?
-                     (request-context/adapter context))))
-           :snapshot-exact? snapshot-exact?
+           (:completed-cache-request? opts)
+           :historical-basis? historical-basis?
            :snapshot-semantic-identity
            (request-context/basis-identity context)
            :request-proof-frame (request-context/proof-frame context)
@@ -336,15 +342,30 @@
        adapter resource-type permission)
       :relation-ids relation-ids}}))
 
-(defn- new-request-proof-frame
-  [adapter opts]
-  (proof-frame/request-frame
-   adapter
-   {:diagnostic-fn
-    (fn [diagnostic]
-      (cache/record-proof-unavailable!
-       (:current-cache-store opts)
-       diagnostic))}))
+(defn- detached-schema-state
+  "Builds basis-bound lazy schema/proof state for an adapter that is not the
+  request context's original adapter (notably exact cursor reconstruction)."
+  [adapter opts basis-identity]
+  (let [schema-generation
+        (delay (backend/invoke adapter :schema-generation))
+        request-proof-frame
+        (proof-frame/request-frame
+         adapter
+         {:basis-identity basis-identity
+          :schema-generation-fn #(force schema-generation)
+          :diagnostic-fn
+          (fn [diagnostic]
+            (cache/record-proof-unavailable!
+             (:basis-cache-store opts)
+             diagnostic))})]
+    {:proof-frame request-proof-frame
+     :schema-cache
+     (delay
+       (binding [engine/*proof-frame* request-proof-frame]
+         (engine/schema-cache-for!
+          (:derived-schema-caches opts)
+          adapter basis-identity
+          (force schema-generation))))}))
 
 (defn- relationship-filter-relation-eids
   [adapter {:keys [resource-type relation subject-type]}]
@@ -368,26 +389,64 @@
   [request-context adapter opts selection resource-type permission
    relationship-dependency]
   (let [contract (:execution-contract opts)
+        basis-identity
+        (or (:snapshot-semantic-identity opts)
+            (request-context/basis-identity request-context))
         candidate-proof-frame (:request-proof-frame opts)
         reuse-request-context?
         (identical? adapter (request-context/adapter request-context))
+        detached-state
+        (when-not reuse-request-context?
+          (detached-schema-state adapter opts basis-identity))
         request-proof-frame
         (if reuse-request-context?
           (request-context/proof-frame request-context)
           (if (and candidate-proof-frame
                    (identical? adapter (:adapter candidate-proof-frame)))
             candidate-proof-frame
-            (new-request-proof-frame adapter opts)))
+            (:proof-frame detached-state)))
         schema-cache
         (if reuse-request-context?
           (delay (request-context/derived request-context))
           (or (:request-schema-cache opts)
-              (delay
-                (binding [engine/*proof-frame* request-proof-frame]
-                  (engine/schema-cache-for!
-                   (:derived-schema-caches opts)
-                   adapter)))))]
+              (:schema-cache detached-state)))
+        dependency-relation-ids
+        (fn [candidate-adapter candidate-basis-identity]
+          (let [same-basis?
+                (and (identical? candidate-adapter adapter)
+                     (= candidate-basis-identity basis-identity))
+                candidate-state
+                (when-not same-basis?
+                  (detached-schema-state
+                   candidate-adapter opts candidate-basis-identity))
+                candidate-schema-cache
+                (if same-basis?
+                  schema-cache
+                  (:schema-cache candidate-state))]
+            (try
+              (binding [engine/*schema-cache* @candidate-schema-cache]
+                (let [permission-ids
+                      (when (and resource-type permission)
+                        (engine/permission-relationship-eids
+                         candidate-adapter resource-type permission))
+                      relationship-ids
+                      (when relationship-dependency
+                        (relationship-filter-relation-eids
+                         candidate-adapter relationship-dependency))]
+                  ;; A broad relationship scan cannot name a bounded relation
+                  ;; dependency set through the current SPI. It therefore
+                  ;; falls back to exact immutable basis identity.
+                  (when (or (nil? relationship-dependency)
+                            (some? relationship-ids))
+                    (->> (concat permission-ids relationship-ids)
+                         distinct
+                         sort
+                         vec))))
+              (catch #?(:clj Exception :cljs :default) _
+                nil))))]
     (assoc opts
+           :snapshot-semantic-identity
+           basis-identity
            :request-proof-frame request-proof-frame
            :cursor-consistency-mode
            (get-in selection [:descriptor :mode])
@@ -405,7 +464,7 @@
            :cursor-schema-stamp
            {:adapter adapter
             :stamp (delay (:schema-version @schema-cache))}
-           :cursor-dependency-relation-ids
+           :cursor-dependency-relation-ids-fn
            ;; Cursor reuse uses the same compiled dependency closure as the
            ;; request proof frame. If proof is unavailable, the cursor remains
            ;; bound to exact immutable snapshot identity. Datomic/Datahike may
@@ -413,40 +472,18 @@
            ;; fails closed after a relevant basis change.
            (when (or (and resource-type permission)
                      relationship-dependency)
-             (delay
-               (try
-                 (binding [engine/*schema-cache* @schema-cache]
-                   (let [permission-ids
-                         (when (and resource-type permission)
-                           (engine/permission-relationship-eids
-                            adapter resource-type permission))
-                         relationship-ids
-                         (when relationship-dependency
-                           (relationship-filter-relation-eids
-                            adapter relationship-dependency))]
-                     ;; A broad relationship scan cannot name a bounded
-                     ;; relation dependency set through the current SPI. It
-                     ;; therefore falls back to the existing exact-snapshot
-                     ;; cursor proof instead of publishing a partial proof.
-                     (when (or (nil? relationship-dependency)
-                               (some? relationship-ids))
-                       (->> (concat permission-ids relationship-ids)
-                            distinct
-                            sort
-                            vec))))
-                 (catch #?(:clj Exception :cljs :default) _
-                   nil)))))))
+             dependency-relation-ids))))
 
 (defn- page-context
   [request-context opts operation query resource-type permission
    relationship-dependency]
   (let [;; Low-level raw-DB entry points may receive a client's opts map. They
         ;; must remain bound to that caller-owned DB and must not reach through
-        ;; the client's live provider during cursor recovery.
+        ;; the client's live source during cursor recovery.
         selection (context-selection request-context)
         opts (if (:selected-snapshot selection)
                opts
-               (dissoc opts :snapshot-provider))
+               (dissoc opts :source))
         adapter (request-context/adapter request-context)
         current-opts
         (cursor-options
@@ -459,33 +496,31 @@
         (:adapter prepared)
         page-selected-snapshot (:selected-snapshot prepared)]
     (try
-      (let [initial-semantic-identity
-            (if-let [selected (:selected-snapshot selection)]
-              (snapshot-provider/semantic-identity selected)
-              (adapter-semantic-identity adapter))
-            page-semantic-identity
+      (let [page-semantic-identity
             (if page-selected-snapshot
-              (snapshot-provider/semantic-identity page-selected-snapshot)
-              (adapter-semantic-identity page-adapter))
-            snapshot-exact?
-            (or (= :at-exact-snapshot
-                   (get-in selection [:descriptor :mode]))
-                (not= initial-semantic-identity page-semantic-identity))
+              (source/semantic-identity page-selected-snapshot)
+              (if (identical? page-adapter adapter)
+                (request-context/basis-identity request-context)
+                (throw
+                 (ex-info
+                  "Cursor recovery changed basis without transferring ownership."
+                  {:type :eacl/backend-contract-violation
+                   :eacl/error :eacl/backend-contract-violation
+                   :operation :cursor-recovery}))))
+            historical-basis?
+            (= :as-of (:basis-kind page-semantic-identity))
             page-opts
             (assoc
              (cursor-options
-              request-context page-adapter opts selection
+              request-context page-adapter
+              (assoc opts
+                     :snapshot-semantic-identity page-semantic-identity)
+              selection
               resource-type permission relationship-dependency)
              :snapshot-semantic-identity page-semantic-identity
-             :snapshot-exact? snapshot-exact?
+             :historical-basis? historical-basis?
              :completed-cache?
-             (and
-              (:completed-cache-request? opts)
-              ;; Historical completed-answer reuse additionally requires a stable
-              ;; adapter/identity contract. Cursor authentication and exact
-              ;; selection have already happened before this decision.
-              (or (not snapshot-exact?)
-                  (backend/deterministic? page-adapter))))]
+             (:completed-cache-request? opts))]
         {:adapter page-adapter
          :request-context request-context
          :selected-snapshot page-selected-snapshot
@@ -507,30 +542,37 @@
       (f page)
       (finally
         (when-let [selected (:selected-snapshot page)]
-          (snapshot-provider/release! selected))))))
+          (source/release! selected))))))
 
 (defn- cached-engine-result
   [request-context adapter opts operation query resource-type permission
    valid-value? compute]
   (let [contract (:execution-contract opts)
         context-adapter (request-context/adapter request-context)
+        context-adapter? (identical? adapter context-adapter)
+        candidate-proof-frame (:request-proof-frame opts)
+        candidate-schema-cache (:request-schema-cache opts)
+        complete-candidate-state?
+        (and candidate-schema-cache
+             candidate-proof-frame
+             (identical? adapter (:adapter candidate-proof-frame)))
+        detached-state
+        (when (and (not context-adapter?)
+                   (not complete-candidate-state?))
+          (detached-schema-state
+           adapter opts (:snapshot-semantic-identity opts)))
         request-proof-frame
-        (if (identical? adapter context-adapter)
+        (if context-adapter?
           (request-context/proof-frame request-context)
-          (let [candidate (:request-proof-frame opts)]
-            (if (and candidate
-                     (identical? adapter (:adapter candidate)))
-              candidate
-              (new-request-proof-frame adapter opts))))
+          (if complete-candidate-state?
+            candidate-proof-frame
+            (:proof-frame detached-state)))
         schema-cache
-        (if (identical? adapter context-adapter)
+        (if context-adapter?
           (delay (request-context/derived request-context))
-          (or (:request-schema-cache opts)
-              (delay
-                (binding [engine/*proof-frame* request-proof-frame]
-                  (engine/schema-cache-for!
-                   (:derived-schema-caches opts)
-                   adapter)))))
+          (if complete-candidate-state?
+            candidate-schema-cache
+            (:schema-cache detached-state)))
         evaluate
         #(do
            (execution/check! contract :schema-plan)
@@ -550,14 +592,14 @@
              (execution/check! contract :semantic-evaluation)
              value))
         cacheable?
-        (and (:current-cache-store opts)
+        (and (:basis-cache-store opts)
              (:completed-cache? opts)
              (or (nil? contract)
                  (execution/cache-stage-available? contract)))]
     (if-not cacheable?
       (do
         (cache/record-current-bypass!
-         (:current-cache-store opts))
+         (:basis-cache-store opts))
         {:value (evaluate)
          :cached? false
          :cache-tier nil
@@ -572,9 +614,13 @@
                         (permission-dependencies
                          adapter resource-type permission))
                       page-deps
-                      (when-let [dependency-ids
-                                 (:cursor-dependency-relation-ids opts)]
-                        @dependency-ids)
+                      (if-let [resolve-dependency-ids
+                               (:cursor-dependency-relation-ids-fn opts)]
+                        (resolve-dependency-ids
+                         adapter (:snapshot-semantic-identity opts))
+                        (when-let [dependency-ids
+                                   (:cursor-dependency-relation-ids opts)]
+                          @dependency-ids))
                       relation-ids
                       (->> (concat (:relation-ids permission-deps)
                                    page-deps)
@@ -591,6 +637,7 @@
                request-proof-frame
                (:relation-ids @dependencies)))
             semantic-snapshot (:snapshot-semantic-identity opts)
+            exact-basis-key (cache/exact-basis-key adapter semantic-snapshot)
             semantic-key
             {:operation operation
              :query query
@@ -614,21 +661,22 @@
                 (get-in contract
                         [:cache-attempt :maximum-atomic-attempts]
                         4)]
-                (if (:snapshot-exact? opts)
+                (if (:historical-basis? opts)
                   (cache/resolve-exact!
-                   (:current-cache-store opts)
-                   {:snapshot-exact-key (cache/snapshot-exact-key adapter)
+                   (:basis-cache-store opts)
+                   {:snapshot semantic-snapshot
+                    :snapshot-order (:revision semantic-snapshot)
+                    :exact-basis-key exact-basis-key
                     :cache-lifecycle (:cache-lifecycle opts)
                     :cache-basis (backend/invoke adapter :snapshot-id)
                     :decision-kernel (:decision-kernel opts)}
                    semantic-key operation valid-value? evaluate)
-                  (cache/resolve-current!
-                   (:current-cache-store opts)
+                  (cache/resolve-basis!
+                   (:basis-cache-store opts)
                    {:snapshot semantic-snapshot
                     :cache-lifecycle (:cache-lifecycle opts)
                     :snapshot-order (:revision semantic-snapshot)
-                    :same-snapshot? =
-                    :snapshot-exact-key (cache/snapshot-exact-key adapter)
+                    :exact-basis-key exact-basis-key
                     :cache-basis (backend/invoke adapter :snapshot-id)
                     :decision-kernel (:decision-kernel opts)
                     :managed-key-fn
@@ -642,7 +690,9 @@
                         (proof-frame/subset-descriptor
                          @complete-proof dependency)))
                     :managed-subproblem-scope
-                    (consistency-v3/source-scope adapter)}
+                    (select-keys
+                     semantic-snapshot
+                     [:backend :source-id :branch :source-lifecycle])}
                    semantic-key operation valid-value? evaluate)))]
           (execution/check! contract :cache-publication)
           answer)))))
@@ -917,35 +967,36 @@
         (fn [object]
           (assoc (spice-object->internal db object)
                  :eacl.relationship/identity-guard
-                 (object-id->lookup-ref (:id object))))]
+                 (object-id->lookup-ref (:id object))
+                 ;; Resolution is intentionally performed against the selected
+                 ;; basis, so an absent endpoint becomes nil in the internal
+                 ;; object. Retain the bounded public identity solely for a
+                 ;; precise, backend-independent typed error; it never enters
+                 ;; transaction data or a cache key.
+                 :eacl.relationship/public-object
+                 (select-keys object [:type :id])))]
     {:subject (internalize subject)
      :relation relation
      :resource (internalize resource)}))
 
 (defn- response-token-for-revision
   [api native-revision opts]
-  (let [provider (:snapshot-provider opts)]
-    (if (snapshot-provider/provider? provider)
+  (let [basis-source (:source opts)]
+    (if (source/source? basis-source)
       (causal-token/issue
        (:format-options opts)
        (merge
-        {:backend (snapshot-provider/backend-id provider)
+        {:backend (source/backend-id basis-source)
          :source-lifecycle
-         (snapshot-provider/source-lifecycle provider)}
-        (snapshot-provider/source-scope provider)
+         (source/source-lifecycle basis-source)}
+        (source/source-scope basis-source)
         native-revision))
       nil)))
 
 (defn- response-token
   [api db opts]
-  (if-let [native-revision-fn (:db-native-revision api)]
-    (response-token-for-revision api (native-revision-fn db) opts)
-    (let [adapter ((:snapshot-adapter api) db opts)]
-      (causal-token/issue
-       (:format-options opts)
-       (merge
-        (consistency-v3/source-scope adapter)
-        (consistency-v3/native-revision adapter))))))
+  (response-token-for-revision
+   api ((:db-native-revision api) db) opts))
 
 (defn- write-response
   [api db opts]
@@ -971,20 +1022,6 @@
       (write-response-for-revision api native-revision opts))
     (write-response api db opts)))
 
-(defn- with-write-planning-context
-  [api conn opts f]
-  (if-let [provider (:snapshot-provider opts)]
-    (with-selected-basis
-      api provider opts consistency/minimize-latency
-      (fn [{:keys [db selection]}]
-        {:plan (f db)
-         :native-revision (:native-revision selection)}))
-    (let [db ((:db api) conn)
-          adapter ((:snapshot-adapter api) db opts)]
-      {:plan (f db)
-       :native-revision (consistency-v3/native-revision adapter)
-       :raw-db db})))
-
 (defn- relationship-commit-preconditions-first
   "Moves relationship transaction functions ahead of the mutations they
   validate while retaining the leading schema-fence CAS and the relative
@@ -1005,82 +1042,6 @@
             (concat (filter transaction-function? operations)
                     (remove transaction-function? operations))))
     []))
-
-(defn write-relationships!
-  [api conn opts updates]
-  (let [validate-operation!
-        (get-in api [:impl :validate-relationship-operation!])
-        tx-update-relationship
-        (get-in api [:impl :tx-update-relationship])
-        updates (vec updates)
-        _ (doseq [{:keys [operation]} updates]
-            (validate-operation! operation))
-        {tx-data :plan planning-revision :native-revision raw-db :raw-db}
-        (with-write-planning-context
-          api conn opts
-          (fn [db]
-            (let [schema ((get-in api [:schema :read-schema]) db)
-                  _ (doseq [{:keys [relationship]} updates]
-                      (schema-errors/validate-relationship-write!
-                       schema :write-relationships
-                       {:resource-type
-                        (:type (:resource relationship))
-                        :subject-type
-                        (:type (:subject relationship))
-                        :relation (:relation relationship)}))
-                  internal-updates
-                  (S/transform
-                   [S/ALL :relationship]
-                   #(spice-relationship->internal db opts %)
-                   updates)
-                  _ (relationship-mutations/validate-batch!
-                     internal-updates)]
-              (->> internal-updates
-                   (mapcat #(tx-update-relationship db %))
-                   (remove nil?)
-                   distinct
-                   vec
-                   relationship-commit-preconditions-first))))]
-    (if (seq tx-data)
-      (let [report
-            ((:transact! api)
-             conn
-             {:tx-data tx-data})]
-        (committed-write-response api (:db-after report) opts))
-      (if raw-db
-        (write-response api raw-db opts)
-        (write-response-for-revision api planning-revision opts)))))
-
-(defn delete-object!
-  "Removes every relationship that references `object`, without retracting the
-  object entity itself."
-  [api conn {:keys [object->entid] :as opts} object]
-  (let [{tx-data :plan planning-revision :native-revision raw-db :raw-db}
-        (with-write-planning-context
-          api conn opts
-          (fn [db]
-            (let [object-eid
-                  (or (try
-                        (object->entid db object)
-                        (catch #?(:clj Exception :cljs :default) _
-                          nil))
-                      (when (number? (:id object))
-                        (:id object)))]
-              ((get-in api [:impl :tx-delete-object]) db object-eid))))]
-    (if (seq tx-data)
-      (let [report
-            ((:transact! api)
-             conn
-             {:tx-data tx-data})]
-        (assoc (committed-write-response api (:db-after report) opts)
-               :retracted-datoms
-               ((:relationship-retraction-count api)
-                (:db-after report) (:tx-data report))))
-      (assoc (if raw-db
-               (write-response api raw-db opts)
-               (write-response-for-revision
-                api planning-revision opts))
-             :retracted-datoms 0))))
 
 (defn- relationship-seq
   [relationships]
@@ -1431,14 +1392,14 @@
                               internal-query validate!))
                            page
                            (with-cache-info
-                            (binding [subproblem/*store*
-                                      (:subproblem-store answer)
-                                      subproblem/*decision-kernel*
-                                      (:decision-kernel cursor-opts)]
-                              (relay/externalize-page
-                               adapter cursor-opts :lookup-resources query
-                               (:value answer)))
-                            answer)]
+                             (binding [subproblem/*store*
+                                       (:subproblem-store answer)
+                                       subproblem/*decision-kernel*
+                                       (:decision-kernel cursor-opts)]
+                               (relay/externalize-page
+                                adapter cursor-opts :lookup-resources query
+                                (:value answer)))
+                             answer)]
                        (relay/remember-visited-page!
                         adapter cursor-opts :lookup-resources query page)))
                     (or
@@ -1467,14 +1428,14 @@
                                     :lookup-resources query))})))
                            page
                            (with-cache-info
-                            (binding [subproblem/*store*
-                                      (:subproblem-store answer)
-                                      subproblem/*decision-kernel*
-                                      (:decision-kernel cursor-opts)]
-                              (relay/externalize-page
-                               adapter cursor-opts :lookup-resources query
-                               (:value answer)))
-                            answer)]
+                             (binding [subproblem/*store*
+                                       (:subproblem-store answer)
+                                       subproblem/*decision-kernel*
+                                       (:decision-kernel cursor-opts)]
+                               (relay/externalize-page
+                                adapter cursor-opts :lookup-resources query
+                                (:value answer)))
+                             answer)]
                        (relay/remember-visited-page!
                         adapter cursor-opts :lookup-resources query
                         page)))))))))))))
@@ -1598,14 +1559,14 @@
                               internal-query validate!))
                            page
                            (with-cache-info
-                            (binding [subproblem/*store*
-                                      (:subproblem-store answer)
-                                      subproblem/*decision-kernel*
-                                      (:decision-kernel cursor-opts)]
-                              (relay/externalize-page
-                               adapter cursor-opts :lookup-subjects query
-                               (:value answer)))
-                            answer)]
+                             (binding [subproblem/*store*
+                                       (:subproblem-store answer)
+                                       subproblem/*decision-kernel*
+                                       (:decision-kernel cursor-opts)]
+                               (relay/externalize-page
+                                adapter cursor-opts :lookup-subjects query
+                                (:value answer)))
+                             answer)]
                        (relay/remember-visited-page!
                         adapter cursor-opts :lookup-subjects query page)))
                     (or
@@ -1634,14 +1595,14 @@
                                     :lookup-subjects query))})))
                            page
                            (with-cache-info
-                            (binding [subproblem/*store*
-                                      (:subproblem-store answer)
-                                      subproblem/*decision-kernel*
-                                      (:decision-kernel cursor-opts)]
-                              (relay/externalize-page
-                               adapter cursor-opts :lookup-subjects query
-                               (:value answer)))
-                            answer)]
+                             (binding [subproblem/*store*
+                                       (:subproblem-store answer)
+                                       subproblem/*decision-kernel*
+                                       (:decision-kernel cursor-opts)]
+                               (relay/externalize-page
+                                adapter cursor-opts :lookup-subjects query
+                                (:value answer)))
+                             answer)]
                        (relay/remember-visited-page!
                         adapter cursor-opts :lookup-subjects query
                         page)))))))))))))
@@ -1732,7 +1693,7 @@
               tree (:value answer)]
           (execution/check! contract :permission-tree-token-issuance)
           (let [token
-                (permission-tree/selected-adapter-token adapter opts)]
+                (permission-tree/selected-basis-token opts)]
             (execution/check! contract :permission-tree-token-issued)
             {:expanded-at token
              :tree-root tree}))))))
@@ -1742,337 +1703,871 @@
   (cache/validate-request-cache-option! cache-option)
   (not (false? cache-option)))
 
-(defn- fixed-snapshot-provider
-  [adapter]
-  (snapshot-provider/borrowed-adapter-provider
-   {:static-adapter adapter
-    :topology {:snapshot-values :fixed-borrowed-view}
-    :source-scope-fn #(backend/invoke adapter :source-scope)
-    :source-lifecycle-fn #(backend/invoke adapter :source-lifecycle)
-    :acquire-current! (constantly adapter)
-    :acquire-authoritative! (fn [_timeout-ms] adapter)
-    :acquire-at-least! (fn [_token-data _timeout-ms] adapter)
-    :acquire-exact! (fn [_token-data _timeout-ms] adapter)}))
+#?(:clj (ns-unmap *ns* 'Runtime))
+(defrecord Runtime [])
+(defrecord Basis [adapter selected-snapshot identity selection basis-kind
+                  historical-basis? execution-constraints release-state
+                  owner-thread acquired-at-ms maximum-retention-ms])
 
-(defn- snapshot-view-closed!
-  []
+(def ^:private runtime-option-keys
+  #{:adapter-fingerprint :adapter-deterministic? :aggregate-limits
+    :cache-attempt :continuation-cache-store :basis-cache-store
+    :cursor-codec-cache :page-navigation-cache :decision-kernel
+    :derived-schema-caches :entid->object-id :object-id->entid
+    :object-id->lookup-ref :object->entid :internal-object->spice
+    :spice-object->internal :internal-cursor->spice
+    :spice-cursor->internal :format-options :cursor-ttl-seconds
+    :token-ttl-seconds :managed-cache-enabled?
+    :recursive-traversal-limits :permission-tree-limits
+    :execution-timeout-ms :consistency-sync-timeout-ms
+    :service-admission :source-lifecycle :source-lifecycle-state
+    :maximum-snapshot-retention-ms})
+
+(defn- reader-api
+  [api]
+  {:backend-id (:backend-id api)
+   :schema {:read-schema (get-in api [:schema :read-schema])}
+   :impl {:read-relationships (get-in api [:impl :read-relationships])}})
+
+(defn- runtime-options
+  [runtime]
+  (into {} runtime))
+
+(defn- typed-capability-error!
+  [capability target]
   (throw
    (ex-info
-    "The snapshot authorization view escaped its synchronous scope."
-    {:type :eacl/snapshot-view-closed
-     :eacl/error :eacl/snapshot-view-closed})))
+    "Authorization target does not support this capability."
+    {:type :eacl/unsupported-capability
+     :eacl/error :eacl/unsupported-capability
+     :capability capability
+     :target target})))
 
-(defn- snapshot-view-thread-violation!
+(defn- monotonic-millis
   []
-  (throw
-   (ex-info
-    "The snapshot authorization view escaped its owning thread."
-    {:type :eacl/snapshot-view-thread-violation
-     :eacl/error :eacl/snapshot-view-thread-violation})))
+  #?(:clj (quot (System/nanoTime) 1000000)
+     :cljs (.now js/Date)))
 
-(defn- snapshot-view-write!
-  []
-  (throw
-   (ex-info
-    "A composed snapshot view is read-only."
-    {:type :eacl/read-only-snapshot-view
-     :eacl/error :eacl/read-only-snapshot-view})))
+(declare release-basis!)
 
-(defn- require-snapshot-view!
-  [open? owner-thread]
-  (when-not @open?
-    (snapshot-view-closed!))
-  #?(:clj
-     (when-not (identical? owner-thread (Thread/currentThread))
-       (snapshot-view-thread-violation!))
-     :cljs nil)
-  nil)
+(defn- enforce-basis-retention!
+  [basis]
+  (when-let [maximum (:maximum-retention-ms basis)]
+    (let [age (- (monotonic-millis) (:acquired-at-ms basis))]
+      (when (>= age maximum)
+        ;; This runs only after the ordinary open/thread checks below.  An
+        ;; owned native value is therefore released on its acquiring thread;
+        ;; a direct borrowed value only closes the EACL wrapper.
+        (release-basis! basis)
+        (throw
+         (ex-info
+          "Authorization snapshot exceeded its configured retention bound."
+          {:type :eacl/snapshot-retention-exceeded
+           :eacl/error :eacl/snapshot-retention-exceeded
+           :backend (get-in basis [:identity :backend])
+           :maximum-retention-ms maximum
+           :age-ms age}))))))
 
-(defn- fixed-snapshot-demand
-  [demand]
-  (when (some? (:consistency demand))
-    (throw
-     (ex-info
-      "Consistency is fixed by the enclosing with-snapshot selection."
-      {:type :eacl/snapshot-view-consistency-fixed
-       :eacl/error :eacl/snapshot-view-consistency-fixed
-       :requested (:consistency demand)})))
-  (dissoc demand :consistency))
+(defn- basis-open!
+  [basis]
+  (if-let [selected (:selected-snapshot basis)]
+    (do
+      (source/assert-open! selected)
+      (enforce-basis-retention! basis))
+    (do
+      #?(:clj
+         (when (and (= :acquiring-thread
+                       (get-in basis
+                               [:execution-constraints :snapshot-thread]))
+                    (not (identical? (:owner-thread basis)
+                                     (Thread/currentThread))))
+           (throw
+            (ex-info
+             "Authorization snapshot escaped its acquiring thread."
+             {:type :eacl/snapshot-thread-violation
+              :eacl/error :eacl/snapshot-thread-violation
+              :backend (get-in basis [:identity :backend])
+              :phase :snapshot-access
+              :constraint :acquiring-thread}))))
+      (when (= :released @(:release-state basis))
+        (throw
+         (ex-info
+          "Authorization snapshot has already been released."
+          {:type :eacl/snapshot-released
+           :eacl/error :eacl/snapshot-released
+           :backend (get-in basis [:identity :backend])})))
+      (enforce-basis-retention! basis)))
+  basis)
 
-(declare ->ClientAuthorization)
+(defn- basis-released?
+  [basis]
+  (if-let [selected (:selected-snapshot basis)]
+    (source/released? selected)
+    (= :released @(:release-state basis))))
 
-(defrecord SnapshotAuthorization [delegate open? owner-thread]
-  IAuthorization
-  (can? [_ subject permission resource]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/can? delegate subject permission resource))
-  (can? [_ subject permission resource consistency-value]
-    (require-snapshot-view! open? owner-thread)
-    (fixed-snapshot-demand {:consistency consistency-value})
-    (eacl/can? delegate subject permission resource))
-  (can? [_ demand]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/can? delegate (fixed-snapshot-demand demand)))
+(defn- release-basis!
+  [basis]
+  (if-let [selected (:selected-snapshot basis)]
+    (let [released? (source/release! selected)]
+      (when released?
+        (request-counters/add! :releases))
+      released?)
+    (do
+      #?(:clj
+         (when (and (= :acquiring-thread
+                       (get-in basis
+                               [:execution-constraints :release-thread]))
+                    (not (identical? (:owner-thread basis)
+                                     (Thread/currentThread))))
+           (throw
+            (ex-info
+             "Authorization snapshot release escaped its acquiring thread."
+             {:type :eacl/snapshot-thread-violation
+              :eacl/error :eacl/snapshot-thread-violation
+              :backend (get-in basis [:identity :backend])
+              :phase :snapshot-release
+              :constraint :acquiring-thread}))))
+      (let [released? (compare-and-set! (:release-state basis)
+                                        :open :released)]
+        (when released?
+          (request-counters/add! :releases))
+        released?))))
 
-  (read-schema [_]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/read-schema delegate))
-  (write-schema! [_ _schema]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
+(defn- public-basis
+  [basis]
+  (basis-open! basis)
+  (assoc
+   (select-keys (:identity basis)
+                [:backend :source-id :branch :source-lifecycle
+                 :revision :exact-locator])
+   :kind (:basis-kind basis)))
 
-  (read-relationships [_ query]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/read-relationships delegate (fixed-snapshot-demand query)))
-  (write-relationships! [_ _updates]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (write-relationship! [_ _operation _subject _relation _resource]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (write-relationship! [_ _demand]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (create-relationships! [_ _relationships]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (create-relationship! [_ _subject _relation _resource]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (create-relationship! [_ _relationship]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (delete-relationships! [_ _relationships]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (delete-object! [_ _object]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (delete-relationship! [_ _subject _relation _resource]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
-  (delete-relationship! [_ _relationship]
-    (require-snapshot-view! open? owner-thread)
-    (snapshot-view-write!))
+(defn- basis-token*
+  [runtime basis]
+  (basis-open! basis)
+  (consistency-v3/selected-basis-token
+   (:identity basis) (runtime-options runtime)))
 
-  (lookup-resources [_ query]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/lookup-resources delegate (fixed-snapshot-demand query)))
-  (count-resources [_ query]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/count-resources delegate (fixed-snapshot-demand query)))
-  (lookup-subjects [_ query]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/lookup-subjects delegate (fixed-snapshot-demand query)))
-  (count-subjects [_ query]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/count-subjects delegate (fixed-snapshot-demand query)))
-  (expand-permission-tree [_ query]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/expand-permission-tree delegate (fixed-snapshot-demand query)))
+(defn- basis-token-data
+  [runtime basis token source]
+  (let [identity (:identity basis)
+        expected-scope
+        (select-keys identity
+                     [:backend :source-id :source-lifecycle :branch])]
+    (try
+      (causal-token/token-data
+       (:format-options (runtime-options runtime)) expected-scope token)
+      (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
+             error
+        (if (= :scope-mismatch (:reason (ex-data error)))
+          (throw
+           (ex-info
+            "Consistency token names another authorization basis."
+            {:type :eacl.consistency/basis-conflict
+             :eacl/error :eacl.consistency/basis-conflict
+             :source source}
+            error))
+          (throw error))))))
 
-  IDetailedAuthorization
-  (-check-permission [_ demand]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/check-permission delegate (fixed-snapshot-demand demand)))
+(defn- assert-snapshot-consistency!
+  [runtime basis request]
+  (basis-open! basis)
+  (let [{:keys [mode token]}
+        (consistency/descriptor (:consistency request))
+        identity (:identity basis)]
+    (case mode
+      :minimize-latency nil
 
-  IBatchedAuthorization
-  (-check-permissions [_ request]
-    (require-snapshot-view! open? owner-thread)
-    (eacl/check-permissions delegate (fixed-snapshot-demand request))))
+      :fully-consistent
+      (when-not (::transient-acl-selection? (runtime-options runtime))
+        (throw
+         (ex-info
+          "Fully consistent reads require selection through an acl."
+          {:type :eacl.consistency/selection-required
+           :eacl/error :eacl.consistency/selection-required
+           :capability :snapshot-selection
+           :target :snapshot})))
+
+      :at-least-as-fresh
+      (let [requested (basis-token-data runtime basis token :token)
+            actual (:revision identity)]
+        (when (< actual (:revision requested))
+          (throw
+           (ex-info
+            "The retained snapshot is behind the requested freshness floor."
+            {:type :eacl.consistency/freshness-unavailable
+             :eacl/error :eacl.consistency/freshness-unavailable
+             :reason :snapshot-behind
+             :requested-revision (:revision requested)
+             :actual-revision actual}))))
+
+      :at-exact-snapshot
+      (let [requested (basis-token-data runtime basis token :token)]
+        (when-not (= (select-keys requested [:revision :exact-locator])
+                     (select-keys identity [:revision :exact-locator]))
+          (throw
+           (ex-info
+            "Consistency token names another authorization basis."
+            {:type :eacl.consistency/basis-conflict
+             :eacl/error :eacl.consistency/basis-conflict
+             :source :token}))))))
+  request)
+
+(defn- snapshot-opts
+  [runtime basis]
+  (let [opts (runtime-options runtime)
+        current-lifecycle
+        (or (some-> (:source-lifecycle-state opts) deref)
+            (:source-lifecycle opts))
+        retained-lifecycle (get-in basis [:identity :source-lifecycle])
+        retired? (not= current-lifecycle retained-lifecycle)]
+    (cond-> (assoc opts
+                   ::retained-basis basis
+                   :authorization-target-kind
+                   (if (::transient-acl-selection? opts)
+                     :acl
+                     :snapshot))
+      retired?
+      ;; Lifecycle rotation makes every old registry generation unreachable
+      ;; to the live Acl. A retained immutable snapshot remains evaluable, but
+      ;; it must not repopulate the cleared runtime under its old lineage.
+      (assoc :basis-cache-store nil
+             :continuation-cache-store nil
+             :cursor-codec-cache nil
+             :page-navigation-cache nil
+             :derived-schema-caches (atom {})
+             :managed-cache-enabled? false
+             ::retired-basis? true))))
 
 (defn- read-current-schema
-  [api source opts]
-  (let [opts (ensure-execution-contract opts :read-schema {})]
+  [api source opts request]
+  (let [opts (ensure-execution-contract opts :read-schema request)]
     (with-selected-context
-      api source opts consistency/minimize-latency
+      api source opts (:consistency request)
       (fn [request-context]
-        ((get-in api [:schema :read-schema])
-         (context-db request-context))))))
+        (execution/check! (:execution-contract opts) :schema-read)
+        (let [schema ((get-in api [:schema :read-schema])
+                      (context-db request-context))]
+          (execution/check! (:execution-contract opts)
+                            :schema-read-complete)
+          schema)))))
 
-(defrecord ClientAuthorization [conn opts api]
-  IAuthorization
-  (can? [_ subject permission resource]
-    (can? api (:snapshot-provider opts) (assoc opts
-                                               :request-operation :can?
-                                               :completed-cache-request? true)
-          subject permission resource consistency/minimize-latency))
-  (can? [_ subject permission resource consistency]
-    (can? api (:snapshot-provider opts) (assoc opts
-                                               :request-operation :can?
-                                               :completed-cache-request? true)
-          subject permission resource consistency))
-  (can? [_ {:keys [subject permission resource consistency]
-            cache? :cache? :as demand}]
-    (can? api (:snapshot-provider opts)
-          (assoc opts
-                 :request-operation :can?
-                 :execution-request demand
-                 :completed-cache-request?
-                 (request-cache-enabled? cache?))
-          subject permission resource
-          consistency))
+(defn- make-basis
+  [{:keys [adapter selected-snapshot semantic-identity selection
+           historical-basis? execution-constraints
+           maximum-snapshot-retention-ms]}]
+  (->Basis adapter selected-snapshot semantic-identity selection
+           (:basis-kind semantic-identity)
+           historical-basis?
+           (or execution-constraints
+               source/default-execution-constraints)
+           (atom :open)
+           #?(:clj (Thread/currentThread) :cljs nil)
+           (monotonic-millis)
+           maximum-snapshot-retention-ms))
 
-  (read-schema [_]
-    (read-current-schema api (:snapshot-provider opts) opts))
-  (write-schema! [_ schema-string]
-    (let [result
-          ((get-in api [:schema :write-schema!])
-           conn schema-string
-           (select-keys opts [:token-ttl-seconds]))]
-      (when-not (:eacl.schema/no-op? result)
-        (reset! (:derived-schema-caches opts) {})
-        (when-let [store (:current-cache-store opts)]
-          (cache/expire-current! store)))
-      (merge result
-             (if (:eacl.schema/no-op? result)
-               (write-response api (:eacl.schema/db-after result) opts)
-               (committed-write-response
-                api (:eacl.schema/db-after result) opts)))))
-
-  (read-relationships [_ filters]
-    (read-relationships
-     api
-     (:snapshot-provider opts)
-     (assoc opts
-            :completed-cache-request?
-            (request-cache-enabled? (:cache? filters)))
-     (dissoc filters :cache?)))
-  (write-relationships! [_ updates]
-    (write-relationships! api conn opts updates))
-  (write-relationship! [_ operation subject relation resource]
-    (write-relationships! api conn opts
-                          [(->RelationshipUpdate operation
-                                                 (->Relationship subject relation resource))]))
-  (write-relationship! [_ {:keys [operation subject relation resource]}]
-    (write-relationships! api conn opts
-                          [(->RelationshipUpdate operation
-                                                 (->Relationship subject relation resource))]))
-  (create-relationships! [_ relationships]
-    (write-relationships! api conn opts
-                          (for [rel relationships]
-                            (->RelationshipUpdate :create rel))))
-  (create-relationship! [_ relationship]
-    (write-relationships! api conn opts
-                          [(->RelationshipUpdate :create relationship)]))
-  (create-relationship! [_ subject relation resource]
-    (write-relationships! api conn opts
-                          [(->RelationshipUpdate :create (->Relationship subject relation resource))]))
-  (delete-relationships! [_ relationships]
-    (write-relationships! api conn opts
-                          (for [rel (relationship-seq relationships)]
-                            (->RelationshipUpdate :delete rel))))
-  (delete-object! [_ object]
-    (delete-object! api conn opts object))
-  (delete-relationship! [_ {:keys [subject relation resource]}]
-    (write-relationships! api conn opts
-                          [(->RelationshipUpdate :delete
-                                                 (->Relationship subject relation resource))]))
-  (delete-relationship! [_ subject relation resource]
-    (write-relationships! api conn opts
-                          [(->RelationshipUpdate :delete
-                                                 (->Relationship subject relation resource))]))
-
-  (lookup-resources [_ query]
-    (let [cache-enabled?
-          (request-cache-enabled? (:cache? query))]
-      (lookup-resources
-       api
-       (:snapshot-provider opts)
-       (assoc opts
-              :completed-cache-request? cache-enabled?
-              :continuation-cache-request? cache-enabled?)
-       (dissoc query :cache?))))
-  (count-resources [_ query]
-    (count-resources
-     api
-     (:snapshot-provider opts)
-     (assoc opts :completed-cache-request?
-            (request-cache-enabled? (:cache? query)))
-     (dissoc query :cache?)))
-  (lookup-subjects [_ query]
-    (let [cache-enabled?
-          (request-cache-enabled? (:cache? query))]
-      (lookup-subjects
-       api
-       (:snapshot-provider opts)
-       (assoc opts
-              :completed-cache-request? cache-enabled?
-              :continuation-cache-request? cache-enabled?)
-       (dissoc query :cache?))))
-  (count-subjects [_ query]
-    (count-subjects
-     api
-     (:snapshot-provider opts)
-     (assoc opts :completed-cache-request?
-            (request-cache-enabled? (:cache? query)))
-     (dissoc query :cache?)))
-
-  (expand-permission-tree [_ query]
-    (expand-permission-tree
-     api
-     (:snapshot-provider opts)
-     (assoc opts :completed-cache-request? true)
-     query))
-
-  IDetailedAuthorization
-  (-check-permission
-    [_ {:keys [subject permission resource consistency]
-        cache? :cache? :as demand}]
+(defrecord Snapshot [runtime basis api]
+  IAuthorizationReader
+  (-check-permission [_ {:keys [subject permission resource consistency]
+                         cache? :cache? :as request}]
+    (assert-snapshot-consistency! runtime basis request)
     (check-permission
-     api
-     (:snapshot-provider opts)
-     (assoc opts
+     api nil
+     (assoc (snapshot-opts runtime basis)
             :request-operation :check-permission
-            :execution-request demand
-            :completed-cache-request?
-            (request-cache-enabled? cache?))
+            :execution-request request
+            :completed-cache-request? (request-cache-enabled? cache?))
      subject permission resource
      (or consistency consistency/minimize-latency)))
+  (-read-schema [_ request]
+    (assert-snapshot-consistency! runtime basis request)
+    (read-current-schema api nil (snapshot-opts runtime basis) request))
+  (-read-relationships [_ request]
+    (assert-snapshot-consistency! runtime basis request)
+    (read-relationships
+     api nil
+     (assoc (snapshot-opts runtime basis)
+            :completed-cache-request?
+            (request-cache-enabled? (:cache? request)))
+     (dissoc request :cache?)))
+  (-lookup-resources [_ request]
+    (assert-snapshot-consistency! runtime basis request)
+    (let [cache-enabled? (request-cache-enabled? (:cache? request))]
+      (lookup-resources
+       api nil
+       (assoc (snapshot-opts runtime basis)
+              :completed-cache-request? cache-enabled?
+              :continuation-cache-request? cache-enabled?)
+       (dissoc request :cache?))))
+  (-lookup-subjects [_ request]
+    (assert-snapshot-consistency! runtime basis request)
+    (let [cache-enabled? (request-cache-enabled? (:cache? request))]
+      (lookup-subjects
+       api nil
+       (assoc (snapshot-opts runtime basis)
+              :completed-cache-request? cache-enabled?
+              :continuation-cache-request? cache-enabled?)
+       (dissoc request :cache?))))
+  (-count-resources [_ request]
+    (assert-snapshot-consistency! runtime basis request)
+    (count-resources
+     api nil
+     (assoc (snapshot-opts runtime basis)
+            :completed-cache-request?
+            (request-cache-enabled? (:cache? request)))
+     (dissoc request :cache?)))
+  (-count-subjects [_ request]
+    (assert-snapshot-consistency! runtime basis request)
+    (count-subjects
+     api nil
+     (assoc (snapshot-opts runtime basis)
+            :completed-cache-request?
+            (request-cache-enabled? (:cache? request)))
+     (dissoc request :cache?)))
+  (-expand-permission-tree [_ request]
+    (assert-snapshot-consistency! runtime basis request)
+    (expand-permission-tree
+     api nil (assoc (snapshot-opts runtime basis)
+                    :completed-cache-request? true)
+     request))
 
   IBatchedAuthorization
   (-check-permissions [_ request]
-    (check-permissions api (:snapshot-provider opts) opts request))
+    (assert-snapshot-consistency! runtime basis request)
+    (check-permissions api nil (snapshot-opts runtime basis) request))
 
-  ISnapshotAuthorization
-  (-with-snapshot
-    [_ consistency-value request-options f]
+  IAuthorizationSnapshot
+  (-basis [_] (public-basis basis))
+  (-basis-token [_] (basis-token* runtime basis))
+  (-release! [_] (release-basis! basis))
+  (-released? [_] (basis-released? basis)))
+
+(defn- writable!
+  [writer]
+  (or writer (typed-capability-error! :write :acl)))
+
+(defn- make-writer-role
+  [api conn source options]
+  (backend-writer/make-writer
+   {:id (:backend-id api)
+    :state {:conn conn :source source :options options :api api}
+    :max-attempts (or (:writer-max-attempts api) 1)
+    :max-transaction-size
+    (or (:writer-max-transaction-size api)
+        backend/maximum-exact-integer)
+    :operations
+    {:transact! (:transact! api)
+     :write-schema! (get-in api [:schema :write-schema!])
+     :schema-generation (get-in api [:schema :generation])
+     :plan-relationship-update
+     (get-in api [:impl :tx-update-relationship])
+     :plan-delete-object
+     (or (get-in api [:impl :tx-delete-object-stream])
+         (get-in api [:impl :tx-delete-object]))
+     :prepare-relationship-tx
+     (or (:prepare-relationship-tx api)
+         (fn [_db tx-data]
+           (relationship-commit-preconditions-first tx-data)))
+     :relation-id (get-in api [:impl :relationship-relation-id])
+     :affected-relations (get-in api [:impl :affected-relation-ids])
+     :retraction-count (:relationship-retraction-count api)
+     :contention? (or (:writer-contention? api) (constantly false))}}))
+
+(defn- relationship-contention!
+  [writer attempts cause]
+  (throw
+   (ex-info
+    "EACL mutation could not obtain a stable schema/relation generation."
+    {:type :eacl/relationship-contention
+     :eacl/error :eacl/relationship-contention
+     :backend (backend-writer/backend-id writer)
+     :attempts attempts}
+    cause)))
+
+(defn- transaction-size-exceeded!
+  [writer actual]
+  (throw
+   (ex-info
+    "Planned authorization transaction exceeds the writer's declared limit."
+    {:type :eacl/transaction-size-exceeded
+     :eacl/error :eacl/transaction-size-exceeded
+     :backend (backend-writer/backend-id writer)
+     :actual actual
+     :maximum (backend-writer/max-transaction-size writer)})))
+
+(defn- call-with-writer-basis
+  [writer f]
+  (let [{:keys [source options api]} (backend-writer/state writer)]
+    (with-selected-basis
+      api source options consistency/minimize-latency f)))
+
+(defn- submit-writer-tx!
+  [writer tx-data]
+  (let [{:keys [conn]} (backend-writer/state writer)]
+    (request-counters/add! :writer-submissions)
+    ((backend-writer/operation writer :transact!)
+     conn {:tx-data (vec tx-data)})))
+
+(defn- writer-write-relationships!
+  [writer updates]
+  (let [{:keys [options api]} (backend-writer/state writer)
+        validate-operation!
+        (get-in api [:impl :validate-relationship-operation!])
+        plan-update
+        (backend-writer/operation writer :plan-relationship-update)
+        prepare
+        (backend-writer/operation writer :prepare-relationship-tx)
+        contention?
+        (backend-writer/operation writer :contention?)
+        updates (vec updates)]
+    ;; Shape and operation validation precede acquisition. A malformed batch
+    ;; cannot observe source state or enter a retry loop.
+    (doseq [{:keys [operation]} updates]
+      (validate-operation! operation))
+    (loop [attempt 1]
+      (let [outcome
+            (try
+              {:value
+               (let [{:keys [tx-data no-op-response]}
+                     (call-with-writer-basis
+                      writer
+                      (fn [{:keys [db selection]}]
+                        (let [schema
+                              ((get-in api [:schema :read-schema]) db)
+                              _
+                              (doseq [{:keys [relationship]} updates]
+                                (schema-errors/validate-relationship-write!
+                                 schema :write-relationships
+                                 {:resource-type
+                                  (:type (:resource relationship))
+                                  :subject-type
+                                  (:type (:subject relationship))
+                                  :relation (:relation relationship)}))
+                              internal-updates
+                              (S/transform
+                               [S/ALL :relationship]
+                               #(spice-relationship->internal db options %)
+                               updates)
+                              _
+                              (relationship-mutations/validate-batch!
+                               internal-updates)
+                              raw-tx
+                              (->> internal-updates
+                                   (mapcat #(plan-update db %))
+                                   (remove nil?)
+                                   distinct
+                                   vec)
+                              tx-data
+                              (when (seq raw-tx)
+                                (vec (prepare db raw-tx)))]
+                          (if (seq tx-data)
+                            {:tx-data tx-data}
+                            {:no-op-response
+                             (write-response-for-revision
+                              api (:native-revision selection)
+                              options)}))))]
+                 ;; An owned planning basis (notably Datalevin's read
+                 ;; transaction) is released before the writer can block on a
+                 ;; commit. The fully realized plan is the only value crossing
+                 ;; this boundary.
+                 (if-not tx-data
+                   no-op-response
+                   ;; Relationship batches retain their documented atomic
+                   ;; semantics. The declared transaction-size bound governs
+                   ;; the only operation the shared contract permits to split:
+                   ;; delete-object!. Silently partitioning relationship
+                   ;; updates would make create/touch/delete batch validation
+                   ;; race across commits.
+                   (let [report (submit-writer-tx! writer tx-data)]
+                     (committed-write-response
+                      api (:db-after report) options))))}
+              (catch #?(:clj Throwable :cljs :default) error
+                {:error error}))]
+        (if-let [error (:error outcome)]
+          (if (contention? error)
+            (if (< attempt (backend-writer/max-attempts writer))
+              (recur (inc attempt))
+              (relationship-contention! writer attempt error))
+            (throw error))
+          (:value outcome))))))
+
+(defn- largest-fitting-prepared-batch
+  "Returns a non-empty final transaction no larger than the writer limit.
+
+  `raw-ops` may be a lazy native scan. At most limit+1 raw operations are
+  realized, and preparation is binary-searched because schema/relation guards
+  can make the final transaction larger than its raw slice."
+  [writer db raw-ops]
+  (let [limit (backend-writer/max-transaction-size writer)
+        prepare (backend-writer/operation writer :prepare-relationship-tx)
+        sampled (if (counted? raw-ops)
+                  (let [raw-count (count raw-ops)]
+                    (vec (if (<= raw-count limit)
+                           raw-ops
+                           (take (inc limit) raw-ops))))
+                  (vec (take (inc limit) raw-ops)))
+        more-raw? (> (count sampled) limit)
+        candidates (if more-raw? (subvec sampled 0 limit) sampled)]
+    (when (seq candidates)
+      (let [prepared-prefix
+            (fn [n]
+              (vec (prepare db (subvec candidates 0 n))))
+            all-prepared (prepared-prefix (count candidates))]
+        (if (<= (count all-prepared) limit)
+          {:tx-data all-prepared
+           :raw-count (count candidates)
+           :basis-exhausted? (not more-raw?)}
+          (loop [low 1
+                 high (dec (count candidates))
+                 best nil]
+            (if (> low high)
+              (if best
+                (assoc best :basis-exhausted? false)
+                (transaction-size-exceeded!
+                 writer (count (prepared-prefix 1))))
+              (let [mid (quot (+ low high) 2)
+                    prepared (prepared-prefix mid)]
+                (if (<= (count prepared) limit)
+                  (recur (inc mid) high
+                         {:tx-data prepared :raw-count mid})
+                  (recur low (dec mid) best))))))))))
+
+(defn- writer-delete-object!
+  "Removes every relationship touching object in final-transaction-bounded
+  batches. Each contention retry reacquires and replans from a fresh basis."
+  [writer object]
+  (let [{:keys [options api]} (backend-writer/state writer)
+        plan-delete
+        (backend-writer/operation writer :plan-delete-object)
+        contention?
+        (backend-writer/operation writer :contention?)
+        retraction-count
+        (backend-writer/operation writer :retraction-count)]
+    (loop [retracted 0
+           last-response nil]
+      (let [batch-outcome
+            (loop [attempt 1]
+              (let [outcome
+                    (try
+                      {:value
+                       (let [planned
+                             (call-with-writer-basis
+                              writer
+                              (fn [{:keys [db selection]}]
+                                (let [object-eid
+                                      (or
+                                       (try
+                                         ((:object->entid options) db object)
+                                         (catch #?(:clj Throwable
+                                                   :cljs :default) _
+                                           nil))
+                                       (when (number? (:id object))
+                                         (:id object)))
+                                      fitted
+                                      (largest-fitting-prepared-batch
+                                       writer db
+                                       (plan-delete db object-eid))]
+                                  (if-not fitted
+                                    {:done? true
+                                     :response
+                                     (or last-response
+                                         (write-response-for-revision
+                                          api (:native-revision selection)
+                                          options))}
+                                    fitted))))]
+                         (if-not (:tx-data planned)
+                           planned
+                           (let [report
+                                 (submit-writer-tx!
+                                  writer (:tx-data planned))
+                                 db-after (:db-after report)]
+                             {:done? (:basis-exhausted? planned)
+                              :response
+                              (committed-write-response
+                               api db-after options)
+                              :retracted
+                              (retraction-count
+                               db-after (:tx-data report))})))}
+                      (catch #?(:clj Throwable :cljs :default) error
+                        {:error error}))]
+                (if-let [error (:error outcome)]
+                  (if (contention? error)
+                    (if (< attempt (backend-writer/max-attempts writer))
+                      (recur (inc attempt))
+                      (relationship-contention! writer attempt error))
+                    (throw error))
+                  (:value outcome))))
+            retracted (+ retracted (or (:retracted batch-outcome) 0))
+            response (:response batch-outcome)]
+        (if (:done? batch-outcome)
+          (assoc response :retracted-datoms retracted)
+          (recur retracted response))))))
+
+(defn- write-schema-through!
+  [writer schema-string]
+  (let [{:keys [conn options api]} (backend-writer/state writer)
+        write-schema! (backend-writer/operation writer :write-schema!)
+        contention? (backend-writer/operation writer :contention?)
+        result
+        (loop [attempt 1]
+          (let [outcome
+                (try
+                  (let [expected-generation
+                        (call-with-writer-basis
+                         writer
+                         (fn [{:keys [db]}]
+                           ((backend-writer/operation
+                             writer :schema-generation)
+                            db)))]
+                    {:value
+                     (write-schema!
+                      conn schema-string
+                      (select-keys options [:token-ttl-seconds])
+                      expected-generation)})
+                  (catch #?(:clj Throwable :cljs :default) error
+                    {:error error}))]
+            (if-let [error (:error outcome)]
+              (if (contention? error)
+                (if (< attempt (backend-writer/max-attempts writer))
+                  (recur (inc attempt))
+                  (relationship-contention! writer attempt error))
+                (throw error))
+              (:value outcome))))]
+    (when-not (:eacl.schema/no-op? result)
+      (request-counters/add! :writer-submissions)
+      (reset! (:derived-schema-caches options) {})
+      (when-let [store (:basis-cache-store options)]
+        (cache/expire-basis-cache! store)))
+    (merge result
+           (if (:eacl.schema/no-op? result)
+             (write-response api (:eacl.schema/db-after result) options)
+             (committed-write-response
+              api (:eacl.schema/db-after result) options)))))
+
+(defn- call-with-transient-snapshot
+  "Selects one request basis, delegates to the ordinary Snapshot reader, and
+  releases in `finally`. The transient runtime carries only the already
+  normalized request contract; it still contains no source or writer."
+  [runtime source api operation request f]
+  (let [opts (ensure-execution-contract
+              (runtime-options runtime) operation request)
+        selected (select-request-basis
+                  api source opts (:consistency request))
+        transient-runtime
+        (map->Runtime
+         (assoc (runtime-options runtime)
+                ::transient-acl-selection? true
+                :execution-contract (:execution-contract opts)
+                :cache-lifecycle (:cache-lifecycle opts)))
+        snapshot (->Snapshot transient-runtime
+                             (make-basis selected)
+                             (reader-api api))]
+    (try
+      (binding [relay/*acl-cursor-recovery-source* source]
+        (f snapshot))
+      (finally
+        (eacl/release! snapshot)))))
+
+(defrecord Acl [runtime source writer api]
+  IAuthorizationReader
+  (-check-permission [_ request]
+    (call-with-transient-snapshot
+     runtime source api :check-permission request
+     #(eacl/-check-permission % request)))
+  (-read-schema [_ request]
+    (call-with-transient-snapshot
+     runtime source api :read-schema request
+     #(eacl/-read-schema % request)))
+  (-read-relationships [_ request]
+    (relationship-filters/validate! request)
+    (authorization-filters/validate-scan-authorization! request)
+    (call-with-transient-snapshot
+     runtime source api :read-relationships request
+     #(eacl/-read-relationships % request)))
+  (-lookup-resources [_ request]
+    (authorization-filters/validate-lookup! :lookup-resources request)
+    (call-with-transient-snapshot
+     runtime source api :lookup-resources request
+     #(eacl/-lookup-resources % request)))
+  (-lookup-subjects [_ request]
+    (authorization-filters/validate-lookup! :lookup-subjects request)
+    (call-with-transient-snapshot
+     runtime source api :lookup-subjects request
+     #(eacl/-lookup-subjects % request)))
+  (-count-resources [_ request]
+    (call-with-transient-snapshot
+     runtime source api :count-resources request
+     #(eacl/-count-resources % request)))
+  (-count-subjects [_ request]
+    (call-with-transient-snapshot
+     runtime source api :count-subjects request
+     #(eacl/-count-subjects % request)))
+  (-expand-permission-tree [_ request]
+    (permission-tree/validate-request! request)
+    (call-with-transient-snapshot
+     runtime source api :expand-permission-tree request
+     #(eacl/-expand-permission-tree % request)))
+
+  IBatchedAuthorization
+  (-check-permissions [_ request]
+    (let [request
+          (batch/validate-request!
+           request (:aggregate-limits (runtime-options runtime)))]
+      (if (empty? (:checks request))
+        (do
+          (execution/normalize
+           (runtime-options runtime) :check-permissions request)
+          [])
+        (batch/call-with-demand-error
+         0 batch/empty-aggregate-counters
+         #(call-with-transient-snapshot
+           runtime source api :check-permissions request
+           (fn [snapshot]
+             (eacl/-check-permissions snapshot request)))))))
+
+  ISnapshotSource
+  (-snapshot [_ consistency-value options]
     (let [opts
           (ensure-execution-contract
-           opts :with-snapshot request-options)]
-      (with-selected-context
-        api (:snapshot-provider opts) opts consistency-value
-        (fn [request-context]
-          (let [adapter (request-context/adapter request-context)
-                open? (atom true)
-                fixed-provider (fixed-snapshot-provider adapter)
-                request-proof-frame
-                (request-context/proof-frame request-context)
-                request-schema-cache
-                (delay (request-context/derived request-context))
-                delegate
-                (->ClientAuthorization
-                 conn
-                 (assoc opts
-                        :snapshot-provider fixed-provider
-                        ::request-context request-context
-                        :request-proof-frame request-proof-frame
-                        :request-schema-cache request-schema-cache)
-                 api)
-                view
-                (->SnapshotAuthorization
-                 delegate open?
-                 #?(:clj (Thread/currentThread) :cljs nil))]
-            (try
-              (f view)
-              (finally
-                (reset! open? false)))))))))
+           (merge (runtime-options runtime) options)
+           :snapshot
+           {:consistency consistency-value})]
+      (->Snapshot
+       runtime
+       (make-basis
+        (select-request-basis api source opts consistency-value))
+       (reader-api api))))
+
+  IAuthorizationWriter
+  (-write-schema! [_ {:keys [schema]}]
+    (write-schema-through! (writable! writer) schema))
+  (-write-relationships! [_ {:keys [updates]}]
+    (writer-write-relationships! (writable! writer) updates))
+  (-delete-object! [_ {:keys [object]}]
+    (writer-delete-object! (writable! writer) object)))
 
 (defn client?
   "True when `client` is a shared-orchestration client for `backend-id`."
   [client backend-id]
-  (and (instance? ClientAuthorization client)
+  (and (instance? Acl client)
        (= backend-id (get-in client [:api :backend-id]))))
+
+(defn- unsupported-database-value!
+  [backend-id basis-kind data cause]
+  (throw
+   (ex-info
+    "Database value is not an admissible public authorization basis."
+    (merge
+     {:type :eacl/unsupported-database-value
+      :eacl/error :eacl/unsupported-database-value
+      :backend backend-id
+      :basis-kind basis-kind}
+     data)
+    cause)))
+
+(defn direct-snapshot
+  "Pairs an admissible application-owned immutable database value with an
+  acl's runtime. This performs no source acquisition and never transfers
+  ownership of the native value to EACL."
+  [acl backend-id db]
+  (when-not (client? acl backend-id)
+    (unsupported-database-value!
+     backend-id :foreign-backend {:target :acl} nil))
+  (let [api (:api acl)
+        classify (:basis-kind api)
+        database-source-scope (:database-source-scope api)]
+    (when-not (ifn? classify)
+      (throw
+       (ex-info
+        "Backend API has no certified basis-kind classifier."
+        {:type :eacl/invalid-backend-role
+         :eacl/error :eacl/invalid-backend-role
+         :role :adapter
+         :backend backend-id
+         :operation :basis-kind})))
+    ;; Classification precedes access to runtime registries, cache state, token
+    ;; codecs, or source metadata. Inadmissible values therefore cannot create
+    ;; an identity or partially enter the execution pipeline.
+    (let [kind
+          (try
+            (classify db)
+            (catch #?(:clj Throwable :cljs :default) error
+              (unsupported-database-value!
+               backend-id :foreign-backend {} error)))]
+      (when-not (backend/admissible-basis-kind? kind)
+        (unsupported-database-value! backend-id kind {} nil))
+      (let [source (:source acl)
+            expected-scope (source/source-scope source)
+            actual-scope
+            (when (ifn? database-source-scope)
+              (database-source-scope db))]
+        (when-not (= expected-scope actual-scope)
+          (unsupported-database-value!
+           backend-id :foreign-source
+           {:database-basis-kind kind
+            :expected-source expected-scope
+            :actual-source actual-scope}
+           nil))
+        (let [runtime (:runtime acl)
+              opts
+              (assoc (runtime-options runtime)
+                     :source-scope expected-scope)
+              adapter
+              (try
+                ((:basis-adapter api)
+                 db
+                 (select-keys opts (:basis-adapter-config-keys api)))
+                (catch #?(:clj Throwable :cljs :default) error
+                  (unsupported-database-value!
+                   backend-id kind {} error)))
+              adapter-kind (backend/basis-kind adapter)]
+          (when-not (= kind adapter-kind)
+            (throw
+             (ex-info
+              "Basis classifier and adapter disagree."
+              {:type :eacl/backend-contract-violation
+               :eacl/error :eacl/backend-contract-violation
+               :backend backend-id
+               :operation :basis-kind
+               :classified kind
+               :adapter-kind adapter-kind})))
+          (->Snapshot
+           runtime
+           (make-basis
+            {:adapter adapter
+             :selected-snapshot nil
+             :semantic-identity
+             (adapter-semantic-identity
+              adapter expected-scope
+              (or (some-> (get (runtime-options runtime)
+                               :source-lifecycle-state)
+                          deref)
+                  (:source-lifecycle (runtime-options runtime))))
+             :selection {:descriptor {:mode :minimize-latency}
+                         :direct? true}
+             :execution-constraints
+             (source/execution-constraints source)
+             :maximum-snapshot-retention-ms
+             (:maximum-snapshot-retention-ms
+              (runtime-options runtime))
+             :historical-basis? (= :as-of kind)})
+           (reader-api api)))))))
+
+(defn snapshot-db
+  "Returns the native immutable value held by a backend-specific snapshot."
+  [snapshot backend-id]
+  (when-not (and (instance? Snapshot snapshot)
+                 (= backend-id (get-in snapshot [:api :backend-id])))
+    (unsupported-database-value!
+     backend-id :foreign-backend {:target :snapshot} nil))
+  (basis-open! (:basis snapshot))
+  (:db (backend/state (get-in snapshot [:basis :adapter]))))
+
+(defn- client-options
+  [client]
+  (if (instance? Acl client)
+    (runtime-options (:runtime client))
+    {}))
 
 (defn expire-cache!
   "Rotates the complete local cache/token lifecycle for one EACL client.
@@ -2084,18 +2579,15 @@
    (expire-cache! client (str (random-uuid))))
   ([client source-lifecycle]
    (causal-token/validate-source-lifecycle! source-lifecycle)
-   (when-let [state (get-in client [:opts :source-lifecycle-state])]
-     (reset! state source-lifecycle))
-   (when-let [store (get-in client [:opts :current-cache-store])]
-     (cache/expire-current! store))
-   (some-> (get-in client [:opts :derived-schema-caches]) (reset! {}))
-   (cursor/clear-codec-cache!
-    (get-in client [:opts :cursor-codec-cache]))
-   (relay/clear-page-navigation-cache!
-    (get-in client [:opts :page-navigation-cache]))
-   (some->
-    (get-in client [:opts :continuation-cache-store])
-    continuation/clear!)
+   (let [opts (client-options client)]
+     (when-let [state (:source-lifecycle-state opts)]
+       (reset! state source-lifecycle))
+     (when-let [store (:basis-cache-store opts)]
+       (cache/expire-basis-cache! store))
+     (some-> (:derived-schema-caches opts) (reset! {}))
+     (cursor/clear-codec-cache! (:cursor-codec-cache opts))
+     (relay/clear-page-navigation-cache! (:page-navigation-cache opts))
+     (some-> (:continuation-cache-store opts) continuation/clear!))
    nil))
 
 (defn clear-answer-cache!
@@ -2107,25 +2599,22 @@
   answer-cache testing and capacity management, but MUST NOT be used after a
   restore, history replacement, or unsupported authorization mutation."
   [client]
-  (when-let [store (get-in client [:opts :current-cache-store])]
-    (cache/expire-current! store))
-  (relay/clear-page-navigation-cache!
-   (get-in client [:opts :page-navigation-cache]))
-  (some->
-   (get-in client [:opts :continuation-cache-store])
-   continuation/clear!)
+  (let [opts (client-options client)]
+    (when-let [store (:basis-cache-store opts)]
+      (cache/expire-basis-cache! store))
+    (relay/clear-page-navigation-cache! (:page-navigation-cache opts))
+    (some-> (:continuation-cache-store opts) continuation/clear!))
   nil)
 
 (defn cache-stats
   "Returns private completed-cache counters for one EACL client."
   [client]
-  (let [current-store
-        (get-in client [:opts :current-cache-store])
-        continuation-store
-        (get-in client [:opts :continuation-cache-store])]
+  (let [opts (client-options client)
+        basis-store (:basis-cache-store opts)
+        continuation-store (:continuation-cache-store opts)]
     (cond->
-     (if current-store
-       (cache/current-cache-stats current-store)
+     (if basis-store
+       (cache/basis-cache-stats basis-store)
        {:disabled? true})
       continuation-store
       (assoc :continuations
@@ -2154,13 +2643,90 @@
     :execution-timeout-ms
     :aggregate-limits
     :cache-attempt
-    :service-admission})
+    :service-admission
+    :read-only?})
+
+(defn- valid-security-kid?
+  [kid]
+  (or (keyword? kid)
+      (and (string? kid) (not (empty? kid)))))
+
+(defn- normalize-security-root-keyring
+  [config-opts security-key security-keyring security-kid]
+  (let [key-present? (contains? config-opts :security-key)
+        keyring-present? (contains? config-opts :security-keyring)
+        kid-present? (contains? config-opts :security-kid)
+        current-kid (if kid-present? security-kid :default)
+        invalid!
+        (fn [message data cause]
+          (throw
+           (ex-info
+            message
+            (merge {:type :eacl/invalid-config
+                    :eacl/error :eacl/invalid-config}
+                   data)
+            cause)))]
+    (when (and key-present? keyring-present?)
+      (invalid!
+       "EACL Config Error: supply only one of :security-key or :security-keyring."
+       {:conflicting-keys [:security-key :security-keyring]}
+       nil))
+    (when (and kid-present? (not (valid-security-kid? current-kid)))
+      (invalid!
+       "EACL Config Error: :security-kid must be a non-empty string or keyword."
+       {:key :security-kid :value current-kid}
+       nil))
+    (let [root-keyring
+          (try
+            (cond
+              keyring-present?
+              (do
+                (when-not (and (map? security-keyring)
+                               (seq security-keyring))
+                  (invalid!
+                   "EACL Config Error: :security-keyring must be a non-empty map."
+                   {:key :security-keyring :value security-keyring}
+                   nil))
+                (reduce-kv
+                 (fn [result kid key-material]
+                   (when-not (valid-security-kid? kid)
+                     (invalid!
+                      "EACL Config Error: security key IDs must be non-empty strings or keywords."
+                      {:key :security-keyring :security-kid kid}
+                      nil))
+                   (assoc result kid (secure/normalize-key key-material)))
+                 {}
+                 security-keyring))
+
+              key-present?
+              {current-kid (secure/normalize-key security-key)}
+
+              :else
+              (do
+                (secure/warn-defaulted-token-key!)
+                {:default secure/default-root-key}))
+            (catch #?(:clj Exception :cljs :default) error
+              (if (= :eacl/invalid-config (:type (ex-data error)))
+                (throw error)
+                (invalid!
+                 "EACL Config Error: security key material is invalid."
+                 {:key (if keyring-present? :security-keyring :security-key)
+                  :format-reason (:reason (ex-data error))}
+                 error))))]
+      (when-not (get root-keyring current-kid)
+        (invalid!
+         "EACL Config Error: :security-kid is absent from :security-keyring."
+         {:key :security-kid
+          :value current-kid}
+         nil))
+      {:current-kid current-kid
+       :root-keyring root-keyring})))
 
 (defn make-client
-  "Builds the shared IAuthorization client over one backend api map.
+  "Builds the shared authorization acl over one backend api map.
 
   Validates the uniform option surface, assembles the client-private caches,
-  and returns a ClientAuthorization. Managed reuse is automatic when the
+  and returns an Acl. Managed reuse is automatic when the
   selected immutable snapshot supplies a complete native-generation proof.
   Backend make-client wrappers supply `api` and document their
   :extra-client-opt-keys."
@@ -2185,7 +2751,8 @@
            execution-timeout-ms
            aggregate-limits
            cache-attempt
-           service-admission]
+           service-admission
+           read-only?]
     :or   {object-id->lookup-ref  (fn [obj-id] [:eacl/id obj-id])
            internal-cursor->spice default-internal-cursor->spice
            spice-cursor->internal default-spice-cursor->internal}}]
@@ -2194,17 +2761,13 @@
     (when-let [unknown-keys (seq (remove known-client-opt-keys (keys config-opts)))]
       (throw (ex-info (str "EACL Config Error: unknown make-client option(s) " (pr-str (vec unknown-keys))
                            ". Known options: " (pr-str (vec (sort known-client-opt-keys))) ".")
-                      {:type :eacl/invalid-config
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :unknown-keys (vec unknown-keys)
                        :known-keys known-client-opt-keys}))))
-  (when (and security-key security-keyring)
-    (throw (ex-info "EACL Config Error: supply only one of :security-key or :security-keyring."
-                    {:type :eacl/invalid-config
-                     :conflicting-keys [:security-key :security-keyring]})))
   (when (and (contains? config-opts :adapter-deterministic?)
              (not (boolean? adapter-deterministic?)))
     (throw (ex-info "EACL Config Error: :adapter-deterministic? must be boolean."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :adapter-deterministic?
                      :value adapter-deterministic?})))
   (when adapter-fingerprint
@@ -2212,16 +2775,29 @@
       (secure/encode-canonical adapter-fingerprint)
       (catch #?(:clj Exception :cljs :default) error
         (throw (ex-info "EACL Config Error: :adapter-fingerprint must be portable canonical data."
-                        {:type :eacl/invalid-config
+                        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                          :key :adapter-fingerprint}
                         error)))))
-  (when (and token-ttl-seconds
+  (when (and (contains? config-opts :token-ttl-seconds)
              (not (and (integer? token-ttl-seconds)
                        (pos? token-ttl-seconds))))
     (throw (ex-info "EACL Config Error: :token-ttl-seconds must be positive."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :token-ttl-seconds
                      :value token-ttl-seconds})))
+  (when (and (contains? config-opts :cursor-ttl-seconds)
+             (not (and (integer? cursor-ttl-seconds)
+                       (pos? cursor-ttl-seconds)
+                       (<= cursor-ttl-seconds
+                           backend/maximum-exact-integer))))
+    (throw
+     (ex-info
+      "EACL Config Error: :cursor-ttl-seconds must be a positive portable exact integer."
+      {:type :eacl/invalid-config
+       :eacl/error :eacl/invalid-config
+       :key :cursor-ttl-seconds
+       :value cursor-ttl-seconds
+       :maximum backend/maximum-exact-integer})))
   (when source-lifecycle
     (try
       (causal-token/validate-source-lifecycle! source-lifecycle)
@@ -2229,18 +2805,18 @@
         (throw
          (ex-info
           "EACL Config Error: :source-lifecycle must be bounded portable canonical data."
-          {:type :eacl/invalid-config
+          {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
            :key :source-lifecycle
            :value source-lifecycle}
           error)))))
-  (when (and consistency-sync-timeout-ms
+  (when (and (contains? config-opts :consistency-sync-timeout-ms)
              (not (and (integer? consistency-sync-timeout-ms)
                        (pos? consistency-sync-timeout-ms))))
     (throw (ex-info "EACL Config Error: :consistency-sync-timeout-ms must be positive."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :consistency-sync-timeout-ms
                      :value consistency-sync-timeout-ms})))
-  (when (and execution-timeout-ms
+  (when (and (contains? config-opts :execution-timeout-ms)
              (not (and (integer? execution-timeout-ms)
                        (pos? execution-timeout-ms)
                        (<= execution-timeout-ms
@@ -2248,11 +2824,19 @@
     (throw
      (ex-info
       "EACL Config Error: :execution-timeout-ms must be a positive integer within the supported range."
-      {:type :eacl/invalid-config
+      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
        :key :execution-timeout-ms
        :value execution-timeout-ms
        :maximum-timeout-ms execution/maximum-execution-timeout-ms})))
-  (let [source-lifecycle (or source-lifecycle (str (random-uuid)))
+  (when-not (or (nil? read-only?) (boolean? read-only?))
+    (throw
+     (ex-info
+      "EACL Config Error: :read-only? must be boolean."
+      {:type :eacl/invalid-config
+       :eacl/error :eacl/invalid-config
+       :key :read-only?
+       :value read-only?})))
+  (let [source-lifecycle (or source-lifecycle "eacl/initial")
         source-lifecycle-state (atom source-lifecycle)
         codec-instance-id (str (random-uuid))
         prepared-native-source-id-key
@@ -2264,26 +2848,9 @@
           (if-let [native-source-id-fn (:native-source-id api)]
             (native-source-id-fn conn)
             (str (random-uuid))))
-        current-kid (or security-kid :default)
-        root-keyring
-        (cond
-          security-keyring
-          (into {} (map (fn [[kid key]]
-                          [kid (secure/normalize-key key)]))
-                security-keyring)
-
-          security-key
-          {current-kid (secure/normalize-key security-key)}
-
-          :else
-          (do
-            (secure/warn-defaulted-token-key!)
-            {:default secure/default-root-key}))
-        _ (when-not (get root-keyring current-kid)
-            (throw (ex-info "EACL Config Error: :security-kid is absent from :security-keyring."
-                            {:type :eacl/invalid-config
-                             :key :security-kid
-                             :value current-kid})))
+        {:keys [current-kid root-keyring]}
+        (normalize-security-root-keyring
+         config-opts security-key security-keyring security-kid)
         format-options {:current-kid current-kid
                         :keyring root-keyring
                         :token-ttl-seconds
@@ -2299,10 +2866,10 @@
         (or (not custom-codec?)
             (and (some? adapter-fingerprint)
                  (true? adapter-deterministic?)))
-        current-cache-store
-        (cache/current-cache-for-option cache)
+        basis-cache-store
+        (cache/basis-cache-for-option cache)
         cursor-codec-cache
-        (when current-cache-store
+        (when basis-cache-store
           (cursor/codec-cache
            {:max-entries
             (if (and (map? cache)
@@ -2310,7 +2877,7 @@
               (:max-entries cache)
               2048)}))
         page-navigation-cache
-        (when current-cache-store
+        (when basis-cache-store
           (relay/page-navigation-cache
            {:max-entries
             (if (and (map? cache)
@@ -2324,89 +2891,107 @@
          (select-keys config-opts
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
-         :conn conn
-         :derived-schema-caches (atom {})
-         :adapter-fingerprint
-         (or adapter-fingerprint
-             {:backend (:backend-id api)
-              :adapter-version backend/adapter-version
-              :recursive-traversal-limits
-              recursive-traversal-limits
-              :codec
-              (if custom-codec?
-                [:custom-unfingerprinted codec-instance-id]
-                :eacl-id-immutable-v1)})
-         :adapter-deterministic?
-         (if custom-codec?
-           (true? adapter-deterministic?)
-           true)
-         :entid->object-id entid->object-id
-         :object-id->entid object-id->entid
-         :cursor-ttl-seconds cursor-ttl-seconds
-         :format-options format-options
-         :source-lifecycle source-lifecycle
-         :source-lifecycle-state source-lifecycle-state
-         :native-source-id native-source-id
-         :decision-kernel production-kernel/default-selection
-         :consistency-sync-timeout-ms
-         (or consistency-sync-timeout-ms 30000)
-         :execution-timeout-ms
-         (or execution-timeout-ms
-             execution/default-execution-timeout-ms)
-         :aggregate-limits
-         (batch/normalize-client-limits aggregate-limits)
-         :cache-attempt
-         (execution/normalize-cache-attempt cache-attempt)
-         :token-ttl-seconds
-         (or token-ttl-seconds
-             causal-token/default-token-ttl-seconds)
-         :current-cache-store
-         current-cache-store
-         :continuation-cache-store
-         (when current-cache-store
-           (continuation/make-store
-            {:max-entries
-             (if (and (map? cache)
-                      (integer? (:max-entries cache)))
-               (:max-entries cache)
-               2048)}))
-         :cursor-codec-cache cursor-codec-cache
-         :page-navigation-cache
-         page-navigation-cache
-         :managed-cache-enabled? managed-cache-eligible?
-         :recursive-traversal-limits
-         (engine/normalize-recursive-traversal-limits
-          recursive-traversal-limits)
-         :permission-tree-limits
-         (permission-tree/normalize-limits
-          permission-tree-limits)
-         :object->entid (fn [db {:keys [id]}]
-                          (object-id->entid db id))
-         :internal-object->spice (fn [db {:keys [type id]}]
-                                   (spice-object type (entid->object-id db id)))
-         :spice-object->internal (fn [db obj]
-                                   (update obj :id #(object-id->entid db %)))
-         :internal-cursor->spice internal-cursor->spice
-         :spice-cursor->internal spice-cursor->internal
+          :derived-schema-caches (atom {})
+          :adapter-fingerprint
+          (or adapter-fingerprint
+              {:backend (:backend-id api)
+               :adapter-version backend/adapter-version
+               :recursive-traversal-limits
+               recursive-traversal-limits
+               :codec
+               (if custom-codec?
+                 [:custom-unfingerprinted codec-instance-id]
+                 :eacl-id-immutable-v1)})
+          :adapter-deterministic?
+          (if custom-codec?
+            (true? adapter-deterministic?)
+            true)
+          :entid->object-id entid->object-id
+          :object-id->entid object-id->entid
+          :cursor-ttl-seconds cursor-ttl-seconds
+          :format-options format-options
+          :source-lifecycle source-lifecycle
+          :source-lifecycle-state source-lifecycle-state
+          :native-source-id native-source-id
+          :decision-kernel production-kernel/default-selection
+          :consistency-sync-timeout-ms
+          (or consistency-sync-timeout-ms 30000)
+          :execution-timeout-ms
+          (or execution-timeout-ms
+              execution/default-execution-timeout-ms)
+          :aggregate-limits
+          (batch/normalize-client-limits aggregate-limits)
+          :cache-attempt
+          (execution/normalize-cache-attempt cache-attempt)
+          :token-ttl-seconds
+          (or token-ttl-seconds
+              causal-token/default-token-ttl-seconds)
+          :basis-cache-store
+          basis-cache-store
+          :continuation-cache-store
+          (when basis-cache-store
+            (continuation/make-store
+             {:max-entries
+              (if (and (map? cache)
+                       (integer? (:max-entries cache)))
+                (:max-entries cache)
+                2048)}))
+          :cursor-codec-cache cursor-codec-cache
+          :page-navigation-cache
+          page-navigation-cache
+          :managed-cache-enabled? managed-cache-eligible?
+          :recursive-traversal-limits
+          (engine/normalize-recursive-traversal-limits
+           recursive-traversal-limits)
+          :permission-tree-limits
+          (permission-tree/normalize-limits
+           permission-tree-limits)
+          :object->entid (fn [db {:keys [id]}]
+                           (object-id->entid db id))
+          :internal-object->spice (fn [db {:keys [type id]}]
+                                    (spice-object type (entid->object-id db id)))
+          :spice-object->internal (fn [db obj]
+                                    (update obj :id #(object-id->entid db %)))
+          :internal-cursor->spice internal-cursor->spice
+          :spice-cursor->internal spice-cursor->internal
                           ;; The service-edge bulkhead and replay ledger
                           ;; (bounded-physical-execution): nil leaves the
                           ;; routed engine unguarded, a map installs it.
-         :service-admission
-         (some-> (physical/normalize-service-admission
-                  service-admission)
-                 physical/make-service-admission)})
-        provider-constructor (:snapshot-provider api)
-        _ (when-not (fn? provider-constructor)
+          :service-admission
+          (some-> (physical/normalize-service-admission
+                   service-admission)
+                  physical/make-service-admission)})
+        adapter-constructor (:basis-adapter api)
+        adapter-config-keys (:basis-adapter-config-keys api)
+        _ (when-not (and (fn? adapter-constructor)
+                         (set? adapter-config-keys))
             (throw
              (ex-info
-              "Backend api must provide a snapshot-provider constructor."
+              "Backend API must declare a basis-adapter constructor and closed configuration keys."
               {:type :eacl/invalid-backend-api
                :eacl/error :eacl/invalid-backend-api
                :backend (:backend-id api)
-               :missing :snapshot-provider})))
-        provider (provider-constructor conn base-opts)
-        opts (assoc base-opts :snapshot-provider provider)
-        ;; Stable-engine qualification uses only long-lived provider metadata;
+               :missing
+               (cond
+                 (not (fn? adapter-constructor)) :basis-adapter
+                 :else :basis-adapter-config-keys)})))
+        source-constructor (:source api)
+        _ (when-not (fn? source-constructor)
+            (throw
+             (ex-info
+              "Backend API must provide a basis-source constructor."
+              {:type :eacl/invalid-backend-api
+               :eacl/error :eacl/invalid-backend-api
+               :backend (:backend-id api)
+               :missing :source})))
+        source (source-constructor conn base-opts)
+        ;; Stable-engine qualification uses only long-lived source metadata;
         ;; client construction does not retain or own a request snapshot.
-        _ (physical/require-qualified-provider-topology! provider)]
-    (->ClientAuthorization conn opts api)))
+        _ (physical/require-qualified-source-topology! source)
+        runtime (map->Runtime
+                 (select-keys base-opts runtime-option-keys))
+        writer (when-not read-only?
+                 (make-writer-role
+                  api conn source
+                  (assoc base-opts :source source)))]
+    (->Acl runtime source writer api)))

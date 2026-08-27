@@ -3,7 +3,7 @@
             [datalevin.constants :as datalevin-constants]
             [datalevin.core :as d]
             [datalevin.util :as u]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
@@ -60,18 +60,22 @@
 (defn- with-system
   [f]
   (let [dir (u/tmp-dir (str "eacl-datalevin-module-" (random-uuid)))
-        conn (datalevin/create-conn dir)]
+        conn (datalevin/create-conn dir)
+        watermark-config (watermark-options)]
     (try
       (let [client
             (datalevin/make-client
              conn
              (merge
-              (watermark-options)
+              watermark-config
               {:source-lifecycle "test-lifecycle"
                :datalevin-topology
                datalevin-backend/certified-topology-declaration
                :security-key test-key}))]
-        (f {:dir dir :conn conn :client client}))
+        (f {:dir dir
+            :conn conn
+            :client client
+            :watermark (:revision-watermark watermark-config)}))
       (finally
         (d/close conn)
         (u/delete-files dir)))))
@@ -110,6 +114,43 @@
       {:message (ex-message error)
        :data (ex-data error)
        :class (str (class error))})))
+
+(declare client-config)
+
+(deftest maximum-snapshot-retention-is-validated-and-fails-closed-test
+  (with-connection
+    (fn [conn]
+      (doseq [invalid [0 -1 1.5]]
+        (let [data
+              (error-data
+               #(datalevin/make-client
+                 conn
+                 (client-config
+                  {:maximum-snapshot-retention-ms invalid})))]
+          (is (= :eacl/invalid-config (:type data)))
+          (is (= (:type data) (:eacl/error data)))
+          (is (= :maximum-snapshot-retention-ms (:key data)))))
+      (let [client
+            (datalevin/make-client
+             conn
+             (client-config {:maximum-snapshot-retention-ms 1}))
+            before (d/active-read-snapshot-info)
+            snapshot (eacl/snapshot client)]
+        (try
+          (is (= (inc (:active before))
+                 (:active (d/active-read-snapshot-info))))
+          (Thread/sleep 5)
+          (let [data (error-data #(eacl/read-schema snapshot))]
+            (is (= :eacl/snapshot-retention-exceeded (:type data)))
+            (is (= (:type data) (:eacl/error data)))
+            (is (= 1 (:maximum-retention-ms data)))
+            (is (<= 1 (:age-ms data))))
+          (is (eacl/released? snapshot))
+          (is (= before (d/active-read-snapshot-info)))
+          (is (= :eacl/snapshot-released
+                 (:type (error-data #(eacl/read-schema snapshot)))))
+          (finally
+            (eacl/release! snapshot)))))))
 
 (defn- halted-writer-process
   [dir watermark-file]
@@ -165,17 +206,41 @@
      :security-key test-key}
     overrides)))
 
+(deftest persisted-lifecycle-token-round-trips-across-client-runtimes-test
+  (with-connection
+    (fn [conn]
+      (let [client-a (datalevin/make-client conn (client-config))
+            client-b (datalevin/make-client conn (client-config))]
+        (eacl/write-schema! client-a contract/smoke-schema)
+        (d/transact!
+         conn
+         (mapv (fn [{:keys [id]}] {:eacl/id id})
+               contract/smoke-objects))
+        (let [token
+              (:zed/token
+               (eacl/create-relationship!
+                client-a (first contract/smoke-relationships)))]
+          (is
+           (true?
+            (eacl/can?
+             client-b
+             (contract/->user "user-1") :admin
+             (contract/->account "account-1")
+             (consistency/at-least-as-fresh token)))))
+        (is (= {:active 0 :oldest-age-ms nil}
+               (d/active-read-snapshot-info)))))))
+
 (defn- issue-token
   [client revision overrides]
-  (let [provider (get-in client [:opts :snapshot-provider])]
+  (let [provider (:source client)]
     (causal-token/issue
-     (get-in client [:opts :format-options])
+     (get-in client [:runtime :format-options])
      (merge
       {:backend :datalevin
-       :source-lifecycle (snapshot-provider/source-lifecycle provider)
+       :source-lifecycle (source/source-lifecycle provider)
        :revision revision
        :exact-locator nil}
-      (snapshot-provider/source-scope provider)
+      (source/source-scope provider)
       overrides))))
 
 (defn- collect-exclusive-pages
@@ -415,24 +480,23 @@
 (deftest revision-watermark-advances-before-success-and-fails-closed-test
   (testing "every acknowledged bootstrap and EACL commit advances the watermark"
     (with-system
-      (fn [{:keys [conn client]}]
-        (let [watermark (get-in client [:opts :revision-watermark])]
-          (is (= (:max-tx (d/db conn)) @watermark))
-          (eacl/write-schema! client schema)
-          (is (= (:max-tx (d/db conn)) @watermark))
-          (d/transact! conn [{:eacl/id "alice"}
-                             {:eacl/id "document-1"}])
-          ;; Out-of-band object fixture writes are deliberately outside EACL's
-          ;; authorization mutation acknowledgement contract.
-          (let [before @watermark]
-            (eacl/create-relationship!
-             client
-             (eacl/->Relationship
-              (eacl/spice-object :user "alice")
-              :viewer
-              (eacl/spice-object :document "document-1")))
-            (is (> @watermark before))
-            (is (= (:max-tx (d/db conn)) @watermark)))))))
+      (fn [{:keys [conn client watermark]}]
+        (is (= (:max-tx (d/db conn)) @watermark))
+        (eacl/write-schema! client schema)
+        (is (= (:max-tx (d/db conn)) @watermark))
+        (d/transact! conn [{:eacl/id "alice"}
+                           {:eacl/id "document-1"}])
+        ;; Out-of-band object fixture writes are deliberately outside EACL's
+        ;; authorization mutation acknowledgement contract.
+        (let [before @watermark]
+          (eacl/create-relationship!
+           client
+           (eacl/->Relationship
+            (eacl/spice-object :user "alice")
+            :viewer
+            (eacl/spice-object :document "document-1")))
+          (is (> @watermark before))
+          (is (= (:max-tx (d/db conn)) @watermark))))))
   (doseq [failure-mode [:no-op :throw]]
     (testing (name failure-mode)
       (let [dir (u/tmp-dir (str "eacl-watermark-failure-" (random-uuid)))
@@ -647,8 +711,7 @@
       (let [too-large 9007199254740992
             snapshot (d/open-read-snapshot conn)
             info (d/read-snapshot-revision-info snapshot)
-            adapter-opts {:native-source-id "source"
-                          :source-lifecycle "lifecycle"}]
+            adapter-opts {}]
         (try
           (doseq [field [:max-tx :max-eid]]
             (is (= :eacl/numeric-domain-error
@@ -656,10 +719,10 @@
                     (with-redefs [d/read-snapshot-revision-info
                                   (fn [_] (assoc info field too-large))]
                       (error-data
-                       #(datalevin-backend/snapshot-adapter
+                       #(datalevin-backend/basis-adapter
                          snapshot adapter-opts)))))))
           (let [adapter
-                (datalevin-backend/snapshot-adapter snapshot adapter-opts)]
+                (datalevin-backend/basis-adapter snapshot adapter-opts)]
             (doseq [[operation args]
                     [[:object-id->internal [too-large]]
                      [:internal-id->object [too-large]]
@@ -693,30 +756,30 @@
 (deftest provider-owns-and-closes-explicit-snapshots-test
   (with-system
     (fn [{:keys [client]}]
-      (let [provider (get-in client [:opts :snapshot-provider])
+      (let [provider (:source client)
             before (d/active-read-snapshot-info)
-            selected (snapshot-provider/acquire! provider :current)]
-        (is (= :owned (snapshot-provider/ownership selected)))
+            selected (source/acquire! provider :current)]
+        (is (= :owned (source/ownership selected)))
         (is (= :datalevin
-               (:backend (snapshot-provider/semantic-identity selected))))
+               (:backend (source/semantic-identity selected))))
         (is (= (inc (:active before))
                (:active (d/active-read-snapshot-info))))
-        (is (true? (snapshot-provider/release! selected)))
-        (is (false? (snapshot-provider/release! selected)))
+        (is (true? (source/release! selected)))
+        (is (false? (source/release! selected)))
         (is (= before (d/active-read-snapshot-info)))))))
 
 (deftest snapshot-identity-carries-no-physical-schema-fingerprint-test
   (with-system
     (fn [{:keys [client]}]
-      (let [provider (get-in client [:opts :snapshot-provider])
+      (let [provider (:source client)
             snapshot-id
             (fn []
-              (let [selected (snapshot-provider/acquire! provider :current)]
+              (let [selected (source/acquire! provider :current)]
                 (try
                   (backend/invoke
-                   (snapshot-provider/adapter selected) :snapshot-id)
+                   (source/adapter selected) :snapshot-id)
                   (finally
-                    (snapshot-provider/release! selected)))))]
+                    (source/release! selected)))))]
         (with-redefs [d/read-snapshot-info
                       (fn [_]
                         (throw
@@ -831,50 +894,48 @@
                           (swap! schema-reads inc)
                           (read-schema db))]
             (binding [request-counters/*ledger* ledger]
-              (eacl/with-snapshot
-               client
-               (fn [view]
-                 (reset! escaped view)
-                 (is (= 1 (count (:relations (eacl/read-schema view)))))
+              (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+                 (reset! escaped snapshot)
+                 (is (= 1 (count (:relations (eacl/read-schema snapshot)))))
                  (is (= 1
                         (count
                          (:data
                           (eacl/read-relationships
-                           view {:subject/type :user
-                                 :subject/id "alice"
-                                 :resource/type :document
-                                 :resource/relation :viewer
-                                 :first 10
-                                 :cache? false})))))
+                           snapshot {:subject/type :user
+                                     :subject/id "alice"
+                                     :resource/type :document
+                                     :resource/relation :viewer
+                                     :first 10
+                                     :cache? false})))))
                  (dotimes [_ 4]
                    (is (:allowed?
                         (eacl/check-permission
-                         view {:subject alice
-                               :permission :view
-                               :resource document
-                               :cache? false}))))
-                 (is (= :eacl/read-only-snapshot-view
+                         snapshot {:subject alice
+                                   :permission :view
+                                   :resource document
+                                   :cache? false}))))
+                 (is (= :eacl/unsupported-capability
                         (:type
                          (error-data
                           #(eacl/delete-relationship!
-                            view alice :viewer document)))))
-                 (is (= :eacl/snapshot-view-thread-violation
+                            snapshot alice :viewer document)))))
+                 (is (= :eacl/snapshot-thread-violation
                         (:type
                          @(future
                             (error-data
-                             #(eacl/can? view alice :view document)))))))))
+                             #(eacl/can? snapshot alice :view document))))))))
             (is (= 1 @opens))
             (is (= 2 @schema-reads)
                 "one public schema read plus one shared request-local parse")
-            (is (= {:public-entries 1
+            (is (= {:public-entries 6
                     :acquisitions 1
-                    :context-constructions 1
+                    :context-constructions 6
                     :releases 1}
                    (select-keys
                     (request-counters/snapshot ledger)
                     [:public-entries :acquisitions
                      :context-constructions :releases]))))
-          (is (= :eacl/snapshot-view-closed
+          (is (= :eacl/snapshot-released
                  (:type
                   (error-data
                    #(eacl/can? @escaped alice :view document)))))
@@ -888,12 +949,11 @@
       (let [alice (eacl/spice-object :user "alice")
             document (eacl/spice-object :document "document-1")]
         (eacl/with-snapshot
-         client consistency/fully-consistent
-         (fn [view]
-           (is (false? (eacl/can? view alice :view document)))
+         [snapshot (eacl/snapshot client consistency/fully-consistent)]
+           (is (false? (eacl/can? snapshot alice :view document)))
            @(future
               (eacl/create-relationship! client alice :viewer document))
-           (is (false? (eacl/can? view alice :view document)))))
+           (is (false? (eacl/can? snapshot alice :view document))))
         (is (true? (eacl/can? client alice :view document)))
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
@@ -912,11 +972,11 @@
           (is (= :eacl.execution/cancelled
                  (:type
                   (error-data
-                   #(eacl/with-snapshot
-                     client nil {:cancellation-token token}
-                     (fn [_] :unreachable)))))))
-        (is (zero? @opens)
-            "cancellation is enforced before native snapshot acquisition")
+                   #(eacl/with-snapshot [snapshot (eacl/snapshot client)]
+                      (eacl/read-schema
+                       snapshot {:cancellation-token token})))))))
+        (is (= 1 @opens)
+            "capture acquires once; cancelled snapshot read acquires nothing")
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
 
@@ -1090,9 +1150,9 @@
         (dotimes [_ 2]
           (eacl/write-relationship!
            client :touch alice :viewer document-1))
-        (let [provider (get-in client [:opts :snapshot-provider])
-              selected (snapshot-provider/acquire! provider :current)
-              adapter (snapshot-provider/adapter selected)]
+        (let [provider (:source client)
+              selected (source/acquire! provider :current)
+              adapter (source/adapter selected)]
           (try
             (let [subject-id
                   (backend/invoke adapter :object-id->internal "alice")
@@ -1214,26 +1274,26 @@
                     adapter :direct-match?
                     :user subject-id relation-id :document
                     (first resource-ids))))
-              (snapshot-provider/release! selected)
+              (source/release! selected)
               (is (= {:active 0 :oldest-age-ms nil}
                      (d/active-read-snapshot-info))))
             (finally
-              (snapshot-provider/release! selected)))))))))
+              (source/release! selected)))))))))
 
 (deftest shared-v8-backend-contract-test
   (with-connection
     (fn [conn]
       (let [store (contract/portable-store)
+            client-options
+            (merge
+             (watermark-options)
+             {:cache store
+              :security-key test-key
+              :datalevin-topology
+              datalevin-backend/certified-topology-declaration
+              :source-lifecycle "shared-contract"})
             client
-            (datalevin/make-client
-             conn
-             (merge
-              (watermark-options)
-              {:cache store
-               :security-key test-key
-               :datalevin-topology
-               datalevin-backend/certified-topology-declaration
-               :source-lifecycle "shared-contract"}))]
+            (datalevin/make-client conn client-options)]
         (eacl/write-schema! client contract/smoke-schema)
         (d/transact!
          conn
@@ -1244,6 +1304,13 @@
         (eacl/create-relationships! client contract/smoke-relationships)
         (contract/assert-v8-seeded-contracts! client)
         (contract/assert-v8-permission-tree-contract! client)
+        (contract/assert-authorization-target-matrix!
+         {:writable client
+          :read-only
+          (datalevin/make-client
+           conn (assoc client-options :read-only? true))
+          :snapshot-db datalevin/db
+          :direct-snapshot datalevin/snapshot})
         (contract/assert-unified-filter-validation! client)
         (contract/assert-v8-request-cache-controls! client store)
         (contract/assert-v8-cache-disabled!
@@ -1310,30 +1377,30 @@
           (let [ledger (request-counters/make-ledger)
                 escaped (atom nil)]
             (binding [request-counters/*ledger* ledger]
-              (eacl/with-snapshot
-               client
-               (fn [view]
-                 (reset! escaped view)
+              (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+                 (reset! escaped snapshot)
                  (is (= ["server-1" "server-2"]
                         (mapv (comp :id :resource)
                               (:data
                                (eacl/read-relationships
-                                view (assoc scan-query :cache? false))))))
+                                snapshot
+                                (assoc scan-query :cache? false))))))
                  (is (= ["server-1" "server-2"]
                         (mapv :id
                               (:data
                                (eacl/lookup-resources
-                                view (assoc enumerate-query :cache? false))))))
+                                snapshot
+                                (assoc enumerate-query :cache? false))))))
                  (doseq [[label invoke]
-                         [[:scan #(eacl/read-relationships view scan-query)]
+                         [[:scan #(eacl/read-relationships snapshot scan-query)]
                           [:enumerate
-                           #(eacl/lookup-resources view enumerate-query)]]]
-                   (is (= :eacl/snapshot-view-thread-violation
+                           #(eacl/lookup-resources snapshot enumerate-query)]]]
+                   (is (= :eacl/snapshot-thread-violation
                           (:type @(future (error-data invoke))))
-                       (name label))))))
-            (is (= {:public-entries 1
+                       (name label)))))
+            (is (= {:public-entries 2
                     :acquisitions 1
-                    :context-constructions 1
+                    :context-constructions 2
                     :releases 1}
                    (select-keys
                     (request-counters/snapshot ledger)
@@ -1343,7 +1410,7 @@
                     [[:scan #(eacl/read-relationships @escaped scan-query)]
                      [:enumerate
                       #(eacl/lookup-resources @escaped enumerate-query)]]]
-              (is (= :eacl/snapshot-view-closed
+              (is (= :eacl/snapshot-released
                      (:type (error-data invoke)))
                   (name label)))))
 
@@ -1376,11 +1443,11 @@
 
         (testing "cache reuse is identical-basis-only without ordered generations"
           (let [capabilities
-                (snapshot-provider/capabilities
-                 (get-in client [:opts :snapshot-provider]))]
+                (source/capabilities
+                 (:source client))]
             (is (= "aggregate-lifecycle"
-                   (snapshot-provider/source-lifecycle
-                    (get-in client [:opts :snapshot-provider]))))
+                   (source/source-lifecycle
+                    (:source client))))
             (is (not (contains? (:cache-proofs capabilities)
                                 :ordered-generations)))
             (doseq [[label invoke]

@@ -9,8 +9,8 @@
   Run it from a fresh nREPL JVM so Datomic and JIT state are isolated, and run
   each version in its own JVM. See docs/benchmarks/v6-reference.md."
   (:require [eacl.bench.pagination-test :as pagination]
+            [eacl.cache :as cache]
             [eacl.core :as eacl]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.fixtures :refer [->user]]))
@@ -102,7 +102,7 @@
   The others show what v7's cache adds on top of the same engine."
   {:off {:cache cache/no-cache}
    :default {}
-   :remember-answers {:cache {:remember-answers true}}})
+   :explicit-default {:cache {}}})
 
 (defn- client-for
   [conn cache-key]
@@ -112,17 +112,17 @@
      (cond-> (-> config
                  (dissoc :cache-fn)
                  (assoc ;; Fixed key so token cost does not vary between runs.
-                        :page-token-key "version-comparison"
+                        :security-key "version-comparison00000000000000"
                         ;; A 3,000-page walk outlives the 5-minute default, and
                         ;; an expiring cursor mid-walk would measure the error
                         ;; path rather than pagination.
-                        :page-token-ttl-seconds 3600))
+                        :cursor-ttl-seconds 3600))
        cache-fn (assoc :cache (cache-fn))))))
 
 (defn run-reference!
   "Runs the v7 reference benchmark for one cache configuration.
 
-  `cache-key` is :off (comparable to v6), :default, or :remember-answers."
+  `cache-key` is :off (comparable to v6), :default, or :explicit-default."
   ([]
    (run-reference! :off default-config))
   ([cache-key]

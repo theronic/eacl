@@ -22,16 +22,14 @@
        (:objects fixture))))
     (eacl/create-relationships! client (:relationships fixture))
     (let [db (d/db conn)]
-      (datahike-backend/snapshot-adapter
+      (datahike-backend/basis-adapter
        db
        {:object-id->entid
         (fn [snapshot object-id]
           (:db/id (d/entity snapshot [:eacl/id object-id])))
         :entid->object-id
         (fn [snapshot internal-id]
-          (:eacl/id (d/entity snapshot internal-id)))
-        :conn conn
-        }))))
+          (:eacl/id (d/entity snapshot internal-id)))}))))
 
 (deftest datahike-adapter-certification-test
   (doseq [[label config]
@@ -50,7 +48,7 @@
             (pr-str (:checks report)))))))
 
 (deftest current-db-reference-identity-test
-  (testing "the exact-current cache can use immutable DB object identity"
+  (testing "the exact-basis cache can use immutable DB object identity"
     (let [conn (datahike/create-conn)
           before-1 (d/db conn)
           before-2 (d/db conn)

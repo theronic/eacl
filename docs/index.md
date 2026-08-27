@@ -52,7 +52,7 @@ retraction, or explicitly install/use the backend's optional
 - [Consistency and cache operations](v8-consistency-cache-operations.md)
 - [Backend modules and capabilities](v8-backend-modules-and-upgrade.md)
 - [Backend adapter contract](v8-backend-adapter-boundary.md)
-- [Snapshot-provider migration](v8-snapshot-provider-migration.md)
+- [Basis-source migration](v8-snapshot-provider-migration.md)
 - [Answer cache and subproblem store](v8-subproblem-cache.md)
 - [Formal assurance boundary](formal-verification.md)
 - [Audit reports](reports/) — dated records; the 2026-08-15 stable-engine audit lists open bugs and optimizations

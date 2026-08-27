@@ -760,6 +760,42 @@
       :accept
       (consistency-error (.-dtor_error outcome)))))
 
+(defn- consistency-work-map
+  [work]
+  {:capability-observations
+   (.toNumber (.-dtor_capabilityObservations work))
+   :plan-decisions
+   (.toNumber (.-dtor_planDecisions work))
+   :authentication-attempts
+   (.toNumber (.-dtor_authenticationAttempts work))
+   :backend-selection-calls
+   (.toNumber (.-dtor_backendSelectionCalls work))
+   :validation-decisions
+   (.toNumber (.-dtor_validationDecisions work))
+   :source-scope-reads
+   (.toNumber (.-dtor_sourceScopeReads work))
+   :revision-validation-calls
+   (.toNumber (.-dtor_revisionValidationCalls work))
+   :native-revision-reads
+   (.toNumber (.-dtor_nativeRevisionReads work))
+   :order-hint-reads
+   (.toNumber (.-dtor_orderHintReads work))
+   :exact-locator-reads
+   (.toNumber (.-dtor_exactLocatorReads work))
+   :source-lifecycle-reads
+   (.toNumber (.-dtor_sourceLifecycleReads work))
+   :snapshot-id-reads
+   (.toNumber (.-dtor_snapshotIdReads work))
+   :basis-kind-reads
+   (.toNumber (.-dtor_basisKindReads work))})
+
+(defn consistency-plan-work
+  "Returns the generated Dafny logical-work vector for planning only."
+  []
+  (let [consistency (.-ConsistencyDecision generated)]
+    (consistency-work-map
+     (js-invoke (.-__default consistency) "SelectionPlanWork"))))
+
 (defn consistency-selection-work
   "Returns the generated Dafny logical-work vector for one successful path."
   [path issue-response-token?]
@@ -767,8 +803,6 @@
         paths (.-SuccessfulSelectionPath consistency)
         formal-path
         (case path
-          :captured-current
-          (js-invoke paths "create_CapturedCurrentPath")
           :selected-current
           (js-invoke paths "create_SelectedCurrentPath")
           :authoritative
@@ -783,26 +817,7 @@
          "SuccessfulSelectionWork"
          formal-path
          issue-response-token?)]
-    {:capability-observations
-     (.toNumber (.-dtor_capabilityObservations work))
-     :plan-decisions
-     (.toNumber (.-dtor_planDecisions work))
-     :authentication-attempts
-     (.toNumber (.-dtor_authenticationAttempts work))
-     :backend-selection-calls
-     (.toNumber (.-dtor_backendSelectionCalls work))
-     :validation-decisions
-     (.toNumber (.-dtor_validationDecisions work))
-     :source-scope-reads
-     (.toNumber (.-dtor_sourceScopeReads work))
-     :revision-validation-calls
-     (.toNumber (.-dtor_revisionValidationCalls work))
-     :native-revision-reads
-     (.toNumber (.-dtor_nativeRevisionReads work))
-     :order-hint-reads
-     (.toNumber (.-dtor_orderHintReads work))
-     :exact-locator-reads
-     (.toNumber (.-dtor_exactLocatorReads work))}))
+    (consistency-work-map work)))
 
 (defn- candidate-state
   [subproblem candidate]
@@ -872,8 +887,8 @@
       :exact-entry
       (js-invoke stages "create_ExactEntryStage")
 
-      :snapshot-exact-entry
-      (js-invoke stages "create_SnapshotExactEntryStage")
+      :exact-only-entry
+      (js-invoke stages "create_ExactOnlyEntryStage")
 
       :managed-entry
       (js-invoke stages "create_ManagedEntryStage"))))
@@ -893,9 +908,8 @@
       (.-is_UseExactEntry action) :use-exact-entry
       (.-is_ProbeManagedEntry action) :probe-managed-entry
       (.-is_UseManagedEntry action) :use-managed-entry
-      (.-is_UseSnapshotExactEntry action) :use-snapshot-exact-entry
-      (.-is_ComputeSnapshotExactValue action) :compute-snapshot-exact-value
-      :else :compute-current-value)))
+      (.-is_ComputeExactValue action) :compute-exact-value
+      :else :compute-selected-value)))
 
 (defn- ordered-merge-head
   [value]

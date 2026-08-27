@@ -43,7 +43,7 @@
     :recursive-engine-cost-model
     :snapshot-consistency-decision
     :cache-decision-kernel
-    :current-generation-cache
+    :basis-first-cache
     :subproblem-cache
     :indexed-recursive-public-engine
     :complete-public-engine})

@@ -3,7 +3,7 @@
 
   The context owns snapshot cleanup and request-invariant state. It is never a
   portable value and must not escape its constructing thread or request."
-  (:require [eacl.backend.snapshot-provider :as snapshot-provider]
+  (:require [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
@@ -102,18 +102,18 @@
 (defn- validate-basis-identity!
   [basis-identity]
   (when-not (and (map? basis-identity)
-                 (= snapshot-provider/semantic-identity-keys
+                 (= source/semantic-identity-keys
                     (set (keys basis-identity))))
     (invalid-context!
      "Request context basis identity must be the closed semantic identity."
      {:basis-identity basis-identity
-      :expected-keys snapshot-provider/semantic-identity-keys})))
+      :expected-keys source/semantic-identity-keys})))
 
 (defn- release-after-construction-failure!
   [selected ledger error]
   (when selected
     (try
-      (when (snapshot-provider/release! selected)
+      (when (source/release! selected)
         (when ledger
           (record! ledger :releases)))
       (catch #?(:clj Throwable :cljs :default) release-error
@@ -139,7 +139,7 @@
     :as input}]
   (let [selected
         (when (and (map? input)
-                   (snapshot-provider/selected-snapshot? selected-snapshot))
+                   (source/selected-basis? selected-snapshot))
           selected-snapshot)
         initial-ledger
         (when (map? input)
@@ -162,7 +162,7 @@
         (invalid-context! "Request context requires a validated adapter."
                           {:adapter adapter}))
       (when (and (some? selected-snapshot)
-                 (not (snapshot-provider/selected-snapshot?
+                 (not (source/selected-basis?
                        selected-snapshot)))
         (invalid-context!
          "Request context selected snapshot is invalid."
@@ -172,7 +172,7 @@
                           {:contract contract}))
       (let [selected-adapter
             (when selected
-              (snapshot-provider/adapter selected))
+              (source/adapter selected))
             _
             (when (and selected-adapter
                        (not (identical? adapter selected-adapter)))
@@ -181,7 +181,7 @@
                {:backend (backend/backend-id adapter)}))
             selected-identity
             (when selected
-              (snapshot-provider/semantic-identity selected))
+              (source/semantic-identity selected))
             basis-identity (or basis-identity selected-identity)
             _ (validate-basis-identity! basis-identity)
             _
@@ -207,7 +207,8 @@
             proof-options
             (cond->
              {:schema-generation-fn
-              #(force schema-generation-delay)}
+              #(force schema-generation-delay)
+              :basis-identity basis-identity}
               proof-diagnostic-fn
               (assoc :diagnostic-fn proof-diagnostic-fn)
               maximum-proof-relation-count
@@ -218,7 +219,8 @@
             derived-delay
             (delay
               (engine/schema-cache-for!
-               registry adapter (force schema-generation-delay)))
+               registry adapter basis-identity
+               (force schema-generation-delay)))
             context
             (RequestContext.
              {:version context-version
@@ -226,7 +228,7 @@
               :adapter adapter
               :selected-snapshot selected
               :ownership (if selected
-                           (snapshot-provider/ownership selected)
+                           (source/ownership selected)
                            :borrowed)
               :basis-identity basis-identity
               :schema-generation-delay schema-generation-delay
@@ -355,7 +357,7 @@
               (reset! (:publication-buffer state) [])
               (try
                 (when-let [selected (:selected-snapshot state)]
-                  (when (snapshot-provider/release! selected)
+                  (when (source/release! selected)
                     (record! (:counter-ledger state) :releases)))
                 (reset! close-state :closed)
                 true

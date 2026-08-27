@@ -12,6 +12,7 @@
   everything else compiles per call."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
@@ -38,7 +39,7 @@ definition doc {
   ;; but not the schema stamp, the database id, or the basis. Whichever
   ;; view seals first must not answer for the other.
   (with-mem-conn [conn schema/v7-schema]
-    (let [acl (core/make-client conn {:cache cache/no-cache})
+    (let [acl (core/make-client conn {:cache shared-cache/no-cache})
           _ (eacl/write-schema! acl stamped-schema)
           _ @(d/transact conn [{:eacl/id "alice"} {:eacl/id "doc1"}])
           _ (eacl/create-relationship!

@@ -3,7 +3,7 @@
             [datalevin.core :as d]
             [datalevin.util :as u]
             [eacl.adapter-certification :as certification]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as v8]
             [eacl.core :as eacl]
             [eacl.datalevin.backend :as backend]
@@ -17,7 +17,7 @@
     (catch clojure.lang.ExceptionInfo error
       (ex-data error))))
 
-(deftest datalevin-owned-snapshot-adapter-certification-test
+(deftest datalevin-owned-basis-adapter-certification-test
   (doseq [fixture (certification/coherent-fixtures [820084])]
     (testing (str "seed " (:seed fixture))
       (let [dir (u/tmp-dir (str "eacl-datalevin-cert-" (random-uuid)))
@@ -41,10 +41,10 @@
                 {:db/id (- (inc index)) :eacl/id id})
               (:objects fixture)))
             (eacl/create-relationships! client (:relationships fixture))
-            (let [provider (get-in client [:opts :snapshot-provider])
-                  selected (snapshot-provider/acquire! provider :current)]
+            (let [provider (:source client)
+                  selected (source/acquire! provider :current)]
               (try
-                (let [adapter (snapshot-provider/adapter selected)
+                (let [adapter (source/adapter selected)
                       report
                       (certification/certify
                       {:adapter adapter
@@ -65,7 +65,7 @@
                             (error-data #(v8/operation adapter :proof-frame))
                             [:type :capability :requested])))))
                 (finally
-                  (snapshot-provider/release! selected)))))
+                  (source/release! selected)))))
           (finally
             (d/close conn)
             (u/delete-files dir)))))))

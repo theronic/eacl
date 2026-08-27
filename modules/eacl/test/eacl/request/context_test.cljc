@@ -1,7 +1,7 @@
 (ns eacl.request.context-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
@@ -25,8 +25,7 @@
                    [operation (fn [& _] nil)]))
             backend/required-snapshot-operations)
       {:snapshot-id (constantly {:database-id ::database :basis-t 7})
-       :source-scope (constantly {:source-id ::source :branch nil})
-       :source-lifecycle (constantly ::lifecycle)
+       :basis-kind (constantly :ordinary)
        :native-revision (constantly {:revision 7 :exact-locator 7})
        :order-hint (constantly 7)
        :exact-locator (constantly 7)
@@ -51,7 +50,7 @@
            {:adapter adapter
             :ownership :owned
             :release-token ::reader})]
-     (snapshot-provider/make-provider
+     (source/make-source
       {:id :request-context-test
        :capabilities
        (assoc backend/empty-capabilities
@@ -59,8 +58,8 @@
        :traversal-execution backend/strict-sequential-traversal-execution
        :topology {:deployment :test}
        :execution-constraints
-       snapshot-provider/default-execution-constraints
-       :snapshot-ownership :owned
+       source/default-execution-constraints
+       :basis-ownership :owned
        :operations
        {:source-scope (constantly {:source-id ::source :branch nil})
         :source-lifecycle (constantly ::lifecycle)
@@ -90,7 +89,7 @@
            (swap! release-calls inc)
            (release-fn token))
          acquire-calls)
-        selected (snapshot-provider/acquire! provider :current)]
+        selected (source/acquire! provider :current)]
     {:context
      (context/make-context
       {:runtime {:derived-schema-caches registry}
@@ -130,6 +129,7 @@
             :source-id ::source
             :branch nil
             :source-lifecycle ::lifecycle
+            :basis-kind :ordinary
             :revision 7
             :exact-locator 7
             :backend-snapshot-id
@@ -208,6 +208,7 @@
          :source-id ::source
          :branch nil
          :source-lifecycle ::lifecycle
+         :basis-kind :ordinary
          :revision 7
          :exact-locator 7
          :backend-snapshot-id {:database-id ::database :basis-t 7}}
@@ -233,7 +234,7 @@
         schema-generation-calls (atom 0)
         adapter (test-adapter schema-generation-calls)
         provider (test-provider adapter #(swap! release-tokens conj %))
-        selected (snapshot-provider/acquire! provider :current)
+        selected (source/acquire! provider :current)
         failure
         (error-data
          #(context/make-context
@@ -244,7 +245,7 @@
             :contract (contract)}))]
     (is (= :eacl.request/invalid-context (:type failure)))
     (is (= [::reader] @release-tokens))
-    (is (snapshot-provider/released? selected))))
+    (is (source/released? selected))))
 
 (deftest failed-close-is-retryable-and-discards-publications-test
   (let [attempts (atom 0)
@@ -258,7 +259,7 @@
     (is (= :eacl/snapshot-release-failed
            (:type (error-data #(context/close! context)))))
     (is (false? (context/closed? context)))
-    (is (false? (snapshot-provider/released? selected)))
+    (is (false? (source/released? selected)))
     (is (= [] (context/take-publications! context)))
     (is (true? (context/close! context)))
     (is (= 2 @attempts))))

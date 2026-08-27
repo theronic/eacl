@@ -140,7 +140,7 @@
     (and (= :probe-managed-entry correct)
          (not= correct mutant))))
 
-(defn- snapshot-exact-key-omits-lifecycle-killed?
+(defn- exact-basis-key-omits-lifecycle-killed?
   []
   (let [base {:backend :datomic
               :source :database-a
@@ -1357,8 +1357,8 @@
    immediate-reverse-consumer-registration-killed?
    :current-cache-missing-entry-hit
    current-cache-missing-entry-hit-killed?
-   :snapshot-exact-key-omits-lifecycle
-   snapshot-exact-key-omits-lifecycle-killed?
+   :exact-basis-key-omits-lifecycle
+   exact-basis-key-omits-lifecycle-killed?
    :mismatched-indexed-request-scope-response
    mismatched-indexed-request-scope-response-killed?
    :ordered-merge-wrong-comparator

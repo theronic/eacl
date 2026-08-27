@@ -1,13 +1,14 @@
 (ns eacl.formal.consistency-boundary-benchmark
   "Absolute wall-time gate for the generated consistency decision boundary.
 
-  This measures the complete captured-current orchestration used by public
-  backend clients. Identity makes its same-source proof reflexive, so it does
-  not perform source-scope I/O. It does not claim JVM heap, CPU, backend I/O,
-  or worst-case latency bounds."
+  This measures the minimize-latency source plan used before public Acl
+  acquisition. The plan reads only source-static capabilities and performs no
+  acquisition or source-scope I/O. Retained Snapshot reads use their separate
+  assertion boundary and never enter this source-selection plan. It does not
+  claim JVM heap, CPU, backend I/O, or worst-case latency bounds."
   (:refer-clojure :exclude [run!])
   (:require
-   [eacl.backend.v8 :as backend]
+   [eacl.backend.source :as source]
    [eacl.consistency :as consistency]
    [eacl.formal.production-kernel :as production]
    [eacl.spicedb.consistency :as public-consistency]))
@@ -21,43 +22,31 @@
          (long (Math/floor (* proportion (count ordered)))))]
     (nth ordered index)))
 
-(defn- benchmark-adapter
+(defn- benchmark-source
   []
-  (let [self (atom nil)
-        base-operations
-        (into
-         {}
-         (map (fn [operation] [operation (fn [& _] nil)]))
-         backend/required-snapshot-operations)
-        adapter
-        (backend/make-adapter
-         {:id :consistency-benchmark
-          :capabilities
-          {:consistency #{:minimize-latency}
-           :snapshots #{:current}
-           :source #{:stable-scope :source-lifecycle
-                     :native-revision :order-hint :exact-locator}
-           :cursor #{}
-           :transactions #{}
-           :cache-proofs #{}
-           :runtime #{:clj}}
-          :operations
-          (merge
-           base-operations
-           {:snapshot-id (fn [] [:source nil 1])
-            :source-scope
-            (fn [] {:source-id "source" :branch nil})
-            :source-lifecycle (constantly "benchmark-lifecycle")
-            :native-revision
-            (constantly {:revision 1 :exact-locator 1})
-            :order-hint (constantly 1)
-            :exact-locator (constantly 1)
-            :select-current (fn [] @self)})})]
-    (reset! self adapter)
-    adapter))
+  (source/make-source
+   {:id :consistency-benchmark
+    :capabilities
+    {:consistency #{:minimize-latency}
+     :snapshots #{:current}
+     :source #{:stable-scope :source-lifecycle
+               :native-revision :order-hint :exact-locator}
+     :cursor #{}
+     :transactions #{}
+     :cache-proofs #{}
+     :runtime #{:clj}}
+    :basis-ownership :borrowed
+    :operations
+    {:source-scope (constantly {:source-id "source" :branch nil})
+     :source-lifecycle (constantly "benchmark-lifecycle")
+     :acquire-current! (fn [& _] nil)
+     :acquire-authoritative! (fn [& _] nil)
+     :acquire-at-least! (fn [& _] nil)
+     :acquire-exact! (fn [& _] nil)
+     :release! (fn [& _] nil)}}))
 
 (defn- run-batch
-  [adapter repetitions]
+  [source repetitions]
   (let [options
         {:decision-kernel production/default-selection}
         started (System/nanoTime)]
@@ -68,15 +57,14 @@
          :nanoseconds-per-call
          (/ (double (- (System/nanoTime) started))
             repetitions)}
-        (let [selected
-              (:adapter
-               (consistency/captured-current-selection
-                adapter
-                public-consistency/minimize-latency
-                options))]
+        (let [action
+              (consistency/selection-plan
+               source
+               {:mode public-consistency/minimize-latency}
+               options)]
           (recur
            (inc iteration)
-           (+ checksum (System/identityHashCode selected))))))))
+           (+ checksum (hash action))))))))
 
 (defn run!
   "Returns generated-boundary per-request wall-time samples."
@@ -86,11 +74,11 @@
      :or {repetitions 2000
           warmup 10
           samples 40}}]
-   (let [adapter (benchmark-adapter)
+   (let [source (benchmark-source)
          observations
          (mapv
           (fn [_]
-            (run-batch adapter repetitions))
+            (run-batch source repetitions))
           (range (+ warmup samples)))
          measured (subvec observations warmup)
          checksums (mapv :checksum measured)
@@ -98,10 +86,10 @@
      (when-not (apply = checksums)
        (throw
         (ex-info
-         "Consistency boundary selected different adapters."
+         "Consistency boundary returned different plan actions."
          {:checksums checksums})))
      {:fixture
-      {:path :captured-current
+      {:path :minimize-latency-plan
        :repetitions repetitions
        :warmup warmup
        :samples samples
@@ -116,7 +104,10 @@
        :revision-validation-calls 0
        :native-revision-reads 0
        :order-hint-reads 0
-       :exact-locator-reads 0}
+       :exact-locator-reads 0
+       :source-lifecycle-reads 0
+       :snapshot-id-reads 0
+       :basis-kind-reads 0}
       :resource-qualification
       {:wall-time :host-specific-measurement
        :jvm-live-heap-bytes :not-established
@@ -147,7 +138,7 @@
        :aggregation :median-of-trial-percentiles)
       :required
       {:maximum-median-p95-ns maximum-median-p95-ns
-       :identical-selected-adapter-every-call true
+       :identical-plan-action-every-call true
        :exact-logical-work-correspondence true}
       :summary
       {:median-p95-ns median-p95

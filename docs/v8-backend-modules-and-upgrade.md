@@ -97,12 +97,13 @@ generations. The retained identity contains the source lifecycle, schema
 generation, and scalar maximum generation over the complete relation
 dependency closure.
 
-Authenticated `at-exact-snapshot` requests use a separate bounded
-snapshot-exact answer tier after selection. Its key binds the complete
-source/lifecycle, native locator, ordinary-view, adapter/identity, engine,
-semantic request, result-shape, demand, and limit identity. Exact requests do
-not use managed proof lifting; public IDs, basis, tokens, cursors, and metadata
-are rebuilt from the selected adapter on every hit.
+Authenticated `at-exact-snapshot` requests and ordinary selected bases use the
+same bounded exact-basis answer tier. Its key binds the complete source scope,
+lifecycle, native revision and locator, basis kind, adapter/identity contract,
+engine ABI, semantic request, result shape, demand, and limit identity.
+Historical requests do not use managed proof lifting; public IDs, basis,
+tokens, cursors, and metadata are rebuilt from the selected adapter on every
+hit.
 
 All authorization-relevant schema, relationship, identity/liveness, repair,
 and safe-deletion mutations must use EACL APIs or documented EACL transaction
@@ -277,7 +278,7 @@ object conversion, schema definitions, adjacency, direct matches, recursive
 nodes, transaction behavior, cursor identity, the independent
 `:schema-generation` operation, and optional ordered-generation proof
 capability. A third-party adapter without certified proof support remains a
-correct exact-current adapter. Returning nil for schema generation also
+correct exact-basis adapter. Returning nil for schema generation also
 disables cross-request derived-state reuse while preserving request-local
 reuse.
 
@@ -286,7 +287,7 @@ inventory](v8-backend-adapter-boundary.md) and run the shared public API,
 recursive, aggregate, cache, mutation, and independent-oracle contracts.
 
 Adapters over live or closeable database handles must also implement the
-[snapshot-provider lifecycle](v8-snapshot-provider-migration.md). A borrowed
+[basis-source lifecycle](v8-snapshot-provider-migration.md). A borrowed
 provider is correct only for an already immutable value. An owned reader must
 declare its thread/runtime restrictions, keep the handle inside the complete
 request scope, eagerly realize all returned data, and release every accepted

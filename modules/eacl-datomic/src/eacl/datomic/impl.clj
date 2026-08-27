@@ -21,14 +21,6 @@
   [subject relation resource]
   (eacl/->Relationship subject relation resource))
 
-(defonce ^:private raw-engine-lifecycle
-  ;; The engine adapters minted by this facade carry one process-stable
-  ;; lifecycle. A raw call has no client lifecycle to rotate; a fresh random
-  ;; lifecycle per call (the previous behaviour) made the engine's sealed-plan
-  ;; cache miss on every request. The lifecycle only distinguishes stores
-  ;; that alias a source scope; every raw call on one database shares it.
-  (str "eacl-datomic-raw-" (java.util.UUID/randomUUID)))
-
 (defmacro ^:private with-request-engine
   "Builds ONE snapshot adapter for the call and binds the shared engine
   context: a caller-supplied impl.indexed schema cache wins; otherwise a
@@ -36,39 +28,15 @@
   snapshot (eliminating duplicate proof reads, path walks, and plan
   compiles inside one raw request without cross-request publication).
 
-  Sealed plans are reused across raw calls ONLY for ordinary views
-  (current and as-of) of a STAMPED schema generation. A d/filter, d/since,
-  or d/history view reports the plain value's database id, basis, and
-  schema stamp, so a stable plan key cannot distinguish it from the plain
-  database — and sealed plans embed relation eids, so serving one view's
-  plan to the other yields wrong answers in both directions. An unstamped
-  database (no write-schema! generation) can only key plans by basis,
-  which a d/with speculative value aliases with the later committed basis.
-  Both classes therefore mint a fresh per-call lifecycle and no schema
-  identity — plans compile per call there, matching the unstamped regime's
-  documented recompute-instead-of-latch contract. The residual assumption
-  for reused plans is the same one every derived cache already makes:
-  schema-definition datoms change only through write-schema!, which bumps
-  the stamped generation (a d/with that writes definition datoms without
-  the stamp is outside the supported contract on the committed path too).
-
-  Otherwise the adapter carries the facade's process-stable lifecycle. The
-  request-local derived cache prepares each root once without publishing it
-  across raw calls.
-
   A caller-supplied schema cache (the public client, or a v7-compat caller
   binding impl.indexed/*schema-cache*) keeps the pre-existing contract: no
-  stamp read here (the bound generation already carries the plan identity)
-  and the stable lifecycle, with view/coherence discipline owned by that
-  caller — the public client only ever evaluates ordinary conn-derived
-  values."
+  stamp read here because the bound generation already carries the plan
+  identity. The raw facade otherwise prepares derived state per call and
+  publishes nothing across database values."
   [[adapter-sym db] & body]
   `(let [db# ~db
          bound-cache# impl.indexed/*schema-cache*
-         ~adapter-sym (backend/snapshot-adapter
-                       db# (if bound-cache#
-                             {:source-lifecycle raw-engine-lifecycle}
-                             {}))]
+         ~adapter-sym (backend/basis-adapter db# {})]
      (binding [engine/*schema-cache*
                (or bound-cache#
                    (engine/request-schema-cache ~adapter-sym))
@@ -162,18 +130,22 @@
   (if (can? db subject permission resource)
     true
     (throw (ex-info "Unauthorized"
-             {:type :eacl/unauthorized
+             {:type :eacl/unauthorized :eacl/error :eacl/unauthorized
               :subject subject
               :permission permission
               :resource resource}))))
 
 (defn- unknown-object!
-  [object-id]
+  [object]
+  (let [public-object (or (:eacl.relationship/public-object object)
+                          (select-keys object [:type :id]))
+        object-id (:id public-object)]
   (throw (ex-info (str "Unknown object: " (pr-str object-id) " does not resolve to an existing entity."
                        " Pass {:allow-tempids? true} to tx-relationship for same-transaction tempids.")
            {:type :eacl/unknown-object
             :eacl/error :eacl/unknown-object
-            :object-id object-id})))
+            :object public-object
+            :object-id object-id}))))
 
 (defn- object-id->eid-or-tempid
   "Resolves an object id to an existing eid. Unresolvable ids throw
@@ -183,28 +155,29 @@
   minted ghost entities on typo'd ids (audit §12). Positive numeric eids are
   verified via datom presence — the transactor rejects unallocated eids anyway,
   but with a raw :db.error/invalid-entity-id."
-  [db object-id {:keys [allow-tempids?]}]
-  (cond
-    (number? object-id)
+  [db object {:keys [allow-tempids?]}]
+  (let [object-id (:id object)]
     (cond
-      (seq (d/datoms db :eavt object-id)) object-id
-      (and allow-tempids? (neg? object-id)) object-id
-      :else (unknown-object! object-id))
+      (number? object-id)
+      (cond
+        (seq (d/datoms db :eavt object-id)) object-id
+        (and allow-tempids? (neg? object-id)) object-id
+        :else (unknown-object! object))
 
-    (string? object-id)
-    (or (d/entid db [:eacl/id object-id])
-        (if allow-tempids?
-          object-id
-          (unknown-object! object-id)))
+      (string? object-id)
+      (or (d/entid db [:eacl/id object-id])
+          (if allow-tempids?
+            object-id
+            (unknown-object! object)))
 
-    (instance? datomic.db.DbId object-id)
-    (if allow-tempids?
-      object-id
-      (unknown-object! object-id))
+      (instance? datomic.db.DbId object-id)
+      (if allow-tempids?
+        object-id
+        (unknown-object! object))
 
-    :else
-    (or (d/entid db object-id)
-        (unknown-object! object-id))))
+      :else
+      (or (d/entid db object-id)
+          (unknown-object! object)))))
 
 (defn- find-relation-eid
   [db resource-type relation-name subject-type]
@@ -232,7 +205,7 @@
         (throw
          (ex-info
           "A relationship endpoint has no commit-time identity guard."
-          {:type :eacl/endpoint-identity-unavailable
+          {:type :eacl/endpoint-identity-unavailable :eacl/error :eacl/endpoint-identity-unavailable
            :role role
            :endpoint-eid eid
            :object object})))
@@ -242,9 +215,9 @@
 (defn- resolve-relationship
   [db {:keys [subject relation resource]} opts]
   (let [subject-type (:type subject)
-        subject-eid  (object-id->eid-or-tempid db (:id subject) opts)
+        subject-eid  (object-id->eid-or-tempid db subject opts)
         resource-type (:type resource)
-        resource-eid  (object-id->eid-or-tempid db (:id resource) opts)
+        resource-eid  (object-id->eid-or-tempid db resource opts)
         relation-eid  (find-relation-eid db resource-type relation subject-type)]
     (when-not relation-eid
       (throw
@@ -369,6 +342,30 @@
   [db filters]
   (->> (find-relations db filters)
        (map :db/id)
+       sort
+       vec))
+
+(defn relationship-relation-id
+  "Returns the schema relation eid named by one resolved relationship."
+  [db relationship]
+  (:relation-eid (resolve-relationship db relationship {})))
+
+(defn affected-relation-ids
+  "Returns every relation eid named by relationship endpoint mutations."
+  [tx-data]
+  (->> tx-data
+       (keep
+        (fn [op]
+          (when (and (vector? op)
+                     (contains? #{:db/add :db/retract} (first op))
+                     (contains?
+                      #{relationship-storage/forward-attribute
+                        relationship-storage/reverse-attribute}
+                      (nth op 2 nil))
+                     (vector? (nth op 3 nil)))
+            (nth (nth op 3) 1 nil))))
+       (remove nil?)
+       distinct
        sort
        vec))
 
@@ -703,7 +700,7 @@
              (throw
               (ex-info
                "A relationship transaction names a relation removed by a concurrent schema write."
-               {:type :eacl/schema-changed
+               {:type :eacl/schema-changed :eacl/error :eacl/schema-changed
                 :relation-eid relation-eid})))
            (let [current (some-> ^datomic.Datom
                                  (first (d/datoms db :eavt relation-eid
@@ -880,7 +877,7 @@
    (ex-info
     (str (pr-str operation)
          " relationship update is not supported. Use :create, :touch or :delete.")
-    {:type :eacl/unsupported-operation
+    {:type :eacl/unsupported-operation :eacl/error :eacl/unsupported-operation
      :operation operation})))
 
 (defn validate-relationship-operation!

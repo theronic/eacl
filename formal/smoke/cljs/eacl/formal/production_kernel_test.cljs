@@ -3,6 +3,7 @@
    [cljs.reader :as reader]
    [cljs.test :refer-macros [deftest is testing]]
    [datascript.core :as ds]
+   [eacl.backend.source :as source]
    [eacl.backend.v8 :as backend]
    [eacl.cache :as cache]
    [eacl.consistency :as consistency]
@@ -27,6 +28,17 @@
 
 (def generated-selection
   {:kernel production/generated-javascript-kernel})
+
+(defn- datascript-basis-adapter
+  [db]
+  (datascript-backend/basis-adapter
+   db
+   {:object-id->entid
+    (fn [selected-db object-id]
+      (ds/entid selected-db [:eacl/id object-id]))
+    :entid->object-id
+    (fn [selected-db internal-id]
+      (:eacl/id (ds/entity selected-db internal-id)))}))
 
 (defn- cross-runtime-vectors
   []
@@ -102,9 +114,8 @@
               input))))))
 
 (defn- expected-consistency-work
-  [path issue-response-token?]
-  (let [response-scope (if issue-response-token? 1 0)
-        common
+  [path _issue-response-token?]
+  (let [common
         {:capability-observations 1
          :plan-decisions 1
          :authentication-attempts 0
@@ -113,42 +124,51 @@
          :revision-validation-calls 0
          :native-revision-reads 1
          :order-hint-reads 1
-         :exact-locator-reads 1}]
+         :exact-locator-reads 1
+         :source-lifecycle-reads 2
+         :snapshot-id-reads 1
+         :basis-kind-reads 1}]
     (case path
-      :captured-current
-      {:capability-observations 1
-       :plan-decisions 1
-       :authentication-attempts 0
-       :backend-selection-calls 0
-       :validation-decisions 0
-       :source-scope-reads 0
-       :revision-validation-calls 0
-       :native-revision-reads 0
-       :order-hint-reads 0
-       :exact-locator-reads 0}
       (:selected-current :authoritative)
-      (assoc common :source-scope-reads (+ 2 response-scope))
+      (assoc common :source-scope-reads 2)
       :at-least
       (assoc common
              :authentication-attempts 1
-             :source-scope-reads (+ 3 response-scope)
+             :source-scope-reads 2
              :revision-validation-calls 1
-             :native-revision-reads 2
-             :order-hint-reads 2
-             :exact-locator-reads 2)
+             :native-revision-reads 1
+             :order-hint-reads 1
+             :exact-locator-reads 1)
       :exact
       (assoc common
              :authentication-attempts 1
-             :source-scope-reads (+ 3 response-scope)
+             :source-scope-reads 2
              :revision-validation-calls 1
-             :native-revision-reads 2
-             :order-hint-reads 2
-             :exact-locator-reads 2))))
+             :native-revision-reads 1
+             :order-hint-reads 1
+             :exact-locator-reads 1))))
+
+(def plan-only-work
+  {:capability-observations 1
+   :plan-decisions 1
+   :authentication-attempts 0
+   :backend-selection-calls 0
+   :validation-decisions 0
+   :source-scope-reads 0
+   :revision-validation-calls 0
+   :native-revision-reads 0
+   :order-hint-reads 0
+   :exact-locator-reads 0
+   :source-lifecycle-reads 0
+   :snapshot-id-reads 0
+   :basis-kind-reads 0})
+
+(deftest generated-javascript-consistency-plan-work-is-dimensionally-exact
+  (is (= plan-only-work (production/consistency-plan-work))))
 
 (deftest generated-javascript-consistency-work-is-dimensionally-exact
   (doseq [path
-          [:captured-current :selected-current :authoritative
-           :at-least :exact]
+          [:selected-current :authoritative :at-least :exact]
           issue-response-token? [false true]]
     (is (= (expected-consistency-work path issue-response-token?)
            (production/consistency-selection-work
@@ -156,7 +176,7 @@
 
 (defn- consistency-plan-adapter
   [mode capability-supported?]
-  (backend/make-adapter
+  (source/make-source
    {:id :generated-consistency-plan-test
     :capabilities
     {:consistency (if capability-supported? #{mode} #{})
@@ -167,22 +187,17 @@
      :transactions #{}
      :cache-proofs #{}
      :runtime #{:cljs}}
+    :topology {}
+    :basis-ownership :borrowed
     :operations
-    (merge
-     (into
-      {}
-      (map
-       (fn [operation]
-         [operation (fn [& _] nil)]))
-      backend/required-snapshot-operations)
-     {:snapshot-id (constantly {:revision 1})
-      :source-scope
+    {:source-scope
       (constantly {:source-id "generated-plan" :branch nil})
       :source-lifecycle (constantly "generated-plan-lifecycle")
-      :native-revision
-      (constantly {:revision 1 :exact-locator 1})
-      :order-hint (constantly 1)
-      :exact-locator (constantly 1)})}))
+     :acquire-current! (fn [& _] nil)
+     :acquire-authoritative! (fn [& _] nil)
+     :acquire-at-least! (fn [& _] nil)
+     :acquire-exact! (fn [& _] nil)
+     :release! (fn [& _] nil)}}))
 
 (defn- observed-generated-plan
   [source mode]
@@ -558,8 +573,7 @@
     :capabilities
     {:consistency #{:minimize-latency}
      :snapshots #{:current :exact}
-     :source #{:stable-scope :source-lifecycle
-               :native-revision :order-hint :exact-locator}
+     :source #{}
      :cursor #{:forward :backward}
      :transactions #{}
      :cache-proofs #{:ordered-generations}
@@ -573,14 +587,11 @@
                   [operation (fn [& _] nil)]))
            backend/required-snapshot-operations)
      {:snapshot-id (constantly {:basis 1})
-      :source-scope
-      (constantly {:source-id "source" :branch nil})
-      :source-lifecycle (constantly "formal-production-lifecycle")
+      :basis-kind (constantly :ordinary)
       :native-revision
       (constantly {:revision 1 :exact-locator 1})
       :order-hint (constantly 1)
       :exact-locator (constantly 1)
-      :select-exact (fn [& _] nil)
       :object-id->internal
       #(case % "document-1" 1 "document-2" 2 nil)
       :internal-id->object
@@ -644,8 +655,7 @@
       :capabilities
       {:consistency #{:minimize-latency}
        :snapshots #{:current}
-       :source #{:stable-scope :source-lifecycle
-                 :native-revision :order-hint :exact-locator}
+       :source #{}
        :cursor #{:forward :backward}
        :transactions #{}
        :cache-proofs #{:ordered-generations}
@@ -659,10 +669,7 @@
              backend/required-snapshot-operations)
        {:snapshot-id
         (constantly {:database-id :formal :basis-t 1})
-        :source-scope
-        (constantly {:source-id :formal :branch nil})
-        :source-lifecycle
-        (constantly "formal-recursive-plan-lifecycle")
+        :basis-kind (constantly :ordinary)
         :native-revision
         (constantly {:revision 1 :exact-locator 1})
         :order-hint (constantly 1)
@@ -906,10 +913,10 @@
             :probe-exact-entry]
            [{:stage :exact-entry :available? false}
             :probe-managed-entry]
-           [{:stage :snapshot-exact-entry :available? true}
-            :use-snapshot-exact-entry]
-           [{:stage :snapshot-exact-entry :available? false}
-            :compute-snapshot-exact-value]
+           [{:stage :exact-only-entry :available? true}
+            :use-exact-entry]
+           [{:stage :exact-only-entry :available? false}
+            :compute-exact-value]
            [{:stage :managed-entry :available? true}
             :use-managed-entry]]]
     (is (= expected
@@ -1855,7 +1862,7 @@
         cached
         (datascript/make-client
          conn
-         (assoc common :cache {:remember-answers true}))
+         (assoc common :cache {}))
         uncached
         (datascript/make-client
          conn
@@ -1990,9 +1997,7 @@
             (catch :default error
               error))
           raw-adapter
-          (datascript-backend/snapshot-adapter
-           (ds/db conn)
-           (:opts uncached))
+          (datascript-basis-adapter (ds/db conn))
           raw-page (engine/lookup-resources raw-adapter page-query)
           raw-bound (get-in raw-page [:page-info :end-cursor])
           compare!
@@ -2087,9 +2092,7 @@
        uncached
        [(eacl/->Relationship user :reader document-1)])
       (let [changed-adapter
-            (datascript-backend/snapshot-adapter
-             (ds/db conn)
-             (:opts uncached))
+            (datascript-basis-adapter (ds/db conn))
             current-ids
             (mapv :id
                   (:data

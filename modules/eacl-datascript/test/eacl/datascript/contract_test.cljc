@@ -1,6 +1,7 @@
 (ns eacl.datascript.contract-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
@@ -10,6 +11,7 @@
             [eacl.engine.v8 :as engine]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
+            [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
 
 (def ^:private permission-tree-schema
@@ -28,6 +30,37 @@
      permission base = viewer
      permission view = base + parent->view
    }")
+
+(deftest default-source-lifecycle-is-cross-client-constant-test
+  (let [conn (datascript/create-conn)
+        key "01234567890123456789012345678901"
+        client-a (datascript/make-client conn {:security-key key})
+        client-b (datascript/make-client conn {:security-key key})
+        snapshot-a (eacl/snapshot client-a)
+        snapshot-b (eacl/snapshot client-b)]
+    (try
+      (is (= "eacl/initial"
+             (get-in client-a [:runtime :source-lifecycle])
+             (get-in client-b [:runtime :source-lifecycle])
+             (:source-lifecycle (eacl/basis snapshot-a))
+             (:source-lifecycle (eacl/basis snapshot-b))))
+      (finally
+        (eacl/release! snapshot-a)
+        (eacl/release! snapshot-b)))
+    (eacl/write-schema! client-a contract/smoke-schema)
+    (ds/transact!
+     conn
+     (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))
+    (let [token
+          (:zed/token
+           (eacl/create-relationship!
+            client-a (first contract/smoke-relationships)))]
+      (is (true?
+           (eacl/can?
+            client-b
+            (contract/->user "user-1") :admin
+            (contract/->account "account-1")
+            (consistency/at-least-as-fresh token)))))))
 
 (defn- seed-permission-tree!
   [conn client]
@@ -122,7 +155,7 @@
                     [:tree-root :intermediate :children 0 :leaf :subjects])
             token-data
             (causal-token/token-data
-             (get-in client [:opts :format-options])
+             (get-in client [:runtime :format-options])
              (:expanded-at captured))]
         (is (= [(eacl/spice-object :user "alice")] first-subjects))
         (is (< (:revision token-data) (:max-tx (ds/db conn))))
@@ -202,7 +235,7 @@
   (let [conn (datascript/create-conn)
         default-client (datascript/make-client conn {})
         default-selection
-        (get-in default-client [:opts :decision-kernel])
+        (get-in default-client [:runtime :decision-kernel])
         error
         (try
           (datascript/make-client conn {:engine-selection :anything})
@@ -210,7 +243,7 @@
           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) exception
             (ex-data exception)))]
     (is (satisfies? verified/DecisionKernel (:kernel default-selection)))
-    (is (true? (get-in default-client [:opts :managed-cache-enabled?])))
+    (is (true? (get-in default-client [:runtime :managed-cache-enabled?])))
     (is (= :eacl/invalid-config (:type error)))
     (is (= [:engine-selection] (:unknown-keys error)))))
 
@@ -353,14 +386,14 @@
     (ds/transact! conn [{:eacl/id (:id user)}
                         {:eacl/id (:id document)}])
     (let [default-stats (atom {})]
-      (binding [backend/*backend-op-stats* default-stats]
+      (binding [source/*source-op-stats* default-stats]
         (eacl/check-permission client demand))
-      (is (zero? (get @default-stats :select-authoritative 0))))
+      (is (zero? (get @default-stats :acquire-authoritative! 0))))
     (let [explicit-stats (atom {})]
-      (binding [backend/*backend-op-stats* explicit-stats]
+      (binding [source/*source-op-stats* explicit-stats]
         (eacl/check-permission
          client (assoc demand :consistency :fully-consistent)))
-      (is (pos? (get @explicit-stats :select-authoritative 0))))))
+      (is (pos? (get @explicit-stats :acquire-authoritative! 0))))))
 
 (deftest custom-codec-cache-isolation-and-selected-snapshot-rendering-test
   (let [conn (datascript/create-conn)
@@ -381,8 +414,8 @@
      local-client [relationship-1 relationship-2])
 
     (testing "an unfingerprinted codec keeps safe client-local exact caching"
-      (is (false? (get-in local-client [:opts :managed-cache-enabled?])))
-      (is (some? (get-in local-client [:opts :current-cache-store])))
+      (is (false? (get-in local-client [:runtime :managed-cache-enabled?])))
+      (is (some? (get-in local-client [:runtime :basis-cache-store])))
       (is (true? (:allowed? (eacl/check-permission local-client demand))))
       (is (true? (:cached? (eacl/check-permission local-client demand))))
       (let [before (datascript/cache-stats local-client)]
@@ -407,7 +440,7 @@
                    :first 10}
             first-page (eacl/lookup-resources stable-client query)
             before (datascript/cache-stats stable-client)]
-        (is (true? (get-in stable-client [:opts :managed-cache-enabled?])))
+        (is (true? (get-in stable-client [:runtime :managed-cache-enabled?])))
         (is (= #{"codec-document-1" "codec-document-2"}
                (set (map :id (:data first-page)))))
         (ds/transact! conn [{:application/unrelated :two}])
@@ -425,9 +458,9 @@
       (let [db (ds/db conn)
             eids (mapv #(ds/entid db [:eacl/id %])
                        [(:id user) (:id document-1) (:id document-2)])
-            externalize (get-in local-client [:opts :entid->object-id])
+            externalize (get-in local-client [:runtime :entid->object-id])
             external-ids (mapv #(externalize db %) eids)
-            internalize (get-in local-client [:opts :object-id->entid])]
+            internalize (get-in local-client [:runtime :object-id->entid])]
         (is (= (count external-ids) (count (distinct external-ids))))
         (is (= eids (mapv #(internalize db %) external-ids)))))))
 
@@ -582,6 +615,11 @@
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
     (contract/assert-v8-permission-tree-contract! client)
+    (contract/assert-authorization-target-matrix!
+     {:writable client
+      :read-only (datascript/make-client conn {:read-only? true})
+      :snapshot-db datascript/db
+      :direct-snapshot datascript/snapshot})
     (contract/assert-v8-request-cache-controls! client store)
     (contract/assert-v8-cache-disabled!
      (datascript/make-client conn {:cache cache/no-cache}))))

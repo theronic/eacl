@@ -29,7 +29,7 @@
   (when-not (and (bytes? root-key)
                  (pos? (alength ^bytes root-key)))
     (throw (ex-info "Zed token root key must be non-empty bytes."
-                    {:type :eacl/invalid-config
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :zed-token-key})))
   (hmac-sha-256 root-key (utf8-bytes signing-key-domain)))
 
@@ -59,7 +59,7 @@
                     (not (neg? interval-ms))
                     (fn? clock))
        (throw (ex-info "Invalid EACL revision checkpoint configuration."
-                       {:type :eacl/invalid-config
+                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                         :checkpoints config'})))
      (->RevisionCheckpoints (atom []) config'))))
 
@@ -84,7 +84,7 @@
   (when checkpoints
     (when-not (and (integer? basis-t) (not (neg? basis-t)))
       (throw (ex-info "Invalid observed Datomic revision."
-                      {:type :eacl/invalid-zed-token
+                      {:type :eacl/invalid-zed-token :eacl/error :eacl/invalid-zed-token
                        :revision basis-t})))
     (let [{:keys [clock interval-ms] :as config} (:config checkpoints)
           now (clock)]
@@ -114,7 +114,7 @@
                  (integer? current-t)
                  (not (neg? current-t)))
     (throw (ex-info "Invalid age-based freshness request."
-                    {:type :eacl/invalid-consistency
+                    {:type :eacl/invalid-consistency :eacl/error :eacl/invalid-consistency
                      :seconds-ago seconds-ago
                      :current-t current-t})))
   (if-not checkpoints

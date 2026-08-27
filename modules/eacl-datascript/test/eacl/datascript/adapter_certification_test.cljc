@@ -8,6 +8,25 @@
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]))
 
+(deftest unmanaged-connection-source-id-is-atomically-attached-test
+  (let [conn (ds/create-conn {})
+        ids
+        #?(:clj
+           (let [gate (promise)
+                 workers
+                 (repeatedly
+                  32
+                  #(future
+                     @gate
+                     (datascript-backend/connection-source-id conn)))]
+             (deliver gate true)
+             (mapv deref workers))
+           :cljs
+           [(datascript-backend/connection-source-id conn)
+            (datascript-backend/connection-source-id conn)])]
+    (is (= 1 (count (set ids))))
+    (is (= (first ids) (:eacl.datascript/source-id (meta conn))))))
+
 (defn- seed-adapter
   [fixture]
   (let [conn (datascript/create-conn)
@@ -22,16 +41,14 @@
       (:objects fixture)))
     (eacl/create-relationships! client (:relationships fixture))
     (let [db (ds/db conn)]
-      (datascript-backend/snapshot-adapter
+      (datascript-backend/basis-adapter
        db
        {:object-id->entid
         (fn [snapshot object-id]
           (ds/entid snapshot [:eacl/id object-id]))
         :entid->object-id
         (fn [snapshot internal-id]
-          (:eacl/id (ds/entity snapshot internal-id)))
-        :conn conn
-        }))))
+          (:eacl/id (ds/entity snapshot internal-id)))}))))
 
 (deftest datascript-adapter-certification-test
   (doseq [fixture (certification/coherent-fixtures [820084])]
@@ -47,7 +64,7 @@
             (pr-str (:checks report)))))))
 
 (deftest current-db-reference-identity-test
-  (testing "the exact-current cache can use immutable DB object identity"
+  (testing "the exact-basis cache can use immutable DB object identity"
     (let [conn (datascript/create-conn)
           before-1 (ds/db conn)
           before-2 (ds/db conn)

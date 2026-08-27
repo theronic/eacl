@@ -6,12 +6,19 @@ result rendering, and cursor construction all use that value.
 
 ## Consistency modes
 
-| Mode | Datomic | Datahike | DataScript | Completed-answer cache |
-| --- | --- | --- | --- | --- |
-| omitted / `:minimize-latency` | current DB visible to the Peer | current connection DB | current connection DB | exact-first, then automatic proof-backed reuse |
-| `:fully-consistent` | bounded zero-argument `d/sync` | authoritative head barrier when supported | serialized connection head | enabled for the selected current DB |
-| `:at-least-as-fresh` | targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | enabled only when selection is an ordinary current DB |
-| `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | matching snapshot-exact answers only; managed proof reuse prohibited |
+| Mode | Datomic | Datahike | DataScript | Datalevin | Completed-answer cache |
+| --- | --- | --- | --- | --- | --- |
+| omitted / `:minimize-latency` | current DB visible to the Peer | current connection DB | current connection DB | new owned read snapshot | exact-first, then automatic proof-backed reuse when certified |
+| `:fully-consistent` | bounded zero-argument `d/sync` | authoritative head barrier when supported | serialized connection head | new owned read snapshot under the sole-writer topology | enabled for the selected ordinary basis |
+| `:at-least-as-fresh` | targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | bounded acquire/check/release retry | enabled only when selection is an ordinary basis |
+| `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | unsupported | matching exact-basis answers only; managed proof reuse prohibited |
+
+These modes select a basis only when the target is an `acl`. On a retained
+snapshot they are assertions: omitted or minimize-latency evaluates that basis;
+at-least evaluates only if the authenticated floor is satisfied; exact
+evaluates only if the token names that basis; fully-consistent is rejected
+because a value with no source cannot establish a new head barrier. Assertion
+failure occurs before cache lookup, schema planning, or adapter evaluation.
 
 The default performs no synchronization or historical selection. Low-level
 engine functions that accept caller-supplied historical, filtered, or
@@ -30,27 +37,27 @@ temporal path survives ordinary commit-record cutoff collection. A
 history-disabled store with a commit graph has only conditional exact support:
 collection of the named commit can make that snapshot unavailable.
 
-## Automatic current cache
+## Automatic basis cache
 
-Every client owns a bounded current cache. Exact answers are attached to the
+Every client owns a bounded basis cache. Exact answers are attached to the
 selected immutable database identity and are checked first without proof. On
 an exact miss, deterministic ordinary current requests automatically attempt a
-complete ordered-generation proof. A proof-backed answer may survive unrelated
-forward transactions when lifecycle, normalized operation, result shape,
-schema generation, and scalar dependency frontier are equal.
+complete ordered-generation proof. A proof-backed answer may serve an older or
+newer ordinary selected basis in the same scope and lifecycle when normalized
+operation, result shape, schema generation, and scalar dependency frontier are
+equal; selected revision order is not part of that equality proof.
 
 Missing, malformed, partial, oversized, unsupported, or exceptional proof
 evidence falls back to evaluation
 and exact caching for the selected value. It never becomes an authorization
 error and never permits partial-proof reuse.
 
-Authenticated exact requests use a separate bounded completed-answer tier
-keyed by the complete ordinary snapshot identity and semantic request. That
-key includes source/lifecycle, native revision and locator, exact view kind,
-adapter and identity contracts, engine/order ABI, result shape, demand, and
-answer-affecting limits. Exact requests never probe the managed tier and never
-bind partial traversal stores. Public IDs, tokens, cursors, cache basis, and
-other metadata are rebuilt from the selected adapter on every hit.
+Authenticated exact requests use the same bounded exact-basis tier as ordinary
+selected bases. The key includes source scope and lifecycle, native revision
+and locator, basis kind, adapter and identity contracts, engine ABI, result
+shape, demand, and answer-affecting limits. Historical requests never probe the
+managed tier. Public IDs, tokens, cursors, cache basis, and other metadata are
+rebuilt from the selected adapter on every hit.
 
 Disable caching:
 
@@ -110,10 +117,12 @@ and fingerprint.
 
 Cursors bind the normalized query, principal, permission, filters, operation,
 adapter/source lifecycle, ordering, native revision, and exact/proof identity.
-On continuation EACL authenticates before traversal, continues on a
-proof-equivalent current snapshot when possible, otherwise reconstructs the
-authenticated exact snapshot on history-capable backends, and fails closed
-when neither is possible. It never drops a bound or silently restarts page one.
+The same retained snapshot continues directly with zero acquisition. An `acl`
+uses source-owned exact reconstruction when necessary. A different retained
+snapshot continues only when its complete proof admits the cursor basis;
+otherwise EACL throws `:eacl.consistency/basis-conflict` with `:source :cursor`.
+It never drops a bound, silently restarts page one, or acquires through a
+retained snapshot.
 
 Continuation state is a private performance optimization. Eviction replays the
 authenticated prefix on the already selected snapshot and does not select a
@@ -130,8 +139,8 @@ check for each consumed object.
 
 ## Assurance boundary
 
-Dafny proves the finite cache decision distinguishes current exact, managed,
-and snapshot-exact hit/miss actions; it also proves lifecycle isolation, proof
+Dafny proves the finite cache decision distinguishes exact-basis and managed
+hit/miss actions; it also proves lifecycle isolation, proof
 completeness, and scalar-frontier preservation under globally ordered atomic
 relation stamps and deterministic complete dependencies. It does not prove
 Datomic I/O effects or future cancellation, Datahike history retention, or the

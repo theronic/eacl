@@ -9,31 +9,18 @@
   "modules/eacl-datalevin/src"]
  :runtime-passes
  {:clj
-  {;; 61 -> 75 (2026-08-22): snapshot-provider-backed consistency
-   ;; selection adds fourteen literal adapter observations while moving
-   ;; acquisition/release ownership behind the provider and cross-checking
-   ;; native revision against both order and exact locators; no new operations.
-   ;; 75 -> 77 (2026-08-22): the synchronous composed-snapshot view captures
-   ;; its fixed provider's source scope and lifecycle through the same literal,
-   ;; guarded dispatch boundary; again, no new operation keys are introduced.
-   ;; 77 -> 76 (2026-08-22): certified schema generation adds its independent
-   ;; literal operation while removal of duplicated proof/schema identity reads
-   ;; reduces the total static call sites by one.
-   ;; 76 -> 82 (2026-08-23): aggregate scan/enumerate cache provenance adds
-   ;; six literal direct-match and relation-observation sites. Both reader
-   ;; passes retain the same closed certified operation set.
-   :invoke-call-count 82
+  {;; 82 -> 52 (2026-08-23): source selection and lifecycle operations moved
+   ;; out of the immutable adapter dispatch surface into eacl.backend.source.
+   ;; The new :basis-kind observation closes exact identity without granting
+   ;; the adapter source authority. Both reader passes retain the same closed
+   ;; basis-adapter operation set.
+   :invoke-call-count 52
    :operations
    #{:snapshot-id
-     :source-scope
-	     :source-lifecycle
-	     :native-revision
+     :basis-kind
+     :native-revision
      :order-hint
-     :select-current
-     :select-authoritative
-     :select-at-least
      :exact-locator
-     :select-exact
      :object-id->internal
      :internal-id->object
      :relation-defs
@@ -45,18 +32,13 @@
      :schema-generation
      :proof-frame}}
   :cljs
-  {:invoke-call-count 82
+  {:invoke-call-count 52
    :operations
    #{:snapshot-id
-     :source-scope
-	     :source-lifecycle
-	     :native-revision
+     :basis-kind
+     :native-revision
      :order-hint
-     :select-current
-     :select-authoritative
-     :select-at-least
      :exact-locator
-     :select-exact
      :object-id->internal
      :internal-id->object
      :relation-defs
@@ -72,5 +54,5 @@
   :observed-equals-certified-snapshot-operations true
   :make-adapter-requires-callable-operation-implementations true}
  :remaining
- [:backend-operation-semantics-remain-adapter-obligations
+ [:backend-operation-semantics-remain-basis-adapter-obligations
   :storage-engine-and-host-runtime-remain-trusted]}

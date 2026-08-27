@@ -9,7 +9,7 @@
             [datalevin.constants :as constants]
             [datalevin.core :as d]
             [datalevin.util :as u]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.bench.paired :as paired]
             [eacl.client.orchestration :as orchestration]
@@ -441,10 +441,8 @@
 
 (defn- measured-scalar-loop
   [client subject]
-  (eacl/with-snapshot
-    client
-    (fn [snapshot]
-      (scalar-loop-page snapshot subject))))
+  (eacl/with-snapshot [snapshot (eacl/snapshot client)]
+    (scalar-loop-page snapshot subject)))
 
 (declare environment)
 
@@ -822,7 +820,7 @@
 
 (defn- profiled-client
   [client]
-  (let [opts (:opts client)
+  (let [opts (:runtime client)
         convert (:spice-object->internal opts)]
     (assoc
      client :opts
@@ -844,7 +842,7 @@
   (with-system
     (fn [{:keys [client alice documents]}]
       (let [client (profiled-client client)
-            provider (get-in client [:opts :snapshot-provider])
+            provider (:source client)
             demand {:subject alice
                     :permission :view
                     :resource (first documents)}
@@ -889,11 +887,11 @@
                  :selection
                  (fn []
                    (let [selection
-                         (snapshot-provider/acquire! provider :current)]
+                         (source/acquire! provider :current)]
                      (try
-                       (snapshot-provider/semantic-identity selection)
+                       (source/semantic-identity selection)
                        (finally
-                         (snapshot-provider/release! selection))))))))}
+                         (source/release! selection))))))))}
             :active-readers-after (d/active-read-snapshot-info)}))))))
 
 (defn run-acquisition-gate!
@@ -902,17 +900,17 @@
   []
   (with-system
     (fn [{:keys [client]}]
-      (let [provider (get-in client [:opts :snapshot-provider])
+      (let [provider (:source client)
             result
             (distribution
              scalar-warmups scalar-samples
              (fn [_]
                (let [selection
-                     (snapshot-provider/acquire! provider :current)]
+                     (source/acquire! provider :current)]
                  (try
-                   (snapshot-provider/semantic-identity selection)
+                   (source/semantic-identity selection)
                    (finally
-                     (snapshot-provider/release! selection))))))
+                     (source/release! selection))))))
             allocation-p50 (get-in result [:allocated-bytes :p50])]
         {:format-version 1
          :benchmark :authorization-request-amplification-acquisition-gate
@@ -1039,7 +1037,7 @@
       (let [stats (atom {})
             seal-count (atom 0)
             original-seal sealed-plan/seal-plan
-            provider (get-in client [:opts :snapshot-provider])]
+            provider (:source client)]
         (binding [backend/*backend-op-stats* stats]
           (with-redefs [sealed-plan/seal-plan
                         (fn [& args]
@@ -1049,17 +1047,17 @@
                           :permission :view
                           :resource (first documents)}
                   _ (eacl/check-permission client demand)
-                  selected (snapshot-provider/acquire! provider :current)
+                  selected (source/acquire! provider :current)
                   plan-seal
                   (try
                     (measured
                      stats seal-count scalar-warmups scalar-samples
                      (fn [_]
                        (sealed-plan/seal-plan
-                        (snapshot-provider/adapter selected)
+                        (source/adapter selected)
                         [:document :view])))
                     (finally
-                      (snapshot-provider/release! selected)))
+                      (source/release! selected)))
                   report
                   {:format-version 1
                    :benchmark
@@ -1088,11 +1086,11 @@
                      stats seal-count scalar-warmups scalar-samples
                      (fn [_]
                        (let [selection
-                             (snapshot-provider/acquire! provider :current)]
+                             (source/acquire! provider :current)]
                          (try
-                           (snapshot-provider/semantic-identity selection)
+                           (source/semantic-identity selection)
                            (finally
-                             (snapshot-provider/release! selection))))))
+                             (source/release! selection))))))
                     :plan-seal plan-seal}
                    :final-operation-counts
                    (assoc (op-counts @stats) :plan-seals @seal-count)}]
@@ -1108,7 +1106,7 @@
       (let [stats (atom {})
             seal-count (atom 0)
             original-seal sealed-plan/seal-plan
-            provider (get-in client [:opts :snapshot-provider])]
+            provider (:source client)]
         (binding [backend/*backend-op-stats* stats]
           (with-redefs [sealed-plan/seal-plan
                         (fn [& args]
@@ -1119,17 +1117,17 @@
                    :permission :view
                    :resource (first documents)}
                   _ (eacl/check-permission client cache-demand)
-                  selected (snapshot-provider/acquire! provider :current)
+                  selected (source/acquire! provider :current)
                   plan-seal
                   (try
                     (measured
                      stats seal-count scalar-warmups scalar-samples
                      (fn [_]
                        (sealed-plan/seal-plan
-                        (snapshot-provider/adapter selected)
+                        (source/adapter selected)
                         [:document :view])))
                     (finally
-                      (snapshot-provider/release! selected)))]
+                      (source/release! selected)))]
               {:format-version 1
                :benchmark :authorization-request-amplification
                :phase :pre-change
@@ -1155,11 +1153,11 @@
                  stats seal-count scalar-warmups scalar-samples
                  (fn [_]
                    (let [selection
-                         (snapshot-provider/acquire! provider :current)]
+                         (source/acquire! provider :current)]
                      (try
-                       (snapshot-provider/semantic-identity selection)
+                       (source/semantic-identity selection)
                        (finally
-                         (snapshot-provider/release! selection))))))
+                         (source/release! selection))))))
                 :plan-seal plan-seal
                 :scalar-loop-dense
                 (measured

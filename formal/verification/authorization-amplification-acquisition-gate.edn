@@ -24,7 +24,7 @@
   :warmups 25
   :samples 51
   :operation
-  "snapshot-provider acquire, semantic identity read, and balanced release"}
+  "basis-source acquire, semantic identity read, and balanced release"}
  :pre-change
  {:latency-us-p50 108.583
   :allocated-bytes-p50 226728}

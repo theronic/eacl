@@ -542,7 +542,7 @@
             (= present #{:relation :permission})
             (throw (ex-info (str "Arrow target '" path "' resolves to a relation on some subject types of '"
                                  base-name "' and a permission on others: " (pr-str subject-types))
-                     {:type :eacl.schema/mixed-arrow-target
+                     {:type :eacl.schema/mixed-arrow-target :eacl/error :eacl.schema/mixed-arrow-target
                       :component component
                       :resource-type resource-type
                       :subject-types subject-types}))
@@ -607,4 +607,3 @@
                      :when comp]
                  (let [spec (resolve-component comp res-type schema-info)]
                    (model/Permission (keyword res-type) (keyword name) spec)))))))})))
-

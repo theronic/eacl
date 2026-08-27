@@ -1,8 +1,17 @@
 {:schema-version 1
  :certification-version "eacl.adapter-certification/v3"
  :date "2026-08-23"
- :formal-contract "formal/dafny/SnapshotOracle.dfy"
- :runtime-contract "eacl.backend.v8/adapter-obligations"
+ :role-contracts
+ {:basis-adapter
+  {:formal-contract "formal/dafny/SnapshotOracle.dfy"
+   :runtime-contract "eacl.backend.v8/basis-adapter-obligations"}
+  :basis-source
+  {:formal-contract "formal/dafny/ConsistencyDecision.dfy"
+   :runtime-contract "eacl.backend.source/source-obligations"}
+  :writer
+  {:formal-contracts ["formal/dafny/CacheKernel.dfy"
+                      "formal/dafny/ScalarFrontierCoherence.dfy"]
+   :runtime-contract "eacl.backend.writer/writer-obligations"}}
  :fixture
  {:generator "eacl.adapter-certification/coherent-fixture"
   :seeds [820084]

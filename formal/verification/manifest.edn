@@ -92,7 +92,7 @@
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
   {:status :passed
-   :verified-obligations 18
+   :verified-obligations 20
    :source "formal/dafny/ConsistencyDecision.dfy"
    :report "formal/verification/consistency-decision.edn"
    :integration-status
@@ -107,14 +107,14 @@
    :classification :proof-only-model
    :integration-status :no-runtime-operation
    :production-assurance-contribution :none}
-  :current-generation-cache
+  :basis-first-cache
   {:status :passed
    :verified-obligations 32
    :source "formal/dafny/CurrentCache.dfy"
    :report "formal/verification/cache-kernel.edn"
    :integration-status
    :generated-selection-routed-and-all-three-backends-regression-passed
-   :claim :conditional-current-cache-refinement}
+   :claim :conditional-basis-first-cache-refinement}
   :subproblem-cache
   {:status :passed
    :verified-obligations 73
@@ -155,7 +155,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 8809
+   :verified-obligations 8811
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -300,7 +300,7 @@
    :report "formal/verification/performance-gates.edn"
    :explorer-v8-release-report
    "formal/verification/explorer-v8-release.edn"
-   :current-generation-cache-heavy-suite :passed
+   :basis-first-cache-heavy-suite :passed
    :generated-authority-heavy-suite :passed
    :shared-subgraph-zero-final-hit :passed
    :completed-answer-hot-nonregression :passed

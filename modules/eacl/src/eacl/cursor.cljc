@@ -47,7 +47,7 @@
      :or {max-entries 2048}}]
    (when-not (and (integer? max-entries) (pos? max-entries))
      (throw (ex-info "Cursor codec cache :max-entries must be positive."
-                     {:type :eacl/invalid-config
+                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                       :max-entries max-entries})))
    (->CursorCodecCache
     (atom {:order []
@@ -64,7 +64,7 @@
   (when cache
     (when-not (instance? CursorCodecCache cache)
       (throw (ex-info "Expected an EACL cursor codec cache."
-                      {:type :eacl/invalid-config})))
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
     (reset! (:state cache)
             {:order []
              :by-token {}
@@ -84,13 +84,13 @@
   [cache key build]
   (when-not (fn? build)
     (throw (ex-info "Cursor context builder must be a function."
-                    {:type :eacl/invalid-config})))
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
   (if-not cache
     (build)
     (do
       (when-not (instance? CursorCodecCache cache)
         (throw (ex-info "Expected an EACL cursor codec cache."
-                        {:type :eacl/invalid-config})))
+                        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
       (let [state (:state cache)]
         (if (contains? (:by-context @state) key)
           (do
@@ -126,7 +126,7 @@
     (do
       (when-not (instance? CursorCodecCache cache)
         (throw (ex-info "Expected an EACL cursor codec cache."
-                        {:type :eacl/invalid-config})))
+                        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
       (let [state (:state cache)]
         (if (contains? (:by-key-context @state) key)
           (do
@@ -164,7 +164,7 @@
 (defn- cursor-error!
   [reason data]
   (throw (ex-info "Invalid EACL cursor."
-                  (merge {:type :eacl/invalid-cursor
+                  (merge {:type :eacl.pagination/invalid-cursor
                           :eacl/error :eacl.pagination/invalid-cursor
                           :reason reason}
                          data))))
@@ -387,7 +387,7 @@
                    (<= (count token) maximum-size)
                    (str/starts-with? token cursor-prefix))
       (throw (ex-info "Invalid encrypted cursor."
-                      {:type :eacl.format/invalid
+                      {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
                        :reason :malformed-token})))
     (let [segments
           (str/split
@@ -397,13 +397,13 @@
       (when-not (and (= 4 (count segments))
                      (every? not-empty segments))
         (throw (ex-info "Invalid encrypted cursor."
-                        {:type :eacl.format/invalid
+                        {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
                          :reason :malformed-token})))
       (let [[kid-segment nonce-segment ciphertext-segment tag-segment]
             segments
             _ (when (> (count kid-segment) 1368)
                 (throw (ex-info "Invalid encrypted cursor key id."
-                                {:type :eacl.format/invalid
+                                {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
                                  :reason :malformed-token})))
             kid
             (secure/decode-canonical
@@ -417,7 +417,7 @@
              kid)]
         (when-not root-key
           (throw (ex-info "Encrypted cursor authentication failed."
-                          {:type :eacl.format/invalid
+                          {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
                            :reason :authentication-failed})))
         (let [domain-key (secure/derive-key root-key cursor-domain)
               {:keys [encryption-key authentication-key]}
@@ -438,7 +438,7 @@
           (when-not (secure/secure-equal? expected supplied)
             (throw
              (ex-info "Encrypted cursor authentication failed."
-                      {:type :eacl.format/invalid
+                      {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
                        :reason :authentication-failed})))
           (let [nonce (secure/b64url-decode nonce-segment)
                 ciphertext (secure/b64url-decode ciphertext-segment)
@@ -469,7 +469,7 @@
              (nil? cursor-ttl-seconds))
     (when-not (instance? CursorCodecCache cursor-codec-cache)
       (throw (ex-info "Expected an EACL cursor codec cache."
-                      {:type :eacl/invalid-config})))
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
     cursor-codec-cache))
 
 (defn- cached-token

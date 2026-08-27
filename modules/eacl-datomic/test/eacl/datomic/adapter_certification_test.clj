@@ -16,7 +16,7 @@
         (let [client
               (datomic/make-client
                conn
-               {:page-token-key "datomic-adapter-certification"})]
+               {:security-key "datomic-adapter-certification000"})]
           (eacl/write-schema! client (:schema fixture))
           @(d/transact
             conn
@@ -29,14 +29,12 @@
            client (:relationships fixture))
           (let [db (d/db conn)
                 adapter
-                (datomic-backend/snapshot-adapter
+                (datomic-backend/basis-adapter
                  db
                  {:entid->object-id
                   (fn [snapshot internal-id]
                     (:eacl/id
-                     (d/entity snapshot internal-id)))
-                  :conn conn
-                  })
+                     (d/entity snapshot internal-id)))})
                 report
                 (certification/certify
                  {:adapter adapter

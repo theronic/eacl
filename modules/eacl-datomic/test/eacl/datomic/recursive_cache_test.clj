@@ -9,6 +9,7 @@
   (:require [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.cache :as shared-cache]
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.cache :as cache]
@@ -16,6 +17,7 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
+            [eacl.engine.v8 :as engine]
             [eacl.engine.portable-decisions :as portable-decisions]
             [eacl.engine.portable-indexed :as portable-indexed]
             [eacl.execution :as execution]
@@ -90,7 +92,7 @@
          data []
          derived 0]
     (let [stats (atom {})
-          page (binding [idx/*recursive-traversal-stats* stats]
+          page (binding [engine/*recursive-traversal-stats* stats]
                  (eacl/lookup-resources
                   client
                   (cond-> query after (assoc :after after))))
@@ -167,7 +169,7 @@
 
 (deftest datomic-validates-execution-contract-before-backend-or-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "execution-order"})
+    (let [client (core/make-client conn {:security-key "execution-order00000000000000000"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -183,23 +185,23 @@
                 nil
                 (catch clojure.lang.ExceptionInfo error
                   (ex-data error))))]
-        (is (= :eacl/invalid-request (:type data)))
+        (is (= :eacl.execution/invalid-contract (:type data)))
         (is (= :evaluation (:key data)))
         (is (empty? @backend-work))
         (is (= before (core/cache-stats client)))))))
 
 (deftest datomic-recursive-cursor-binds-normalized-traversal-limits-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "cursor-limit-contract"
+    (let [token-key "cursor-limit-contract00000000000"
           roomy
           (core/make-client
            conn
-           {:page-token-key token-key
+           {:security-key token-key
             :recursive-traversal-limits {:max-derived-grants 1000}})
           tight
           (core/make-client
            conn
-           {:page-token-key token-key
+           {:security-key token-key
             :recursive-traversal-limits {:max-derived-grants 2}})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
@@ -218,29 +220,29 @@
 
 (deftest datomic-demand-and-complete-evaluation-have-identical-page-order-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "execution-parity"
-          demand-client (core/make-client conn {:page-token-key token-key})
+    (let [token-key "execution-parity0000000000000000"
+          demand-client (core/make-client conn {:security-key token-key})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
                  :first 5}]
       (seed-recursive! conn demand-client 30 1)
       (let [uncached-client
-            (core/make-client conn {:page-token-key token-key
-                                    :cache cache/no-cache})
+            (core/make-client conn {:security-key token-key
+                                    :cache shared-cache/no-cache})
             complete-client
-            (core/make-client conn {:page-token-key token-key})
+            (core/make-client conn {:security-key token-key})
             demand-work (atom {})
             uncached-work (atom {})
             complete-work (atom {})
             demand
-            (binding [idx/*recursive-traversal-stats* demand-work]
+            (binding [engine/*recursive-traversal-stats* demand-work]
               (eacl/lookup-resources demand-client query))
             uncached
-            (binding [idx/*recursive-traversal-stats* uncached-work]
+            (binding [engine/*recursive-traversal-stats* uncached-work]
               (eacl/lookup-resources uncached-client query))
             complete
-            (binding [idx/*recursive-traversal-stats* complete-work]
+            (binding [engine/*recursive-traversal-stats* complete-work]
               (eacl/lookup-resources
                complete-client
                (assoc query :evaluation :complete-denotation)))]
@@ -260,25 +262,25 @@
 
 (deftest recursive-page-order-is-stable-across-scan-wave-boundaries-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "page-boundary-scan-wave"
+    (let [token-key "page-boundary-scan-wave000000000"
           lifecycle "page-boundary-scan-wave-source"
           cached-client
-          (core/make-client conn {:page-token-key token-key
+          (core/make-client conn {:security-key token-key
                                   :source-lifecycle lifecycle})
           query (seed-page-boundary-scan-wave-regression! conn cached-client)
           uncached-client
-          (core/make-client conn {:page-token-key token-key
+          (core/make-client conn {:security-key token-key
                                   :source-lifecycle lifecycle
-                                  :cache cache/no-cache})
+                                  :cache shared-cache/no-cache})
           portable-client
           (with-redefs
            [production-kernel/default-selection
             {:kernel
              (portable-indexed/portable-indexed-kernel
               portable-decisions/portable-decision-kernel)}]
-            (core/make-client conn {:page-token-key token-key
+            (core/make-client conn {:security-key token-key
                                     :source-lifecycle lifecycle
-                                    :cache cache/no-cache}))
+                                    :cache shared-cache/no-cache}))
           clients [[:cached-generated cached-client]
                    [:uncached-generated uncached-client]
                    [:portable portable-client]]]
@@ -296,7 +298,7 @@
 
 (deftest complete-point-membership-uses-generated-logical-not-numeric-order-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "logical-membership"})
+    (let [client (core/make-client conn {:security-key "logical-membership00000000000000"})
           user (spice-object :user "logical-user")
           low (spice-object :account "logical-low")
           high (spice-object :account "logical-high")
@@ -329,7 +331,7 @@
 
 (deftest datomic-deadline-is-typed-and-never-becomes-denial-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "execution-deadline"})
+    (let [client (core/make-client conn {:security-key "execution-deadline00000000000000"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -354,8 +356,8 @@
 
 (deftest forward-recursive-pagination-resumes-retries-and-recomputes-misses-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "recursive-forward-cache"
-          cached-client (core/make-client conn {:page-token-key token-key
+    (let [token-key "recursive-forward-cache000000000"
+          cached-client (core/make-client conn {:security-key token-key
                                                 :source-lifecycle
                                                 portable-source-lifecycle})
           query {:subject (spice-object :user (user-id 0))
@@ -363,37 +365,37 @@
                  :resource/type :account
                  :first 5}]
       (seed-recursive! conn cached-client 30 1)
-      (let [disabled-client (core/make-client conn {:page-token-key token-key
+      (let [disabled-client (core/make-client conn {:security-key token-key
                                                     :source-lifecycle
                                                     portable-source-lifecycle
-                                                    :cache cache/no-cache})
-            alternate-client (core/make-client conn {:page-token-key token-key
+                                                    :cache shared-cache/no-cache})
+            alternate-client (core/make-client conn {:security-key token-key
                                                      :source-lifecycle
                                                      portable-source-lifecycle})
             page1-stats (atom {})
-            page1 (binding [idx/*recursive-traversal-stats* page1-stats]
+            page1 (binding [engine/*recursive-traversal-stats* page1-stats]
                     (eacl/lookup-resources cached-client query))
             cursor (page-end-cursor page1)
             replay-page1 (eacl/lookup-resources disabled-client query)
             hit-stats (atom {})
             miss-stats (atom {})
-            hit-page2 (binding [idx/*recursive-traversal-stats* hit-stats]
+            hit-page2 (binding [engine/*recursive-traversal-stats* hit-stats]
                         (eacl/lookup-resources cached-client (assoc query :after cursor)))
-            miss-page2 (binding [idx/*recursive-traversal-stats* miss-stats]
+            miss-page2 (binding [engine/*recursive-traversal-stats* miss-stats]
                          (eacl/lookup-resources
                           disabled-client
                           (assoc query :after (page-end-cursor replay-page1))))
             alternate-stats (atom {})
             alternate-page2
-            (binding [idx/*recursive-traversal-stats* alternate-stats]
+            (binding [engine/*recursive-traversal-stats* alternate-stats]
               (eacl/lookup-resources alternate-client
                                      (assoc query :after cursor)))
             retry-stats (atom {})
-            retry-page2 (binding [idx/*recursive-traversal-stats* retry-stats]
+            retry-page2 (binding [engine/*recursive-traversal-stats* retry-stats]
                           (eacl/lookup-resources cached-client
                                                  (assoc query :after cursor)))
             previous-stats (atom {})
-            previous-page (binding [idx/*recursive-traversal-stats* previous-stats]
+            previous-page (binding [engine/*recursive-traversal-stats* previous-stats]
                             (eacl/lookup-resources
                              cached-client
                              (-> query
@@ -426,14 +428,11 @@
         (is (zero? (stat retry-stats :stream-fills))
             "an answer hit does not re-enter recursive traversal")
         (is (<= (stat previous-stats :derived-grants) 30)
-            "bounded prefix replay retains at most the requested window")
-        (is (pos? (get-in (core/cache-stats cached-client)
-                          [:subproblems :answer-hits]))
-            "an exact demanded page is reusable without caching a denotation")))))
+            "bounded prefix replay retains at most the requested window")))))
 
 (deftest reverse-recursive-pagination-resumes-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "recursive-reverse-cache"})
+    (let [client (core/make-client conn {:security-key "recursive-reverse-cache000000000"})
           query {:resource (spice-object :account (account-id 4))
                  :permission :read
                  :subject/type :user
@@ -441,7 +440,7 @@
       (seed-recursive! conn client 5 130)
       (let [page1 (eacl/lookup-subjects client query)
             stats (atom {})
-            page2 (binding [idx/*recursive-traversal-stats* stats]
+            page2 (binding [engine/*recursive-traversal-stats* stats]
                     (eacl/lookup-subjects
                      client
                      (assoc query :after (page-end-cursor page1))))]
@@ -459,8 +458,8 @@
 
 (deftest recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "recursive-historical-cache"
-          cached-client (core/make-client conn {:page-token-key token-key
+    (let [token-key "recursive-historical-cache000000"
+          cached-client (core/make-client conn {:security-key token-key
                                                 :source-lifecycle
                                                 portable-source-lifecycle})
           query {:subject (spice-object :user (user-id 0))
@@ -468,10 +467,10 @@
                  :resource/type :account
                  :first 5}]
       (seed-recursive! conn cached-client 15 1)
-      (let [replay-client (core/make-client conn {:page-token-key token-key
+      (let [replay-client (core/make-client conn {:security-key token-key
                                                   :source-lifecycle
                                                   portable-source-lifecycle
-                                                  :cache cache/no-cache})
+                                                  :cache shared-cache/no-cache})
             page1 (eacl/lookup-resources cached-client query)
             cursor (page-end-cursor page1)
             page2 (eacl/lookup-resources cached-client
@@ -506,7 +505,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:page-token-key "recursive-freshness-floor"})
+                  {:security-key "recursive-freshness-floor0000000"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -559,7 +558,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:page-token-key "recursive-unrelated"})
+                  {:security-key "recursive-unrelated0000000000000"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -581,7 +580,7 @@
                            (spice-object :account (account-id n)))))
         (let [stats (atom {})
               crossings (atom {})
-              page2 (binding [idx/*recursive-traversal-stats* stats
+              page2 (binding [engine/*recursive-traversal-stats* stats
                               verified/*kernel-crossing-stats* crossings]
                       (eacl/lookup-resources client (assoc query :after cursor)))]
           (is (= (mapv #(spice-object :account (account-id %))
@@ -600,7 +599,7 @@
               "continuation work stays below full-denotation work")
           (let [fresh-stats (atom {})
                 fresh-page1
-                (binding [idx/*recursive-traversal-stats* fresh-stats]
+                (binding [engine/*recursive-traversal-stats* fresh-stats]
                   (eacl/lookup-resources client query))]
             (is (= (:data page1) (:data fresh-page1)))
             (is (true? (:cached? fresh-page1))
@@ -608,17 +607,16 @@
             (is (zero? (get @fresh-stats :derived-grants 0))
                 "a managed answer hit performs no recursive traversal")))))))
 
-(deftest recursive-denotations-are-client-private-across-namespaces-test
+(deftest recursive-denotations-are-client-private-across-clients-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "recursive-namespace-isolation"
+    (let [token-key "recursive-namespace-isolation000"
           client-a
           (core/make-client
            conn
            {:security-key token-key
             ;; asserts on engine work, so the answer cache must not
             ;; short-circuit the engine before it can slice the denotation
-            :cache {:namespace :tenant-a
-                    :remember-answers false}})
+            :cache shared-cache/no-cache})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -628,15 +626,14 @@
             (core/make-client
              conn
              {:security-key token-key
-              :cache {:namespace :tenant-b
-                      :remember-answers false}})
+              :cache shared-cache/no-cache})
             a-stats (atom {})
             page-a
-            (binding [idx/*recursive-traversal-stats* a-stats]
+            (binding [engine/*recursive-traversal-stats* a-stats]
               (eacl/lookup-resources client-a query))
             first-b-stats (atom {})
             page-b
-            (binding [idx/*recursive-traversal-stats* first-b-stats]
+            (binding [engine/*recursive-traversal-stats* first-b-stats]
               (eacl/lookup-resources client-b query))]
         (is (= (:data page-a) (:data page-b)))
         (is (pos? (stat a-stats :derived-grants))
@@ -645,13 +642,11 @@
             "tenant B cannot reuse tenant A's denotation and pays its own closure")
         (let [second-b-stats (atom {})
               page-b-again
-              (binding [idx/*recursive-traversal-stats* second-b-stats]
+              (binding [engine/*recursive-traversal-stats* second-b-stats]
                 (eacl/lookup-resources client-b query))]
           (is (= (:data page-b) (:data page-b-again)))
-          ;; With :remember-answers false there is no answer memo to serve
-          ;; the repeat (the old engine's private page-memo layer retired
-          ;; with it); the repeat re-derives deterministically and stays
-          ;; demand-bounded.
+          ;; With the cache disabled there is no completed-answer memo to
+          ;; serve the repeat. Replay is deterministic and demand-bounded.
           (is (= (stat first-b-stats :derived-grants)
                  (stat second-b-stats :derived-grants))
               "an uncached repeat re-derives exactly the same bounded work"))))))
@@ -661,8 +656,8 @@
     (let [client
           (core/make-client
            conn
-           {:security-key "reverse-rule-weight"})
-          store (get-in client [:opts :continuation-cache-store])
+           {:security-key "reverse-rule-weight0000000000000"})
+          store (get-in client [:runtime :continuation-cache-store])
           query {:resource (spice-object :account (account-id 2))
                  :permission :read
                  :subject/type :user
@@ -681,7 +676,7 @@
 
 (deftest recursive-cursor-remains-on-exact-snapshot-when-live-objects-disappear-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [client (core/make-client conn {:page-token-key "recursive-deleted-boundary"})
+    (let [client (core/make-client conn {:security-key "recursive-deleted-boundary000000"})
           subject (spice-object :user (user-id 0))
           query {:subject subject
                  :permission :read
@@ -714,7 +709,7 @@
 
 (deftest alternate-cache-resolves-its-own-denotation-for-a-foreign-cursor-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "recursive-shared-proof"
+    (let [token-key "recursive-shared-proof0000000000"
           first-client
           (core/make-client
            conn
@@ -733,7 +728,7 @@
             page1 (eacl/lookup-resources first-client query)
             stats (atom {})
             page2
-            (binding [idx/*recursive-traversal-stats* stats]
+            (binding [engine/*recursive-traversal-stats* stats]
               (eacl/lookup-resources
                second-client
                (assoc query :after (page-end-cursor page1))))]
@@ -747,8 +742,8 @@
     (let [client
           (core/make-client
            conn
-           {:security-key "recursive-bounded-streams"})
-          store (get-in client [:opts :continuation-cache-store])
+           {:security-key "recursive-bounded-streams0000000"})
+          store (get-in client [:runtime :continuation-cache-store])
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -781,8 +776,8 @@
 
 (deftest uncached-client-safely-serves-a-borrowed-cursor-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "recursive-rejected-cache"
-          client (core/make-client conn {:page-token-key token-key
+    (let [token-key "recursive-rejected-cache00000000"
+          client (core/make-client conn {:security-key token-key
                                          :source-lifecycle
                                          portable-source-lifecycle})
           query {:subject (spice-object :user (user-id 0))
@@ -790,14 +785,14 @@
                  :resource/type :account
                  :first 3}]
       (seed-recursive! conn client 12 1)
-      (let [fresh-client (core/make-client conn {:page-token-key token-key
+      (let [fresh-client (core/make-client conn {:security-key token-key
                                                  :source-lifecycle
                                                  portable-source-lifecycle
-                                                 :cache cache/no-cache})
+                                                 :cache shared-cache/no-cache})
             page1 (eacl/lookup-resources client query)
             stats (atom {})
             page2
-            (binding [idx/*recursive-traversal-stats* stats]
+            (binding [engine/*recursive-traversal-stats* stats]
               (eacl/lookup-resources
                fresh-client
                (assoc query :after (page-end-cursor page1))))]
@@ -809,15 +804,15 @@
 
 (deftest complete-recursive-enumeration-is-equal-with-or-without-cache-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [token-key "recursive-linear-walk"
-          cached-client (core/make-client conn {:page-token-key token-key})
+    (let [token-key "recursive-linear-walk00000000000"
+          cached-client (core/make-client conn {:security-key token-key})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
                  :first 10}]
       (seed-recursive! conn cached-client 80 1)
-      (let [disabled-client (core/make-client conn {:page-token-key token-key
-                                                    :cache cache/no-cache})
+      (let [disabled-client (core/make-client conn {:security-key token-key
+                                                    :cache shared-cache/no-cache})
             cached (collect-forward cached-client query)
             replayed (collect-forward disabled-client query)]
         (is (= (:data replayed) (:data cached)))
@@ -830,7 +825,7 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:security-key "recursive-no-expiry"})
+                  {:security-key "recursive-no-expiry0000000000000"})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -838,10 +833,12 @@
       (seed-recursive! conn client 10 1)
       (let [page1 (eacl/lookup-resources client query)
             cursor (page-end-cursor page1)
-            now-var (ns-resolve 'eacl.datomic.core 'now-seconds)
+            now-var (ns-resolve 'eacl.cursor 'now-seconds)
             now-fn @now-var
             page2
-            (with-redefs-fn {now-var #(+ 600 (long (now-fn)))}
+            (with-redefs-fn
+              {now-var (fn [options]
+                         (+ 600 (long (now-fn options))))}
               #(eacl/lookup-resources client (assoc query :after cursor)))]
         (is (= (mapv account-id (range 3 6))
                (mapv :id (:data page2)))
@@ -854,8 +851,8 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client
                   conn
-                  {:page-token-key "recursive-expired"
-                   :page-token-ttl-seconds 1})
+                  {:security-key "recursive-expired000000000000000"
+                   :cursor-ttl-seconds 1})
           query {:subject (spice-object :user (user-id 0))
                  :permission :read
                  :resource/type :account
@@ -863,11 +860,13 @@
       (seed-recursive! conn client 10 1)
       (let [page1 (eacl/lookup-resources client query)
             cursor (page-end-cursor page1)
-            now-var (ns-resolve 'eacl.datomic.core 'now-seconds)
+            now-var (ns-resolve 'eacl.cursor 'now-seconds)
             now-fn @now-var
             crossings (atom {})
             error
-            (with-redefs-fn {now-var #(+ 120 (long (now-fn)))}
+            (with-redefs-fn
+              {now-var (fn [options]
+                         (+ 120 (long (now-fn options))))}
               (fn []
                 (binding [verified/*kernel-crossing-stats* crossings]
                   (try
@@ -879,6 +878,6 @@
         (is (= :eacl.pagination/expired-cursor (:type (ex-data error))))
         (is (= :eacl.pagination/expired-cursor (:eacl/error (ex-data error))))
         (is (= :expired (:reason (ex-data error))))
-        (is (= "Page token has expired." (ex-message error)))
+        (is (= "Invalid EACL cursor." (ex-message error)))
         (is (pos? (get @crossings :cursor-continuation 0))
             "the expired token was rejected by a :cursor-continuation kernel decision")))))

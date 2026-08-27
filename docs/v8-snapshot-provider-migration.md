@@ -1,29 +1,28 @@
-# v8 snapshot-provider migration
+# v8 basis-source migration
 
-EACL v8 clients construct a long-lived `eacl.backend.snapshot-provider`
+EACL v8 clients construct a long-lived `eacl.backend.source`
 instead of reading a database value during client construction or at every
-orchestration checkpoint. The provider publishes snapshot-free capability,
+orchestration checkpoint. The source publishes snapshot-free capability,
 topology, traversal, ownership, and execution metadata. Each public request
 then acquires one selected immutable adapter and releases it after proof,
 cache, cursor, token, ID conversion, and response realization are complete.
 
-## Compatibility path for immutable values
+## Borrowed immutable values
 
 Backends whose database values are genuinely immutable may use
-`borrowed-adapter-provider`. The static adapter is inspected but not retained;
-every acquisition callback must return the adapter selected for that request.
-The provider declares `:snapshot-ownership :borrowed`, and its release
-operation is a no-op. Datomic, Datahike, and DataScript use this path without
-changing their public client APIs or capability declarations.
+`:basis-ownership :borrowed`. Every acquisition callback returns the adapter
+selected for that request; `:release!` is a no-op for its native value. Datomic,
+Datahike, and DataScript use this path without changing their one-`make-client`
+public construction flow.
 
 The borrowed path is invalid for a mutable handle, an adapter that consults a
 live connection after construction, or any value that owns a native reader,
 cursor, transaction, file, socket, or lease. Object identity and
 `identical?` are not snapshot equality.
 
-## Required owned-provider behavior
+## Required owned-source behavior
 
-An owned provider must:
+An owned source must:
 
 1. declare the closed execution constraints and ownership policy at client
    construction without acquiring a request snapshot;
@@ -41,7 +40,7 @@ An owned provider must:
 
 Core attempts cleanup for every map returned by an acquisition callback,
 including a malformed map that omitted `:release-token` (the cleanup callback
-receives nil). A provider that throws before returning must clean any native
+receives nil). A source that throws before returning must clean any native
 state it acquired internally because core has no release token.
 
 ## Semantic snapshot identity
@@ -54,6 +53,7 @@ database object identity. The identity contains exactly:
  :source-id ...
  :branch ...
  :source-lifecycle ...
+ :basis-kind ...
  :revision ...
  :exact-locator ...
  :backend-snapshot-id ...}
@@ -63,7 +63,7 @@ The adapter's native revision must agree with both `:order-hint` and
 `:exact-locator`. Independently acquired snapshots may compare equal only when
 every EACL-visible dimension above is equal. Mutable values, directory paths,
 credentials, and process-local object identities must not appear in tokens or
-portable cache identity. A provider must reject a snapshot identity that
+portable cache identity. A source must reject a snapshot identity that
 contains the retired `:schema-identity` field.
 
 Schema generation is deliberately separate from basis identity. The selected
@@ -71,7 +71,7 @@ adapter exposes it through the memoized `:schema-generation` operation, where
 it keys schema-derived registries and is checked against an ordered proof
 frame when one exists. It is not copied into native revision tokens, exact
 locators, or semantic snapshot identity. In particular, an owned Datalevin
-provider reads only revision bounds while acquiring a native reader; it does
+source reads only revision bounds while acquiring a native reader; it does
 not fetch full metadata or fingerprint physical schema. Its adapter performs
 the one schema-generation probe lazily if a request needs derived state.
 
@@ -89,8 +89,8 @@ tokens, invalidation, and any external monotonic watermark hook.
 
 ## Migration checklist
 
-- Replace client-construction DB retention with a provider constructor.
-- Keep a compatibility provider only for certified immutable values.
+- Replace client-construction DB retention with a source constructor.
+- Use borrowed ownership only for certified immutable values.
 - Count acquisitions and releases for every public operation and error path.
 - Test cancellation immediately after acquisition and failure during context
   construction, proof, cache publication, cursor recovery, and response

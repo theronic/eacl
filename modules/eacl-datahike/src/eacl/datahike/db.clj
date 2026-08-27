@@ -39,7 +39,7 @@
     (number? eid-or-ref) eid-or-ref
     (or (keyword? eid-or-ref) (sequential? eid-or-ref)) (:db/id (d/entity db eid-or-ref))
     :else (throw (ex-info (str "Expected a number, ident or lookup ref, got " (pr-str eid-or-ref) ".")
-                          {:type :eacl/invalid-entity-id
+                          {:type :eacl/invalid-entity-id :eacl/error :eacl/invalid-entity-id
                            :value eid-or-ref}))))
 
 (defn attribute-refs?

@@ -32,14 +32,14 @@
       (throw
        (ex-info
         "EACL Config Error: :permission-tree-limits must be a map."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :permission-tree-limits
          :value overrides})))
     (when-let [unknown (seq (remove known (keys overrides)))]
       (throw
        (ex-info
         "EACL Config Error: unknown permission-tree limit."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :permission-tree-limits
          :unknown-keys (vec unknown)
          :known-keys known})))
@@ -47,7 +47,7 @@
       (throw
        (ex-info
         "EACL Config Error: permission-tree limits must be positive portable exact integers."
-        {:type :eacl/invalid-config
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
          :key :permission-tree-limits
          :value overrides
          :maximum backend/maximum-exact-integer})))
@@ -63,13 +63,13 @@
     (throw
      (ex-info
       "expand-permission-tree requires a request map."
-      {:type :eacl/invalid-request
+      {:type :eacl.permission-tree/invalid-request
        :eacl/error :eacl.permission-tree/invalid-request})))
   (when-let [unknown (seq (remove query-keys (keys query)))]
     (throw
      (ex-info
       "expand-permission-tree received unknown request keys."
-      {:type :eacl/invalid-request
+      {:type :eacl.permission-tree/invalid-request
        :eacl/error :eacl.permission-tree/invalid-request
        :unknown-keys (vec unknown)
        :known-keys query-keys})))
@@ -78,7 +78,7 @@
       (throw
        (ex-info
         "expand-permission-tree is missing a required request key."
-        {:type :eacl/invalid-request
+        {:type :eacl.permission-tree/invalid-request
          :eacl/error :eacl.permission-tree/invalid-request
          :missing-key required}))))
   (let [{:keys [resource permission]} query]
@@ -88,21 +88,21 @@
       (throw
        (ex-info
         "expand-permission-tree requires a resource with an unqualified keyword :type and non-nil :id."
-        {:type :eacl/invalid-request
+        {:type :eacl.permission-tree/invalid-request
          :eacl/error :eacl.permission-tree/invalid-request
          :key :resource})))
     (when (some? (:relation resource))
       (throw
        (ex-info
         "expand-permission-tree resources cannot carry a subject relation."
-        {:type :eacl/invalid-request
+        {:type :eacl.permission-tree/invalid-request
          :eacl/error :eacl.permission-tree/invalid-request
          :key :resource/relation})))
     (when-not (unqualified-keyword? permission)
       (throw
        (ex-info
         "expand-permission-tree requires an unqualified keyword permission."
-        {:type :eacl/invalid-request
+        {:type :eacl.permission-tree/invalid-request
          :eacl/error :eacl.permission-tree/invalid-request
          :key :permission}))))
   query)
@@ -151,12 +151,14 @@
                      (js/Number.isSafeInteger value)))
        (<= 0 value backend/maximum-exact-integer)))
 
-(defn selected-adapter-token
-  "Issues a token from the selected adapter through the redacting boundary."
-  [adapter opts]
-  (adapter-call!
-   (fn [_]
-     (consistency/selected-adapter-token adapter opts))))
+(defn selected-basis-token
+  "Issues a token from the selected basis through the redacting boundary."
+  [opts]
+  (if-let [basis-identity (:snapshot-semantic-identity opts)]
+    (adapter-call!
+     (fn [_]
+       (consistency/selected-basis-token basis-identity opts)))
+    (adapter-contract! :missing-basis-identity)))
 
 (def ^:private dimension->limit
   {:depth :max-depth

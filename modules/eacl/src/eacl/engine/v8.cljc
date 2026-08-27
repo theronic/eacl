@@ -270,6 +270,7 @@
       (page-error!
        "Generated page normalization returned an unknown error."
        {:type :eacl.verification/kernel-failure
+        :eacl/error :eacl.verification/kernel-failure
         :operation :relationship-page
         :reason reason}))))
 
@@ -438,8 +439,13 @@
   ([snapshot]
    (make-schema-cache snapshot (schema-version snapshot)))
   ([snapshot known-schema-generation]
+   (make-schema-cache snapshot nil known-schema-generation))
+  ([snapshot basis-identity known-schema-generation]
    {:backend-id (backend/backend-id snapshot)
-    :source-scope (backend/invoke snapshot :source-scope)
+    :source-scope
+    (some-> basis-identity
+            (select-keys
+             [:backend :source-id :branch :source-lifecycle]))
     :database-id (:database-id (backend/invoke snapshot :snapshot-id))
     :schema-version known-schema-generation
     ;; Client-owned memo of the parsed public schema for this generation
@@ -530,15 +536,27 @@
   The key deliberately contains no listener/client counter. A missed callback
   cannot make a cache entry cross a source or schema proof boundary."
   ([snapshot]
-   (schema-cache-key
-    snapshot
-    (schema-version snapshot)))
+   (throw
+    (ex-info
+     "Cross-request derived state requires complete basis identity."
+     {:type :eacl/invalid-basis-identity
+      :eacl/error :eacl/invalid-basis-identity
+      :backend (backend/backend-id snapshot)})))
   ([snapshot schema-generation]
+   (schema-cache-key snapshot nil schema-generation))
+  ([snapshot basis-identity schema-generation]
+   (when-not (map? basis-identity)
+     (throw
+      (ex-info
+       "Cross-request derived state requires complete basis identity."
+       {:type :eacl/invalid-basis-identity
+        :eacl/error :eacl/invalid-basis-identity
+        :backend (backend/backend-id snapshot)})))
    [engine-version
     (backend/backend-id snapshot)
     (backend/fingerprint snapshot)
-    (backend/invoke snapshot :source-scope)
-    (backend/invoke snapshot :source-lifecycle)
+    (select-keys basis-identity [:source-id :branch])
+    (:source-lifecycle basis-identity)
     schema-generation]))
 
 (def ^:private maximum-schema-cache-generations 64)
@@ -561,21 +579,26 @@
   Installation is one nonblocking atomic update. A request retains its
   immutable generation even if a later install evicts it from the registry."
   ([registry snapshot]
-   (schema-cache-for! registry snapshot (schema-version snapshot)))
+   (request-schema-cache snapshot))
   ([registry snapshot schema-generation]
+   (request-schema-cache snapshot))
+  ([registry snapshot basis-identity schema-generation]
    (let [;; Without a certified schema generation, cross-snapshot reuse must
          ;; fail closed. A fresh request-local cache still avoids repeating pure
          ;; schema derivations within this one immutable selected snapshot.
-         request-local? (nil? schema-generation)]
+         request-local? (or (nil? schema-generation)
+                            (nil? basis-identity))]
      (if request-local?
        (request-schema-cache snapshot)
-       (let [key (schema-cache-key snapshot schema-generation)
+       (let [key (schema-cache-key
+                  snapshot basis-identity schema-generation)
              existing (get @registry key)]
          (if existing
            existing
            (let [created
                  (make-schema-cache
                   snapshot
+                  basis-identity
                   schema-generation)
                  selected (volatile! created)]
              (swap! registry
@@ -886,25 +909,29 @@
 
 (defn normalize-recursive-traversal-limits
   [overrides]
-  (let [overrides (or overrides {})
-        known (set (keys default-recursive-traversal-limits))
-        unknown (seq (remove known (keys overrides)))]
+  (let [overrides (or overrides {})]
     (when-not (map? overrides)
       (throw (ex-info ":recursive-traversal-limits must be a map."
                       {:type :eacl/invalid-config
+                       :eacl/error :eacl/invalid-config
                        :recursive-traversal-limits overrides})))
-    (when unknown
-      (throw (ex-info "Unknown recursive traversal safety limit."
-                      {:type :eacl/invalid-config
-                       :unknown-keys (vec unknown)
-                       :known-keys known})))
-    (when-not (every? (fn [[_ value]]
-                        (and (integer? value) (pos? value)))
-                      overrides)
-      (throw (ex-info "Recursive traversal safety limits must be positive integers."
-                      {:type :eacl/invalid-config
-                       :recursive-traversal-limits overrides})))
-    (merge default-recursive-traversal-limits overrides)))
+    (let [
+        known (set (keys default-recursive-traversal-limits))
+        unknown (seq (remove known (keys overrides)))]
+      (when unknown
+        (throw (ex-info "Unknown recursive traversal safety limit."
+                        {:type :eacl/invalid-config
+                         :eacl/error :eacl/invalid-config
+                         :unknown-keys (vec unknown)
+                         :known-keys known})))
+      (when-not (every? (fn [[_ value]]
+                          (and (integer? value) (pos? value)))
+                        overrides)
+        (throw (ex-info "Recursive traversal safety limits must be positive integers."
+                        {:type :eacl/invalid-config
+                         :eacl/error :eacl/invalid-config
+                         :recursive-traversal-limits overrides})))
+      (merge default-recursive-traversal-limits overrides))))
 
 (def ^:dynamic *recursive-traversal-limits*
   default-recursive-traversal-limits)
@@ -1518,6 +1545,8 @@
                                   (merge
                                    (stable-limits)
                                    {:adapter db
+                                    :basis-identity
+                                    (:basis-identity *proof-frame*)
                                     :fetch-fn fetch-fn
                                     :plan plan
                                     :direction traversal
@@ -1609,6 +1638,8 @@
                            (merge
                             (stable-limits)
                             {:adapter db
+                             :basis-identity
+                             (:basis-identity *proof-frame*)
                              :fetch-fn fetch-fn
                              :plan plan
                              :direction traversal

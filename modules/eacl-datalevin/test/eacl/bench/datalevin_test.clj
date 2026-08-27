@@ -6,7 +6,7 @@
             [datalevin.constants :as constants]
             [datalevin.core :as d]
             [datalevin.util :as u]
-            [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl]
             [eacl.datalevin.backend :as datalevin-backend]
@@ -143,9 +143,9 @@
       (let [document (first documents)
             heap-before (used-heap-bytes)
             disk-before (directory-bytes dir)
-            provider (get-in client [:opts :snapshot-provider])
-            selected (snapshot-provider/acquire! provider :current)
-            adapter (snapshot-provider/adapter selected)
+            provider (:source client)
+            selected (source/acquire! provider :current)
+            adapter (source/adapter selected)
             subject-id (backend/invoke adapter :object-id->internal "alice")
             relation-id
             (:relation-id
@@ -160,7 +160,7 @@
                   :user subject-id relation-id :document
                   {:direction :asc :limit 25})))
               (finally
-                (snapshot-provider/release! selected)))
+                (source/release! selected)))
             permission-result
             (distribution
              warmup-samples measurement-samples
@@ -190,13 +190,13 @@
              warmup-samples measurement-samples
              (fn [_]
                (let [selected
-                     (snapshot-provider/acquire! provider :current)]
+                     (source/acquire! provider :current)]
                  (try
                    (get-in
-                    (snapshot-provider/semantic-identity selected)
+                    (source/semantic-identity selected)
                     [:backend-snapshot-id :basis-t])
                    (finally
-                     (snapshot-provider/release! selected))))))
+                     (source/release! selected))))))
             cache-bypass-result
             (distribution
              warmup-samples measurement-samples

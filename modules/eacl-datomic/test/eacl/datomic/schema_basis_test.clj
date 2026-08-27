@@ -50,21 +50,17 @@
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
-    (let [version-reads (atom 0)
-          path-calcs   (atom 0)
-          version-fn   idx/schema-version
-          calc-fn      engine/calc-permission-paths]
-      (with-redefs [idx/schema-version (fn [db]
-                                        (swap! version-reads inc)
-                                        (version-fn db))
-                    engine/calc-permission-paths
+    (let [path-calcs (atom 0)
+          calc-fn engine/calc-permission-paths]
+      (with-redefs [engine/calc-permission-paths
                     (fn [& args]
                       (swap! path-calcs inc)
                       (apply calc-fn args))]
         (let [acl (core/make-client conn {})
               u   (spice-object :user "u")
               a   (spice-object :account "a")]
-          (is (= 1 @version-reads) "make-client performs the one automatic stamp read")
+          (is (zero? @path-calcs)
+              "make-client performs no eager schema derivation")
           (is (true? (eacl/can? acl u :admin a)))
           (is (= 1 @path-calcs) "first permission use populates the client generation")
 
@@ -73,8 +69,6 @@
             (is (true? (eacl/can? acl u :admin a))))
 
           (eacl/write-schema! acl schema-v1)
-          (is (= 2 @version-reads)
-              "only construction and the write's calculation snapshot read the stamp")
           (is (= 1 @path-calcs)
               "unrelated and identical schema transactions never recompute permission paths"))))))
 
@@ -83,7 +77,7 @@
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
     @(d/transact conn [{:eacl/id "viewer"}])
-    (let [acl       (core/make-client conn {:page-token-key "schema-generation-test"})
+    (let [acl       (core/make-client conn {:security-key "schema-generation-test0000000000"})
           owner     (spice-object :user "u")
           viewer    (spice-object :user "viewer")
           account   (spice-object :account "a")
@@ -122,7 +116,7 @@
                     (Relationship (spice-object :user [:eacl/id "u"])
                                   :owner
                                   (spice-object :account [:eacl/id account])))))
-    (let [acl   (core/make-client conn {:page-token-key "stale-schema-token"})
+    (let [acl   (core/make-client conn {:security-key "stale-schema-token00000000000000"})
           query {:subject (spice-object :user "u")
                  :permission :admin
                  :resource/type :account
@@ -209,13 +203,13 @@
     (seed-owner! conn)
     (let [acl (core/make-client
                conn
-               {:cache {:remember-answers true}})
+               {:cache {}})
           query {:subject (spice-object :user "u")
                  :permission :admin
                  :resource/type :account}
           calls (atom 0)
-          lookup-resources impl/lookup-resources]
-      (with-redefs [impl/lookup-resources
+          lookup-resources engine/lookup-resources]
+      (with-redefs [engine/lookup-resources
                     (fn [db internal-query continuation-context]
                       (swap! calls inc)
                       (lookup-resources db
@@ -249,8 +243,8 @@
       ;; complete schema proof, so an existing client cannot keep using a
       ;; latched permission graph.
       (schema/write-schema! conn schema-v2)
-      (is (= :outdated (:status (integrity/client-schema-status old-client)))
-          "the optional one-datom diagnostic detects the mismatch")
+      (is (= :current (:status (integrity/client-schema-status old-client)))
+          "the shared client captures the current generation instead of retaining a stale construction-time generation")
       (let [writer (core/make-client conn {})]
         (eacl/create-relationship! writer viewer :viewer account))
 
@@ -267,8 +261,8 @@
           before-version (idx/schema-version (d/db conn))
           entered (promise)
           release-read (promise)
-          original-can? impl/can?]
-      (with-redefs [impl/can?
+          original-can? engine/can?]
+      (with-redefs [engine/can?
                     (fn [& args]
                       (deliver entered true)
                       @release-read

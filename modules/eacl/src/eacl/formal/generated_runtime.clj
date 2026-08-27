@@ -26,7 +26,7 @@
               "their checkout with `" preparation-command "`; this opt-in "
               "command downloads formal tools and can take substantial disk "
               "space and time. See " preparation-documentation ".")
-         {:type :eacl.formal/generated-runtime-missing
+         {:type :eacl.formal/generated-runtime-missing :eacl/error :eacl.formal/generated-runtime-missing
           :class class-name
           :command preparation-command
           :documentation preparation-documentation}

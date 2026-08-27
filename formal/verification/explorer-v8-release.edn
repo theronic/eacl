@@ -38,7 +38,7 @@
    :finding
    :default-datascript-content-proof-cursor-minting-scanned-the-complete-relationship-dependency-content-even-for-cache-bypassed-small-pages
    :remediation
-   :bind-default-cursors-to-exact-current-basis-and-reserve-bounded-dependency-stamps-for-explicit-managed-mutation-mode}
+   :bind-default-cursors-to-exact-basis-and-reserve-bounded-dependency-stamps-for-explicit-managed-mutation-mode}
   {:id :pure-permission-alias-frontier-duplication
    :counterexample :EACL-FORMAL-065
    :finding
