@@ -1,7 +1,8 @@
 # 🦅 EACL: Enterprise Access ControL
 
 EACL is a situated relationship-based authorization library for Clojure and
-ClojureScript, backed by Datomic Pro, Datahike, or DataScript. Authorization
+ClojureScript, backed by Datomic Pro, Datahike, DataScript, or a qualified
+embedded Datalevin deployment. Authorization
 data lives beside application data and is evaluated against one immutable
 database value per request.
 
@@ -18,6 +19,9 @@ Choose the adapter for your database; it brings the core module transitively:
 
 ;; DataScript
 {:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
+
+;; Datalevin (implemented; publication pending maintained-fork release)
+{:deps {dev.eacl/eacl-datalevin {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 The [repository README](https://github.com/theronic/eacl#readme) contains the
@@ -48,6 +52,7 @@ retraction, or explicitly install/use the backend's optional
 - [Consistency and cache operations](v8-consistency-cache-operations.md)
 - [Backend modules and capabilities](v8-backend-modules-and-upgrade.md)
 - [Backend adapter contract](v8-backend-adapter-boundary.md)
+- [Snapshot-provider migration](v8-snapshot-provider-migration.md)
 - [Answer cache and subproblem store](v8-subproblem-cache.md)
 - [Formal assurance boundary](formal-verification.md)
 - [Audit reports](reports/) — dated records; the 2026-08-15 stable-engine audit lists open bugs and optimizations

@@ -12,11 +12,33 @@ depend on one adapter module; backend authors depend on core.
 | `eacl-datomic` | Clojure/JVM | current Peer DB, explicit sync barrier, causal floor, targeted catch-up plus exact `d/as-of T` | authenticated; proof-equivalent current continuation or full-history exact reconstruction |
 | `eacl-datahike` | Clojure/JVM | current connection DB; durable temporal history when enabled, otherwise conditional retained-commit selection | authenticated; proof-equivalent current continuation or configuration-honest exact reconstruction |
 | `eacl-datascript` | Clojure and ClojureScript | current connection DB; no arbitrary exact selection | authenticated proof-equivalent current continuation |
+| `eacl-datalevin` | Clojure/JVM | fresh owned native read snapshot at the local embedded head; causal-floor polling; no historical exact selection | authenticated revision-bound continuation; no ordered-proof lifting |
 | `eacl` | Clojure and ClojureScript | supplied by an adapter | shared protocol, engine, proof, and cache implementation |
 
 Capabilities are configuration-specific and are validated before
 authorization. Ordinary calls select one current immutable snapshot and do not
 perform historical selection.
+
+`eacl-datalevin` is implemented but not yet published. It depends on the
+explicit public read-snapshot API in the maintained
+`dev.eacl/datalevin-embedded-eacl` fork. Neither coordinate may be treated as
+released until a clean remote-only consumer resolves both from immutable
+public SCM revisions.
+
+## Consistency matrix
+
+| Backend | Minimize latency | Fully consistent | At least as fresh | Exact snapshot | Ordered-generation cache proof |
+| --- | --- | --- | --- | --- | --- |
+| Datomic Pro | current Peer value | bounded `d/sync` then current | targeted catch-up | `d/as-of T` | yes |
+| Datahike | current connection value | qualified writer head | revision/commit catch-up | durable with temporal history; otherwise retained-commit conditional | yes |
+| DataScript | serialized current value | serialized current head | waits for connection revision | unsupported | yes, in the in-process mutation topology |
+| Datalevin | fresh explicit native reader | same local sole-writer head guarantee | retries fresh readers to the authenticated revision floor | unsupported | no; exact selected-revision reuse only |
+
+Datalevin's fully-consistent mode is not a replica barrier. The certified
+topology has one embedded connection and one direct synchronous writer, so a
+fresh read transaction is already the authoritative local head. Remote,
+replica, HA, WAL, multi-connection, multi-writer, and virtual-thread profiles
+are rejected during construction.
 
 All public list operations use Relay controls: `:first`/`:after` or
 `:last`/`:before`. Counts use optional `:count-limit`. `delete-object!` is
@@ -34,6 +56,10 @@ disabled:
 (datascript/make-client conn {:cache cache/no-cache})
 (datahike/make-client conn {:cache cache/no-cache})
 (datomic/make-client conn {:cache cache/no-cache})
+(datalevin/make-client conn {:cache cache/no-cache
+                             ;; plus mandatory lifecycle, watermark,
+                             ;; signing, and topology options
+                             })
 ```
 
 Exact immutable-snapshot lookup is always first. After an exact miss, complete
@@ -66,6 +92,12 @@ The exact lifecycle functions are:
 (eacl.datascript.core/expire-cache! acl)
 ```
 
+Datalevin deliberately has no process-local lifecycle rotation. A restore or
+rollback must durably rotate the externally owned source lifecycle and reset
+its external revision watermark before constructing a replacement client.
+`eacl.datalevin.core/expire-cache!` rejects attempts to fake that operation in
+memory.
+
 See [cache operations](v8-consistency-cache-operations.md) for proof
 availability, custom-codec, time-travel, and multi-process lifecycle rules.
 
@@ -90,6 +122,11 @@ or history replacement require quiescence, completion, shared source-lifecycle
 rotation, complete client/cache detachment, and deliberate signing-key/wire
 version policy before traffic resumes.
 
+Datalevin cursors are current-revision continuations. Because the adapter has
+no historical selector, a continuation whose selected revision is no longer
+the current semantic snapshot fails closed; it is not reconstructed from LMDB
+history.
+
 ## Optional atomic entity retraction
 
 Every embedded bundled backend can support EACL's safe target-only retraction
@@ -104,6 +141,7 @@ peer-only ghost; a missing lookup ref cannot recover the former eid.
 | DataScript direct in-process form | `eacl.datascript.safe-retraction/prepare!` |
 | Datahike function-safe named topology | `eacl.datahike.safe-retraction/install!` |
 | Datahike direct in-process topology | `eacl.datahike.safe-retraction/prepare!` |
+| Datalevin qualified embedded topology | `eacl.datalevin.safe-retraction/prepare!` |
 | Function-unsafe remote topology | use `delete-object!`, then native entity deletion |
 
 Do not combine relationship additions involving a target with safe retraction
@@ -158,7 +196,8 @@ Rejections are `:eacl.service/admission-rejected` and
 Client construction fails closed with `:eacl.topology/unqualified` when the
 backend adapter's declared execution profile does not certify the strict,
 unique, replayable, strict-progress, atomic scan contract over an immutable
-basis that stable discovery requires (the three bundled adapters do).
+basis that stable discovery requires (the four bundled adapters do within
+their certified topologies).
 
 ## Permission-tree expansion
 
@@ -213,3 +252,10 @@ a correct exact-current adapter.
 Backend authors should follow the [adapter boundary
 inventory](v8-backend-adapter-boundary.md) and run the shared public API,
 recursive, cache, mutation, and independent-oracle contracts.
+
+Adapters over live or closeable database handles must also implement the
+[snapshot-provider lifecycle](v8-snapshot-provider-migration.md). A borrowed
+provider is correct only for an already immutable value. An owned reader must
+declare its thread/runtime restrictions, keep the handle inside the complete
+request scope, eagerly realize all returned data, and release every accepted
+and rejected candidate deterministically.

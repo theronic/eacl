@@ -1,6 +1,7 @@
 (ns eacl.relay
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.backend.snapshot-provider :as snapshot-provider]
+            [eacl.backend.v8 :as backend]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
@@ -684,10 +685,10 @@
      (continuation-decision opts current envelope nil))
     true))
 
-(defn- select-envelope-adapter
+(defn- select-envelope-context
   [adapter opts envelope]
   (if-not envelope
-    adapter
+    {:adapter adapter}
     (let [current (current-context adapter opts)
           initial
           (continuation-decision opts current envelope nil)]
@@ -699,49 +700,71 @@
             (stale-context!
              "The backend cannot reconstruct the cursor's changed proof."
              :dependency-proof-changed))
-          (let [exact
-                (do
-                  (execution/check!
+          (let [provider (:snapshot-provider opts)
+                revision
+                {:revision
+                 (get-in envelope [:native-revision :revision])
+                 :exact-locator
+                 (get-in envelope [:native-revision :exact-locator])}
+                _ (execution/check!
                    (:execution-contract opts)
                    :cursor-exact-selection)
-                (backend/invoke
-                 adapter
-                 :select-exact
-                 {:revision
-                  (get-in envelope [:native-revision :revision])
-                  :exact-locator
-                  (get-in envelope [:native-revision :exact-locator])}
-                 (:timeout-ms opts)))]
-            (execution/check!
-             (:execution-contract opts)
-             :cursor-exact-selected)
-            (when-not exact
-              (throw
-               (ex-info
-                "The cursor's exact snapshot is no longer retained."
-                {:type :eacl.consistency/snapshot-expired
-                 :eacl/error
-                 :eacl.consistency/snapshot-expired})))
-            (let [exact-context
-                  (request-dependency-context exact opts)
-                  decision
-                  (continuation-decision
-                   opts current envelope exact-context)]
-              (apply-continuation-decision!
-               exact exact-context envelope decision)
-              exact)))
+                selected
+                (when provider
+                  (snapshot-provider/acquire!
+                   provider :exact revision (:timeout-ms opts)))]
+            (try
+              (let [exact
+                    (if selected
+                      (snapshot-provider/adapter selected)
+                      (backend/invoke
+                       adapter :select-exact revision (:timeout-ms opts)))
+                    _
+                    (execution/check!
+                     (:execution-contract opts)
+                     :cursor-exact-selected)
+                    _
+                    (when-not exact
+                      (throw
+                       (ex-info
+                        "The cursor's exact snapshot is no longer retained."
+                        {:type :eacl.consistency/snapshot-expired
+                         :eacl/error
+                         :eacl.consistency/snapshot-expired})))
+                    exact-context
+                    (request-dependency-context exact opts)
+                    decision
+                    (continuation-decision
+                     opts current envelope exact-context)]
+                (apply-continuation-decision!
+                 exact exact-context envelope decision)
+                {:adapter exact
+                 :selected-snapshot selected})
+              (catch #?(:clj Throwable :cljs :default) error
+                (when selected
+                  (snapshot-provider/release! selected))
+                (throw error)))))
 
         (do
           (apply-continuation-decision!
            adapter current envelope initial)
-          adapter)))))
+          {:adapter adapter})))))
 
 (defn select-continuation-adapter
   "Uses an equal current proof or a verified exact historical fallback."
   [adapter opts operation query]
   (let [token (or (:after query) (:before query))
-        envelope (decode-envelope adapter opts operation query token)]
-    (select-envelope-adapter adapter opts envelope)))
+        envelope (decode-envelope adapter opts operation query token)
+        context (select-envelope-context adapter opts envelope)]
+    (if-let [selected (:selected-snapshot context)]
+      (do
+        (snapshot-provider/release! selected)
+        (throw
+         (ex-info
+          "Provider-owned cursor recovery requires a resource-scoped page request."
+          {:type :eacl/snapshot-scope-required
+           :eacl/error :eacl/snapshot-scope-required})))
+      (:adapter context))))
 
 (defn- internalize-tracked-edge
   [adapter edge]
@@ -789,23 +812,31 @@
                     adapter opts operation query (get query field))])))
              vec)
         primary-envelope (some second envelopes)
-        page-adapter
-        (select-envelope-adapter adapter opts primary-envelope)
-        prepared-query
-        (reduce
-         (fn [query [field envelope]]
-           (if-not envelope
-             (assoc query field nil)
-             (do
-               (when-not (identical? envelope primary-envelope)
-                 (validate-context! page-adapter opts envelope))
-               (assoc query field
-                      (internalize-continued-edge
-                       page-adapter (:edge envelope))))))
-         query
-         envelopes)]
-    {:adapter page-adapter
-     :query prepared-query}))
+        page-context
+        (select-envelope-context adapter opts primary-envelope)
+        page-adapter (:adapter page-context)
+        selected (:selected-snapshot page-context)]
+    (try
+      (let [prepared-query
+            (reduce
+             (fn [query [field envelope]]
+               (if-not envelope
+                 (assoc query field nil)
+                 (do
+                   (when-not (identical? envelope primary-envelope)
+                     (validate-context! page-adapter opts envelope))
+                   (assoc query field
+                          (internalize-continued-edge
+                           page-adapter (:edge envelope))))))
+             query
+             envelopes)]
+        {:adapter page-adapter
+         :selected-snapshot selected
+         :query prepared-query})
+      (catch #?(:clj Throwable :cljs :default) error
+        (when selected
+          (snapshot-provider/release! selected))
+        (throw error)))))
 
 (defn- decode-page-edge
   [adapter opts operation query token]

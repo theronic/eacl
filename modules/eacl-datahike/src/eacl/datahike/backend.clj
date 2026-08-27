@@ -1,6 +1,7 @@
 (ns eacl.datahike.backend
   "Datahike storage operations for the shared v8 authorization engine."
   (:require [datahike.api :as d]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
@@ -367,3 +368,40 @@
        :proof-frame
        (fn [relation-ids]
          (ordered-generation-frame db relation-ids))}})))
+
+(defn provider
+  "Builds the borrowed immutable-snapshot provider for one Datahike conn."
+  [conn opts]
+  (let [current-adapter
+        (fn [] (snapshot-adapter (d/db conn) opts))
+        static-adapter (current-adapter)
+        source-scope (backend/invoke static-adapter :source-scope)
+        source-lifecycle
+        (fn []
+          (or (some-> (:source-lifecycle-state opts) deref)
+              (:source-lifecycle opts)))
+        select!
+        (fn [operation-key & args]
+          (let [selected
+                (apply backend/invoke
+                       (current-adapter) operation-key args)]
+            (or selected
+                (throw
+                 (ex-info
+                  "The requested Datahike snapshot is unavailable."
+                  {:type :eacl.consistency/exact-snapshot-unavailable
+                   :eacl/error :eacl.consistency/exact-snapshot-unavailable
+                   :backend :datahike})))))]
+    (snapshot-provider/borrowed-adapter-provider
+     {:static-adapter static-adapter
+      :topology {:deployment :embedded
+                 :snapshot-values :immutable}
+      :source-scope-fn (constantly source-scope)
+      :source-lifecycle-fn source-lifecycle
+      :acquire-current! current-adapter
+      :acquire-authoritative!
+      #(select! :select-authoritative %)
+      :acquire-at-least!
+      #(select! :select-at-least %1 %2)
+      :acquire-exact!
+      #(select! :select-exact %1 %2)})))

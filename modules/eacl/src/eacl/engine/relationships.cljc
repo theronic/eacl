@@ -135,9 +135,9 @@
       (if (or (empty? pending)
               (= target (count rows)))
         rows
-        (let [spec (first pending)
+        (let [remaining (- target (count rows))
+              spec (assoc (first pending) :physical-limit remaining)
               resume-edge (when (= (:idx spec) start-index) edge)
-              remaining (- target (count rows))
               scanned (take remaining
                             (scan-fn spec resume-edge direction))]
           (recur (rest pending) (into rows scanned)))))))
@@ -251,7 +251,9 @@
               (and remaining (zero? remaining)))
         {:data (mapv :relationship acc)
          :cursor (build-cursor cursor last-row)}
-        (let [spec          (first pending)
+        (let [spec          (cond-> (first pending)
+                              remaining
+                              (assoc :physical-limit remaining))
               resume-cursor (when (= (:idx spec) start-idx) cursor)
               rows          (seq (scan-fn spec resume-cursor))]
           (if (empty? rows)

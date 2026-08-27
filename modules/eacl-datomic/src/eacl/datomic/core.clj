@@ -2,6 +2,7 @@
   "Reifies eacl.core/IAuthorization for Datomic-backed EACL in eacl.datomic.impl."
   (:require [com.rpl.specter :as S]
             [datomic.api :as d]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as shared-cache]
             [eacl.causal-token :as causal-token]
@@ -474,13 +475,15 @@
          (execution/remaining-millis contract))
     (:consistency-sync-timeout-ms opts)))
 
+(declare select-current-request-db)
+
 (defn- await-revision-db
   "Returns a local DB that has observed `requested-t`, waiting only when needed."
   [conn opts requested-t]
   (let [timeout-ms (cursor-selection-timeout-ms opts)
         local-db
         (try
-          (d/db conn)
+          (select-current-request-db conn opts)
           (catch Exception failure
             (historical-selection-failure!
              "Failed reading the local Datomic database."
@@ -1228,7 +1231,7 @@
   (let [updates (vec updates)]
     (doseq [{:keys [operation]} updates]
       (impl/validate-relationship-operation! operation))
-    (let [schema (schema/read-schema (d/db conn))]
+    (let [schema (schema/read-schema (select-current-request-db conn opts))]
       (doseq [{:keys [relationship]} updates]
         (schema-errors/validate-relationship-write!
          schema :write-relationships
@@ -1236,7 +1239,7 @@
           :subject-type (:type (:subject relationship))
           :relation (:relation relationship)})))
     (loop [attempt 1]
-      (let [db (d/db conn)
+      (let [db (select-current-request-db conn opts)
             internal-updates
             (S/transform [S/ALL :relationship]
                          #(spice-relationship->internal db opts %)
@@ -1519,27 +1522,41 @@
   [conn opts consistency-value]
   (let [contract (:execution-contract opts)
         _ (execution/check! contract :consistency-selection)
-        descriptor (consistency/descriptor consistency-value)
-        source-adapter ((:backend-adapter-fn opts) (d/db conn))
+        provider (:snapshot-provider opts)
         selection-options
         {:format-options (:format-options opts)
          :decision-kernel (:decision-kernel opts)
          :issue-token? false
+         :selection-check!
+         (when contract
+           (fn [phase]
+             (execution/check! contract phase)))
          :timeout-ms
          (if contract
            (min (:consistency-sync-timeout-ms opts)
                 (execution/remaining-millis contract))
            (:consistency-sync-timeout-ms opts))}
         selection
-        (if (= :minimize-latency (:mode descriptor))
-          (consistency-v3/captured-current-selection
-           source-adapter consistency-value selection-options)
-          (consistency-v3/select
-           source-adapter
-           consistency-value
-           selection-options))]
-    (execution/check! contract :consistency-selected)
-    selection))
+        (consistency-v3/select
+         provider consistency-value selection-options)
+        selected (:selected-snapshot selection)]
+    (try
+      (execution/check! contract :consistency-selected)
+      ;; Datomic DB values are immutable and the compatibility provider owns
+      ;; no native resource. Closing its borrowed selection here still makes
+      ;; every acquisition/release observable and balanced while the adapter
+      ;; remains valid for the full request.
+      (dissoc selection :selected-snapshot)
+      (finally
+        (when selected
+          (snapshot-provider/release! selected))))))
+
+(defn- select-current-request-db
+  [conn opts]
+  (-> (select-request-snapshot conn opts consistency/minimize-latency)
+      :adapter
+      backend/state
+      :db))
 
 (defn- capture-result-context
   "Selects one immutable request snapshot. Exact-snapshot requests reconstruct
@@ -1651,7 +1668,7 @@
                  :kernel-decision initial})))))]
     (when (:revision-checkpoints opts)
       (revision/observe! (:revision-checkpoints opts)
-                         (d/basis-t (d/db conn))))
+                         (backend/invoke selected-adapter :order-hint)))
     (let [snapshot-exact?
           (or (= :at-exact-snapshot
                  (or (:mode selected-context) mode))
@@ -1682,7 +1699,7 @@
         request-token (:request-token selection)]
     (when (:revision-checkpoints opts)
       (revision/observe! (:revision-checkpoints opts)
-                         (d/basis-t (d/db conn))))
+                         (backend/invoke adapter :order-hint)))
     {:adapter adapter
      :db db
      :basis-t basis-t
@@ -1836,10 +1853,10 @@
 (def ^:private delete-object-batch-size 1000)
 
 (defn- transact-delete-object-batch!
-  [conn batch]
+  [conn opts batch]
   (let [batch (vec batch)]
     (loop [attempt 1]
-      (let [db (d/db conn)
+      (let [db (select-current-request-db conn opts)
           stamped (impl/stamp-relation-versions batch)
           guarded (impl/optimistic-relationship-tx-data db stamped)
           submission
@@ -1877,7 +1894,7 @@
   far worse against a real transactor). No barrier is taken now."
   [conn {:keys [object-id->entid] :as opts} object]
   (let [object-id (if (map? object) (:id object) object)
-        db        (d/db conn)
+        db        (select-current-request-db conn opts)
         eid       (or (try (object-id->entid db object-id)
                            (catch Exception _ nil))
                       ;; A retracted entity no longer resolves through the
@@ -1896,7 +1913,7 @@
           ;; without this a later batch retracts relationships while announcing
           ;; nothing.
           (let [{:keys [db-after tx-data]}
-                (transact-delete-object-batch! conn batch)]
+                (transact-delete-object-batch! conn opts batch)]
             (recur (next batches)
                    (+ retracted
                       (relationship-retraction-count db-after tx-data))
@@ -2299,10 +2316,10 @@
                      consistency)))
 
   (read-schema [_]
-    (schema/read-schema (d/db conn)))
+    (schema/read-schema (select-current-request-db conn opts)))
 
   (write-schema! [_ schema-string]
-    (let [base-db     (d/db conn)
+    (let [base-db     (select-current-request-db conn opts)
           expected-version (impl.indexed/schema-version base-db)
           deltas      (schema/write-schema!
                        conn schema-string
@@ -3037,7 +3054,7 @@
                             :token-ttl-seconds
                             (or token-ttl-seconds
                                 causal-token/default-token-ttl-seconds)}
-        opts               {:object-id->ident object-id->ident
+        opts-base          {:object-id->ident object-id->ident
                             :execution-timeout-ms
                             (or execution-timeout-ms
                                 execution/default-execution-timeout-ms)
@@ -3142,10 +3159,13 @@
                             (some-> (physical/normalize-service-admission
                                      service-admission)
                                     physical/make-service-admission)}
-        ;; The stable engine runs only on a qualified topology; the adapter's
-        ;; declared execution profile is checked once here.
-        _ (physical/require-qualified-topology!
-           ((:backend-adapter-fn opts) (d/db conn)))]
+        provider           (datomic-backend/provider conn opts-base)
+        opts               (assoc opts-base :snapshot-provider provider)
+        ;; Construction qualification is provider-static and retains no
+        ;; request DB value. The provider remains the sole selection seam for
+        ;; Datomic request reads, allowing head-observation optimization to be
+        ;; implemented without changing the public client.
+        _ (physical/require-qualified-provider-topology! provider)]
     (->Spiceomic conn opts)))
 
 (defn current-zed-token

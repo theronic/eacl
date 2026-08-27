@@ -1,6 +1,7 @@
 (ns eacl.datascript.backend
   "DataScript storage operations for the shared v8 authorization engine."
   (:require [datascript.core :as ds]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.backend.v8 :as backend]
             [eacl.datascript.impl :as impl])
   #?(:clj (:import [java.util WeakHashMap])))
@@ -228,3 +229,40 @@
        :proof-frame
        (fn [relation-ids]
          (ordered-generation-frame db relation-ids))}})))
+
+(defn provider
+  "Builds the borrowed immutable-snapshot provider for one DataScript conn."
+  [conn opts]
+  (let [current-adapter
+        (fn [] (snapshot-adapter (ds/db conn) opts))
+        static-adapter (current-adapter)
+        source-scope (backend/invoke static-adapter :source-scope)
+        source-lifecycle
+        (fn []
+          (or (some-> (:source-lifecycle-state opts) deref)
+              (:source-lifecycle opts)))]
+    (snapshot-provider/borrowed-adapter-provider
+     {:static-adapter static-adapter
+      :topology {:deployment :embedded
+                 :snapshot-values :immutable}
+      :source-scope-fn (constantly source-scope)
+      :source-lifecycle-fn source-lifecycle
+      :acquire-current! current-adapter
+      :acquire-authoritative!
+      (fn [timeout-ms]
+        (backend/invoke
+         (current-adapter) :select-authoritative timeout-ms))
+      :acquire-at-least!
+      (fn [token-data timeout-ms]
+        (backend/invoke
+         (current-adapter) :select-at-least token-data timeout-ms))
+      :acquire-exact!
+      (fn [_token-data _timeout-ms]
+        (throw
+         (ex-info
+          "DataScript does not retain exact historical snapshots."
+          {:type :eacl/unsupported-capability
+           :eacl/error :eacl/unsupported-capability
+           :backend :datascript
+           :capability :consistency
+           :requested :at-exact-snapshot})))})))

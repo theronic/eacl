@@ -33,6 +33,12 @@ EACL v8.0 is a workspace with independently consumable modules:
   storage now matches Datomic's two cardinality-many heterogeneous endpoint
   tuples. DataScript uses the same component order in ordinary vectors because
   DataScript 1.7.8 does not support heterogeneous tuple declarations.
+- `modules/eacl-datalevin` contains a CLJ-only adapter for a qualified
+  embedded, one-JVM, one-connection, one-writer Datalevin topology. It owns a
+  public explicit native read snapshot per request. Publication remains
+  blocked until the maintained `dev.eacl/datalevin-embedded-eacl` fork is
+  available from immutable public SCM and passes packaged Linux ARM64
+  qualification.
 
 Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
@@ -40,7 +46,7 @@ does not alter v7 relationship storage. Tokens, cursors, cache envelopes, and
 the additive native-generation schema are deliberately new v8 formats; no
 downgrade or dual-format cache/token mode is provided. Third-party adapters
 implement the validated v8 operation/capability contract (`eacl.backend.v8`);
-the pre-v8 six-function SPI is gone. The three built-in adapters share
+the pre-v8 six-function SPI is gone. The four built-in adapters share
 permission-plan compilation, the stable-discovery reducer, pagination,
 counting, and portable cache validation.
 
@@ -99,6 +105,11 @@ schemas, relationships, caches, and tokens require no rewrite.
   to authenticated `T` with bounded two-argument `d/sync` before exact
   `d/as-of T`; DataScript rejects exact mode before cache access because it has
   no EACL time-travel registry.
+- Datalevin supports minimize-latency, fully-consistent local head, and
+  at-least-as-fresh revision-floor selection through fresh explicit readers.
+  It rejects exact selection. Its initial adapter advertises no ordered
+  generations and no proof frame, so it never lifts a cached answer across a
+  different revision.
 - Low-level operations accepting an arbitrary `db`, including caller-created
   `d/as-of`, `d/with`, prospective, or filtered views, bypass completed-answer
   caching.
@@ -133,10 +144,14 @@ permission check.
   ghost repair. Integrity reports detect damage when the old eid is unknown.
 - Relationship update operations are validated before endpoint resolution. `delete-object!`
   reports actual committed relationship-datom retractions across all batches.
+- Datalevin commits matching forward/reverse tuples, relation stamps, and the
+  schema write fence atomically through its serialized writer. Object deletion
+  rescans inside the commit transaction. These claims apply only to the
+  certified direct synchronous sole-writer topology.
 
 ## Completed-answer cache
 
-Each Datomic, Datahike, and DataScript client owns a bounded native cache. It
+Each Datomic, Datahike, DataScript, and Datalevin client owns a bounded native cache. It
 has three sound reuse rules:
 
 1. **Exact-current:** accept an entry only for the identical immutable selected
@@ -158,6 +173,9 @@ backend time travel.
 - Datahike uses immutable DB object identity.
 - DataScript uses a private opaque identity handle for the immutable DB object,
   avoiding numeric `max-tx` collisions after reset.
+- Datalevin uses backend/source/lifecycle/revision plus an independently
+  captured physical-schema fingerprint. It performs exact selected-revision
+  reuse only.
 - A transaction replaces the exact generation. No schema/relationship proof
   calculation occurs on an exact hit.
 - Publication captures the generation/lifecycle. A delayed computation cannot
@@ -168,8 +186,9 @@ backend time travel.
 
 ### Managed-current tier
 
-Proof-backed ("managed") reuse is unconditional on every backend: EACL's
-writers publish the relation generations the proof needs, and the
+Proof-backed ("managed") reuse is enabled only when the adapter advertises
+certified ordered generations. Datomic, Datahike, and DataScript writers
+publish the relation generations the proof needs, and the
 `:coherence-authority` option that once selected between `:unknown` and
 `:managed` no longer exists (supplying it is invalid configuration). The
 contract is that every authorization-affecting relationship and schema write
@@ -195,19 +214,26 @@ projections) under one relation-stamp framing:
   frontier; an unrelated write leaves it unchanged.
 - Missing/malformed stamps disable managed reuse rather than becoming a
   reusable zero value.
-- All backends read the current physical `:eacl/relation-version` assertion;
+- All proof-capable backends read the current physical `:eacl/relation-version` assertion;
   a missing assertion is a fail-closed miss and has no fallback.
 - Custom object-ID codecs remain exact-current-only unless they supply the
   additional deterministic dependency contract.
 - Randomized cached-versus-cache-free differential oracles run with the
-  managed tier active on all three backends, interleaving EACL-API writes
+  managed tier active on the three ordered-proof backends, interleaving EACL-API writes
   with checks, lookups, and counts.
+- Datalevin maintains relation versions for mutation fencing and a future
+  proof-capable design, but does not expose those values through a proof frame:
+  persistent datom transaction identity is not certified as an ordered
+  generation.
 
 ### Cache operations
 
 - `eacl.datomic.core/expire-cache!`
 - `eacl.datahike.core/expire-cache!`
 - `eacl.datascript.core/expire-cache!`
+
+Datalevin lifecycle rotation is external and durable;
+`eacl.datalevin.core/expire-cache!` rejects process-local rotation.
 
 These rotate source/token scope and replace the entire client lifecycle. Use them after reset,
 restore, branch force, manual history manipulation, or unstamped bulk repair.

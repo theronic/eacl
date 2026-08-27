@@ -1,6 +1,6 @@
 # 🦅 **EACL**: Enterprise Access ControL
 
-EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library inspired by [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), [Datahike](https://datahike.io/) or [DataScript](https://github.com/tonsky/datascript/).
+EACL is a situated [ReBAC](https://en.wikipedia.org/wiki/Relationship-based_access_control) authorization library inspired by [SpiceDB](https://authzed.com/spicedb), built in Clojure and backed by [Datomic Pro](https://www.datomic.com/), [Datahike](https://datahike.io/), [DataScript](https://github.com/tonsky/datascript/), or a qualified embedded [Datalevin](https://datalevin.org/) deployment.
 
 | Authentication (AuthN)                     | Authorization (AuthZ)    |
 |--------------------------------------------|--------------------------|
@@ -37,12 +37,12 @@ Yes.
 | [Datomic Pro](https://www.datomic.com/)             | [eacl-datomic](https://clojars.org/dev.eacl/eacl-datomic)       | DynamoDB (recommended), Cassandra or SQL                                 |
 | [Datahike](https://datahike.io/)                    | [eacl-datahike](https://clojars.org/dev.eacl/eacl-datahike)     | DynamoDB, S3 (cheaper, but slower), LMDB, SQL, Redis, GCS or IndexedDB.  |
 | [DataScript](https://github.com/tonsky/datascript/) | [eacl-datascript](https://clojars.org/dev.eacl/eacl-datascript) | In-memory, but can persist to disk or add a SQL adapter. No time-travel. |
-| [Datalevin](https://datalevin.org/)                 | _Coming soon._                                                  | Embedded.                                                                |
+| [Datalevin](https://datalevin.org/)                 | [`eacl-datalevin`](modules/eacl-datalevin) — implemented, publication pending | Embedded LMDB; certified sole-writer topology only.                       |
 
 
 S3-backed Datahike is attractive for infrequently-accessed apps, because you can trade latency for reduced storage cost, and it supports [serverless](https://github.com/replikativ/datahike-serverless) to reduce running Peer / Transactor costs.
 
-*Note:* DataScript does not store full history, so it has no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots.
+*Note:* DataScript and Datalevin have no `at-exact-snapshot` semantics. Datahike requires a retained commit graph or temporal history to support exact snapshots. Datalevin additionally omits ordered-generation cache proofs and only reuses answers at the identical selected revision.
 
 ## Overview of EACL
 
@@ -181,7 +181,25 @@ If you need cache provenance, use `check-permission` instead of `can?`, otherwis
 
 "Which `<resources>` does `<subject>` have `<permission>` on, as-of `<10 seconds ago, or newer>`?"
 
-(These require `{:cache {:checkpoints true}}`, but this will soon be the default.)
+```clojure
+(eacl/lookup-resources acl
+  {:subject       subject
+   :permission    permission
+   :resource/type resource-type
+   :first         page-size N ; or :last N
+   :cursor
+   :consistency   (consistency/at-least-as-fresh token-10s-ago)})
+=> {:data [{:type :product :id "product-1"}
+           {:type :product :id "product-7"}
+           ...
+           {:type :product :id "product-63"}]
+    :page-info ...
+    :cached? true|false>
+    ...}
+```
+
+The `:consistency` argument is optional. The default is `minimize-latency`, which means _locally-consistent_ to the Peer. Presently, `at-least-as-fresh` semantics require config `{:cache {:checkpoints true}}`, but this will soon be the default.
+
 
 ```clojure
 (def token-10s-ago (datomic/zed-token-at-least-seconds-ago acl 10))
@@ -200,8 +218,6 @@ If you need cache provenance, use `check-permission` instead of `can?`, otherwis
     :cached? true|false>
     ...}
 ``` 
-
-The `:consistency` argument is optional. The default is `minimize-latency`, which means _locally-consistent_ to the Peer.
 
 ```clojure
 (eacl/lookup-resources acl query)
@@ -253,7 +269,7 @@ As long as the DB basis is recent enough for our consistency demands, we can avo
      Since you have to hit the DB anyway to show anything useful, we might as well compute permissions on the Peer, which has the database – which is what EACL does.
 
 2. **Time Travel**: Unlike Spice cursors, EACL cursors do not expire (and are encrypted for UI exposure) unless you specify a TTL, so we can reconstruct selected snapshots if the backend retains it.
-   - Note that DataScript does not store full history, so does not support `at-exact-snapshot` in the past.
+   - DataScript and the initial Datalevin adapter do not support `at-exact-snapshot`.
 
 3. **Consistency:** Syncing to an external system introduces eventual consistency. With situated AuthZ, queries are at least locally-consistent as-of time `T`.
     - In **single-Peer environments**, EACL reads from the database currently visible to the local Peer.
@@ -390,7 +406,7 @@ Even in a fast-moving DB, EACL will reuse cache segments that are unaffected by 
        - EACL will throw if `T` is newer than the Transactor has seen.
        - EACL will only reuse cache segments that are valid for `T`.
     - Supported by Datahike if history is enabled.
-    - `at-exact-snapshot` is not supported by DataScript, because it requires full history.
+    - `at-exact-snapshot` is not supported by DataScript or Datalevin. Both fail closed instead of emulating history.
 
 The EACL engine and cache benefit from monotonic `txId` (transaction IDs), i.e. the `t` in `[e a v t]`, so cache segments are keyed by basis `T`. The engine will only use cache segments valid @ `T`.
 
@@ -402,7 +418,7 @@ Unsupported modes by backend will return an error. Refer [Consistency and ZedTok
 
 ## Data Structures
 
-EACL co-exists with your data in Datomic, Datahike or DataScript. As a result, EACL installs and maintains some attributes in your data store, all of which are prefixed by `:eacl*`.
+EACL co-exists with your data in Datomic, Datahike, DataScript, or Datalevin. As a result, EACL installs and maintains some attributes in your data store, all of which are prefixed by `:eacl*`.
 
 Presently, EACL Relationships are stored in history to support auditability, `d/as-of` & `at-exact-snapshot` semantics, but in a future version of EACL, history could be optional to save on storage, but then you lose time travel & auditability. For many applications that only care about permissions as-of "now", this would be acceptable.
 
@@ -448,14 +464,14 @@ But you will probably forget one day, so there are helpers to fined & clean up g
 - Datomic permission arrows: `:eacl.permission/resource-type+source-relation-name+target-type+permission-name`
 - Datomic relation arrows: `:eacl.permission/resource-type+source-relation-name+target-type+target-name`
 - Datomic full key: `:eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name`
-- Datahike and DataScript full key: `:eacl.permission/full-key`
+- Datahike, DataScript, and Datalevin full key: `:eacl.permission/full-key`
 
 ### Schema Tracking
 
 - `:eacl/id` uniquely identifies Relations & Permissions. It's a string to match SpiceDB IDs, but you can also use it for external ID. Like in SpiceDB, Some IDs are reserved by EACL internals (todo: document EACL ID prefixes).
 - `:eacl/schema-string` stores a valid schema string was written via `eacl/write-schema!`.
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
-- `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript.
+- `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike, DataScript, and Datalevin.
 - `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
 - `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
@@ -526,6 +542,9 @@ EACL supports multiple backends. Each adapter will bring in the shared EACL engi
 ;; DataScript
 {:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
 
+;; Datalevin (coordinate reserved; publication remains gated)
+{:deps {dev.eacl/eacl-datalevin {:mvn/version "8.0.0-SNAPSHOT"}}}
+
 ;; Core-only consumers and backend authors (you typically won't need this)
 {:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
@@ -557,7 +576,7 @@ Java 26; source builds may target Java 8 through Java 26, subject to their
 backend and application dependencies. See [formal/README.md](formal/README.md)
 for tool versions and the full verification commands.
 
-For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md).
+For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup, mandatory topology/lifecycle/watermark inputs, and publication status are documented in the [`eacl-datalevin` module README](modules/eacl-datalevin/README.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md) and [snapshot-provider migration guide](docs/v8-snapshot-provider-migration.md).
 
 ### Schema & Relationships
 
@@ -1214,7 +1233,10 @@ I suspect SpiceDB does not support counting for the same reason. EACL currently 
 
 `at-exact-snapshot` semantics always call `(d/as-of conn T)`, but EACL can still reuse cache segments that are valid for snapshot _S_ with basis _B_ at time `T`.
 
-Unlike SpiceDB, EACL cursors do not expire, because EACL's backends support time-travel over full history (except for DataScript).
+Unlike SpiceDB, EACL cursors do not expire by default. History-capable
+backends can reconstruct exact continuations; current-only DataScript and
+Datalevin continuations fail closed after their selected snapshot is no longer
+available.
 
 ### Cache Coherence
 
@@ -1326,8 +1348,8 @@ no EACL cursor-retention window.
 EACL-created Datahike databases retain temporal history by default. External
 history-enabled Datahike stores can reconstruct exact revisions after commit
 record collection; history-disabled stores advertise only conditional exact
-selection while a named commit is retained. DataScript does not provide
-general historical snapshot reconstruction. If a backend cannot satisfy the
+selection while a named commit is retained. DataScript and Datalevin do not
+provide general historical snapshot reconstruction. If a backend cannot satisfy the
 requested guarantee, EACL returns a typed error rather than silently selecting
 a different snapshot.
 
@@ -1398,7 +1420,8 @@ The portable deletion sequence is:
 
 `delete-object!` removes relationships but does not delete the application
 entity. It is idempotent. The Datomic implementation batches high-degree
-cleanup; the Datahike and DataScript implementations use one transaction.
+cleanup; the Datahike, DataScript, and Datalevin implementations use one
+transaction in their certified in-process topologies.
 
 Backends that support transaction functions also provide an optional atomic
 `:eacl.fn/retractEntity`. It removes both relationship halves and the target
@@ -1411,6 +1434,7 @@ schema; enabling it is an explicit deployment step.
 | DataScript CLJ/CLJS | Named or direct in-process function |
 | Datahike with an in-process writer | Named or direct, depending on schema configuration |
 | Datahike remote/function-unsafe writer | Use `delete-object!` and ordinary deletion |
+| Datalevin qualified embedded writer | Direct in-process function |
 
 Datomic example:
 

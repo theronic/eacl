@@ -1,7 +1,7 @@
 # Backend adapter boundary
 
 `eacl.backend.v8` is the only production boundary between the shared
-authorization engine and Datomic, Datahike, or DataScript mechanics. Shared
+authorization engine and Datomic, Datahike, DataScript, or Datalevin mechanics. Shared
 code invokes validated logical operations and never inspects backend database,
 datom, attribute-id, or tuple implementation types.
 
@@ -45,6 +45,13 @@ The runtime proof validator rejects missing, malformed, duplicate,
 non-canonical, oversized, or partial evidence. The adapter does not choose a
 coherence or proof mode.
 
+Snapshot acquisition and ownership are separate from the immutable adapter.
+`eacl.backend.snapshot-provider` selects borrowed or owned snapshots for the
+complete request lifetime. Owned providers must close rejected causal
+candidates and release on success, typed/foreign failure, timeout,
+cancellation, proof resolution, cache publication, and cursor/token
+construction. See [the provider migration guide](v8-snapshot-provider-migration.md).
+
 ## Ordered-generation certification
 
 Shared cache proofs assume that:
@@ -77,3 +84,10 @@ selection establishes a native revision floor only inside the authenticated
 backend/source/lifecycle scope; exact selection additionally establishes the
 exact locator. Source replacement requires lifecycle rotation before cached or
 token-bearing traffic resumes.
+
+Datalevin demonstrates the conservative capability policy: its persistent
+datoms do not expose the original transaction in a form certified for EACL's
+proof order. The adapter therefore omits `:ordered-generations` and the
+`:proof-frame` operation. It may reuse answers only for the same certified
+semantic snapshot identity and never interprets a datom `:tx` as a relation
+generation.

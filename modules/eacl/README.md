@@ -43,12 +43,14 @@ remains a correct exact-current adapter.
 The contract uses logical types and identifiers. Datoms, attribute ids,
 database values, and raw index tuples stay inside each adapter. See the
 [v8 adapter boundary](../../docs/v8-backend-adapter-boundary.md) for the full
-inventory.
+inventory and the
+[snapshot-provider migration guide](../../docs/v8-snapshot-provider-migration.md)
+for owned/borrowed lifecycle and third-party adapter requirements.
 
 The shared contract fixture is
 `modules/eacl/test/eacl/contract_support.cljc`. It exercises the same v8 public
-API and recursive/cache behavior for Datomic, DataScript, and Datahike and
-compares authorization sets with independent semantic oracles. Those oracles
+API and recursive/cache behavior for Datomic, DataScript, Datahike, and
+Datalevin, and compares authorization sets with independent semantic oracles. Those oracles
 are test code, not selectable production engines.
 
 ## Permission-tree expansion

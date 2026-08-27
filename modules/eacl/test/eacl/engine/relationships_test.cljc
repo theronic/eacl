@@ -113,6 +113,17 @@
     (is (= 3 @realized))
     (is (true? (get-in page [:page-info :has-next-page?])))))
 
+(deftest keyset-page-propagates-the-remaining-physical-budget-test
+  (let [budgets (atom [])
+        scan-fn
+        (fn [{:keys [idx physical-limit]} _edge _direction]
+          (swap! budgets conj [idx physical-limit])
+          (take physical-limit (get rows-by-spec idx)))
+        page (relationships/execute-page scan-specs {:first 2} scan-fn)]
+    (is (= [:r-0-0 :r-0-1] (:data page)))
+    (is (= [[0 3]] @budgets))
+    (is (true? (get-in page [:page-info :has-next-page?])))))
+
 (deftest keyset-cursor-is-a-direction-neutral-exclusive-position-test
   (let [scan-fn (scanner (atom 0))
         forward-page

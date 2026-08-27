@@ -1,6 +1,7 @@
 (ns eacl.datomic.consistency-v3-test
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.causal-token :as causal-token]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
@@ -65,6 +66,31 @@
               :consistency false}))]
       (is (= :eacl/unsupported-consistency (:type error)))
       (is (false? (:consistency error))))))
+
+(deftest public-datomic-reads-use-balanced-borrowed-provider-selections-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [authorization (client conn)
+          _ (seed! conn authorization)
+          _ (eacl/create-relationship! authorization relationship)
+          operations
+          [[:can? #(eacl/can? authorization user :view document)]
+           [:read-schema #(eacl/read-schema authorization)]
+           [:read-relationships
+            #(eacl/read-relationships
+              authorization {:subject/type :user :first 10})]
+           [:lookup-resources
+            #(eacl/lookup-resources
+              authorization {:subject user
+                             :permission :view
+                             :resource/type :document
+                             :first 10})]]]
+      (doseq [[label operation] operations]
+        (testing (name label)
+          (let [calls (atom {})]
+            (binding [snapshot-provider/*provider-op-stats* calls]
+              (is (some? (operation))))
+            (is (= 1 (:acquire-current! @calls 0)))
+            (is (= 1 (:release! @calls 0)))))))))
 
 (deftest minimize-authoritative-and-targeted-sync-arities-test
   (with-mem-conn [conn schema/v7-schema]
@@ -245,7 +271,10 @@
             (is (= :eacl.consistency/freshness-unavailable
                    (:type data)))
             (is (= :freshness-timeout (:reason data)))
-            (is (= 5 (:timeout-ms data)))))))))
+            ;; The provider receives the remaining duration from one original
+            ;; deadline; authentication and setup may consume part of the
+            ;; configured five milliseconds before Datomic starts waiting.
+            (is (<= 1 (:timeout-ms data) 5))))))))
 
 (deftest authenticated-cache-lifts-only-across-equal-proofs-test
   (with-mem-conn [conn schema/v7-schema]

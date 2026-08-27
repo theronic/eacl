@@ -1,6 +1,7 @@
 (ns eacl.consistency
   "Shared v4 backend-native revision selection over validated adapters."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.backend.snapshot-provider :as snapshot-provider]
             [eacl.causal-token :as causal-token]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
@@ -76,8 +77,15 @@
     revision))
 
 (defn- expected-scope
-  [adapter]
-  (source-scope adapter))
+  [source]
+  (if (snapshot-provider/provider? source)
+    (let [scope (snapshot-provider/source-scope source)
+          lifecycle (snapshot-provider/source-lifecycle source)]
+      (causal-token/validate-source-lifecycle! lifecycle)
+      (assoc scope
+             :source-lifecycle lifecycle
+             :backend (snapshot-provider/backend-id source)))
+    (source-scope source)))
 
 (defn- authenticate
   [adapter {:keys [format-options]} token]
@@ -114,7 +122,13 @@
 (defn- capability-error
   [source mode]
   (try
-    (backend/require-capability! source :consistency mode)
+    (if (snapshot-provider/provider? source)
+      (backend/require-supported!
+       (snapshot-provider/backend-id source)
+       (snapshot-provider/capabilities source)
+       :consistency
+       mode)
+      (backend/require-capability! source :consistency mode))
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
       error
@@ -137,6 +151,11 @@
            :mode mode})))
 
       :exact-snapshot-unavailable
+      ;; Exact selection has a stable public failure regardless of whether the
+      ;; backend omitted the exact capability or advertised it but cannot
+      ;; reconstruct the requested locator.  Preserve the capability failure
+      ;; only as the cause; leaking :eacl/unsupported-capability here would
+      ;; contradict the verified consistency boundary.
       (fail! :exact-snapshot-unavailable
              "The backend cannot reconstruct exact snapshots."
              {}
@@ -168,7 +187,9 @@
   decision over that fact is made by the generated kernel."
   [source {:keys [mode]} options]
   (let [capability-supported?
-        (backend/supports? source :consistency mode)
+        (if (snapshot-provider/provider? source)
+          (snapshot-provider/supports? source :consistency mode)
+          (backend/supports? source :consistency mode))
         input
         {:mode mode
          :capability-supported? capability-supported?}
@@ -358,6 +379,257 @@
       {:adapter selected
        :request-token payload})))
 
+(defn- selection-check!
+  [options phase]
+  (when-let [check! (:selection-check! options)]
+    (check! phase))
+  nil)
+
+(defn- monotonic-millis
+  []
+  #?(:clj (/ (double (System/nanoTime)) 1000000.0)
+     :cljs (.now js/Date)))
+
+(defn- selection-deadline
+  [options]
+  (+ (monotonic-millis)
+     (double (or (:timeout-ms options) 30000))))
+
+(defn- remaining-millis
+  [deadline]
+  (let [remaining (- deadline (monotonic-millis))]
+    (if (pos? remaining)
+      (max 1 (long remaining))
+      0)))
+
+(defn- release-after-selection-error!
+  [selected selection-error]
+  (try
+    (snapshot-provider/release! selected)
+    (catch #?(:clj Throwable :cljs :default) release-error
+      (throw
+       (ex-info
+        "Snapshot selection failed and candidate cleanup also failed."
+        {:type :eacl/snapshot-release-failed
+         :eacl/error :eacl/snapshot-release-failed
+         :backend (:backend (snapshot-provider/semantic-identity selected))
+         :selection-error (ex-data selection-error)}
+        release-error))))
+  (throw selection-error))
+
+(defn- acquire-provider-candidate!
+  [source kind options & args]
+  (selection-check! options :before-snapshot-acquisition)
+  (let [selected (apply snapshot-provider/acquire! source kind args)]
+    (try
+      (selection-check! options :after-snapshot-acquisition)
+      selected
+      (catch #?(:clj Throwable :cljs :default) error
+        (release-after-selection-error! selected error)))))
+
+(defn- provider-selected-adapter!
+  [source selected kind revision-check options required-scope]
+  (let [adapter (snapshot-provider/adapter selected)
+        provider-scope-value (or required-scope (expected-scope source))
+        selected-scope-value (source-scope adapter)
+        same-source-scope? (= provider-scope-value selected-scope-value)
+        revision-observation
+        (if (and same-source-scope? revision-check)
+          (revision-check adapter)
+          {:satisfied? (nil? revision-check)})
+        input
+        {:kind kind
+         :selection-present? true
+         :selected-adapter? true
+         :same-source-scope? same-source-scope?
+         :revision-satisfied? (boolean (:satisfied? revision-observation))}
+        decision
+        (decide options :consistency-validation input)]
+    (case decision
+      :accept selected
+
+      :exact-snapshot-unavailable
+      (fail! :exact-snapshot-unavailable
+             "The requested exact snapshot is unavailable.")
+
+      :invalid-selected-adapter
+      (throw
+       (ex-info
+        "A provider acquisition did not return an immutable adapter."
+        {:type :eacl/invalid-backend-adapter
+         :eacl/error :eacl/invalid-backend-adapter
+         :backend (snapshot-provider/backend-id source)}))
+
+      :incomparable-scope
+      (fail! :incomparable-scope
+             "Backend selection crossed source, branch, or lifecycle scope."
+             {:source provider-scope-value
+              :selected selected-scope-value})
+
+      :history-divergence
+      (fail! :history-divergence
+             (:message revision-observation)
+             (:data revision-observation)))))
+
+(defn- validate-provider-candidate!
+  [source selected kind revision-check options required-scope]
+  (try
+    (provider-selected-adapter!
+     source selected kind revision-check options required-scope)
+    (catch #?(:clj Throwable :cljs :default) error
+      (release-after-selection-error! selected error))))
+
+(defn- freshness-timeout!
+  [payload timeout-ms]
+  (fail! :freshness-timeout
+         "Timed out waiting for the requested native revision."
+         {:requested-revision (:revision payload)
+          :timeout-ms timeout-ms}))
+
+(defn- select-provider-at-least!
+  [source payload options deadline]
+  (let [timeout-ms (or (:timeout-ms options) 30000)]
+    (loop []
+      (selection-check! options :at-least-candidate)
+      (let [remaining (remaining-millis deadline)]
+        (when (zero? remaining)
+          (freshness-timeout! payload timeout-ms))
+        (let [selected
+              (acquire-provider-candidate!
+               source :at-least options payload remaining)
+              _
+              (when (zero? (remaining-millis deadline))
+                (try
+                  (freshness-timeout! payload timeout-ms)
+                  (catch #?(:clj Throwable :cljs :default) error
+                    (release-after-selection-error! selected error))))
+              ;; Acquisition already captured and validated native revision in
+              ;; the selected snapshot's semantic identity. Re-observing the
+              ;; adapter here is unnecessary and, for owned native snapshots,
+              ;; would create a post-validation failure point that could leak
+              ;; the candidate before ownership transfer.
+              actual
+              (:revision (snapshot-provider/semantic-identity selected))]
+          (if (>= actual (:revision payload))
+            (validate-provider-candidate!
+             source
+             selected
+             :at-least
+             (fn [_]
+               {:satisfied? true
+                :message
+                "The selected snapshot did not reach the requested native revision."
+                :data {:requested-revision (:revision payload)
+                       :actual-revision actual}})
+             options
+             (select-keys
+              payload
+              [:backend :source-id :branch :source-lifecycle]))
+            (do
+              (snapshot-provider/release! selected)
+              (selection-check! options :at-least-retry)
+              (recur))))))))
+
+(defn- select-provider-snapshot
+  [source {:keys [mode token]} options]
+  (case (selection-plan source {:mode mode} options)
+      :select-current
+      {:selected-snapshot
+       (let [selected
+             (acquire-provider-candidate! source :current options)]
+         (validate-provider-candidate!
+          source selected :current nil options nil))}
+
+      :select-authoritative
+      {:selected-snapshot
+       (let [selected
+             (acquire-provider-candidate!
+              source
+              :authoritative
+              options
+              (:timeout-ms options))]
+         (validate-provider-candidate!
+          source selected :authoritative nil options nil))}
+
+      :authenticate-and-select-at-least
+      (let [payload (authenticate source options token)
+            deadline (selection-deadline options)]
+        {:selected-snapshot
+         (select-provider-at-least! source payload options deadline)
+         :request-token payload})
+
+      :authenticate-and-select-exact
+      (let [payload (authenticate source options token)
+            deadline (selection-deadline options)
+            selected
+            (acquire-provider-candidate!
+             source :exact options payload (remaining-millis deadline))]
+        {:selected-snapshot
+         (validate-provider-candidate!
+          source
+          selected
+          :exact
+          (fn [_selected-adapter]
+            (let [actual
+                  (select-keys
+                   (snapshot-provider/semantic-identity selected)
+                   [:revision :exact-locator])]
+              {:satisfied?
+               (and (= (:revision payload) (:revision actual))
+                    (= (:exact-locator payload)
+                       (:exact-locator actual)))
+               :message
+               "The exact locator resolved to a different native revision."
+               :data
+               {:expected-revision
+                (select-keys payload [:revision :exact-locator])
+                :actual-revision actual}}))
+          options
+          (select-keys
+           payload
+           [:backend :source-id :branch :source-lifecycle]))
+         :request-token payload})))
+
+(defn select-from-provider
+  "Authenticates and acquires exactly one provider-owned selected snapshot.
+
+  The caller owns `:selected-snapshot` on return and must release it in a
+  `finally` scope after completely realizing the public response. Every error
+  before ownership transfer releases the candidate here."
+  [source consistency-value
+   {:keys [format-options issue-token?]
+    :as options}]
+  (when-not (snapshot-provider/provider? source)
+    (throw
+     (ex-info
+      "Provider selection requires a snapshot provider."
+      {:type :eacl/invalid-snapshot-provider
+       :eacl/error :eacl/invalid-snapshot-provider})))
+  (let [descriptor (public-consistency/descriptor consistency-value)
+        selection (select-provider-snapshot source descriptor options)
+        selected (:selected-snapshot selection)]
+    (try
+      (let [selected-adapter (snapshot-provider/adapter selected)
+            request-token (:request-token selection)
+            identity (snapshot-provider/semantic-identity selected)
+            revision (select-keys identity [:revision :exact-locator])
+            response-token
+            (when issue-token?
+              (causal-token/issue
+               format-options
+               (select-keys
+                identity
+                [:backend :source-id :branch :source-lifecycle
+                 :revision :exact-locator])))]
+        {:selected-snapshot selected
+         :adapter selected-adapter
+         :descriptor descriptor
+         :request-token request-token
+         :response-token response-token
+         :native-revision revision})
+      (catch #?(:clj Throwable :cljs :default) error
+        (release-after-selection-error! selected error)))))
+
 (defn select
   "Authenticates and selects exactly one immutable snapshot adapter.
 
@@ -367,22 +639,24 @@
   [source consistency-value
    {:keys [format-options issue-token?]
     :as options}]
-  (let [descriptor (public-consistency/descriptor consistency-value)
-        selection (select-adapter source descriptor options)
-        selected (:adapter selection)
-        request-token (:request-token selection)
-        revision (native-revision selected)
-        response-token
-        (when issue-token?
-          (causal-token/issue
-           format-options
-           (merge (source-scope selected)
-                  revision)))]
-    {:adapter selected
-     :descriptor descriptor
-     :request-token request-token
-     :response-token response-token
-     :native-revision revision}))
+  (if (snapshot-provider/provider? source)
+    (select-from-provider source consistency-value options)
+    (let [descriptor (public-consistency/descriptor consistency-value)
+          selection (select-adapter source descriptor options)
+          selected (:adapter selection)
+          request-token (:request-token selection)
+          revision (native-revision selected)
+          response-token
+          (when issue-token?
+            (causal-token/issue
+             format-options
+             (merge (source-scope selected)
+                    revision)))]
+      {:adapter selected
+       :descriptor descriptor
+       :request-token request-token
+       :response-token response-token
+       :native-revision revision})))
 
 (defn selected-adapter-token
   "Issues a causal token from an already selected immutable adapter.
