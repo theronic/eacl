@@ -3470,6 +3470,15 @@
        :eacl/error :eacl/invalid-config
        :key :read-only?
        :value read-only?})))
+  (when (and (contains? config-opts :relationship-observations?)
+             (not (boolean? (:relationship-observations? config-opts))))
+    (throw
+     (ex-info
+      "EACL Config Error: :relationship-observations? must be boolean."
+      {:type :eacl/invalid-config
+       :eacl/error :eacl/invalid-config
+       :key :relationship-observations?
+       :value (:relationship-observations? config-opts)})))
   (let [source-lifecycle (or source-lifecycle "eacl/initial")
         source-lifecycle-state (atom source-lifecycle)
         codec-instance-id (str (random-uuid))

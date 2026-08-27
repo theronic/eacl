@@ -292,14 +292,21 @@
          [resource-type relation-eid subject-type]))))))
 
 (defn relationship-present-for-relation?
-  "One bounded AVET probe for speculative retain-inert diagnostics."
+  "At most one bounded AVET probe per physical direction for speculative
+  retain-inert diagnostics. Either half witnesses retained relationship data,
+  including a one-sided tuple left by earlier corruption."
   [db {:eacl.relation/keys [resource-type subject-type] :as relation}]
   (when-let [relation-eid (ddb/entid db [:eacl/id (:eacl/id relation)])]
     (boolean
-     (first
-      (ddb/avet-tuple-prefix
-       db relationship-storage/forward-attribute 4
-       [subject-type relation-eid resource-type])))))
+     (or
+      (first
+       (ddb/avet-tuple-prefix
+        db relationship-storage/forward-attribute 4
+        [subject-type relation-eid resource-type]))
+      (first
+       (ddb/avet-tuple-prefix
+        db relationship-storage/reverse-attribute 4
+        [resource-type relation-eid subject-type]))))))
 
 (defn current-schema-generation
   [db]

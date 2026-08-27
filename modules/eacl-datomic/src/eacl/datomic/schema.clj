@@ -973,7 +973,15 @@
      (if (map? node)
        (let [node (dissoc node :grouped?)]
          (if (and (= :union (:op node)) (vector? (:children node)))
-           (update node :children #(vec (sort-by pr-str %)))
+           (update node :children
+                   (fn [children]
+                     (->> children
+                          (mapcat #(if (= :union (:op %))
+                                     (:children %)
+                                     [%]))
+                          distinct
+                          (sort-by pr-str)
+                          vec)))
            node))
        node))
    (:root (expression-persistence/decode-entity entity))))

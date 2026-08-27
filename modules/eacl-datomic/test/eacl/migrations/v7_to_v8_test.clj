@@ -270,6 +270,35 @@
                        }"})]
         (is (= :migrated (:status report)))
         (is (= :expression (schema/permission-storage-shape (d/db conn)))))))
+  (testing "union denotation is associative and idempotent"
+    (doseq [permission-source
+            ["reader + (writer + owner)"
+             "reader + (writer + (reader + owner))"]]
+      (with-mem-conn [conn released-v7-schema]
+        @(d/transact conn [(base/Relation :document :reader :user)
+                           (base/Relation :document :writer :user)
+                           (base/Relation :document :owner :user)
+                           (base/Permission :document :view
+                                            {:relation :reader})
+                           (base/Permission :document :view
+                                            {:relation :writer})
+                           (base/Permission :document :view
+                                            {:relation :owner})])
+        (let [report
+              (migration/migrate!
+               conn
+               {:schema
+                (str "definition user {}\n"
+                     "definition document {\n"
+                     "  relation reader: user\n"
+                     "  relation writer: user\n"
+                     "  relation owner: user\n"
+                     "  permission view = " permission-source "\n"
+                     "}")})]
+          (is (= :migrated (:status report)) permission-source)
+          (is (= :expression
+                 (schema/permission-storage-shape (d/db conn)))
+              permission-source)))))
   (testing "permissions present only in the replacement are additive"
     (with-mem-conn [conn released-v7-schema]
       (populate-two-relation-v7! conn)

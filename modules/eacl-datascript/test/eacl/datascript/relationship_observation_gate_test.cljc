@@ -85,6 +85,20 @@
       (is (pos? (:recorded-events stats))
           "opting in records observations on the same request paths"))))
 
+(deftest relationship-observation-option-is-closed-and-boolean-test
+  (doseq [value [nil 0 "true" :enabled]]
+    (let [data
+          (try
+            (datascript/make-client
+             (datascript/create-conn)
+             {:relationship-observations? value})
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (ex-data error)))]
+      (is (= :eacl/invalid-config (:type data)) (pr-str value))
+      (is (= :relationship-observations? (:key data)) (pr-str value)))))
+
 (deftest recording-prefers-evicting-superseded-watermarks-test
   ;; When the store is full, entries whose watermark can never recur are the
   ;; preferred victims, so entries that remain reusable at the current

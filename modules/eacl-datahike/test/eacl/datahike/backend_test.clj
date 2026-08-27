@@ -15,7 +15,9 @@
             [eacl.datahike.core :as datahike]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.schema :as schema]))
+            [eacl.datahike.schema :as schema]
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.model :as model]))
 
 (def ^:private modes
   {"attributes as keywords"          nil
@@ -95,6 +97,38 @@
                  permission view = account->view
                  permission reboot = account->admin
                }")))))))
+
+(deftest retain-inert-presence-detects-reverse-only-ghost-test
+  (doseq [[label config] modes]
+    (testing label
+      (let [[conn _] (seeded-conn config)
+            db (d/db conn)
+            user-eid (ddb/entid db [:eacl/id "user-1"])
+            account-eid (ddb/entid db [:eacl/id "account-1"])
+            relation-id (model/->relation-id :account :owner :user)
+            relation-eid (ddb/entid db [:eacl/id relation-id])
+            relation {:eacl/id relation-id
+                      :eacl.relation/resource-type :account
+                      :eacl.relation/relation-name :owner
+                      :eacl.relation/subject-type :user}
+            forward-value [:user relation-eid :account account-eid]]
+        (d/transact
+         conn
+         [[:db/retract user-eid
+           relationship-storage/forward-attribute forward-value]])
+        (is (empty?
+             (ddb/eavt-datoms
+              (d/db conn) user-eid
+              relationship-storage/forward-attribute forward-value)))
+        (is (seq
+             (ddb/eavt-datoms
+              (d/db conn) account-eid
+              relationship-storage/reverse-attribute
+              [:account relation-eid :user user-eid])))
+        (is (true?
+             (schema/relationship-present-for-relation?
+              (d/db conn) relation))
+            "retain-inert diagnostics must detect either surviving tuple half")))))
 
 (deftest a-schema-change-invalidates-cached-permission-paths
   ;; A schema write replaces the adapter's derived-schema generation. The
