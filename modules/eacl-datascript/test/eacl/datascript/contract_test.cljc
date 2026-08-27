@@ -8,11 +8,144 @@
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
+            [eacl.datascript.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
+
+(deftest missing-anchor-validation-reuses-derived-schema-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        missing-user (contract/->user "missing")
+        missing-server (contract/->server "missing")
+        reads (atom 0)
+        original-read-schema schema/read-schema
+        exercise!
+        (fn []
+          (is (= []
+                 (:data
+                  (eacl/lookup-resources
+                   client {:subject missing-user
+                           :permission :view
+                           :resource/type :server
+                           :first 20
+                           :cache? false}))))
+          (is (= 0
+                 (:count
+                  (eacl/count-resources
+                   client {:subject missing-user
+                           :permission :view
+                           :resource/type :server
+                           :cache? false}))))
+          (is (false?
+               (eacl/can? client {:subject missing-user
+                                  :permission :view
+                                  :resource missing-server
+                                  :cache? false}))))]
+    (eacl/write-schema! client contract/smoke-schema)
+    #?(:clj
+       (with-redefs [schema/read-schema
+                     (fn [db & format]
+                       (swap! reads inc)
+                       (apply original-read-schema db format))]
+         (exercise!)
+         (is (= 1 @reads)
+             "missing-anchor validation decodes one immutable schema generation"))
+       :cljs
+       (exercise!))))
+
+(deftest cache-only-metrics-refresh-preserves-results-and-cursors-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client
+                conn {:security-key
+                      "metrics-refresh00000000000000000"})
+        alice (eacl/spice-object :user "metrics-alice")
+        documents (mapv #(eacl/spice-object
+                          :document (str "metrics-d" %))
+                        (range 6))
+        query {:subject alice
+               :permission :view
+               :resource/type :document
+               :first 2
+               :cache? false}]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation reader: user
+        permission view = reader
+      }")
+    (ds/transact!
+     conn
+     (into [{:eacl/id (:id alice)}]
+           (map (fn [document] {:eacl/id (:id document)}) documents)))
+    (eacl/create-relationships!
+     client
+     (mapv #(eacl/->Relationship alice :reader %) documents))
+    (let [cold (eacl/lookup-resources client query)
+          cold-stats (datascript/cache-stats client)]
+      (is (= (subvec documents 0 2) (:data cold)))
+      (is (pos? (get-in cold-stats
+                        [:relationship-observations :entry-count])))
+      (is (pos? (get-in cold-stats
+                        [:structural-metrics :entry-count])))
+
+      (testing "default refresh performs no backend read and keeps cursors valid"
+        (let [observed (atom [])
+              refresh-report
+              (binding [backend/*invoke-observer* #(swap! observed conj %)]
+                (datascript/refresh-metrics!
+                 client {:scope :relationships}))]
+          (is (empty? @observed))
+          (is (= 0 (get-in refresh-report
+                           [:relationship-observations :entry-count])))
+          (let [continued
+                (eacl/lookup-resources
+                 client (assoc query :after
+                               (get-in cold [:page-info :end-cursor])))]
+            (is (= (subvec documents 2 4) (:data continued))))))
+
+      (testing "an explicit bounded read-through repopulates organically"
+        (let [report
+              (datascript/refresh-metrics!
+               client
+               {:scope :relationships
+                :read-through {:operation :lookup-resources
+                               :request (dissoc query :cache?)}})]
+          (is (= (:data cold)
+                 (get-in report [:read-through-result :data])))
+          (is (pos? (get-in report
+                            [:relationship-observations :entry-count]))))
+        (let [report
+              (datascript/refresh-metrics!
+               client
+               {:scope :relationships
+                :read-through
+                {:operation :count-resources
+                 :request (dissoc query :first :cache?)}})]
+          (is (= 6 (get-in report [:read-through-result :count])))
+          (is (pos? (get-in report
+                            [:relationship-observations
+                             :exact-entry-count])))))
+
+      (testing "a new database high-watermark gets a distinct observation"
+        (let [before (get-in (datascript/cache-stats client)
+                             [:relationship-observations :entry-count])]
+          (ds/transact! conn [{:eacl/id "metrics-unrelated"}])
+          (is (= (:data cold)
+                 (:data (eacl/lookup-resources client query))))
+          (is (> (get-in (datascript/cache-stats client)
+                         [:relationship-observations :entry-count])
+                 before))))
+
+      (testing "eager structural refresh derives metrics without durable data"
+        (let [report (datascript/refresh-metrics!
+                      client {:scope :structural :eager? true})]
+          (is (:structural-refreshed? report))
+          (is (pos? (get-in (datascript/cache-stats client)
+                            [:structural-metrics :entry-count]))))))))
 
 (def ^:private permission-tree-schema
   "definition user {}
@@ -874,6 +1007,48 @@
     nil
     (catch #?(:clj Exception :cljs :default) ex
       (ex-data ex))))
+
+(deftest expression-admission-limits-are-client-local-test
+  (let [schema-source
+        "definition user {}
+         definition document {
+           relation reader: user
+           permission view = reader
+         }"
+        conn (datascript/create-conn)
+        permissive
+        (datascript/make-client
+         conn {:security-key "client-limits-permissive00000000"})]
+    (eacl/write-schema! permissive schema-source)
+    ;; Warm the permissive client's derived generation before constructing a
+    ;; stricter peer. The caches are client-owned and cannot cross this boundary.
+    (is (= 1 (count (:permissions (eacl/read-schema permissive)))))
+    (let [strict
+          (datascript/make-client
+           conn {:security-key "client-limits-strict000000000000"
+                 :expression-limits {:maximum-source-nodes 0}})
+          failure (thrown-data #(eacl/read-schema strict))]
+      (is (= :eacl.schema/expression-limit (:type failure)))
+      (is (= :node-count (:dimension failure)))
+      (is (= 0 (:maximum failure)))
+      (is (= 1 (:actual failure))))
+    (is (= 1 (count (:permissions (eacl/read-schema permissive))))))
+  (let [conn (datascript/create-conn)
+        strict
+        (datascript/make-client
+         conn {:security-key "client-limits-writer000000000000"
+               :expression-limits {:maximum-source-nodes 0}})
+        failure
+        (thrown-data
+         #(eacl/write-schema!
+           strict
+           "definition user {}
+            definition document {
+              relation reader: user
+              permission view = reader
+            }"))]
+    (is (= :eacl.schema/expression-limit (:type failure)))
+    (is (empty? (:permissions (schema/read-schema (ds/db conn)))))))
 
 (deftest v7-3-parser-hardening-test
   (testing "identifiers that merely start with reserved words remain legal"

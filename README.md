@@ -356,7 +356,6 @@ As long as the DB basis is recent enough for our consistency demands, we can avo
 
 Note that EACL has [Limitations](#limitations-deficiencies--gotchas) compared to SpiceDB, mainly:
 - No [Caveats](https://authzed.com/docs/spicedb/concepts/caveats) yet (needed for ABAC),
-- No `Negation` or `Intersection` operators yet,
 - and a few other minor differences.
 
 ## ReBAC: Relationship-based Access Control
@@ -519,19 +518,22 @@ But you will probably forget one day, so there are helpers to fined & clean up g
 
 ### Permissions
 
+- `:eacl/id`
 - `:eacl.permission/resource-type`
 - `:eacl.permission/permission-name`
-- `:eacl.permission/source-relation-name`
-- `:eacl.permission/target-type`
-- `:eacl.permission/target-name`
+- `:eacl.permission/expression-payload`
 
 #### Permission Tuples (indices):
 
-- Direct Permissions: `:eacl.permission/resource-type+permission-name`
-- Datomic permission arrows: `:eacl.permission/resource-type+source-relation-name+target-type+permission-name`
-- Datomic relation arrows: `:eacl.permission/resource-type+source-relation-name+target-type+target-name`
-- Datomic full key: `:eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name`
-- Datahike, DataScript, and Datalevin full key: `:eacl.permission/full-key`
+- `:eacl.permission/resource-type+permission-name`
+
+The canonical payload contains its expression-format version. EACL does not
+store a second format field, a content digest, a policy digest, admission
+limits, or expression/DAG metrics. Those values either duplicate the payload
+or describe one client's resource-admission policy rather than permission
+meaning. Node counts, depth, fan-in, encoded size, normalized DAG counts, word
+counts, and checkpoint weights are derived from the payload and may be cached
+inside the client.
 
 ### Schema Tracking
 
@@ -540,6 +542,7 @@ But you will probably forget one day, so there are helpers to fined & clean up g
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
 - `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript. Datalevin uses scalar `:eacl.datalevin/schema-generation` and `:eacl.datalevin/schema-write-fence` values in its native `max-tx` domain.
 - `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
+- `:eacl/permission-storage-version` identifies Datomic's canonical permission representation (version 8).
 - `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
 ## Performance
@@ -643,7 +646,16 @@ Java 26; source builds may target Java 8 through Java 26, subject to their
 backend and application dependencies. See [formal/README.md](formal/README.md)
 for tool versions and the full verification commands.
 
-For module selection, current capability differences, cache mutation rules, and recursive controls, see the [backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup, mandatory lifecycle/watermark inputs, write-policy boundary, and publication status are documented in the [`eacl-datalevin` module README](modules/eacl-datalevin/README.md). Backend authors should also read the [adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source migration guide](docs/v8-snapshot-provider-migration.md).
+For permission operators, precedence, stratification, limits, ordering, cursors,
+cache behavior, and measured performance, see the [permission set-algebra
+guide](docs/permission-set-algebra.md). For module selection, current
+capability differences, cache mutation rules, and recursive controls, see the
+[backend guide](docs/v8-backend-modules-and-upgrade.md). Datalevin setup,
+mandatory lifecycle/watermark inputs, write-policy boundary, and publication
+status are documented in the [`eacl-datalevin` module
+README](modules/eacl-datalevin/README.md). Backend authors should also read the
+[adapter boundary](docs/v8-backend-adapter-boundary.md) and [basis-source
+migration guide](docs/v8-snapshot-provider-migration.md).
 
 ### Schema & Relationships
 
@@ -656,23 +668,30 @@ To create a Relationship, first define your schema using `eacl/write-schema!`:
    definition account {
      relation owner: user
      relation viewer: user
+     relation active: user
+     relation banned: user
 
-     permission admin = owner
+     permission admin = owner - banned
+     permission view = (owner + viewer) & active
    }
 
    definition product {
      relation account: account
 
      permission edit = account->admin
-     permission view = account->admin + account->viewer
+     permission view = account->view
    }")
 ```
 
 This schema defines:
-- An `account`, which can have an `owner` and `viewer` users, with `admin` permission granted to owners.
-- A `product` belongs to an `account`, with `edit` permission for account admins and `view` permission for account admins and viewers
+- An `account`, which can have owner, viewer, active, and banned users, with
+  `admin` permission granted to non-banned owners.
+- A `product` belongs to an `account`, with `edit` permission for account
+  admins and `view` permission for active account owners or viewers.
 
-In SpiceDB schema DSL, `+` means union (OR-logic). EACL does not support exclusion (`-`) or intersection (`&`) yet.
+In the schema DSL, `+` is union, `&` is intersection, and `-` is directed set
+exclusion. Parentheses are supported. `+` binds more tightly than `&`, which
+binds more tightly than `-`; repeated exclusion associates from the left.
 
 ### Relationship Maintenance
 
@@ -770,6 +789,11 @@ token belongs to one logical request.
 All schema changes must use `eacl/write-schema!`. If an application changes
 the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
+
+Datomic consumers upgrading a released v7 database must run the explicit
+permission-only v7-to-v8 migration before constructing an ordinary v8 client.
+It reuses the existing relationship tuple attributes and datoms without a
+relationship rebuild. See the [v7-to-v8 migration guide](docs/migration-v7-to-v8.md).
 
 ### Permission-tree expansion
 
@@ -928,7 +952,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install EACL's current Datomic Relationship schema:
-@(d/transact conn schema/v7-schema)
+@(d/transact conn schema/v8-schema)
 
 ; Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl
@@ -1279,6 +1303,27 @@ The default options are to use the built-in EACL string attr `:eacl/id`, but you
 
 `make-client` rejects unknown options with `{:type :eacl/invalid-config}`.
 
+Expression admission limits are immutable client configuration. Overrides are
+merged with EACL's calibrated defaults and checked against portable hard
+ceilings:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:expression-limits
+    {:maximum-source-nodes 32768
+     :maximum-source-depth 64
+     :maximum-expression-bytes 262144}}))
+```
+
+The profile applies to schema reads and writes performed by that client. It is
+also accepted by direct schema writers and the explicit Datomic v7-to-v8
+permission migration. Two Peers may deliberately use different profiles: a
+stricter Peer can reject a schema accepted by a looser Peer, but schemas
+accepted by both have identical permission meaning. The profile is never
+written to the database and never coordinates Peers.
+
 All backends issue non-expiring cursors by default. Configure a positive
 `:cursor-ttl-seconds` only when the application deliberately wants a maximum
 pagination age; cache TTL and capacity remain independent of cursor age.
@@ -1380,13 +1425,27 @@ Inspect or expire a client through its backend API:
 ```clojure
 (eacl.datomic.core/cache-stats acl)
 (eacl.datomic.core/expire-cache! acl)
+(eacl.datomic.core/refresh-metrics! acl)
 
 (eacl.datahike.core/cache-stats acl)
 (eacl.datahike.core/expire-cache! acl)
+(eacl.datahike.core/refresh-metrics! acl)
 
 (eacl.datascript.core/cache-stats acl)
 (eacl.datascript.core/expire-cache! acl)
+(eacl.datascript.core/refresh-metrics! acl)
+
+(eacl.datalevin.core/cache-stats acl)
+(eacl.datalevin.core/expire-cache! acl)
+(eacl.datalevin.core/refresh-metrics! acl)
 ```
+
+Metric refresh is cache-only. By default it clears structural and relationship
+observations and performs no relationship scan. Pass
+`{:scope :structural :eager? true}` to reread the bounded permission schema.
+An explicit `:read-through` runs the named public operation with completed
+answer caching bypassed; a count without `:count-limit` is therefore an
+explicit exhaustive read subject to the normal work limits.
 
 After a database restore, reset, branch replacement, or other operation that
 can replace history, expire or replace every affected client before serving
@@ -1655,16 +1714,10 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   replacement require quiescing affected traffic, completing the operation,
   rotating the shared source lifecycle and affected clients/caches, and then
   resuming with deliberate token/cursor key-version policy.
-- *No negation operator:* EACL only supports Union (`+`) permission operators, not `-` negation, e.g.
-  - `permission admin = owner + shared_admin` is valid,
-  - but `permission admin = owner - banned_member` is not.
-- Arrow syntax is limited to one level of nesting, e.g.
-  - `permission arrow = relation->via-permission` is supported,
-  - but `permission arrow = relation->subrelation->permission` is not. The target permission may itself contain an arrow, so longer graph traversals can be modelled through named permissions.
 - SpiceDB `subject#relation` subject sets are not supported. Model group membership with explicit group Relationships and arrow permissions when that expresses the required semantics.
 - *Expansion is structural, not a membership proof:* permission trees preserve
-  relation, permission, union, and arrow boundaries. Use `can?` for an
-  authorization decision.
+  relation, permission, union, intersection, directed exclusion, and arrow
+  boundaries. Use `can?` for an authorization decision.
 - *Cache coherence requires EACL authorization writers:* Bypassing EACL for
   schema, relationship, secured identity, or deletion mutations can
   leave cached answers stale. Stop affected traffic, repair the data, and
@@ -1706,9 +1759,9 @@ but it is not a byte-for-byte or operational clone:
   Datomic commits high-degree deletion in batches of 1,000; Datahike and
   DataScript use one atomic transaction. These do not have direct SpiceDB API
   equivalents.
-- EACL currently supports a smaller schema subset: unions and its documented
-  arrow forms, but not caveats, wildcard subjects, expiration, intersections,
-  exclusions, or subject relations.
+- EACL currently supports a smaller schema subset: unions, intersections,
+  exclusions, and its documented arrow forms, but not caveats, wildcard
+  subjects, expiration, or subject relations.
 - EACL evaluates relationship cycles as a fixed point and has no separate
   dispatch-depth limit for checks, lookups, and counts. These operations remain
   subject to configured traversal work limits. SpiceDB uses a configurable

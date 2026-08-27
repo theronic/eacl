@@ -19,7 +19,8 @@
 (deftest eacl-config-tests
   (testing ""
     (with-mem-conn [conn schema/v7-schema]
-      @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+      (fixtures/install-expression-schema! conn)
+      @(d/transact conn fixtures/entity-fixtures)
       @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
       ;@(d/transact conn [{:db/ident :my/id
       ;                    :db/doc "Your custom ID here, e.g. UUID in this case."
@@ -202,7 +203,8 @@
   ;; codec whose external ids differ from :eacl/id used to yield an absent
   ;; root (no subjects anywhere) instead of the tree.
   (with-mem-conn [conn schema/v7-schema]
-    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    (fixtures/install-expression-schema! conn)
+    @(d/transact conn fixtures/entity-fixtures)
     @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
     (let [external->eacl-id {"S1" "account1-server1" "A1" "account-1" "U1" "user-1"
                              "G1" "group-1" "SU" "super-user" "P" "platform"
@@ -241,7 +243,8 @@
 
 (deftest service-admission-option-test
   (with-mem-conn [conn schema/v7-schema]
-    @(d/transact conn (concat fixtures/relations+permissions fixtures/entity-fixtures))
+    (fixtures/install-expression-schema! conn)
+    @(d/transact conn fixtures/entity-fixtures)
     @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
     (testing "the option is validated at construction"
       (doseq [bad [{:max-concurrent 0} {:bogus 1} :on]]

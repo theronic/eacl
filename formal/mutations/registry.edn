@@ -1,8 +1,8 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 113
- :historical-clojure-mutant-count 109
- :historical-model-mutant-count 4
+ :historical-mutant-count 129
+ :historical-clojure-mutant-count 119
+ :historical-model-mutant-count 10
  :mutants
  [{:id :wrong-arrow-direction
    :mechanism :executed-production
@@ -215,6 +215,77 @@
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by {:test :aggregate-deadline-control}}
 
+  {:id :operator-wrong-precedence
+   :mechanism :executed-production
+   :mutation :parse-union-after-intersection-and-exclusion
+   :target-symbol "parser/permission-expression->source-ast"
+   :detector "operator-wrong-precedence-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-precedence-production-control}}
+  {:id :operator-swapped-exclusion
+   :mechanism :executed-production
+   :mutation :swap-exclusion-left-and-right
+   :target-symbol "parser/permission-expression->source-ast"
+   :detector "operator-swapped-exclusion-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-exclusion-direction-production-control}}
+  {:id :operator-unsigned-dependency
+   :mechanism :executed-production
+   :mutation :erase-negative-edge-sign
+   :target-symbol "expression-graph/signed-dependencies"
+   :detector "operator-unsigned-dependency-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-signed-dependency-production-control}}
+  {:id :operator-missing-join-slot
+   :mechanism :executed-production
+   :mutation :drop-one-required-intersection-slot
+   :target-symbol "operator-recursive/update-join"
+   :detector "operator-missing-join-slot-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-complete-join-production-control}}
+  {:id :operator-duplicate-satisfaction-count
+   :mechanism :executed-production
+   :mutation :increment-satisfied-count-for-duplicate-slot
+   :target-symbol "operator-recursive/update-join"
+   :detector "operator-duplicate-satisfaction-count-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-idempotent-join-production-control}}
+  {:id :operator-partial-negative
+   :mechanism :executed-production
+   :mutation :authorize-negative-absence-before-component-completion
+   :target-symbol "operator-recursive/exclusion-decision"
+   :detector "operator-partial-negative-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-completed-negative-production-control}}
+  {:id :operator-vector-misalignment
+   :mechanism :executed-production
+   :mutation :reverse-physical-membership-decisions-before-scatter
+   :target-symbol "direct/direct-match-many?"
+   :detector "operator-vector-misalignment-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-aligned-vector-production-control}}
+  {:id :operator-overread-cursor-advance
+   :mechanism :executed-production
+   :mutation :advance-resume-to-physical-overread-coordinate
+   :target-symbol "operator-lookup/resume-coordinate"
+   :detector "operator-overread-cursor-advance-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-logical-cursor-production-control}}
+  {:id :operator-any-child-allocation
+   :mechanism :executed-production
+   :mutation :allocate-parent-join-state-on-nonanchor-fact
+   :target-symbol "operator-recursive/join-transition-action"
+   :detector "operator-any-child-allocation-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-anchor-allocation-production-control}}
+  {:id :operator-cache-selected-generator
+   :mechanism :executed-production
+   :mutation :select-generator-from-observed-cache-state
+   :target-symbol "operator-plan/select-intersection-anchor"
+   :detector "operator-cache-selected-generator-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by {:test :operator-pure-generator-selection-production-control}}
+
   {:id :cljs-default-restores-generated-kernel
    :mechanism :source-text
    :mutation :require-the-retired-generated-javascript-default
@@ -325,6 +396,54 @@
              :model "formal/tla/EaclManagedProjectionCache.tla"
              :config "formal/tla/mutations/EaclManagedProofBypass.cfg"
              :length 4}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-vector-cancellation-publication
+   :mechanism :executed-model
+   :mutation :publish-vector-after-subgroup-cancellation
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorVectorCancellation.cfg"
+             :length 3}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-partial-vector-publication
+   :mechanism :executed-model
+   :mutation :publish-before-all-physical-subgroups-complete
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPartialVector.cfg"
+             :length 3}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-physical-overread-cursor
+   :mechanism :executed-model
+   :mutation :checkpoint-physical-instead-of-logical-boundary
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPhysicalCursor.cfg"
+             :length 2}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-wrong-checkpoint-resume
+   :mechanism :executed-model
+   :mutation :resume-before-authenticated-logical-checkpoint
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorWrongResume.cfg"
+             :length 3}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-stale-cache-lifecycle
+   :mechanism :executed-model
+   :mutation :retain-cache-entry-across-lifecycle-expiry
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorStaleLifecycle.cfg"
+             :length 4}
+   :killed-by {:test :apalache-counterexample}}
+  {:id :operator-partial-negative-authorization
+   :mechanism :executed-model
+   :mutation :authorize-before-negative-subproblem-completes
+   :control {:kind :apalache
+             :model "formal/tla/EaclOperatorSafety.tla"
+             :config "formal/tla/mutations/EaclOperatorPartialNegative.cfg"
+             :length 2}
    :killed-by {:test :apalache-counterexample}}]
 
  :retired-mutant-groups

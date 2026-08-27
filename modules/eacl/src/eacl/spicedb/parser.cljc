@@ -3,7 +3,8 @@
   (:require [instaparse.core :as insta]
             [clojure.string :as str]
             [clojure.walk :as walk]
-            [eacl.schema.model :as model]))
+            [eacl.schema.model :as model]
+            [eacl.secure-format :as secure]))
 
 ;      primary-expr = identifier | <'('> permission-expr <')'>
 ;; SpiceDB declarations are line-oriented: a relation or permission must end
@@ -56,11 +57,14 @@
       permission = <'permission'> permission-name <'='> permission-expr
       <permission-name> = identifier
 
-      (* Permission expressions with all operators *)
-      permission-expr = union-expr
-      union-expr = intersect-expr (<'+'> intersect-expr)*
-      intersect-expr = exclusion-expr (<'&'> exclusion-expr)*
-      exclusion-expr = arrow-expr (<'-'> arrow-expr)*
+      (* Permission expressions. EACL's public precedence is deliberately
+         union-before-intersection-before-exclusion: + binds tighter than &,
+         and & binds tighter than -. Repeated exclusion is folded from the
+         left by the source-AST transformer. *)
+      permission-expr = exclusion-expr
+      exclusion-expr = intersect-expr (<'-'> intersect-expr)*
+      intersect-expr = union-expr (<'&'> union-expr)*
+      union-expr = arrow-expr (<'+'> arrow-expr)*
 
       (* Arrow expressions: rel->perm or rel.any(perm) or rel.all(perm) *)
       arrow-expr = arrow-func-expr | simple-arrow-expr
@@ -83,8 +87,44 @@
 
 ;; Example SpiceDB schema
 ;; Parse the schema
-(defn parse-schema [schema-str]
-  (spicedb-parser schema-str))
+(defn parse-schema
+  "Parses one schema. When :maximum-schema-source-bytes is supplied, rejects the
+   source before Instaparse allocates a parse tree."
+  ([schema-str]
+   (parse-schema schema-str {}))
+  ([schema-str {:keys [maximum-schema-source-bytes]}]
+   (when-not (string? schema-str)
+     (throw (ex-info "Schema source must be a string."
+              {:type :eacl.schema/parse-error
+               :eacl/error :eacl.schema/parse-error})))
+   (when maximum-schema-source-bytes
+     (when-not (and (integer? maximum-schema-source-bytes)
+                    (not (neg? maximum-schema-source-bytes)))
+       (throw (ex-info "Invalid schema source-byte limit."
+                {:type :eacl.schema/invalid-expression-limit
+                 :eacl/error :eacl.schema/invalid-expression-limit
+                 :limit :maximum-schema-source-bytes
+                 :value maximum-schema-source-bytes})))
+     ;; UTF-16 code units are a cheap lower bound for UTF-8 bytes. Rejecting on
+     ;; that bound avoids allocating a byte vector for obviously oversized
+     ;; sources; the exact portable byte count is evaluated only inside it.
+     (let [lower-bound (count schema-str)]
+       (when (> lower-bound maximum-schema-source-bytes)
+         (throw (ex-info "Schema source exceeds its byte limit."
+                  {:type :eacl.schema/expression-limit
+                   :eacl/error :eacl.schema/expression-limit
+                   :dimension :source-bytes
+                   :maximum maximum-schema-source-bytes
+                   :actual-at-least lower-bound})))
+       (let [actual (count (secure/utf8-bytes schema-str))]
+         (when (> actual maximum-schema-source-bytes)
+           (throw (ex-info "Schema source exceeds its byte limit."
+                    {:type :eacl.schema/expression-limit
+                     :eacl/error :eacl.schema/expression-limit
+                     :dimension :source-bytes
+                     :maximum maximum-schema-source-bytes
+                     :actual actual}))))))
+   (spicedb-parser schema-str)))
 
 ;; Pretty print parse tree
 ;; ============================================================================
@@ -252,22 +292,6 @@
       (fn [node]
         (when (vector? node)
           (case (first node)
-            ;; Check for intersection operator
-            :intersect-expr
-            (when (> (count (rest node)) 1)
-              (swap! issues conj
-                {:type     :unsupported-operator
-                 :operator "&"
-                 :message  "Unsupported operator: Intersection (&). EACL only supports Union (+) at this time."}))
-
-            ;; Check for exclusion operator
-            :exclusion-expr
-            (when (> (count (rest node)) 1)
-              (swap! issues conj
-                {:type     :unsupported-operator
-                 :operator "-"
-                 :message  "Unsupported operator: Exclusion (-). EACL only supports Union (+) at this time."}))
-
             ;; Check for multi-level arrows and parenthesized arrow bases/targets
             :simple-arrow-expr
             (let [base-exprs (filter #(and (vector? %) (= :base-expr (first %))) (rest node))]
@@ -361,7 +385,7 @@
    Takes a parse tree and throws ex-info if any unsupported features are found.
 
    EACL restrictions:
-   - Only union (+) operator allowed (no intersection &, exclusion -)
+   - Union (+), intersection (&), and exclusion (-) are accepted
    - Only single-level arrows (no a->b->c)
    - No .all() arrow function (only implicit .any() via arrow)
    - No nil keyword
@@ -391,10 +415,10 @@
 
 ;; ============================================================================
 ;; Permission Expression Transformation
-;; Converts new grammar parse tree to component list for EACL
+;; Preserves the source expression before semantic resolution/canonicalization.
 ;; ============================================================================
 
-(declare transform-union-expr)
+(declare permission-expr->source)
 
 (defn- extract-base-expr-identifier
   "Extract identifier string from a base-expr node."
@@ -404,81 +428,178 @@
       (when (and (vector? child) (= :identifier (first child)))
         (second child)))))
 
-(defn- base-expr-paren-child
-  "Returns the inner permission-expr node when a base-expr wraps a paren-expr, else nil."
+(defn- base-expr->source
+  "Converts one base expression to a source node. Parentheses are retained as
+   the :grouped? bit on the enclosed node so same-operator nesting is not lost."
   [node]
-  (when (and (vector? node) (= :base-expr (first node)))
-    (let [child (second node)]
-      (when (and (vector? child) (= :paren-expr (first child)))
-        (second child)))))
+  (when-not (and (vector? node) (= :base-expr (first node)))
+    (throw (ex-info "Malformed permission base expression."
+             {:type :eacl.schema/malformed-permission-expression
+              :eacl/error :eacl.schema/malformed-permission-expression
+              :node node})))
+  (let [child (second node)]
+    (case (first child)
+      :identifier
+      {:op :identifier :name (extract-identifier child)}
 
-(defn- transform-arrow-expr
-  "Transform an arrow expression to component maps.
-   Returns vector of {:type :identifier/:arrow, ...} maps.
-   Parenthesized union operands flatten (EACL is union-only, so `(a + b)` == `a + b`);
-   parens as arrow bases/targets are rejected during validation, with a defensive
-   throw here in case transform is called directly."
+      :paren-expr
+      (assoc (permission-expr->source (second child)) :grouped? true)
+
+      :nil-expr
+      (throw (ex-info "Unsupported keyword: 'nil'."
+               {:type :eacl.schema/unsupported-feature
+                :eacl/error :eacl.schema/unsupported-feature
+                :node node}))
+
+      :self-expr
+      (throw (ex-info "Unsupported keyword: 'self'."
+               {:type :eacl.schema/unsupported-feature
+                :eacl/error :eacl.schema/unsupported-feature
+                :node node}))
+
+      (throw (ex-info "Malformed permission base expression."
+               {:type :eacl.schema/malformed-permission-expression
+                :eacl/error :eacl.schema/malformed-permission-expression
+                :node node})))))
+
+(defn- arrow-expr->source
+  "Converts an arrow expression to an unresolved source node. Only one-hop
+   arrows are representable; validation and these defensive checks reject
+   chained or parenthesized arrow endpoints."
   [node]
   (cond
-    ;; Arrow function expression: rel.any(perm) or rel.all(perm)
     (and (vector? node) (= :arrow-func-expr (first node)))
     (let [children  (rest node)
           base-id   (extract-identifier (first children))
           func-node (some #(when (and (vector? %) (= :arrow-func-name (first %))) %) children)
           func-name (second func-node)
           target-id (extract-identifier (last children))]
-      ;; .any() is equivalent to arrow, .all() should have been rejected by validation
-      [{:type :arrow :base {:type :identifier :name base-id} :path [target-id]}])
+      (when-not (= "any" func-name)
+        (throw (ex-info "Unsupported arrow function."
+                 {:type :eacl.schema/unsupported-arrow-function
+                  :eacl/error :eacl.schema/unsupported-arrow-function
+                  :function func-name})))
+      {:op :arrow :base base-id :target target-id :syntax :any})
 
-    ;; Simple arrow expression: identifier, (paren union), or rel->perm chains
     (and (vector? node) (= :simple-arrow-expr (first node)))
     (let [base-exprs (filter #(and (vector? %) (= :base-expr (first %))) (rest node))]
-      (if (= 1 (count base-exprs))
-        (let [base-expr (first base-exprs)]
-          (if-let [inner-permission-expr (base-expr-paren-child base-expr)]
-            ;; Parenthesized union operand: flatten to its components.
-            (vec (transform-union-expr (second inner-permission-expr)))
-            ;; Single identifier - direct permission/relation reference
-            [{:type :identifier :name (extract-base-expr-identifier base-expr)}]))
-        ;; Arrow chain: every element must be a plain identifier.
-        (let [ids (map extract-base-expr-identifier base-exprs)]
-          (when (some nil? ids)
-            (throw (ex-info "Parenthesized expressions are not supported as arrow bases or targets."
-                     {:type :eacl.schema/paren-arrow
-                      :eacl/error :eacl.schema/paren-arrow
-                      :node node})))
-          [{:type :arrow :base {:type :identifier :name (first ids)} :path (vec (rest ids))}])))
+      (case (count base-exprs)
+        1 (base-expr->source (first base-exprs))
+        2 (let [ids (mapv extract-base-expr-identifier base-exprs)]
+            (when (some nil? ids)
+              (throw (ex-info "Parenthesized expressions are not supported as arrow bases or targets."
+                       {:type :eacl.schema/paren-arrow
+                        :eacl/error :eacl.schema/paren-arrow
+                        :node node})))
+            {:op :arrow :base (first ids) :target (second ids) :syntax :arrow})
+        (throw (ex-info "Multi-level arrows are not supported."
+                 {:type :eacl.schema/multi-level-arrow
+                  :eacl/error :eacl.schema/multi-level-arrow
+                  :node node}))))
 
-    ;; Wrapped arrow expr
     (and (vector? node) (= :arrow-expr (first node)))
-    (transform-arrow-expr (second node))
+    (arrow-expr->source (second node))
 
-    :else []))
+    :else
+    (throw (ex-info "Malformed arrow expression."
+             {:type :eacl.schema/malformed-permission-expression
+              :eacl/error :eacl.schema/malformed-permission-expression
+              :node node}))))
 
-(defn- transform-exclusion-expr
-  "Transform exclusion expression. After validation, this should only have one child."
+(defn- union-expr->source
   [node]
-  (when (and (vector? node) (= :exclusion-expr (first node)))
-    (mapcat transform-arrow-expr (rest node))))
+  (when-not (and (vector? node) (= :union-expr (first node)))
+    (throw (ex-info "Malformed union expression."
+             {:type :eacl.schema/malformed-permission-expression
+              :eacl/error :eacl.schema/malformed-permission-expression
+              :node node})))
+  (let [children (mapv arrow-expr->source (rest node))]
+    (if (= 1 (count children))
+      (first children)
+      {:op :union :children children})))
 
-(defn- transform-intersect-expr
-  "Transform intersection expression. After validation, this should only have one child."
+(defn- intersect-expr->source
   [node]
-  (when (and (vector? node) (= :intersect-expr (first node)))
-    (mapcat transform-exclusion-expr (rest node))))
+  (when-not (and (vector? node) (= :intersect-expr (first node)))
+    (throw (ex-info "Malformed intersection expression."
+             {:type :eacl.schema/malformed-permission-expression
+              :eacl/error :eacl.schema/malformed-permission-expression
+              :node node})))
+  (let [children (mapv union-expr->source (rest node))]
+    (if (= 1 (count children))
+      (first children)
+      {:op :intersection :children children})))
 
-(defn- transform-union-expr
-  "Transform union expression to flat list of components."
+(defn- exclusion-expr->source
+  "Builds ordered binary exclusion nodes by left-folding repeated `-`."
   [node]
-  (when (and (vector? node) (= :union-expr (first node)))
-    (vec (mapcat transform-intersect-expr (rest node)))))
+  (when-not (and (vector? node) (= :exclusion-expr (first node)))
+    (throw (ex-info "Malformed exclusion expression."
+             {:type :eacl.schema/malformed-permission-expression
+              :eacl/error :eacl.schema/malformed-permission-expression
+              :node node})))
+  (let [[left & rights] (mapv intersect-expr->source (rest node))]
+    (reduce (fn [acc right]
+              {:op :exclusion :left acc :right right})
+      left
+      rights)))
+
+(defn- permission-expr->source [node]
+  (when-not (and (vector? node) (= :permission-expr (first node)))
+    (throw (ex-info "Malformed permission expression."
+             {:type :eacl.schema/malformed-permission-expression
+              :eacl/error :eacl.schema/malformed-permission-expression
+              :node node})))
+  (exclusion-expr->source (second node)))
+
+(defn permission-expression->source-ast
+  "Converts a parsed :permission-expr node to an unresolved source AST.
+
+   The AST preserves explicit parentheses with :grouped? and preserves ordered,
+   left-associated exclusion. Identifier kind and arrow target partitions are
+   resolved later against the complete schema."
+  [node]
+  (let [issues (collect-parse-tree-issues node)]
+    (when (seq issues)
+      (throw (ex-info (:message (first issues))
+               {:type :eacl.schema/unsupported-feature
+                :eacl/error :eacl.schema/unsupported-feature
+                :issues issues
+                :issue-count (count issues)})))
+    (permission-expr->source node)))
+
+(defn- operator-source-expression? [node]
+  (case (:op node)
+    (:intersection :exclusion) true
+    :union (boolean (some operator-source-expression? (:children node)))
+    false))
+
+(defn- source-ast->components
+  "Projects union-compatible source syntax into the existing flat permission
+   component domain. Operator expressions have no sound flat projection."
+  [node]
+  (case (:op node)
+    :identifier [{:type :identifier :name (:name node)}]
+    :arrow [{:type :arrow
+             :base {:type :identifier :name (:base node)}
+             :path [(:target node)]}]
+    :union (vec (mapcat source-ast->components (:children node)))
+    (throw (ex-info "Operator expression cannot use flat permission storage."
+             {:type :eacl.schema/operator-storage-disabled
+              :eacl/error :eacl.schema/operator-storage-disabled
+              :expression node}))))
 
 (defn- flatten-expression
   "Flatten a permission expression to a vector of component maps.
    Each component is {:type :identifier/:arrow, ...}"
   [expr]
-  (when (and (vector? expr) (= :permission-expr (first expr)))
-    (transform-union-expr (second expr))))
+  (let [source (permission-expression->source-ast expr)]
+    (when (operator-source-expression? source)
+      (throw (ex-info "Operator expressions require expression-capable schema storage."
+               {:type :eacl.schema/operator-storage-disabled
+                :eacl/error :eacl.schema/operator-storage-disabled
+                :expression source})))
+    (source-ast->components source)))
 
 ;; ============================================================================
 ;; Schema Info Collection

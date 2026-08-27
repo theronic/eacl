@@ -1,0 +1,95 @@
+{:format-version 1
+ :captured-at "2026-08-25"
+ :purpose :pre-production-operator-million-resource-datomic-baseline
+ :environment
+ {:uri-prefix "datomic:dev://localhost:4334/eacl-operator-experiment-"
+  :datomic-peer "1.0.7705"
+  :datomic-transactor "1.0.7705"
+  :transactor-heap-bytes 4294967296
+  :eacl-core-base "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+  :branch "agent/design-operator-engine-performance"
+  :java "26.0.2"
+  :os "Mac OS X 26.4.1 aarch64"}
+ :command
+ "clj-nrepl-eval -p 7788 \"(eacl.operator-engine.datomic-experiments/start! {:resource-count 1000000 :batch-size 2000})\""
+ :source
+ "modules/eacl-datomic/test/eacl/operator_engine/datomic_experiments.clj"
+ :source-sha256
+ "8e2f6dde075374d0bfdd737e26b73962c0fd76d8fa26c88abd2ab2316667c93f"
+ :fixture
+ {:resources 1000000
+  :candidate-relationships 1000000
+  :selective-relationships 250000
+  :forward-tuple-datoms 1250000
+  :reverse-tuple-datoms 1250000
+  :transaction-batches 500
+  :batch-size 2000
+  :final-basis-t 999509}
+ :run
+ {:database-uri
+  "datomic:dev://localhost:4334/eacl-operator-experiment-8434b60d-34b0-41b9-9ea2-c85898d989c0"
+  :database-deleted true
+  :database-absence-confirmed true
+  :total-elapsed-ms 47545.424875
+  :public
+  {:present-check {:median-nanos 126416 :p95-nanos 328792}
+   :missing-check {:median-nanos 444541 :p95-nanos 702042}
+   :first-page {:items 20 :median-nanos 567792 :p95-nanos 859542}
+   :adjacent-pages {:first-items 20 :second-items 20 :overlap 0}
+   :bounded-count
+   {:limit 1000
+    :result-count 1000
+    :truncated true
+    :median-nanos 3705500
+    :p95-nanos 3940708}
+   :default-exact-count
+   {:nanos 274550458
+    :outcome :limit-exceeded
+    :limit-kind :advanced-datoms
+    :limit 100000}
+   :experimental-exhaustive-count
+   {:nanos 3361867000
+    :result-count 1000000
+    :limits {:max-derived-grants 2000000
+             :max-advanced-datoms 2000000
+             :max-queued-work 2000000}}}
+  :prototype
+  {:dense
+   {:candidate-count 256
+    :eid-span 256
+    :accepted 64
+    :equal-decisions true
+    :exact-nanos 885084
+    :prefix-nanos 216292
+    :prefix-values-realized 64}
+   :sparse
+   {:candidate-count 256
+    :eid-span 1000499
+    :accepted 63
+    :equal-decisions true
+    :exact-nanos 60346416
+    :prefix-nanos 86671458
+    :prefix-values-realized 250000}
+   :adaptive-demand
+   {:logical-demand 21
+    :physical-candidates 147
+    :batches 3
+    :accepted 21}}}
+ :discarded-first-attempt
+ {:outcome :default-limit-exceeded
+  :limit-kind :advanced-datoms
+  :limit 100000
+  :elapsed-ms 60815
+  :database-deleted true
+  :reason
+  :qualification-did-not-yet-capture-the-expected-default-limit-as-data}
+ :early-conclusion
+ {:million-resource-write-and-read-qualified true
+  :production-default-limit-preserved true
+  :unconditional-dense-prefix-rejected true
+  :density-gated-dispatch-supported true
+  :dense-prefix-speedup 4.091150325
+  :sparse-prefix-values-over-exact-candidates 976.5625
+  :exact-million-enumeration-seconds 3.361867
+  :qualification
+  :early-local-baseline-not-final-operator-acceptance-ceiling}}

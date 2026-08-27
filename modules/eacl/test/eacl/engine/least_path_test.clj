@@ -64,6 +64,7 @@
          (filterv #(and (= resource-type (:resource-type %))
                         (= permission-name (:permission-name %)))
                   permissions))
+       :permission-expression (fn [& _] nil)
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type opts]
          (scan-slice

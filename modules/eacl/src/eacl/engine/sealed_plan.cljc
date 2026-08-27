@@ -90,7 +90,8 @@
   [adapter [resource-type permission-name :as node]]
   (vec
    (mapcat
-    (fn [{:keys [source-relation-name target-type target-name]}]
+    (fn [{:keys [source-relation-name source-subject-type
+                 target-type target-name]}]
       (cond
         ;; permission p = r (direct relation grant)
         (and (= :self source-relation-name) (= :relation target-type))
@@ -114,7 +115,9 @@
         ;; permission p = via->q (arrow to permission)
         (= :permission target-type)
         (for [{:keys [relation-id subject-type]}
-              (relation-defs adapter resource-type source-relation-name)]
+              (relation-defs adapter resource-type source-relation-name)
+              :when (or (nil? source-subject-type)
+                        (= source-subject-type subject-type))]
           {:rule :arrow-permission
            :node node
            :resource-type resource-type
@@ -127,6 +130,8 @@
         (= :relation target-type)
         (for [{via-eid :relation-id intermediate :subject-type}
               (relation-defs adapter resource-type source-relation-name)
+              :when (or (nil? source-subject-type)
+                        (= source-subject-type intermediate))
               {target-eid :relation-id target-subject :subject-type}
               (relation-defs adapter intermediate target-name)]
           {:rule :arrow-relation

@@ -574,6 +574,24 @@
     (is (= 1 (:key-context-cache-hits @work))
         "the next distinct cursor reuses key derivation without reusing a token")))
 
+(deftest cursor-construction-cache-does-not-cache-tokens-test
+  (let [construction-cache (cursor/codec-cache {:max-entries 4})
+        construction-options
+        (assoc options :cursor-construction-cache construction-cache)
+        value {:v 10 :scope :same :edge {:kind :lookup-eid :value 1}}
+        work (atom {})
+        [token-a token-b]
+        (binding [cursor/*codec-work* work]
+          [(cursor/cursor->token value construction-options)
+           (cursor/cursor->token value construction-options)])]
+    (is (not= token-a token-b)
+        "construction reuse retains a fresh nonce for every uncached token")
+    (is (= value (cursor/token->cursor token-a construction-options)))
+    (is (= value (cursor/token->cursor token-b construction-options)))
+    (is (= 2 (:encode-calls @work)))
+    (is (= 1 (:key-context-builds @work)))
+    (is (= 1 (:key-context-cache-hits @work)))))
+
 #?(:clj
    (deftest encrypted-cursor-key-context-is-concurrency-safe-test
      (let [codec-cache (cursor/codec-cache {:max-entries 128})

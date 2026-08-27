@@ -19,6 +19,13 @@ Capabilities are configuration-specific and are validated before
 authorization. Ordinary calls select one current immutable snapshot and do not
 perform historical selection.
 
+All bundled adapters store and evaluate the same canonical permission
+expressions, including union, intersection, and exclusion. Datahike additionally
+implements the certified density-bounded direct-membership batch; Datomic,
+DataScript, and Datalevin use their certified fallback paths. The shared engine
+owns operator semantics, planning, cursor identity, caching, and limits. See
+[Permission set algebra](permission-set-algebra.md).
+
 `eacl-datalevin` is implemented but not yet published. It depends on the
 explicit public read-snapshot API in the maintained
 `dev.eacl/datalevin-embedded-eacl` fork. Neither coordinate may be treated as
@@ -250,8 +257,10 @@ DataScript supplies current/causal selection but no arbitrary historical
 reconstruction.
 
 The tree is a shallow structural explanation, not a flattened authorization
-answer. It preserves union, permission, and arrow boundaries, empty branches,
-and duplicate multiplicity. Child/subject order is deliberately unspecified.
+answer. It preserves union, intersection, directed exclusion, permission, and
+arrow boundaries, empty branches, and duplicate multiplicity. Child/subject
+order is deliberately unspecified except that exclusion retains left/right
+operand order.
 Use `can?` for membership decisions and compare normalized tree topology with
 multisets when order is irrelevant.
 
@@ -310,3 +319,29 @@ the shared contracts where its topology permits, adopt the current encrypted
 cursor ABI, and pass the aggregate conformance suite. An older published
 `eacl-spicedb` artifact is not source- or wire-compatible merely because scalar
 operations still compile.
+
+## Released v7 permission upgrade and unreleased-v8 reset
+
+Ordinary v8 permission rows contain one canonical expression payload. There is
+no flat-permission compatibility reader or dual-write representation. Datomic
+accepts released v7 flat permission rows only through the explicit
+`eacl.migrations.v7-to-v8/migrate!` maintenance path. The migration validates
+the complete replacement and authoritative attribute meanings, rejects any
+relation identity change, then atomically swaps permission rows and stamps
+permission storage version 8. Released v7 relationship attributes and tuples
+are reused without enumeration, backfill, rewrite, or rebuild. See
+[Migrating Datomic permissions from v7 to v8](migration-v7-to-v8.md).
+
+An ordinary v8 client fails closed on flat-only, mixed, duplicated,
+conflicting, corrupt, or unsupported-format permission storage. The optional
+`:auto-migrate-v7` client setting is explicit opt-in to the same migration,
+not a compatibility reader.
+
+If source control is rolled back across this expression-storage change,
+dispose of and recreate development databases with the schema belonging to the
+selected source revision. Do not open an expression-capable database with an
+older binary. No compatibility is claimed for persisted cursors across that
+rollback, and no migration or dual-write path is provided between superseded
+unreleased-v8 representations. This reset contract is distinct from the
+released v6-to-v7 relationship migration and released v7-to-v8 permission
+migration utilities.

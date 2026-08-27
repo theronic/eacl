@@ -5,7 +5,8 @@
             [eacl.backend.v8 :as v8]
             [eacl.core :as eacl]
             [eacl.datahike.backend :as datahike-backend]
-            [eacl.datahike.core :as datahike]))
+            [eacl.datahike.core :as datahike]
+            [eacl.datahike.direct-membership :as direct-membership]))
 
 (defn- seed-adapter
   [fixture config]
@@ -44,6 +45,12 @@
               :fixture fixture
               :runtime :clj})]
         (is (some? (v8/invoke adapter :schema-generation)))
+        (is (= v8/direct-membership-batch-capability
+               (get-in (v8/operator-capability-identity adapter)
+                       [:direct-membership :mode])))
+        (is (= direct-membership/physical-policy-identity
+               (get-in (v8/operator-capability-identity adapter)
+                       [:direct-membership :physical-policy])))
         (is (:passed? report)
             (pr-str (:checks report)))))))
 

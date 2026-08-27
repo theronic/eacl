@@ -1,0 +1,158 @@
+{:format-version 1
+ :captured-at "2026-08-26"
+ :change :design-demand-driven-set-algebra-engine
+ :status :passed
+ :qualified-tree
+ {:repository "/Users/petrus/code/eacl/core2"
+  :branch "agent/design-operator-engine-performance"
+  :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+  :implementation-commit "b3ebaa32c8158901820167af08d7cb8416b5b6ff"
+  :diff {:files 195 :insertions 37724 :deletions 919}
+  :recorded-release-tree-commit
+  "4c8263085cb649ffc2939226d848c2e848b2bec7"
+  :recorded-release-diff {:files 196 :insertions 37860 :deletions 919}
+  :original-core-worktree
+  {:path "/Users/petrus/code/eacl/core"
+   :head "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+   :modified-by-this-change false
+   :concurrent-user-changes-preserved true}}
+ :release-defaults
+ {:operator-expression-writes true
+  :operator-routing true
+  :disabled-regression-controls-retained true
+  :union-only-bypasses-both-controls true}
+ :validation
+ {:aggregate-jvm
+  {:command "clojure -X:test :excludes '[:benchmark :formal-artifact]'"
+   :tests 993 :assertions 32463 :failures 0 :errors 0}
+  :isolated-modules
+  {:eacl {:tests 286 :assertions 4650 :failures 0 :errors 0}
+   :datomic {:tests 570 :assertions 16595 :failures 0 :errors 0}
+   :datascript {:tests 518 :assertions 11565 :failures 0 :errors 0}
+   :datahike {:tests 350 :assertions 7537 :failures 0 :errors 0}}
+  :cljs
+  {:tests 435 :assertions 9326 :failures 0 :errors 0}
+  :datalevin
+  {:tests 339 :assertions 9061 :failures 0 :errors 0}
+  :formal
+  {:command "bin/formal verify"
+   :modules 48 :verified-obligations 9361 :errors 0
+   :report-sha256
+   "cef3b506cd8b7415657b5e386fa7afe19e15f5934f369a28b17093f38149860c"}
+  :mutations
+  {:registered 55 :killed 55 :survived 0
+   :production-operator-assertions 175
+   :temporal-mutants 10}
+  :packaging
+  {:isolated-module-jars 4
+   :root-release-version "8.0.0-SNAPSHOT"
+   :cold-installed-maven-smoke :passed}
+  :mechanical
+  {:reflection-gate :clean
+   :public-source-closure {:roots 70 :definitions 2093 :status :passed}
+   :evidence-edn-parse :passed
+   :git-diff-check :passed}
+  :openspec
+  {:command
+   "openspec validate design-demand-driven-set-algebra-engine --strict"
+   :status :passed}}
+ :performance
+ {:matched-host-union-only
+  {:operations 16
+   :deterministic-work-equal true
+   :faster 15
+   :within-envelope-not-faster 1
+   :latency-delta-percent {:minimum -65.93 :maximum 0.67}
+   :maximum-allocation-regression-percent 3.82
+   :release-ceiling-percent 5.0}
+  :datahike-loopback-minio
+  {:resources 4096
+   :page-size 20
+   :ceiling-checks 17
+   :all-ceilings-passed true
+   :immediate-warm-index-gets
+   {:intersection 0 :dense-exclusion 0 :sparse-exclusion 0 :arrow 0}
+   :cold-index-gets
+   {:intersection 8 :dense-exclusion 9 :sparse-exclusion 7 :arrow 8}
+   :bounded-count-index-gets 6
+   :exact-count-index-gets 26
+   :bounded-pages-remain-lazy true
+   :store-deleted true
+   :bucket-empty-after-run true}
+  :datomic-million
+  {:resources 1000000
+   :candidate-relationships 1000000
+   :selective-relationships 250000
+   :forward-tuple-datoms 1250000
+   :reverse-tuple-datoms 1250000
+   :automatic-invariants 12
+   :intersection-first-page-median-ms 8.075875
+   :exclusion-first-page-median-ms 7.786625
+   :exact-counts {:union 1000000 :intersection 250000 :exclusion 750000}
+   :database-deleted true
+   :database-absence-confirmed true
+   :original-demo-database-modified false}}
+ :spicedb-oracle
+ {:repository "/Users/petrus/code/eacl/eacl-spicedb-operator-engine"
+  :commit "c5a6335e84b825b149088578714ee1f85155e462"
+  :spicedb-version "1.56.0"
+  :tests 2 :assertions 680 :failures 0 :errors 0
+  :point-decisions 336
+  :lookup-resource-sets 48
+  :lookup-subject-sets 112
+  :return-order :ignored
+  :negative-recursion
+  {:spicedb-schema-write :accepted
+   :spicedb-check :failed-precondition
+   :eacl-schema-write :eacl.schema/unstratified-exclusion}}
+ :evidence-sha256
+ {"exploration/operator-engine/baseline-manifest.edn"
+  "b890ab94caa59958ffe229f1d551a7b1aef9a56336693b66b4a570f210a62bd5"
+  "exploration/operator-engine/datomic-million-early-baseline.edn"
+  "51cc3295b4207e1f7d0f72368458571074afe0564e21758756a7cabfbf1e240e"
+  "exploration/operator-engine/datomic-million-qualification.edn"
+  "334dff8e525c2c9109a908b28a1dcc47d32e59fc3a6fbe884b0906ea2fdb7fc9"
+  "exploration/operator-engine/datomic-v7-to-v8-million-qualification.edn"
+  "bb36d689cbb958f1ccbf134f90752c0c931d6eb3b941fd3f5449c8f07f43fa11"
+  "exploration/operator-engine/minimized-counterexamples.edn"
+  "ac774bffbbee59180e1ed7502505ea327576cb47724f2ca945edf9abba0278bb"
+  "exploration/operator-engine/minio-early-baseline.edn"
+  "103efb520b8ae9d8e5c478f1725b0bde7690b638fa3c09eb6df5a2f14fb447ba"
+  "exploration/operator-engine/minio-qualification.edn"
+  "582b48c81fa2ff32c310b7523ebc4d9625a949ba662fdecff67555e066d0f803"
+  "exploration/operator-engine/performance-qualification.edn"
+  "9b6a529b856437bb11c884960f7546ed162d983c8006c52052a9b0e4dea85038"
+  "exploration/operator-engine/repl-experiments.edn"
+  "003ace8afe260b97b8b06a02eb48ca39b731b21527a9d85c8e5433f12788e957"
+  "exploration/operator-engine/spicedb-oracle.edn"
+  "77d1416f267f67a5851411df78cb5caca0ab95355c01b484b799ec13f80259b9"
+  "exploration/operator-engine/union-only-baseline.edn"
+  "1082b0b02944c01cbf1253c32df02db1597177d9502ebfd08ce23f5eb4104c87"
+  "exploration/operator-engine/union-only-cursor-payloads.edn"
+  "a904abfc7e96c346a53ad7a6b82c66270fb91ed1f2aa369f0a2a6f93906affc4"
+  "formal/verification/assurance-matrix.edn"
+  "df8112abb8f05ab758d2525f43e8cff8f310a47d8726e8e645fddf1f175296bd"
+  "formal/verification/derived-metrics-cache.edn"
+  "55126ec603ea35b48bceec0a247899d202c7966044f2ecb1276a914d4d1966c3"
+  "formal/verification/generated-boundary.edn"
+  "cf0c82a786aa8152196673829286374114876fe7bc72941db5f89cae4b16e971"
+  "formal/verification/manifest.edn"
+  "ae5e321b591dc044aa8f902a6f57585ea9245f6ad3434d5f9708654d31ab6cc0"
+  "formal/verification/mutation-control.edn"
+  "0c4cbfac2ba7d069c313144bef26f79bc29e82224d8bbfce335538afacc0deec"
+  "formal/verification/operator-eacl-conformance.edn"
+  "0248a61917935b33074441bef72ec38df32cc4f6c63e7734be71b69c57af3c4c"
+  "formal/verification/operator-expression-limit-calibration.edn"
+  "73bfa7b0417760061f318b96d7e1b11177387eb287e7b5eb682fa7cf0261d009"
+  "formal/verification/operator-expression-storage.edn"
+  "825c4aab5925c824fd0ccd5174be86ccd92dbce6e203202eb267a35dd1f503b4"
+  "formal/verification/operator-phase-a-review-request.md"
+  "d6074621594d93b85e8ba881cd6955e0dd5b315a90eca625151d1d9447f3b05f"
+  "formal/verification/operator-phase-a.edn"
+  "2b878fd7d7c4ccd57136064f0f1e42a170dac60d2cd1b20a839e90bfdad43c12"
+  "formal/verification/operator-phase-b.edn"
+  "a9bc3319f03fa5120b693d78a24b4e330b3a2f56e539257a673dc949d6e26ffb"
+  "formal/verification/operator-union-only-conformance.edn"
+  "c0cdb3a75eb4fc9b9652a20e1b2d163aefd2c59c91169d161ef1f30ff59221d5"
+  "formal/verification/public-source-closure.json"
+  "cd8a71316fbf45be5c32f61c5cb7b2d9aa161b8784c28f84e0c7354aaf7a2de9"}}

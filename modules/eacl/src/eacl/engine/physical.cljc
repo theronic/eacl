@@ -13,7 +13,8 @@
   (:require [clojure.string]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
-            [eacl.execution :as execution]))
+            [eacl.execution :as execution]
+            [eacl.metrics :as metrics]))
 
 ;; ---------------------------------------------------------------------------
 ;; Three-outcome classification (task 7.1)
@@ -60,10 +61,13 @@
   single released value. A descriptor without a positive integer `:limit`
   realizes the complete scan, which keeps raw callers unchanged."
   [descriptor values]
-  (let [limit (:limit descriptor)]
-    (if (and (int? limit) (pos? limit))
-      (into [] (take limit) values)
-      (vec values))))
+  (let [limit (:limit descriptor)
+        result
+        (if (and (int? limit) (pos? limit))
+          (into [] (take limit) values)
+          (vec values))]
+    (metrics/record-scan! descriptor result)
+    result))
 
 (defn classified-fetch-fn
   "Wraps a read-demand fetch so every outcome is one of the three classes.

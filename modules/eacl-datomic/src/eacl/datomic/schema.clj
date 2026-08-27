@@ -3,8 +3,12 @@
             [datomic.api :as d]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.relationships.storage :as relationship-storage]
-            [eacl.schema.model :as model]
-            [eacl.spicedb.parser :as parser]))
+            [eacl.schema.expression :as expression]
+            [eacl.schema.expression-limits :as expression-limits]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]
+            [eacl.schema.expression-resolver :as expression-resolver]
+            [eacl.schema.model :as model]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
 ; might be confused for Datomic fn's like Relation / Permission in impl. base.
@@ -45,6 +49,15 @@
   {:db/ident       :eacl/schema-version
    :db/doc         "Squuid bumped by write-schema! whenever definitions change. EACL clients latch one generation at construction."
    :db/valueType   :db.type/uuid
+   :db/cardinality :db.cardinality/one
+   :db/index       true})
+
+(def permission-storage-version 8)
+
+(def permission-storage-version-attr-definition
+  {:db/ident       :eacl/permission-storage-version
+   :db/doc         "Authoritative EACL permission representation version (8 = canonical expressions)."
+   :db/valueType   :db.type/long
    :db/cardinality :db.cardinality/one
    :db/index       true})
 
@@ -134,7 +147,7 @@
            :subject-type subject-type}))
         [])})})
 
-(def v7-schema
+(def v7-compatible-schema
   [; :eacl/id is now optional.
    {:db/ident       :eacl/id                                ; todo: figure out how to support :id, :object/id or :spice/id of different types.
     :db/doc         "Unique String ID to match SpiceDB Object IDs."
@@ -148,6 +161,7 @@
     :db/cardinality :db.cardinality/one}
 
    schema-version-attr-definition
+   permission-storage-version-attr-definition
    relation-version-attr-definition
    assert-relation-unused-fn-definition
 
@@ -218,6 +232,11 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
+   {:db/ident       :eacl.permission/expression-payload
+    :db/doc         "EACL canonical permission expression payload."
+    :db/valueType   :db.type/string
+    :db/cardinality :db.cardinality/one}
+
    ; Permission Indices
    {:db/ident       :eacl.permission/resource-type+permission-name
     :db/doc         "EACL Permission: Index for finding all permissions on a resource type"
@@ -226,39 +245,6 @@
                      :eacl.permission/permission-name]
     :db/cardinality :db.cardinality/one
     :db/index       true}
-
-   ;; Added: Enumeration indices for efficient arrow permission lookup
-   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+permission-name
-    :db/doc         "EACL Permission: Index for enumerating permission-type arrows"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/source-relation-name
-                     :eacl.permission/target-type
-                     :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name
-    :db/doc         "EACL Permission: Index for enumerating relation-type arrows"
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/source-relation-name
-                     :eacl.permission/target-type
-                     :eacl.permission/target-name]
-    :db/cardinality :db.cardinality/one
-    :db/index       true}
-
-   {:db/ident       :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name
-    :db/doc         "EACL Permission: Full unique identity tuple to prevent duplicate permissions."
-    ; I suspect the tuple order can be improved for faster permission enumeration.
-    :db/valueType   :db.type/tuple
-    :db/tupleAttrs  [:eacl.permission/resource-type
-                     :eacl.permission/source-relation-name
-                     :eacl.permission/target-type
-                     :eacl.permission/target-name
-                     :eacl.permission/permission-name]
-    :db/cardinality :db.cardinality/one
-    :db/unique      :db.unique/identity}
 
    ;; v7 Relationships: forward and reverse tuple indexes only.
    {:db/ident       relationship-storage/forward-attribute
@@ -280,6 +266,112 @@
                      :db.type/ref]
     :db/cardinality :db.cardinality/many
     :db/index       true}])
+
+(def v8-schema
+  "Clean v8 Datomic install. Released-v7 flat permission attributes are
+  intentionally omitted; an existing v7 database retains those immutable
+  Datomic schema entities as inert upgrade history after its flat rows retire."
+  (filterv
+   #(not (contains? expression-persistence/legacy-flat-attributes
+                    (:db/ident %)))
+   v7-compatible-schema))
+
+(def v7-schema
+  "Compatibility name for the former all-in-one installer. New v8 databases
+  should transact `v8-schema`; released-v7 databases already contain the flat
+  attributes required by the explicit permission migration."
+  v7-compatible-schema)
+
+(def ^:private authoritative-permission-attribute-idents
+  #{:eacl/id
+    :eacl/permission-storage-version
+    :eacl.permission/resource-type
+    :eacl.permission/permission-name
+    :eacl.permission/expression-payload
+    :eacl.permission/resource-type+permission-name})
+
+(def ^:private additive-v8-permission-attribute-idents
+  (disj authoritative-permission-attribute-idents
+        :eacl/id
+        :eacl.permission/resource-type
+        :eacl.permission/permission-name))
+
+(def ^:private authoritative-permission-attribute-definitions
+  (into {}
+        (keep (fn [definition]
+                (when (contains? authoritative-permission-attribute-idents
+                                 (:db/ident definition))
+                  [(:db/ident definition) definition])))
+        v8-schema))
+
+(defn- ident-value
+  [db value]
+  (when value
+    (or (:db/ident value)
+        (d/ident db value))))
+
+(defn- attribute-shape
+  [db ident]
+  (when-let [eid (d/entid db ident)]
+    (let [attribute (d/entity db eid)]
+      {:value-type (ident-value db (:db/valueType attribute))
+       :cardinality (ident-value db (:db/cardinality attribute))
+       :unique (ident-value db (:db/unique attribute))
+       :tuple-attrs (some->> (:db/tupleAttrs attribute)
+                             (mapv #(ident-value db %)))
+       :tuple-types (some->> (:db/tupleTypes attribute)
+                             (mapv #(ident-value db %)))
+       :no-history? (true? (:db/noHistory attribute))
+       :is-component? (true? (:db/isComponent attribute))
+       :fulltext? (true? (:db/fulltext attribute))
+       :indexed? (true? (:db/index attribute))})))
+
+(defn- expected-attribute-shape
+  [definition]
+  {:value-type (:db/valueType definition)
+   :cardinality (:db/cardinality definition)
+   :unique (:db/unique definition)
+   :tuple-attrs (:db/tupleAttrs definition)
+   :tuple-types (:db/tupleTypes definition)
+   :no-history? (true? (:db/noHistory definition))
+   :is-component? (true? (:db/isComponent definition))
+   :fulltext? (true? (:db/fulltext definition))
+   :indexed? (true? (:db/index definition))})
+
+(defn- assert-authoritative-permission-attribute-shapes!
+  [db]
+  (doseq [[ident definition]
+          authoritative-permission-attribute-definitions
+          :let [actual (attribute-shape db ident)]
+          :when actual]
+    (let [expected (expected-attribute-shape definition)]
+      (when-not (= expected actual)
+        (throw
+         (ex-info
+          "An existing Datomic attribute conflicts with EACL v8 permission storage."
+          {:type :eacl.migration/attribute-conflict
+           :eacl/error :eacl.migration/attribute-conflict
+           :attribute ident
+           :expected expected
+           :actual actual})))))
+  nil)
+
+(defn- ensure-v8-permission-attributes!
+  "Installs only authoritative additive v8 permission attributes. Derived
+  metric attributes are intentionally absent."
+  [conn]
+  (let [db (d/db conn)
+        _ (assert-authoritative-permission-attribute-shapes! db)
+        missing
+        (into []
+              (filter #(and (contains? additive-v8-permission-attribute-idents
+                                       (:db/ident %))
+                            (nil? (d/entid db (:db/ident %)))))
+              v8-schema)]
+    (when (seq missing)
+      @(d/transact conn missing))
+    (assert-authoritative-permission-attribute-shapes! (d/db conn))
+    (count missing)))
 
 (defn count-relationships-using-relation
   "Counts v7 forward relationship tuples that reference the given relation."
@@ -318,7 +410,8 @@
                              :eacl.permission/permission-name
                              :eacl.permission/source-relation-name
                              :eacl.permission/target-type
-                             :eacl.permission/target-name]) ...]
+                             :eacl.permission/target-name
+                             :eacl.permission/expression-payload]) ...]
          :where
          [?perm :eacl.permission/permission-name]]
        db))
@@ -327,7 +420,16 @@
   "Enumerates all EACL permission schema entities in DB and returns maps."
   ; todo: unparse into SpiceDB string schema if desired.
   [db & [_format]]
-  {:relations   (read-relations db)
+  (let [permissions (read-permissions db)]
+    (expression-persistence/validate-entities permissions)
+    {:relations   (read-relations db)
+     :permissions permissions}))
+
+(defn- read-schema-unchecked
+  "Migration-only physical schema read. Normal readers must use read-schema so
+  flat, mixed, duplicate, or corrupt permission storage fails closed."
+  [db]
+  {:relations (read-relations db)
    :permissions (read-permissions db)})
 
 (defn prepare-cache-coherence!
@@ -356,7 +458,7 @@
             [])
           missing-relations
           (filterv #(empty? (d/datoms db :eavt %
-                                     :eacl/relation-version))
+                                      :eacl/relation-version))
                    relation-eids)
           tx-data
           (mapv #(vector :db/add % :eacl/relation-version "datomic.tx")
@@ -365,7 +467,7 @@
           db-after (if report (:db-after report) db)
           missing-after
           (filterv #(empty? (d/datoms db-after :eavt %
-                                     :eacl/relation-version))
+                                      :eacl/relation-version))
                    relation-eids)]
       {:prepared? true
        :changed? (boolean report)
@@ -436,29 +538,281 @@
   [conn tx-data expected-version]
   (try
     @(d/transact conn tx-data)
-     (catch Throwable throwable
-       (if-let [relation-in-use
-                (caused-by-type throwable
-                                :eacl.schema/relation-in-use)]
-         (throw
-          (ex-info (.getMessage ^Throwable relation-in-use)
-                   (ex-data relation-in-use)
-                   throwable))
-         (if-let [cause-data (cas-failure-data throwable)]
-           (throw
-            (ex-info
-             "The EACL schema changed concurrently; retry against a new client or database value."
-             {:type :eacl.schema/concurrent-write
-              :eacl/error :eacl.schema/concurrent-write
-              :expected-version expected-version
-              :actual-version (impl.indexed/schema-version (d/db conn))
+    (catch Throwable throwable
+      (if-let [relation-in-use
+               (caused-by-type throwable
+                               :eacl.schema/relation-in-use)]
+        (throw
+         (ex-info (.getMessage ^Throwable relation-in-use)
+                  (ex-data relation-in-use)
+                  throwable))
+        (if-let [cause-data (cas-failure-data throwable)]
+          (throw
+           (ex-info
+            "The EACL schema changed concurrently; retry against a new client or database value."
+            {:type :eacl.schema/concurrent-write
+             :eacl/error :eacl.schema/concurrent-write
+             :expected-version expected-version
+             :actual-version (impl.indexed/schema-version (d/db conn))
               ;; The shared key names used by the other backends.
-              :expected-generation expected-version
-              :actual-generation (impl.indexed/schema-version (d/db conn))
-              :backend-error cause-data
-              :datomic-error cause-data}
-             throwable))
-           (throw throwable))))))
+             :expected-generation expected-version
+             :actual-generation (impl.indexed/schema-version (d/db conn))
+             :backend-error cause-data
+             :datomic-error cause-data}
+            throwable))
+          (throw throwable))))))
+
+(defn- legacy-flat-permission?
+  [permission]
+  (not (contains? permission :eacl.permission/expression-payload)))
+
+(defn- legacy-permission-node
+  [relation-subject-types
+   {:eacl.permission/keys
+    [resource-type source-relation-name target-type target-name]}]
+  (when-not (contains? #{:relation :permission} target-type)
+    (throw (ex-info "Legacy permission has an invalid target type."
+                    {:type :eacl.schema/corrupt-expression-storage
+                     :eacl/error :eacl.schema/corrupt-expression-storage
+                     :reason :invalid-legacy-target-type
+                     :target-type target-type})))
+  (if (= :self source-relation-name)
+    (case target-type
+      :relation
+      (expression/relation
+       target-name
+       (get relation-subject-types [resource-type target-name]))
+
+      :permission
+      (expression/permission target-name))
+    (expression/arrow
+     source-relation-name
+     (mapv (fn [subject-type]
+             {:subject-type subject-type
+              :target-kind target-type
+              :target-name target-name})
+           (get relation-subject-types
+                [resource-type source-relation-name])))))
+
+(defn- expression-metadata
+  [resolved-expression limits]
+  (let [source-metrics
+        (expression-limits/check-source!
+         (:root resolved-expression) limits)
+        {:keys [encoded-byte-size]}
+        (expression-limits/check-expression-bytes!
+         resolved-expression limits)
+        {:keys [dag metrics]}
+        (expression-limits/check-normalized!
+         resolved-expression limits)]
+    {:source-metrics source-metrics
+     :encoded-byte-size encoded-byte-size
+     :normalized-dag dag
+     :normalized-metrics metrics}))
+
+(defn- legacy-flat-candidate-schema
+  "Converts released v6/v7 union-only permission rows into the canonical v8
+  expression representation. This function is reachable only from the
+  explicit v6->v7 migration; ordinary v8 reads never synthesize expressions."
+  [{:keys [relations permissions]} limits]
+  (model/validate-schema-references
+   {:relations relations :permissions permissions})
+  (let [relation-subject-types
+        (reduce
+         (fn [result relation]
+           (update result
+                   [(:eacl.relation/resource-type relation)
+                    (:eacl.relation/relation-name relation)]
+                   (fnil conj [])
+                   (:eacl.relation/subject-type relation)))
+         {}
+         relations)
+        relation-subject-types
+        (update-vals relation-subject-types
+                     #(vec (sort-by str (distinct %))))
+        expressions
+        (mapv
+         (fn [[[resource-type permission-name] rules]]
+           (let [nodes
+                 (->> rules
+                      (sort-by
+                       (juxt (comp str
+                                   :eacl.permission/source-relation-name)
+                             (comp str :eacl.permission/target-type)
+                             (comp str :eacl.permission/target-name)))
+                      (mapv #(legacy-permission-node
+                              relation-subject-types %)))
+                 root (if (= 1 (count nodes))
+                        (first nodes)
+                        (expression/union nodes))]
+             (expression/expression
+              resource-type permission-name root)))
+         (sort-by
+          (fn [[[resource-type permission-name] _]]
+            [(str resource-type) (str permission-name)])
+          (group-by
+           (juxt :eacl.permission/resource-type
+                 :eacl.permission/permission-name)
+           permissions)))
+        metadata (mapv #(expression-metadata % limits) expressions)]
+    (expression-limits/check-aggregate!
+     metadata limits)
+    (expression-persistence/candidate-schema
+     {:definitions
+      (->> relations
+           (mapcat
+            (juxt :eacl.relation/resource-type
+                  :eacl.relation/subject-type))
+           distinct
+           (sort-by str)
+           vec)
+      :relations relations
+      :expressions expressions
+      :expression-metadata metadata})))
+
+(defn- write-schema-candidate!
+  [conn schema-string new-schema-map
+   {:keys [allow-empty-schema? validate-existing?]
+    :or {validate-existing? true}}
+   known-schema-version]
+  ;; Fresh/partially installed v7 databases may not have the stamp
+  ;; attributes yet. This is schema installation, not a v6 compatibility
+  ;; path. :eacl/relation-version is installed the same way so a database
+  ;; created before per-relation stamps picks it up on its next valid schema
+  ;; write rather than silently running without result caching.
+  (ensure-relation-version-history! conn true)
+  (let [db (d/db conn)
+        missing (cond-> []
+                  (not (d/entid db :eacl/schema-version))
+                  (conj schema-version-attr-definition)
+
+                  (not (d/entid db :eacl/permission-storage-version))
+                  (conj permission-storage-version-attr-definition)
+
+                  (not (d/entid db :eacl.fn/assert-relation-unused))
+                  (conj assert-relation-unused-fn-definition))]
+    (when (seq missing)
+      @(d/transact conn missing)))
+  (let [db                     (d/db conn)
+        existing-schema        ((if validate-existing?
+                                  read-schema
+                                  read-schema-unchecked)
+                                db)
+        _                      (when
+                                 (and (empty? (:definitions new-schema-map))
+                                      (not allow-empty-schema?)
+                                      (or (seq (:relations existing-schema))
+                                          (seq (:permissions existing-schema))))
+                                 (throw
+                                  (ex-info
+                                   (str "Refusing to replace a non-empty schema with zero definitions."
+                                        " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
+                                   {:type :eacl.schema/empty-schema-guard
+                                    :eacl/error :eacl.schema/empty-schema-guard
+                                    :existing
+                                    {:relations (count (:relations existing-schema))
+                                     :permissions (count (:permissions existing-schema))}})))
+        deltas                 (compare-schema existing-schema new-schema-map)
+        {:keys [relations permissions]} deltas
+        relation-retractions   (:retractions relations)
+        permission-retractions
+        (expression-persistence/entity-deletions permissions)]
+
+       ;; Check for orphaned relationships.
+    (doseq [rel relation-retractions]
+      (let [cnt (count-relationships-using-relation db rel)]
+        (when (pos? cnt)
+          (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
+                               " because it is used by " cnt " relationships.")
+                          {:type :eacl.schema/relation-in-use
+                           :eacl/error :eacl.schema/relation-in-use
+                           :relation rel
+                           :count cnt})))))
+
+       ;; Transact changes.
+    (let [schema-changed? (boolean
+                           (or (seq (:additions relations))
+                               (seq relation-retractions)
+                               (seq (:additions permissions))
+                               (seq permission-retractions)))
+             ;; A connection-backed client passes the version its generation
+             ;; was built from. A direct caller uses the version in this exact
+             ;; db snapshot. Either value becomes the CAS expectation; a stale
+             ;; client therefore fails closed instead of relabeling a new diff.
+          current-version (if (= ::read-current-version
+                                 known-schema-version)
+                            (impl.indexed/schema-version db)
+                            known-schema-version)
+          stamp-missing? (nil? current-version)
+          stamp-schema? (or schema-changed? stamp-missing?)
+          next-version (if stamp-schema?
+                         (d/squuid)
+                         current-version)
+          schema-entity (or (d/entid db [:eacl/id "schema-string"])
+                            (d/tempid :db.part/user))
+          relation-commit-guards
+          (mapv
+           (fn [relation]
+             [:eacl.fn/assert-relation-unused
+              (:eacl.relation/resource-type relation)
+              (d/entid db [:eacl/id (:eacl/id relation)])
+              (:eacl.relation/subject-type relation)])
+           relation-retractions)
+          relation-addition-entities
+          (mapv (fn [relation]
+                  (assoc relation
+                         :db/id (d/tempid :db.part/user)))
+                (:additions relations))
+          relation-initial-stamps
+          (mapv (fn [relation]
+                  [:db/add (:db/id relation)
+                   :eacl/relation-version "datomic.tx"])
+                relation-addition-entities)
+          schema-stamp-entity
+          (cond-> {:db/id schema-entity
+                   :eacl/id "schema-string"
+                   :eacl/permission-storage-version
+                   permission-storage-version}
+            (some? schema-string)
+            (assoc :eacl/schema-string schema-string))
+          tx-data
+          (concat
+              ;; Additions
+           relation-addition-entities
+           relation-initial-stamps
+           (:additions permissions)
+              ;; Retractions
+           (for [rel relation-retractions]
+             [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
+           (for [perm permission-retractions]
+             [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
+              ;; Close the orphan-check race in the transactor's db value. A
+              ;; relationship committed after the count above makes this
+              ;; transaction fail instead of deleting an in-use definition.
+           relation-commit-guards
+              ;; The schema text and generation rotate atomically. CAS with
+              ;; old==new is deliberate for a structural no-op: it still
+              ;; asserts that another replacement did not commit after the
+              ;; diff above was calculated.
+           [schema-stamp-entity
+            [:db.fn/cas schema-entity
+             :eacl/schema-version current-version next-version]])
+          report
+          (if stamp-schema?
+            (transact-schema!
+             conn
+             tx-data
+             current-version)
+            (let [db (d/db conn)]
+              {:db-before db
+               :db-after db
+               :tx-data []
+               :no-op? true}))]
+      (with-meta
+        deltas
+        {:eacl/schema-version next-version
+         :eacl.schema/db-after (:db-after report)
+         :eacl.schema/no-op? (boolean (:no-op? report))}))))
 
 (defn write-schema!
   "Computes delta between existing schema and
@@ -474,132 +828,137 @@
    (write-schema! conn schema-string {}))
   ([conn schema-string opts]
    (write-schema! conn schema-string opts ::read-current-version))
-  ([conn schema-string
-    {:keys [allow-empty-schema?]}
-    known-schema-version]
-   (let [new-schema-map (parser/->eacl-schema
-                         (parser/parse-schema schema-string))
-         ;; ADR 012 says an invalid schema makes NO database changes. This must
-         ;; therefore precede even the compatibility installation below.
-         _ (validate-schema-references new-schema-map)]
-     ;; Fresh/partially installed v7 databases may not have the stamp
-     ;; attributes yet. This is schema installation, not a v6 compatibility
-     ;; path. :eacl/relation-version is installed the same way so a database
-     ;; created before per-relation stamps picks it up on its next valid schema
-     ;; write rather than silently running without result caching.
-     (ensure-relation-version-history! conn true)
-     (let [db (d/db conn)
-           missing (cond-> []
-                     (not (d/entid db :eacl/schema-version))
-                     (conj schema-version-attr-definition)
+  ([conn schema-string opts known-schema-version]
+   (let [expression-limits
+         (expression-policy/normalize-client-limits
+          (:expression-limits opts))]
+     (binding [expression-persistence/*expression-limits* expression-limits]
+       (let [new-schema-map
+             (expression-persistence/candidate-schema
+              (expression-resolver/validate-schema
+               schema-string expression-limits))]
+         (write-schema-candidate!
+          conn schema-string new-schema-map opts known-schema-version))))))
 
-                     (not (d/entid db :eacl.fn/assert-relation-unused))
-                     (conj assert-relation-unused-fn-definition))]
-       (when (seq missing)
-         @(d/transact conn missing)))
-     (let [db                     (d/db conn)
-           existing-schema        (read-schema db)
-           _                      (when (and (empty? (:definitions new-schema-map))
-                                           (not allow-empty-schema?)
-                                           (or (seq (:relations existing-schema))
-                                               (seq (:permissions existing-schema))))
-                                  (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
-                                                       " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                                  {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
-                                                   :existing {:relations (count (:relations existing-schema))
-                                                              :permissions (count (:permissions existing-schema))}})))
-           deltas                 (compare-schema existing-schema new-schema-map)
-           {:keys [relations permissions]} deltas
-           relation-retractions   (:retractions relations)
-           permission-retractions (:retractions permissions)]
+(defn migrate-v6-schema!
+  "Migration-only conversion of released flat v6 schema rows to canonical
+  expression storage. If schema-string is supplied it is fully parsed and
+  validated before replacement; otherwise the stored union-only rows are
+  converted deterministically. The strict v8 read path is never relaxed."
+  [conn schema-string]
+  (let [expression-limits (expression-policy/normalize-client-limits nil)
+        existing (read-schema-unchecked (d/db conn))
+        permissions (:permissions existing)
+        flat-permissions (filterv legacy-flat-permission? permissions)
+        expression-permissions
+        (filterv (complement legacy-flat-permission?) permissions)]
+    (cond
+      (and (seq flat-permissions) (seq expression-permissions))
+      ;; Produce the same stable corruption classification as every normal
+      ;; reader instead of guessing how an interrupted external rewrite should
+      ;; be reconciled.
+      (expression-persistence/validate-entities permissions)
 
-       ;; Check for orphaned relationships.
-       (doseq [rel relation-retractions]
-         (let [cnt (count-relationships-using-relation db rel)]
-           (when (pos? cnt)
-             (throw (ex-info (str "Cannot delete relation " (:eacl.relation/relation-name rel)
-                                  " because it is used by " cnt " relationships.")
-                             {:type :eacl.schema/relation-in-use
-                              :eacl/error :eacl.schema/relation-in-use
-                              :relation rel
-                              :count cnt})))))
+      (seq flat-permissions)
+      (let [candidate
+            (if schema-string
+              (expression-persistence/candidate-schema
+               (expression-resolver/validate-schema
+                schema-string expression-limits))
+              (legacy-flat-candidate-schema existing expression-limits))]
+        (binding [expression-persistence/*expression-limits* expression-limits]
+          (write-schema-candidate!
+           conn schema-string candidate
+           {:validate-existing? false
+            :expression-limits expression-limits}
+           ::read-current-version)))
 
-       ;; Transact changes.
-       (let [schema-changed? (boolean
-                              (or (seq (:additions relations))
-                                  (seq relation-retractions)
-                                  (seq (:additions permissions))
-                                  (seq permission-retractions)))
-             ;; A connection-backed client passes the version its generation
-             ;; was built from. A direct caller uses the version in this exact
-             ;; db snapshot. Either value becomes the CAS expectation; a stale
-             ;; client therefore fails closed instead of relabeling a new diff.
-             current-version (if (= ::read-current-version
-                                    known-schema-version)
-                               (impl.indexed/schema-version db)
-                               known-schema-version)
-             stamp-missing? (nil? current-version)
-             stamp-schema? (or schema-changed? stamp-missing?)
-             next-version (if stamp-schema?
-                            (d/squuid)
-                            current-version)
-             schema-entity (or (d/entid db [:eacl/id "schema-string"])
-                               (d/tempid :db.part/user))
-             relation-commit-guards
-             (mapv
-              (fn [relation]
-                [:eacl.fn/assert-relation-unused
-                 (:eacl.relation/resource-type relation)
-                 (d/entid db [:eacl/id (:eacl/id relation)])
-                 (:eacl.relation/subject-type relation)])
-              relation-retractions)
-             relation-addition-entities
-             (mapv (fn [relation]
-                     (assoc relation
-                            :db/id (d/tempid :db.part/user)))
-                   (:additions relations))
-             relation-initial-stamps
-             (mapv (fn [relation]
-                     [:db/add (:db/id relation)
-                      :eacl/relation-version "datomic.tx"])
-                   relation-addition-entities)
-             tx-data
-             (concat
-              ;; Additions
-              relation-addition-entities
-              relation-initial-stamps
-              (:additions permissions)
-              ;; Retractions
-              (for [rel relation-retractions]
-                [:db.fn/retractEntity [:eacl/id (:eacl/id rel)]])
-              (for [perm permission-retractions]
-                [:db.fn/retractEntity [:eacl/id (:eacl/id perm)]])
-              ;; Close the orphan-check race in the transactor's db value. A
-              ;; relationship committed after the count above makes this
-              ;; transaction fail instead of deleting an in-use definition.
-              relation-commit-guards
-              ;; The schema text and generation rotate atomically. CAS with
-              ;; old==new is deliberate for a structural no-op: it still
-              ;; asserts that another replacement did not commit after the
-              ;; diff above was calculated.
-              [{:db/id schema-entity
-                :eacl/id "schema-string"
-                :eacl/schema-string schema-string}
-               [:db.fn/cas schema-entity
-                :eacl/schema-version current-version next-version]])
-             report
-             (if stamp-schema?
-               (transact-schema!
-                conn
-                tx-data
-                current-version)
-               (let [db (d/db conn)]
-                 {:db-before db
-                  :db-after db
-                  :tx-data []
-                  :no-op? true}))]
-         (with-meta
-           deltas
-           {:eacl/schema-version next-version
-            :eacl.schema/db-after (:db-after report)
-            :eacl.schema/no-op? (boolean (:no-op? report))}))))))
+      schema-string
+      (write-schema! conn schema-string)
+
+      :else
+      nil)))
+
+(defn permission-storage-shape
+  "Classifies only permission-definition storage without touching relationship
+  tuples. `:flat` is the released v7 input; ordinary v8 reads accept only
+  `:expression` or `:none`."
+  [db]
+  (let [permissions (read-permissions db)
+        flat? (some legacy-flat-permission? permissions)
+        expression? (some (complement legacy-flat-permission?) permissions)]
+    (cond
+      (and flat? expression?) :mixed
+      expression? :expression
+      flat? :flat
+      :else :none)))
+
+(defn migrate-v7-permissions!
+  "Atomically replaces released v7 flat permissions with v8 expressions.
+
+  The complete candidate and relation-identity diff are computed before any
+  additive v8 attribute is installed. Relation additions/retractions are
+  rejected: v7 relationship tuples refer to relation entity ids and this
+  migration is intentionally permission-only. The final write atomically
+  retracts old permission entities, asserts expressions, stores the schema
+  text when supplied, advances :eacl/schema-version, and stamps
+  :eacl/permission-storage-version."
+  ([conn schema-string]
+   (migrate-v7-permissions! conn schema-string nil))
+  ([conn schema-string expression-limit-overrides]
+  (let [expression-limits
+        (expression-policy/normalize-client-limits expression-limit-overrides)
+        db (d/db conn)
+        existing (read-schema-unchecked db)
+        permissions (:permissions existing)
+        shape (permission-storage-shape db)]
+    (case shape
+      :mixed
+      (expression-persistence/validate-entities permissions)
+
+      :expression
+      {:status :already-v8
+       :permission-storage-version permission-storage-version
+       :relationships-touched 0}
+
+      (:flat :none)
+      (let [;; Validate every released-v7 row even when the caller supplies a
+            ;; replacement schema. A replacement must not silently erase
+            ;; evidence that the input storage was already corrupt.
+            _ (when (= :flat shape)
+                (legacy-flat-candidate-schema existing expression-limits))
+            candidate
+            (if schema-string
+              (expression-persistence/candidate-schema
+               (expression-resolver/validate-schema
+                schema-string expression-limits))
+              (legacy-flat-candidate-schema existing expression-limits))
+            deltas (compare-schema existing candidate)
+            relation-additions (get-in deltas [:relations :additions])
+            relation-retractions (get-in deltas [:relations :retractions])]
+        (when (or (seq relation-additions) (seq relation-retractions))
+          (throw
+           (ex-info
+            "The v7->v8 permission upgrade cannot change relation identities."
+            {:type :eacl.migration/relation-schema-change
+             :eacl/error :eacl.migration/relation-schema-change
+             :relation-additions (count relation-additions)
+             :relation-retractions (count relation-retractions)})))
+        (let [expected-version (impl.indexed/schema-version db)
+              _ (ensure-v8-permission-attributes! conn)
+              result
+              (binding [expression-persistence/*expression-limits*
+                        expression-limits]
+                (write-schema-candidate!
+                 conn schema-string candidate
+                 {:validate-existing? false
+                  :expression-limits expression-limits}
+                 expected-version))]
+          {:status :migrated
+           :permission-storage-version permission-storage-version
+           :relationships-touched 0
+           :permission-additions
+           (count (get-in result [:permissions :additions]))
+           :permission-retractions
+           (count (get-in result [:permissions :retractions]))
+           :schema-generation (:eacl/schema-version (meta result))}))))))

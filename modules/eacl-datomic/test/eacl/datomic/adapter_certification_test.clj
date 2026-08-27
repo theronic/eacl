@@ -41,6 +41,9 @@
                   :fixture fixture
                   :runtime :clj})]
             (is (some? (v8/invoke adapter :schema-generation)))
+            (is (= :certified-scalar-fallback-v1
+                   (get-in (v8/operator-capability-identity adapter)
+                           [:direct-membership :mode])))
             (is (:passed? report)
                 (pr-str (:checks report)))
             (let [relation-ids

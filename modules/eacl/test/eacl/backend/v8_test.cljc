@@ -249,7 +249,7 @@
        (backend/certification-obligations
         :subject->resources)
        :strict-order))
-  (is (= #{:schema-generation}
+  (is (= #{:schema-generation :direct-match-many?}
          backend/optional-snapshot-operations))
   (is (every?
        (backend/certification-obligations :schema-generation)
@@ -257,6 +257,63 @@
         :memoized-per-selected-adapter
         :independent-of-ordered-generations
         :nil-when-uncertified])))
+
+(deftest operator-capability-pairing-is-closed-test
+  (testing "canonical expressions are structurally required"
+    (let [data
+          (error-data
+           #(backend/make-adapter
+             {:id :missing-expression
+              :capabilities {}
+              :operations (dissoc (operation-map)
+                                  :permission-expression)}))]
+      (is (= :eacl/invalid-backend-role (:type data)))
+      (is (= :permission-expression (:operation data)))))
+  (testing "native batch capability and operation are inseparable"
+    (doseq [config
+            [{:capabilities
+              {:direct-membership-batch
+               #{backend/direct-membership-batch-capability}}
+              :operations (operation-map)}
+             {:capabilities {}
+              :operations
+              (assoc (operation-map)
+                     :direct-match-many? (constantly []))}]]
+      (let [data
+            (error-data
+             #(backend/make-adapter
+               (merge {:id :mismatched-batch} config)))]
+        (is (= :eacl/invalid-backend-adapter (:type data)))
+        (is (= :direct-match-many? (:operation data))))))
+  (let [scalar (backend/make-adapter
+                {:id :scalar
+                 :capabilities {}
+                 :operations (operation-map)})
+        native (backend/make-adapter
+                {:id :native
+                 :capabilities
+                 {:direct-membership-batch
+                  #{backend/direct-membership-batch-capability}}
+                 :operator-physical-policy
+                 {:id :test-batch-policy-v1 :parameters {}}
+                 :operations
+                 (assoc (operation-map)
+                        :direct-match-many? (constantly []))})]
+    (is (= {:permission-expression
+            backend/permission-expression-capability
+            :direct-membership
+            {:mode :certified-scalar-fallback-v1
+             :maximum-width
+             backend/maximum-direct-membership-batch-width
+             :physical-policy
+             {:id :certified-scalar-fallback-v1 :parameters {}}}}
+           (backend/operator-capability-identity scalar)))
+    (is (= backend/direct-membership-batch-capability
+           (get-in (backend/operator-capability-identity native)
+                   [:direct-membership :mode])))
+    (is (= {:id :test-batch-policy-v1 :parameters {}}
+           (get-in (backend/operator-capability-identity native)
+                   [:direct-membership :physical-policy])))))
 
 (deftest schema-generation-is-optional-independent-and-memoized-test
   (let [reads (atom 0)

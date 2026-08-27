@@ -18,11 +18,13 @@
 
 (def permission-def-pull
   '[:db/id
+    :eacl/id
     :eacl.permission/resource-type
     :eacl.permission/permission-name
     :eacl.permission/source-relation-name
     :eacl.permission/target-type
-    :eacl.permission/target-name])
+    :eacl.permission/target-name
+    :eacl.permission/expression-payload])
 
 (defn relation-datoms
   "Returns relation datoms for the exact resource/relation name pair, for ANY

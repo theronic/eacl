@@ -11,6 +11,15 @@
 (def maximum-exact-integer exact-integer/maximum)
 (def minimum-exact-integer exact-integer/minimum)
 
+(def permission-expression-capability
+  "Required canonical permission-expression contract carried by every v8
+  adapter. Its version is fixed by the required operation rather than an
+  optional capability declaration."
+  :canonical-expression-v1)
+
+(def direct-membership-batch-capability :bounded-aligned-v1)
+(def maximum-direct-membership-batch-width 256)
+
 (def ^:dynamic *backend-op-stats*
   "Optional atom counting backend adapter invocations by operation keyword.
 
@@ -43,6 +52,7 @@
     :internal-id->object
     :relation-defs
     :permission-defs
+    :permission-expression
     :subject->resources
     :resource->subjects
     :direct-match?
@@ -51,7 +61,7 @@
 (def optional-snapshot-operations
   "Snapshot operations with fail-closed defaults. They remain visible to the
   certification boundary without making an uncertified snapshot invalid."
-  #{:schema-generation})
+  #{:schema-generation :direct-match-many?})
 
 (def ^:private source-authority-operation-keys
   #{:select-current :select-authoritative :select-at-least :select-exact
@@ -83,6 +93,9 @@
    #{:finite :complete :type-correct :snapshot-bound}
    :permission-defs
    #{:finite :complete :type-correct :snapshot-bound}
+   :permission-expression
+   #{:canonical-expression-v1 :complete-metadata-and-digest
+     :at-most-one-logical-permission :snapshot-bound}
    :subject->resources
    #{:finite :strict-order :unique :complete
      :inclusive-exclusive-bounds :nonnegative :snapshot-bound}
@@ -92,6 +105,12 @@
    :direct-match?
    #{:iff-forward-scan-membership :iff-reverse-scan-membership
      :snapshot-bound}
+   :direct-match-many?
+   #{:optional-capability-paired :immutable-basis
+     :normalized-direct-relation-descriptor
+     :distinct-typed-input :maximum-width-256
+     :aligned-boolean-result :scalar-equivalent
+     :cooperative-cancellation :atomic-failure :snapshot-bound}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
    :schema-generation
@@ -133,6 +152,9 @@
    :transactions #{}
    :cache-proofs #{}
    :runtime #{}})
+
+(def ^:private known-capability-groups
+  (conj (set (keys empty-capabilities)) :direct-membership-batch))
 
 (def ^:private scan-contract-keys
   #{:strict-order? :unique? :replayable? :strict-progress? :atomic-chunk?})
@@ -249,13 +271,13 @@
                       {:backend backend-id
                        :capabilities capabilities}))
   (let [normalized (merge empty-capabilities capabilities)
-        unknown-keys (seq (remove (set (keys empty-capabilities))
+        unknown-keys (seq (remove known-capability-groups
                                   (keys normalized)))]
     (when unknown-keys
       (invalid-adapter! "Backend declares unknown capability groups."
                         {:backend backend-id
                          :unknown-capabilities (vec unknown-keys)
-                         :known-capabilities (set (keys empty-capabilities))}))
+                         :known-capabilities known-capability-groups}))
     (doseq [[capability values] normalized]
       (when-not (set? values)
         (invalid-adapter! "Backend capability groups must contain sets."
@@ -269,6 +291,16 @@
                         {:backend backend-id
                          :unknown-consistency-modes (vec unknown-modes)
                          :known-consistency-modes known-consistency-modes}))
+    (when-let [unknown-batch-contracts
+               (seq (remove #{direct-membership-batch-capability}
+                            (:direct-membership-batch normalized)))]
+      (invalid-adapter!
+       "Backend declares an unknown direct-membership batch contract."
+       {:backend backend-id
+        :unknown-direct-membership-batch-contracts
+        (vec unknown-batch-contracts)
+        :known-direct-membership-batch-contracts
+        #{direct-membership-batch-capability}}))
     normalized))
 
 (defn normalize-traversal-execution
@@ -330,7 +362,8 @@
 
 (defn make-adapter
   [{:keys [id capabilities operations state fingerprint deterministic?
-           identity-contract runtime-guards? traversal-execution]
+           identity-contract runtime-guards? traversal-execution
+           operator-physical-policy]
     :or {deterministic? true
          identity-contract :selected-internal/current-external-injective-v2}}]
   (when-not (keyword? id)
@@ -359,12 +392,25 @@
   (when (and (contains? operations :schema-generation)
              (not (fn? (:schema-generation operations))))
     (invalid-adapter!
-     "Backend :schema-generation operation must be a function when supplied."
+     "Optional backend operations must be functions when supplied."
      {:backend id
       :operation :schema-generation
       :value (:schema-generation operations)}))
-  (let [missing (seq (remove #(ifn? (get operations %))
-                             required-snapshot-operations))]
+  (when (and (contains? operations :direct-match-many?)
+             (not (fn? (:direct-match-many? operations))))
+    (invalid-adapter!
+     "Optional backend operations must be functions when supplied."
+     {:backend id
+      :operation :direct-match-many?
+      :value (:direct-match-many? operations)}))
+  (let [missing
+        (reduce
+         (fn [result operation]
+           (if (ifn? (get operations operation))
+             result
+             (conj result operation)))
+         nil
+         required-snapshot-operations)]
     (when missing
       (throw
        (ex-info
@@ -393,19 +439,50 @@
       (invalid-adapter!
        "Backend advertises ordered generations without a proof-frame operation."
        {:backend id :capability :ordered-generations}))
-  {::adapter true
-   ::version adapter-version
-   ::id id
-   ::capabilities normalized
-   ::traversal-execution traversal-execution
-   ::operations operations
-   ::fingerprint
-   (or fingerprint
-       {:backend id :adapter-version adapter-version})
-   ::deterministic? (boolean deterministic?)
-   ::identity-contract identity-contract
-   ::runtime-guards? (boolean runtime-guards?)
-   ::state state}))
+    (let [batch-capability?
+          (contains? (:direct-membership-batch normalized)
+                     direct-membership-batch-capability)
+          batch-operation? (fn? (:direct-match-many? operations))]
+      (when-not (= batch-capability? batch-operation?)
+        (invalid-adapter!
+         "Batched direct membership capability and operation must be declared together."
+         {:backend id
+          :capability direct-membership-batch-capability
+          :capability-present? batch-capability?
+          :operation :direct-match-many?
+          :operation-present? batch-operation?}))
+      (when-not (= batch-capability? (some? operator-physical-policy))
+        (invalid-adapter!
+         "Native batched membership requires one sealed physical policy identity."
+         {:backend id
+          :capability direct-membership-batch-capability
+          :capability-present? batch-capability?
+          :physical-policy operator-physical-policy}))
+      (when (and operator-physical-policy
+                 (not (and (map? operator-physical-policy)
+                           (= #{:id :parameters}
+                              (set (keys operator-physical-policy)))
+                           (keyword? (:id operator-physical-policy))
+                           (map? (:parameters operator-physical-policy)))))
+        (invalid-adapter!
+         "Operator physical policy identity must be a closed versioned value."
+         {:backend id :physical-policy operator-physical-policy})))
+  (cond->
+   {::adapter true
+    ::version adapter-version
+    ::id id
+    ::capabilities normalized
+    ::traversal-execution traversal-execution
+    ::operations operations
+    ::fingerprint
+    (or fingerprint
+        {:backend id :adapter-version adapter-version})
+    ::deterministic? (boolean deterministic?)
+    ::identity-contract identity-contract
+    ::runtime-guards? (boolean runtime-guards?)
+    ::state state}
+    operator-physical-policy
+    (assoc ::operator-physical-policy operator-physical-policy))))
 
 (defn adapter?
   [candidate]
@@ -476,6 +553,26 @@
   [adapter]
   (if (adapter? adapter)
     (::identity-contract adapter)
+    (invalid-adapter! "Value is not a v8 backend adapter."
+                      {:value adapter})))
+
+(defn operator-capability-identity
+  "Returns the sealed physical capability identity used by operator plans.
+  Absence of native batching is an explicit scalar-fallback identity, never an
+  implicit or provider-selected behavior."
+  [adapter]
+  (if (adapter? adapter)
+    {:permission-expression permission-expression-capability
+     :direct-membership
+     {:mode (if (contains?
+                 (get (capabilities adapter) :direct-membership-batch #{})
+                 direct-membership-batch-capability)
+              direct-membership-batch-capability
+              :certified-scalar-fallback-v1)
+      :maximum-width maximum-direct-membership-batch-width
+      :physical-policy
+      (or (::operator-physical-policy adapter)
+          {:id :certified-scalar-fallback-v1 :parameters {}})}}
     (invalid-adapter! "Value is not a v8 backend adapter."
                       {:value adapter})))
 
@@ -675,6 +772,13 @@
            value))
         value)
 
+      :permission-expression
+      (do
+        (when-not (or (nil? value) (map? value))
+          (contract-violation!
+           backend-id operation-key :canonical-expression-or-nil value))
+        value)
+
       :all-permission-nodes
       (do
         (when-not (set? value)
@@ -687,6 +791,13 @@
         (when-not (boolean? value)
           (contract-violation!
            backend-id operation-key :boolean-result value))
+        value)
+
+      :direct-match-many?
+      (do
+        (when-not (and (sequential? value) (every? boolean? value))
+          (contract-violation!
+           backend-id operation-key :boolean-vector value))
         value)
 
       ;; These values are intentionally opaque at this boundary. Their

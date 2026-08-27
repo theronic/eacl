@@ -1,0 +1,36 @@
+{:schema-version 1
+ :change :design-demand-driven-set-algebra-engine
+ :captured-at "2026-08-26"
+ :status :passed
+ :frozen-baseline
+ {:base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f"
+  :index "exploration/operator-engine/union-only-baseline.edn"
+  :fixtures
+  [:broad-union :cyclic-data :explorer-acyclic :explorer-recursive
+   :folder-chain :group-star :mutual-mixed]
+  :exact-dimensions
+  [:denotations :result-order :forward-pages :reverse-pages
+   :point-decisions :counts :page-composition :duplicate-elimination
+   :cursor-replay :cancellation :stale-basis]
+  :decoded-cursor-dimensions
+  [:plan-fingerprint :schema-generation :direction :query-scope
+   :logical-boundary :coordinate-shape]
+  :artifact-digests-verified true
+  :tests 5 :assertions 88 :failures 0 :errors 0}
+ :regression-corpus
+ {:jvm
+  {:command "clojure -X:test :excludes '[:benchmark :formal-artifact]'"
+   :tests 969 :assertions 32300 :failures 0 :errors 0}
+  :cljs
+  {:runner eacl.datascript.cljs-test-runner
+   :tests 428 :assertions 9282 :failures 0 :errors 0}
+  :behavior-classes
+  [:public-values :ordering :pagination :cursor-authentication
+   :plan-fingerprints :deterministic-request-counters
+   :completed-answer-cache :continuation-cache :proof-cache
+   :cache-disabled-parity :recursive-fixed-point-traces
+   :recursive-checkpoint-replay :typed-failures]}
+ :qualification
+ {:operator-routing-default true
+  :operator-expression-writes-default true
+  :performance-acceptance-deferred-to-section-12 false}}

@@ -3,6 +3,7 @@
   (:require [datascript.core :as ds]
             [datascript.db :as dsdb]
             [eacl.backend.source :as source]
+            [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.backend.v8 :as backend]
             [eacl.datascript.impl :as impl]))
 
@@ -95,15 +96,17 @@
            (freshness-timeout!
             token-data timeout-ms candidate))))))
 
-(defn- normalized-permission
+(defn- normalized-permissions
   [permission]
-  {:permission-id (:db/id permission)
-   :resource-type (:eacl.permission/resource-type permission)
-   :permission-name (:eacl.permission/permission-name permission)
-   :source-relation-name
-   (:eacl.permission/source-relation-name permission)
-   :target-type (:eacl.permission/target-type permission)
-   :target-name (:eacl.permission/target-name permission)})
+  (expression-persistence/union-compatible-definitions
+    (:db/id permission)
+    (expression-persistence/decode-entity permission)))
+
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (impl/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
@@ -184,9 +187,13 @@
 
        :permission-defs
        (fn [resource-type permission-name]
-         (mapv normalized-permission
-               (impl/find-permission-defs
-                db resource-type permission-name)))
+         (vec (mapcat normalized-permissions
+                      (impl/find-permission-defs
+                       db resource-type permission-name))))
+
+       :permission-expression
+       (fn [resource-type permission-name]
+         (permission-expression db resource-type permission-name))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
@@ -225,11 +232,19 @@
           (or (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))
         adapter-options (select-keys opts adapter-config-keys)
+        adapter-cache (volatile! nil)
         borrowed
         (fn [db]
-          {:adapter (basis-adapter db adapter-options)
-           :ownership :borrowed
-           :release-token nil})]
+          (let [{cached-db :db cached-adapter :adapter} @adapter-cache
+                adapter
+                (if (identical? cached-db db)
+                  cached-adapter
+                  (let [created (basis-adapter db adapter-options)]
+                    (vreset! adapter-cache {:db db :adapter created})
+                    created))]
+            {:adapter adapter
+             :ownership :borrowed
+             :release-token nil}))]
     (source/make-source
      {:id :datascript
       :capabilities source-capabilities

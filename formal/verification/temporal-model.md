@@ -6,7 +6,15 @@
 history-sensitive authorization boundary. It deliberately models decisions
 rather than the internals of Clojure or any database.
 
-Its 25 transitions cover:
+`formal/tla/EaclOperatorSafety.tla` is a separate abstract Phase A model for
+operator execution. It covers atomic aligned-vector publication and
+cancellation, logical progress despite physical overread, exact checkpoint
+resume, eviction of entries from expired cache lifecycles, cache-hit lifecycle
+matching, and authorization from negative evidence only
+after the lower stratum is complete. It is not connected to a production
+operator implementation.
+
+The detailed temporal model's 25 transitions cover:
 
 - managed and unmanaged graph and schema writes;
 - clone, reset, restore, branch, and forced-head movement;
@@ -46,6 +54,13 @@ and is checked to length 6. The scheduled configuration expands to four
 histories, three proofs/queries/operations/result kinds, four times, and is
 checked to length 3.
 
+The operator baseline is checked to length 8. Six registered mutation
+configurations negate vector cancellation, permit partial vector publication,
+advance cursors through physical overread, resume from the wrong checkpoint,
+reuse a stale cache lifecycle, or publish partial negative authorization. All
+six are killed; the combined Apalache registry contains ten killed temporal
+mutants.
+
 The bounded configurations are bug-finding evidence, not a proof for arbitrary
 trace length. Therefore `bin/formal apalache-invariant` separately checks:
 
@@ -82,6 +97,7 @@ Run:
 bin/formal tla-typecheck
 bin/formal apalache-check
 bin/formal apalache-invariant
+bin/formal apalache-mutation-control
 bin/formal apalache-scheduled
 bin/formal verify
 ```

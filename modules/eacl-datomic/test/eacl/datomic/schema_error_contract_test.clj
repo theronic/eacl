@@ -313,9 +313,11 @@
                                                    relation reader: user
                                                    permission view = missing
                                                  }"))]
-          (is (= :eacl.schema/invalid-reference (:type data)))
-          (is (= :eacl.schema/invalid-reference (:eacl/error data)))
-          (is (seq (:errors data)))))
+          (is (= :eacl.schema/expression-resolution-failed (:type data)))
+          (is (= :eacl.schema/expression-resolution-failed
+                 (:eacl/error data)))
+          (is (some #(= :missing-reference (:type %))
+                    (:errors data)))))
       (testing "an undefined relation subject type is rejected like SpiceDB does"
         (let [data (error-data
                     #(eacl/write-schema! client "definition user {}
@@ -323,8 +325,9 @@
                                                    relation reader: nobody
                                                    permission view = reader
                                                  }"))]
-          (is (= :eacl.schema/invalid-reference (:type data)))
-          (is (some #(= :undefined-subject-type (:type %)) (:errors data)))))
+          (is (= :eacl.schema/expression-resolution-failed (:type data)))
+          (is (some #(= :type-invalid-reference (:type %))
+                    (:errors data)))))
       (testing "unsupported schema features carry a category"
         (let [data (error-data
                     #(eacl/write-schema! client "definition user {}

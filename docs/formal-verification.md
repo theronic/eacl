@@ -126,6 +126,28 @@ not by itself a public assurance claim. `formal/verification/manifest.edn` is
 the release gate and must continue to refuse verified status while any required
 obligation is incomplete.
 
+### Operator set-algebra boundary
+
+The Phase A models prove finite typed union/intersection/exclusion semantics,
+strict signed-dependency stratification, candidate-cover soundness, scalar and
+aligned-vector predicates, bounded batching, least-path pagination, direct
+k-way leapfrog and anti-join kernels, anchor-gated positive recursion,
+completed lower-stratum exclusion, and cache refinement. The direct n-ary
+intersection proof uses an anchor-preserving max-head k-way leapfrog, not
+repeated binary filtering.
+
+Phase B adds the generated recursive command decision and digest-closes the
+handwritten parser, canonical expression codec/storage, signed graph, plan,
+evaluators, cursor/cache boundary, Datahike density-bounded batch, scalar
+fallbacks, and four backend adapters. The clean whole-tree run verifies 48
+modules and 9,361 obligations; generated Java and advanced JavaScript boundary
+suites, fixed/random differentials, counterexample replay, formal and temporal
+mutation controls, cross-backend conformance, storage, and matched-host
+performance gates pass. Public expression writes and public operator routing
+are enabled by default. Exact evidence and source digests are in
+`formal/verification/operator-phase-b.edn`; operational semantics and measured
+limits are in [Permission set algebra](permission-set-algebra.md).
+
 ### Permission-tree assurance boundary
 
 `PermissionTree.dfy` contributes 62 locked obligations. The theorem map covers

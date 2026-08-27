@@ -1,0 +1,53 @@
+{:format-version 1
+ :captured-at "2026-08-26"
+ :purpose :released-v7-to-v8-permission-migration-at-million-resource-shape
+ :status :passed
+ :environment
+ {:uri-prefix "datomic:dev://localhost:4334/eacl-v7-upgrade-experiment-"
+  :datomic-peer "1.0.7705"
+  :datomic-transactor "1.0.7705"
+  :branch "agent/design-operator-engine-performance"
+  :java "26.0.2"
+  :os "macOS 26.4.1 aarch64"}
+ :harness
+ {:source
+  "modules/eacl-datomic/test/eacl/operator_engine/datomic_experiments.clj"
+  :source-sha256
+  "fbc071dbaf63c040bbd289953200fb54ea7d6549e47d84709cb94b962b83f2da"
+  :start-command
+  "clj-nrepl-eval -p 7799 \"(do (require '[eacl.datomic.schema :as datomic-schema] :reload) (require '[eacl.operator-engine.datomic-experiments :as dx] :reload) (dx/start-v7-upgrade-million! {:resource-count 1000000 :batch-size 2000}))\""
+  :result-command
+  "clj-nrepl-eval -p 7799 \"(dx/v7-upgrade-status)\""}
+ :fixture
+ {:resources 1000000
+  :batch-size 2000
+  :seed-batches 500
+  :relations 2
+  :released-v7-flat-permissions 2
+  :candidate-v8-expression-permissions 4
+  :forward-tuple-datoms 1250000
+  :reverse-tuple-datoms 1250000
+  :relationship-tuple-datoms 2500000}
+ :migration
+ {:status :migrated
+  :permission-storage-version 8
+  :permission-additions 4
+  :permission-retractions 2
+  :relationships-touched 0
+  :relationship-index-reads-during-migration 0
+  :permission-storage-shape-after :expression}
+ :relationship-evidence
+ {:digest-format
+  :sha256-of-deterministic-aevt-e-a-v-record-stream-within-one-database
+  :before-sha256
+  "0e96cae9d48c5b6e5fd091e7afa43b3bfad9acb471d4d1204fa95cfedbd1c50e"
+  :after-sha256
+  "0e96cae9d48c5b6e5fd091e7afa43b3bfad9acb471d4d1204fa95cfedbd1c50e"
+  :identical true}
+ :run
+ {:database-uri
+  "datomic:dev://localhost:4334/eacl-v7-upgrade-experiment-75b43725-a55e-4711-bae0-efbbc96c027b"
+  :elapsed-ms 72589.04025
+  :database-deleted true
+  :database-absence-confirmed true
+  :shared-eacl-solidjs-database-modified false}}

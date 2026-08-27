@@ -6,7 +6,8 @@
             [eacl.backend.v8 :as backend]
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
-            [eacl.datalevin.impl :as impl]))
+            [eacl.datalevin.impl :as impl]
+            [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def adapter-capabilities
   {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
@@ -103,15 +104,19 @@
           {:source-id (str source-id)
            :branch nil})))))
 
-(defn- normalized-permission
+(defn- normalized-permissions
   [permission]
-  {:permission-id (exact-natural! :permission-id (:db/id permission))
-   :resource-type (:eacl.permission/resource-type permission)
-   :permission-name (:eacl.permission/permission-name permission)
-   :source-relation-name
-   (:eacl.permission/source-relation-name permission)
-   :target-type (:eacl.permission/target-type permission)
-   :target-name (:eacl.permission/target-name permission)})
+  (let [permission-id
+        (exact-natural! :permission-id (:db/id permission))]
+    (expression-persistence/union-compatible-definitions
+     permission-id
+     (expression-persistence/decode-entity permission))))
+
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (impl/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
 
 (defn- scalar-generation
   [db entity-id attribute]
@@ -227,9 +232,15 @@
        (fn [resource-type permission-name]
          (ddb/with-db
            snapshot
-           #(mapv normalized-permission
-                  (impl/find-permission-defs
-                   % resource-type permission-name))))
+           #(vec (mapcat normalized-permissions
+                         (impl/find-permission-defs
+                          % resource-type permission-name)))))
+
+       :permission-expression
+       (fn [resource-type permission-name]
+         (ddb/with-db
+          snapshot
+          #(permission-expression % resource-type permission-name)))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]

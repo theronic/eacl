@@ -4,7 +4,8 @@
   (:require [datomic.api :as d]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
-            [eacl.datomic.db :as ddb])
+            [eacl.datomic.db :as ddb]
+            [eacl.schema.expression-persistence :as expression-persistence])
   (:import [java.util.concurrent Future]))
 
 (def adapter-capabilities
@@ -254,15 +255,18 @@
   [db resource-type permission-name]
   (->> (ddb/find-permission-defs
         db resource-type permission-name)
-       (mapv
+       (mapcat
         (fn [permission]
-          {:permission-id (:db/id permission)
-           :resource-type (:eacl.permission/resource-type permission)
-           :permission-name (:eacl.permission/permission-name permission)
-           :source-relation-name
-           (:eacl.permission/source-relation-name permission)
-           :target-type (:eacl.permission/target-type permission)
-           :target-name (:eacl.permission/target-name permission)}))))
+          (expression-persistence/union-compatible-definitions
+           (:db/id permission)
+           (expression-persistence/decode-entity permission))))
+       vec))
+
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (ddb/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
@@ -342,6 +346,9 @@
        :permission-defs
        (fn [resource-type permission-name]
          (permission-defs db resource-type permission-name))
+       :permission-expression
+       (fn [resource-type permission-name]
+         (permission-expression db resource-type permission-name))
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type scan-options]
          ((or subject->resources-fn ddb/subject->resources)

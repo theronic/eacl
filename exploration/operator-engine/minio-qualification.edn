@@ -1,0 +1,191 @@
+{:format-version 1
+ :captured-at "2026-08-26"
+ :status :accepted
+ :purpose :production-operator-remote-io-qualification
+ :environment
+ {:endpoint "http://127.0.0.1:19000"
+  :bucket "eacl-datahike-local"
+  :minio-image
+  "minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e"
+  :datahike "0.8.1759"
+  :konserve-s3 "0.1.38"
+  :java "26.0.2"
+  :os "macOS 26.4.1 aarch64"}
+ :harness
+ {:path "modules/eacl-datahike/test/eacl/operator_engine/s3_experiments.clj"
+  :sha256
+  "5a970e29f2ac03ef70d94b9b74a1b44eb77c70efbdbecbab29737b08e90fea69"
+  :command
+  "clj-nrepl-eval -p 7790 --timeout 900000 \"(do (require 'eacl.operator-engine.s3-experiments :reload) (eacl.operator-engine.s3-experiments/run!))\""}
+ :fixture
+ {:store-id "a2a8f23f-3470-422a-93f1-c56a9bf76da2"
+  :store-deleted true
+  :resources 4096
+  :selective-cardinality 1024
+  :dense-exclusion-cardinality 1024
+  :sparse-exclusion-cardinality 4032
+  :store-node-cache-size 8192
+  :search-cache-size 0
+  :index-diff-buffer-size 256
+  :elapsed-ms 2890.864583}
+ :measurement-contract
+ {:connection-and-branch-head-io :separate
+  :bounded [:intersection-page :dense-exclusion-page
+            :sparse-exclusion-page :arrow-page :bounded-count]
+  :exhaustive [:exact-count]
+  :blend-bounded-and-exhaustive false
+  :immediate-warm-zero-get-claim :only-when-working-set-resident}
+ :accepted-ceilings
+ {:connection-branch-head-gets 1
+  :cold-bounded-page-index-gets 12
+  :immediate-warm-resident-index-gets 0
+  :adjacent-page-index-gets 3
+  :bounded-count-index-gets 8
+  :exact-count-index-gets 32
+  :cold-bounded-page-bytes 100000
+  :adjacent-page-bytes 20000
+  :bounded-count-bytes 64000
+  :exact-count-bytes 256000
+  :cold-bounded-page-candidates 64
+  :cold-bounded-page-fetched-values 512
+  :cold-bounded-page-allocated-bytes 80000000
+  :warm-bounded-page-allocated-bytes 60000000
+  :adjacent-page-allocated-bytes 65000000
+  :bounded-count-allocated-bytes 25000000
+  :exact-count-allocated-bytes 150000000
+  :cold-bounded-page-latency-nanos 80000000
+  :warm-bounded-page-latency-nanos 30000000
+  :adjacent-page-latency-nanos 50000000
+  :bounded-count-latency-nanos 40000000
+  :exact-count-latency-nanos 150000000}
+ :observed
+ {:intersection
+  {:connection {:gets 1 :branch-head-gets 1}
+   :cold {:items 20 :has-next-page true :gets 9 :bytes 73417
+          :index-reads 9 :cache-entry-delta 9 :candidates 21
+          :commands 6 :fetched-values 384
+          :allocated-bytes 51287704 :latency-nanos 30057625}
+   :warm {:items 20 :has-next-page true :gets 0 :bytes 0
+          :index-reads 0 :cache-entry-delta 0 :candidates 21
+          :commands 6 :fetched-values 384
+          :allocated-bytes 33674312 :latency-nanos 8207708}
+   :adjacent {:items 20 :has-next-page true :gets 2 :bytes 13053
+              :index-reads 2 :cache-entry-delta 2 :candidates 21
+              :commands 6 :fetched-values 384
+              :allocated-bytes 38276216 :latency-nanos 15311458}}
+  :dense-exclusion
+  {:cold {:items 20 :gets 10 :bytes 80128 :index-reads 10
+          :candidates 21 :commands 6 :fetched-values 384
+          :allocated-bytes 51709184 :latency-nanos 24256083}
+   :warm {:items 20 :gets 0 :bytes 0 :index-reads 0
+          :candidates 21 :commands 6 :fetched-values 384
+          :allocated-bytes 33398792 :latency-nanos 8914916}
+   :adjacent {:items 20 :gets 2 :bytes 13053 :index-reads 2
+              :candidates 21 :commands 6 :fetched-values 384
+              :allocated-bytes 37989960 :latency-nanos 12580542}}
+  :sparse-exclusion
+  {:cold {:items 20 :gets 7 :bytes 57123 :index-reads 7
+          :candidates 21 :commands 4 :fetched-values 256
+          :allocated-bytes 49094464 :latency-nanos 18331292}
+   :warm {:items 20 :gets 0 :bytes 0 :index-reads 0
+          :candidates 21 :commands 4 :fetched-values 256
+          :allocated-bytes 33419864 :latency-nanos 8855000}
+   :adjacent {:items 20 :gets 0 :bytes 0 :index-reads 0
+              :candidates 21 :commands 4 :fetched-values 254
+              :allocated-bytes 36445184 :latency-nanos 9359833}}
+  :arrow
+  {:cold {:items 20 :gets 8 :bytes 67054 :index-reads 8
+          :candidates 41 :probes 63 :commands 65 :fetched-values 191
+          :allocated-bytes 71697368 :latency-nanos 27333459}
+   :warm {:items 20 :gets 0 :bytes 0 :index-reads 0
+          :candidates 41 :probes 63 :commands 65 :fetched-values 191
+          :allocated-bytes 52588120 :latency-nanos 13763166}
+   :adjacent {:items 20 :gets 1 :bytes 6363 :index-reads 1
+              :candidates 42 :probes 63 :commands 65 :fetched-values 191
+              :allocated-bytes 56646512 :latency-nanos 16267792}}
+  :after-node-cache-eviction
+  {:cold {:items 20 :gets 9 :bytes 73417 :index-reads 9
+          :cache-entry-delta 9 :candidates 21 :commands 6
+          :fetched-values 384 :allocated-bytes 51235568
+          :latency-nanos 28008542}
+   :warm {:items 20 :gets 0 :bytes 0 :index-reads 0
+          :cache-entry-delta 0 :candidates 21 :commands 6
+          :fetched-values 384 :allocated-bytes 33674008
+          :latency-nanos 11989167}}
+  :bounded-count
+  {:count 20 :limit 20 :truncated true :gets 6 :bytes 49865
+   :index-reads 6 :commands 3 :fetched-values 192
+   :allocated-bytes 17592776 :latency-nanos 13916458}
+  :exact-count
+  {:count 1024 :gets 26 :bytes 183511 :index-reads 26
+   :commands 82 :fetched-values 5123
+   :allocated-bytes 125413216 :latency-nanos 56652208}}
+ :physical-key-evidence
+ {:branch-head
+  "a2a8f23f-3470-422a-93f1-c56a9bf76da2_0594e3b6-9635-5c99-8142-412accf3023b.ksv"
+  :intersection-cold-distinct-keys 9
+  :intersection-adjacent-distinct-keys 2
+  :immediate-warm-distinct-keys 0}
+ :multiplier-neighborhood
+ {1 {:selected :bounded-prefix :exact-gets 1 :prefix-gets 2
+     :exact-values 256 :prefix-values 64 :equal-decisions true}
+  2 {:selected :bounded-prefix :exact-gets 1 :prefix-gets 2
+     :exact-values 256 :prefix-values 128 :equal-decisions true}
+  4 {:selected :sparse-exact :exact-gets 2 :prefix-gets 3
+     :exact-values 256 :prefix-values 256 :equal-decisions true}
+  8 {:selected :sparse-exact :exact-gets 3 :prefix-gets 4
+     :exact-values 256 :prefix-values 512 :equal-decisions true}}
+ :reverification
+ {:captured-at "2026-08-26"
+  :command
+  "clojure -Sdeps '{:deps {org.replikativ/konserve-s3 {:mvn/version \"0.1.38\"}}}' -M:dev -e '(require (quote eacl.operator-engine.s3-experiments)) (eacl.operator-engine.s3-experiments/run!)'"
+  :source-sha256
+  "5a970e29f2ac03ef70d94b9b74a1b44eb77c70efbdbecbab29737b08e90fea69"
+  :store-id "d3a878f2-15cf-4947-9a1d-eb1b90d9129a"
+  :store-deleted true
+  :bucket-empty-after-run true
+  :elapsed-ms 4812.149084
+  :observed
+  {:intersection
+   {:cold {:gets 8 :bytes 63204 :allocated-bytes 42694456
+           :latency-nanos 72875833}
+    :warm {:gets 0 :allocated-bytes 25644464
+           :latency-nanos 22741833}
+    :adjacent {:gets 1 :bytes 8396 :allocated-bytes 29433552
+               :latency-nanos 19823500}}
+   :dense-exclusion
+   {:cold {:gets 9 :bytes 69877 :allocated-bytes 39302216
+           :latency-nanos 40273916}
+    :warm {:gets 0 :allocated-bytes 25376312
+           :latency-nanos 10450417}
+    :adjacent {:gets 1 :bytes 8396 :allocated-bytes 29081184
+               :latency-nanos 15172416}}
+   :sparse-exclusion
+   {:cold {:gets 7 :bytes 55988 :allocated-bytes 37683296
+           :latency-nanos 31304625}
+    :warm {:gets 0 :allocated-bytes 25400376
+           :latency-nanos 12235875}
+    :adjacent {:gets 1 :bytes 7216 :allocated-bytes 29012528
+               :latency-nanos 14248250}}
+   :arrow
+   {:cold {:gets 8 :bytes 63204 :allocated-bytes 48156472
+           :latency-nanos 46375667}
+    :warm {:gets 0 :allocated-bytes 33773568
+           :latency-nanos 16289167}
+    :adjacent {:gets 0 :bytes 0 :allocated-bytes 36844304
+               :latency-nanos 18092291}}
+   :bounded-count
+   {:count 20 :limit 20 :truncated true :gets 6 :bytes 46945
+    :allocated-bytes 12479200 :latency-nanos 22691084}
+   :exact-count
+   {:count 1024 :gets 26 :bytes 180588
+    :allocated-bytes 47443800 :latency-nanos 85745250}}
+  :ceiling-checks 17
+  :all-ceilings-passed true}
+ :conclusion
+ {:high-get-amplification false
+  :bounded-pages-remain-lazy true
+  :immediate-warm-index-gets 0
+  :adjacent-page-maximum-index-gets 2
+  :exact-count-reported-separately true
+  :physical-policy-multiplier 2}}

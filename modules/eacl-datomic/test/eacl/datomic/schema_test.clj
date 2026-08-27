@@ -1,5 +1,6 @@
 (ns eacl.datomic.schema-test
   (:require [clojure.java.io :as io]
+            [clojure.set]
             [clojure.test :as t :refer [deftest testing is]]
             [datomic.api :as d]
             [eacl.core :as eacl]
@@ -7,7 +8,37 @@
             [eacl.datomic.schema :as schema]
             [eacl.datomic.fixtures :as fixtures]
             [eacl.datomic.impl :as impl]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.spicedb.parser]))
+
+(defn- exception-data [thunk]
+  (try
+    (thunk)
+    nil
+    (catch clojure.lang.ExceptionInfo error
+      (ex-data error))))
+
+(defn- stored-union-components
+  [permissions resource-type permission-name]
+  (->> permissions
+       (filter #(and (= resource-type
+                        (:eacl.permission/resource-type %))
+                     (= permission-name
+                        (:eacl.permission/permission-name %))))
+       (mapcat
+        #(expression-persistence/union-compatible-definitions
+          0 (expression-persistence/decode-entity %)))
+       (map (juxt :source-relation-name :target-type :target-name))
+       set))
+
+(defn- expression-storage-projection [db]
+  {:schema (schema/read-schema db)
+   :permissions
+   (->> (schema/read-permissions db)
+        (map #(select-keys % expression-persistence/expression-attributes))
+        (sort-by :eacl/id)
+        vec)})
 
 (def example-schema-string
   "definition user {}
@@ -25,12 +56,182 @@
      permission update = admin
    }")
 
+(def operator-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = base & reader - banned
+   }")
+
+(def replacement-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+     permission base = reader + writer
+     permission view = reader - banned
+   }")
+
+(def no-permission-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     relation writer: user
+     relation banned: user
+   }")
+
+(def invalid-negative-cycle-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     permission a = reader - b
+     permission b = a
+   }")
+
+(def direct-storage-schema
+  "definition user {}
+   definition document {
+     relation reader: user
+     permission view = reader
+   }")
+
+(deftest expression-admission-limits-are-local-and-failed-writes-are-atomic-test
+  (with-mem-conn [conn schema/v8-schema]
+    (let [failure
+          (exception-data
+           #(schema/write-schema!
+             conn direct-storage-schema
+             {:expression-limits {:maximum-source-nodes 0}}))]
+      (is (= :eacl.schema/expression-limit (:type failure)))
+      (is (= :node-count (:dimension failure)))
+      (is (= 0 (:maximum failure)))
+      (is (empty? (:permissions (schema/read-schema (d/db conn))))))))
+
+(deftest permission-storage-is-expression-only-and-replaceable-test
+  (with-mem-conn [conn schema/v7-schema]
+    (schema/write-schema! conn operator-storage-schema)
+    (let [before-db (d/db conn)
+          before (schema/read-permissions before-db)
+          view-id
+          (expression-persistence/->expression-id :document :view)
+          view-eid (d/entid before-db [:eacl/id view-id])
+          before-payload
+          (:eacl.permission/expression-payload
+           (first (filter #(= view-id (:eacl/id %)) before)))
+          installed-idents (set (map :db/ident schema/v7-schema))]
+      (is (= 2 (count before)))
+      (is (every? #(not-any? (fn [attribute]
+                               (contains? % attribute))
+                             expression-persistence/legacy-flat-attributes)
+                  before))
+      (is (empty?
+           (clojure.set/intersection
+            installed-idents
+            (disj expression-persistence/legacy-flat-attributes
+                  :eacl.permission/source-relation-name
+                  :eacl.permission/target-type
+                  :eacl.permission/target-name))))
+      (schema/write-schema! conn replacement-storage-schema)
+      (let [after-db (d/db conn)
+            after (schema/read-permissions after-db)
+            view (first (filter #(= view-id (:eacl/id %)) after))]
+        (is (= view-eid (d/entid after-db [:eacl/id view-id])))
+        (is (= 2 (count after)))
+        (is (not= before-payload
+                  (:eacl.permission/expression-payload view)))
+        (is (= :exclusion
+               (:op (:root
+                     (expression-persistence/decode-entity view))))))
+      (let [stable-db (d/db conn)
+            stable-schema (schema/read-schema stable-db)
+            stable-generation
+            (eacl.datomic.impl.indexed/schema-version stable-db)
+            data
+            (exception-data
+             #(schema/write-schema! conn invalid-negative-cycle-schema))
+            after-failure (d/db conn)]
+        (is (= :eacl.schema/unstratified-exclusion (:type data)))
+        (is (= stable-generation
+               (eacl.datomic.impl.indexed/schema-version after-failure)))
+        (is (= stable-schema (schema/read-schema after-failure))))
+      (schema/write-schema! conn no-permission-storage-schema)
+      (is (empty? (schema/read-permissions (d/db conn))))
+      (is (= 2 (count (schema/read-permissions before-db)))))))
+
+(deftest permission-storage-rejects-incompatible-rows-test
+  (let [permission
+        (first
+         (:permissions
+          (expression-persistence/candidate-schema
+           (expression-resolver/validate-schema direct-storage-schema))))]
+    (doseq [[label entities reason]
+            [["flat-only"
+              [{:eacl/id "flat"
+                :eacl.permission/resource-type :document
+                :eacl.permission/permission-name :view
+                :eacl.permission/source-relation-name :self
+                :eacl.permission/target-type :relation
+                :eacl.permission/target-name :reader}]
+              :flat-only-representation]
+             ["mixed"
+              [(assoc permission :eacl.permission/target-type :relation)]
+              :mixed-flat-and-expression]
+             ["duplicate"
+              [permission (assoc permission :eacl/id "duplicate")]
+              :duplicate-expression]
+             ["corrupt"
+              [(assoc permission
+                      :eacl.permission/expression-payload "not-edn")]
+              :invalid-payload]]]
+      (testing label
+        (with-mem-conn [conn schema/v7-schema]
+          @(d/transact conn entities)
+          (is (= reason
+                 (:reason
+                  (exception-data
+                   #(schema/read-schema (d/db conn)))))))))))
+
+(deftest expression-storage-export-import-and-logical-backup-restore-test
+  (with-mem-conn [source schema/v7-schema]
+    (schema/write-schema! source operator-storage-schema)
+    (let [source-db (d/db source)
+          expected (expression-storage-projection source-db)
+          exported-source
+          (:eacl/schema-string
+           (d/entity source-db [:eacl/id "schema-string"]))
+          backup
+          {:schema-string exported-source
+           :relations (:relations (schema/read-schema source-db))
+           :permissions (:permissions (schema/read-schema source-db))}]
+      (with-mem-conn [imported schema/v7-schema]
+        (schema/write-schema! imported exported-source)
+        (is (= expected
+               (expression-storage-projection (d/db imported)))
+            "source export/import preserves canonical expressions"))
+      (with-mem-conn [restored schema/v7-schema]
+        @(d/transact
+          restored
+          (concat
+           (:relations backup)
+           (:permissions backup)
+           [{:eacl/id "schema-string"
+             :eacl/schema-string (:schema-string backup)}]))
+        (is (= expected
+               (expression-storage-projection (d/db restored)))
+            "logical entity backup/restore preserves expression rows")))))
+
 (deftest eacl-schema-stable-ident-tests
   (with-mem-conn [conn schema/v7-schema]
-    (testing "we can transact Realtions & Permissions twice without datom conflicts after introduction of :eacl/id for Relation & Permission."
+    (testing "flat-only permission rows are rejected even when their legacy identities are stable"
       (is @(d/transact conn fixtures/relations+permissions))
       (is @(d/transact conn fixtures/relations+permissions))
-      (is (schema/read-schema (d/db conn))))))
+      (is (= :flat-only-representation
+             (:reason
+              (exception-data #(schema/read-schema (d/db conn)))))))))
 
 (deftest schema-does-not-include-persisted-grants-test
   (testing "recursive traversal does not require persisted effective grant attrs"
@@ -38,6 +239,28 @@
       (is (not (contains? idents :eacl.v7.grant/subject-type+permission+resource-type+resource)))
       (is (not (contains? idents :eacl.v7.grant/resource-type+permission+subject-type+subject)))
       (is (not (contains? idents :eacl.grant/indexed-node))))))
+
+(deftest schema-does-not-include-derived-expression-metrics-test
+  (let [idents (set (map :db/ident schema/v7-schema))]
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/retired-expression-attributes)))))
+
+(deftest clean-v8-schema-retires-flat-permission-attributes-test
+  (let [idents (set (map :db/ident schema/v8-schema))]
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/legacy-flat-attributes)))
+    (is (empty?
+         (clojure.set/intersection
+          idents
+          expression-persistence/retired-expression-attributes)))
+    (with-mem-conn [conn schema/v8-schema]
+      (schema/write-schema! conn direct-storage-schema)
+      (is (= :expression
+             (schema/permission-storage-shape (d/db conn)))))))
 
 (deftest eacl-schema-comparison-tests
   (testing "we can calculate additions & retractions"
@@ -68,9 +291,9 @@
             db     (d/db conn)
             schema (schema/read-schema db)]
         (is (= 3 (count (:relations schema))))
-        (is (= 5 (count (:permissions schema))))
+        (is (= 3 (count (:permissions schema))))
         (is (= 3 (count (:additions (:relations deltas)))))
-        (is (= 5 (count (:additions (:permissions deltas)))))
+        (is (= 3 (count (:additions (:permissions deltas)))))
 
         ;; Verify schema string is stored
         (is (= example-schema-string (:eacl/schema-string (d/entity db [:eacl/id "schema-string"]))))))
@@ -134,8 +357,9 @@
                         definition account {
                           permission admin = nonexistent_relation
                         }"]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
-              (schema/write-schema! conn bad-schema))))))
+        (is (= :eacl.schema/expression-resolution-failed
+               (:type (exception-data
+                       #(schema/write-schema! conn bad-schema))))))))
 
   (testing "arrow permission with invalid target is rejected"
     (with-mem-conn [conn schema/v7-schema]
@@ -147,8 +371,9 @@
                           relation account: account
                           permission view = account->nonexistent
                         }"]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
-              (schema/write-schema! conn bad-schema))))))
+        (is (= :eacl.schema/expression-resolution-failed
+               (:type (exception-data
+                       #(schema/write-schema! conn bad-schema))))))))
 
   (testing "self-permission referencing non-existent permission is rejected"
     (with-mem-conn [conn schema/v7-schema]
@@ -156,8 +381,9 @@
                         definition server {
                           permission view = fake_permission
                         }"]
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
-              (schema/write-schema! conn bad-schema))))))
+        (is (= :eacl.schema/expression-resolution-failed
+               (:type (exception-data
+                       #(schema/write-schema! conn bad-schema))))))))
 
   (testing "arrow permission with missing source relation is rejected"
     (with-mem-conn [conn schema/v7-schema]
@@ -168,9 +394,9 @@
                         definition server {
                           permission view = missing_relation->admin
                         }"]
-        ;; Error comes from parser's resolve-component (validates during parse)
-        (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Unknown relation"
-              (schema/write-schema! conn bad-schema))))))
+        (is (= :eacl.schema/expression-resolution-failed
+               (:type (exception-data
+                       #(schema/write-schema! conn bad-schema))))))))
 
   (testing "valid schema is accepted"
     (with-mem-conn [conn schema/v7-schema]
@@ -188,7 +414,7 @@
         (let [db     (d/db conn)
               schema (schema/read-schema db)]
           (is (= 3 (count (:relations schema))))
-          (is (= 3 (count (:permissions schema)))))))))
+          (is (= 2 (count (:permissions schema)))))))))
 
 (deftest invalid-schema-does-not-install-cache-stamp-attributes-test
   ;; ADR 012 says an invalid write makes no changes. The v8.0 compatibility
@@ -435,7 +661,12 @@
   (testing "zero-definition output cannot wipe a non-empty schema (parser-gap belt-and-braces)"
     (with-mem-conn [conn schema/v7-schema]
       (schema/write-schema! conn example-schema-string)
-      (with-redefs [eacl.spicedb.parser/->eacl-schema (fn [_] {:definitions [] :relations [] :permissions []})]
+      (with-redefs [expression-resolver/validate-schema
+                    (fn [_ & _]
+                      {:definitions []
+                       :relations []
+                       :expressions []
+                       :expression-metadata []})]
         (try
           (schema/write-schema! conn "anything")
           (is false "should have thrown")
@@ -460,8 +691,11 @@
       ;; mgmt exists on user but not group: both orders must be rejected identically.
       (doseq [types ["user | group" "group | user"]]
         (with-mem-conn [conn schema/v7-schema]
-          (is (thrown-with-msg? clojure.lang.ExceptionInfo #"Invalid schema"
-                (schema/write-schema! conn (schema-with-owner-types types)))
+          (is (= :eacl.schema/expression-resolution-failed
+                 (:type
+                  (exception-data
+                   #(schema/write-schema! conn
+                                          (schema-with-owner-types types)))))
               (str "owner: " types " should be rejected — mgmt missing on group")))))
 
     (testing "accepted when the target exists on every subject type"
@@ -509,32 +743,23 @@
 
       (testing "account/admin permission has correct definitions"
         ;; permission admin = owner + platform->super_admin
-        (let [account-admin-perms (filter #(and (= :account (:eacl.permission/resource-type %))
-                                             (= :admin (:eacl.permission/permission-name %)))
-                                    permissions)]
-          (is (= #{(impl/Permission :account :admin {:relation :owner})
-                   (impl/Permission :account :admin {:arrow :platform :relation :super_admin})}
-                (set account-admin-perms)))))
+        (is (= #{[:self :relation :owner]
+                 [:platform :relation :super_admin]}
+               (stored-union-components permissions :account :admin))))
 
       (testing "server/view permission has correct definitions"
         ;; permission view = admin + nic->view + shared_member + backup_creator
-        (let [server-view-perms (filter #(and (= :server (:eacl.permission/resource-type %))
-                                           (= :view (:eacl.permission/permission-name %)))
-                                  permissions)]
-          (is (= #{(impl/Permission :server :view {:permission :admin})
-                   (impl/Permission :server :view {:arrow :nic :permission :view})
-                   (impl/Permission :server :view {:relation :shared_member})
-                   (impl/Permission :server :view {:relation :backup_creator})}
-                (set server-view-perms)))))
+        (is (= #{[:self :permission :admin]
+                 [:nic :permission :view]
+                 [:self :relation :shared_member]
+                 [:self :relation :backup_creator]}
+               (stored-union-components permissions :server :view))))
 
       (testing "vpc/admin permission has correct definitions"
         ;; permission admin = account->admin + shared_admin
-        (let [vpc-admin-perms (filter #(and (= :vpc (:eacl.permission/resource-type %))
-                                         (= :admin (:eacl.permission/permission-name %)))
-                                permissions)]
-          (is (= #{(impl/Permission :vpc :admin {:arrow :account :permission :admin})
-                   (impl/Permission :vpc :admin {:relation :shared_admin})}
-                (set vpc-admin-perms)))))
+        (is (= #{[:account :permission :admin]
+                 [:self :relation :shared_admin]}
+               (stored-union-components permissions :vpc :admin))))
 
       (testing "schema string is stored"
         (is (= schema-string (:eacl/schema-string (d/entity db [:eacl/id "schema-string"]))))))))

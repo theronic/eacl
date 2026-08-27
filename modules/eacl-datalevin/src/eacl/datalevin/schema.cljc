@@ -4,8 +4,10 @@
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.relationships.storage :as relationship-storage]
-            [eacl.schema.model :as model]
-            [eacl.spicedb.parser :as parser]))
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]
+            [eacl.schema.expression-resolver :as expression-resolver]
+            [eacl.schema.model :as model]))
 
 (def datalevin-schema
   {:eacl/id {:db/valueType :db.type/string
@@ -39,19 +41,12 @@
                                  :db/index true}
    :eacl.permission/target-name {:db/valueType :db.type/keyword
                                  :db/index true}
+   :eacl.permission/expression-payload {:db/valueType :db.type/string}
    :eacl.permission/resource-type+permission-name
    {:db/valueType :db.type/tuple
     :db/tupleAttrs [:eacl.permission/resource-type
                     :eacl.permission/permission-name]
     :db/index true}
-   :eacl.permission/full-key
-   {:db/valueType :db.type/tuple
-    :db/tupleAttrs [:eacl.permission/resource-type
-                    :eacl.permission/source-relation-name
-                    :eacl.permission/target-type
-                    :eacl.permission/target-name
-                    :eacl.permission/permission-name]
-    :db/unique :db.unique/identity}
 
    relationship-storage/forward-attribute
    {:db/valueType :db.type/tuple
@@ -282,7 +277,8 @@
   [:eacl/id :eacl.permission/resource-type
    :eacl.permission/permission-name
    :eacl.permission/source-relation-name
-   :eacl.permission/target-type :eacl.permission/target-name])
+   :eacl.permission/target-type :eacl.permission/target-name
+   :eacl.permission/expression-payload])
 
 (defn- eager-entity
   [db eid attributes]
@@ -310,8 +306,10 @@
   (ddb/with-db
    snapshot-or-db
    (fn [db]
-     {:relations (read-relations db)
-      :permissions (read-permissions db)})))
+     (let [permissions (read-permissions db)]
+       (expression-persistence/validate-entities permissions)
+       {:relations (read-relations db)
+        :permissions permissions}))))
 
 (defn prepare-cache-coherence!
   "Initializes missing physical schema/relation generations and the schema
@@ -526,19 +524,25 @@
   ([conn schema-string options]
    (write-schema! conn schema-string options ::read-current-generation))
   ([conn schema-string
-    {:keys [allow-empty-schema?]}
+    {:keys [allow-empty-schema? expression-limits]}
     known-schema-generation]
    (write-schema! conn schema-string
-                  {:allow-empty-schema? allow-empty-schema?}
+                  {:allow-empty-schema? allow-empty-schema?
+                   :expression-limits expression-limits}
                   known-schema-generation nil))
   ([conn schema-string
-    {:keys [allow-empty-schema?]}
+    {:keys [allow-empty-schema? expression-limits]}
     known-schema-generation
     write-token]
-   (let [new-schema-map  (parser/->eacl-schema (parser/parse-schema schema-string))
-         _               (validate-schema-references new-schema-map)
+   (let [expression-limits
+         (expression-policy/normalize-client-limits expression-limits)
+         new-schema-map  (expression-persistence/candidate-schema
+                           (expression-resolver/validate-schema
+                            schema-string expression-limits))
          initial-db      (ds/db conn)
-         initial-schema  (read-schema initial-db)
+         initial-schema  (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema initial-db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations initial-schema))
@@ -549,7 +553,9 @@
                                             :existing {:relations (count (:relations initial-schema))
                                                        :permissions (count (:permissions initial-schema))}})))
          db              (ensure-schema-coherence! conn)
-         existing-schema (read-schema db)
+         existing-schema (binding [expression-persistence/*expression-limits*
+                                   expression-limits]
+                           (read-schema db))
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations existing-schema))
@@ -562,7 +568,8 @@
          deltas          (compare-schema existing-schema new-schema-map)
          {:keys [relations permissions]} deltas
          relation-retractions   (:retractions relations)
-         permission-retractions (:retractions permissions)]
+         permission-retractions
+         (expression-persistence/entity-deletions permissions)]
      (doseq [rel relation-retractions]
        (let [cnt (count-relationships-using-relation db rel)]
          (when (pos? cnt)

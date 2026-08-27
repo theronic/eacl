@@ -145,7 +145,8 @@
          execution-scope
          (scoped-query-form query)]]
     (cursor/memoized-context!
-     (:cursor-codec-cache opts)
+     (or (:cursor-codec-cache opts)
+         (:cursor-construction-cache opts))
      [:cursor-query-scope 8 scope-input]
      #(secure/canonical-digest
        "eacl/cursor/query-scope/v8"
@@ -482,11 +483,15 @@
              adapter
              {:basis-identity (:snapshot-semantic-identity opts)}))]
       (build-dependency-context
-       adapter frame relation-ids (:cursor-codec-cache opts)
+       adapter frame relation-ids
+       (or (:cursor-codec-cache opts)
+           (:cursor-construction-cache opts))
        (:snapshot-semantic-identity opts)
        (:request-lineage opts)))
     (build-dependency-context
-     adapter nil nil (:cursor-codec-cache opts)
+     adapter nil nil
+     (or (:cursor-codec-cache opts)
+         (:cursor-construction-cache opts))
      (:snapshot-semantic-identity opts)
      (:request-lineage opts))))
 

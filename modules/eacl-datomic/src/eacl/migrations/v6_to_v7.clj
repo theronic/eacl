@@ -22,19 +22,19 @@
     contains unmigrated v6 relationship data, unless the client opts into
     automatic migration with {:auto-migrate-v6 <opts>}.
 
-  Schema (Relations & Permissions) is deliberately NOT interpreted or
-  converted from stored v6 data. Pass your SpiceDB schema string as {:schema
-  ...} and `migrate!` re-asserts it via eacl.datomic.schema/write-schema!,
-  which validates it and retracts any stored schema entities that are no
-  longer part of it. `normalize-schema-entity-ids!` first gives legacy schema
-  entities the canonical :eacl/id handles write-schema! needs to manage them.
+  Flat v6 permissions are converted once to canonical expression entities.
+  Pass your SpiceDB schema string as {:schema ...} to validate and replace the
+  stored schema from source. Without it, migrate! deterministically converts
+  the stored union-only rows. `normalize-schema-entity-ids!` first gives
+  legacy schema entities the canonical :eacl/id handles the replacement needs.
 
   Full walkthrough and edge cases:
   docs/migration-v6-to-v7.md."
   (:require [datomic.api :as d]
             [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.schema.expression-resolver :as expression-resolver]))
 
 (def storage-version
   "The relationship storage model version this version of EACL reads & writes."
@@ -182,6 +182,37 @@
            [?relation :eacl.relation/subject-type ?subject-type]]
       db)))
 
+(defn- assert-v6-relationship-relations!
+  "Validates every v6 relationship against the relation set that will exist
+  after schema conversion. This runs before any schema replacement, so a
+  missing or removed relation cannot leave a partially converted schema."
+  [db schema-string]
+  (let [relations
+        (if schema-string
+          (:relations
+           (expression-resolver/validate-schema schema-string))
+          (schema/read-relations db))
+        relation-triples
+        (into #{}
+              (map (juxt :eacl.relation/resource-type
+                         :eacl.relation/relation-name
+                         :eacl.relation/subject-type))
+              relations)]
+    (doseq [v6-rel-eid (v6-relationship-eids db)]
+      (let [{:eacl.relationship/keys
+             [subject-type relation-name resource-type]}
+            (d/entity db v6-rel-eid)]
+        (when-not (contains? relation-triples
+                             [resource-type relation-name subject-type])
+          (throw
+           (ex-info "v6 relationship references a missing Relation."
+                    {:type :eacl.migration/missing-relation
+                     :eacl/error :eacl.migration/missing-relation
+                     :v6-relationship-eid v6-rel-eid
+                     :resource-type resource-type
+                     :relation-name relation-name
+                     :subject-type subject-type})))))))
+
 (defn v6-relationship->v7-txes
   "The two v7 tuple assertions for one v6 relationship entity. Throws
   {:type :eacl.migration/missing-relation} if the relationship references a
@@ -297,20 +328,18 @@
 
   1. ensure-v7-attributes!            — install v7 schema attributes (additive)
   2. normalize-schema-entity-ids!     — give legacy schema entities :eacl/id handles
-  3. write-schema! with :schema       — re-assert your schema (skipped if absent)
+  3. migrate-v6-schema!               — replace flat permissions with expressions
   4. backfill-relationship-tuples!    — v7 tuples for every v6 relationship
   5. verify-backfill                  — throws unless every v6 row has its tuples
   6. retract-v6-relationship-entities! — remove the superseded v6 entities
   7. stamp-storage-version!           — unblocks make-client's startup check
 
   Options:
-  - :schema (string, recommended) — your SpiceDB schema DSL string, re-asserted
-    via eacl.datomic.schema/write-schema!. This is the supported way to migrate
-    schema: stored v6 Relation/Permission entities are not interpreted; on
-    standard v6 databases re-assertion is a zero-delta no-op that keeps
-    relation eids stable, and outdated schema entities are retracted by
-    write-schema!'s delta logic. Without :schema, stored schema entities carry
-    over untouched (the Relation/Permission model is identical in v6 and v7).
+  - :schema (string, recommended) — your SpiceDB schema DSL string, parsed and
+    validated before it atomically replaces the flat permission rows with
+    canonical expression entities. Relations that are unchanged keep their
+    eids. Without :schema, the stored v6 union-only permission rows are
+    converted deterministically to equivalent expression entities.
     Note: if the schema string drops a relation that stored v6 relationships
     still use, step 4 throws :eacl.migration/missing-relation and the
     migration aborts additively — nothing is lost, fix the schema and re-run.
@@ -331,8 +360,9 @@
                :known-keys   known-migrate-opt-keys})))
    (ensure-v7-attributes! conn)
    (let [normalized    (normalize-schema-entity-ids! conn)
-         schema-deltas (when schema
-                         (schema/write-schema! conn schema))
+         _             (assert-v6-relationship-relations!
+                        (d/db conn) schema)
+         schema-deltas (schema/migrate-v6-schema! conn schema)
          backfilled    (backfill-relationship-tuples! conn {:batch-size batch-size})
          verify-report (verify-backfill (d/db conn))]
      (when-not (:complete? verify-report)

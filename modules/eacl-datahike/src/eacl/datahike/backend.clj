@@ -4,14 +4,17 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.direct-membership :as direct-membership]
             [eacl.datahike.impl :as impl]
-            [eacl.datahike.schema :as schema])
+            [eacl.datahike.schema :as schema]
+            [eacl.schema.expression-persistence :as expression-persistence])
   (:import [datahike.db AsOfDB DB FilteredDB HistoricalDB SinceDB]
            [java.util UUID]))
 
 (def adapter-capabilities
   {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
+   :direct-membership-batch #{backend/direct-membership-batch-capability}
    :runtime #{:clj}})
 
 (def source-capabilities
@@ -189,15 +192,17 @@
             (Thread/sleep 2)
             (recur)))))))
 
-(defn- normalized-permission
+(defn- normalized-permissions
   [permission]
-  {:permission-id (:db/id permission)
-   :resource-type (:eacl.permission/resource-type permission)
-   :permission-name (:eacl.permission/permission-name permission)
-   :source-relation-name
-   (:eacl.permission/source-relation-name permission)
-   :target-type (:eacl.permission/target-type permission)
-   :target-name (:eacl.permission/target-name permission)})
+  (expression-persistence/union-compatible-definitions
+   (:db/id permission)
+   (expression-persistence/decode-entity permission)))
+
+(defn- permission-expression [db resource-type permission-name]
+  (some-> (expression-persistence/validate-entities
+           (impl/find-permission-defs db resource-type permission-name))
+          first
+          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
@@ -226,11 +231,21 @@
               selected-order-hint selected-exact-locator]
        :as opts}]
   (backend/validate-adapter-config! :datahike adapter-config-keys opts)
+  (let [kind (basis-kind db)]
+    (when-not (contains? #{:ordinary :as-of} kind)
+      (throw
+       (ex-info
+        "Datahike EACL adapters require an ordinary or as-of database value."
+        {:type :eacl/unsupported-topology
+         :eacl/error :eacl/unsupported-topology
+         :backend :datahike
+         :basis-kind kind}))))
   (backend/make-adapter
      {:id :datahike
       :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
       :deterministic? (:adapter-deterministic? opts)
+      :operator-physical-policy direct-membership/physical-policy-identity
       :identity-contract
       (:identity-contract opts
                           :selected-internal/current-external-injective-v2)
@@ -285,9 +300,13 @@
 
        :permission-defs
        (fn [resource-type permission-name]
-         (mapv normalized-permission
-               (impl/find-permission-defs
-                db resource-type permission-name)))
+         (vec (mapcat normalized-permissions
+                      (impl/find-permission-defs
+                       db resource-type permission-name))))
+
+       :permission-expression
+       (fn [resource-type permission-name]
+         (permission-expression db resource-type permission-name))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
@@ -304,6 +323,10 @@
          (impl/direct-match?
           db subject-type subject-id relation-id
           resource-type resource-id))
+
+       :direct-match-many?
+       (fn [request]
+         (direct-membership/direct-match-many? db request))
 
        :all-permission-nodes
        (fn []
