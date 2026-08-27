@@ -966,64 +966,70 @@ definition doc {
   ;; of bypassed by a statically dispatched arity call.
   (apply parser/parse-schema [operator-precedence-schema]))
 
-(defn- parse-schema-rewriting
-  [original from to]
+(defn- parse-schema-result
+  [expected-source parse-tree executed]
   (fn
     ([source]
-     (original (str/replace source from to) {}))
+     (vswap! executed inc)
+     (if (= expected-source source)
+       parse-tree
+       (throw (ex-info "Unexpected mutation-control schema source."
+                       {:expected expected-source :actual source}))))
     ([source options]
-     (original (str/replace source from to) options))))
+     (vswap! executed inc)
+     (if (and (= expected-source source) (empty? options))
+       parse-tree
+       (throw (ex-info "Unexpected mutation-control schema invocation."
+                       {:expected expected-source :actual source
+                        :options options}))))))
 
-(defn- parse-schema-counting
-  [original executed]
-  (fn
-    ([source]
-     (vswap! executed inc)
-     (original source {}))
-    ([source options]
-     (vswap! executed inc)
-     (original source options))))
+(defn- rewritten-parse-schema
+  [original from to executed]
+  (parse-schema-result
+   operator-precedence-schema
+   (original (str/replace operator-precedence-schema from to))
+   executed))
 
 (defn operator-wrong-precedence-killed?
   []
   (let [original parser/parse-schema
+        baseline (original operator-precedence-schema)
         executed (volatile! 0)
-        counted (parse-schema-counting original executed)]
+        mutant (rewritten-parse-schema
+                original
+                "reader + writer & approved - banned"
+                "(reader + (writer & approved)) - banned"
+                executed)]
     (and
      (= operator-precedence-expected
-        (with-redefs [parser/parse-schema counted]
-          (operator-precedence-decisions (operator-precedence-parse))))
-     (pos? @executed)
+        (operator-precedence-decisions baseline))
      ;; Conventional intersection-before-union precedence: subject 1, a bare
      ;; reader without approval, becomes authorized.
      (not= operator-precedence-expected
-           (with-redefs [parser/parse-schema
-                         (parse-schema-rewriting
-                          original
-                          "reader + writer & approved - banned"
-                          "(reader + (writer & approved)) - banned")]
+           (with-redefs [parser/parse-schema mutant]
              (operator-precedence-decisions
-              (operator-precedence-parse)))))))
+              (operator-precedence-parse))))
+     (pos? @executed))))
 
 (defn operator-swapped-exclusion-killed?
   []
   (let [original parser/parse-schema
+        baseline (original operator-precedence-schema)
         executed (volatile! 0)
-        counted (parse-schema-counting original executed)]
+        mutant (rewritten-parse-schema
+                original
+                "reader + writer & approved - banned"
+                "banned - (reader + writer & approved)"
+                executed)]
     (and
      (= operator-precedence-expected
-        (with-redefs [parser/parse-schema counted]
-          (operator-precedence-decisions (operator-precedence-parse))))
-     (pos? @executed)
+        (operator-precedence-decisions baseline))
      ;; Swapped exclusion operands authorize exactly the banned subjects.
      (not= operator-precedence-expected
-           (with-redefs [parser/parse-schema
-                         (parse-schema-rewriting
-                          original
-                          "reader + writer & approved - banned"
-                          "banned - (reader + writer & approved)")]
+           (with-redefs [parser/parse-schema mutant]
              (operator-precedence-decisions
-              (operator-precedence-parse)))))))
+              (operator-precedence-parse))))
+     (pos? @executed))))
 
 (defn operator-unsigned-dependency-killed?
   []
