@@ -7,6 +7,30 @@
   [(:type subject) (:id subject) relation (:type resource) (:id resource)])
 
 (def ^:private relationship-operation-kinds #{:db/add :db/retract})
+(def ^:private supported-update-operations #{:create :touch :delete})
+
+(defn validate-operation!
+  "Validates a public relationship update operation before endpoint work."
+  [operation]
+  (when-not (contains? supported-update-operations operation)
+    (throw
+     (ex-info
+      (str (pr-str operation)
+           " relationship update is not supported. Use :create, :touch or :delete.")
+      {:type :eacl/unsupported-operation
+       :eacl/error :eacl/unsupported-operation
+       :operation operation})))
+  true)
+
+(defn conflict!
+  "Raises the common strict-create conflict."
+  [relationship]
+  (throw
+   (ex-info
+    ":create conflicts with an existing relationship. Use :touch for idempotent writes."
+    {:type :eacl/relationship-conflict
+     :eacl/error :eacl/relationship-conflict
+     :relationship relationship})))
 
 (defn- relationship-operation-relation-id
   [operations op]

@@ -31,28 +31,16 @@
   ([db entity attr value]
    (ds/datoms db :eavt entity attr value)))
 
-(defn- valid-prefix?
-  [prefix]
-  (and (vector? prefix)
-       (= 3 (count prefix))
-       (keyword? (nth prefix 0))
-       (nat-int? (nth prefix 1))
-       (keyword? (nth prefix 2))))
-
-(defn- matches-prefix?
-  [prefix {:keys [v]}]
-  (endpoint-pair/value-prefix? v prefix))
-
 (defn- matching-eavt-prefix?
   [entity attr prefix {:keys [e a] :as datom}]
   (and (= entity e)
        (= attr a)
-       (matches-prefix? prefix datom)))
+       (endpoint-pair/value-prefix? (:v datom) prefix)))
 
 (defn- matching-avet-prefix?
   [attr prefix {:keys [a] :as datom}]
   (and (= attr a)
-       (matches-prefix? prefix datom)))
+       (endpoint-pair/value-prefix? (:v datom) prefix)))
 
 (defn eavt-endpoint-prefix
   "Endpoint datoms for an exact three-component value prefix.
@@ -63,7 +51,7 @@
    (eavt-endpoint-prefix db entity attr prefix nil :asc))
   ([db entity attr prefix cursor-eid direction]
    (if-not (and (nat-int? entity)
-                (valid-prefix? prefix)
+                (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
      []
      (let [tail  (or cursor-eid
@@ -87,7 +75,7 @@
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc))
   ([db attr prefix cursor-eid direction]
-   (if-not (and (valid-prefix? prefix)
+   (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
      []
      (let [tail  (or cursor-eid

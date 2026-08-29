@@ -97,9 +97,6 @@
   ([counters key amount]
    (vswap! counters update key (fnil + 0) amount)))
 
-(defn- root-index [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
-
 (defn- question
   [permission node-id direction subject-type subject-eid resource-eid]
   [permission node-id direction subject-type subject-eid resource-eid])
@@ -1053,7 +1050,7 @@
               {:value-type (some-> candidates type str)}))
   (doseq [candidate candidates] (validate-candidate! candidate))
   (let [limits (normalize-limits limits)
-        roots (root-index plan)
+        roots (operator-plan/expression-roots plan)
         permission (or permission (:root plan))
         root-questions (mapv #(candidate->root-question roots permission %)
                              candidates)

@@ -86,9 +86,6 @@
                 {:width (count identities)}))
     normalized))
 
-(defn- roots [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
-
 (defn- direct-probe [candidate descriptor]
   (when-let [{:keys [relation-id]}
              (operator-plan/relation-partition
@@ -142,11 +139,13 @@
     (if (zero? width)
       []
       (let [root-permission (or permission (:root plan))
-            root-id (or node-id (get (roots plan) root-permission))
+            root-id (or node-id
+                        (get (operator-plan/expression-roots plan)
+                             root-permission))
             memo (atom {})
             active (atom #{})
             mask-state (atom {})
-            node-roots (roots plan)
+            node-roots (operator-plan/expression-roots plan)
             cache-lookup (or cache-lookup (constantly direct/cache-miss))
             completed-leaves (atom [])]
         (when-not (or (nil? cache-publish-many!)
@@ -378,7 +377,8 @@
               {:plan-domain (:domain plan)}))
   (let [candidates (normalize-candidates candidates)
         permission (or permission (:root plan))
-        node-id (or node-id (get (roots plan) permission))
+        node-id (or node-id
+                    (get (operator-plan/expression-roots plan) permission))
         options (assoc options :candidates candidates
                        :permission permission :node-id node-id)
         store subproblem/*store*]

@@ -851,24 +851,10 @@
     db
     (add-relationship-txes (resolve-relationship db relationship opts)))))
 
-(def ^:private supported-relationship-operations
-  #{:create :touch :delete})
-
-(defn- unsupported-relationship-operation!
-  [operation]
-  (throw
-   (ex-info
-    (str (pr-str operation)
-         " relationship update is not supported. Use :create, :touch or :delete.")
-    {:type :eacl/unsupported-operation :eacl/error :eacl/unsupported-operation
-     :operation operation})))
-
 (defn validate-relationship-operation!
   "Validates an update operation before any relationship endpoint work."
   [operation]
-  (when-not (contains? supported-relationship-operations operation)
-    (unsupported-relationship-operation! operation))
-  true)
+  (relationship-mutations/validate-operation! operation))
 
 (defn tx-update-relationship
   "Relationship writes are implemented against v7 forward/reverse tuple indexes.
@@ -885,10 +871,7 @@
 
           :create
           (if exists?
-            (throw (ex-info ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-                            {:type :eacl/relationship-conflict
-                             :eacl/error :eacl/relationship-conflict
-                             :relationship relationship}))
+            (relationship-mutations/conflict! relationship)
             (add-relationship-txes resolved))
 
           ;; Unconditional: Datomic ignores retraction of an absent datom, and

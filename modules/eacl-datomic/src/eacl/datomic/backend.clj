@@ -259,18 +259,8 @@
   [db resource-type permission-name]
   (->> (ddb/find-permission-defs
         db resource-type permission-name)
-       (mapcat
-        (fn [permission]
-          (expression-persistence/union-compatible-definitions
-           (:db/id permission)
-           (expression-persistence/decode-entity permission))))
+       (mapcat expression-persistence/union-compatible-entity-definitions)
        vec))
-
-(defn- permission-expression [db resource-type permission-name]
-  (some-> (expression-persistence/validate-entities
-           (ddb/find-permission-defs db resource-type permission-name))
-          first
-          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
@@ -352,7 +342,8 @@
          (permission-defs db resource-type permission-name))
        :permission-expression
        (fn [resource-type permission-name]
-         (permission-expression db resource-type permission-name))
+         (expression-persistence/validated-expression-entity
+          (ddb/find-permission-defs db resource-type permission-name)))
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type scan-options]
          ((or subject->resources-fn ddb/subject->resources)

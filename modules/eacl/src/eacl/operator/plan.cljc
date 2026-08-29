@@ -55,6 +55,9 @@
        (= plan-version (:version value))
        (= :operator (:domain value))))
 
+(defn ^:no-doc expression-roots [plan]
+  (into {} (map (juxt :permission :root)) (:expressions plan)))
+
 (defn- expression-entity [adapter [resource-type permission-name :as node]]
   (let [entity (backend/invoke adapter :permission-expression
                                resource-type permission-name)]
@@ -194,12 +197,6 @@
              :reverse :least-path
              :direct-sequence-compatible? false}}))
 
-(defn- record-children [record]
-  (case (first record)
-    (:union :intersection) (second record)
-    :exclusion [(second record) (nth record 2)]
-    []))
-
 (defn- enrich-expression
   [adapter relation-cache [resource-type _ :as permission]
    resolved]
@@ -248,7 +245,7 @@
    (fn [result {:keys [id record]}]
      (reduce #(update %1 %2 (fnil conj []) id)
              result
-             (record-children record)))
+             (expression-limits/record-children record)))
    (sorted-map)
    nodes))
 
@@ -263,7 +260,7 @@
 (defn- node-costs [nodes]
   (reduce
    (fn [costs {:keys [id op record descriptor]}]
-     (let [children (record-children record)
+     (let [children (expression-limits/record-children record)
            depth (if (seq children)
                    (inc (reduce max (map #(get-in costs [% :depth]) children)))
                    (if (= :arrow op) 1 0))
@@ -303,7 +300,7 @@
 (defn- compile-node-programs [nodes costs]
   (reduce
    (fn [result {:keys [id op record descriptor target-node]}]
-     (let [children (record-children record)
+     (let [children (expression-limits/record-children record)
            anchor (when (= :intersection op)
                     (select-intersection-anchor children costs))
            left (when (= :exclusion op) (second record))
@@ -393,7 +390,7 @@
      (sorted-map)
      (keep
       (fn [{:keys [id op record]}]
-        (let [children (record-children record)]
+        (let [children (expression-limits/record-children record)]
           (when (and (contains? #{:intersection :exclusion} op)
                      (every? #(= :relation (get-in nodes-by-id [% :op]))
                              children))

@@ -285,3 +285,13 @@
       ;; duplicate rules. Preserve that union-only ABI while expression
       ;; storage retains the canonical source expression.
       (vec (distinct (walk root))))))
+
+(defn ^:no-doc union-compatible-entity-definitions
+  [permission]
+  (union-compatible-definitions
+   (:db/id permission)
+   (decode-entity permission)))
+
+(defn ^:no-doc validated-expression-entity
+  [entities]
+  (some-> (validate-entities entities) first :entity))

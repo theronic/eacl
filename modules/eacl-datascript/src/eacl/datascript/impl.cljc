@@ -326,28 +326,9 @@
        (reverse-match? db resource-type resource-id relation-id
                        subject-type subject-id)))
 
-(def ^:private supported-relationship-operations
-  #{:create :touch :delete})
-
 (defn validate-relationship-operation!
   [operation]
-  (when-not (contains? supported-relationship-operations operation)
-    (throw
-     (ex-info
-      (str (pr-str operation)
-           " relationship update is not supported. Use :create, :touch or :delete.")
-      {:type :eacl/unsupported-operation :eacl/error :eacl/unsupported-operation
-       :operation operation})))
-  true)
-
-(defn- relationship-conflict!
-  [relationship]
-  (throw
-   (ex-info
-    ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-    {:type :eacl/relationship-conflict
-     :eacl/error :eacl/relationship-conflict
-     :relationship relationship})))
+  (relationship-mutations/validate-operation! operation))
 
 (defn create-relationship-at-commit
   "Commit-time precondition behind `:create`. It re-checks the relationship
@@ -362,7 +343,7 @@
   with Datomic."
   [db resolved relationship]
   (if (relationship-exists? db resolved)
-    (relationship-conflict! relationship)
+    (relationship-mutations/conflict! relationship)
     []))
 
 (defn tx-update-relationship
@@ -378,7 +359,7 @@
 
           :create
           (if exists?
-            (relationship-conflict! relationship)
+            (relationship-mutations/conflict! relationship)
             (into
              [[:db.fn/call create-relationship-at-commit
                resolved relationship]]

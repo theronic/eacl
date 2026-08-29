@@ -217,7 +217,7 @@
   [value]
   (instance? SubproblemStore value))
 
-(defn- record-metrics!
+(defn ^:no-doc record-metrics!
   [store f & args]
   (when (:telemetry-enabled? store)
     (apply swap! (:metrics store) f args))
@@ -563,7 +563,7 @@
      :entry-count (count entries)
      :retained-weight (reduce + 0 (map :weight entries))}))
 
-(defn- positive-snapshot-bound!
+(defn ^:no-doc positive-snapshot-bound!
   [option value]
   (when-not (and (integer? value) (pos? value))
     (throw
@@ -599,7 +599,7 @@
          snapshot-tier-priority)]
     (snapshot-value store selected)))
 
-(defn- incompatible-snapshot!
+(defn ^:no-doc incompatible-snapshot!
   [message data]
   (throw
    (ex-info message
@@ -607,7 +607,7 @@
                     :eacl/error :eacl/cache-snapshot-incompatible}
                    data))))
 
-(defn- closed-map?
+(defn ^:no-doc closed-map?
   [value expected-keys]
   (and (map? value) (= expected-keys (set (keys value)))))
 
