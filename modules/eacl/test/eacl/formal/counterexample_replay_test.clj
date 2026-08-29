@@ -134,7 +134,7 @@
     :EACL-FORMAL-064
     eacl.engine.stable-page-test/page-composition-test
     :EACL-FORMAL-065
-    eacl.engine.stable-reducer-test/interior-admission-keys-are-node-qualified-test
+    eacl.engine.sealed-plan-test/exact-alias-deduplicates-only-the-acyclic-execution-frontier-test
     :EACL-FORMAL-066
     eacl.engine.stable-reducer-test/frozen-baseline-denotation-differential-test
     :EACL-FORMAL-067

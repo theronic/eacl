@@ -1,0 +1,29 @@
+{:format :eacl.performance/report-v1
+ :phase :golden
+ :identity
+ {:operation-boundary :fully-realized-public-result
+  :cache-regime :disabled
+  :basis {:kind :ordinary :revision 7 :identity "golden-basis"}
+  :command {:operation :lookup-resources :demand {:first 2}}
+  :source {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+           :tree "golden-tree"
+           :artifact "golden-artifact"}
+  :estimator {:id :deterministic-golden :version 1}
+  :runtime {:language :clj :version "1.12.2" :jvm "golden-jvm"}
+  :environment {:host-class ["test" "portable" "0"]}
+  :fixture {:id :golden-fixture :digest "golden-fixture-digest"}
+  :backend {:id :datascript :adapter-fingerprint :golden-adapter}
+  :dependencies {:classpath-sha256 "golden-classpath"}}
+ :raw-digest "1ba828dce2e586b38b46d4e12c62ca2e24fb94cac265aa71b01340542e5f5703"
+ :elapsed {:unit :nanoseconds :samples 3 :minimum 10 :median 20 :maximum 30}
+ :mandatory
+ {:candidates-examined
+  {:unit :count :samples 3 :minimum 5 :median 5 :maximum 5}
+  :commands {:unit :count :samples 3 :minimum 3 :median 3 :maximum 3}
+  :fetched-values {:unit :count :samples 3 :minimum 4 :median 4 :maximum 4}
+  :probes {:unit :count :samples 3 :minimum 1 :median 1 :maximum 1}}
+ :optional
+ {:allocated-bytes
+  {:unit :bytes :samples 3 :minimum 100 :median 200 :maximum 300}
+  :cpu-nanos {:status :unsupported :reason :runtime-unavailable}}
+ :report-digest "7ca88913ae2ffcc58167ada19fce2bff9c548499b4ffd2a7f93742d539f285d8"}

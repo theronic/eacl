@@ -29,7 +29,10 @@
     ;; 62 -> 63 (2026-08-27): speculative snapshot construction captures the
     ;; committed root schema generation before applying a local native report.
     ;; This is an existing literal :schema-generation capability.
-    :invoke-call-count 63
+    ;; 63 -> 62 (2026-08-29): exact answer-cache metadata now reuses the
+    ;; selected basis's already validated backend snapshot identity instead
+    ;; of crossing the immutable adapter boundary a second time.
+    :invoke-call-count 62
    :operations
    #{:snapshot-id
      :basis-kind
@@ -49,7 +52,7 @@
      :schema-generation
      :proof-frame}}
   :cljs
-  {:invoke-call-count 63
+  {:invoke-call-count 62
    :operations
    #{:snapshot-id
      :basis-kind

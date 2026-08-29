@@ -41,6 +41,7 @@
   [adapter]
   (fn [{:keys [operation bound-eid direction] :as descriptor}]
     (let [options (cond-> {:direction (or direction :asc)}
+                    (:limit descriptor) (assoc :limit (:limit descriptor))
                     bound-eid (assoc :bound-eid bound-eid
                                      :inclusive-bound? false))]
       (case operation
@@ -68,6 +69,12 @@
                           :fetched-values (:fetched-values counters)
                           :discovered 0}
                          detail))))
+
+(defn- bounded-vector
+  [values limit]
+  (if (and (vector? values) (<= (count values) limit))
+    values
+    (into [] (take limit) values)))
 
 (defn make-context
   "One request-scoped read context. `:fetch-fn` is the routed read seam
@@ -97,8 +104,8 @@
        (when (>= (:commands @counters) max-commands)
          (limit-failure! :max-commands @counters
                          {:max-commands max-commands}))
-       (let [values (into [] (take (:limit descriptor))
-                          (fetch-fn descriptor))]
+       (let [values (bounded-vector (fetch-fn descriptor)
+                                    (:limit descriptor))]
          (when (> (+ (:fetched-values @counters) (count values))
                   max-values)
            (limit-failure! :max-values @counters

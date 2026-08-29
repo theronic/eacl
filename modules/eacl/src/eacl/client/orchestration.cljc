@@ -87,6 +87,12 @@
   available for release-gate regression tests."
   true)
 
+(def completed-cache-value-abi
+  "Narrow ABI for values stored in the completed answer cache. Version 2
+  retires every pre-compatibility scalar/page entry: old values miss and are
+  recomputed without a durable-data migration or a value-shape exception."
+  2)
+
 (defn- operator-expression-node?
   "Recognizes an actual intersection/exclusion operation in an Instaparse
   tree. The grammar emits one-child wrapper nodes with these tags for every
@@ -364,17 +370,25 @@
 
 (defn- selected-cache-options
   [opts context]
-  (let [historical-basis?
-        (::historical-basis? (context-runtime context))]
+  (let [context-state (request-context/active-state context)
+        runtime (:runtime context-state)
+        historical-basis? (::historical-basis? runtime)]
     (assoc opts
+           ::request-context-state context-state
            :completed-cache?
            (:completed-cache-request? opts)
            :historical-basis? historical-basis?
            :snapshot-semantic-identity
-           (request-context/basis-identity context)
-           :request-lineage (request-context/lineage context)
-           :request-proof-frame (request-context/proof-frame context)
-           :request-schema-cache (delay (request-context/derived context)))))
+           (:basis-identity context-state)
+           :request-lineage (:lineage context-state)
+           :request-proof-frame-delay
+           (:proof-frame-delay context-state)
+           :request-schema-cache (:derived-delay context-state))))
+
+(defn- request-proof-frame
+  [opts]
+  (or (:request-proof-frame opts)
+      (some-> (:request-proof-frame-delay opts) force)))
 
 (defn- metric-observation-context [opts]
   (let [identity (:snapshot-semantic-identity opts)]
@@ -402,7 +416,7 @@
               ;; entirely when observations are disabled.
               (when (:relationship-observations opts)
                 (metric-observation-context opts))
-              engine/*proof-frame* (:request-proof-frame opts)]
+              engine/*proof-frame* (request-proof-frame opts)]
       (f))
     (f)))
 
@@ -633,9 +647,11 @@
   [request-context adapter opts operation query resource-type permission
    valid-value? compute]
   (let [contract (:execution-contract opts)
-        context-adapter (request-context/adapter request-context)
+        context-state (or (::request-context-state opts)
+                          (request-context/active-state request-context))
+        context-adapter (:adapter context-state)
         context-adapter? (identical? adapter context-adapter)
-        candidate-proof-frame (:request-proof-frame opts)
+        candidate-proof-frame (request-proof-frame opts)
         candidate-schema-cache (:request-schema-cache opts)
         complete-candidate-state?
         (and candidate-schema-cache
@@ -646,15 +662,16 @@
                    (not complete-candidate-state?))
           (detached-schema-state
            adapter opts (:snapshot-semantic-identity opts)))
-        request-proof-frame
-        (if context-adapter?
-          (request-context/proof-frame request-context)
-          (if complete-candidate-state?
-            candidate-proof-frame
-            (:proof-frame detached-state)))
+        request-proof-frame-delay
+        (delay
+          (if context-adapter?
+            (force (:proof-frame-delay context-state))
+            (if complete-candidate-state?
+              candidate-proof-frame
+              (:proof-frame detached-state))))
         schema-cache
         (if context-adapter?
-          (delay (request-context/derived request-context))
+          (:derived-delay context-state)
           (if complete-candidate-state?
             candidate-schema-cache
             (:schema-cache detached-state)))
@@ -671,7 +688,7 @@
               (when-let [relation-ids @request-relation-ids]
                 (proof-frame/descriptor
                  (proof-frame/resolve!
-                  request-proof-frame relation-ids)))))
+                  @request-proof-frame-delay relation-ids)))))
         evaluate
         #(do
            (execution/check! contract :schema-plan)
@@ -686,7 +703,7 @@
                            metrics/*context*
                            (when (:relationship-observations opts)
                              (metric-observation-context opts))
-                           engine/*proof-frame* request-proof-frame
+                           engine/*proof-frame* @request-proof-frame-delay
                            engine/*request-lineage*
                            (:request-lineage opts)
                            engine/*request-frame*
@@ -722,7 +739,7 @@
               (binding [engine/*schema-cache* @schema-cache
                         expression-persistence/*expression-limits*
                         (:expression-limits opts)
-                        engine/*proof-frame* request-proof-frame]
+                        engine/*proof-frame* @request-proof-frame-delay]
                 (let [permission-deps
                       (when (and resource-type permission)
                         (permission-dependencies
@@ -764,7 +781,7 @@
             complete-proof
             (delay
               (proof-frame/resolve!
-               request-proof-frame
+               @request-proof-frame-delay
                (:relation-ids @dependencies)))
             semantic-snapshot (:snapshot-semantic-identity opts)
             exact-basis-key (cache/exact-basis-key adapter semantic-snapshot)
@@ -811,6 +828,9 @@
              ;; The public order ABI is part of an answer's identity: a page
              ;; cached under one order must never be served under another.
              :order-abi engine/stable-order-abi
+             :compiler-plan-compatibility
+             engine/compiler-plan-compatibility
+             :cache-value-abi completed-cache-value-abi
              :adapter-fingerprint (:adapter-fingerprint opts)
              :recursive-traversal-limits
              (:recursive-traversal-limits opts)
@@ -848,7 +868,7 @@
                     :cache-lifecycle (:cache-lifecycle opts)
                     :snapshot-order (:revision semantic-snapshot)
                     :exact-basis-key exact-basis-key
-                    :cache-basis (backend/invoke adapter :snapshot-id)
+                    :cache-basis (:backend-snapshot-id semantic-snapshot)
                     :decision-kernel (:decision-kernel opts)
                     :populate-cache?
                     (:populate-cache-request? opts true)
@@ -908,7 +928,7 @@
       :evaluation (get-in opts [:execution-contract :evaluation])
       :recursive-traversal-limits
       (:recursive-traversal-limits opts)}
-     {:request-proof-frame (:request-proof-frame opts)
+     {:request-proof-frame (request-proof-frame opts)
       :request-lineage (:request-lineage opts)
       :populate-cache? (:populate-cache-request? opts true)})))
 
@@ -943,12 +963,9 @@
 
 (defn- authorization-scan-page
   [api opts request-context adapter selected-db cursor-opts filters
-   internal-query validate!]
+  internal-query validate!]
   (let [{:keys [subject permission on]} (:authorization filters)
         internal-subject ((:spice-object->internal opts) selected-db subject)
-        endpoint-type (get filters (case on
-                                     :subject :subject/type
-                                     :resource :resource/type))
         schema-cache (:request-schema-cache cursor-opts)
         request-proof-frame (:request-proof-frame cursor-opts)
         contract (:execution-contract opts)
@@ -999,15 +1016,13 @@
     ;; Root/schema validation is selected-snapshot work but precedes the first
     ;; physical relationship candidate.
     (binding [engine/*schema-cache* @schema-cache
-              expression-persistence/*expression-limits*
-              (:expression-limits opts)
-              engine/*proof-frame* request-proof-frame]
-      (validate!)
-      (validate-permission-root!
-       api request-context selected-db opts subject permission
-       {:type endpoint-type :id ::authorization-endpoint-type}))
+      expression-persistence/*expression-limits*
+      (:expression-limits opts)
+      engine/*proof-frame* request-proof-frame]
+      (validate!))
     (let [internal-page
-          (binding [engine/*aggregate-work-stats* work-stats]
+          (binding [engine/*aggregate-work-stats* work-stats
+                    relationship-filters/*validated-request?* true]
             ((get-in api [:impl :read-relationships])
              selected-db internal-query (:decision-kernel cursor-opts)
              {:candidate-window candidate-window
@@ -1020,8 +1035,10 @@
   [api source {:as opts :keys [object-id->entid]} filters]
   ;; The unified filter contract validates the complete public query before
   ;; any snapshot selection or cursor work (backend-unification 9.1).
-  (relationship-filters/validate! filters)
-  (authorization-filters/validate-scan-authorization! filters)
+  (when-not relationship-filters/*validated-request?*
+    (relationship-filters/validate! filters))
+  (when-not authorization-filters/*validated-request?*
+    (authorization-filters/validate-scan-authorization! filters))
   (let [opts (ensure-execution-contract opts :read-relationships filters)
         authorization (:authorization filters)
         authorization-resource-type
@@ -1126,9 +1143,11 @@
                                 (map? (:page-info %)))
                           #(do
                              (validate!)
-                             ((get-in api [:impl :read-relationships])
-                              page-db internal-query
-                              (:decision-kernel cursor-opts))))
+                             (binding
+                              [relationship-filters/*validated-request?* true]
+                               ((get-in api [:impl :read-relationships])
+                                page-db internal-query
+                                (:decision-kernel cursor-opts)))))
                          page
                          (with-cache-info
                            (relay/externalize-relationship-page
@@ -1230,25 +1249,30 @@
 
 (defn- validate-permission-root!
   [api request-context selected-db opts subject permission resource]
-  (request-context/memoized!
-   request-context
-   :prepared-roots
-   [(:type resource) permission (:type subject)]
-   #(do
-      (schema-errors/validate-permission-request!
-       (request-schema api selected-db)
-       (or (:request-operation opts) :can?)
-       {:resource-type (:type resource)
-        :subject-type (:type subject)
-        :permission permission})
-      true)))
+  (let [build
+        #(do
+           (schema-errors/validate-permission-request!
+            (request-schema api selected-db)
+            (or (:request-operation opts) :can?)
+            {:resource-type (:type resource)
+             :subject-type (:type subject)
+             :permission permission})
+           true)]
+    (if-let [context-state (::request-context-state opts)]
+      (request-context/memoized-active-state!
+       context-state :prepared-roots
+       [(:type resource) permission (:type subject)] build)
+      (request-context/memoized!
+       request-context :prepared-roots
+       [(:type resource) permission (:type subject)] build))))
 
 (defn- check-permission-in-context
   [api {:keys [spice-object->internal] :as opts} request-context
    subject permission resource]
-  (let [selected-db (context-db request-context)
-        adapter (request-context/adapter request-context)
-        opts (selected-cache-options opts request-context)
+  (let [opts (selected-cache-options opts request-context)
+        context-state (::request-context-state opts)
+        adapter (:adapter context-state)
+        selected-db (:db (backend/state adapter))
         validate!
         #(validate-permission-root!
           api request-context selected-db opts subject permission resource)
@@ -1464,7 +1488,7 @@
           (fn [candidate]
             (execution/check!
              contract :authorization-probe (counters 0))
-            (request-counters/add! :probes)
+            (request-counters/add-probes!)
             (let [matches?
                   (if-not (:id internal-anchor)
                     false
@@ -1517,7 +1541,8 @@
   [api source
    {:as opts :keys [spice-object->internal]}
    {:as query :keys [subject]}]
-  (authorization-filters/validate-lookup! :lookup-resources query)
+  (when-not authorization-filters/*validated-request?*
+    (authorization-filters/validate-lookup! :lookup-resources query))
   (let [opts (ensure-execution-contract opts :lookup-resources query)]
     (with-selected-context
       api source opts (:consistency query)
@@ -1689,7 +1714,8 @@
   [api source
    {:as opts :keys [spice-object->internal]}
    query]
-  (authorization-filters/validate-lookup! :lookup-subjects query)
+  (when-not authorization-filters/*validated-request?*
+    (authorization-filters/validate-lookup! :lookup-subjects query))
   (when (contains? query :subject/relation)
     (throw (ex-info ":subject/relation is not supported by lookup-subjects."
                     {:eacl/error :eacl.pagination/unsupported-filter
@@ -2974,19 +3000,23 @@
   (-read-relationships [_ request]
     (relationship-filters/validate! request)
     (authorization-filters/validate-scan-authorization! request)
-    (call-with-transient-snapshot
-     runtime source api :read-relationships request
-     #(eacl/-read-relationships % request)))
+    (binding [relationship-filters/*validated-request?* true
+              authorization-filters/*validated-request?* true]
+      (call-with-transient-snapshot
+       runtime source api :read-relationships request
+       #(eacl/-read-relationships % request))))
   (-lookup-resources [_ request]
     (authorization-filters/validate-lookup! :lookup-resources request)
-    (call-with-transient-snapshot
-     runtime source api :lookup-resources request
-     #(eacl/-lookup-resources % request)))
+    (binding [authorization-filters/*validated-request?* true]
+      (call-with-transient-snapshot
+       runtime source api :lookup-resources request
+       #(eacl/-lookup-resources % request))))
   (-lookup-subjects [_ request]
     (authorization-filters/validate-lookup! :lookup-subjects request)
-    (call-with-transient-snapshot
-     runtime source api :lookup-subjects request
-     #(eacl/-lookup-subjects % request)))
+    (binding [authorization-filters/*validated-request?* true]
+      (call-with-transient-snapshot
+       runtime source api :lookup-subjects request
+       #(eacl/-lookup-subjects % request))))
   (-count-resources [_ request]
     (call-with-transient-snapshot
      runtime source api :count-resources request

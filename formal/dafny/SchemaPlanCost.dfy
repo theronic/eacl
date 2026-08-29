@@ -388,39 +388,79 @@ module SchemaPlanCost {
     }
   }
 
-  datatype ArrowFrontier = ArrowFrontier(
+  // Every semantic/work field participates in equality. CanonicalPosition is
+  // deliberately outside the identity: it is assigned from canonical schema
+  // encoding before alias normalization and the first equal identity keeps
+  // that position.
+  datatype ArrowFrontierIdentity = ArrowFrontierIdentity(
+    source: int,
+    direction: int,
     relation: int,
+    relationPath: int,
     targetType: int,
-    targetPermission: int
+    targetPermission: int,
+    physicalOrder: int,
+    capability: int,
+    admissionGranularity: int,
+    limitCursorAbi: int
+  )
+
+  datatype ArrowFrontier = ArrowFrontier(
+    canonicalPosition: nat,
+    identity: ArrowFrontierIdentity
   )
 
   function CanonicalArrowFrontier(
     bodiesByType: map<int, map<int, PermissionBody>>,
     path: ArrowFrontier
   ): ArrowFrontier {
-    if path.targetType in bodiesByType
+    if path.identity.targetType in bodiesByType
     then ArrowFrontier(
-           path.relation,
-           path.targetType,
-           CanonicalPermissionAlias(
-             bodiesByType[path.targetType],
-             path.targetPermission,
-             {}
+           path.canonicalPosition,
+           ArrowFrontierIdentity(
+             path.identity.source,
+             path.identity.direction,
+             path.identity.relation,
+             path.identity.relationPath,
+             path.identity.targetType,
+             CanonicalPermissionAlias(
+               bodiesByType[path.identity.targetType],
+               path.identity.targetPermission,
+               {}
+             ),
+             path.identity.physicalOrder,
+             path.identity.capability,
+             path.identity.admissionGranularity,
+             path.identity.limitCursorAbi
            )
          )
     else path
   }
 
+  lemma CanonicalArrowFrontierKeepsPreNormalizationPosition(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    path: ArrowFrontier
+  )
+    ensures CanonicalArrowFrontier(
+              bodiesByType,
+              path
+            ).canonicalPosition == path.canonicalPosition
+  {
+  }
+
   function DeduplicateCanonicalFrontiers(
     bodiesByType: map<int, map<int, PermissionBody>>,
     paths: seq<ArrowFrontier>,
-    seen: set<ArrowFrontier>
+    seen: set<ArrowFrontierIdentity>
   ): seq<ArrowFrontier>
     decreases |paths|
   {
     if |paths| == 0 then
       []
-    else if CanonicalArrowFrontier(bodiesByType, paths[0]) in seen then
+    else if CanonicalArrowFrontier(
+              bodiesByType,
+              paths[0]
+            ).identity in seen then
       DeduplicateCanonicalFrontiers(
         bodiesByType,
         paths[1..],
@@ -431,7 +471,7 @@ module SchemaPlanCost {
       DeduplicateCanonicalFrontiers(
         bodiesByType,
         paths[1..],
-        seen + {CanonicalArrowFrontier(bodiesByType, paths[0])}
+        seen + {CanonicalArrowFrontier(bodiesByType, paths[0]).identity}
       )
   }
 
@@ -444,13 +484,13 @@ module SchemaPlanCost {
 
   predicate UniqueFrontiers(paths: seq<ArrowFrontier>) {
     forall i, j ::
-      0 <= i < j < |paths| ==> paths[i] != paths[j]
+      0 <= i < j < |paths| ==> paths[i].identity != paths[j].identity
   }
 
   lemma DeduplicateCanonicalFrontiersExcludesSeen(
     bodiesByType: map<int, map<int, PermissionBody>>,
     paths: seq<ArrowFrontier>,
-    seen: set<ArrowFrontier>
+    seen: set<ArrowFrontierIdentity>
   )
     ensures forall index ::
               0 <= index <
@@ -459,12 +499,12 @@ module SchemaPlanCost {
                   bodiesByType,
                   paths,
                   seen
-                )[index] !in seen
+                )[index].identity !in seen
     decreases |paths|
   {
     if |paths| > 0 {
       var canonical := CanonicalArrowFrontier(bodiesByType, paths[0]);
-      if canonical in seen {
+      if canonical.identity in seen {
         DeduplicateCanonicalFrontiersExcludesSeen(
           bodiesByType,
           paths[1..],
@@ -474,7 +514,7 @@ module SchemaPlanCost {
         DeduplicateCanonicalFrontiersExcludesSeen(
           bodiesByType,
           paths[1..],
-          seen + {canonical}
+          seen + {canonical.identity}
         );
       }
     }
@@ -483,7 +523,7 @@ module SchemaPlanCost {
   lemma DeduplicateCanonicalFrontiersAreUnique(
     bodiesByType: map<int, map<int, PermissionBody>>,
     paths: seq<ArrowFrontier>,
-    seen: set<ArrowFrontier>
+    seen: set<ArrowFrontierIdentity>
   )
     ensures UniqueFrontiers(
               DeduplicateCanonicalFrontiers(
@@ -496,7 +536,7 @@ module SchemaPlanCost {
   {
     if |paths| > 0 {
       var canonical := CanonicalArrowFrontier(bodiesByType, paths[0]);
-      if canonical in seen {
+      if canonical.identity in seen {
         DeduplicateCanonicalFrontiersAreUnique(
           bodiesByType,
           paths[1..],
@@ -506,12 +546,12 @@ module SchemaPlanCost {
         DeduplicateCanonicalFrontiersExcludesSeen(
           bodiesByType,
           paths[1..],
-          seen + {canonical}
+          seen + {canonical.identity}
         );
         DeduplicateCanonicalFrontiersAreUnique(
           bodiesByType,
           paths[1..],
-          seen + {canonical}
+          seen + {canonical.identity}
         );
       }
     }
@@ -520,7 +560,7 @@ module SchemaPlanCost {
   lemma DeduplicateCanonicalFrontiersCannotAddTraversalStreams(
     bodiesByType: map<int, map<int, PermissionBody>>,
     paths: seq<ArrowFrontier>,
-    seen: set<ArrowFrontier>
+    seen: set<ArrowFrontierIdentity>
   )
     ensures |DeduplicateCanonicalFrontiers(
               bodiesByType,
@@ -531,7 +571,7 @@ module SchemaPlanCost {
   {
     if |paths| > 0 {
       var canonical := CanonicalArrowFrontier(bodiesByType, paths[0]);
-      if canonical in seen {
+      if canonical.identity in seen {
         DeduplicateCanonicalFrontiersCannotAddTraversalStreams(
           bodiesByType,
           paths[1..],
@@ -541,7 +581,7 @@ module SchemaPlanCost {
         DeduplicateCanonicalFrontiersCannotAddTraversalStreams(
           bodiesByType,
           paths[1..],
-          seen + {canonical}
+          seen + {canonical.identity}
         );
       }
     }
@@ -576,6 +616,68 @@ module SchemaPlanCost {
       bodiesByType,
       paths,
       {}
+    );
+  }
+
+  lemma EqualCanonicalFrontiersKeepEarlierPosition(
+    bodiesByType: map<int, map<int, PermissionBody>>,
+    earlier: ArrowFrontier,
+    later: ArrowFrontier
+  )
+    requires earlier.canonicalPosition < later.canonicalPosition
+    requires CanonicalArrowFrontier(
+               bodiesByType,
+               earlier
+             ).identity ==
+             CanonicalArrowFrontier(
+               bodiesByType,
+               later
+             ).identity
+    ensures |CanonicalFrontierSequence(
+              bodiesByType,
+              [earlier, later]
+            )| == 1
+    ensures CanonicalFrontierSequence(
+              bodiesByType,
+              [earlier, later]
+            )[0].canonicalPosition == earlier.canonicalPosition
+  {
+    reveal CanonicalFrontierSequence();
+    reveal DeduplicateCanonicalFrontiers();
+    var canonicalEarlier := CanonicalArrowFrontier(bodiesByType, earlier);
+    var canonicalLater := CanonicalArrowFrontier(bodiesByType, later);
+    assert canonicalEarlier.identity == canonicalLater.identity;
+    assert canonicalEarlier.identity !in {};
+    assert {} + {canonicalEarlier.identity} ==
+           {canonicalEarlier.identity};
+    assert canonicalLater.identity in {canonicalEarlier.identity};
+    assert [earlier, later][0] == earlier;
+    assert [earlier, later][1..] == [later];
+    assert [later][0] == later;
+    assert [later][1..] == [];
+    assert DeduplicateCanonicalFrontiers(
+        bodiesByType,
+        [later],
+        {canonicalEarlier.identity}
+      ) == [];
+    assert DeduplicateCanonicalFrontiers(
+        bodiesByType,
+        [earlier, later],
+        {}
+      ) ==
+           [canonicalEarlier] +
+           DeduplicateCanonicalFrontiers(
+             bodiesByType,
+             [later],
+             {canonicalEarlier.identity}
+           );
+    assert CanonicalFrontierSequence(
+        bodiesByType,
+        [earlier, later]
+      ) == [canonicalEarlier];
+    CanonicalArrowFrontierKeepsPreNormalizationPosition(
+      bodiesByType,
+      earlier
     );
   }
 }

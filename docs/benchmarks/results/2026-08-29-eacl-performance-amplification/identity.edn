@@ -1,0 +1,93 @@
+{:evidence/version 1
+ :recorded-date "2026-08-29"
+ :purpose :eliminate-eacl-performance-amplification
+ :repository
+ {:path "/Users/petrus/code/eacl/core"
+  :remote "git@github.com:theronic/eacl.git"
+  :base-branch "main"
+  :base-commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+  :working-branch "codex/eacl-performance-amplification"
+  :merge-base-main "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+  :git-tree "324445d66d55446c4d6a5395608749fb832fec8f"
+  :git-archive-sha256 "6a869320054c44f7bf55acd5251e21e9e87363f03de1e6564b8d65a57b781212"
+  :tracked-file-content-list-sha256 "54f6c3c625b4b5736937c2fc4afe6b8cab70509629a90a7bf6c1601ff18e82e4"
+  :tracked-file-count 1467
+  :status-before-evidence []
+  :untracked-before-evidence []
+  :status-after-bootstrap
+  ["?? docs/benchmarks/results/2026-08-29-eacl-performance-amplification/identity.edn"
+   "?? docs/benchmarks/results/2026-08-29-eacl-performance-amplification/mechanism-ledger.edn"
+   "?? docs/benchmarks/results/2026-08-29-eacl-performance-amplification/source-closure.md"]
+  :status-after-bootstrap-ownership :this-change-only}
+ :inputs
+ {:tracked {:identity :git-tree-and-content-list
+            :deps-edn-sha256 "1f145657d793a685cba52a3b848be3a58de3a63e4eb6fc756b28fcbbc50b08bd"}
+  :untracked []
+  :generated
+  {:resolved-basis ".cpcache/3886387406.basis"
+   :resolved-basis-sha256 "4b8e67eec1728d8e119407f6208e3138259e62560e90f3fbf014c9d04dbc6ea5"
+   :nrepl-port-file {:path ".nrepl-port" :value 7788 :owner :this-change}
+   :ignored-worktree-roots
+   [".DS_Store" ".cljs_node_repl/" ".cpcache/" ".idea/"
+    ".nrepl-port" "core.iml" "exploration/" "formal/" "modules/"
+    "openspec/" "target/"]
+   :semantic-source-inputs [".cpcache/3886387406.basis"]
+   :excluded-from-source-identity
+   [".DS_Store" ".cljs_node_repl/" ".idea/" ".nrepl-port"
+    "core.iml" "exploration/" "formal ignored outputs" "modules ignored outputs"
+    "openspec ignored outputs" "target/"]}}
+ :clojure
+ {:cli-version "1.12.5.1645"
+  :config-files
+  ["/opt/homebrew/Cellar/clojure/1.12.5.1645/deps.edn"
+   "/Users/petrus/.clojure/deps.edn"
+   "/Users/petrus/code/eacl/core/deps.edn"]
+  :classpath-sha256 "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"
+  :dedicated-repl
+  {:port 7788
+   :pid 6240
+   :launch ["clojure" "-M:dev:test:cljs-test:nrepl" "--port" "7788"]
+   :preexisting-ports []
+   :jvm-input-arguments
+   ["-XX:-OmitStackTraceInFastThrow"
+    "-Dclojure.basis=.cpcache/3886387406.basis"]}}
+ :runtime
+ {:java {:version "26.0.2"
+         :runtime "Temurin-26.0.2+10"
+         :vm "OpenJDK 64-Bit Server VM"
+         :vendor "Eclipse Adoptium"}
+  :node "26.7.0"
+  :os {:uname "Darwin petrus-mac-studio.local 25.4.0 Darwin Kernel Version 25.4.0: Thu Mar 19 19:33:25 PDT 2026; root:xnu-12377.101.15~1/RELEASE_ARM64_T6041 arm64"
+       :java-os-version "26.4.1"
+       :arch "aarch64"
+       :timezone "Africa/Johannesburg"}
+  :cpu-logical-count 14
+  :memory-bytes 38654705664
+  :limits {:cpu-seconds :unlimited
+           :file-blocks :unlimited
+           :data-kib :unlimited
+           :stack-kib 8176
+           :core-blocks 0
+           :address-kib :unlimited
+           :locked-memory-kib :unlimited
+           :processes 6000
+           :file-descriptors 1048575}
+  :relevant-environment-variable-names []}
+ :core-configuration
+ {:test-execution :nrepl-only
+  :repl-aliases [:dev :test :cljs-test :nrepl]
+  :public-source-closure-required-after-public-source-edits true
+  :cljs-build-order :last
+  :measurement-status :identity-only
+  :benchmark-acceptance-record
+  {:path "docs/benchmarks/results/2026-08-29-eacl-performance-amplification/release-acceptance.edn"
+   :digest "8eba9de7d062bc39f1c89bd462f18b003422994fe5b5ce80f3582a011552a695"
+   :frozen-after-baseline-only-pilot true}
+  :demo-and-deployment-settings :out-of-scope
+  :requested-preexisting-datomic-transactor
+  {:observed-running false
+   :replacement-started-by-this-change true
+   :replacement-command
+   ["bin/transactor" "-Xmx4g" "-Xms4g"
+    "config/eacl-dev-transactor.properties"]
+   :replacement-must-stop-at-task-6.8 true}}}

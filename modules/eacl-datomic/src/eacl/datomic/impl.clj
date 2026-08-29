@@ -432,7 +432,8 @@
    ;; The unified filter contract shared by every backend
    ;; (backend-unification 9.1). Value-presence anchor semantics: a
    ;; present-but-nil anchor throws instead of widening the read.
-   (relationship-filters/validate! filters)
+   (when-not relationship-filters/*validated-request?*
+     (relationship-filters/validate! filters))
    (let [relations (find-relations db filters)
          subject-id (:subject/id filters)
          resource-id (:resource/id filters)

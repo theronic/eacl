@@ -1,0 +1,35 @@
+{:evidence/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :report "task-1.7-datomic-reproduction.edn"
+ :transactor
+ {:supplied-process-present-at-first-probe? false
+  :first-probe-error "Connection refused: localhost:4335"
+  :replacement-owned-by-this-work true
+  :replacement-pid 13506
+  :replacement-session 34446
+  :config-sha256 "f150edbe8ac49f3e72bb6760900dc612fe81fa2ceb3f600982d9d27dcd1b6558"
+  :configuration-modified? false
+  :ports-listening [4334 4335]}
+ :seeded-database
+ {:name "eacl-solidjs"
+  :database-id "eacl-solidjs-442c3a9c-b81d-4d42-8df5-d5450ff19bcd"
+  :basis-t 1008733
+  :schema-relations 13
+  :schema-permissions 9
+  :forward-datoms 3007047
+  :reverse-datoms 3007047
+  :public-id-datoms 1007069
+  :distinct-servers 1000000
+  :modified-by-probe? false}
+ :public-count-lanes
+ {:count-30000 {:count 30000 :limit 30000 :truncated? true}
+  :count-100000 {:count 100000 :limit 100000 :truncated? true}
+  :count-1000000 {:count 1000000 :limit -1}}
+ :current-production-exact-effects
+ {:local-covered {:d-db 0 :d-sync 1 :d-as-of 1}
+  :local-behind {:d-db 0 :d-sync 1 :d-as-of 1}
+  :conclusion :unconditional-targeted-sync-reproduced}
+ :disposable-database
+ {:created? true
+  :deleted? true
+  :remaining-database-names ["eacl-solidjs"]}}

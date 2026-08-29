@@ -152,12 +152,14 @@
                 :normalized-dag dag
                 :normalized-metrics metrics}}))
 
+(defrecord ^:private CompletedStructuralDecode [value])
+
 (defn decode-entity-with-metadata
   "Returns one validated expression and its exact derived metadata.
 
-   When a schema-generation cache is bound, concurrent readers share one
-   completed delay. A failed decode remains scoped to that immutable schema
-   generation and is discarded when the generation cache is refreshed."
+   When a schema-generation cache is bound, a completed immutable decode is
+   read first. Concurrent misses decode independently and race one bounded
+   installation; failures are never installed or inherited by a peer."
   [entity]
   (if-not *structural-cache*
     (decode-entity-with-metadata-uncached entity)
@@ -165,12 +167,26 @@
                 entity
                 (into expression-attributes legacy-flat-attributes))
                (effective-expression-limits)]
-          candidate (delay (decode-entity-with-metadata-uncached entity))
-          selected
-          (get (swap! *structural-cache*
-                      #(if (contains? % key) % (assoc % key candidate)))
-               key)]
-      @selected)))
+          current (get @*structural-cache* key ::missing)]
+      (cond
+        (instance? CompletedStructuralDecode current)
+        (:value current)
+
+        ;; Tolerate a completed pre-rollout entry during development reload.
+        (delay? current)
+        @current
+
+        (not= ::missing current)
+        current
+
+        :else
+        (let [value (decode-entity-with-metadata-uncached entity)
+              state @*structural-cache*]
+          (when-not (contains? state key)
+            (compare-and-set!
+             *structural-cache* state
+             (assoc state key (->CompletedStructuralDecode value))))
+          value)))))
 
 (defn clear-structural-cache!
   "Evicts a bound or explicitly supplied structural metric cache."

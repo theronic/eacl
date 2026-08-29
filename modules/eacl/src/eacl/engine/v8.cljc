@@ -18,6 +18,7 @@
             [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.secure-format :as secure-format]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
@@ -469,7 +470,10 @@
     (some-> basis-identity
             (select-keys
              [:backend :source-id :branch :source-lifecycle]))
-    :database-id (:database-id (backend/invoke snapshot :snapshot-id))
+    :database-id
+    (:database-id
+     (or (:backend-snapshot-id basis-identity)
+         (backend/invoke snapshot :snapshot-id)))
     :schema-version known-schema-generation
     ;; Client-owned memo of the parsed public schema for this generation
     ;; (request validation reads it on the miss path); the engine never
@@ -542,27 +546,57 @@
     :relationship-dependencies (atom {})
     :direct-grant-relations (atom {})}))
 
-(defn memoized-derived!
-  "Forces at most one concurrent build of an initially nil artifact slot.
+(defrecord ^:private CompletedDerivedValue [value])
 
-  Success is cached permanently. A thrown build failure clears the slot so
-  a later caller retries: a Clojure delay caches its exception, and leaving
-  it installed would poison the derived artifact for the rest of the schema
-  generation after one transient adapter read failure."
+(defn memoized-derived!
+  "Reads one installed immutable artifact before allocating or building.
+
+  Concurrent misses build independently under their own request context and
+  make one bounded compare-and-install attempt. A publication loser may use
+  its own completed value; failures are never installed or shared."
   [slot build]
-  (let [candidate (delay (build))
-        selected
-        (loop []
-          (let [current @slot]
-            (cond
-              current current
-              (compare-and-set! slot nil candidate) candidate
-              :else (recur))))]
-    (try
-      @selected
-      (catch #?(:clj Throwable :cljs :default) error
-        (compare-and-set! slot selected nil)
-        (throw error)))))
+  (let [current @slot]
+    (cond
+      (instance? CompletedDerivedValue current)
+      (:value current)
+
+      ;; Development hot reload and pre-rollout in-process generations may
+      ;; still contain the previous completed delay representation.
+      (delay? current)
+      @current
+
+      (some? current)
+      current
+
+      :else
+      (let [value (build)]
+        (compare-and-set! slot nil (->CompletedDerivedValue value))
+        value))))
+
+(defn- memoized-map-derived!
+  "Map-keyed counterpart of `memoized-derived!` for generation registries.
+  A miss builds under the caller and makes one bounded installation attempt;
+  no request ever waits on another request's delay or inherits its failure."
+  [registry key build]
+  (let [current (get @registry key ::missing)]
+    (cond
+      (instance? CompletedDerivedValue current)
+      (:value current)
+
+      ;; Development hot reload may retain a completed pre-rollout delay.
+      (delay? current)
+      @current
+
+      (not= ::missing current)
+      current
+
+      :else
+      (let [value (build)
+            state @registry]
+        (when-not (contains? state key)
+          (compare-and-set!
+           registry state (assoc state key (->CompletedDerivedValue value))))
+        value))))
 
 (defn schema-cache-key
   "Identity of schema-derived state for one selected immutable snapshot.
@@ -1007,6 +1041,47 @@
 (def stable-order-abi 2)
 (def stable-cursor-version 2)
 
+(def compiler-plan-compatibility
+  "Complete compatibility identity for completed values produced by the v8
+  planner. This is deliberately a constant-time cache-key input, not a plan
+  fingerprint: scalar answers do not need to seal a plan on a cache hit.
+
+  Any change to the fingerprint algorithm, sealed/operator plan ordering or
+  ranking, execution-frontier interpretation, or cursor/checkpoint semantics
+  that can change a produced value must change this identity. Work-only
+  adapter capabilities remain part of the adapter/cache ABI instead."
+  {:identity-version 1
+   :fingerprint-algorithm
+   {:digest :sha-256
+    :canonical-format secure-format/canonical-version
+    :record-framing :unsigned-32-bit-big-endian-length-prefix}
+   :sealed-plan
+   {:plan-version sealed-plan/plan-version
+    :fingerprint-domain sealed-plan/fingerprint-domain
+    :rank-contract sealed-plan/rank-contract
+    :order-contract sealed-plan/order-contract
+    :execution-frontier
+    {:version 1
+     :normalization :exact-same-resource-single-body-alias
+     :deduplication :complete-rule-identity-excluding-ordinal
+     :retention :first-canonical-pre-normalization-position}}
+   :operator-plan
+   {:plan-version operator-plan/plan-version
+    :fingerprint-domain operator-plan/fingerprint-domain
+    :order-contract operator-plan/order-contract
+    :versions
+    {:cover operator-plan/cover-version
+     :witness operator-plan/witness-version
+     :predicate operator-plan/predicate-version
+     :physical-policy operator-plan/physical-policy-version}}
+   :cursor
+   {:stable-version stable-cursor-version
+    :stable-order-abi stable-order-abi
+    :operator-scope-version operator-cursor-scope/scope-version
+    :operator-scope-domain operator-cursor-scope/scope-domain
+    :operator-recursive-checkpoint-version
+    operator-recursive/checkpoint-version}})
+
 (defn expire-plans!
   "Compatibility no-op. Sealed plans are owned by derived-schema generations;
   clearing a runtime's generation registry makes them unreachable."
@@ -1072,19 +1147,13 @@
   an unbound raw engine call seals without publishing."
   [db root-node]
   (if-let [plans (:sealed-plans *schema-cache*)]
-    (let [candidate
-          (delay
-            (request-counters/add! :definition-reads)
-            (request-counters/add! :seals)
-            (seal-and-certify-plan db root-node))
-          selected
-          (get
-           (swap! plans
-                  #(if (contains? % root-node)
-                     %
-                     (assoc % root-node candidate)))
-           root-node)]
-      (require-enabled-plan @selected))
+    (require-enabled-plan
+     (memoized-map-derived!
+      plans root-node
+      #(do
+         (request-counters/add! :definition-reads)
+         (request-counters/add! :seals)
+         (seal-and-certify-plan db root-node))))
     (do
       (request-counters/add! :definition-reads)
       (request-counters/add! :seals)
@@ -1293,7 +1362,19 @@
        {:eacl/error :eacl.pagination/invalid-cursor
         :reason :malformed-boundary}))))
 
-(defn- stable-limits
+(defn- saturating-add
+  [limit left right]
+  (if (> right (- limit left))
+    limit
+    (+ left right)))
+
+(defn- saturating-multiply
+  [limit factor value]
+  (if (> value (quot limit factor))
+    limit
+    (* factor value)))
+
+(defn ^:no-doc stable-limits
   "Maps the public recursive-traversal limits onto the stable reducer's
   budgets with matching semantics: derived grants bound unique logical
   admissions, advanced datoms bound consumed projection values, and
@@ -1303,7 +1384,11 @@
   command counts remain internal reducer safety ceilings."
   []
   (let [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}
-        *recursive-traversal-limits*]
+        *recursive-traversal-limits*
+        authorized-work
+        (saturating-add backend/maximum-exact-integer
+                        (or max-derived-grants 0)
+                        (or max-advanced-datoms 0))]
     (cond-> {}
       max-derived-grants (assoc :max-admissions max-derived-grants)
       max-advanced-datoms (assoc :max-values max-advanced-datoms)
@@ -1316,12 +1401,11 @@
       (or max-derived-grants max-advanced-datoms)
       (assoc :max-transitions
              (max stable-reducer/default-max-transitions
-                  (* 4 (+ (or max-derived-grants 0)
-                          (or max-advanced-datoms 0))))
+                  (saturating-multiply backend/maximum-exact-integer
+                                       4 authorized-work))
              :max-commands
              (max stable-reducer/default-max-commands
-                  (+ (or max-derived-grants 0)
-                     (or max-advanced-datoms 0)))))))
+                  authorized-work)))))
 
 (defn- recursive-operator-limits []
   (let [{:keys [max-derived-grants max-advanced-datoms max-queued-work]}
@@ -1464,10 +1548,10 @@
   commands (:advanced-datoms); :stream-opens has no reducer analog and
   reports under its own name."
   [run]
-  (request-counters/add! :commands
-                         (get-in run [:counters :commands] 0))
-  (request-counters/add! :fetched-values
-                         (get-in run [:counters :fetched-values] 0))
+  (request-counters/add-commands!
+   (get-in run [:counters :commands] 0))
+  (request-counters/add-fetched-values!
+   (get-in run [:counters :fetched-values] 0))
   (doseq [stats (distinct (remove nil? [*recursive-traversal-stats*
                                         *aggregate-work-stats*]))]
     (let [{:keys [emissions commands fetched-values stream-opens]}
@@ -1650,7 +1734,7 @@
                   [accepted examined last-examined]
                   (reduce
                    (fn [[accepted examined _] [candidate accepted?]]
-                     (request-counters/add! :candidates-examined)
+                     (request-counters/add-candidates-examined!)
                      [(cond-> accepted
                         accepted?
                         (conj candidate))

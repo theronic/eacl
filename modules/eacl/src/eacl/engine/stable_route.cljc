@@ -226,9 +226,9 @@
                        (every? #(= :relation (:rule %)) rules))
               rules)))
         report! (fn []
-                  (request-counters/add! :commands (:commands @counters))
-                  (request-counters/add! :fetched-values
-                                         (:fetched-values @counters))
+                  (request-counters/add-commands! (:commands @counters))
+                  (request-counters/add-fetched-values!
+                   (:fetched-values @counters))
                   (doseq [stats
                           (distinct
                            (remove nil?
@@ -429,6 +429,7 @@
                                            :max-admissions :max-commands
                                            :max-transitions :max-values :max-stack])
                              {:subject-eid subject-eid
+                              :result-sink :count
                               :target target}))
             discovered (:discovered finished)
             truncated? (boolean (and count-limit
@@ -452,6 +453,7 @@
                                            :max-admissions :max-commands
                                            :max-transitions :max-values :max-stack])
                              {:resource-eid resource-eid
+                              :result-sink :count
                               :target target}))
             discovered (:discovered finished)
             truncated? (boolean (and count-limit

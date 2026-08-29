@@ -128,14 +128,56 @@
   Admission limits are checked before any state mutates, so a rejected
   transition commits nothing (staged atomic admission)."
   [{:keys [admitted] :as state} residual new-work]
-  (let [fresh (loop [items (seq new-work)
-                     ;; Two equal work-ids inside one batch admit once, so
-                     ;; this literally refines StableReducer.Admit (which
-                     ;; folds `seen` through the batch) even if a future
-                     ;; plan shape produced such a batch. The plan
-                     ;; compiler never does today; the cost is one small
-                     ;; batch-local set (batches are a node's consumers,
-                     ;; typically one to three items).
+  (letfn [(check-limits! [fresh-count]
+            (when (> (+ (:admissions state) fresh-count)
+                     (:max-admissions state))
+              (limit-failure! :max-admissions state
+                              {:max-admissions (:max-admissions state)
+                               :staged fresh-count}))
+            ;; :max-stack is instantaneous queue depth, never cumulative
+            ;; scheduled work.
+            (when (> (+ (count (:stack state))
+                        (if residual 1 0)
+                        fresh-count)
+                     (:max-stack state))
+              (limit-failure! :max-stack state
+                              {:max-stack (:max-stack state)
+                               :staged fresh-count})))
+          (commit-zero []
+            (check-limits! 0)
+            (if residual
+              (let [stack (conj (:stack state) residual)]
+                (-> state
+                    (assoc :stack stack)
+                    (update :maximum-stack max (count stack))))
+              state))
+          (commit-one [item id]
+            (check-limits! 1)
+            (let [stack (cond-> (:stack state)
+                          residual (conj residual)
+                          true (conj item))]
+              (-> state
+                  (assoc :stack stack :admitted (conj! admitted id))
+                  (update :admissions inc)
+                  (update :maximum-stack max (count stack)))))]
+    ;; Zero and one successor dominate live traces. They do not allocate the
+    ;; batch-local transient set/vector used by the general fan-out oracle.
+    (let [items (seq new-work)]
+      (cond
+        (nil? items)
+        (commit-zero)
+
+        (nil? (next items))
+        (if-let [item (first items)]
+          (let [id (work-id item)]
+            (if (contains? admitted id)
+              (commit-zero)
+              (commit-one item id)))
+          (commit-zero))
+
+        :else
+        (let [fresh
+              (loop [items items
                      seen (transient #{})
                      fresh (transient [])]
                 (if items
@@ -143,72 +185,121 @@
                     (if (nil? item)
                       (recur (next items) seen fresh)
                       (let [id (work-id item)]
-                        (if (or (contains? admitted id) (contains? seen id))
+                        (if (or (contains? admitted id)
+                                (contains? seen id))
                           (recur (next items) seen fresh)
                           (recur (next items) (conj! seen id)
                                  (conj! fresh [item id]))))))
-                  (persistent! fresh)))]
-    (when (> (+ (:admissions state) (count fresh)) (:max-admissions state))
-      (limit-failure! :max-admissions state
-                      {:max-admissions (:max-admissions state)
-                       :staged (count fresh)}))
-    ;; :max-stack bounds INSTANTANEOUS queue depth (the public
-    ;; :max-queued-work contract), not cumulative work: a long chain
-    ;; traversal keeps a shallow stack no matter how many transitions it
-    ;; takes overall.
-    (when (> (+ (count (:stack state))
-                (if residual 1 0)
-                (count fresh))
-             (:max-stack state))
-      (limit-failure! :max-stack state
-                      {:max-stack (:max-stack state)
-                       :staged (count fresh)}))
-    (let [stack (cond-> (:stack state)
-                  residual (conj residual))
-          stack (into stack (map first) (rseq fresh))
-          admitted (reduce (fn [admitted [_ id]] (conj! admitted id))
-                           admitted fresh)]
-      (-> state
-          (assoc :stack stack :admitted admitted)
-          (update :admissions + (count fresh))
-          (update :maximum-stack max (count stack))))))
+                  (persistent! fresh)))
+              _ (check-limits! (count fresh))
+              stack (cond-> (:stack state)
+                      residual (conj residual))
+              stack (into stack (map first) (rseq fresh))
+              admitted (reduce (fn [acc [_ id]] (conj! acc id))
+                               admitted fresh)]
+          (-> state
+              (assoc :stack stack :admitted admitted)
+              (update :admissions + (count fresh))
+              (update :maximum-stack max (count stack))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; One-value scan release with bounded disposable buffers
 ;; ---------------------------------------------------------------------------
 
+(defn- remaining-buffer-values
+  [entry]
+  (if entry
+    (- (count (:values entry)) (:index entry 0))
+    0))
+
+(defn- remove-buffer
+  [state identity]
+  (if-let [entry (get-in state [:sidecar identity])]
+    (-> state
+        (update :sidecar dissoc identity)
+        (update :current-sidecar-values -
+                (remaining-buffer-values entry)))
+    state))
+
+(defn- compact-sidecar-order
+  [{:keys [sidecar-cap sidecar-order sidecar-order-index sidecar] :as state}]
+  (let [pending (- (count sidecar-order) sidecar-order-index)
+        ceiling (max 1 (* 2 sidecar-cap))]
+    (if (or (> pending ceiling)
+            (> sidecar-order-index sidecar-cap))
+      (assoc state
+             :sidecar-order
+             (->> sidecar
+                  (map (fn [[identity entry]]
+                         [identity (:generation entry)]))
+                  (sort-by second)
+                  vec)
+             :sidecar-order-index 0)
+      state)))
+
 (defn- evict-to-cap
   [{:keys [sidecar-cap] :as state}]
   (loop [state state]
-    (let [order (:sidecar-order state)]
-      (if (<= (count order) sidecar-cap)
-        state
-        (recur (-> state
-                   (update :sidecar dissoc (first order))
-                   (assoc :sidecar-order (subvec order 1))))))))
+    (if (<= (count (:sidecar state)) sidecar-cap)
+      (compact-sidecar-order state)
+      (let [index (:sidecar-order-index state)
+            [identity generation] (nth (:sidecar-order state) index)
+            entry (get-in state [:sidecar identity])
+            state (assoc state :sidecar-order-index (inc index))]
+        (if (= generation (:generation entry))
+          (recur (remove-buffer state identity))
+          (recur state))))))
 
 (defn- retain-buffer
-  "Retains remaining fetched values as the newest buffer; a refreshed
-  identity moves to the newest slot. Cap zero disables retention."
-  [state identity values more-physical?]
-  (let [state (-> state
-                  (update :sidecar dissoc identity)
-                  (update :sidecar-order #(vec (remove #{identity} %))))]
+  "Retains one fetched vector plus an index, never a suffix view. Recency is
+  generation-stamped and compacted at a capacity-derived ceiling; a touch
+  appends one pair and performs no whole-order filter."
+  [state identity values index more-physical?]
+  (let [state (remove-buffer state identity)]
     (if (and (pos? (:sidecar-cap state))
-             (or (seq values) more-physical?))
-      (-> state
-          (assoc-in [:sidecar identity]
-                    {:values values :more-physical? more-physical?})
-          (update :sidecar-order conj identity)
-          evict-to-cap
-          (as-> state'
-                (-> state'
-                    (update :maximum-sidecar-buffers
-                            max (count (:sidecar-order state')))
-                    (update :maximum-sidecar-values
-                            max (reduce + 0 (map (comp count :values)
-                                                 (vals (:sidecar state'))))))))
-      state)))
+             (or (< index (count values)) more-physical?))
+      (let [generation (inc (:sidecar-clock state))
+            retained (- (count values) index)
+            state (-> state
+                      (assoc :sidecar-clock generation)
+                      (assoc-in [:sidecar identity]
+                                {:values values
+                                 :index index
+                                 :more-physical? more-physical?
+                                 :generation generation})
+                      (update :current-sidecar-values + retained)
+                      (update :sidecar-order conj [identity generation])
+                      compact-sidecar-order
+                      evict-to-cap)]
+        (-> state
+            (update :maximum-sidecar-buffers
+                    max (count (:sidecar state)))
+            (update :maximum-sidecar-values
+                    max (:current-sidecar-values state))))
+      (compact-sidecar-order state))))
+
+(defn- advance-buffer
+  "Consumes one value from an existing buffer without re-admitting that
+  buffer to the recency index. The index entry already represents this live
+  scan; rebuilding its map entry and appending a generation record for every
+  value made physical chunking more expensive than the traversal itself."
+  [state identity entry next-index]
+  (if (and (= next-index (count (:values entry)))
+           (not (:more-physical? entry)))
+    ;; remove-buffer observes the old index, so it subtracts the one value
+    ;; consumed by this transition.
+    (remove-buffer state identity)
+    (-> state
+        (assoc-in [:sidecar identity :index] next-index)
+        (update :current-sidecar-values dec))))
+
+(defn ^:no-doc bounded-vector
+  "Reuses a routed vector when it already satisfies the requested bound.
+  Wider or non-vector adapter results are realized into one bounded vector."
+  [values limit]
+  (if (and (vector? values) (<= (count values) limit))
+    values
+    (into [] (take limit) values)))
 
 (defn- fetch-values
   "The single effectful call: realizes one physical chunk strictly after the
@@ -221,10 +312,11 @@
   (when (>= (:commands state) (:max-commands state))
     (limit-failure! :max-commands state
                     {:max-commands (:max-commands state)}))
-  (let [values (into [] (take (:physical-chunk-size state))
-                     (fetch-fn (assoc descriptor
-                                      :bound-eid bound-eid
-                                      :limit (:physical-chunk-size state))))]
+  (let [values (bounded-vector
+                (fetch-fn (assoc descriptor
+                                 :bound-eid bound-eid
+                                 :limit (:physical-chunk-size state)))
+                (:physical-chunk-size state))]
     ;; :max-values bounds consumed projection values (the public
     ;; :max-advanced-datoms contract); the whole chunk is rejected before
     ;; any of it commits.
@@ -246,22 +338,23 @@
   residual-item is nil when the scan is complete."
   [state item descriptor]
   (let [identity (work-id item)
-        entry (get-in state [:sidecar identity])]
-    (if (seq (:values entry))
-      (let [value (first (:values entry))
-            remaining (subvec (:values entry) 1)
+        entry (get-in state [:sidecar identity])
+        index (:index entry 0)]
+    (if (and entry (< index (count (:values entry))))
+      (let [value (nth (:values entry) index)
+            next-index (inc index)
             more? (:more-physical? entry)
-            state (retain-buffer state identity remaining more?)]
-        [state value (when (or (seq remaining) more?)
+            state (advance-buffer state identity entry next-index)]
+        [state value (when (or (< next-index (count (:values entry))) more?)
                        (assoc item :bound-eid value))])
       (let [[state values more?] (fetch-values state descriptor
                                                (:bound-eid item))]
         (if (empty? values)
-          [(retain-buffer state identity [] false) nil nil]
+          [(retain-buffer state identity [] 0 false) nil nil]
           (let [value (first values)
-                remaining (subvec values 1)
-                state (retain-buffer state identity remaining more?)]
-            [state value (when (or (seq remaining) more?)
+                next-index 1
+                state (retain-buffer state identity values next-index more?)]
+            [state value (when (or (< next-index (count values)) more?)
                            (assoc item :bound-eid value))]))))))
 
 ;; ---------------------------------------------------------------------------
@@ -314,9 +407,25 @@
 
 (defn- emit
   [state eid]
-  (-> state
-      (update :discovered inc)
-      (update :results conj! eid)))
+  (let [state (update state :discovered inc)]
+    (case (:result-sink state)
+      :count state
+      :collect (update state :results conj! eid)
+      :window
+      (let [limit (:result-window-size state)
+            index (:result-index state)
+            results (conj (:results state) eid)
+            index (if (> (- (count results) index) limit)
+                    (inc index)
+                    index)]
+        ;; Compact only after one full window has become unreachable. The
+        ;; retained backing vector is therefore always below 2*limit while
+        ;; each emission remains amortized constant-time.
+        (if (>= index limit)
+          (assoc state
+                 :results (into [] (drop index results))
+                 :result-index 0)
+          (assoc state :results results :result-index index))))))
 
 (defn- grant-successors
   "Consumers of a grant at `node` for entity `eid`: self-permission
@@ -458,10 +567,12 @@
 ;; ---------------------------------------------------------------------------
 
 (defn- initial-state
-  "Request-owned state. The admitted set and result vector are transients
-  owned linearly by the run loop (task 5.2); `finish` freezes them before
-  the state escapes. Limits are checked before their transition commits."
-  [{:keys [adapter fetch-fn physical-chunk-size sidecar-cap
+  "Request-owned state. The admitted set and collecting result vector are
+  transients owned linearly by the run loop; scalar count and bounded window
+  sinks do not construct a full result history. Limits are checked before
+  their transition commits."
+  [{:keys [adapter fetch-fn physical-chunk-size sidecar-cap result-sink
+           result-window-size
            max-admissions max-commands max-transitions
            max-values max-stack]
     :or {physical-chunk-size default-physical-chunk-size
@@ -470,8 +581,11 @@
          max-commands default-max-commands
          max-transitions default-max-transitions
          max-values default-max-values
-         max-stack default-max-stack}}]
+         max-stack default-max-stack
+         result-sink :collect}}]
   {:pre [(pos? physical-chunk-size) (int? sidecar-cap) (<= 0 sidecar-cap)
+         (contains? #{:collect :count :window} result-sink)
+         (or (not= :window result-sink) (pos-int? result-window-size))
          (pos? max-admissions) (pos? max-commands) (pos? max-transitions)
          (pos? max-values) (pos? max-stack)]}
   {:stack []
@@ -483,6 +597,9 @@
    :fetch-fn (or fetch-fn (adapter-fetch-fn adapter))
    :sidecar {}
    :sidecar-order []
+   :sidecar-order-index 0
+   :sidecar-clock 0
+   :current-sidecar-values 0
    :sidecar-cap sidecar-cap
    :physical-chunk-size physical-chunk-size
    :max-admissions max-admissions
@@ -494,7 +611,13 @@
    :maximum-sidecar-values 0
    :maximum-stack 0
    :discovered 0
-   :results (transient [])})
+   :result-sink result-sink
+   :result-window-size result-window-size
+   :result-index 0
+   :results (case result-sink
+              :collect (transient [])
+              :window []
+              :count nil)})
 
 (defn- run-loop
   [context state target cut-point!]
@@ -518,16 +641,22 @@
                         (update :transitions inc))]
           (recur (step context state item)))))))
 
-(defn- finish
-  "Freezes request-owned transients and enforces the always-on structural
-  invariants (task 5.4): this run's result count equals its discovered
-  delta and results are duplicate-free by construction."
+(defn ^:no-doc finish
+  "Freezes request-owned transients. Collecting sinks check result count
+  against the constructionally unique root admissions; scalar count sinks
+  never construct a delivered-result history."
   [state]
-  (let [results (persistent! (:results state))
+  (let [sink (:result-sink state)
+        collect? (= :collect sink)
+        results (case sink
+                  :collect (persistent! (:results state))
+                  :window (into [] (drop (:result-index state)
+                                         (:results state)))
+                  :count [])
         admitted (persistent! (:admitted state))]
-    (when-not (and (= (- (:discovered state) (:base-discovered state 0))
-                      (count results))
-                   (= (count results) (count (distinct results))))
+    (when-not (or (not collect?)
+                  (= (- (:discovered state) (:base-discovered state 0))
+                     (count results)))
       (throw (ex-info "Stable-discovery structural invariant violated."
                       {:eacl/error :eacl.reducer/invariant-violation
                        :discovered (:discovered state)
@@ -573,11 +702,9 @@
 
 (defn- report-run!
   [before final-state]
-  (request-counters/add!
-   :commands
+  (request-counters/add-commands!
    (- (:commands final-state) (:commands before 0)))
-  (request-counters/add!
-   :fetched-values
+  (request-counters/add-fetched-values!
    (- (:fetched-values final-state) (:fetched-values before 0)))
   (doseq [stats (distinct (remove nil? [*observer-stats*
                                         *aggregate-work-stats*]))]
@@ -611,7 +738,6 @@
         state (-> (initial-state options)
                   (merge (select-keys checkpoint-state semantic-state-keys))
                   (assoc :admitted (transient (:admitted checkpoint-state))
-                         :results (transient [])
                          :base-discovered (:discovered checkpoint-state)))
         before (select-keys state
                             [:admissions :commands :transitions

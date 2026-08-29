@@ -1,0 +1,120 @@
+{:evidence/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :candidate-production-manifest-sha256
+ "9a2e05402636c1558870b53778cd914e41f1a1d8186c1e5cc771e3927b40b989"
+ :classpath-sha256
+ "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"
+ :method :deterministic-counters-and-structural-proxies
+ :engine
+ {:exact-count
+  [{:available-results 64 :discovered 64 :retained-results 0
+    :completion-distinct-width 0 :suffix-views 0
+    :maximum-sidecar-buffers 1 :maximum-sidecar-values 63}
+   {:available-results 1024 :discovered 1024 :retained-results 0
+    :completion-distinct-width 0 :suffix-views 0
+    :maximum-sidecar-buffers 1 :maximum-sidecar-values 63}
+   {:available-results 16384 :discovered 16384 :retained-results 0
+    :completion-distinct-width 0 :suffix-views 0
+    :maximum-sidecar-buffers 1 :maximum-sidecar-values 63}]
+  :least-path-limit
+  [{:available-width 64 :descriptor-limit 1 :adapter-received-limit 1
+    :backend-eager-values-realized 1 :logical-values-returned 1}
+   {:available-width 1024 :descriptor-limit 1 :adapter-received-limit 1
+    :backend-eager-values-realized 1 :logical-values-returned 1}
+   {:available-width 16384 :descriptor-limit 1 :adapter-received-limit 1
+    :backend-eager-values-realized 1 :logical-values-returned 1}]
+  :alias-frontier
+  {:ordered-result-ids ["document"]
+   :alias-equivalent-frontier-scan-count 1
+   :duplicate-alias-frontier-scans? false}
+  :routed-vector
+  {:stable-reused-identically? true
+   :least-path-reused-identically? true}
+  :fixed-capacity-sidecar-churn
+  [{:touches 1000 :capacity 16 :maximum-rescan-entry-visits 0
+    :recency-filter-entry-visits 0 :retained-buffers 16
+    :maximum-retained-values 128}
+   {:touches 10000 :capacity 16 :maximum-rescan-entry-visits 0
+    :recency-filter-entry-visits 0 :retained-buffers 16
+    :maximum-retained-values 128}
+   {:touches 100000 :capacity 16 :maximum-rescan-entry-visits 0
+    :recency-filter-entry-visits 0 :retained-buffers 16
+    :maximum-retained-values 128}]
+  :fixed-capacity-continuation-churn
+  [{:publications 1000 :capacity 16 :whole-vector-filter-entry-visits 0
+    :pending-entry-order 16 :pending-tombstone-order 16}
+   {:publications 10000 :capacity 16 :whole-vector-filter-entry-visits 0
+    :pending-entry-order 16 :pending-tombstone-order 16}
+   {:publications 100000 :capacity 16 :whole-vector-filter-entry-visits 0
+    :pending-entry-order 16 :pending-tombstone-order 16}]
+  :scheduler
+  {:zero-successor
+   {:transitions 10000 :batch-local-transient-allocations 0}
+   :one-successor
+   {:transitions 10000 :batch-local-transient-allocations 0}}}
+ :request
+ {:boundary-validation
+  [{:candidates 256 :public-relationship-shape 1
+    :public-authorization-shape 1 :selected-schema 1}
+   {:candidates 4096 :public-relationship-shape 1
+    :public-authorization-shape 1 :selected-schema 1}
+   {:candidates 65536 :public-relationship-shape 1
+    :public-authorization-shape 1 :selected-schema 1}]
+  :fixed-counter
+  [{:increments 10000 :dynamic-key-validations 0 :dynamic-index-lookups 0
+    :exact-final-value 10000}
+   {:increments 100000 :dynamic-key-validations 0 :dynamic-index-lookups 0
+    :exact-final-value 100000}
+   {:increments 1000000 :dynamic-key-validations 0 :dynamic-index-lookups 0
+    :exact-final-value 1000000}]
+  :snapshot-identity
+  [{:requests 1 :snapshot-id-invocations 1}
+   {:requests 100 :snapshot-id-invocations 100}
+   {:requests 10000 :snapshot-id-invocations 10000}]
+  :lazy-request-context
+  [{:constructions 1 :proof-frames 0 :memo-atoms 0
+    :publication-buffers 0 :backend-calls-before-use 0}
+   {:constructions 1000 :proof-frames 0 :memo-atoms 0
+    :publication-buffers 0 :backend-calls-before-use 0}
+   {:constructions 100000 :proof-frames 0 :memo-atoms 0
+    :publication-buffers 0 :backend-calls-before-use 0}]
+  :native-membership
+  [{:candidates 256 :candidate-validations 256 :native-batches 1
+    :maximum-batch-width 256}
+   {:candidates 1024 :candidate-validations 1024 :native-batches 4
+    :maximum-batch-width 256}
+   {:candidates 4096 :candidate-validations 4096 :native-batches 16
+    :maximum-batch-width 256}]
+  :telemetry-disabled-completed-hits
+  [{:hits 1000 :correctness-state-mutations 0 :telemetry-mutations 0}
+   {:hits 10000 :correctness-state-mutations 0 :telemetry-mutations 0}
+   {:hits 100000 :correctness-state-mutations 0 :telemetry-mutations 0}]
+  :independent-completed-misses
+  [{:requests 2 :independent-computations 2 :publication-races 1
+    :successful-publications 1 :own-values-returned? true}
+   {:requests 8 :independent-computations 8 :publication-races 7
+    :successful-publications 1 :own-values-returned? true}
+   {:requests 32 :independent-computations 32 :publication-races 31
+    :successful-publications 1 :own-values-returned? true}]
+  :independent-derived-failures
+  {:slots [:parsed-schema :validation-catalog
+           :structural-expression-decode :sealed-plan]
+   :fanouts [2 8 32]
+   :builders-equal-request-count-before-release? true
+   :distinct-errors-equal-request-count? true
+   :failure-published? false
+   :explicit-retry-builds-again? true}
+  :current-cache-refinement
+  {:domain-size 10
+   :all-generated-and-host-actions-equal? true
+   :artifact "formal/verification/current-cache-specialization.edn"}}
+ :datomic
+ {:evidence "task-5.13-datomic-verification.edn"
+  :local-covered-sync-count 0
+  :local-above-sync-count 0
+  :local-behind-sync-count 1
+  :all-selected-revisions-exact? true}
+ :decision
+ {:all-declared-multiscale-structural-claims-passed? true
+  :no-command-reduction-described-as-latency? true
+  :passed? true}}

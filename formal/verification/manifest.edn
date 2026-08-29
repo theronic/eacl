@@ -87,7 +87,7 @@
    :claim :conditional-operation-count-bound}
   :recursive-engine-cost-model
   {:status :passed
-   :verified-obligations 52
+   :verified-obligations 55
    :source "formal/dafny/SchemaPlanCost.dfy"
    :claim :conditional-operation-count-bound}
   :snapshot-consistency-decision
@@ -172,8 +172,8 @@
   :operator-engine-phase-b
   {:status :passed
    :verified-obligations 35
-   :whole-tree-obligation-delta-since-phase-a 36
-   :whole-tree-obligations 9382
+   :whole-tree-obligation-delta-since-phase-a 39
+   :whole-tree-obligations 9385
    :generated-policy-leaf-obligations 20
    :proof-refinement-leaf-obligations 15
    :sources
@@ -208,7 +208,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9382
+   :verified-obligations 9385
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed

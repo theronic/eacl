@@ -1,0 +1,60 @@
+{:pilot/version 1
+ :phase :baseline-only
+ :candidate-data-observed? false
+ :source
+ {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+  :tree "324445d66d55446c4d6a5395608749fb832fec8f"
+  :classpath-sha256
+  "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"}
+ :lane :recursive-star-exact-count
+ :fixture
+ {:backend :datascript
+  :shape {:shape :star :accounts 4096}
+  :digest "f0ef94a458d1fbb5f84b60cd239f8fe78677ec9788473b043357808f523ccae2"
+  :expected-count 4096}
+ :operation
+ {:public-api :count-resources
+  :query {:subject :user/user-1
+          :permission :view
+          :resource-type :account
+          :count-limit :exact}
+  :cache-regime :completed-disabled-derived-warm
+  :boundary :fully-realized-public-result}
+ :sampling
+ {:warmups-per-arm 7
+  :samples-per-arm 21
+  :unit :one-complete-public-request
+  :interleaving :alternating-forward-reverse
+  :outlier-policy :none-all-finite-samples-retained}
+ :environment
+ {:os "Mac OS X"
+  :os-version "26.4.1"
+  :architecture "aarch64"
+  :java-version "26.0.2"
+  :java-vendor "Eclipse Adoptium"
+  :maximum-heap-bytes 9663676416
+  :available-processors 14}
+ :arms
+ {:baseline-a
+  {:latency-us
+   [42033.0 40967.584 49447.125 52741.542 38903.792 45663.542
+    35844.833 34431.792 32203.917 34212.625 38359.459 35379.792
+    31713.75 35421.834 34864.333 38602.958 34406.042 36607.25
+    42777.709 44336.958 44659.959]
+   :latency-p50-us 38359.459
+   :allocated-bytes-p50 73710552
+   :result-checksum -521091732}
+  :baseline-b
+  {:latency-us
+   [39953.958 43941.209 44056.75 53084.584 37680.708 37678.667
+    34369.458 35101.416 34772.083 32060.542 34839.583 33755.333
+    38669.541 35894.458 35928.583 36574.083 38671.458 39308.667
+    42000.125 47114.083 35660.5]
+   :latency-p50-us 37678.667
+   :allocated-bytes-p50 73710552
+   :result-checksum -521091732}}
+ :observations
+ {:relative-median-gap 0.01774769555535184
+  :allocation-median-gap 0.0
+  :semantic-checksums-equal? true
+  :qualification-use :variance-and-sample-plan-only}}

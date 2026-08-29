@@ -31,6 +31,27 @@
       (is (= 3 @revision)
           "publication changes content, while the lookup-only touch does not"))))
 
+(deftest restored-entry-requires-operation-specific-validation-test
+  (let [options {:projection-max-weight 8
+                 :denotation-max-weight 8
+                 :answer-max-weight 8}
+        original (subproblem/store options)
+        _ (subproblem/publish! original :answer :wrong-shape {} :not-a-page)
+        snapshot (subproblem/export-snapshot
+                  original {:max-weight 8 :max-entries 8})
+        restored (subproblem/restore-store snapshot options)
+        validations (atom 0)]
+    (is (nil?
+         (subproblem/lookup!
+          restored
+          :answer
+          :wrong-shape
+          {:valid? (fn [value]
+                     (swap! validations inc)
+                     (map? value))})))
+    (is (= 1 @validations))
+    (is (= 1 (:invalid-results (subproblem/stats restored))))))
+
 (deftest malformed-subproblem-snapshot-is-rejected-test
   (let [options {:projection-max-weight 8
                  :denotation-max-weight 8
@@ -114,10 +135,61 @@
     (let [stats (subproblem/stats store)]
       (is (= capacity (get-in stats [:tiers :projection :entries])))
       (is (= 1 (:evictions stats)))
-      (is (= 1 (:eviction-probes stats)))
+      (is (= 2 (:eviction-probes stats))
+          "the hot oldest entry receives one coalesced second chance")
       (is (= 0 (:value (subproblem/lookup!
                         store :projection 0 {}))))
       (is (<= (get-in stats [:tiers :projection :lru-records]) 1024)))))
+
+(deftest disabled-telemetry-does-not-mutate-observers-or-global-hit-state-test
+  (let [store (subproblem/store {:projection-max-weight 2
+                                 :telemetry? false})]
+    (subproblem/publish! store :projection :hot {} :hot)
+    (subproblem/publish! store :projection :cold {} :cold)
+    (let [state-before @(:state store)
+          metrics-before @(:metrics store)]
+      (is (= :hot (:value (subproblem/lookup!
+                           store :projection :hot {}))))
+      (is (identical? state-before @(:state store))
+          "a hit changes only its held entry's access counter")
+      (is (identical? metrics-before @(:metrics store))
+          "disabled optional telemetry performs no observer mutation"))
+    (subproblem/publish! store :projection :new {} :new)
+    (is (= :hot (:value (subproblem/lookup!
+                         store :projection :hot {})))
+        "coalesced access still protects the hot entry during eviction")
+    (is (nil? (subproblem/lookup! store :projection :cold {})))
+    (is (false? (:telemetry-enabled? (subproblem/stats store))))))
+
+#?(:clj
+   (deftest held-restored-entry-survives-concurrent-eviction-test
+     (let [options {:projection-max-weight 1
+                    :denotation-max-weight 1
+                    :answer-max-weight 4}
+           original (subproblem/store options)
+           _ (subproblem/publish! original :projection :held {} :answer)
+           snapshot (subproblem/export-snapshot
+                     original {:max-weight 1 :max-entries 1})
+           restored (subproblem/restore-store snapshot options)
+           validation-started (promise)
+           release-validation (promise)
+           reader
+           (future
+             (subproblem/lookup!
+              restored :projection :held
+              {:valid? (fn [value]
+                         (deliver validation-started true)
+                         @release-validation
+                         (= :answer value))}))]
+       @validation-started
+       (is (:published?
+            (subproblem/publish! restored :projection :replacement {}
+                                 :replacement)))
+       (is (nil? (subproblem/lookup! restored :projection :held {}))
+           "the mapping was evicted while the first reader held the entry")
+       (deliver release-validation true)
+       (is (= :answer (:value (deref reader 1000 ::timed-out)))
+           "eviction cannot invalidate an immutable value already held"))))
 
 (deftest completed-entry-is-validated-once-before-publication-test
   (let [store (subproblem/store)

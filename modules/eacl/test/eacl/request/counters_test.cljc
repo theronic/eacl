@@ -3,7 +3,7 @@
              :refer [deftest is testing]]
             [eacl.request.counters :as counters]))
 
-(deftest request-counter-ledger-is-complete-and-observation-only
+(deftest request-counter-ledger-is-complete-and-exact
   (let [ledger (counters/make-ledger)
         result
         (counters/call-with-ledger
@@ -22,6 +22,28 @@
     (is (= 1 (:writer-submissions (counters/snapshot ledger))))
     (is (= 3 (:commands (counters/snapshot ledger))))
     (is (zero? (:publications (counters/snapshot ledger))))))
+
+(deftest preindexed-internal-counters-match-the-checked-path
+  (let [ledger (counters/make-ledger)]
+    (counters/call-with-ledger
+     ledger
+     #(do
+        (counters/add-commands!)
+        (counters/add-commands! 2)
+        (counters/add-fetched-values! 4)
+        (counters/add-candidates-examined! 5)
+        (counters/add-probes! 6)))
+    (is (= {:commands 3 :fetched-values 4
+            :candidates-examined 5 :probes 6}
+           (select-keys (counters/snapshot ledger)
+                        [:commands :fetched-values
+                         :candidates-examined :probes])))
+    (let [data (try (counters/add-commands! -1) nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo
+                              :cljs cljs.core.ExceptionInfo) error
+                      (ex-data error)))]
+      (is (= :eacl.request/invalid-counter-increment (:type data)))
+      (is (= :commands (:counter data))))))
 
 (deftest request-counter-validation-is-typed
   (testing "an unknown counter cannot silently fork the ledger schema"

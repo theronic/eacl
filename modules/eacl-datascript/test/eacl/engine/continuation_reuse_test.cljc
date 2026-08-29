@@ -680,3 +680,33 @@
         "keyset pages compose exactly with no server-side state")
     (is (= puts-before (:puts (continuation/stats store)))
         "acyclic pagination publishes nothing to the continuation store")))
+
+(deftest continuation-order-metadata-is-capacity-bounded-test
+  (let [capacity 4
+        store (continuation/make-store
+               {:max-entries capacity
+                :max-weight capacity
+                :max-entry-weight 1})]
+    (doseq [index (range 200)]
+      (continuation/put! store :checkpoint [:scope :checkpoint index]
+                         {:index index} 1))
+    (let [{:keys [entries order order-index tombstones tombstone-order
+                  tombstone-order-index]} @(:state store)]
+      (is (= capacity (count entries)))
+      (is (<= (- (count order) order-index) capacity))
+      (is (<= (count order) (* 2 capacity)))
+      (is (<= (count tombstones) capacity))
+      (is (<= (- (count tombstone-order) tombstone-order-index)
+              (* 2 capacity)))
+      (is (<= (count tombstone-order) (* 2 capacity))))
+    ;; Repeatedly refreshing the same rejected key used to filter the whole
+    ;; tombstone vector on every publication attempt.
+    (doseq [_ (range 200)]
+      (continuation/put! store :checkpoint [:scope :checkpoint :overweight]
+                         :rejected 2))
+    (let [{:keys [tombstones tombstone-order tombstone-order-index]}
+          @(:state store)]
+      (is (<= (count tombstones) capacity))
+      (is (<= (- (count tombstone-order) tombstone-order-index)
+              (* 2 capacity)))
+      (is (<= (count tombstone-order) (* 2 capacity))))))

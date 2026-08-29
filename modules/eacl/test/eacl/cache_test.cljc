@@ -1,9 +1,62 @@
 (ns eacl.cache-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
             :refer [deftest is testing]]
+            #?(:clj [clojure.edn :as edn])
             [eacl.cache :as cache]
             [eacl.core :as eacl]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.formal.current-cache-refinement :as cache-refinement]
+            #?(:clj [eacl.secure-format :as secure-format])
+            [eacl.subproblem-cache :as subproblem]
+            [eacl.verified-kernel :as verified]))
+
+(deftest current-cache-host-specialization-exhausts-generated-domain-test
+  (doseq [stage [:eligibility :generation :exact-entry
+                 :exact-only-entry :managed-entry]
+          available? [false true]]
+    (is (= (verified/decide
+            subproblem/default-decision-kernel
+            :current-cache-decision
+            {:stage stage :available? available?})
+           (cache/specialized-current-cache-action stage available?))
+        (str stage " " available?))))
+
+(deftest stale-or-incomplete-current-cache-refinement-is-not-authorized-test
+  (is (cache/current-cache-specialization-authorized?
+       subproblem/default-decision-kernel))
+  (let [stale-kernel subproblem/default-decision-kernel
+        stale-evidence (assoc subproblem/default-current-cache-refinement
+                              :artifact-sha256 "stale")]
+    (with-redefs [subproblem/default-decision-kernel stale-kernel
+                  subproblem/default-current-cache-refinement stale-evidence]
+      (is (false?
+           (cache/current-cache-specialization-authorized? stale-kernel)))))
+  (is (false?
+       (cache-refinement/complete-mapping?
+        (dissoc cache-refinement/current-cache-mapping
+                [:managed-entry false])))))
+
+#?(:clj
+   (deftest current-cache-refinement-artifact-binds-all-sources-test
+     (let [hex-digest
+           (fn [path]
+             (let [digest (java.security.MessageDigest/getInstance "SHA-256")
+                   bytes (.digest digest
+                                  (.getBytes (slurp path) "UTF-8"))]
+               (apply str
+                      (map #(format "%02x" (bit-and (int %) 255)) bytes))))
+           artifact-path
+           "formal/verification/current-cache-specialization.edn"
+           artifact (edn/read-string (slurp artifact-path))]
+       (is (= cache-refinement/artifact-sha256
+              (hex-digest artifact-path)))
+       (is (= cache-refinement/current-cache-domain (:domain artifact)))
+       (is (= cache-refinement/current-cache-mapping (:mapping artifact)))
+       (is (= cache-refinement/mapping-digest
+              (secure-format/canonical-digest
+               cache-refinement/artifact-domain
+               {:domain (:domain artifact) :mapping (:mapping artifact)})))
+       (doseq [[path expected] (:source-digests artifact)]
+         (is (= expected (hex-digest path)) path)))))
 
 (defn- snapshot-object
   []
@@ -391,6 +444,37 @@
     (is (false? (:cached? (resolve 2)))
         "the least-recently-used basis recomputes after eviction")
     (is (= {1 1, 2 2, 3 1} @computations))))
+
+(deftest exact-generation-hits-are-nonserializing-with-optional-telemetry-test
+  (let [store (cache/basis-cache {:retained-bases 2 :telemetry? false})
+        computations (atom {})
+        resolve
+        (fn [revision]
+          (cache/resolve-basis!
+           store (basis-context (snapshot-object) revision)
+           :same-query :decision integer?
+           (fn []
+             (swap! computations update revision (fnil inc 0))
+             revision)))]
+    (resolve 1)
+    (resolve 2)
+    (let [lifecycle @(:lifecycle store)
+          bases (:bases lifecycle)
+          basis-state @bases
+          metrics-state @(:metrics store)]
+      (is (= :exact-basis (:cache-tier (resolve 1))))
+      (is (identical? basis-state @bases)
+          "a generation hit does not swap the shared lifecycle state")
+      (is (identical? metrics-state @(:metrics store))
+          "disabled cache telemetry performs no observer mutation"))
+    (resolve 3)
+    (is (false? (:cached? (resolve 2)))
+        "the coalesced exact-generation touch still determines eviction")
+    (let [stats (cache/basis-cache-stats store)]
+      (is (false? (:telemetry-enabled? stats)))
+      (is (zero? (:exact-hits stats)))
+      (is (false? (get-in stats
+                          [:subproblems :telemetry-enabled?]))))))
 
 (deftest basis-kind-is-part-of-exact-cache-identity-test
   (let [store (cache/basis-cache)

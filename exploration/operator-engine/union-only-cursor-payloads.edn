@@ -28,16 +28,16 @@
      :v 13}
     :start-edge
     {:anchor :progress
-     :coords [1 9 4 5 35 36 38 47]
-     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :coords [1 4 5 27 28 30 39]
+     :fingerprint "SnPDXuYVyDl6MhmXrBb7oSeNt7yrE7Bs8NXCO8K8e3k"
      :kind :least-path-edge
      :order-abi 2
      :traversal :forward
      :version 2}
     :end-edge
     {:anchor :progress
-     :coords [1 9 4 5 35 36 38 48]
-     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :coords [1 4 5 27 28 30 40]
+     :fingerprint "SnPDXuYVyDl6MhmXrBb7oSeNt7yrE7Bs8NXCO8K8e3k"
      :kind :least-path-edge
      :order-abi 2
      :traversal :forward
@@ -66,16 +66,16 @@
      :v 13}
     :start-edge
     {:anchor :progress
-     :coords [1 38 9 4 36 5 35 33]
-     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :coords [1 30 4 28 5 27 25]
+     :fingerprint "SnPDXuYVyDl6MhmXrBb7oSeNt7yrE7Bs8NXCO8K8e3k"
      :kind :least-path-edge
      :order-abi 2
      :traversal :reverse
      :version 2}
     :end-edge
     {:anchor :progress
-     :coords [1 38 9 8 34]
-     :fingerprint "r3V5dAKDHiu87EyzzowvqlszSoKIkKJ1F7bO4wAdokM"
+     :coords [1 30 8 26]
+     :fingerprint "SnPDXuYVyDl6MhmXrBb7oSeNt7yrE7Bs8NXCO8K8e3k"
      :kind :least-path-edge
      :order-abi 2
      :traversal :reverse

@@ -135,12 +135,9 @@
      (:relation-eid descriptor)
      (:resource-type descriptor) (:resource-eid descriptor))))
 
-(defn direct-match-many?
-  "Returns one Boolean per input candidate, or throws without returning a
-  partial vector. Native and scalar execution have the same normalized input,
-  selected basis, ordering, cancellation cut points, and output contract."
+(defn ^:no-doc direct-match-many-checked?
   [adapter request]
-  (let [{:keys [candidates] :as request} (normalize-request request)]
+  (let [{:keys [candidates]} request]
     (execution/check! execution/*contract*
                       :direct-membership-batch/before
                       {:candidate-count 0})
@@ -171,9 +168,10 @@
         (add-stat! :prefix-values 0)
         (add-stat! :batch-overread 0)
         (when-not native?
-          (request-counters/add! :commands (count candidates))
-          (request-counters/add! :probes (count candidates))
-          (request-counters/add! :fetched-values (count (filter true? result)))
+          (request-counters/add-commands! (count candidates))
+          (request-counters/add-probes! (count candidates))
+          (request-counters/add-fetched-values!
+           (count (filter true? result)))
           (add-stat! :adapter-fetched-values (count (filter true? result))))
         (execution/check!
          execution/*contract*
@@ -190,6 +188,13 @@
                                       (:direction request)
                                       candidates result))
         result))))
+
+(defn direct-match-many?
+  "Returns one Boolean per input candidate, or throws without returning a
+  partial vector. Native and scalar execution have the same normalized input,
+  selected basis, ordering, cancellation cut points, and output contract."
+  [adapter request]
+  (direct-match-many-checked? adapter (normalize-request request)))
 
 (def ^:private probe-keys #{:descriptor :candidate :direction})
 
@@ -270,7 +275,7 @@
                  (let [request {:direction direction
                                 :descriptor descriptor
                                 :candidates (vec candidate-chunk)}
-                       decisions (direct-match-many? adapter request)]
+                       decisions (direct-match-many-checked? adapter request)]
                    (reduce
                     (fn [results [candidate decision]]
                       (reduce #(assoc %1 %2 decision)

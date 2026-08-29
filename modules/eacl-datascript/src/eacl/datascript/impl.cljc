@@ -403,7 +403,8 @@
   ([db filters decision-kernel window-options]
   ;; The unified filter contract shared by every backend
   ;; (backend-unification 9.1).
-   (relationship-filters/validate! filters)
+   (when-not relationship-filters/*validated-request?*
+     (relationship-filters/validate! filters))
    (let [subject-id'  (when (contains? filters :subject/id)
                         (internal-id db (:subject/id filters)))
          resource-id' (when (contains? filters :resource/id)

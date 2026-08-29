@@ -1,0 +1,163 @@
+{:coverage/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :rows
+ [{:id :acyclic-alias-frontier
+   :generator :exact-alias-arrow-fanout
+   :scale-points [1 4 16]
+   :model :duplicate-streams-nonincreasing
+   :tolerance {:kind :exact :maximum-extra-streams 0}}
+  {:id :least-path-adapter-limit-forwarding
+   :generator :wide-eager-acyclic-adjacency
+   :scale-points [64 1024 16384]
+   :model :backend-width-bounded-by-descriptor-limit
+   :tolerance {:kind :exact :maximum-excess-values 0}}
+  {:id :stable-full-result-retention
+   :generator :wide-recursive-distinct-results
+   :scale-points [1000 10000 100000]
+   :model :retention-bounded-by-operation-demand
+   :tolerance {:kind :exact :count-history 0 :page-overhead 1}}
+  {:id :stable-completion-distinct
+   :generator :multi-derivation-recursive-results
+   :scale-points [1000 10000 100000]
+   :model :no-result-width-completion-rebuild
+   :tolerance {:kind :exact :maximum-rebuild-width 0}}
+  {:id :stable-buffer-suffix-view
+   :generator :single-wide-one-at-a-time-scan
+   :scale-points [64 1024 16384]
+   :model :constant-state-release
+   :tolerance {:kind :exact :suffix-wrapper-allocations 0}}
+  {:id :routed-response-vector-recopy
+   :generator :already-realized-bounded-vector
+   :scale-points [1 64 256]
+   :model :single-physical-vector
+   :tolerance {:kind :exact :equivalent-vector-copies 0}}
+  {:id :stable-retained-maximum-rescan
+   :generator :full-capacity-sidecars
+   :scale-points [4 16 64]
+   :model :incremental-maximum
+   :tolerance {:kind :exact :whole-sidecar-rescans 0}}
+  {:id :stable-sidecar-recency-filter
+   :generator :fixed-capacity-repeated-sidecar-touch
+   :scale-points [1000 10000 100000]
+   :model :amortized-constant-touch
+   :tolerance {:kind :capacity-derived :maximum-record-factor 2}}
+  {:id :continuation-recency-filter
+   :generator :fixed-capacity-continuation-churn
+   :scale-points [1000 10000 100000]
+   :model :amortized-constant-update
+   :tolerance {:kind :capacity-derived :maximum-record-factor 2}}
+  {:id :zero-successor-scheduling
+   :generator :terminal-grant-transitions
+   :scale-points [1000 10000 100000]
+   :model :zero-batch-temporaries
+   :tolerance {:kind :exact :batch-temporaries-per-transition 0}}
+  {:id :one-successor-scheduling
+   :generator :certified-linear-permission-chain
+   :scale-points [1000 10000 100000]
+   :model :constant-single-successor-staging
+   :tolerance {:kind :exact :general-batch-temporaries-per-transition 0}}
+  {:id :public-boundary-revalidation
+   :generator :rejection-heavy-filtered-relationship-page
+   :scale-points [256 4096 65536]
+   :model :one-validation-per-owning-boundary
+   :tolerance {:kind :exact :duplicate-shape-validations 0}}
+  {:id :fixed-counter-key-validation
+   :generator :constant-key-generated-transition-loop
+   :scale-points [10000 100000 1000000]
+   :model :prevalidated-slot-equivalence
+   :tolerance {:kind :exact :value-difference 0 :failure-difference 0}}
+  {:id :duplicate-adapter-snapshot-id
+   :generator :current-exact-cache-hit-series
+   :scale-points [1 100 10000]
+   :model :one-basis-capture-no-cache-requery
+   :tolerance {:kind :exact :post-capture-snapshot-calls 0}}
+  {:id :eager-proof-frame
+   :generator :compatible-exact-cache-hit-series
+   :scale-points [1 1000 100000]
+   :model :unused-state-not-constructed
+   :tolerance {:kind :exact :unused-proof-frames 0}}
+  {:id :eager-request-memo-slots
+   :generator :compatible-exact-cache-hit-series
+   :scale-points [1 1000 100000]
+   :model :unused-state-not-constructed
+   :tolerance {:kind :exact :unused-memo-atoms 0}}
+  {:id :eager-publication-buffer
+   :generator :cache-disabled-point-series
+   :scale-points [1 1000 100000]
+   :model :unused-state-not-constructed
+   :tolerance {:kind :exact :unused-publication-buffers 0}}
+  {:id :native-membership-double-normalization
+   :generator :distinct-probes-one-descriptor
+   :scale-points [256 1024 4096]
+   :model :one-candidate-validation-at-owning-boundary
+   :tolerance {:kind :exact :candidate-validations-per-candidate 1}}
+  {:id :completed-hit-recency-mutation
+   :generator :single-hot-entry-under-cold-churn
+   :scale-points [1000 10000 100000]
+   :model :nonserializing-bounded-recency
+   :tolerance {:kind :policy-exact :hot-key-survives? true}}
+  {:id :completed-hit-telemetry-mutation
+   :generator :single-hot-entry-observation-disabled
+   :scale-points [1000 10000 100000]
+   :model :zero-disabled-observer-mutation
+   :tolerance {:kind :exact :observer-mutations 0}}
+  {:id :plan-and-memo-hit-candidate-allocation
+   :generator :resident-schema-plan-and-request-memo
+   :scale-points [1000 10000 100000]
+   :model :completed-value-first
+   :tolerance {:kind :exact :candidate-builds-on-hit 0}}
+  {:id :independent-completed-cache-misses
+   :generator :promise-controlled-identical-cold-burst
+   :scale-points [2 8 32]
+   :model :independent-request-work
+   :tolerance {:kind :exact :waiters 0 :owner-failure-inheritance 0}}
+  {:id :shared-parsed-schema-delay
+   :generator :promise-controlled-schema-build-failure
+   :scale-points [2 8 32]
+   :model :independent-build-and-bounded-install
+   :tolerance {:kind :exact :waiters 0 :failure-publications 0}}
+  {:id :shared-validation-catalog-delay
+   :generator :promise-controlled-catalog-build-failure
+   :scale-points [2 8 32]
+   :model :independent-build-and-bounded-install
+   :tolerance {:kind :exact :waiters 0 :failure-publications 0}}
+  {:id :shared-expression-decode-delay
+   :generator :promise-controlled-expression-decode-failure
+   :scale-points [2 8 32]
+   :model :independent-build-and-bounded-install
+   :tolerance {:kind :exact :waiters 0 :poisoned-slots 0}}
+  {:id :shared-sealed-plan-delay
+   :generator :promise-controlled-plan-seal-failure
+   :scale-points [2 8 32]
+   :model :independent-build-and-bounded-install
+   :tolerance {:kind :exact :waiters 0 :poisoned-slots 0}}
+  {:id :finite-current-cache-decision
+   :generator :complete-stage-availability-domain
+   :scale-points [1 10000 1000000]
+   :model :complete-finite-refinement
+   :tolerance {:kind :exact :partition-differences 0}}
+  {:id :restored-entry-operation-validation
+   :generator :authenticated-wrong-operation-shape-snapshot
+   :scale-points [1 16 256]
+   :model :semantic-invariant
+   :tolerance {:kind :exact :wrong-shaped-hits 0}}
+  {:id :completed-cache-compatibility-identity
+   :generator :old-new-compiler-and-value-abi-matrix
+   :scale-points [1 16 256]
+   :model :semantic-invariant
+   :tolerance {:kind :exact :incompatible-hits 0}}
+  {:id :cache-flight-contract-reconciliation
+   :generator :durable-spec-and-source-inventory
+   :scale-points [1 2 32]
+   :model :semantic-invariant
+   :tolerance {:kind :exact :positive-join-requirements 0 :waiters 0}}
+  {:id :rank-cost-duplicate-authority
+   :generator :all-four-stable-rule-kinds
+   :scale-points [4 16 64]
+   :model :single-production-contract-independent-oracle
+   :tolerance {:kind :exact :rank-differences 0}}
+  {:id :datomic-unconditional-exact-sync
+   :generator :live-seeded-and-disposable-exact-selection
+   :scale-points [30000 100000 1000000]
+   :model :conditional-targeted-synchronization
+   :tolerance {:kind :exact :covered-sync-calls 0 :behind-sync-calls 1}}]}

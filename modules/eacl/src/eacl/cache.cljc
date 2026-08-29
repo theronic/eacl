@@ -7,6 +7,7 @@
   (native completed answers are client-private and never flow through
   portable providers)."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.formal.current-cache-refinement :as cache-refinement]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
@@ -82,16 +83,19 @@
    (dissoc internal-query
            :consistency :cache? :populate-cache? :cancellation-token)})
 
-(defrecord ExactGeneration [snapshot order subproblems last-used])
+(defrecord ExactGeneration
+           [snapshot order subproblems last-used access-state promoted-access])
 (defrecord ManagedGeneration
-           [generation-key schema-generation subproblems last-used])
+           [generation-key schema-generation subproblems last-used
+            access-state promoted-access])
 (defrecord CacheLifecycle [bases managed])
 (defrecord BasisCache [lifecycle metrics max-entries admissions
                                    admit-on-repeat? subproblem-options
                                    retained-bases managed-lifting-disabled?
                                    reported-contract-violations
                                    content-revision
-                                   proof-contract-reporter])
+                                   proof-contract-reporter
+                                   telemetry-enabled?])
 
 (def basis-snapshot-format
   "Version identifier for process-neutral basis-cache snapshot values."
@@ -287,11 +291,12 @@
   ([]
    (basis-cache {}))
   ([{:keys [max-entries admit-on-repeat? subproblem-cache retained-bases
-            proof-contract-reporter]
+            proof-contract-reporter telemetry?]
      :or {max-entries 1024
           admit-on-repeat? false
           retained-bases 4
-          subproblem-cache {}}}]
+          subproblem-cache {}
+          telemetry? true}}]
    (when-not (and (integer? max-entries) (pos? max-entries))
      (throw (ex-info "Basis cache :max-entries must be positive."
                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
@@ -315,13 +320,21 @@
       (ex-info "Basis cache :proof-contract-reporter must be a function."
                {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                 :proof-contract-reporter proof-contract-reporter})))
+   (when-not (boolean? telemetry?)
+     (throw
+      (ex-info "Basis cache :telemetry? must be boolean."
+               {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                :telemetry? telemetry?})))
    (when-not (boolean? (get subproblem-cache :enabled? true))
      (throw (ex-info "Basis cache subproblem :enabled? must be boolean."
                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                       :subproblem-cache subproblem-cache})))
    ;; Validate budgets before a request attempts to install a generation.
-   (subproblem/store (dissoc subproblem-cache :enabled?))
-   (let [content-revision (atom 0)]
+   (let [subproblem-cache (if telemetry?
+                            subproblem-cache
+                            (assoc subproblem-cache :telemetry? false))]
+     (subproblem/store (dissoc subproblem-cache :enabled?))
+     (let [content-revision (atom 0)]
      (->BasisCache
       (atom (new-lifecycle subproblem-cache))
       (atom {:exact-hits 0
@@ -344,15 +357,23 @@
       (atom false)
       (atom #{})
       content-revision
-      proof-contract-reporter))))
+      proof-contract-reporter
+      telemetry?)))))
 
 (defn basis-cache?
   [value]
   (instance? BasisCache value))
 
+(defn- record-metrics!
+  [store f & args]
+  (when (:telemetry-enabled? store)
+    (apply swap! (:metrics store) f args))
+  nil)
+
 (def cache-option-keys
   "Closed configuration surface for the client-private authorization cache."
-  #{:max-entries :admit-on-repeat? :subproblem-cache :retained-bases})
+  #{:max-entries :admit-on-repeat? :subproblem-cache :retained-bases
+    :telemetry?})
 
 (defn- invalid-cache-option!
   [message value data]
@@ -370,8 +391,8 @@
   "Builds the private basis cache corresponding to a public `:cache` option.
 
   `no-cache` disables it. Cache stores are client-private and cannot be
-  supplied by applications. A closed config map contributes only the four
-  documented capacity/admission settings."
+  supplied by applications. A closed config map contributes only the five
+  documented capacity/admission/telemetry settings."
   ([value]
    (basis-cache-for-option value {}))
   ([value {:keys [proof-contract-reporter]}]
@@ -459,6 +480,7 @@
             (dissoc (:subproblem-options store) :enabled?)
             (:content-revision store))))]
     (assoc @(:metrics store)
+           :telemetry-enabled? (:telemetry-enabled? store)
            :managed-lifting-disabled?
            @(:managed-lifting-disabled? store)
            :exact-entries
@@ -487,7 +509,7 @@
       (throw (ex-info "Expected an EACL basis cache."
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :cache store})))
-    (swap! (:metrics store) update :bypasses inc))
+    (record-metrics! store update :bypasses inc))
   nil)
 
 (defn record-proof-unavailable!
@@ -501,12 +523,13 @@
       (throw (ex-info "Expected an EACL basis cache."
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :cache store})))
-    (swap! (:metrics store)
-           (fn [metrics]
-             (-> metrics
-                 (update :proof-unavailable inc)
-                 (update-in [:proof-unavailable-reasons reason]
-                            (fnil inc 0))))))
+    (record-metrics!
+     store
+     (fn [metrics]
+       (-> metrics
+           (update :proof-unavailable inc)
+           (update-in [:proof-unavailable-reasons reason]
+                      (fnil inc 0))))))
   nil)
 
 (defn record-proof-diagnostic!
@@ -527,12 +550,13 @@
       :contract-violation
       (do
         (reset! (:managed-lifting-disabled? store) true)
-        (swap! (:metrics store)
-               (fn [metrics]
-                 (-> metrics
-                     (update :proof-contract-violations inc)
-                     (update-in [:proof-contract-violation-reasons reason]
-                                (fnil inc 0)))))
+        (record-metrics!
+         store
+         (fn [metrics]
+           (-> metrics
+               (update :proof-contract-violations inc)
+               (update-in [:proof-contract-violation-reasons reason]
+                          (fnil inc 0)))))
         (when (and (:proof-contract-reporter store)
                    (not (contains? @(:reported-contract-violations store)
                                    reason)))
@@ -589,50 +613,88 @@
   (reset! (:admissions store) empty-answer-sightings)
   (reset! (:managed-lifting-disabled? store) false)
   (reset! (:reported-contract-violations store) #{})
-  (swap! (:metrics store) update :expirations inc)
+  (record-metrics! store update :expirations inc)
   (swap! (:content-revision store) inc)
   nil)
 
+(defn- touch-generation!
+  [generation]
+  (when-let [access-state (:access-state generation)]
+    (swap! access-state inc))
+  generation)
+
+(defn- materialize-generation-accesses
+  "Coalesces per-generation hit counters into the immutable eviction state.
+
+  This runs only while installing a generation. Hits never contend on the
+  lifecycle atom; every generation touched since the previous installation is
+  promoted ahead of untouched generations before a victim is selected."
+  [{:keys [generations] :as state}]
+  (reduce
+   (fn [{:keys [tick] :as current} [key generation]]
+     (let [access-generation (some-> (:access-state generation) deref)]
+       (if (and (integer? access-generation)
+                (< (:promoted-access generation 0) access-generation))
+         (let [tick (inc tick)]
+           (-> current
+               (assoc :tick tick)
+               (assoc-in [:generations key :last-used] tick)
+               (assoc-in [:generations key :promoted-access]
+                         access-generation)))
+         current)))
+   state
+   ;; Preserve the previous LRU relation among entries promoted in the same
+   ;; coalescing pass. The new generation is installed after all promotions.
+   (sort-by (fn [[key generation]]
+              [(:last-used generation) (pr-str key)])
+            generations)))
+
 (defn- install-exact-generation!
-  "Installs or touches one exact-basis generation in the lifecycle LRU."
+  "Installs one exact-basis generation or records a non-serializing touch."
   [store lifecycle basis-key snapshot order]
   (if-not (valid-exact-basis-key? basis-key)
     {:generation nil :active? false}
-    (let [selected (volatile! nil)
-          changed? (volatile! false)]
-      (swap!
-       (:bases lifecycle)
-       (fn [{:keys [tick generations]}]
-         (let [tick (inc tick)
-               existing (get generations basis-key)
-               generation
-               (if existing
-                 (assoc existing :last-used tick)
-                 (->ExactGeneration
-                  snapshot order
-                  (subproblem/store
-                   (dissoc (:subproblem-options store) :enabled?)
-                   (:content-revision store))
-                  tick))
-               generations (assoc generations basis-key generation)
-               overflow (- (count generations) (:retained-bases store))
-               victims
-               (when (pos? overflow)
-                 (->> generations
-                      (remove (fn [[key _]] (= key basis-key)))
-                      (sort-by (fn [[key value]]
-                                 [(:last-used value) (pr-str key)]))
-                      (take overflow)
-                      (map first)))
-               generations (if (seq victims)
-                             (apply dissoc generations victims)
-                             generations)]
-           (vreset! selected generation)
-           (vreset! changed? (or (nil? existing) (seq victims)))
-           {:tick tick :generations generations})))
-      (when @changed?
-        (swap! (:content-revision store) inc))
-      {:generation @selected :active? true})))
+    (if-let [existing
+             (get-in @(:bases lifecycle) [:generations basis-key])]
+      {:generation (touch-generation! existing) :active? true}
+      (let [selected (volatile! nil)
+            installed? (volatile! false)
+            candidate
+            (->ExactGeneration
+             snapshot order
+             (subproblem/store
+              (dissoc (:subproblem-options store) :enabled?)
+              (:content-revision store))
+             0 (atom 0) 0)]
+        (swap!
+         (:bases lifecycle)
+         (fn [{:keys [generations] :as original}]
+           (if-let [winner (get generations basis-key)]
+             (do (vreset! selected winner) original)
+             (let [{:keys [tick generations] :as materialized}
+                   (materialize-generation-accesses original)
+                   tick (inc tick)
+                   generation (assoc candidate :last-used tick)
+                   generations (assoc generations basis-key generation)
+                   overflow (- (count generations) (:retained-bases store))
+                   victims
+                   (when (pos? overflow)
+                     (->> generations
+                          (remove (fn [[key _]] (= key basis-key)))
+                          (sort-by (fn [[key value]]
+                                     [(:last-used value) (pr-str key)]))
+                          (take overflow)
+                          (map first)))
+                   generations (if (seq victims)
+                                 (apply dissoc generations victims)
+                                 generations)]
+               (vreset! selected generation)
+               (vreset! installed? true)
+               (assoc materialized :tick tick :generations generations)))))
+        (if @installed?
+          (swap! (:content-revision store) inc)
+          (touch-generation! @selected))
+        {:generation @selected :active? true}))))
 
 (defn- select-exact-generation!
   "Selects an existing exact generation for read-only requests; installs one
@@ -640,10 +702,12 @@
   [store lifecycle basis-key snapshot order populate?]
   (if populate?
     (install-exact-generation! store lifecycle basis-key snapshot order)
-    {:generation
-     (when (valid-exact-basis-key? basis-key)
-       (get-in @(:bases lifecycle) [:generations basis-key]))
-     :active? (valid-exact-basis-key? basis-key)}))
+    (let [valid? (valid-exact-basis-key? basis-key)
+          generation
+          (when valid?
+            (get-in @(:bases lifecycle) [:generations basis-key]))]
+      {:generation (some-> generation touch-generation!)
+       :active? valid?})))
 
 (defn- managed-generation-key
   [lineage schema-generation]
@@ -661,7 +725,7 @@
      :schema-generation schema-generation}))
 
 (defn- install-managed-generation!
-  "Installs or touches one lineage-and-schema managed generation.
+  "Installs one lineage-and-schema managed generation or records a touch.
 
   Revision order is recorded only for diagnostics. It is never an admission
   predicate: equal complete schema and dependency frontiers prove an equal
@@ -669,42 +733,47 @@
   [store lifecycle lineage schema-generation]
   (when-let [generation-key
              (managed-generation-key lineage schema-generation)]
-    (let [selected (volatile! nil)
-          changed? (volatile! false)]
-      (swap!
-       (:managed lifecycle)
-       (fn [{:keys [tick generations]}]
-         (let [tick (inc tick)
-               existing (get generations generation-key)
-               generation
-               (if existing
-                 (assoc existing :last-used tick)
-                 (->ManagedGeneration
-                  generation-key
-                  schema-generation
-                  (subproblem/store
-                   (dissoc (:subproblem-options store) :enabled?)
-                   (:content-revision store))
-                  tick))
-               generations (assoc generations generation-key generation)
-               overflow (- (count generations) (:retained-bases store))
-               victims
-               (when (pos? overflow)
-                 (->> generations
-                      (remove (fn [[key _]] (= key generation-key)))
-                      (sort-by (fn [[key value]]
-                                 [(:last-used value) (pr-str key)]))
-                      (take overflow)
-                      (map first)))
-               generations (if (seq victims)
-                             (apply dissoc generations victims)
-                             generations)]
-           (vreset! selected generation)
-           (vreset! changed? (or (nil? existing) (seq victims)))
-           {:tick tick :generations generations})))
-      (when @changed?
-        (swap! (:content-revision store) inc))
-      @selected)))
+    (if-let [existing
+             (get-in @(:managed lifecycle) [:generations generation-key])]
+      (touch-generation! existing)
+      (let [selected (volatile! nil)
+            installed? (volatile! false)
+            candidate
+            (->ManagedGeneration
+             generation-key schema-generation
+             (subproblem/store
+              (dissoc (:subproblem-options store) :enabled?)
+              (:content-revision store))
+             0 (atom 0) 0)]
+        (swap!
+         (:managed lifecycle)
+         (fn [{:keys [generations] :as original}]
+           (if-let [winner (get generations generation-key)]
+             (do (vreset! selected winner) original)
+             (let [{:keys [tick generations] :as materialized}
+                   (materialize-generation-accesses original)
+                   tick (inc tick)
+                   generation (assoc candidate :last-used tick)
+                   generations (assoc generations generation-key generation)
+                   overflow (- (count generations) (:retained-bases store))
+                   victims
+                   (when (pos? overflow)
+                     (->> generations
+                          (remove (fn [[key _]] (= key generation-key)))
+                          (sort-by (fn [[key value]]
+                                     [(:last-used value) (pr-str key)]))
+                          (take overflow)
+                          (map first)))
+                   generations (if (seq victims)
+                                 (apply dissoc generations victims)
+                                 generations)]
+               (vreset! selected generation)
+               (vreset! installed? true)
+               (assoc materialized :tick tick :generations generations)))))
+        (if @installed?
+          (swap! (:content-revision store) inc)
+          (touch-generation! @selected))
+        @selected))))
 
 (defn- select-managed-generation!
   "Selects an existing lineage generation without creating it for read-only
@@ -715,7 +784,8 @@
      store lifecycle lineage schema-generation)
     (when-let [generation-key
                (managed-generation-key lineage schema-generation)]
-      (get-in @(:managed lifecycle) [:generations generation-key]))))
+      (some-> (get-in @(:managed lifecycle) [:generations generation-key])
+              touch-generation!))))
 
 (defn- positive-snapshot-bound!
   [option value]
@@ -963,18 +1033,19 @@
             (restored-generation-state
              exact :basis-key
              (fn [{:keys [order store]} last-used]
-               (->ExactGeneration nil order store last-used))))
+               (->ExactGeneration nil order store last-used (atom 0) 0))))
            (atom
             (restored-generation-state
              managed :generation-key
              (fn [{:keys [generation-key schema-generation store]} last-used]
                (->ManagedGeneration
-                generation-key schema-generation store last-used)))))]
+                generation-key schema-generation store last-used
+                (atom 0) 0)))))]
       (reset! (:lifecycle store) lifecycle)
       (reset! (:admissions store) empty-answer-sightings)
       (reset! (:managed-lifting-disabled? store) false)
       (reset! (:reported-contract-violations store) #{})
-      (swap! (:metrics store) update :restores inc)
+      (record-metrics! store update :restores inc)
       (swap! (:content-revision store) inc)
       {:restored? true
        :generation-counts (:generation-counts snapshot)
@@ -997,15 +1068,31 @@
         (when (valid-managed-descriptor? descriptor)
           descriptor))
       (catch #?(:clj Exception :cljs :default) _
-        (swap! (:metrics store) update :stamp-failures inc)
+        (record-metrics! store update :stamp-failures inc)
         nil))))
+
+(def ^:dynamic ^:no-doc *current-cache-specialization-enabled?* true)
+
+(defn ^:no-doc specialized-current-cache-action
+  [stage available?]
+  (cache-refinement/action stage available?))
+
+(defn ^:no-doc current-cache-specialization-authorized?
+  [kernel]
+  (and (identical? kernel subproblem/default-decision-kernel)
+       (cache-refinement/authorized-selection?
+        subproblem/default-current-cache-refinement)))
 
 (defn- current-cache-action
   [decision-kernel stage available?]
-  (verified/decide
-   (or decision-kernel subproblem/*decision-kernel*)
-   :current-cache-decision
-   {:stage stage :available? available?}))
+  (let [kernel (or decision-kernel subproblem/*decision-kernel*)]
+    (if (and *current-cache-specialization-enabled?*
+             (current-cache-specialization-authorized? kernel))
+      (specialized-current-cache-action stage available?)
+      (verified/decide
+       kernel
+       :current-cache-decision
+       {:stage stage :available? available?}))))
 
 (defn resolve-exact!
   "Resolves an answer in one historical-class exact-basis generation.
@@ -1038,7 +1125,7 @@
             (subproblem/with-decision-memo compute)))]
     (if-not (valid-exact-basis-key? exact-basis-key)
       (do
-        (swap! (:metrics store) update :bypasses inc)
+        (record-metrics! store update :bypasses inc)
         {:value (uncached-compute)
          :cached? false
          :cache-tier nil
@@ -1080,7 +1167,7 @@
                :cache-basis cache-basis})
             hit
             (fn [entry]
-              (swap! (:metrics store) update :exact-hits inc)
+              (record-metrics! store update :exact-hits inc)
               {:value (:value entry)
                :cached? true
                :cache-tier :exact-basis
@@ -1101,20 +1188,19 @@
               (if (:cached? resolved)
                 (hit entry)
                 (do
-                  (swap! (:metrics store)
-                         #(-> %
-                              (update :misses inc)
-                              (update :puts inc)))
+                  (record-metrics!
+                   store
+                   #(-> %
+                        (update :misses inc)
+                        (update :puts inc)))
                   {:value (:value entry)
                    :cached? false
                    :cache-tier nil
                    :cache-basis cache-basis
                    :subproblem-store answer-store})))
             (let [entry (evaluate-entry)]
-              (swap! (:metrics store)
-                     update
-                     (if remember-answer? :misses :bypasses)
-                     inc)
+              (record-metrics!
+               store update (if remember-answer? :misses :bypasses) inc)
               {:value (:value entry)
                :cached? false
                :cache-tier nil
@@ -1149,7 +1235,7 @@
           (and (some? store) cacheable?)))
     (do
       (when (basis-cache? store)
-        (swap! (:metrics store) update :bypasses inc))
+        (record-metrics! store update :bypasses inc))
       {:value (binding [subproblem/*store* nil
                         subproblem/*managed-store* nil
                         subproblem/*managed-key-fn* nil
@@ -1182,7 +1268,7 @@
                (current-cache-action
                 decision-kernel :generation active?))
           (do
-            (swap! (:metrics store) update :bypasses inc)
+            (record-metrics! store update :bypasses inc)
             {:value (binding [subproblem/*store* nil
                               subproblem/*managed-store* nil
                               subproblem/*managed-key-fn* nil
@@ -1208,7 +1294,7 @@
                  decision-kernel :exact-entry (some? exact-entry))]
             (if (= :use-exact-entry exact-action)
               (do
-                (swap! (:metrics store) update :exact-hits inc)
+                (record-metrics! store update :exact-hits inc)
                 {:value (:value exact-entry)
                  :cached? true
                  :cache-tier :exact-basis
@@ -1244,8 +1330,8 @@
                       (subproblem/resolve-independent!
                        answer-store :answer entry-key answer-options
                        (fn [] managed-entry))
-                      (swap! (:metrics store) update :puts inc))
-                    (swap! (:metrics store) update :managed-hits inc)
+                      (record-metrics! store update :puts inc))
+                    (record-metrics! store update :managed-hits inc)
                     {:value (:value managed-entry)
                      :cached? true
                      :cache-tier :managed-current
@@ -1293,25 +1379,24 @@
                         ;; A compatible completed value was already visible
                         ;; at lookup time; serve it as the exact hit it is.
                           (do
-                            (swap! (:metrics store) update :exact-hits inc)
+                            (record-metrics! store update :exact-hits inc)
                             {:value (:value entry)
                              :cached? true
                              :cache-tier :exact-basis
                              :cache-basis (:cache-basis entry)
                              :subproblem-store answer-store})
                           (do
-                            (swap! (:metrics store) update :misses inc)
-                            (swap! (:metrics store) update :puts inc)
+                            (record-metrics! store update :misses inc)
+                            (record-metrics! store update :puts inc)
                             {:value (:value entry)
                              :cached? false
                              :cache-tier nil
                              :cache-basis (:cache-basis entry)
                              :subproblem-store answer-store})))
                       (let [entry (compute-entry)]
-                        (swap! (:metrics store)
-                               update
-                               (if remember-answer? :misses :bypasses)
-                               inc)
+                        (record-metrics!
+                         store update
+                         (if remember-answer? :misses :bypasses) inc)
                         {:value (:value entry)
                          :cached? false
                          :cache-tier nil
@@ -1367,14 +1452,14 @@
               managed-store :answer entry-key answer-options)))]
       (if entry
         (do
-          (swap! (:metrics store) update :managed-hits inc)
+          (record-metrics! store update :managed-hits inc)
           {:value (:value entry)
            :cached? true
            :cache-tier :managed-current
            :cache-basis (:cache-basis entry)
            :subproblem-store nil})
         (do
-          (swap! (:metrics store) update :bypasses inc)
+          (record-metrics! store update :bypasses inc)
           {:value
            (binding [subproblem/*populate?* false
                      subproblem/*store* nil

@@ -22,8 +22,13 @@
          :evaluation :timeout-ms
          :cancellation-token :aggregate-limits :authorization]))
 
+(def ^:dynamic ^:no-doc *validated-request?* false)
+
 (defn validate!
   [filters]
+  (if *validated-request?*
+    filters
+    (do
   (when-not (map? filters)
     (throw
      (ex-info
@@ -87,4 +92,4 @@
              :operation :read-relationships
              :filter :subject/id
              :required-filter :subject/type})))
-  filters)
+      filters)))

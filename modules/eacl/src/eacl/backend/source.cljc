@@ -45,7 +45,9 @@
    :acquire-at-least!
    #{:one-selected-basis :requested-floor-satisfied-or-typed-failure}
    :acquire-exact!
-   #{:one-selected-basis :exact-locator-selection :no-current-head-acquisition}
+   #{:one-selected-basis :exact-locator-selection
+     :at-most-one-local-observation
+     :conditional-targeted-synchronization}
    :release!
    #{:owned-native-release :idempotent-shared-boundary
      :declared-thread-constraint}})

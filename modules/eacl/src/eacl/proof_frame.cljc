@@ -53,7 +53,10 @@
         :key :schema-generation-fn})))
    {:adapter adapter
     :basis-identity basis-identity
-    :snapshot-id-delay (delay (backend/invoke adapter :snapshot-id))
+    :snapshot-id-delay
+    (delay
+      (or (:backend-snapshot-id basis-identity)
+          (backend/invoke adapter :snapshot-id)))
     :source-lifecycle-delay
     (delay (:source-lifecycle basis-identity))
     :revision-delay

@@ -213,8 +213,8 @@
                           (:intermediate-type descriptor)
                           options))]
                (vswap! counters assoc :commands next-commands)
-               (request-counters/add! :commands)
-               (request-counters/add! :fetched-values (count chunk))
+               (request-counters/add-commands!)
+               (request-counters/add-fetched-values! (count chunk))
                (execution/check! execution/*contract*
                                  :operator-recursive/arrow-scan-after
                                  {:commands next-commands

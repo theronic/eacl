@@ -1,0 +1,381 @@
+{:ledger/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :allowed-dispositions #{:pending :reproduced :refuted :correctness-required}
+ :outcomes
+ {:implemented
+  #{:acyclic-alias-frontier
+    :least-path-adapter-limit-forwarding
+    :stable-full-result-retention
+    :stable-completion-distinct
+    :stable-buffer-suffix-view
+    :routed-response-vector-recopy
+    :stable-retained-maximum-rescan
+    :stable-sidecar-recency-filter
+    :continuation-recency-filter
+    :zero-successor-scheduling
+    :one-successor-scheduling
+    :public-boundary-revalidation
+    :fixed-counter-key-validation
+    :duplicate-adapter-snapshot-id
+    :eager-proof-frame
+    :eager-request-memo-slots
+    :eager-publication-buffer
+    :native-membership-double-normalization
+    :completed-hit-recency-mutation
+    :completed-hit-telemetry-mutation
+    :plan-and-memo-hit-candidate-allocation
+    :independent-completed-cache-misses
+    :shared-parsed-schema-delay
+    :shared-validation-catalog-delay
+    :shared-expression-decode-delay
+    :shared-sealed-plan-delay
+    :finite-current-cache-decision
+    :rank-cost-duplicate-authority
+    :datomic-unconditional-exact-sync}
+  :refuted
+  #{:terminal-scan-evidence :captured-adapter-invoker}
+  :correctness-required
+  #{:restored-entry-operation-validation
+    :completed-cache-compatibility-identity
+    :cache-flight-contract-reconciliation}}
+ :rows
+ [{:id :acyclic-alias-frontier
+   :scope :planning
+   :live-source {:path "modules/eacl/src/eacl/engine/sealed_plan.cljc"
+                 :symbol "seal-plan"}
+   :reproducer :alias-equivalent-arrow-frontiers
+   :primary :exact-alias-denotation-and-work-equality
+   :fixture :explorer-pure-alias
+  :operation :count-resources
+  :scale-points [1 4 16]
+   :disposition :reproduced}
+  {:id :least-path-adapter-limit-forwarding
+   :scope :least-path
+   :live-source {:path "modules/eacl/src/eacl/engine/least_path.cljc"
+                 :symbol "adapter-fetch-fn"}
+   :reproducer :eager-adapter-observed-width
+   :primary :backend-values-realized
+   :fixture :wide-acyclic-adjacency
+   :operation :lookup-resources
+   :scale-points [64 1024 16384]
+   :disposition :reproduced}
+  {:id :stable-full-result-retention
+   :scope :stable-sink
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "emit"}
+   :reproducer :retained-results-versus-demand
+   :primary :maximum-retained-result-units
+   :fixture :wide-recursive-result-set
+   :operation :count-resources
+   :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :stable-completion-distinct
+   :scope :stable-sink
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "finish"}
+   :reproducer :completion-allocation-and-structural-oracle
+   :primary :completion-uniqueness-rebuild-width
+   :fixture :multi-derivation-recursive
+   :operation :count-resources
+   :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :stable-buffer-suffix-view
+   :scope :stable-sidecar
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "release-one"}
+   :reproducer :one-value-releases-per-chunk
+   :primary :suffix-wrapper-allocations
+   :fixture :single-wide-scan
+   :operation :lookup-resources
+   :scale-points [64 1024 16384]
+   :disposition :reproduced}
+  {:id :routed-response-vector-recopy
+   :scope :physical-response-consumers
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "fetch-values"}
+   :reproducer :realized-vector-identity
+   :primary :equivalent-vector-allocations
+   :fixture :already-realized-bounded-response
+   :operation :lookup-resources
+   :scale-points [1 64 256]
+   :disposition :reproduced}
+  {:id :stable-retained-maximum-rescan
+   :scope :stable-sidecar
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "retain-buffer"}
+   :reproducer :sidecar-value-rescan-trace
+   :primary :retained-value-count-visits
+   :fixture :full-sidecar-capacity
+   :operation :lookup-resources
+   :scale-points [4 16 64]
+   :disposition :reproduced}
+  {:id :stable-sidecar-recency-filter
+   :scope :stable-sidecar
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "retain-buffer"}
+   :reproducer :fixed-capacity-touch-churn
+   :primary :recency-elements-copied
+   :fixture :repeated-sidecar-touch
+   :operation :lookup-resources
+   :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :continuation-recency-filter
+   :scope :continuation-cache
+   :live-source {:path "modules/eacl/src/eacl/continuation.cljc"
+                 :symbol "put!"}
+   :reproducer :fixed-capacity-continuation-churn
+   :primary :recency-or-tombstone-elements-scanned
+   :fixture :continued-recursive-pages
+   :operation :lookup-resources
+   :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :zero-successor-scheduling
+   :scope :stable-scheduler
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "schedule"}
+   :reproducer :zero-successor-transition-trace
+   :primary :scheduler-temporaries-per-transition
+   :fixture :terminal-grant
+   :operation :can?
+   :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :one-successor-scheduling
+   :scope :stable-scheduler
+   :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
+                 :symbol "schedule"}
+   :reproducer :one-successor-transition-trace
+   :primary :scheduler-temporaries-per-transition
+   :fixture :linear-permission-chain
+   :operation :lookup-resources
+   :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :terminal-scan-evidence
+   :scope :physical-scan-capability
+   :live-source {:path "modules/eacl/src/eacl/engine/physical.cljc"
+                 :symbol "classified-fetch-fn"}
+   :reproducer :conservative-lookahead-command-count
+   :primary :backend-commands-and-progress-correctness
+   :fixture :exact-chunk-boundary
+  :operation :lookup-resources
+  :scale-points [64 128 1024]
+   :disposition :refuted}
+  {:id :public-boundary-revalidation
+   :scope :request-validation
+   :live-source {:path "modules/eacl/src/eacl/client/orchestration.cljc"
+                 :symbol "authorization-scan-page"}
+   :reproducer :validation-call-ledger
+   :primary :validation-shape-rebuilds
+   :fixture :rejection-heavy-filtered-page
+  :operation :read-relationships
+  :scale-points [256 4096 65536]
+   :disposition :reproduced}
+  {:id :fixed-counter-key-validation
+   :scope :request-meter
+   :live-source {:path "modules/eacl/src/eacl/request/counters.cljc"
+                 :symbol "add!"}
+   :reproducer :constant-counter-increment-microtrace
+   :primary :nanoseconds-and-allocations-per-increment
+   :fixture :generated-transition-counter-loop
+  :operation :lookup-resources
+  :scale-points [10000 100000 1000000]
+   :disposition :reproduced}
+  {:id :duplicate-adapter-snapshot-id
+   :scope :basis-cache-metadata
+   :live-source {:path "modules/eacl/src/eacl/client/orchestration.cljc"
+                 :symbol "cached-engine-result"}
+   :reproducer :adapter-operation-count
+   :primary :snapshot-id-invocations-per-request
+   :fixture :current-exact-cache-miss
+  :operation :check-permission
+  :scale-points [1 100 10000]
+   :disposition :reproduced}
+  {:id :eager-proof-frame
+   :scope :request-context
+   :live-source {:path "modules/eacl/src/eacl/request/context.cljc"
+                 :symbol "make-context"}
+   :reproducer :constructor-allocation-trace
+   :primary :objects-allocated-before-first-proof-use
+   :fixture :compatible-exact-cache-hit
+  :operation :check-permission
+  :scale-points [1 1000 100000]
+   :disposition :reproduced}
+  {:id :eager-request-memo-slots
+   :scope :request-context
+   :live-source {:path "modules/eacl/src/eacl/request/context.cljc"
+                 :symbol "make-context"}
+   :reproducer :constructor-allocation-trace
+   :primary :memo-atoms-allocated-before-use
+   :fixture :compatible-exact-cache-hit
+  :operation :check-permission
+  :scale-points [1 1000 100000]
+   :disposition :reproduced}
+  {:id :eager-publication-buffer
+   :scope :request-context
+   :live-source {:path "modules/eacl/src/eacl/request/context.cljc"
+                 :symbol "make-context"}
+   :reproducer :constructor-allocation-trace
+   :primary :publication-state-allocated-before-use
+   :fixture :cache-disabled-point-check
+  :operation :check-permission
+  :scale-points [1 1000 100000]
+   :disposition :reproduced}
+  {:id :native-membership-double-normalization
+   :scope :direct-membership
+   :live-source {:path "modules/eacl/src/eacl/backend/direct_membership.cljc"
+                 :symbol "dispatch"}
+   :reproducer :normalization-call-ledger
+   :primary :candidate-validations
+   :fixture :thousand-distinct-misses-one-descriptor
+  :operation :check-permissions
+  :scale-points [256 1024 4096]
+   :disposition :reproduced}
+  {:id :captured-adapter-invoker
+   :scope :adapter-dispatch
+   :live-source {:path "modules/eacl/src/eacl/backend/v8.cljc"
+                 :symbol "invoke"}
+   :reproducer :operation-lookup-and-shape-count
+   :primary :dispatch-overhead-per-physical-call
+   :fixture :membership-probe-loop
+  :operation :check-permissions
+  :scale-points [256 4096 65536]
+   :disposition :refuted}
+  {:id :completed-hit-recency-mutation
+   :scope :completed-cache-hit
+   :live-source {:path "modules/eacl/src/eacl/subproblem_cache.cljc"
+                 :symbol "lookup!"}
+   :reproducer :hot-hit-shared-state-mutation-count
+   :primary :shared-mutations-per-hit
+   :fixture :single-hot-exact-answer
+  :operation :check-permission
+  :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :completed-hit-telemetry-mutation
+   :scope :completed-cache-hit
+   :live-source {:path "modules/eacl/src/eacl/cache.cljc"
+                 :symbol "resolve-basis!"}
+   :reproducer :telemetry-disabled-mutation-count
+   :primary :observer-mutations-per-hit
+   :fixture :single-hot-exact-answer
+  :operation :check-permission
+  :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :plan-and-memo-hit-candidate-allocation
+   :scope :derived-cache-hit
+   :live-source {:path "modules/eacl/src/eacl/engine/v8.cljc"
+                 :symbol "memoized-derived!"}
+   :reproducer :resident-hit-allocation-trace
+   :primary :delay-allocations-per-hit
+   :fixture :resident-schema-and-sealed-plan
+  :operation :check-permissions
+  :scale-points [1000 10000 100000]
+   :disposition :reproduced}
+  {:id :independent-completed-cache-misses
+   :scope :cache-coordination
+   :live-source {:path "modules/eacl/src/eacl/subproblem_cache.cljc"
+                 :symbol "resolve-independent!"}
+   :reproducer :promise-controlled-concurrent-miss
+   :primary :no-waits-and-independent-deadlines
+   :fixture :identical-cold-key-burst
+  :operation :check-permission
+  :scale-points [2 8 32]
+   :disposition :reproduced}
+  {:id :shared-parsed-schema-delay
+   :scope :derived-cache-coordination
+   :live-source {:path "modules/eacl/src/eacl/client/orchestration.cljc"
+                 :symbol "request-schema"}
+   :reproducer :promise-controlled-concurrent-build
+   :primary :peer-waits-and-failure-inheritance
+   :fixture :cold-schema-generation
+  :operation :check-permission
+  :scale-points [2 8 32]
+   :disposition :reproduced}
+  {:id :shared-validation-catalog-delay
+   :scope :derived-cache-coordination
+   :live-source {:path "modules/eacl/src/eacl/client/orchestration.cljc"
+                 :symbol "request-schema"}
+   :reproducer :promise-controlled-concurrent-build
+   :primary :peer-waits-and-failure-inheritance
+   :fixture :cold-schema-catalog
+  :operation :check-permission
+  :scale-points [2 8 32]
+   :disposition :reproduced}
+  {:id :shared-expression-decode-delay
+   :scope :derived-cache-coordination
+   :live-source {:path "modules/eacl/src/eacl/schema/expression_persistence.cljc"
+                 :symbol "decode-entity-with-metadata"}
+   :reproducer :promise-controlled-concurrent-decode
+   :primary :peer-waits-and-failure-inheritance
+   :fixture :cold-structural-expression
+  :operation :check-permission
+  :scale-points [2 8 32]
+   :disposition :reproduced}
+  {:id :shared-sealed-plan-delay
+   :scope :derived-cache-coordination
+   :live-source {:path "modules/eacl/src/eacl/engine/v8.cljc"
+                 :symbol "stable-plan"}
+   :reproducer :promise-controlled-concurrent-seal
+   :primary :peer-waits-and-failure-inheritance
+   :fixture :cold-sealed-plan
+  :operation :lookup-resources
+  :scale-points [2 8 32]
+   :disposition :reproduced}
+  {:id :finite-current-cache-decision
+   :scope :verified-host-specialization
+   :live-source {:path "modules/eacl/src/eacl/cache.cljc"
+                 :symbol "current-cache-action"}
+   :reproducer :complete-finite-domain-differential
+   :primary :decision-invocations-and-equivalence
+   :fixture :all-stage-availability-pairs
+  :operation :check-permission
+  :scale-points [1 10000 1000000]
+   :disposition :reproduced}
+  {:id :restored-entry-operation-validation
+   :scope :cache-restore-correctness
+   :live-source {:path "modules/eacl/src/eacl/subproblem_cache.cljc"
+                 :symbol "restore-store"}
+   :reproducer :cross-operation-malformed-restored-value
+   :primary :operation-specific-cache-value-shape
+   :fixture :authenticated-structurally-valid-wrong-value
+  :operation :lookup-resources
+  :scale-points [1 16 256]
+   :disposition :correctness-required}
+  {:id :completed-cache-compatibility-identity
+   :scope :cache-key-correctness
+   :live-source {:path "modules/eacl/src/eacl/cache.cljc"
+                 :symbol "exact-basis-key"}
+   :reproducer :old-new-compatibility-matrix
+   :primary :incompatible-entry-miss
+   :fixture :pre-rollout-restored-entry
+  :operation :lookup-resources
+  :scale-points [1 16 256]
+   :disposition :correctness-required}
+  {:id :cache-flight-contract-reconciliation
+   :scope :durable-cache-contracts
+   :live-source {:path "modules/eacl/src/eacl/subproblem_cache.cljc"
+                 :symbol "resolve-independent!"}
+   :reproducer :source-and-spec-inventory
+   :primary :no-flight-symbols-waits-or-metrics
+   :fixture :four-cache-main-specs
+  :operation :all-authorization
+  :scale-points [1 2 32]
+   :disposition :correctness-required}
+  {:id :rank-cost-duplicate-authority
+   :scope :planning-identity
+   :live-source {:path "modules/eacl/src/eacl/engine/sealed_plan.cljc"
+                 :symbol "local-read-cost"}
+   :reproducer :source-inventory-and-formal-differential
+   :primary :single-production-rank-contract
+   :fixture :all-four-rule-kinds
+  :operation :lookup-resources
+  :scale-points [4 16 64]
+   :disposition :reproduced}
+  {:id :datomic-unconditional-exact-sync
+   :scope :datomic-exact-acquisition
+   :live-source {:path "modules/eacl-datomic/src/eacl/datomic/backend.clj"
+                 :symbol "source/acquire-exact!"}
+   :reproducer :instrumented-db-sync-as-of-counts
+   :primary :datomic-operation-counts-and-error-classification
+   :fixture :seeded-one-million-database
+  :operation :at-exact-snapshot
+  :scale-points [30000 100000 1000000]
+   :disposition :reproduced}]}

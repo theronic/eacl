@@ -119,3 +119,41 @@
          7 (persistence/decode-entity permission))]
     (is (= 1 (count definitions)))
     (is (= :reader (:target-name (first definitions))))))
+
+#?(:clj
+   (deftest concurrent-structural-decode-misses-build-independently-test
+     (let [request-count 8
+           cache (atom {})
+           entity {:eacl.permission/expression-payload "independent"}
+           ready (java.util.concurrent.CountDownLatch. request-count)
+           release (java.util.concurrent.CountDownLatch. 1)
+           builds (java.util.concurrent.atomic.AtomicLong.)
+           decode-var
+           (ns-resolve 'eacl.schema.expression-persistence
+                       'decode-entity-with-metadata-uncached)]
+       (with-redefs-fn
+         {decode-var
+          (fn [_]
+            (let [build (.getAndIncrement builds)]
+              (.countDown ready)
+              (.await release)
+              {:build build}))}
+         (fn []
+           (let [workers
+                 (mapv
+                  (fn [_]
+                    (future
+                      (binding [persistence/*structural-cache* cache]
+                        (persistence/decode-entity-with-metadata entity))))
+                  (range request-count))]
+             (is (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+             (is (= request-count (.get builds)))
+             (.countDown release)
+             (let [results (mapv #(deref % 5000 ::timed-out) workers)]
+               (is (= (set (map #(hash-map :build %)
+                                (range request-count)))
+                      (set results)))
+               (binding [persistence/*structural-cache* cache]
+                 (is (contains?
+                      (set results)
+                      (persistence/decode-entity-with-metadata entity)))))))))))

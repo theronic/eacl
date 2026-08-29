@@ -107,7 +107,7 @@
       (execution/check! execution/*contract*
                         :operator-point/direct-before
                         {:probes 0})
-      (request-counters/add! :probes)
+      (request-counters/add-probes!)
       (add-stat! :scalar-equivalent-predicates 1)
       (let [decision
             (backend/invoke adapter :direct-match?
@@ -165,8 +165,8 @@
                             (:intermediate-type partition)
                             options))]
                  (vswap! counters assoc :arrow-commands next-command)
-                 (request-counters/add! :commands)
-                 (request-counters/add! :fetched-values (count values))
+                 (request-counters/add-commands!)
+                 (request-counters/add-fetched-values! (count values))
                  (add-stat! :adapter-commands 1)
                  (add-stat! :adapter-fetched-values (count values))
                  values))))
