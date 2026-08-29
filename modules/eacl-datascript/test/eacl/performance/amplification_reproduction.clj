@@ -1,5 +1,5 @@
 (ns eacl.performance.amplification-reproduction
-  "Deterministic source-bound reproduction probes for the v8 performance audit.
+  "DataScript-backed deterministic reproduction probes for the v8 performance audit.
 
   These probes report logical counters and structural allocation proxies. They
   are not release benchmarks and do not turn elapsed time into a correctness
@@ -25,7 +25,8 @@
             [eacl.request.counters :as request-counters]
             [eacl.schema.errors :as schema-errors]
             [eacl.schema.expression-persistence :as expression-persistence]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.subproblem-cache :as subproblem]
+            [eacl.test-support.repo :as repo]))
 
 (def source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b")
 (def classpath-sha256
@@ -1011,8 +1012,7 @@
 
 (defn cache-flight-contract-probe
   []
-  (let [root (java.io.File. (System/getProperty "user.dir"))
-        specs
+  (let [specs
         ["openspec/specs/single-flight-coordination/spec.md"
          "openspec/specs/answer-cache-bounding/spec.md"
          "openspec/specs/verified-subproblem-cache/spec.md"]
@@ -1021,7 +1021,7 @@
         observations
         (mapv
          (fn [path]
-           (let [file (java.io.File. root path)
+           (let [file (repo/file path)
                  text (when (.isFile file) (slurp file))
                  matches (when text (re-seq positive-pattern text))]
              {:path path

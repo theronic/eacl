@@ -2,30 +2,34 @@
   (:require [clojure.edn :as edn]
             [clojure.set :as set]
             [clojure.test :refer [deftest is testing]]
-            [eacl.performance.evidence :as evidence]))
+            [eacl.performance.evidence :as evidence]
+            [eacl.test-support.repo :as repo]))
 
 (defn- read-edn
   [path]
   (edn/read-string (slurp path)))
 
-(def ^:private fixture-root
-  "docs/benchmarks/results/2026-08-29-eacl-performance-amplification/")
+(defn- fixture
+  [filename]
+  (repo/file "docs" "benchmarks" "results"
+             "2026-08-29-eacl-performance-amplification"
+             filename))
 
 (def ^:private frozen-release-acceptance-digest
   "8eba9de7d062bc39f1c89bd462f18b003422994fe5b5ce80f3582a011552a695")
 
 (deftest golden-evidence-is-deterministic-test
-  (let [acceptance (read-edn (str fixture-root "evidence-acceptance.edn"))
-        observed (read-edn (str fixture-root "evidence-golden.edn"))
+  (let [acceptance (read-edn (fixture "evidence-acceptance.edn"))
+        observed (read-edn (fixture "evidence-golden.edn"))
         report (evidence/analyze acceptance observed)
-        expected (read-edn (str fixture-root "evidence-golden-report.edn"))]
+        expected (read-edn (fixture "evidence-golden-report.edn"))]
     (is (= expected report))
     (is (= (:report-digest report)
            (evidence/sha256 (dissoc report :report-digest))))))
 
 (deftest malformed-evidence-fails-closed-test
-  (let [acceptance (read-edn (str fixture-root "evidence-acceptance.edn"))
-        valid (read-edn (str fixture-root "evidence-golden.edn"))
+  (let [acceptance (read-edn (fixture "evidence-acceptance.edn"))
+        valid (read-edn (fixture "evidence-golden.edn"))
         failure-reason
         (fn [candidate]
           (try
@@ -59,8 +63,8 @@
               (assoc-in valid [:identity :source :commit] "other")))))))
 
 (deftest volatile-host-fields-do-not-enter-canonical-report-test
-  (let [acceptance (read-edn (str fixture-root "evidence-acceptance.edn"))
-        valid (read-edn (str fixture-root "evidence-golden.edn"))
+  (let [acceptance (read-edn (fixture "evidence-acceptance.edn"))
+        valid (read-edn (fixture "evidence-golden.edn"))
         changed (-> valid
                     (assoc-in [:identity :environment :captured-at] "later")
                     (assoc-in [:identity :environment :pid] 99999)
@@ -69,7 +73,7 @@
            (evidence/analyze acceptance changed)))))
 
 (deftest metric-capability-records-are-complete-test
-  (let [document (read-edn (str fixture-root "metric-capabilities.edn"))
+  (let [document (read-edn (fixture "metric-capabilities.edn"))
         records (:records document)
         tuples
         (mapv (fn [record]
@@ -89,8 +93,8 @@
               records))))
 
 (deftest every-canonical-decision-mutation-breaks-the-golden-test
-  (let [acceptance (read-edn (str fixture-root "evidence-acceptance.edn"))
-        valid (read-edn (str fixture-root "evidence-golden.edn"))
+  (let [acceptance (read-edn (fixture "evidence-acceptance.edn"))
+        valid (read-edn (fixture "evidence-golden.edn"))
         expected (evidence/analyze acceptance valid)
         raw-mutant (update valid :raw conj {:sample 4})
         mutants
@@ -114,9 +118,8 @@
                                    (assoc valid :format :unknown))))))
 
 (deftest every-retained-mechanism-has-a-multiscale-adversarial-fixture-test
-  (let [ledger (read-edn (str fixture-root "mechanism-ledger.edn"))
-        coverage (read-edn (str fixture-root
-                                "mechanism-fixture-coverage.edn"))
+  (let [ledger (read-edn (fixture "mechanism-ledger.edn"))
+        coverage (read-edn (fixture "mechanism-fixture-coverage.edn"))
         outcomes (:outcomes ledger)
         outcome-ids (apply set/union (vals outcomes))
         expected-outcomes
@@ -169,7 +172,7 @@
                  (evidence/paired-confidence [] [] options)))))
 
 (deftest release-acceptance-is-frozen-before-candidate-evidence-test
-  (let [record (read-edn (str fixture-root "release-acceptance.edn"))]
+  (let [record (read-edn (fixture "release-acceptance.edn"))]
     (is (= record (evidence/validate-release-acceptance! record)))
     (is (= frozen-release-acceptance-digest (:record-digest record)))
     (is (thrown? clojure.lang.ExceptionInfo

@@ -7,6 +7,7 @@
             [eacl.formal.current-cache-refinement :as cache-refinement]
             #?(:clj [eacl.secure-format :as secure-format])
             [eacl.subproblem-cache :as subproblem]
+            #?(:clj [eacl.test-support.repo :as repo])
             [eacl.verified-kernel :as verified]))
 
 (deftest current-cache-host-specialization-exhausts-generated-domain-test
@@ -45,7 +46,8 @@
                (apply str
                       (map #(format "%02x" (bit-and (int %) 255)) bytes))))
            artifact-path
-           "formal/verification/current-cache-specialization.edn"
+           (repo/file "formal" "verification"
+                      "current-cache-specialization.edn")
            artifact (edn/read-string (slurp artifact-path))]
        (is (= cache-refinement/artifact-sha256
               (hex-digest artifact-path)))
@@ -56,7 +58,7 @@
                cache-refinement/artifact-domain
                {:domain (:domain artifact) :mapping (:mapping artifact)})))
        (doseq [[path expected] (:source-digests artifact)]
-         (is (= expected (hex-digest path)) path)))))
+         (is (= expected (hex-digest (repo/file path))) path)))))
 
 (defn- snapshot-object
   []

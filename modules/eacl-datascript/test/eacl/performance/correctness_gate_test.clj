@@ -1,4 +1,5 @@
 (ns eacl.performance.correctness-gate-test
+  "Ordinary CI gates for the DataScript-backed performance reproductions."
   (:require [clojure.test :refer [deftest is]]
             [eacl.performance.amplification-reproduction :as reproduction]))
 
