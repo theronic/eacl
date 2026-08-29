@@ -77,44 +77,46 @@
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound?]
+         :or {direction :asc}}
         (if (map? cursor-or-options)
-          (merge {:direction :asc} cursor-or-options)
+          cursor-or-options
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        _ (case direction :asc nil :desc nil)]
-    (let [datoms (ddb/eavt-endpoint-prefix
-                  db subject-id relationship-storage/forward-attribute
-                  [subject-type relation-id resource-type]
-                  bound-eid direction)]
-      ;; Preserve a canonical eager empty result. Constructing map and bound
-      ;; wrappers for the overwhelmingly common empty recursive probe is pure
-      ;; allocation; non-empty scans remain lazy and bounded by their caller.
-      (if-let [datoms (seq datoms)]
-        (apply-exclusive-scan-bound
-         (map (comp #(nth % 3) :v) datoms)
-         bound-eid inclusive-bound?)
-        []))))
+        _ (case direction :asc nil :desc nil)
+        datoms (ddb/eavt-endpoint-prefix
+                db subject-id relationship-storage/forward-attribute
+                [subject-type relation-id resource-type]
+                bound-eid direction)]
+    ;; Preserve a canonical eager empty result. Constructing map and bound
+    ;; wrappers for the overwhelmingly common empty recursive probe is pure
+    ;; allocation; non-empty scans remain lazy and bounded by their caller.
+    (if-let [datoms (seq datoms)]
+      (apply-exclusive-scan-bound
+       (map (comp #(nth % 3) :v) datoms)
+       bound-eid inclusive-bound?)
+      [])))
 
 (defn resource->subjects
   [db resource-type resource-id relation-id subject-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound?]
+         :or {direction :asc}}
         (if (map? cursor-or-options)
-          (merge {:direction :asc} cursor-or-options)
+          cursor-or-options
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        _ (case direction :asc nil :desc nil)]
-    (let [datoms (ddb/eavt-endpoint-prefix
-                  db resource-id relationship-storage/reverse-attribute
-                  [resource-type relation-id subject-type]
-                  bound-eid direction)]
-      (if-let [datoms (seq datoms)]
-        (apply-exclusive-scan-bound
-         (map (comp #(nth % 3) :v) datoms)
-         bound-eid inclusive-bound?)
-        []))))
+        _ (case direction :asc nil :desc nil)
+        datoms (ddb/eavt-endpoint-prefix
+                db resource-id relationship-storage/reverse-attribute
+                [resource-type relation-id subject-type]
+                bound-eid direction)]
+    (if-let [datoms (seq datoms)]
+      (apply-exclusive-scan-bound
+       (map (comp #(nth % 3) :v) datoms)
+       bound-eid inclusive-bound?)
+      [])))
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]

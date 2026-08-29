@@ -752,7 +752,7 @@
     (and (contains? facts left) (not (contains? facts right))) :authorize
     :else :deny))
 
-(defn- component-consumers [nodes component-of component]
+(defn- component-consumers [nodes component]
   (let [component-set (set component)]
     (reduce
      (fn [result head]
@@ -838,7 +838,7 @@
 
 (defn- run-component!
   [state nodes component completed component-of limits counters]
-  (let [consumers (component-consumers nodes component-of component)
+  (let [consumers (component-consumers nodes component)
         state (assoc state :agenda [] :agenda-index 0)
         state (initialize-component state nodes component completed
                                     component-of limits counters)]
@@ -868,7 +868,7 @@
                        (enqueue-fact! state head limits counters))
 
                      :intersection
-                     (let [{:keys [anchor-slot] :as rule} (get nodes head)
+                     (let [rule (get nodes head)
                            state
                            (case (join-transition-action state rule slot)
                              :update (update-join state rule slot)

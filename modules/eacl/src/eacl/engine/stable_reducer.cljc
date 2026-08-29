@@ -574,7 +574,7 @@
   Reverse scan rules have already been filtered to the requested subject type,
   so their sealed type is the same value the former transition closures
   captured from the request context."
-  [{:keys [kind rule] :as item} eid]
+  [{:keys [kind rule]} eid]
   (case kind
     (:seed-relation :via-scan :consumer)
     {:kind :grant :rule rule :resource-eid eid}

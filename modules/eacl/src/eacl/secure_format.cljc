@@ -311,7 +311,7 @@
   "Returns the canonical portable EDN representation after enforcing bounds."
   ([value]
    (encode-canonical value {}))
-  ([value {:keys [maximum-size maximum-depth maximum-entries] :as limits
+  ([value {:keys [maximum-size maximum-depth maximum-entries]
            :or {maximum-size default-maximum-size}}]
    ;; `portable-render` already imposes the canonical map/set order and renders
    ;; every sequential value as a vector. Building a second recursively sorted

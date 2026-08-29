@@ -255,7 +255,7 @@
   [indexed-demands]
   (second
    (reduce
-    (fn [[seen roots] [index demand :as indexed]]
+    (fn [[seen roots] [_ demand :as indexed]]
       (let [root (root-key demand)]
         (if (contains? seen root)
           [seen roots]

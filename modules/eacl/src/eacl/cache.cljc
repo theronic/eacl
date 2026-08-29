@@ -102,7 +102,7 @@
   :eacl.cache/basis-snapshot-v1)
 
 (defn- new-lifecycle
-  [subproblem-options]
+  []
   (->CacheLifecycle
    (atom {:tick 0 :generations {}})
    (atom {:tick 0 :generations {}})))
@@ -336,7 +336,7 @@
      (subproblem/store (dissoc subproblem-cache :enabled?))
      (let [content-revision (atom 0)]
      (->BasisCache
-      (atom (new-lifecycle subproblem-cache))
+      (atom (new-lifecycle))
       (atom {:exact-hits 0
              :managed-hits 0
              :misses 0
@@ -609,7 +609,7 @@
     (throw (ex-info "Expected an EACL basis cache."
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :cache store})))
-  (reset! (:lifecycle store) (new-lifecycle (:subproblem-options store)))
+  (reset! (:lifecycle store) (new-lifecycle))
   (reset! (:admissions store) empty-answer-sightings)
   (reset! (:managed-lifting-disabled? store) false)
   (reset! (:reported-contract-violations store) #{})

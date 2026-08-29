@@ -207,7 +207,7 @@
     []))
 
 (defn- enrich-expression
-  [adapter relation-cache [resource-type permission-name :as permission]
+  [adapter relation-cache [resource-type _ :as permission]
    resolved]
   (let [{:keys [dag metrics]}
         (expression-limits/check-normalized!

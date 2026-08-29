@@ -575,16 +575,16 @@
                   (:can? :lookup-resources :count-resources)
                   (filter
                    (fn [[rt _ perm st sid]]
-                     (and (= [rt perm st sid]
-                             [(or resource-type (:type resource)) permission
-                              (:type subject) (:id subject)])))
+                     (= [rt perm st sid]
+                        [(or resource-type (:type resource)) permission
+                         (:type subject) (:id subject)]))
                    grants)
                   (:lookup-subjects :count-subjects)
                   (filter
                    (fn [[rt rid perm st _]]
-                     (and (= [rt rid perm st]
-                             [(:type resource) (:id resource)
-                              permission subject-type])))
+                     (= [rt rid perm st]
+                        [(:type resource) (:id resource)
+                         permission subject-type]))
                    grants))
                 items
                 (case operation

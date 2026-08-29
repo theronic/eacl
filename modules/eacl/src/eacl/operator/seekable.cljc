@@ -239,9 +239,7 @@
   "Returns a raw exact generator page for one certified direct
   specialization. Its coordinates are exactly the generic cover path."
   [{:keys [adapter plan cover-plan specialization-node traversal
-           subject-type anchor-eid width order-direction boundary
-           traversal-limits cut-point!]
-    :or {order-direction :asc}
+           subject-type width boundary traversal-limits cut-point!]
     :as request}]
   (when-not (and (integer? width) (not (neg? width)))
     (invalid! :invalid-width "Seekable page width must be a natural integer."
@@ -269,14 +267,13 @@
                          (first relation-ids))
           boundary-eid
           (when boundary
-            (do
-              (when-not (and (= coords-prefix (pop (vec boundary)))
-                             (integer? (peek boundary)))
-                (invalid! :invalid-boundary
-                          "Seekable boundary is outside the generic cover path."
-                          {:boundary boundary
-                           :expected-prefix coords-prefix}))
-              (peek boundary)))
+            (when-not (and (= coords-prefix (pop (vec boundary)))
+                           (integer? (peek boundary)))
+              (invalid! :invalid-boundary
+                        "Seekable boundary is outside the generic cover path."
+                        {:boundary boundary
+                         :expected-prefix coords-prefix}))
+            (peek boundary))
           limits (or traversal-limits {})
           counters (volatile!
                     {:commands 0 :fetched-values 0 :stream-opens 0

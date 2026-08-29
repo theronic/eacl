@@ -25,7 +25,7 @@
    [:managed-entry true] :use-managed-entry})
 
 (def artifact-sha256
-  "fc1b3eefc05a83b35de8a8d17057205f223a2f35008fc2bfb787bbfdda85106b")
+  "415734f1c0265eb69f97df5083223dfbcff609c3ace4640d82606dd3a9a40179")
 
 (def mapping-digest
   ;; This is release evidence, not request data. Computing it at namespace

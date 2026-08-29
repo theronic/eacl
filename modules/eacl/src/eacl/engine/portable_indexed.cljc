@@ -323,8 +323,7 @@
 
 (defn- record-emission
   [state eid]
-  (let [ordinal (dec (get-in state [:counters :emitted-results]))
-        render (:render state)
+  (let [render (:render state)
         kind (:kind render)
         render-state (:render-state state)]
     (case kind

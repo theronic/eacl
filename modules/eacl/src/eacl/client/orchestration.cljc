@@ -1178,7 +1178,7 @@
      :resource (internalize resource)}))
 
 (defn- response-token-for-revision
-  [api native-revision opts]
+  [native-revision opts]
   (let [basis-source (:source opts)]
     (if (source/source? basis-source)
       (causal-token/issue
@@ -1194,7 +1194,7 @@
 (defn- response-token
   [api db opts]
   (response-token-for-revision
-   api ((:db-native-revision api) db) opts))
+   ((:db-native-revision api) db) opts))
 
 (defn- write-response
   [api db opts]
@@ -1203,9 +1203,9 @@
     {}))
 
 (defn- write-response-for-revision
-  [api native-revision opts]
+  [native-revision opts]
   (if-let [token
-           (response-token-for-revision api native-revision opts)]
+           (response-token-for-revision native-revision opts)]
     {:zed/token token}
     {}))
 
@@ -1217,7 +1217,7 @@
     (let [native-revision (native-revision-fn db)]
       (when-let [after-commit! (:after-commit! api)]
         (after-commit! native-revision opts))
-      (write-response-for-revision api native-revision opts))
+      (write-response-for-revision native-revision opts))
     (write-response api db opts)))
 
 (defn- relationship-commit-preconditions-first
@@ -1241,11 +1241,6 @@
                     (remove transaction-function? operations))))
     []))
 
-(defn- relationship-seq
-  [relationships]
-  (if (map? relationships)
-    (:data relationships)
-    relationships))
 
 (defn- validate-permission-root!
   [api request-context selected-db opts subject permission resource]
@@ -1432,7 +1427,7 @@
       :subject-type subject-type}))))
 
 (defn- relationship-filtered-lookup-page
-  [api opts request-context adapter selected-db cursor-opts operation query
+  [opts request-context adapter selected-db cursor-opts operation query
    internal-query validate!]
   (let [contract (:execution-contract opts)
         limits (:aggregate-limits contract)
@@ -1600,7 +1595,7 @@
                                   (vector? (:data %))
                                   (map? (:page-info %)))
                             #(relationship-filtered-lookup-page
-                              api opts request-context adapter selected-db
+                              opts request-context adapter selected-db
                               cursor-opts :lookup-resources query
                               internal-query validate!))
                            page
@@ -1777,7 +1772,7 @@
                                   (vector? (:data %))
                                   (map? (:page-info %)))
                             #(relationship-filtered-lookup-page
-                              api opts request-context adapter selected-db
+                              opts request-context adapter selected-db
                               cursor-opts :lookup-subjects query
                               internal-query validate!))
                            page
@@ -2485,7 +2480,7 @@
                             {:tx-data tx-data}
                             {:no-op-response
                              (write-response-for-revision
-                              api (:native-revision selection)
+                              (:native-revision selection)
                               options)}))))]
                  ;; An owned planning basis (notably Datalevin's read
                  ;; transaction) is released before the writer can block on a
@@ -2593,7 +2588,7 @@
                                      :response
                                      (or last-response
                                          (write-response-for-revision
-                                          api (:native-revision selection)
+                                          (:native-revision selection)
                                           options))}
                                     fitted))))]
                          (if-not (:tx-data planned)
@@ -3348,7 +3343,7 @@
 (defn- valid-security-kid?
   [kid]
   (or (keyword? kid)
-      (and (string? kid) (not (empty? kid)))))
+      (and (string? kid) (not= "" kid))))
 
 (defn- normalize-security-root-keyring
   [config-opts security-key security-keyring security-kid]

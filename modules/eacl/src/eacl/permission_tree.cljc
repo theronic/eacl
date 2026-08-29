@@ -223,20 +223,19 @@
           (adapter-contract! :duplicate-relation-subject-type)))
 
       :permission
-      (do
-        (when-not
-         (every?
-          (fn [definition]
-            (and (portable-natural? (:permission-id definition))
-                 (= resource-type (:resource-type definition))
-                 (= name (:permission-name definition))
-                 (unqualified-keyword?
-                  (:source-relation-name definition))
-                 (contains? #{:relation :permission}
-                            (:target-type definition))
-                 (unqualified-keyword? (:target-name definition))))
-          definitions)
-          (adapter-contract! :malformed-permission-definition)))
+      (when-not
+       (every?
+        (fn [definition]
+          (and (portable-natural? (:permission-id definition))
+               (= resource-type (:resource-type definition))
+               (= name (:permission-name definition))
+               (unqualified-keyword?
+                (:source-relation-name definition))
+               (contains? #{:relation :permission}
+                          (:target-type definition))
+               (unqualified-keyword? (:target-name definition))))
+        definitions)
+        (adapter-contract! :malformed-permission-definition))
 
       (adapter-contract! :unknown-definition-kind))
     definitions))

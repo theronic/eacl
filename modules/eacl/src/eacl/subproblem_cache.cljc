@@ -416,10 +416,7 @@
   non-failing outcomes."
   ([store tier key options value]
    (publish! store tier key options value 4))
-  ([store tier key {:keys [valid? weight-fn]
-                    :or {valid? (constantly true)
-                         weight-fn (constantly 1)}
-                    :as options} value maximum-attempts]
+  ([store tier key options value maximum-attempts]
    (publish! store tier key options value maximum-attempts
              (get @(:state store) lifecycle-key)))
   ([store tier key {:keys [valid? weight-fn]
@@ -586,7 +583,7 @@
   (positive-snapshot-bound! :max-entries max-entries)
   (let [{:keys [selected]}
         (reduce
-         (fn [{:keys [weight count] :as acc} tier]
+         (fn [acc tier]
            (reduce
             (fn [inner entry]
               (if (and (< (:count inner) max-entries)

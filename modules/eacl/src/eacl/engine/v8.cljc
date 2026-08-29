@@ -15,7 +15,6 @@
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
             [eacl.operator.vector-evaluator :as operator-vector]
-            [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.secure-format :as secure-format]
@@ -1964,9 +1963,7 @@
             fetch-exclusive
             (fn [candidate-bound limit]
               (if least-path?
-                (let [descending?
-                      (= :desc direction)
-                      run-options
+                (let [run-options
                       (merge
                        (stable-limits)
                        {:plan plan
@@ -2138,8 +2135,7 @@
   query canonicalization, proof-frame resolution, its backend reads —
   must only be built when the plan actually routes to first-discovery."
   [db traversal query cache-fn candidate-filter]
-  (let [{:keys [direction size bound] :as page-req}
-        (normalize-page-request query)
+  (let [{:keys [bound] :as page-req} (normalize-page-request query)
         forward? (= :forward traversal)
         result-type (if forward?
                       (:resource/type query)

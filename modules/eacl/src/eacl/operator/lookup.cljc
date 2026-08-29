@@ -335,8 +335,7 @@
   "Exact count when :count-limit is absent; otherwise stops after the
   lookahead result needed to report truncation. Exact and bounded work remain
   separately observable through :exhaustive?."
-  [{:keys [adapter plan traversal subject-type anchor-eid count-limit
-           permission]
+  [{:keys [adapter plan count-limit permission]
     :as options}]
   (when-not (or (nil? count-limit)
                 (and (integer? count-limit) (not (neg? count-limit))))

@@ -117,6 +117,8 @@
     (testing "forward scans match the bounded AVET range semantics"
       (is (= [server-1-id server-2-id]
              (vec (impl/subject->resources db :account account-id account-relation :server nil))))
+      (is (= [server-1-id server-2-id]
+             (vec (impl/subject->resources db :account account-id account-relation :server {}))))
       (is (= (forward-reference db :account account-id account-relation :server nil)
              (vec (impl/subject->resources db :account account-id account-relation :server nil)))))
 
@@ -161,6 +163,8 @@
     (testing "reverse scans match the bounded AVET range semantics"
       (is (= [account-id]
              (vec (impl/resource->subjects db :server server-1-id account-relation :account nil))))
+      (is (= [account-id]
+             (vec (impl/resource->subjects db :server server-1-id account-relation :account {}))))
       (is (= (reverse-reference db :server server-1-id account-relation :account nil)
              (vec (impl/resource->subjects db :server server-1-id account-relation :account nil)))))
 
