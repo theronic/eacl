@@ -119,25 +119,25 @@
           :eacl.permission/resource-type+permission-name))))
 
 (defn- eager-scan-values
-  [datoms {:keys [direction bound-eid inclusive-bound? limit]}]
-  (let [within-bound?
-        (case direction
-          :asc
-          (if bound-eid
+  [datoms direction bound-eid inclusive-bound? limit]
+  (let [_ (case direction :asc nil :desc nil)
+        bound-xf
+        (if bound-eid
+          (filter
+           (case direction
+             :asc
             (if inclusive-bound?
               #(<= bound-eid %)
               #(< bound-eid %))
-            (constantly true))
 
-          :desc
-          (if bound-eid
+             :desc
             (if inclusive-bound?
               #(>= bound-eid %)
-              #(> bound-eid %))
-            (constantly true)))
+              #(> bound-eid %))))
+          identity)
         values (into []
                      (comp (map (comp #(nth % 3) :v))
-                           (filter within-bound?)
+                           bound-xf
                            (distinct)
                            (if limit (take limit) identity))
                      datoms)]
@@ -153,9 +153,10 @@
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
-  (let [{:keys [direction bound-eid limit] :as options}
+  (let [{:keys [direction bound-eid inclusive-bound? limit]
+         :or {direction :asc}}
         (if (map? cursor-or-options)
-          (merge {:direction :asc} cursor-or-options)
+          cursor-or-options
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
@@ -165,13 +166,14 @@
       db subject-id relationship-storage/forward-attribute
       [subject-type relation-id resource-type]
       bound-eid direction native-limit)
-     options)))
+     direction bound-eid inclusive-bound? limit)))
 
 (defn resource->subjects
   [db resource-type resource-id relation-id subject-type cursor-or-options]
-  (let [{:keys [direction bound-eid limit] :as options}
+  (let [{:keys [direction bound-eid inclusive-bound? limit]
+         :or {direction :asc}}
         (if (map? cursor-or-options)
-          (merge {:direction :asc} cursor-or-options)
+          cursor-or-options
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
@@ -181,7 +183,7 @@
       db resource-id relationship-storage/reverse-attribute
       [resource-type relation-id subject-type]
       bound-eid direction native-limit)
-     options)))
+     direction bound-eid inclusive-bound? limit)))
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]

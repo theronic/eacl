@@ -305,7 +305,7 @@
                :backend :datahike})))
         schema-eid (ddb/entid db [:eacl/id "schema-string"])
         relation-eids
-        (into [] (map :e)
+        (mapv :e
               (ddb/avet-datoms
                db :eacl.relation/resource-type+relation-name+subject-type))
         missing-schema?

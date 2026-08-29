@@ -2367,58 +2367,61 @@
   (try
     (let [result
           (validate-result! operation (-decide kernel operation input))]
-      (when (and (= :relationship-page operation)
-                 (= :valid (:status result))
-                 (or (> (:end result) (:length input))
-                     (> (:size result) (:maximum-size input))
-                     (zero? (:size result))))
-        (boundary-error!
-         "Generated page result exceeds its validated input bounds."
-         {:operation operation
-          :length (:length input)
-          :maximum-size (:maximum-size input)
-          :result result}))
-      (when (and (= :relationship-keyset-page operation)
-                 (> (:take-count result) (:size input)))
-        (boundary-error!
-         "Generated keyset page exceeds its requested size."
-         {:operation operation
-          :size (:size input)
-          :take-count (:take-count result)}))
-      
-      (when (and (= :consistency-plan operation)
-                 (not= result (expected-consistency-plan input)))
-        (boundary-error!
-         "Generated consistency plan contradicts its validated input."
-         {:operation operation
-          :mode (:mode input)
-          :result result}))
-      (when (and (= :consistency-validation operation)
-                 (not= result
-                       (expected-consistency-selection input)))
-        (boundary-error!
-         "Generated snapshot validation contradicts its validated input."
-         {:operation operation
-          :kind (:kind input)
-          :result result}))
-      (when (and (= :current-cache-decision operation)
-                 (not= result
-                       (expected-current-cache-action input)))
-        (boundary-error!
-         "Generated current-cache action contradicts its validated stage."
-         {:operation operation
-          :stage (:stage input)
-          :available? (:available? input)
-          :result result}))
-      (when (and (= :subproblem-cache-decision operation)
-                 (not= result
-                       (expected-subproblem-cache-action input)))
-        (boundary-error!
-         "Generated subproblem-cache action contradicts its validated state."
-         {:operation operation
-          :decision (:decision input)
-          :result result}))
-      (when (= :recursive-routing-certificate operation)
+      (case operation
+        :relationship-page
+        (when (and (= :valid (:status result))
+                   (or (> (:end result) (:length input))
+                       (> (:size result) (:maximum-size input))
+                       (zero? (:size result))))
+          (boundary-error!
+           "Generated page result exceeds its validated input bounds."
+           {:operation operation
+            :length (:length input)
+            :maximum-size (:maximum-size input)
+            :result result}))
+
+        :relationship-keyset-page
+        (when (> (:take-count result) (:size input))
+          (boundary-error!
+           "Generated keyset page exceeds its requested size."
+           {:operation operation
+            :size (:size input)
+            :take-count (:take-count result)}))
+
+        :consistency-plan
+        (when-not (= result (expected-consistency-plan input))
+          (boundary-error!
+           "Generated consistency plan contradicts its validated input."
+           {:operation operation
+            :mode (:mode input)
+            :result result}))
+
+        :consistency-validation
+        (when-not (= result (expected-consistency-selection input))
+          (boundary-error!
+           "Generated snapshot validation contradicts its validated input."
+           {:operation operation
+            :kind (:kind input)
+            :result result}))
+
+        :current-cache-decision
+        (when-not (= result (expected-current-cache-action input))
+          (boundary-error!
+           "Generated current-cache action contradicts its validated stage."
+           {:operation operation
+            :stage (:stage input)
+            :available? (:available? input)
+            :result result}))
+
+        :subproblem-cache-decision
+        (when-not (= result (expected-subproblem-cache-action input))
+          (boundary-error!
+           "Generated subproblem-cache action contradicts its validated state."
+           {:operation operation
+            :decision (:decision input)
+            :result result}))
+
+        :recursive-routing-certificate
         (let [node-count (:node-count input)
               path-count (count (:path-descriptors input))
               edge-count (count (:edges input))
@@ -2448,34 +2451,39 @@
                 (count (:traversal result)))
               :result-path-checks (:path-checks result)
               :result-node-checks (:node-checks result)
-              :result-edge-checks (:edge-checks result)}))))
-      (when (and (= :enumeration-route operation)
-                 (not= result (expected-enumeration-route input)))
-        (boundary-error!
-         "Generated enumeration route contradicts its schema binding."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-page operation)
-                 (not= result (expected-acyclic-page input)))
-        (boundary-error!
-         "Generated acyclic page contradicts its ordered input."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-continuation operation)
-                 (not= result
-                       (expected-acyclic-continuation input)))
-        (boundary-error!
-         "Generated acyclic continuation contradicts its authenticated context."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-count operation)
-                 (not= result (expected-acyclic-count input)))
-        (boundary-error!
-         "Generated acyclic count contradicts its unique input cardinality."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-work operation)
-                 (not= result (expected-acyclic-work input)))
-        (boundary-error!
-         "Generated acyclic work decision contradicts its bounded counters."
-         {:operation operation :input input :result result}))
-      (when (= :ordered-merge-chunk operation)
+              :result-edge-checks (:edge-checks result)})))
+
+        :enumeration-route
+        (when-not (= result (expected-enumeration-route input))
+          (boundary-error!
+           "Generated enumeration route contradicts its schema binding."
+           {:operation operation :input input :result result}))
+
+        :acyclic-page
+        (when-not (= result (expected-acyclic-page input))
+          (boundary-error!
+           "Generated acyclic page contradicts its ordered input."
+           {:operation operation :input input :result result}))
+
+        :acyclic-continuation
+        (when-not (= result (expected-acyclic-continuation input))
+          (boundary-error!
+           "Generated acyclic continuation contradicts its authenticated context."
+           {:operation operation :input input :result result}))
+
+        :acyclic-count
+        (when-not (= result (expected-acyclic-count input))
+          (boundary-error!
+           "Generated acyclic count contradicts its unique input cardinality."
+           {:operation operation :input input :result result}))
+
+        :acyclic-work
+        (when-not (= result (expected-acyclic-work input))
+          (boundary-error!
+           "Generated acyclic work decision contradicts its bounded counters."
+           {:operation operation :input input :result result}))
+
+        :ordered-merge-chunk
         (let [left-consumed (:left-consumed result)
               right-consumed (:right-consumed result)
               left (:left input)
@@ -2509,7 +2517,9 @@
               :right-count (count right)
               :left-consumed left-consumed
               :right-consumed right-consumed
-              :result-count (count (:values result))}))))
+              :result-count (count (:values result))})))
+
+        nil)
       result)
     (catch #?(:clj Exception :cljs :default) error
       (if (= :eacl.verification/invalid-boundary

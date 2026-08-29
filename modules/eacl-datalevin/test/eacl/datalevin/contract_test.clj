@@ -1252,6 +1252,7 @@
                   (let [ascending (scan operation prefix {:direction :asc})
                         descending (scan operation prefix {:direction :desc})]
                     (is (= expected ascending))
+                    (is (= expected (scan operation prefix {})))
                     (is (= (vec (reverse expected)) descending))
                     (is (= ascending (scan operation prefix {:direction :asc})))
                     (is (= (count ascending) (count (distinct ascending))))))

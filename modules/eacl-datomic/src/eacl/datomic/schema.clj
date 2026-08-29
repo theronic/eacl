@@ -481,8 +481,7 @@
          :backend :datomic})))
     (let [relation-eids
           (if (d/entid db :eacl.relation/relation-name)
-            (into [] (map :e)
-                  (d/datoms db :aevt :eacl.relation/relation-name))
+            (mapv :e (d/datoms db :aevt :eacl.relation/relation-name))
             [])
           missing-relations
           (filterv #(empty? (d/datoms db :eavt %
@@ -775,20 +774,20 @@
                           [(:additions relations)
                            (:retractions relations)
                            (:additions permissions)
-                           (:retractions permissions)]))]
-    (let [tx-data (if no-op? [] tx-data)]
-      (assoc semantic
-             :tx-data tx-data
-             :speculative-tx-data
-             (if no-op?
-               []
-               (conj tx-data
-                     [:db/add schema-entity :eacl/schema-version (d/squuid)]))
-             :relation-commit-guards relation-commit-guards
-             :schema-entity schema-entity
-             :schema-stamp-entity schema-stamp-entity
-             :no-op? no-op?
-             :schema-string schema-string))))
+                           (:retractions permissions)]))
+        effective-tx-data (if no-op? [] tx-data)]
+    (assoc semantic
+           :tx-data effective-tx-data
+           :speculative-tx-data
+           (if no-op?
+             []
+             (conj effective-tx-data
+                   [:db/add schema-entity :eacl/schema-version (d/squuid)]))
+           :relation-commit-guards relation-commit-guards
+           :schema-entity schema-entity
+           :schema-stamp-entity schema-stamp-entity
+           :no-op? no-op?
+           :schema-string schema-string)))
 
 (defn plan-schema-replacement
   "Pure prospective schema replacement plan for one immutable Datomic db.

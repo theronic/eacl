@@ -81,10 +81,6 @@
    :admission-entries 4096
    :clock #(System/currentTimeMillis)})
 
-(defn- now-ms
-  [config]
-  ((:clock config)))
-
 (defn- expired?
   "Entries stored without a ttl have no expiry and are only ever displaced by
   capacity eviction. Time-based expiry is not what keeps EACL's cache correct —
@@ -190,9 +186,10 @@
 (defrecord LocalStore [state config]
   CacheStore
   (lookup [_ k]
-    (let [before @state
+    (let [{:keys [clock]} config
+          before @state
           entry (get-in before [:entries k])
-          expired-entry? (and entry (expired? (now-ms config) entry))
+          expired-entry? (and entry (expired? (clock) entry))
           kind (or (:kind entry) :unknown)
           [without-expired _]
           (if expired-entry?
@@ -211,7 +208,7 @@
       (when-not expired-entry? (:value entry))))
 
   (store! [_ k value weight ttl-ms]
-    (let [{:keys [max-entry-weight]} config
+    (let [{:keys [clock max-entry-weight]} config
           kind (entry-kind value)]
       (if (or (nil? value)
               (not (integer? weight))
@@ -226,7 +223,7 @@
                               (update-metric before kind :rejections)))
           false)
         (let [generation (:generation @state)
-              now (now-ms config)]
+              now (clock)]
           (loop [attempt 0]
             (if (>= attempt 64)
               false

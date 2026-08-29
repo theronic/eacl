@@ -97,38 +97,38 @@
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound?]
+         :or {direction :asc}}
         (if (map? cursor-or-options)
-          (merge {:direction :asc} cursor-or-options)
+          cursor-or-options
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        _ (case direction :asc nil :desc nil)]
+        _ (case direction :asc nil :desc nil)
+        datoms (relationship-datoms-on-entity
+                db subject-id relationship-storage/forward-attribute
+                [subject-type relation-id resource-type]
+                bound-eid direction)]
     (apply-scan-bound
-     db
-     (map (comp #(nth % 3) :v)
-          (relationship-datoms-on-entity
-           db subject-id relationship-storage/forward-attribute
-           [subject-type relation-id resource-type]
-           bound-eid direction))
+     db (map (comp #(nth % 3) :v) datoms)
      direction bound-eid inclusive-bound?)))
 
 (defn resource->subjects
   [db resource-type resource-id relation-id subject-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound?]
+         :or {direction :asc}}
         (if (map? cursor-or-options)
-          (merge {:direction :asc} cursor-or-options)
+          cursor-or-options
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        _ (case direction :asc nil :desc nil)]
+        _ (case direction :asc nil :desc nil)
+        datoms (relationship-datoms-on-entity
+                db resource-id relationship-storage/reverse-attribute
+                [resource-type relation-id subject-type]
+                bound-eid direction)]
     (apply-scan-bound
-     db
-     (map (comp #(nth % 3) :v)
-          (relationship-datoms-on-entity
-           db resource-id relationship-storage/reverse-attribute
-           [resource-type relation-id subject-type]
-           bound-eid direction))
+     db (map (comp #(nth % 3) :v) datoms)
      direction bound-eid inclusive-bound?)))
 
 (defn- relationship-tuple

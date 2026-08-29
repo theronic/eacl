@@ -404,13 +404,9 @@
        :node-checks (* 2 node-count)
        :edge-checks (count edges)})))
 
-(defn- relation-index
-  [bindings]
-  (group-by :relation bindings))
-
 (defn- compiled-rules
   [{:keys [definitions relation-bindings]}]
-  (let [by-relation (relation-index relation-bindings)]
+  (let [by-relation (group-by :relation relation-bindings)]
     (vec
      (mapcat
       (fn [{:keys [kind resource-type permission relation subject-type

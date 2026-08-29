@@ -356,14 +356,6 @@
              (finally
                (request-context/close! context)))))))))
 
-(defn- context-runtime
-  [context]
-  (request-context/runtime context))
-
-(defn- context-selection
-  [context]
-  (::selection (context-runtime context)))
-
 (defn- context-db
   [context]
   (:db (backend/state (request-context/adapter context))))
@@ -571,7 +563,7 @@
   (let [;; Low-level raw-DB entry points may receive a client's opts map. They
         ;; must remain bound to that caller-owned DB and must not reach through
         ;; the client's live source during cursor recovery.
-        selection (context-selection request-context)
+        selection (::selection (request-context/runtime request-context))
         opts (if (:selected-snapshot selection)
                opts
                (dissoc opts :source))
@@ -1191,14 +1183,11 @@
         native-revision))
       nil)))
 
-(defn- response-token
-  [api db opts]
-  (response-token-for-revision
-   ((:db-native-revision api) db) opts))
-
 (defn- write-response
   [api db opts]
-  (if-let [token (response-token api db opts)]
+  (if-let [token
+           (response-token-for-revision
+            ((:db-native-revision api) db) opts)]
     {:zed/token token}
     {}))
 
@@ -1317,13 +1306,6 @@
       #(check-permission-in-context
         api opts % subject permission resource))))
 
-(defn- batch-counters
-  [work-before work-stats ledger-before ledger output-units]
-  (batch/aggregate-counters
-   work-before @work-stats
-   ledger-before (request-counters/snapshot ledger)
-   output-units))
-
 (defn check-permissions
   [api source opts request]
   (let [request (batch/validate-request! request (:aggregate-limits opts))
@@ -1359,8 +1341,10 @@
                      work-stats (atom {})
                      work-before @work-stats
                      counters-fn
-                     #(batch-counters
-                       work-before work-stats ledger-before ledger %)
+                     #(batch/aggregate-counters
+                       work-before @work-stats
+                       ledger-before (request-counters/snapshot ledger)
+                       %)
                      limits (:aggregate-limits request)]
                  (binding [engine/*aggregate-work-stats* work-stats]
                    (loop [index 0
@@ -2054,12 +2038,6 @@
       (enforce-basis-retention! basis)))
   basis)
 
-(defn- basis-released?
-  [basis]
-  (if-let [selected (:selected-snapshot basis)]
-    (source/released? selected)
-    (= :released @(:release-state basis))))
-
 (defn- release-basis!
   [basis]
   (if-let [selected (:selected-snapshot basis)]
@@ -2087,23 +2065,6 @@
         (when released?
           (request-counters/add! :releases))
         released?))))
-
-(defn- public-basis
-  [basis]
-  (basis-open! basis)
-  (assoc
-   (select-keys (:identity basis)
-                [:backend :source-id :branch :source-lifecycle
-                 :revision :exact-locator])
-   :kind (:basis-kind basis)))
-
-(defn- basis-token*
-  [runtime basis]
-  (basis-open! basis)
-  (consistency-v3/selected-basis-token
-   (or (get-in basis [:speculative :committed-root])
-       (:identity basis))
-   (runtime-options runtime)))
 
 (defn- basis-token-data
   [runtime basis token source]
@@ -2353,10 +2314,24 @@
       (typed-capability-error! :speculative-diagnostics :ordinary-snapshot)))
 
   IAuthorizationSnapshot
-  (-basis [_] (public-basis basis))
-  (-basis-token [_] (basis-token* runtime basis))
+  (-basis [_]
+    (basis-open! basis)
+    (assoc
+     (select-keys (:identity basis)
+                  [:backend :source-id :branch :source-lifecycle
+                   :revision :exact-locator])
+     :kind (:basis-kind basis)))
+  (-basis-token [_]
+    (basis-open! basis)
+    (consistency-v3/selected-basis-token
+     (or (get-in basis [:speculative :committed-root])
+         (:identity basis))
+     (runtime-options runtime)))
   (-release! [_] (release-basis! basis))
-  (-released? [_] (basis-released? basis)))
+  (-released? [_]
+    (if-let [selected (:selected-snapshot basis)]
+      (source/released? selected)
+      (= :released @(:release-state basis)))))
 
 (defn- writable!
   [writer]
@@ -2629,8 +2604,7 @@
        :eacl/error :eacl.schema/invalid-orphan-policy
        :orphan-policy :retain-inert
        :operation :write-schema!})))
-  (let [schema-string schema]
-  (require-operator-expression-writes-enabled! schema-string)
+  (require-operator-expression-writes-enabled! schema)
   (let [{:keys [conn options api]} (backend-writer/state writer)
         write-schema! (backend-writer/operation writer :write-schema!)
         contention? (backend-writer/operation writer :contention?)
@@ -2647,7 +2621,7 @@
                             db)))]
                     {:value
                     (write-schema!
-                      conn schema-string
+                      conn schema
                       (merge
                        (select-keys options
                                     [:token-ttl-seconds :expression-limits])
@@ -2672,7 +2646,7 @@
            (if (:eacl.schema/no-op? result)
              (write-response api (:eacl.schema/db-after result) options)
              (committed-write-response
-              api (:eacl.schema/db-after result) options))))))
+              api (:eacl.schema/db-after result) options)))))
 
 (defn- speculative-capability!
   [api capability]

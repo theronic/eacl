@@ -263,7 +263,7 @@
                   :nary
                   (let [op (:op continuation)
                         decisive? (if (= :union op) returned (not returned))
-                        decision (if (= :union op) true false)]
+                        decision (= :union op)]
                     (if decisive?
                       (let [[memo active value]
                             (complete-value memo active key decision
@@ -280,7 +280,7 @@
                                memo active no-value)
                         (let [[memo active value]
                               (complete-value memo active key
-                                              (if (= :union op) false true)
+                                              (not= :union op)
                                               (:maximum-memo-entries limits))]
                           (recur stack memo active value)))))
 
