@@ -96,12 +96,6 @@
   (boolean
    (some (comp operator-node? :root :expression val) collected)))
 
-(defn- exact-natural? [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value) (js/Number.isSafeInteger value)))
-   (<= 0 value exact-integer/maximum)))
-
 (defn- relation-descriptor [adapter cache resource-type relation-name]
   (let [key [resource-type relation-name]]
     (if-some [cached (get @cache key)]
@@ -120,7 +114,7 @@
                          (= resource-type (:resource-type row))
                          (= relation-name (:relation-name row))
                          (keyword? (:subject-type row))
-                         (exact-natural? (:relation-id row)))
+                         (exact-integer/natural? (:relation-id row)))
             (compile-error! :malformed-relation-definition
                             "Backend returned a malformed relation definition."
                             {:resource-type resource-type
@@ -153,7 +147,7 @@
             (swap! cache assoc key descriptor)
             descriptor))))))
 
-(defn- relation-partition [descriptor subject-type]
+(defn ^:no-doc relation-partition [descriptor subject-type]
   (first (filter #(= subject-type (:subject-type %))
                  (:partitions descriptor))))
 

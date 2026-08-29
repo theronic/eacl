@@ -1,7 +1,8 @@
 (ns eacl.relationships.endpoint-pair
   "Pure, backend-neutral representation of EACL's two endpoint relationship
   halves. Database adapters own index access and transaction semantics; this
-  namespace only owns the value shape and its symmetry.")
+  namespace only owns the value shape and its symmetry."
+  (:require [eacl.relationships.storage :as storage]))
 
 (def value-arity 4)
 
@@ -12,6 +13,14 @@
 (defn reverse-value
   [resource-type relation-eid subject-type subject-eid]
   [resource-type relation-eid subject-type subject-eid])
+
+(defn retractions
+  "Both physical retractions for one logical relationship."
+  [subject-type subject-eid relation-eid resource-type resource-eid]
+  [[:db/retract subject-eid storage/forward-attribute
+    (forward-value subject-type relation-eid resource-type resource-eid)]
+   [:db/retract resource-eid storage/reverse-attribute
+    (reverse-value resource-type relation-eid subject-type subject-eid)]])
 
 (defn endpoint-value?
   "True for a stored endpoint value with the expected heterogeneous shape.

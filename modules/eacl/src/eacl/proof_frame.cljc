@@ -4,18 +4,15 @@
   A frame is bound to one immutable adapter. It acquires only canonical,
   complete dependency evidence, derives scalar frontiers centrally, and never
   extends a completed closure with evidence from another snapshot."
-  (:require [eacl.backend.v8 :as backend]))
+  (:require [eacl.backend.v8 :as backend]
+            [eacl.exact-integer :as exact-integer]))
 
 (def default-maximum-relation-count 4096)
 
 (defn generation?
   "True for a portable non-negative committed transaction generation."
   [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value) (js/Number.isSafeInteger value)))
-   (not (neg? value))
-   (<= value backend/maximum-exact-integer)))
+  (exact-integer/natural? value))
 
 (defn canonical-relation-ids
   [relation-ids]

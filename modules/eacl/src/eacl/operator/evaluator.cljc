@@ -95,15 +95,11 @@
     (limit! :memo-entries maximum (inc (count memo))))
   [(assoc memo key (boolean value)) (disj active key) (boolean value)])
 
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
-
 (defn- direct-match?
   [direct-match! subject-type subject-eid resource-type resource-eid
    descriptor]
   (if-let [{:keys [relation-id]}
-           (relation-partition descriptor subject-type)]
+           (operator-plan/relation-partition descriptor subject-type)]
     (do
       (execution/check! execution/*contract*
                         :operator-point/direct-before

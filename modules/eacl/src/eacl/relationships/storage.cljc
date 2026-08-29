@@ -13,3 +13,10 @@
 
 (def attributes
   #{forward-attribute reverse-attribute})
+
+(defn ^:no-doc relation-triples
+  "Materializes [resource-type relation-eid subject-type] schema coordinates."
+  [relation-datoms]
+  (mapv (fn [{:keys [e v]}]
+          [(nth v 0) e (nth v 2)])
+        relation-datoms))

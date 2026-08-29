@@ -6,6 +6,7 @@
             [eacl.engine.relationships :as relationship-engine]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.filters :as relationship-filters]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]))
 
@@ -573,49 +574,11 @@
 ;; embedded in heterogeneous tuple values. The supported deletion path removes
 ;; both halves before the caller retracts the object entity.
 
-(defn- relation-triples
-  [db]
-  (mapv (fn [{:keys [e v]}]
-          [(nth v 0) e (nth v 2)])
-        (ddb/avet-datoms db schema/relation-key-attr)))
-
-(defn- relationship-pair-retractions
-  [subject-type subject-id relation-id resource-type resource-id]
-  [[:db/retract
-    subject-id
-    relationship-storage/forward-attribute
-    [subject-type relation-id resource-type resource-id]]
-   [:db/retract
-    resource-id
-    relationship-storage/reverse-attribute
-    [resource-type relation-id subject-type subject-id]]])
-
-(defn- relationship-op-relation-id
-  [op]
-  (when (and (vector? op)
-             (contains? #{:db/add :db/retract} (first op))
-             (contains? #{relationship-storage/forward-attribute
-                          relationship-storage/reverse-attribute}
-                        (nth op 2 nil))
-             (vector? (nth op 3 nil)))
-    (nth (nth op 3) 1 nil)))
-
 (defn stamp-relation-versions
   "Adds one idempotent native generation stamp per affected relation."
   [tx-data]
-  (let [ops (vec tx-data)
-        relation-ids (into #{} (keep relationship-op-relation-id) ops)
-        stamped (into #{}
-                      (keep (fn [op]
-                              (when (and (vector? op)
-                                         (= :db/add (first op))
-                                         (= :eacl/relation-version
-                                            (nth op 2 nil)))
-                                (nth op 1))))
-                      ops)]
-    (into ops
-          (map tx-relation-version-stamp)
-          (sort (remove stamped relation-ids)))))
+  (relationship-mutations/stamp-relation-generations
+   tx-data :eacl/relation-version tx-relation-version-stamp))
 
 (defn tx-delete-object
   "Returns transaction data removing both halves of every relationship touching
@@ -625,14 +588,15 @@
    retracted the object entity and passes its raw numeric eid."
   [db object-id]
   (if-let [object-eid (internal-id db object-id)]
-    (let [triples (relation-triples db)]
+    (let [triples (relationship-storage/relation-triples
+                   (ddb/avet-datoms db schema/relation-key-attr))]
       (->>
        (concat
         (mapcat
          (fn [{:keys [v]}]
            (let [[subject-type relation-id
                   resource-type resource-id] v]
-             (relationship-pair-retractions
+             (endpoint-pair/retractions
               subject-type object-eid relation-id resource-type resource-id)))
          (ddb/eavt-datoms
           db object-eid relationship-storage/forward-attribute))
@@ -641,7 +605,7 @@
          (fn [{:keys [v]}]
            (let [[resource-type relation-id
                   subject-type subject-id] v]
-             (relationship-pair-retractions
+             (endpoint-pair/retractions
               subject-type subject-id relation-id resource-type object-eid)))
          (ddb/eavt-datoms
           db object-eid relationship-storage/reverse-attribute))
@@ -650,7 +614,7 @@
          (fn [[resource-type relation-id subject-type]]
            (mapcat
             (fn [{resource-id :e}]
-              (relationship-pair-retractions
+              (endpoint-pair/retractions
                subject-type object-eid relation-id resource-type resource-id))
             (ddb/avet-datoms
              db relationship-storage/reverse-attribute
@@ -661,7 +625,7 @@
          (fn [[resource-type relation-id subject-type]]
            (mapcat
             (fn [{subject-id :e}]
-              (relationship-pair-retractions
+              (endpoint-pair/retractions
                subject-type subject-id relation-id resource-type object-eid))
             (ddb/avet-datoms
              db relationship-storage/forward-attribute
@@ -676,19 +640,7 @@
 (defn affected-relation-ids
   "Every relation named by relationship tuple retraction ops."
   [tx-data]
-  (->> tx-data
-       (keep
-        (fn [op]
-          (when (and (vector? op)
-                     (= :db/retract (first op))
-                     (contains?
-                      #{relationship-storage/forward-attribute
-                        relationship-storage/reverse-attribute}
-                      (nth op 2 nil)))
-            (nth (nth op 3) 1))))
-       distinct
-       sort
-       vec))
+  (relationship-mutations/affected-relation-ids tx-data #{:db/retract}))
 
 (defn orphaned-relationship-halves
   "Lazy offline scan of relationship halves whose matching peer half is absent."

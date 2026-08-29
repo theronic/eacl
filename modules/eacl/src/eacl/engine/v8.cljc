@@ -8,6 +8,7 @@
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.stable-route :as stable-route]
             [eacl.execution :as execution]
+            [eacl.exact-integer :as exact-integer]
             [eacl.operator.batch-schedule :as operator-batch-schedule]
             [eacl.operator.cover-plan :as operator-cover-plan]
             [eacl.operator.cursor-scope :as operator-cursor-scope]
@@ -211,21 +212,13 @@
        :size size
        :bound bound})))
 
-(defn- portable-page-natural?
-  [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value)
-                 (js/Number.isSafeInteger value)))
-   (<= 0 value backend/maximum-exact-integer)))
-
 (defn- generated-page-request-encodable?
   [query]
   (every?
    (fn [field]
      (or (not (contains? query field))
          (nil? (get query field))
-         (portable-page-natural? (get query field))))
+         (exact-integer/natural? (get query field))))
    [:first :last]))
 
 (defn- generated-page-presence

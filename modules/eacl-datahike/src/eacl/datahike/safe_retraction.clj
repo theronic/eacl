@@ -89,13 +89,6 @@
      :relation-name (:eacl.relation/relation-name entity)
      :permission-name (:eacl.permission/permission-name entity)}))
 
-(defn- relation-triples
-  [db]
-  (mapv (fn [{:keys [e v]}]
-          [(nth v 0) e (nth v 2)])
-        (ddb/avet-datoms
-         db :eacl.relation/resource-type+relation-name+subject-type)))
-
 (defn- known-ghost-plan
   [db target-eid]
   (safe/combine-plans
@@ -120,7 +113,9 @@
             [[:db/retract peer-eid storage/forward-attribute forward-value]]
             :relation-ids [relation-eid]
             :local-half-count 0}))))
-    (relation-triples db))))
+    (storage/relation-triples
+     (ddb/avet-datoms
+      db :eacl.relation/resource-type+relation-name+subject-type)))))
 
 (defn retract-entity-function
   [db target]

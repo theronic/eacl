@@ -10,6 +10,7 @@
    [eacl.engine.v8 :as engine]
    [eacl.relationships.endpoint-pair :as endpoint-pair]
    [eacl.relationships.filters :as relationship-filters]
+   [eacl.relationships.mutations :as relationship-mutations]
    [eacl.relationships.storage :as relationship-storage]
    [eacl.schema.expression-persistence :as expression-persistence]))
 
@@ -361,21 +362,8 @@
 (defn affected-relation-ids
   "Returns every relation eid named by relationship endpoint mutations."
   [tx-data]
-  (->> tx-data
-       (keep
-        (fn [op]
-          (when (and (vector? op)
-                     (contains? #{:db/add :db/retract} (first op))
-                     (contains?
-                      #{relationship-storage/forward-attribute
-                        relationship-storage/reverse-attribute}
-                      (nth op 2 nil))
-                     (vector? (nth op 3 nil)))
-            (nth (nth op 3) 1 nil))))
-       (remove nil?)
-       distinct
-       sort
-       vec))
+  (relationship-mutations/affected-relation-ids
+   tx-data #{:db/add :db/retract}))
 
 (defn- relation-def
   [relation]
@@ -610,23 +598,6 @@
 ;; callers should run the explicit integrity audit if it might have left a
 ;; surviving peer half.
 
-(defn- relation-triples
-  "[resource-type relation-eid subject-type] for every Relation in the schema.
-  Bounded by schema size, never by relationship count."
-  [db]
-  (mapv (fn [datom]
-          (let [[resource-type _relation-name subject-type] (:v datom)]
-            [resource-type (:e datom) subject-type]))
-        (d/datoms db :aevt :eacl.relation/resource-type+relation-name+subject-type)))
-
-(defn- relationship-pair-retractions
-  "Both halves of one relationship, as retraction ops."
-  [subject-type subject-eid relation-eid resource-type resource-eid]
-  [[:db/retract subject-eid relationship-storage/forward-attribute
-    [subject-type relation-eid resource-type resource-eid]]
-   [:db/retract resource-eid relationship-storage/reverse-attribute
-    [resource-type relation-eid subject-type subject-eid]]])
-
 (defn- op-attr
   "The attribute of a list-form tx op, or nil for a map form or anything else.
   Map forms cannot express a relationship tuple retraction, so skipping them is
@@ -740,7 +711,10 @@
   what makes discovery and heap use bounded by the batch size."
   [db object-id]
   (if-let [eid (impl.indexed/object-eid db object-id)]
-    (let [triples (relation-triples db)]
+    (let [triples (relationship-storage/relation-triples
+                   (d/datoms
+                    db :aevt
+                    :eacl.relation/resource-type+relation-name+subject-type))]
       (concat
        ;; Orphaned forward halves, plus the canonical copy of a self-edge.
        (mapcat
@@ -751,7 +725,7 @@
                       (empty? (d/datoms db :eavt resource-eid
                                         relationship-storage/reverse-attribute
                                         reverse-value)))
-              (relationship-pair-retractions subject-type eid relation-eid
+              (endpoint-pair/retractions subject-type eid relation-eid
                                              resource-type resource-eid))))
         (d/datoms db :eavt eid relationship-storage/forward-attribute))
 
@@ -763,7 +737,7 @@
             (when (empty? (d/datoms db :eavt subject-eid
                                     relationship-storage/forward-attribute
                                     forward-value))
-              (relationship-pair-retractions subject-type subject-eid
+              (endpoint-pair/retractions subject-type subject-eid
                                              relation-eid resource-type eid))))
         (d/datoms db :eavt eid relationship-storage/reverse-attribute))
 
@@ -774,7 +748,7 @@
            (fn [datom]
              ;; Self-edges are canonicalized to the own-forward scan above.
              (when (not= eid (:e datom))
-               (relationship-pair-retractions subject-type eid relation-eid
+               (endpoint-pair/retractions subject-type eid relation-eid
                                               resource-type (:e datom))))
            (d/datoms db :avet relationship-storage/reverse-attribute
                      [resource-type relation-eid subject-type eid])))
@@ -786,7 +760,7 @@
           (mapcat
            (fn [datom]
              (when (not= eid (:e datom))
-               (relationship-pair-retractions subject-type (:e datom)
+               (endpoint-pair/retractions subject-type (:e datom)
                                               relation-eid resource-type eid)))
            (d/datoms db :avet relationship-storage/forward-attribute
                      [subject-type relation-eid resource-type eid])))

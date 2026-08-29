@@ -140,13 +140,10 @@
               "Recursive candidate must contain a complete typed point context."
               {:candidate candidate})))
 
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
-
 (defn- direct-probe [q descriptor]
   (when-let [{:keys [relation-id]}
-             (relation-partition descriptor (question-subject-type q))]
+             (operator-plan/relation-partition
+              descriptor (question-subject-type q))]
     (if (= :forward (question-direction q))
       {:direction :forward
        :descriptor

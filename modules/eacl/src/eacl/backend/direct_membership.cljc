@@ -47,12 +47,6 @@
      :obligation obligation
      :value value})))
 
-(defn- exact-natural? [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value) (js/Number.isSafeInteger value)))
-   (<= 0 value exact-integer/maximum)))
-
 (defn normalize-request
   "Validates and returns the closed portable batch request.
 
@@ -87,7 +81,7 @@
     (doseq [field (if (= :forward direction)
                     [:subject-eid :relation-eid]
                     [:resource-eid :relation-eid])]
-      (when-not (exact-natural? (get descriptor field))
+      (when-not (exact-integer/natural? (get descriptor field))
         (invalid-request!
          "Direct-membership descriptor identifiers must be portable natural integers."
          {:field field :value (get descriptor field)})))
@@ -106,7 +100,7 @@
         (when-not (and (vector? candidate)
                        (= 2 (count candidate))
                        (= candidate-type (first candidate))
-                       (exact-natural? (second candidate)))
+                       (exact-integer/natural? (second candidate)))
           (invalid-request!
            "Direct-membership candidates must be aligned typed identifier pairs."
            {:index index :candidate candidate
