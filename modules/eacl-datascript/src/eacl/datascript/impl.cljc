@@ -63,6 +63,18 @@
            :subject-type (nth v 2)})
         (ds/datoms db :avet :eacl.relation/resource-type+relation-name+subject-type)))
 
+(defn- apply-exclusive-scan-bound
+  "The native index seek is inclusive. Drop only its boundary run when the
+  portable scan contract requests an exclusive cursor; every later value is
+  already on the correct side because the index is monotone."
+  [values bound-eid inclusive-bound?]
+  (if (and (some? bound-eid) (not inclusive-bound?))
+    ;; EAVT contains at most one datom for one [entity attribute value]
+    ;; tuple, so an exclusive native seek can expose at most one boundary
+    ;; row. Avoid constructing a predicate-bearing lazy sequence per scan.
+    (if (= bound-eid (first values)) (rest values) values)
+    values))
+
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
   (let [{:keys [direction bound-eid inclusive-bound?]}
@@ -71,27 +83,19 @@
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        within-bound?
-        (case direction
-          :asc
-          (if bound-eid
-            (if inclusive-bound?
-              #(<= bound-eid %)
-              #(< bound-eid %))
-            (constantly true))
-
-          :desc
-          (if bound-eid
-            (if inclusive-bound?
-              #(>= bound-eid %)
-              #(> bound-eid %))
-            (constantly true)))]
-    (->> (ddb/eavt-endpoint-prefix
-          db subject-id relationship-storage/forward-attribute
-          [subject-type relation-id resource-type]
-          bound-eid direction)
-         (map (comp #(nth % 3) :v))
-         (filter within-bound?))))
+        _ (case direction :asc nil :desc nil)]
+    (let [datoms (ddb/eavt-endpoint-prefix
+                  db subject-id relationship-storage/forward-attribute
+                  [subject-type relation-id resource-type]
+                  bound-eid direction)]
+      ;; Preserve a canonical eager empty result. Constructing map and bound
+      ;; wrappers for the overwhelmingly common empty recursive probe is pure
+      ;; allocation; non-empty scans remain lazy and bounded by their caller.
+      (if-let [datoms (seq datoms)]
+        (apply-exclusive-scan-bound
+         (map (comp #(nth % 3) :v) datoms)
+         bound-eid inclusive-bound?)
+        []))))
 
 (defn resource->subjects
   [db resource-type resource-id relation-id subject-type cursor-or-options]
@@ -101,27 +105,16 @@
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        within-bound?
-        (case direction
-          :asc
-          (if bound-eid
-            (if inclusive-bound?
-              #(<= bound-eid %)
-              #(< bound-eid %))
-            (constantly true))
-
-          :desc
-          (if bound-eid
-            (if inclusive-bound?
-              #(>= bound-eid %)
-              #(> bound-eid %))
-            (constantly true)))]
-    (->> (ddb/eavt-endpoint-prefix
-          db resource-id relationship-storage/reverse-attribute
-          [resource-type relation-id subject-type]
-          bound-eid direction)
-         (map (comp #(nth % 3) :v))
-         (filter within-bound?))))
+        _ (case direction :asc nil :desc nil)]
+    (let [datoms (ddb/eavt-endpoint-prefix
+                  db resource-id relationship-storage/reverse-attribute
+                  [resource-type relation-id subject-type]
+                  bound-eid direction)]
+      (if-let [datoms (seq datoms)]
+        (apply-exclusive-scan-bound
+         (map (comp #(nth % 3) :v) datoms)
+         bound-eid inclusive-bound?)
+        []))))
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]

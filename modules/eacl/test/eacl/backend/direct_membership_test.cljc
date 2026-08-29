@@ -185,6 +185,12 @@
         (is (contains? #{obligation :aligned-boolean-vector}
                        (:obligation data)))))))
 
+(deftest scalar-response-is-validated-at-the-captured-boundary-test
+  (let [scalar (adapter (constantly :not-boolean))
+        data (error-data #(direct/direct-match-many? scalar forward-request))]
+    (is (= :eacl/backend-contract-violation (:type data)))
+    (is (= :boolean-result (:obligation data)))))
+
 (deftest selected-native-basis-does-not-follow-concurrent-head-test
   (let [selected #{0 2}
         head (atom selected)

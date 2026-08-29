@@ -1514,7 +1514,7 @@
   under the request's original absolute deadline. Returns the fetch-fn and
   the attempt counter that feeds `:adapter-attempts` in the observer stats."
   [db]
-  (let [attempts (atom 0)]
+  (let [attempts (when *recursive-traversal-stats* (atom 0))]
     {:fetch-fn (physical/retrying-fetch-fn
                 (stable-reducer/adapter-fetch-fn db)
                 {:max-attempts default-physical-attempts
@@ -1527,7 +1527,7 @@
   classification/retry envelope to `stable-fetch-fn`, over the
   direction-aware seam (descending windows issue :desc scans)."
   [db]
-  (let [attempts (atom 0)]
+  (let [attempts (when *recursive-traversal-stats* (atom 0))]
     {:fetch-fn (physical/retrying-fetch-fn
                 (least-path/adapter-fetch-fn db)
                 {:max-attempts default-physical-attempts
@@ -1537,7 +1537,7 @@
 
 (defn- report-adapter-attempts!
   [attempts]
-  (when-let [stats *recursive-traversal-stats*]
+  (when-let [stats (and attempts *recursive-traversal-stats*)]
     (swap! stats update :adapter-attempts (fnil + 0) @attempts))
   nil)
 

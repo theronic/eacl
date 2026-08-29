@@ -100,7 +100,8 @@
                  (:partitions descriptor))))
 
 (defn- direct-match?
-  [adapter subject-type subject-eid resource-type resource-eid descriptor]
+  [direct-match! subject-type subject-eid resource-type resource-eid
+   descriptor]
   (if-let [{:keys [relation-id]}
            (relation-partition descriptor subject-type)]
     (do
@@ -110,9 +111,8 @@
       (request-counters/add-probes!)
       (add-stat! :scalar-equivalent-predicates 1)
       (let [decision
-            (backend/invoke adapter :direct-match?
-                            subject-type subject-eid relation-id
-                            resource-type resource-eid)]
+            (direct-match! subject-type subject-eid relation-id
+                           resource-type resource-eid)]
         (execution/check! execution/*contract*
                           :operator-point/direct-after
                           {:probes 1})
@@ -125,7 +125,7 @@
       (assoc :values [] :value-index 0 :bound nil :exhausted? false)))
 
 (defn- arrow-values!
-  [adapter {:keys [key partition-index descriptor bound] :as frame}
+  [resource->subjects! {:keys [key partition-index descriptor bound] :as frame}
    limits counters]
   (let [[permission _ _ _ resource-eid] key
         resource-type (first permission)
@@ -158,8 +158,7 @@
                (let [values
                      (into []
                            (take (:physical-chunk-size limits))
-                           (backend/invoke
-                            adapter :resource->subjects
+                           (resource->subjects!
                             resource-type resource-eid
                             (:via-relation-eid partition)
                             (:intermediate-type partition)
@@ -234,7 +233,10 @@
                       subject-eid resource-eid]
             counters (volatile! {:transitions 0
                                  :arrow-commands 0
-                                 :arrow-values 0})]
+                                 :arrow-values 0})
+            direct-match! (backend/direct-match-invoker adapter)
+            resource->subjects!
+            (backend/scan-invoker adapter :resource->subjects)]
         (when-not (some? root-id)
           (invalid! :missing-root "Operator plan root expression is missing."
                     {:root root-permission}))
@@ -347,7 +349,7 @@
                           :direct-membership
                           (let [decision
                                 (direct-match?
-                                 adapter current-subject-type
+                                 direct-match! current-subject-type
                                  current-subject-eid (first permission)
                                  current-resource-eid
                                  (:descriptor predicate))
@@ -442,7 +444,7 @@
                             (if (= :relation (:target-kind partition))
                               (let [decision
                                     (direct-match?
-                                     adapter (nth key 2) (nth key 3)
+                                     direct-match! (nth key 2) (nth key 3)
                                      (:intermediate-type partition)
                                      intermediate-eid
                                      (:target-relation partition))]
@@ -470,7 +472,8 @@
 
                           :else
                           [(conj stack
-                                 (arrow-values! adapter frame limits counters))
+                                 (arrow-values! resource->subjects!
+                                                frame limits counters))
                            memo active no-value])]
                     (recur stack memo active returned))
 

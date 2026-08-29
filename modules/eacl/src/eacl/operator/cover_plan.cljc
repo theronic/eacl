@@ -120,8 +120,15 @@
                         synthetic))))
 
 (defn- forwarding-operation [adapter operation]
-  (fn [& arguments]
-    (apply backend/invoke adapter operation arguments)))
+  (case operation
+    (:subject->resources :resource->subjects)
+    (backend/scan-invoker adapter operation)
+
+    :direct-match?
+    (backend/direct-match-invoker adapter)
+
+    (fn [& arguments]
+      (apply backend/invoke adapter operation arguments))))
 
 (defn- wrapper-adapter
   [adapter operator-plan {:keys [semantic->synthetic synthetic->semantic]}]

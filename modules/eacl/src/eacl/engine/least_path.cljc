@@ -39,22 +39,24 @@
   windows need `:desc` scans). Callers supplying their own `:fetch-fn`
   (the routed classified/retrying seam) must preserve `:direction`."
   [adapter]
-  (fn [{:keys [operation bound-eid direction] :as descriptor}]
-    (let [options (cond-> {:direction (or direction :asc)}
-                    (:limit descriptor) (assoc :limit (:limit descriptor))
-                    bound-eid (assoc :bound-eid bound-eid
-                                     :inclusive-bound? false))]
-      (case operation
-        :subject->resources
-        (backend/invoke adapter :subject->resources
-                        (:subject-type descriptor) (:subject-eid descriptor)
-                        (:relation-eid descriptor) (:resource-type descriptor)
-                        options)
-        :resource->subjects
-        (backend/invoke adapter :resource->subjects
-                        (:resource-type descriptor) (:resource-eid descriptor)
-                        (:relation-eid descriptor) (:subject-type descriptor)
-                        options)))))
+  (let [subject->resources (backend/scan-invoker adapter :subject->resources)
+        resource->subjects (backend/scan-invoker adapter :resource->subjects)]
+    (fn [{:keys [operation bound-eid direction] :as descriptor}]
+      (let [options (cond-> {:direction (or direction :asc)}
+                      (:limit descriptor) (assoc :limit (:limit descriptor))
+                      bound-eid (assoc :bound-eid bound-eid
+                                       :inclusive-bound? false))]
+        (case operation
+          :subject->resources
+          (subject->resources
+           (:subject-type descriptor) (:subject-eid descriptor)
+           (:relation-eid descriptor) (:resource-type descriptor)
+           options)
+          :resource->subjects
+          (resource->subjects
+           (:resource-type descriptor) (:resource-eid descriptor)
+           (:relation-eid descriptor) (:subject-type descriptor)
+           options))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Context: budgeted, cut-pointed reads through the routed fetch seam

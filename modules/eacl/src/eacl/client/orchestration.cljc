@@ -1484,6 +1484,7 @@
                     engine/*proof-frame* request-proof-frame]
             (required-direct-relation-id
              adapter relation-resource-type relation relation-subject-type))
+          direct-match! (backend/direct-match-invoker adapter)
           accept?
           (fn [candidate]
             (execution/check!
@@ -1494,14 +1495,12 @@
                     false
                     (case operation
                       :lookup-resources
-                      (backend/invoke
-                       adapter :direct-match?
+                      (direct-match!
                        (:type internal-anchor) (:id internal-anchor)
                        relation-id (:type candidate) (:id candidate))
 
                       :lookup-subjects
-                      (backend/invoke
-                       adapter :direct-match?
+                      (direct-match!
                        (:type candidate) (:id candidate)
                        relation-id (:type internal-anchor)
                        (:id internal-anchor))))]

@@ -153,6 +153,11 @@
       (is (not-any? #{(object-id->entid db "network-1")}
                     (impl/subject->resources db :account account-id account-relation :server nil))))
 
+    (testing "empty forward probes return a reusable bounded vector"
+      (is (vector?
+           (impl/subject->resources
+            db :account account-id (inc account-relation) :server nil))))
+
     (testing "reverse scans match the bounded AVET range semantics"
       (is (= [account-id]
              (vec (impl/resource->subjects db :server server-1-id account-relation :account nil))))
@@ -176,7 +181,12 @@
       (is (= [account-id]
              (vec (impl/resource->subjects db :server server-1-id account-relation :account nil))))
       (is (not-any? #{(object-id->entid db "user-1")}
-                    (impl/resource->subjects db :server server-1-id account-relation :account nil))))))
+                    (impl/resource->subjects db :server server-1-id account-relation :account nil))))
+
+    (testing "empty reverse probes return a reusable bounded vector"
+      (is (vector?
+           (impl/resource->subjects
+            db :server server-1-id (inc account-relation) :account nil))))))
 
 (defn- seed-permission-db
   []

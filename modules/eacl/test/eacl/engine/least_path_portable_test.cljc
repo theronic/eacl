@@ -6,12 +6,13 @@
             [eacl.engine.v8 :as engine]))
 
 (deftest descriptor-limit-crosses-the-direct-adapter-boundary-test
-  (let [calls (atom [])
-        fetch (least-path/adapter-fetch-fn :test-adapter)]
-    (with-redefs [backend/invoke
-                  (fn [_ operation & args]
-                    (swap! calls conj [operation args])
-                    [10 11 12])]
+  (let [calls (atom [])]
+    (with-redefs [backend/scan-invoker
+                  (fn [_ operation]
+                    (fn [& args]
+                      (swap! calls conj [operation args])
+                      [10 11 12]))]
+      (let [fetch (least-path/adapter-fetch-fn :test-adapter)]
       (is (= [10 11 12]
              (fetch {:operation :subject->resources
                      :subject-type :user :subject-eid 1
@@ -21,7 +22,7 @@
               :bound-eid 20
               :inclusive-bound? false
               :limit 3}
-             (last (second (first @calls))))))))
+             (last (second (first @calls)))))))))
 
 (deftest routed-bounded-vector-is-not-recopied-test
   (let [routed [10 11 12]

@@ -672,9 +672,8 @@
     ((if inclusive? <= <) bound value)))
 
 (defn- guard-scan!
-  [adapter operation-key args value]
+  [adapter operation-key options value]
   (let [backend-id (::id adapter)
-        options (or (last args) {})
         direction (or (:direction options) :asc)
         bound (:bound-eid options)
         inclusive? (true? (:inclusive-bound? options))]
@@ -717,7 +716,7 @@
   (let [backend-id (::id adapter)]
     (case operation-key
       (:subject->resources :resource->subjects)
-      (guard-scan! adapter operation-key args value)
+      (guard-scan! adapter operation-key (or (last args) {}) value)
 
       :object-id->internal
       (do
@@ -811,9 +810,74 @@
       (contract-violation!
        backend-id operation-key :registered-runtime-guard value))))
 
+(defn ^:no-doc scan-invoker
+  "Captures one immutable ordered-scan implementation while preserving the
+  complete adapter invocation boundary on every call.
+
+  This is a fixed-arity specialization of `invoke`, not a raw adapter escape:
+  mandatory request metering, optional backend stats, invocation observers,
+  runtime guards, and failure observation remain identical."
+  [adapter operation-key]
+  (when-not (contains? #{:subject->resources :resource->subjects}
+                       operation-key)
+    (invalid-adapter! "A scan invoker requires an ordered scan operation."
+                      {:operation operation-key}))
+  (if-not (adapter? adapter)
+    ;; Preserve the old call-time validation/redefinition seam for test and
+    ;; diagnostic fetch functions that deliberately stand in for an adapter.
+    ;; Production adapters always take the captured fixed-arity path below.
+    (fn [endpoint-type endpoint-eid relation-eid result-type options]
+      (invoke adapter operation-key endpoint-type endpoint-eid
+              relation-eid result-type options))
+    (let [implementation (operation adapter operation-key)
+          guarded? (runtime-guards? adapter)]
+      (fn [endpoint-type endpoint-eid relation-eid result-type options]
+        (request-counters/add-adapter-reads!)
+        (when *backend-op-stats*
+          (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+        (observe-invocation! :before adapter operation-key)
+        (try
+          (let [value (implementation endpoint-type endpoint-eid
+                                      relation-eid result-type options)]
+            (observe-invocation! :after adapter operation-key)
+            (if guarded?
+              (guard-scan! adapter operation-key options value)
+              value))
+          (catch #?(:clj Throwable :cljs :default) error
+            (observe-invocation! :failed adapter operation-key)
+            (throw error)))))))
+
+(defn ^:no-doc direct-match-invoker
+  "Captures the immutable scalar direct-membership implementation while
+  preserving the complete adapter invocation boundary for every candidate."
+  [adapter]
+  (let [operation-key :direct-match?]
+    (if-not (adapter? adapter)
+      (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+        (invoke adapter operation-key subject-type subject-eid relation-eid
+                resource-type resource-eid))
+      (let [implementation (operation adapter operation-key)
+            guarded? (runtime-guards? adapter)]
+        (fn [subject-type subject-eid relation-eid resource-type resource-eid]
+          (request-counters/add-adapter-reads!)
+          (when *backend-op-stats*
+            (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+          (observe-invocation! :before adapter operation-key)
+          (try
+            (let [value (implementation subject-type subject-eid relation-eid
+                                        resource-type resource-eid)]
+              (observe-invocation! :after adapter operation-key)
+              (if (and guarded? (not (boolean? value)))
+                (contract-violation!
+                 (::id adapter) operation-key :boolean-result value)
+                value))
+            (catch #?(:clj Throwable :cljs :default) error
+              (observe-invocation! :failed adapter operation-key)
+              (throw error))))))))
+
 (defn invoke
   [adapter operation-key & args]
-  (request-counters/add! :adapter-reads)
+  (request-counters/add-adapter-reads!)
   (when *backend-op-stats*
     (swap! *backend-op-stats* update operation-key (fnil inc 0)))
   (observe-invocation! :before adapter operation-key)
@@ -837,7 +901,7 @@
    {:keys [before-realize! after-realize! step]
     :or {before-realize! (constantly nil)
          after-realize! (constantly nil)}}]
-  (request-counters/add! :adapter-reads)
+  (request-counters/add-adapter-reads!)
   (when-not (contains? #{:relation-defs :permission-defs} operation-key)
     (invalid-adapter! "Incremental definition reduction requires a schema operation."
                       {:operation operation-key}))
@@ -881,7 +945,7 @@
    {:keys [before-realize! after-realize! step]
     :or {before-realize! (constantly nil)
          after-realize! (constantly nil)}}]
-  (request-counters/add! :adapter-reads)
+  (request-counters/add-adapter-reads!)
   (when-not (contains? #{:subject->resources :resource->subjects}
                        operation-key)
     (invalid-adapter! "Incremental reduction requires an ordered scan operation."

@@ -31,6 +31,7 @@
 
 (def ^:private known-counter-keys (set counter-keys))
 (def ^:private counter-index (zipmap counter-keys (range)))
+(def ^:private adapter-reads-index (get counter-index :adapter-reads))
 (def ^:private commands-index (get counter-index :commands))
 (def ^:private fetched-values-index (get counter-index :fetched-values))
 (def ^:private candidates-examined-index
@@ -45,6 +46,27 @@
   Ledgers use a fixed primitive array so observing one bounded increment does
   not allocate another persistent counter map on the request path."
   nil)
+
+#?(:clj
+   (def ^:private ^ThreadLocal active-ledger-cache
+     ;; A cache entry is [binding-frame ledger]. Comparing the current frame
+     ;; preserves nested direct `binding` semantics while avoiding
+     ;; PersistentHashMap.entryAt's MapEntry allocation on the normal
+     ;; call-with-ledger path. A conveyed binding on another thread has no
+     ;; ThreadLocal entry and therefore falls back to the dynamic Var.
+     (ThreadLocal.)))
+
+(defn- current-ledger
+  []
+  #?(:clj
+     (let [entry (.get active-ledger-cache)]
+       (if (and entry
+                (identical? (aget ^objects entry 0)
+                            (clojure.lang.Var/getThreadBindingFrame)))
+         (aget ^objects entry 1)
+         *ledger*))
+     :cljs
+     *ledger*))
 
 (defn empty-counts
   []
@@ -77,30 +99,48 @@
        :eacl/error :eacl.request/invalid-counter-increment
        :counter counter
        :amount amount})))
-  (when *ledger*
-    (let [values (:values *ledger*)]
+  (when-let [ledger (current-ledger)]
+    (let [values (:values ledger)]
       #?(:clj
          (let [index (int index)
                values ^longs values]
-           (aset-long values index (+ (aget values index) amount)))
+           (aset values index (long (+ (aget values index) amount))))
          :cljs
          (aset values index (+ (aget values index) amount)))))
   nil)
 
+(defn- increment-at!
+  "Primitive default increment for fixed counters. Keeping the literal `+1`
+  out of `add-at!` avoids boxing the generic amount on every hot-path read."
+  [^long index]
+  (when-let [ledger (current-ledger)]
+    (let [values (:values ledger)]
+      #?(:clj
+         (let [index (int index)
+               values ^longs values]
+           (aset values index (Math/addExact (aget values index) (long 1))))
+         :cljs
+         (aset values index (inc (aget values index))))))
+  nil)
+
 (defn ^:no-doc add-commands!
-  ([] (add-at! commands-index :commands 1))
+  ([] (increment-at! commands-index))
   ([amount] (add-at! commands-index :commands amount)))
 
+(defn ^:no-doc add-adapter-reads!
+  ([] (increment-at! adapter-reads-index))
+  ([amount] (add-at! adapter-reads-index :adapter-reads amount)))
+
 (defn ^:no-doc add-fetched-values!
-  ([] (add-at! fetched-values-index :fetched-values 1))
+  ([] (increment-at! fetched-values-index))
   ([amount] (add-at! fetched-values-index :fetched-values amount)))
 
 (defn ^:no-doc add-candidates-examined!
-  ([] (add-at! candidates-examined-index :candidates-examined 1))
+  ([] (increment-at! candidates-examined-index))
   ([amount] (add-at! candidates-examined-index :candidates-examined amount)))
 
 (defn ^:no-doc add-probes!
-  ([] (add-at! probes-index :probes 1))
+  ([] (increment-at! probes-index))
   ([amount] (add-at! probes-index :probes amount)))
 
 (defn add!
@@ -146,4 +186,16 @@
   "Runs synchronous `f` with `ledger` as the current request ledger."
   [ledger f]
   (binding [*ledger* ledger]
-    (f)))
+    #?(:clj
+       (let [previous (.get active-ledger-cache)
+             entry (object-array
+                    [(clojure.lang.Var/getThreadBindingFrame) ledger])]
+         (.set active-ledger-cache entry)
+         (try
+           (f)
+           (finally
+             (if previous
+               (.set active-ledger-cache previous)
+               (.remove active-ledger-cache)))))
+       :cljs
+       (f))))

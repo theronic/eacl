@@ -68,6 +68,33 @@
    (ddb/eavt-tuple-prefix
     db entity attr 4 prefix cursor-id direction)))
 
+(defn- apply-scan-bound
+  "Avoid a predicate on every row when a direct native seek has already
+  enforced the bound. Datahike temporal/filter wrappers cannot seek by the
+  tail component, so their fallback retains the complete portable filter."
+  [db values direction bound-eid inclusive-bound?]
+  (cond
+    (nil? bound-eid)
+    values
+
+    (ddb/direct-db? db)
+    (if inclusive-bound?
+      values
+      ;; EAVT contains at most one datom for one [entity attribute value]
+      ;; tuple, so the inclusive native seek has at most one boundary row.
+      (if (= bound-eid (first values)) (rest values) values))
+
+    :else
+    (filter
+     (case direction
+       :asc (if inclusive-bound?
+              #(<= bound-eid %)
+              #(< bound-eid %))
+       :desc (if inclusive-bound?
+               #(>= bound-eid %)
+               #(> bound-eid %)))
+     values)))
+
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
   (let [{:keys [direction bound-eid inclusive-bound?]}
@@ -76,27 +103,15 @@
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        within-bound?
-        (case direction
-          :asc
-          (if bound-eid
-            (if inclusive-bound?
-              #(<= bound-eid %)
-              #(< bound-eid %))
-            (constantly true))
-
-          :desc
-          (if bound-eid
-            (if inclusive-bound?
-              #(>= bound-eid %)
-              #(> bound-eid %))
-            (constantly true)))]
-    (->> (relationship-datoms-on-entity
-          db subject-id relationship-storage/forward-attribute
-          [subject-type relation-id resource-type]
-          bound-eid direction)
-         (map (comp #(nth % 3) :v))
-         (filter within-bound?))))
+        _ (case direction :asc nil :desc nil)]
+    (apply-scan-bound
+     db
+     (map (comp #(nth % 3) :v)
+          (relationship-datoms-on-entity
+           db subject-id relationship-storage/forward-attribute
+           [subject-type relation-id resource-type]
+           bound-eid direction))
+     direction bound-eid inclusive-bound?)))
 
 (defn resource->subjects
   [db resource-type resource-id relation-id subject-type cursor-or-options]
@@ -106,27 +121,15 @@
           {:direction :asc
            :bound-eid cursor-or-options
            :inclusive-bound? false})
-        within-bound?
-        (case direction
-          :asc
-          (if bound-eid
-            (if inclusive-bound?
-              #(<= bound-eid %)
-              #(< bound-eid %))
-            (constantly true))
-
-          :desc
-          (if bound-eid
-            (if inclusive-bound?
-              #(>= bound-eid %)
-              #(> bound-eid %))
-            (constantly true)))]
-    (->> (relationship-datoms-on-entity
-          db resource-id relationship-storage/reverse-attribute
-          [resource-type relation-id subject-type]
-          bound-eid direction)
-         (map (comp #(nth % 3) :v))
-         (filter within-bound?))))
+        _ (case direction :asc nil :desc nil)]
+    (apply-scan-bound
+     db
+     (map (comp #(nth % 3) :v)
+          (relationship-datoms-on-entity
+           db resource-id relationship-storage/reverse-attribute
+           [resource-type relation-id subject-type]
+           bound-eid direction))
+     direction bound-eid inclusive-bound?)))
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]

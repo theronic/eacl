@@ -100,8 +100,8 @@
             {:present (persistent! present)
              :realized realized
              :overread 0}))]
-    (request-counters/add! :fetched-values realized)
-    (request-counters/add! :probes (count ordered))
+    (request-counters/add-fetched-values! realized)
+    (request-counters/add-probes! (count ordered))
     (add-stat! :physical-subgroups 1)
     (add-stat! :dense-prefix-groups 1)
     (add-stat! :prefix-values realized)
@@ -116,8 +116,8 @@
          fetched 0]
     (if (= index (count ordered))
       (let [decisions (persistent! decisions)]
-        (request-counters/add! :fetched-values fetched)
-        (request-counters/add! :probes (count ordered))
+        (request-counters/add-fetched-values! fetched)
+        (request-counters/add-probes! (count ordered))
         (add-stat! :physical-subgroups 1)
         (add-stat! :sparse-exact-groups 1)
         (add-stat! :exact-seeks (count ordered))
@@ -151,7 +151,7 @@
           decisions (if dense?
                       (dense-decisions db descriptor ordered)
                       (sparse-decisions db descriptor ordered))]
-      (request-counters/add! :commands 1)
+      (request-counters/add-commands!)
       (add-stat! :adapter-commands 1)
       (add-stat! :scalar-equivalent-predicates (count candidates))
       (scatter (count candidates) ordered decisions))))

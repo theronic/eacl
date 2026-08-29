@@ -43,6 +43,106 @@
 (def default-max-values 4000000)
 (def default-max-stack 1000000)
 
+(defrecord ^:private ReducerState
+  [stack admitted admissions transitions commands fetched-values fetch-fn
+   sidecar sidecar-order sidecar-order-index sidecar-clock
+   current-sidecar-values sidecar-cap physical-chunk-size
+   max-admissions max-commands max-transitions max-values max-stack
+   maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
+   base-discovered result-sink result-window-size result-index results])
+
+(defn- replace-state
+  "Constructs one immutable reducer-state revision. Keeping the mutable fields
+  explicit makes multi-field transition commits allocate one record instead
+  of one complete record per `assoc`/`update`."
+  [^ReducerState state
+   stack admitted admissions transitions commands fetched-values
+   sidecar sidecar-order sidecar-order-index sidecar-clock
+   current-sidecar-values maximum-sidecar-buffers maximum-sidecar-values
+   maximum-stack discovered result-index results]
+  #?(:clj
+     (ReducerState.
+      stack admitted admissions transitions commands fetched-values
+      (.-fetch_fn state)
+      sidecar sidecar-order sidecar-order-index sidecar-clock
+      current-sidecar-values
+      (.-sidecar_cap state) (.-physical_chunk_size state)
+      (.-max_admissions state) (.-max_commands state)
+      (.-max_transitions state) (.-max_values state) (.-max_stack state)
+      maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
+      (.-base_discovered state)
+      (.-result_sink state) (.-result_window_size state) result-index results)
+     :cljs
+     (ReducerState.
+      stack admitted admissions transitions commands fetched-values
+      (.-fetch_fn state)
+      sidecar sidecar-order sidecar-order-index sidecar-clock
+      current-sidecar-values
+      (.-sidecar_cap state) (.-physical_chunk_size state)
+      (.-max_admissions state) (.-max_commands state)
+      (.-max_transitions state) (.-max_values state) (.-max_stack state)
+      maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
+      (.-base_discovered state)
+      (.-result_sink state) (.-result_window_size state) result-index results)))
+
+(defn- schedule-state
+  [^ReducerState state stack admitted admissions maximum-stack]
+  (if (instance? ReducerState state)
+    (replace-state
+     state stack admitted admissions
+     (.-transitions state) (.-commands state) (.-fetched_values state)
+     (.-sidecar state) (.-sidecar_order state) (.-sidecar_order_index state)
+     (.-sidecar_clock state) (.-current_sidecar_values state)
+     (.-maximum_sidecar_buffers state) (.-maximum_sidecar_values state)
+     maximum-stack (.-discovered state) (.-result_index state)
+     (.-results state))
+    ;; `schedule` is a no-doc test seam and accepts ordinary maps.
+    (assoc state :stack stack :admitted admitted :admissions admissions
+           :maximum-stack maximum-stack)))
+
+(defn- transition-state
+  [^ReducerState state stack transitions]
+  (replace-state
+   state stack (.-admitted state) (.-admissions state) transitions
+   (.-commands state) (.-fetched_values state)
+   (.-sidecar state) (.-sidecar_order state) (.-sidecar_order_index state)
+   (.-sidecar_clock state) (.-current_sidecar_values state)
+   (.-maximum_sidecar_buffers state) (.-maximum_sidecar_values state)
+   (.-maximum_stack state) (.-discovered state)
+   (.-result_index state) (.-results state)))
+
+(defn- buffer-state
+  [^ReducerState state sidecar current-sidecar-values]
+  (replace-state
+   state (.-stack state) (.-admitted state) (.-admissions state)
+   (.-transitions state) (.-commands state) (.-fetched_values state)
+   sidecar (.-sidecar_order state) (.-sidecar_order_index state)
+   (.-sidecar_clock state) current-sidecar-values
+   (.-maximum_sidecar_buffers state) (.-maximum_sidecar_values state)
+   (.-maximum_stack state) (.-discovered state)
+   (.-result_index state) (.-results state)))
+
+(defn- fetch-state
+  [^ReducerState state commands fetched-values]
+  (replace-state
+   state (.-stack state) (.-admitted state) (.-admissions state)
+   (.-transitions state) commands fetched-values
+   (.-sidecar state) (.-sidecar_order state) (.-sidecar_order_index state)
+   (.-sidecar_clock state) (.-current_sidecar_values state)
+   (.-maximum_sidecar_buffers state) (.-maximum_sidecar_values state)
+   (.-maximum_stack state) (.-discovered state)
+   (.-result_index state) (.-results state)))
+
+(defn- emission-state
+  [^ReducerState state discovered result-index results]
+  (replace-state
+   state (.-stack state) (.-admitted state) (.-admissions state)
+   (.-transitions state) (.-commands state) (.-fetched_values state)
+   (.-sidecar state) (.-sidecar_order state) (.-sidecar_order_index state)
+   (.-sidecar_clock state) (.-current_sidecar_values state)
+   (.-maximum_sidecar_buffers state) (.-maximum_sidecar_values state)
+   (.-maximum_stack state) discovered result-index results))
+
 ;; ---------------------------------------------------------------------------
 ;; Admission identity: specialized immutable per-kind keys (task 5.2)
 ;; ---------------------------------------------------------------------------
@@ -119,6 +219,52 @@
                           :discovered (:discovered state)}
                          detail))))
 
+(defn- check-schedule-limits!
+  [state residual fresh-count]
+  (when (> (+ (:admissions state) fresh-count)
+           (:max-admissions state))
+    (limit-failure! :max-admissions state
+                    {:max-admissions (:max-admissions state)
+                     :staged fresh-count}))
+  ;; :max-stack is instantaneous queue depth, never cumulative scheduled
+  ;; work.
+  (when (> (+ (count (:stack state))
+              (if residual 1 0)
+              fresh-count)
+           (:max-stack state))
+    (limit-failure! :max-stack state
+                    {:max-stack (:max-stack state)
+                     :staged fresh-count})))
+
+(defn- commit-zero
+  [state residual]
+  (check-schedule-limits! state residual 0)
+  (if residual
+    (let [stack (conj (:stack state) residual)]
+      (schedule-state state stack (:admitted state) (:admissions state)
+                      (max (:maximum-stack state) (count stack))))
+    state))
+
+(defn- commit-one
+  [state residual item id]
+  (check-schedule-limits! state residual 1)
+  (let [stack (cond-> (:stack state)
+                residual (conj residual)
+                true (conj item))
+        admitted (conj! (:admitted state) id)]
+    (schedule-state state stack admitted (inc (:admissions state))
+                    (max (:maximum-stack state) (count stack)))))
+
+(defn- schedule-item
+  "Specialized zero/one-successor admission without a temporary collection."
+  [state residual item]
+  (if item
+    (let [id (work-id item)]
+      (if (contains? (:admitted state) id)
+        (commit-zero state residual)
+        (commit-one state residual item id)))
+    (commit-zero state residual)))
+
 (defn ^:no-doc schedule
   "Admits fresh work exactly once and pushes it after the residual: the
   residual is pushed first, then new work reversed onto the right edge, so
@@ -128,79 +274,41 @@
   Admission limits are checked before any state mutates, so a rejected
   transition commits nothing (staged atomic admission)."
   [{:keys [admitted] :as state} residual new-work]
-  (letfn [(check-limits! [fresh-count]
-            (when (> (+ (:admissions state) fresh-count)
-                     (:max-admissions state))
-              (limit-failure! :max-admissions state
-                              {:max-admissions (:max-admissions state)
-                               :staged fresh-count}))
-            ;; :max-stack is instantaneous queue depth, never cumulative
-            ;; scheduled work.
-            (when (> (+ (count (:stack state))
-                        (if residual 1 0)
-                        fresh-count)
-                     (:max-stack state))
-              (limit-failure! :max-stack state
-                              {:max-stack (:max-stack state)
-                               :staged fresh-count})))
-          (commit-zero []
-            (check-limits! 0)
-            (if residual
-              (let [stack (conj (:stack state) residual)]
-                (-> state
-                    (assoc :stack stack)
-                    (update :maximum-stack max (count stack))))
-              state))
-          (commit-one [item id]
-            (check-limits! 1)
-            (let [stack (cond-> (:stack state)
-                          residual (conj residual)
-                          true (conj item))]
-              (-> state
-                  (assoc :stack stack :admitted (conj! admitted id))
-                  (update :admissions inc)
-                  (update :maximum-stack max (count stack)))))]
-    ;; Zero and one successor dominate live traces. They do not allocate the
-    ;; batch-local transient set/vector used by the general fan-out oracle.
-    (let [items (seq new-work)]
-      (cond
-        (nil? items)
-        (commit-zero)
+  ;; Zero and one successor dominate live traces. They do not allocate the
+  ;; batch-local transient set/vector used by the general fan-out oracle.
+  (let [items (seq new-work)]
+    (cond
+      (nil? items)
+      (commit-zero state residual)
 
-        (nil? (next items))
-        (if-let [item (first items)]
-          (let [id (work-id item)]
-            (if (contains? admitted id)
-              (commit-zero)
-              (commit-one item id)))
-          (commit-zero))
+      (nil? (next items))
+      (schedule-item state residual (first items))
 
-        :else
-        (let [fresh
-              (loop [items items
-                     seen (transient #{})
-                     fresh (transient [])]
-                (if items
-                  (let [item (first items)]
-                    (if (nil? item)
-                      (recur (next items) seen fresh)
-                      (let [id (work-id item)]
-                        (if (or (contains? admitted id)
-                                (contains? seen id))
-                          (recur (next items) seen fresh)
-                          (recur (next items) (conj! seen id)
-                                 (conj! fresh [item id]))))))
-                  (persistent! fresh)))
-              _ (check-limits! (count fresh))
-              stack (cond-> (:stack state)
-                      residual (conj residual))
-              stack (into stack (map first) (rseq fresh))
-              admitted (reduce (fn [acc [_ id]] (conj! acc id))
-                               admitted fresh)]
-          (-> state
-              (assoc :stack stack :admitted admitted)
-              (update :admissions + (count fresh))
-              (update :maximum-stack max (count stack))))))))
+      :else
+      (let [fresh
+            (loop [items items
+                   seen (transient #{})
+                   fresh (transient [])]
+              (if items
+                (let [item (first items)]
+                  (if (nil? item)
+                    (recur (next items) seen fresh)
+                    (let [id (work-id item)]
+                      (if (or (contains? admitted id)
+                              (contains? seen id))
+                        (recur (next items) seen fresh)
+                        (recur (next items) (conj! seen id)
+                               (conj! fresh [item id]))))))
+                (persistent! fresh)))
+            _ (check-schedule-limits! state residual (count fresh))
+            stack (cond-> (:stack state)
+                    residual (conj residual))
+            stack (into stack (map first) (rseq fresh))
+            admitted (reduce (fn [acc [_ id]] (conj! acc id))
+                             admitted fresh)]
+        (schedule-state state stack admitted
+                        (+ (:admissions state) (count fresh))
+                        (max (:maximum-stack state) (count stack)))))))
 
 ;; ---------------------------------------------------------------------------
 ;; One-value scan release with bounded disposable buffers
@@ -289,9 +397,9 @@
     ;; remove-buffer observes the old index, so it subtracts the one value
     ;; consumed by this transition.
     (remove-buffer state identity)
-    (-> state
-        (assoc-in [:sidecar identity :index] next-index)
-        (update :current-sidecar-values dec))))
+    (buffer-state state
+                  (assoc-in (:sidecar state) [identity :index] next-index)
+                  (dec (:current-sidecar-values state)))))
 
 (defn ^:no-doc bounded-vector
   "Reuses a routed vector when it already satisfies the requested bound.
@@ -325,11 +433,13 @@
       (limit-failure! :max-values state
                       {:max-values (:max-values state)
                        :staged (count values)}))
-    [(-> state
-         (update :commands inc)
-         (update :fetched-values + (count values)))
+    [(fetch-state state
+                  (inc (:commands state))
+                  (+ (:fetched-values state) (count values)))
      values
      (= (count values) (:physical-chunk-size state))]))
+
+(declare item-scan-descriptor)
 
 (defn- release-one
   "Releases exactly one ordered scan value for `item`, preferring the
@@ -337,8 +447,12 @@
   Returns [state value residual-item] where value is nil on exhaustion and
   residual-item is nil when the scan is complete."
   [state item descriptor]
-  (let [identity (work-id item)
-        entry (get-in state [:sidecar identity])
+  (let [sidecar (:sidecar state)
+        ;; Sparse/empty endpoints never retain a buffer. Avoid constructing
+        ;; and hashing a sidecar identity until either a buffer exists or this
+        ;; fetch actually needs retention.
+        identity (when-not (empty? sidecar) (work-id item))
+        entry (when identity (get sidecar identity))
         index (:index entry 0)]
     (if (and entry (< index (count (:values entry))))
       (let [value (nth (:values entry) index)
@@ -347,12 +461,18 @@
             state (advance-buffer state identity entry next-index)]
         [state value (when (or (< next-index (count (:values entry))) more?)
                        (assoc item :bound-eid value))])
-      (let [[state values more?] (fetch-values state descriptor
+      (let [descriptor (or descriptor (item-scan-descriptor item))
+            [state values more?] (fetch-values state descriptor
                                                (:bound-eid item))]
         (if (empty? values)
           [(retain-buffer state identity [] 0 false) nil nil]
           (let [value (first values)
                 next-index 1
+                retain? (and (pos? (:sidecar-cap state))
+                             (or (< next-index (count values)) more?))
+                identity (if (and retain? (nil? identity))
+                           (work-id item)
+                           identity)
                 state (retain-buffer state identity values next-index more?)]
             [state value (when (or (< next-index (count values)) more?)
                            (assoc item :bound-eid value))]))))))
@@ -375,42 +495,132 @@
    :resource-type resource-type :resource-eid resource-eid
    :relation-eid relation-eid :subject-type subject-type})
 
+(defn- item-scan-descriptor
+  "Builds a physical descriptor only when a scan needs another chunk.
+
+  Buffered width-one releases carry all immutable endpoint fields in the work
+  item already; rebuilding the same descriptor for every buffered value is
+  pure allocation."
+  [{:keys [kind rule] :as item}]
+  (case kind
+    :seed-relation
+    (subject->resources-scan (:subject-type item) (:subject-eid item)
+                             (:relation-eid rule) (:resource-type rule))
+
+    :seed-arrow-relation
+    (subject->resources-scan (:subject-type item) (:subject-eid item)
+                             (:target-relation-eid rule)
+                             (:intermediate-type rule))
+
+    :via-scan
+    (subject->resources-scan (:intermediate-type rule)
+                             (:intermediate-eid item)
+                             (:via-relation-eid rule)
+                             (:resource-type rule))
+
+    :consumer
+    (subject->resources-scan (:intermediate-type rule)
+                             (:resource-eid item)
+                             (:via-relation-eid rule)
+                             (:resource-type rule))
+
+    :reverse-direct
+    (resource->subjects-scan (:resource-type rule) (:resource-eid item)
+                             (:relation-eid rule) (:subject-type rule))
+
+    :reverse-via-permission
+    (resource->subjects-scan (:resource-type rule) (:resource-eid item)
+                             (:via-relation-eid rule)
+                             (:intermediate-type rule))
+
+    :reverse-via-relation
+    (resource->subjects-scan (:resource-type rule) (:resource-eid item)
+                             (:via-relation-eid rule)
+                             (:intermediate-type rule))
+
+    :reverse-base-subjects
+    (resource->subjects-scan (:intermediate-type rule)
+                             (:intermediate-eid item)
+                             (:target-relation-eid rule)
+                             (:target-subject-type rule))))
+
 (defn adapter-fetch-fn
   "The direct width-one path: realizes one read-demand descriptor against
   the adapter with strictly-ascending exclusive-bound scan options."
   [adapter]
-  (fn [{:keys [operation bound-eid] :as descriptor}]
-    (let [options (cond-> {:direction :asc}
-                    (:limit descriptor)
-                    (assoc :limit (:limit descriptor))
-                    bound-eid (assoc :bound-eid bound-eid
-                                     :inclusive-bound? false))]
-      (case operation
-        :subject->resources
-        (backend/invoke adapter :subject->resources
-                        (:subject-type descriptor) (:subject-eid descriptor)
-                        (:relation-eid descriptor) (:resource-type descriptor)
-                        options)
-        :resource->subjects
-        (backend/invoke adapter :resource->subjects
-                        (:resource-type descriptor) (:resource-eid descriptor)
-                        (:relation-eid descriptor) (:subject-type descriptor)
-                        options)))))
+  (let [subject->resources (backend/scan-invoker adapter :subject->resources)
+        resource->subjects (backend/scan-invoker adapter :resource->subjects)]
+    (fn [{:keys [operation bound-eid] :as descriptor}]
+      (let [options (cond-> {:direction :asc}
+                      (:limit descriptor)
+                      (assoc :limit (:limit descriptor))
+                      bound-eid (assoc :bound-eid bound-eid
+                                       :inclusive-bound? false))]
+        (case operation
+          :subject->resources
+          (subject->resources
+           (:subject-type descriptor) (:subject-eid descriptor)
+           (:relation-eid descriptor) (:resource-type descriptor)
+           options)
+          :resource->subjects
+          (resource->subjects
+           (:resource-type descriptor) (:resource-eid descriptor)
+           (:relation-eid descriptor) (:subject-type descriptor)
+           options))))))
+
+(defn- scan-successor
+  "The single successor released by one scan work item.
+
+  Reverse scan rules have already been filtered to the requested subject type,
+  so their sealed type is the same value the former transition closures
+  captured from the request context."
+  [{:keys [kind rule] :as item} eid]
+  (case kind
+    (:seed-relation :via-scan :consumer)
+    {:kind :grant :rule rule :resource-eid eid}
+
+    :seed-arrow-relation
+    {:kind :via-scan :rule rule :intermediate-eid eid :bound-eid nil}
+
+    :reverse-direct
+    {:kind :reverse-subject :subject-type (:subject-type rule)
+     :subject-eid eid}
+
+    :reverse-via-permission
+    {:kind :reverse-goal :rule {:node (:target-node rule)}
+     :resource-eid eid}
+
+    :reverse-via-relation
+    {:kind :reverse-base-subjects :rule rule
+     :intermediate-eid eid :bound-eid nil}
+
+    :reverse-base-subjects
+    {:kind :reverse-subject :subject-type (:target-subject-type rule)
+     :subject-eid eid}))
 
 (defn- scan-transition
   "Releases one value and schedules its successors before the residual."
   [state item descriptor value->successors]
   (let [[state value residual] (release-one state item descriptor)]
     (if (nil? value)
-      (schedule state residual [])
-      (schedule state residual (value->successors value)))))
+      (schedule-item state residual nil)
+      ;; `value->successors` remains as a mutation-test seam. Production scan
+      ;; kinds have exactly one successor and use the allocation-free path.
+      (if value->successors
+        (schedule state residual (value->successors value))
+        (schedule-item state residual (scan-successor item value))))))
 
 (defn- emit
   [state eid]
-  (let [state (update state :discovered inc)]
+  (let [discovered (inc (:discovered state))]
     (case (:result-sink state)
-      :count state
-      :collect (update state :results conj! eid)
+      :count
+      (emission-state state discovered (:result-index state) (:results state))
+
+      :collect
+      (emission-state state discovered (:result-index state)
+                      (conj! (:results state) eid))
+
       :window
       (let [limit (:result-window-size state)
             index (:result-index state)
@@ -422,22 +632,38 @@
         ;; retained backing vector is therefore always below 2*limit while
         ;; each emission remains amortized constant-time.
         (if (>= index limit)
-          (assoc state
-                 :results (into [] (drop index results))
-                 :result-index 0)
-          (assoc state :results results :result-index index))))))
+          (emission-state state discovered 0
+                          (into [] (drop index results)))
+          (emission-state state discovered index results))))))
+
+(defn- grant-successor
+  [consumer eid]
+  (case (:rule consumer)
+    :self-permission
+    {:kind :grant :rule consumer :resource-eid eid}
+    :arrow-permission
+    {:kind :consumer :rule consumer :resource-eid eid :bound-eid nil}))
 
 (defn- grant-successors
   "Consumers of a grant at `node` for entity `eid`: self-permission
   consumers become grants at the head node; arrow-permission consumers
   become consumer scans from the intermediate entity."
   [plan node eid]
-  (mapv (fn [consumer]
-          (case (:rule consumer)
-            :self-permission {:kind :grant :rule consumer :resource-eid eid}
-            :arrow-permission {:kind :consumer :rule consumer
-                               :resource-eid eid :bound-eid nil}))
-        (get-in plan [:indexes :forward-consumers node])))
+  (let [consumers (get-in plan [:indexes :forward-consumers node])
+        consumer-count (count consumers)]
+    (case consumer-count
+      0 []
+      ;; A list is already its own seq. The vector form allocates both an
+      ;; object array and a ChunkedSeq before `schedule` can inspect its sole
+      ;; successor.
+      1 (list (grant-successor (nth consumers 0) eid))
+      (loop [index 0
+             result (transient [])]
+        (if (= index consumer-count)
+          (persistent! result)
+          (recur (inc index)
+                 (conj! result
+                        (grant-successor (nth consumers index) eid))))))))
 
 (defn- reverse-goal-work
   "Expands one reverse goal at `node` for resource `eid` through the sealed
@@ -472,31 +698,13 @@
     (case (:kind item)
       ;; ---- forward ----
       :seed-relation
-      (scan-transition
-       state item
-       (subject->resources-scan (:subject-type item)
-                                (:subject-eid item) (:relation-eid rule)
-                                (:resource-type rule))
-       (fn [eid] [{:kind :grant :rule rule :resource-eid eid}]))
+      (scan-transition state item nil nil)
 
       :seed-arrow-relation
-      (scan-transition
-       state item
-       (subject->resources-scan (:subject-type item)
-                                (:subject-eid item)
-                                (:target-relation-eid rule)
-                                (:intermediate-type rule))
-       (fn [eid] [{:kind :via-scan :rule rule
-                   :intermediate-eid eid :bound-eid nil}]))
+      (scan-transition state item nil nil)
 
       :via-scan
-      (scan-transition
-       state item
-       (subject->resources-scan (:intermediate-type rule)
-                                (:intermediate-eid item)
-                                (:via-relation-eid rule)
-                                (:resource-type rule))
-       (fn [eid] [{:kind :grant :rule rule :resource-eid eid}]))
+      (scan-transition state item nil nil)
 
       :grant
       (let [node (:node rule)
@@ -506,13 +714,7 @@
         (schedule state nil (grant-successors plan node eid)))
 
       :consumer
-      (scan-transition
-       state item
-       (subject->resources-scan (:intermediate-type rule)
-                                (:resource-eid item)
-                                (:via-relation-eid rule)
-                                (:resource-type rule))
-       (fn [eid] [{:kind :grant :rule rule :resource-eid eid}]))
+      (scan-transition state item nil nil)
 
       ;; ---- reverse ----
       :reverse-goal
@@ -521,43 +723,16 @@
                                    (:resource-eid item)))
 
       :reverse-direct
-      (scan-transition
-       state item
-       (resource->subjects-scan (:resource-type rule)
-                                (:resource-eid item) (:relation-eid rule)
-                                (:subject-type rule))
-       (fn [eid] [{:kind :reverse-subject :subject-type subject-type
-                   :subject-eid eid}]))
+      (scan-transition state item nil nil)
 
       :reverse-via-permission
-      (scan-transition
-       state item
-       (resource->subjects-scan (:resource-type rule)
-                                (:resource-eid item)
-                                (:via-relation-eid rule)
-                                (:intermediate-type rule))
-       (fn [eid] [{:kind :reverse-goal :rule {:node (:target-node rule)}
-                   :resource-eid eid}]))
+      (scan-transition state item nil nil)
 
       :reverse-via-relation
-      (scan-transition
-       state item
-       (resource->subjects-scan (:resource-type rule)
-                                (:resource-eid item)
-                                (:via-relation-eid rule)
-                                (:intermediate-type rule))
-       (fn [eid] [{:kind :reverse-base-subjects :rule rule
-                   :intermediate-eid eid :bound-eid nil}]))
+      (scan-transition state item nil nil)
 
       :reverse-base-subjects
-      (scan-transition
-       state item
-       (resource->subjects-scan (:intermediate-type rule)
-                                (:intermediate-eid item)
-                                (:target-relation-eid rule)
-                                (:target-subject-type rule))
-       (fn [eid] [{:kind :reverse-subject :subject-type subject-type
-                   :subject-eid eid}]))
+      (scan-transition state item nil nil)
 
       :reverse-subject
       (emit state (:subject-eid item)))))
@@ -588,36 +763,38 @@
          (or (not= :window result-sink) (pos-int? result-window-size))
          (pos? max-admissions) (pos? max-commands) (pos? max-transitions)
          (pos? max-values) (pos? max-stack)]}
-  {:stack []
-   :admitted (transient #{})
-   :admissions 0
-   :transitions 0
-   :commands 0
-   :fetched-values 0
-   :fetch-fn (or fetch-fn (adapter-fetch-fn adapter))
-   :sidecar {}
-   :sidecar-order []
-   :sidecar-order-index 0
-   :sidecar-clock 0
-   :current-sidecar-values 0
-   :sidecar-cap sidecar-cap
-   :physical-chunk-size physical-chunk-size
-   :max-admissions max-admissions
-   :max-commands max-commands
-   :max-transitions max-transitions
-   :max-values max-values
-   :max-stack max-stack
-   :maximum-sidecar-buffers 0
-   :maximum-sidecar-values 0
-   :maximum-stack 0
-   :discovered 0
-   :result-sink result-sink
-   :result-window-size result-window-size
-   :result-index 0
-   :results (case result-sink
-              :collect (transient [])
-              :window []
-              :count nil)})
+  (map->ReducerState
+   {:stack []
+    :admitted (transient #{})
+    :admissions 0
+    :transitions 0
+    :commands 0
+    :fetched-values 0
+    :fetch-fn (or fetch-fn (adapter-fetch-fn adapter))
+    :sidecar {}
+    :sidecar-order []
+    :sidecar-order-index 0
+    :sidecar-clock 0
+    :current-sidecar-values 0
+    :sidecar-cap sidecar-cap
+    :physical-chunk-size physical-chunk-size
+    :max-admissions max-admissions
+    :max-commands max-commands
+    :max-transitions max-transitions
+    :max-values max-values
+    :max-stack max-stack
+    :maximum-sidecar-buffers 0
+    :maximum-sidecar-values 0
+    :maximum-stack 0
+    :discovered 0
+    :base-discovered 0
+    :result-sink result-sink
+    :result-window-size result-window-size
+    :result-index 0
+    :results (case result-sink
+               :collect (transient [])
+               :window []
+               :count nil)}))
 
 (defn- run-loop
   [context state target cut-point!]
@@ -636,9 +813,8 @@
                           {:max-transitions (:max-transitions state)}))
         (when cut-point! (cut-point! state))
         (let [item (peek (:stack state))
-              state (-> state
-                        (update :stack pop)
-                        (update :transitions inc))]
+              state (transition-state state (pop (:stack state))
+                                      (inc (:transitions state)))]
           (recur (step context state item)))))))
 
 (defn ^:no-doc finish
@@ -662,11 +838,13 @@
                        :discovered (:discovered state)
                        :base-discovered (:base-discovered state 0)
                        :result-count (count results)})))
-    (-> state
-        (assoc :results results
-               :admitted admitted
-               :completed (- (count admitted) (count (:stack state))))
-        (dissoc :fetch-fn))))
+    (cond-> (-> state
+                (assoc :results results
+                       :admitted admitted
+                       :completed (- (count admitted)
+                                     (count (:stack state))))
+                (dissoc :fetch-fn))
+      (zero? (:base-discovered state)) (dissoc :base-discovered))))
 
 ;; ---------------------------------------------------------------------------
 ;; History-free checkpointing and resumption (section 6 support)

@@ -275,10 +275,13 @@
       (is (= [(first values)]
              (eavt-values :desc resource-a))))
     (testing "missing and adjacent prefixes terminate exactly"
-      (is (empty?
-           (ddb/eavt-endpoint-prefix
-            db subject-a relationship-storage/forward-attribute
-            [:user 99 :document])))
+      (let [missing
+            (ddb/eavt-endpoint-prefix
+             db subject-a relationship-storage/forward-attribute
+             [:user 99 :document])]
+        (is (= [] missing))
+        (is (vector? missing)
+            "empty seeks avoid allocating a predicate-bearing lazy sequence"))
       (is (empty?
            (ddb/eavt-endpoint-prefix
             db subject-a relationship-storage/reverse-attribute prefix))))

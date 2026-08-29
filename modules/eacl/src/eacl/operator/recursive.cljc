@@ -177,7 +177,7 @@
               intermediate-eid)))
 
 (defn- scan-intermediate-chunk!
-  [adapter q partition bound limits counters]
+  [resource->subjects! q partition bound limits counters]
   (let [descriptor
         {:resource-type (first (question-permission q))
          :resource-eid (question-resource-eid q)
@@ -205,8 +205,7 @@
                              :maximum-commands next-commands)
              (let [chunk
                    (into [] (take chunk-size)
-                         (backend/invoke
-                          adapter :resource->subjects
+                         (resource->subjects!
                           (:resource-type descriptor)
                           (:resource-eid descriptor)
                           (:relation-eid descriptor)
@@ -475,7 +474,7 @@
                :component (component-of head)})))
 
 (defn- expand-arrow-chunk!
-  [adapter plan roots nodes q limits counters]
+  [resource->subjects! plan roots nodes q limits counters]
   (let [{:keys [arrow-state] :as spec} (get nodes q)
         {:keys [partitions partition-index bound complete?]} arrow-state]
     (when-not arrow-state
@@ -488,7 +487,7 @@
         (assoc-in nodes [q :arrow-state :complete?] true)
         (let [partition (nth partitions partition-index)
               values (scan-intermediate-chunk!
-                      adapter q partition bound limits counters)
+                      resource->subjects! q partition bound limits counters)
               expanded
               (mapv
                (fn [intermediate-eid]
@@ -641,7 +640,7 @@
          vec)))
 
 (defn- expand-arrow-wave!
-  [adapter plan roots nodes initial-arrows lower-facts upper-facts
+  [resource->subjects! plan roots nodes initial-arrows lower-facts upper-facts
    known-questions width limits counters]
   (loop [nodes nodes
          frontier (vec initial-arrows)
@@ -654,7 +653,7 @@
             (reduce
              (fn [current q]
                (expand-arrow-chunk!
-                adapter plan roots current q limits counters))
+                resource->subjects! plan roots current q limits counters))
              nodes batch)
             descendants
             (mapcat
@@ -1078,6 +1077,8 @@
                           :direct-fetched-values 0 :direct-cache-hits 0
                           :late-anchor-initialized-slots 0})
               pending-direct-publications (atom {})
+              resource->subjects!
+              (backend/scan-invoker adapter :resource->subjects)
               initial-nodes
               (discover-graph! plan roots root-questions limits counters)
               [nodes bounded-decisions]
@@ -1118,7 +1119,7 @@
                           :roots (count root-questions)}))
                       (let [nodes
                             (expand-arrow-wave!
-                             adapter plan roots nodes arrows
+                             resource->subjects! plan roots nodes arrows
                              lower-facts upper-facts known-questions
                              wave-width limits counters)]
                         (add-counter! counters :demand-rounds)
