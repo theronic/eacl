@@ -131,3 +131,6 @@ bin/formal source-closure
 Run the focused benchmark command in the Product evidence section separately
 from other CPU-heavy processes. CLJS/DataScript demos resolve the fork SHA
 listed in Selected libraries.
+
+The product-testing branch is
+`codex/standardize-authorization-cache-storage` on `theronic/eacl`.

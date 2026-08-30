@@ -62,4 +62,4 @@
 ## 8. Publish for Product Testing
 
 - [x] 8.1 Publish the repaired `theronic/cljs-cache` Git SHA with green normal/advanced CI so CLJS/DataScript demos can consume it directly
-- [ ] 8.2 Publish the EACL feature branch for product testing after the functional and performance gates pass; include exact tester commands and the pinned CLJS Git SHA
+- [x] 8.2 Publish the EACL feature branch for product testing after the functional and performance gates pass; include exact tester commands and the pinned CLJS Git SHA
