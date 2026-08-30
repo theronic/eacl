@@ -16,7 +16,7 @@
 
 (def manifest
   (edn/read-string
-   (slurp "formal/verification/explorer-v7-performance.edn")))
+   (slurp "formal/baselines/explorer-v7-performance.edn")))
 
 (defn- median
   [values]

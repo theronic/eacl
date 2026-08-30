@@ -1,7 +1,6 @@
 (ns eacl.formal.production-kernel
   "Released generated-Java implementation of EACL's strict decision SPI."
-  (:require [eacl.formal.current-cache-refinement :as cache-refinement]
-            [eacl.formal.generated-runtime]
+  (:require [eacl.formal.generated-runtime]
             [eacl.verified-kernel :as verified])
   (:import
    (ConsistencyDecision
@@ -1596,10 +1595,6 @@
 
 (def generated-java-kernel
   (->GeneratedJavaKernel))
-
-(def current-cache-refinement
-  {:artifact-sha256 cache-refinement/artifact-sha256
-   :mapping-digest cache-refinement/mapping-digest})
 
 (def default-selection
   {:kernel generated-java-kernel})

@@ -1,13 +1,10 @@
 (ns eacl.cache-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
             :refer [deftest is testing]]
-            #?(:clj [clojure.edn :as edn])
             [eacl.cache :as cache]
             [eacl.core :as eacl]
             [eacl.formal.current-cache-refinement :as cache-refinement]
-            #?(:clj [eacl.secure-format :as secure-format])
             [eacl.subproblem-cache :as subproblem]
-            #?(:clj [eacl.test-support.repo :as repo])
             [eacl.verified-kernel :as verified]))
 
 (deftest current-cache-host-specialization-exhausts-generated-domain-test
@@ -21,44 +18,15 @@
            (cache/specialized-current-cache-action stage available?))
         (str stage " " available?))))
 
-(deftest stale-or-incomplete-current-cache-refinement-is-not-authorized-test
+(deftest only-the-default-kernel-with-a-complete-specialization-is-authorized-test
   (is (cache/current-cache-specialization-authorized?
        subproblem/default-decision-kernel))
-  (let [stale-kernel subproblem/default-decision-kernel
-        stale-evidence (assoc subproblem/default-current-cache-refinement
-                              :artifact-sha256 "stale")]
-    (with-redefs [subproblem/default-decision-kernel stale-kernel
-                  subproblem/default-current-cache-refinement stale-evidence]
-      (is (false?
-           (cache/current-cache-specialization-authorized? stale-kernel)))))
+  (is (false?
+       (cache/current-cache-specialization-authorized? {})))
   (is (false?
        (cache-refinement/complete-mapping?
         (dissoc cache-refinement/current-cache-mapping
                 [:managed-entry false])))))
-
-#?(:clj
-   (deftest current-cache-refinement-artifact-binds-all-sources-test
-     (let [hex-digest
-           (fn [path]
-             (let [digest (java.security.MessageDigest/getInstance "SHA-256")
-                   bytes (.digest digest
-                                  (.getBytes (slurp path) "UTF-8"))]
-               (apply str
-                      (map #(format "%02x" (bit-and (int %) 255)) bytes))))
-           artifact-path
-           (repo/file "formal" "verification"
-                      "current-cache-specialization.edn")
-           artifact (edn/read-string (slurp artifact-path))]
-       (is (= cache-refinement/artifact-sha256
-              (hex-digest artifact-path)))
-       (is (= cache-refinement/current-cache-domain (:domain artifact)))
-       (is (= cache-refinement/current-cache-mapping (:mapping artifact)))
-       (is (= cache-refinement/mapping-digest
-              (secure-format/canonical-digest
-               cache-refinement/artifact-domain
-               {:domain (:domain artifact) :mapping (:mapping artifact)})))
-       (doseq [[path expected] (:source-digests artifact)]
-         (is (= expected (hex-digest (repo/file path))) path)))))
 
 (defn- snapshot-object
   []

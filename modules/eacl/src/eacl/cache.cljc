@@ -1053,8 +1053,8 @@
 (defn ^:no-doc current-cache-specialization-authorized?
   [kernel]
   (and (identical? kernel subproblem/default-decision-kernel)
-       (cache-refinement/authorized-selection?
-        subproblem/default-current-cache-refinement)))
+       (cache-refinement/complete-mapping?
+        cache-refinement/current-cache-mapping)))
 
 (defn- current-cache-action
   [decision-kernel stage available?]

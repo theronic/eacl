@@ -1,4 +1,4 @@
-> Historical record (2026-08-02 – 2026-08-11): these measurements were taken on the interim v8 acyclic/merge engines. The stable-discovery engine routed on 2026-08-14 changes both the enumeration order and the cost profile; see the change's `tasks.md` §10 and `formal/verification/explorer-v7-performance.edn` for current numbers.
+> Historical record (2026-08-02 – 2026-08-11): these measurements were taken on the interim v8 acyclic/merge engines. The stable-discovery engine routed on 2026-08-14 changes both the enumeration order and the cost profile; see the change's `tasks.md` §10 and `formal/baselines/explorer-v7-performance.edn` for the reviewed comparison baseline.
 
 # v6 vs v8.0 reference benchmark
 

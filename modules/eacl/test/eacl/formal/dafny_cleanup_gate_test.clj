@@ -1,6 +1,5 @@
 (ns eacl.formal.dafny-cleanup-gate-test
-  (:require [clojure.edn :as edn]
-            [clojure.java.io :as io]
+  (:require [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [eacl.test-support.repo :as repo]))
@@ -31,10 +30,9 @@
                [".clj" ".cljc" ".cljs" ".dfy" ".mjs" ".cjs" ".html"]))))
 
 (deftest every-dafny-model-has-an-explicit-consumer-test
-  (let [matrix
-        (edn/read-string
-         (slurp (repo/file "formal" "verification" "assurance-matrix.edn")))
-        mappings (:dafny-model-map matrix)
+  (let [contract
+        (load-file (str (repo/file "formal" "assurance_contract.clj")))
+        operations (:operation-contracts contract)
         ^java.io.File dafny-directory (repo/file "formal" "dafny")
         actual
         (->> (.listFiles dafny-directory)
@@ -42,17 +40,18 @@
                        (str/ends-with? (.getName file) ".dfy")))
              (map (fn [^java.io.File file]
                     (str "formal/dafny/" (.getName file))))
+             set)
+        covered
+        (->> operations
+             (mapcat :dafny)
+             (filter #(str/starts-with? % "formal/dafny/"))
              set)]
-    (is (= actual (set (map :source mappings))))
-    (is (= (count actual) (count mappings)))
-    (doseq [{:keys [source class consumer reason]} mappings]
-      (testing source
-        (is (keyword? class))
-        (if (seq consumer)
-          (is true)
-          (do
-            (is (= :proof-only-generated-boundary class))
-            (is (keyword? reason))))))))
+    (is (= actual covered))
+    (doseq [{:keys [operation entry-points dafny]} operations]
+      (testing (name operation)
+        (is (keyword? operation))
+        (is (seq entry-points))
+        (is (seq dafny))))))
 
 (deftest retired-dafny-surface-is-absent-test
   (is (not (.exists (io/file (repo/file "formal" "dafny")

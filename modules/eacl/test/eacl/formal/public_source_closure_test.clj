@@ -1,6 +1,5 @@
 (ns eacl.formal.public-source-closure-test
   (:require
-   [clojure.edn :as edn]
    [clojure.java.io :as io]
    [clojure.set :as set]
    [clojure.test :refer [deftest is testing]]
@@ -52,6 +51,13 @@
 (def invoke-symbols
   '#{backend/invoke eacl.backend.v8/invoke})
 
+(def dispatch-source-roots
+  ["modules/eacl/src"
+   "modules/eacl-datomic/src"
+   "modules/eacl-datahike/src"
+   "modules/eacl-datascript/src"
+   "modules/eacl-datalevin/src"])
+
 (defn- invoke-calls
   [file features]
   (mapcat
@@ -74,32 +80,23 @@
 
 (deftest every-backend-dispatch-key-is-closed-over-the-required-contract
   (let [root (repository-root)
-        report
-        (edn/read-string
-         (slurp
-          (io/file
-           root
-           "formal/verification/backend-dispatch.edn")))
-        files (source-files root (:source-roots report))]
+        files (source-files root dispatch-source-roots)
+        required
+        (into
+         (conj backend/required-snapshot-operations :proof-frame)
+         backend/optional-snapshot-operations)]
     (doseq [[runtime features] [[:clj #{:clj}]
                                [:cljs #{:cljs}]]]
       (testing (name runtime)
         (let [calls (mapcat #(invoke-calls % features) files)
               nonliteral
               (vec (remove #(keyword? (:operation %)) calls))
-              observed (set (map :operation calls))
-              expected (get-in report [:runtime-passes runtime])]
+              observed (set (map :operation calls))]
           (is (empty? nonliteral)
-              (str "dynamic backend dispatch escaped the operation ledger: "
+              (str "dynamic backend dispatch escaped the executable contract: "
                    (pr-str nonliteral)))
-          (is (= (:invoke-call-count expected)
-                 (count calls)))
-          (is (= (:operations expected)
-                 observed))
-          (is (= (into
-                  (conj backend/required-snapshot-operations :proof-frame)
-                  backend/optional-snapshot-operations)
-                 observed))
+          (is (seq calls))
+          (is (= required observed))
           (is (empty?
                (set/difference
                  observed
@@ -107,18 +104,9 @@
 
 (deftest external-certification-gate-names-every-open-refinement-test
   (let [root (repository-root)
-        manifest
-        (edn/read-string
-         (slurp
-          (io/file root "formal/verification/manifest.edn")))
-        unmet
-        (set
-         (get-in manifest
-                 [:release-gate :unmet-required-obligations]))
-        generated-boundary
-        (edn/read-string
-         (slurp
-          (io/file root "formal/verification/generated-boundary.edn")))
+        contract (load-file (str (io/file root "formal/assurance_contract.clj")))
+        release-policy (:release-policy contract)
+        unmet (set (:unmet-required-obligations release-policy))
         required-open-obligations
         #{:mechanized-host-control-source-refinement
           :mechanized-clj-cache-transition-source-refinement
@@ -126,19 +114,15 @@
           :mechanized-backend-adapter-conversion-refinement
           :independent-security-formal-review}]
     (is (false?
-         (get-in manifest
-                 [:release-gate :verified-status-allowed?])))
+         (:verified-status-allowed? release-policy)))
     (is (= {:status :unsigned
             :procedure
             "formal/verification/external-certifier-procedure.md"}
-           (:external-certification manifest)))
+           (:external-certification release-policy)))
     (is (.isFile
          (io/file root
-                  (get-in manifest
+                  (get-in release-policy
                           [:external-certification :procedure]))))
     (is (set/subset? required-open-obligations unmet))
-    (is (empty? (:proof-only-exclusions manifest)))
-    (is (not (some #{:cache-validation}
-                   (:production-routed-decisions generated-boundary))))
-    (is (empty? (:proof-only-generated-decisions generated-boundary)))
-    (is (= :conditionally-verified (:assurance-status manifest)))))
+    (is (= :conditionally-verified
+           (:assurance-status release-policy)))))

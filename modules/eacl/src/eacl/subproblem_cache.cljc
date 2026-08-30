@@ -46,9 +46,6 @@
 (def default-decision-kernel
   production-kernel/default-selection)
 
-(def default-current-cache-refinement
-  production-kernel/current-cache-refinement)
-
 (def ^:dynamic *decision-kernel*
   "Generated-kernel selection inherited from the enclosing public client.
 
