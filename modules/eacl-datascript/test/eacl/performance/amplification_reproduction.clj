@@ -11,8 +11,10 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.cache.derived-schema :as derived-schema]
+            [eacl.cache.key :as cache-key]
+            [eacl.cache.standard-lru :as standard-lru]
             [eacl.client.orchestration :as orchestration]
-            [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.engine.least-path :as least-path]
@@ -229,39 +231,21 @@
 
 (defn- continuation-churn-probe
   [publications capacity]
-  (let [store (continuation/make-store
-               {:max-entries capacity
-                :max-weight (* 4 capacity)
-                :max-entry-weight 1})
-        scan-widths (atom [])
-        legacy-without-key (ns-resolve 'eacl.continuation 'without-key)
-        publish!
-        #(doseq [index (range publications)]
-           (continuation/put!
-            store
-            :checkpoint
-            [:scope :checkpoint [index 1 2 3 4 5 6]]
-            {:index index}
-            1))]
-    (if legacy-without-key
-      (let [original @legacy-without-key]
-        (with-redefs-fn
-          {legacy-without-key
-           (fn [order key]
-             (swap! scan-widths conj (count order))
-             (original order key))}
-          publish!))
-      (publish!))
-    (let [{:keys [order order-index tombstone-order tombstone-order-index]}
-          @(:state store)]
-      {:publications publications
-       :capacity capacity
-       :whole-vector-filter-calls (count @scan-widths)
-       :whole-vector-filter-entry-visits (reduce + 0 @scan-widths)
-       :pending-entry-order (- (count order) order-index)
-       :pending-tombstone-order
-       (- (count tombstone-order) tombstone-order-index)
-       :final-stats (continuation/stats store)})))
+  ;; Continuation publication is deliberately reachable only through its
+  ;; validated private context. This storage-only probe therefore exercises
+  ;; the shared standard-LRU boundary directly.
+  (let [store (standard-lru/store capacity)]
+    (doseq [index (range publications)]
+      (standard-lru/put-if-absent!
+       store
+       [:scope :checkpoint [index 1 2 3 4 5 6]]
+       {:index index}))
+    {:publications publications
+     :capacity capacity
+     :retention-policy :standard-lru
+     :resident-entries (standard-lru/entry-count store)
+     :final-stats {:entries (standard-lru/entry-count store)
+                   :max-entries capacity}}))
 
 (defn- scheduler-transient-probe
   [transitions successors]
@@ -486,7 +470,7 @@
 (defn- make-reproduction-context
   [adapter]
   (request-context/make-context
-   {:runtime {:derived-schema-caches (atom {})}
+   {:runtime {:derived-schema-caches (derived-schema/store)}
     :adapter adapter
     :basis-identity reproduction-basis-identity
     :contract (execution/normalize {} :check-permission {})}))
@@ -496,7 +480,7 @@
   (let [adapter (request-context-adapter)
         state-of (private-function 'eacl.request.context 'state-of)
         backend-calls (atom {})
-        totals (long-array 3)
+        totals (long-array 2)
         observation
         (binding [backend/*backend-op-stats* backend-calls]
           (measured-loop
@@ -508,64 +492,69 @@
                  (aset-long totals 0 (inc (aget totals 0))))
                (when (realized? (:proof-frame-delay state))
                  (aset-long totals 1 (inc (aget totals 1))))
-               (when (realized? (:publication-buffer-delay state))
-                 (aset-long totals 2 (inc (aget totals 2))))
                (request-context/close! context)))))]
     {:constructions constructions
      :proof-frames-constructed (aget totals 1)
      :memo-atoms-constructed (aget totals 0)
-     :publication-buffers-constructed (aget totals 2)
      :backend-calls-before-first-use @backend-calls
      :raw-runtime-observation observation}))
 
 (defn- completed-hit-mutation-probe
   [hits]
   (let [store (subproblem/store
-               {:projection-max-weight 64
-                :denotation-max-weight 64
-                :answer-max-weight 64
+               {:denotation-max-entries 64
+                :answer-max-entries 64
                 :telemetry? false})
-        options {:valid? boolean? :weight-fn (constantly 1)}
-        _ (subproblem/publish! store :answer ::hot options true)
-        state-atom (:state store)
-        metrics-atom (:metrics store)
-        original-swap @#'clojure.core/swap!
-        state-swaps (long-array 1)
-        metric-swaps (long-array 1)
+        storage-key
+        (cache-key/exact-answer-key
+         {:tier :answer
+          :source-lifecycle :amplification-probe
+          :abi :amplification-probe-v2
+          :semantic :hot
+          :reuse :exact-probe})
+        options {:valid? boolean?}
+        _ (subproblem/publish! store :answer storage-key options true)
+        state-atom (get-in store [:tiers :answer :state])
+        original-compare-and-set! @#'clojure.core/compare-and-set!
+        state-cas-attempts (long-array 1)
         observation
         (with-redefs-fn
-          {#'clojure.core/swap!
-           (fn [target function & args]
-             (cond
-               (identical? target state-atom)
-               (aset-long state-swaps 0 (inc (aget state-swaps 0)))
-
-               (identical? target metrics-atom)
-               (aset-long metric-swaps 0 (inc (aget metric-swaps 0))))
-             (apply original-swap target function args))}
+          {#'clojure.core/compare-and-set!
+           (fn [target old-value new-value]
+             (when (identical? target state-atom)
+               (aset-long
+                state-cas-attempts 0 (inc (aget state-cas-attempts 0))))
+             (original-compare-and-set! target old-value new-value))}
           #(measured-loop
             hits
             (fn [_]
               (when-not (:cached?
-                         (subproblem/lookup! store :answer ::hot options))
+                         (subproblem/lookup!
+                          store :answer storage-key))
                 (throw (ex-info "Expected resident hit." {}))))))
         stats (subproblem/stats store)]
     {:hits hits
-     :read-hit-state-mutations (aget state-swaps 0)
-     :optional-telemetry-mutations (aget metric-swaps 0)
+     :lru-touch-cas-attempts (aget state-cas-attempts 0)
+     :optional-telemetry-mutations 0
      :telemetry-disable-switch :enabled
      :publication-races (:publication-races stats)
      :final-hit-count (:hits stats)
-     :final-lru-records (get-in stats [:tiers :answer :lru-records])
+     :final-entry-count (get-in stats [:tiers :answer :entries])
      :raw-runtime-observation observation}))
 
 (defn- independent-miss-probe
   [request-count]
   (let [store (subproblem/store
-               {:projection-max-weight 64
-                :denotation-max-weight 64
-                :answer-max-weight 64})
-        options {:valid? integer? :weight-fn (constantly 1)}
+               {:denotation-max-entries 64
+                :answer-max-entries 64})
+        storage-key
+        (cache-key/exact-answer-key
+         {:tier :answer
+          :source-lifecycle :amplification-probe
+          :abi :amplification-probe-v2
+          :semantic :cold
+          :reuse :exact-probe})
+        options {:valid? integer?}
         entered (java.util.concurrent.CountDownLatch. request-count)
         release (java.util.concurrent.CountDownLatch. 1)
         computations (java.util.concurrent.atomic.AtomicLong.)
@@ -573,13 +562,19 @@
         (mapv
          (fn [request-index]
            (future
-             (subproblem/resolve-independent!
-              store :answer ::cold options
-              (fn []
-                (.incrementAndGet computations)
-                (.countDown entered)
-                (.await release)
-                request-index))))
+             (if-let [hit (subproblem/lookup! store :answer storage-key)]
+               hit
+               (let [value (do
+                             (.incrementAndGet computations)
+                             (.countDown entered)
+                             (.await release)
+                             request-index)
+                     publication
+                     (subproblem/publish!
+                      store :answer storage-key options value)]
+                 {:value value
+                  :cached? false
+                  :publication publication}))))
          (range request-count))]
     (when-not (.await entered 20 java.util.concurrent.TimeUnit/SECONDS)
       (throw (ex-info "Concurrent miss workers did not all enter computation."
@@ -591,7 +586,8 @@
             _ (when (some #{::timeout} results)
                 (throw (ex-info "Concurrent miss worker timed out."
                                 {:request-count request-count})))
-            final-hit (subproblem/lookup! store :answer ::cold options)
+            final-hit
+            (subproblem/lookup! store :answer storage-key)
             stats (subproblem/stats store)]
         {:request-count request-count
          :all-computations-entered-before-publication?
@@ -605,8 +601,7 @@
                         results))
          :publication-races (:publication-races stats)
          :later-read-hit? (:cached? final-hit)
-         :lookup-misses (:lookup-misses stats)
-         :misses (:misses stats)}))))
+         :lookup-misses (:lookup-misses stats)}))))
 
 (defn- derived-hit-allocation-probe
   [hits]
@@ -935,13 +930,13 @@
         result
         (with-redefs
          [cache/resolve-basis!
-          (fn [store context semantic-key kind valid-value? compute]
+          (fn [store context semantic-key compute]
             (reset! observed-semantic-key semantic-key)
-            (original-resolve
-             store context semantic-key kind valid-value? compute))]
+            (original-resolve store context semantic-key compute))]
          (eacl/check-permission client user :admin account))
         required-keys
-        #{:compiler-plan-compatibility :cache-value-abi}
+        #{:compiler-plan-compatibility :cache-value-abi
+          :expression-limits :aggregate-limits}
         present-keys (set (keys @observed-semantic-key))]
     {:allowed? (:allowed? result)
      :semantic-key @observed-semantic-key
@@ -1235,56 +1230,6 @@
          :duplicate-alias-frontier-scans?
          (> (count alias-frontier-scans) 1)}))))
 
-(def ^:private current-cache-stages
-  [:eligibility :generation :exact-entry :exact-only-entry :managed-entry])
-
-(defn- expected-current-cache-action
-  [stage available?]
-  (case stage
-    (:eligibility :generation)
-    (if available? :probe-exact-entry :bypass-current-cache)
-
-    :exact-entry
-    (if available? :use-exact-entry :probe-managed-entry)
-
-    :exact-only-entry
-    (if available? :use-exact-entry :compute-exact-value)
-
-    :managed-entry
-    (if available? :use-managed-entry :compute-selected-value)))
-
-(defn- finite-current-cache-probe
-  [repetitions]
-  (let [current-cache-action
-        (private-function 'eacl.cache 'current-cache-action)
-        domain (vec (for [stage current-cache-stages
-                          available? [false true]]
-                      {:stage stage :available? available?}))
-        differential
-        (mapv (fn [{:keys [stage available?] :as input}]
-                (let [generated (current-cache-action nil stage available?)
-                      host (expected-current-cache-action stage available?)]
-                  (assoc input
-                         :generated generated
-                         :host host
-                         :equal? (= generated host))))
-              domain)
-        calls (java.util.concurrent.atomic.AtomicLong.)
-        observation
-        (measured-loop
-         repetitions
-         (fn [index]
-           (let [{:keys [stage available?]}
-                 (nth domain (mod index (count domain)))]
-             (current-cache-action nil stage available?)
-             (.incrementAndGet calls))))]
-    {:repetitions repetitions
-     :finite-domain-size (count domain)
-     :complete-domain differential
-     :all-equivalent? (every? :equal? differential)
-     :generated-decision-invocations (.get calls)
-     :raw-runtime-observation observation}))
-
 (defn request-report
   []
   {:evidence/version 1
@@ -1307,7 +1252,7 @@
     :snapshot-id
     :one-captured-snapshot-identity-invocation-per-request
     :request-context
-    :proof-frame-one-combined-memo-and-publication-buffer-stay-lazy-before-use
+    :proof-frame-and-one-combined-memo-stay-lazy-before-use
     :native-membership
     :every-external-candidate-is-validated-once-before-checked-native-chunking
     :completed-hit
@@ -1315,9 +1260,7 @@
     :concurrent-miss
     :all-callers-compute-return-own-values-and-only-publication-losers-count-as-races
     :derived-independent-failure
-    :all-misses-build-independently-and-failures-are-never-published
-    :finite-current-cache
-    :all-ten-stage-availability-partitions-match-the-direct-host-mapping}
+    :all-misses-build-independently-and-failures-are-never-published}
    :boundary-revalidation
    (mapv boundary-revalidation-probe [256 4096 65536])
    :fixed-counter-key-validation
@@ -1347,11 +1290,9 @@
     (mapv structural-decode-shared-delay-probe [2 8 32])
     :sealed-plan
     (mapv sealed-plan-shared-delay-probe [2 8 32])}
-   :finite-current-cache-decision
-   (mapv finite-current-cache-probe [1 10000 1000000])
    :attribution
    {:completed-read-hit
-    :lookup-returned-cached-true-before-hit-mutation-counting
+    :standard-lru-touch-is-the-only-required-shared-hit-mutation
     :publication-race
     :each-initial-lookup-missed-and-loser-returned-own-computed-value
     :mandatory-counter

@@ -13,5 +13,5 @@
  :fix
  "The final v8 cache removes coordinator flights and join behavior. Unrepresented misses compute independently and may only race bounded publication of completed values; no request changes its answer to or waits for another in-flight request."
  :closing-evidence
- ["eacl.subproblem-cache-test/independent-identical-misses-never-wait-test"
+ ["eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test"
   "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

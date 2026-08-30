@@ -3,7 +3,7 @@
  :status :proof-and-cross-runtime-tests-passed
  :proof
  {:source "formal/dafny/PageWindow.dfy"
-  :verified-obligations 40
+  :verified-obligations 38
   :claims
   [:total-page-normalization
    :invalid-combinations-rejected
@@ -26,8 +26,6 @@
    :datascript-changed-basis-cannot-yield-cursor-page
    :completed-logical-page-is-exact-slice
    :mismatched-logical-boundary-is-stale
-   :matching-authorization-page-scope-reuses-exact-page
-   :authorization-page-scope-mismatch-cannot-hit
    :relationship-keyset-page-decision-exact
    :relationship-page-from-normalized-request-exact]}
  :shipped-consumers
@@ -37,10 +35,7 @@
   :keyset-page-decision eacl.engine.relationships/execute-page
   :cursor-proof-strategy eacl.client.orchestration/cursor-options
   :continuation-decision eacl.relay/continuation-decision
-  :completed-logical-page eacl.engine.v8/complete-logical-page
-  :retained-exact-page
-  [eacl.relay/lookup-visited-page
-   eacl.engine.v8/cached-recursive-page]}
+  :completed-logical-page eacl.engine.stable-page/edge-page}
  :generated-targets
  {:java
   {:status :passed
@@ -88,18 +83,46 @@
    :relationship-keyset-page-window
    :strict-generated-result-validation]}
  :host-completed-logical-page-boundary
- {:operation :completed-logical-page
-  :source eacl.engine.v8/complete-logical-page
+ {:operation :stable-edge-page
+  :source eacl.engine.stable-page/edge-page
   :input
   {:values :generated-logical-order-complete-denotation-eids
    :bound [:authenticated-logical-ordinal
            :authenticated-external-result-identity]}
   :result
   [:exact-exclusive-page :stale-logical-boundary]
-  :logical-work
+ :logical-work
   {:boundary-validation :constant-index-and-identity-check
    :slice "at most requested page size"
    :heap-and-latency :host-regression-gates-not-dafny-claims}
+  :checkpoint-retention
+  {:store :request-local-standard-lru
+   :default-max-entry-admissions 1000000
+   :publication-eligibility
+   [:cache-stage-available-neither-deadline-expired-nor-cancelled
+    :admitted-identity-count-at-most-configured-cap]
+   :publication-order
+   [:availability-check :semantic-admission-count-check
+    :continuation-callback-or-standalone-lru]
+   :expired-or-cancelled-publication false
+   :over-cap-publication
+   {:result :drop
+    :continuation-callbacks 0
+    :lru-effects 0
+    :telemetry-effects 0}
+   :unavailable-cache-stage-lookup
+   {:result :miss :store-probes 0 :recency-touches 0}
+   :lookup-order
+   [:non-touch-peek :ordinal-and-boundary-acceptance :identity-checked-touch]
+   :rejected-candidate-refresh false
+   :classification :host-lru-trace-not-semantic-authorization-authority
+   :regressions
+   [eacl.engine.stable-page-test/checkpoint-nonregression-test
+    eacl.engine.stable-page-test/request-ineligible-checkpoint-publication-is-a-no-op-test
+    eacl.engine.stable-page-test/request-ineligible-checkpoint-lookup-does-not-probe-or-touch-test
+    eacl.engine.stable-page-test/checkpoint-store-is-lru-and-rejected-boundaries-do-not-touch-test
+    eacl.engine.continuation-reuse-test/client-checkpoint-context-enforces-admission-count-cap-test
+    eacl.engine.continuation-reuse-test/checkpoint-miss-and-lru-telemetry-test]}
   :production-authority
   {:model PageWindow/DecideCompletedLogicalPage
    :clj-java :host-control-flow-over-generated-logical-denotation

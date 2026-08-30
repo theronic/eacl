@@ -1,82 +1,205 @@
-{:schema-version 3
- :semantics-version 2
- :status :conditional-independent-computation-model-verified
- :claim-id :EACL-V8-CACHE-COORDINATION-001
+{:schema-version 7
+ :semantics-version 6
+ :status :pending-two-tier-and-computation-token-reverification
+ :claim-id :EACL-CACHE-STORAGE-BOUNDARY-002
  :production
  {:sources
-  ["modules/eacl/src/eacl/subproblem_cache.cljc"
-   "modules/eacl/src/eacl/cache.cljc"
-   "modules/eacl/src/eacl/client/orchestration.cljc"
-   "modules/eacl/src/eacl/continuation.cljc"
-   "modules/eacl-datomic/src/eacl/datomic/cache.clj"]
-  :represented-entry-kinds :completed-immutable-values-only
+  ["modules/eacl/src/eacl/cache/standard_lru.cljc"
+   "modules/eacl/src/eacl/cache/key.cljc"
+   "modules/eacl/src/eacl/subproblem_cache.cljc"
+   "modules/eacl/src/eacl/cache.cljc"]
+  :storage :count-bounded-standard-lru
+  :semantic-abstraction :finite-partial-map
+  :dafny-store-scope :one-store-per-live-tier
+  :live-tiers
+  {:denotation [:exact-completed-point]
+   :answer [:exact-completed-answer :managed-completed-answer]}
+  :retired-physical-projection-tier :absent
+  :represented-entry-kinds :complete-valid-immutable-values-only
+  :completed-answer-v2
+  {:immutable-anchor
+   [:cache-basis :computed-revision :computed-exact-locator]
+   :exact-locator-domain
+   [:nil :safe-natural-zero-through-9007199254740991
+    :nonempty-string-at-most-4096-host-count-units]
+   :live-exact-resident-origins
+   [:validated-direct-exact-publication
+    :validated-managed-to-exact-promotion]
+   :direct-exact-cache-basis
+   :derived-from-exact-key-backend-snapshot-identity
+   :direct-exact-caller-supplied-cache-basis false
+   :managed-promotion-rewrites-immutable-anchor false
+   :exact-key-revision :selected-snapshot-order
+   :managed-promotion :same-envelope-under-later-exact-key
+   :managed-promotion-basis-class :ordinary-only
+   :portable-exact-export
+   {:cache-basis :equal-to-exact-key-backend-snapshot-identity
+    :computed-revision :equal-to-exact-key-revision
+    :computed-exact-locator :equal-to-exact-key-locator
+    :different-anchor-managed-promotion :omitted
+    :managed-source-entry :retained-for-validated-restore-and-local-causal-check}
+   :promotion-precondition
+   [:managed-proof-valid-at-selected-snapshot
+    :canonical-dependency-identity-equals-selected-proof
+    :managed-proof-generations-at-or-below-computed-revision
+    :computed-revision-at-or-below-selected-snapshot-order]}
+  :lookup :ordinary-membership-plus-held-value-under-valid-store
+  :resident-invariant
+  {:semantic-value :resident-envelope-to-completed-artifact
+   :provenance-contract :complete-key-and-origin-specific-resident-validity
+   :base-cases [:empty-construction :validated-off-side-restore]
+   :live-ingress :validated-publication
+   :preserving-transitions
+   [:lru-touch :arbitrary-eviction :store-instance-replacement]
+   :exact-hit-validation :none-after-ingress
+   :managed-hit-validation :request-relative-causal-revision-only}
+  :authorized-ingress
+  {:live-publication
+   {:value
+    :operation-validated-completed-value-equal-to-independent-evaluation
+    :cache-stage-availability
+    :neither-deadline-expired-nor-cancelled-at-publication-boundary}
+   :off-side-restore
+   {:input :already-authenticated-supported-eacl-export
+    :local-validation :closed-key-value-provenance-capacity-contract
+    :semantic-equality :inherited-from-exporting-valid-store}}
+  :resolution-order [:exact-key :managed-key :independent-computation]
+  :ordinary-resolution-authority
+  {:derived-from-exact-key
+   [:selected-revision :cache-basis :managed-source]
+   :derived-from-semantic-key [:operation :answer-validator]
+   :redundant-caller-inputs :absent
+   :speculative-managed-read-only-explicit
+   [:selected-revision :managed-source]}
+  :managed-key-requires-canonical-dependency-identity true
   :cold-miss-ownership :initiating-request
+  :miss-computation-identity :fresh-ghost-token-per-active-invocation
   :identical-miss-policy :compute-independently
-  :caller-waiting-coordination false
-  :cache-computation-semaphore false
-  :publication
-  {:kind :bounded-best-effort-cas
-   :compatible-existing-winner :retained
-   :losing-candidate :discarded
-   :authorization-result-dependency false}
+  :cache-disabled-isolation
+  {:scope [:answer-store :denotation-store]
+   :host-binding
+   [:subproblem/*store*-nil
+    :subproblem/*exact-denotation-key-fn*-nil
+    :subproblem/*populate?*-false]
+   :lookup-probes 0
+   :publication-attempts 0
+   :model-claim :cache-disabled-request-is-storage-isolated
+   :regression
+   eacl.cache-test/cache-bypass-isolates-inherited-denotation-context-test}
+  :cache-stage-unavailable-isolation
+  {:scope [:answer-store :denotation-store :managed-proof-descriptor]
+   :lookup-probes 0
+   :recency-touches 0
+   :managed-proof-reads 0
+   :publication-attempts 0
+   :result :independent-computation
+   :model-claim :unavailable-cache-stage-is-storage-isolated}
+  :application-callbacks-inside-atom-retry false
+  :lru-policy-authorization-authority false
+  :page-retention-eligibility {:tier :answer
+                               :maximum-result-items 1000
+                               :effect :publication-only}
   :lifecycle
-  {:replacement :atomic-generation-detachment
-   :late-old-generation-publication :unreachable}
-  :portable-snapshot
-  {:format :versioned-closed-data
-   :selection :bounded-mru-with-stable-tier-priority
-   :excluded
-   [:backend-snapshots :process-identity-tokens :metrics :continuations
-    :cursors]
-   :restore :validate-before-atomic-lifecycle-replacement
-   :external-envelope-responsibility
-   [:authentication :encoded-byte-bound-before-deserialization]}
+  {:semantic-source-lifecycle :complete-key-field
+   :private-store-instance :outer-atom-detachment-token
+   :formal-instance-identity :strictly-increasing-ghost-id
+   :production-instance-identity :fresh-private-store-reference
+   :publication-authority :computation-captured-private-store-instance
+   :replacement :fresh-never-reused-private-store-instance
+   :restore-preserves [:tier :configured-capacity]
+   :semantic-key-overlap-across-store-instances :permitted
+   :semantic-identity-recurrence
+   :conditional-on-truthful-complete-key-equivalence
+   :late-detached-store-publication :unreachable}
   :partial-semantic-state-answering false}
  :dafny
  {:source "formal/dafny/SubproblemCache.dfy"
-  :verified-obligations 73
+  :source-lines 1035
+  :removed-source-lines 540
+  :top-level-declarations 68
+  :removed-top-level-declarations 41
+  :verified-obligations :pending-fresh-rerun
   :claims
-  [:exact-command-key-field-separation
-   :recursive-denotation-key-matches-production-semantic-identity-and-public-order
-   :completed-candidate-only-hit
-   :incomplete-candidate-independent-computation
-   :bounded-publication-attempt
-   :current-complete-valid-weight-bounded-publication
-   :lifecycle-qualified-lookup-and-publication-address
-   :late-generation-publication-rejection
-   :one-request-owns-at-most-one-miss-computation
-   :concurrent-requests-have-independent-computation-state
-   :partial-recursive-publication-rejection
-   :completed-worklist-least-fixed-point-publication]}
+  [:complete-composite-key-field-separation
+   :operation-specific-key-and-proof-values-are-opaque-storage-inputs
+   :valid-store-includes-complete-key-resident-contract-and-fresh-semantic-value-invariant
+   :resident-provenance-is-validated-separately-from-semantic-payload-equality
+   :resident-lookup-needs-no-repeated-validation
+   :accepted-hit-equals-fresh-evaluation
+   :managed-hit-retains-per-request-causal-check
+   :managed-promoted-exact-resident-is-valid-but-may-be-nonportable
+   :future-managed-resident-cannot-answer-older-request
+   :denotation-keys-are-exact-only
+   :managed-keys-are-answer-tier-only
+   :exact-managed-answer-alternatives-share-semantic-source-and-abi-fields
+   :exact-and-managed-modes-share-one-tier-store
+   :exact-first-managed-second-resolution
+   :managed-key-resolution-requires-explicit-host-eligibility
+   :every-miss-begins-a-request-owned-computation-token
+   :one-request-can-own-distinct-simultaneous-identical-misses
+   :cache-bypass-returns-independent-evaluation
+   :cache-disabled-request-is-storage-isolated
+   :cache-disabled-request-has-zero-lookup-and-publication-attempts
+   :unavailable-cache-stage-skips-lookup-and-touch
+   :unavailable-cache-stage-skips-answer-lookup-proof-and-touch
+   :unavailable-cache-stage-is-storage-isolated
+   :exact-answer-hit-skips-managed-proof-read
+   :valid-store-resolution-matches-independent-evaluation
+   :validated-publication-preserves-valid-store
+   :cache-stage-publication-eligibility-requires-not-expired-and-not-cancelled
+   :expired-or-cancelled-candidate-cannot-publish
+   :unavailable-cache-stage-cannot-publish
+   :optional-publication-drop-is-valid-store-identity-transition
+   :put-if-absent-publication-preserves-same-key-winner
+   :validated-off-side-restore-establishes-valid-store
+   :empty-construction-establishes-valid-store
+   :authorized-store-transition-preserves-valid-store-by-induction
+   :arbitrary-eviction-can-only-turn-hit-into-miss
+   :arbitrary-eviction-preserves-resolved-result
+   :arbitrary-eviction-preserves-valid-store
+   :one-thousand-item-page-retention-eligible
+   :larger-page-retention-ineligible
+   :partial-value-retention-ineligible
+   :semantic-source-lifecycle-is-distinct-from-private-store-instance
+   :publication-step-requires-computation-captured-installed-store-instance
+   :private-store-instance-identity-is-never-reused
+   :monotone-store-replacement-prevents-aba-reauthorization
+   :replacement-store-instance-starts-empty-and-valid
+   :fresh-validated-restore-detaches-prior-store-instance
+   :fresh-validated-restore-preserves-tier-and-capacity
+   :detached-candidate-cannot-publish-into-installed-store
+   :begun-miss-is-owned-by-initiating-request
+   :concurrent-identical-misses-have-distinct-request-owner-identities]}
  :temporal-models
- [{:source "formal/tla/EaclSubproblemCache.tla"
-   :configuration "formal/tla/EaclSubproblemCache.cfg"
+ [{:source "formal/tla/EaclCacheStorage.tla"
+   :configuration "formal/tla/EaclCacheStorage.cfg"
+   :tlc-configuration "formal/tla/EaclCacheStorageTlc.cfg"
    :models
-   [:request-owned-independent-misses
-    :completed-entry-only-store
-    :bounded-capacity
-    :atomic-lifecycle-detachment
-    :late-publication-discard]
-   :status :typechecked}
-  {:source "formal/tla/EaclTieredSubproblemCache.tla"
-   :configuration "formal/tla/EaclTieredSubproblemCache.cfg"
-   :models
-   [:separate-tier-budgets
-    :request-owned-independent-misses
-    :partial-artifact-nonanswering
-    :late-publication-discard]
+   [:finite-count-bounded-partial-map
+    :denotation-exact-only
+    :answer-exact-or-managed
+    :opaque-composite-key-membership
+    :exact-first-managed-second
+    :computation-token-indexed-request-owned-independent-misses
+    :publication-eligibility-includes-retention-and-cache-stage-availability
+    :exact-and-managed-publication-share-one-request-owned-ingress-transition
+    :managed-publication-uses-computation-captured-proof-descriptor
+    :optional-completed-publication
+    :arbitrary-eviction
+    :partial-candidates-empty-outside-negative-controls
+    :semantic-source-identity-keying
+    :semantic-source-lifecycle-keying
+    :private-store-instance-detachment]
    :mutation-controls
    [:partial-denotation-hit
+    :cache-fail-open
     :late-orphan-publication
-    :coupled-tier-budgets]
-   :status :typechecked}
-  {:source "formal/tla/EaclManagedProjectionCache.tla"
-   :configuration "formal/tla/EaclManagedProjectionCache.cfg"
-   :models
-   [:completed-artifact-only-store
-    :managed-hit-current-source-schema-scalar-frontier]
-   :mutation-controls [:managed-proof-bypass]
-   :status :typechecked}
+    :continuation-race
+    :managed-proof-bypass
+    :managed-publication-proof-drift]
+   :mutation-semantics
+   {:continuation-race :retired-store-instance-aba-reuse}
+   :status :pending-fresh-rerun}
   {:source "formal/tla/EaclSpeculativeCache.tla"
    :configuration "formal/tla/EaclSpeculativeCache.cfg"
    :models
@@ -86,49 +209,56 @@
     :unknown-effect-fallback
     :cumulative-effects]
    :status :typechecked-and-bounded-safety-checked}]
- :executable-conformance
- {:generated-production-boundary
-  eacl.formal.production-kernel/subproblem-cache-decision
-  :portable-boundary
-  eacl.engine.portable-decisions/subproblem-cache-decision
-  :input-contract
-  eacl.verified-kernel/validate-subproblem-cache-input!
-  :result-contract
-  eacl.verified-kernel/validate-subproblem-cache-result!
-  :production-state-machine-tests
-  [eacl.subproblem-cache-test
-   eacl.cache-test]
-  :portable-snapshot-tests
-  [eacl.subproblem-cache-test/process-neutral-snapshot-round-trip-test
-   eacl.subproblem-cache-test/malformed-subproblem-snapshot-is-rejected-test
-   eacl.cache-test/portable-basis-cache-round-trip-test
-   eacl.cache-test/cache-content-revision-advances-on-expiry-test]
-  :adversarial-trace-test
-  eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test}
- :negative-source-assertions
- {:forbidden-production-mechanisms
-  ["single-flight" "Semaphore" "ReentrantReadWriteLock" "(locking"]
-  :test
-  eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test}
+ :host-conformance
+ {:generated-cache-policy-operation :absent
+ :generated-current-cache-specialization :absent
+  :standard-store-tests eacl.cache.standard-lru-test
+  :hot-hit-benchmark
+  {:source "modules/eacl-datascript/test/eacl/bench/subproblem_cache_test.clj"
+   :storage-path :direct-composite-key-standard-lru
+   :generic-cache-get-put-surface :absent}
+  :continuation-latest-progress
+  {:source "modules/eacl/src/eacl/continuation.cljc"
+   :total-order [:ordinal :transitions]
+   :publication :callback-free-expected-value-replacement}
+  :production-state-tests [eacl.subproblem-cache-test eacl.cache-test]
+  :cache-stage-regressions
+  [eacl.subproblem-cache-test/request-ineligible-publication-is-rejected-before-validation-test
+   eacl.subproblem-cache-test/request-ineligible-lookup-skips-store-metrics-and-recency-test
+   eacl.cache-test/cancellation-observed-by-exact-lookup-stops-managed-proof-test]
+  :differential-test
+  eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
+  :source-closure "formal/verification/public-source-closure.json"}
  :assurance-classification
- {:dafny-decisions :generated-production-authority
-  :tla-models :proof-only-temporal-models
-  :clj-cache-state-machine :differential-and-source-closure-conformance
-  :cljs-cache-state-machine :differential-conformance
-  :mechanized-source-refinement false
-  :external-certification-status :qualified-not-certified
-  :reason
-  :mechanized-refinement-from-shipped-clj-cljs-cache-transitions-remains-open}
+ {:dafny-cache-storage :proof-only-semantic-boundary
+  :tla-cache-storage :proof-only-temporal-model
+  :lru-order :host-library-conformance
+  :clj-cljs-source-refinement false
+  :external-certification-status :qualified-not-certified}
+ :trusted-host-boundary
+ {:supported-client-store-injection false
+  :resident-validator-establishes-complete-key-and-provenance-contract true
+  :live-publication-semantic-projection-equals-independent-evaluation true
+  :restore-input-is-authenticated-supported-eacl-export true
+  :restore-does-not-recompute-every-authorization-answer true
+  :resident-values-remain-immutable-after-admission true
+  :unsupported-same-process-record-or-atom-mutation :outside-contract
+  :dishonest-internal-validator :outside-contract
+  :simultaneous-miss-invocations-have-distinct-ghost-identities true
+  :formal-store-state :private-semantic-abstraction}
  :excluded-properties
- [:hard-wall-clock-bound
+ [:lru-priority-order-as-authorization-input
+  :priority-map-representation
+  :atom-retry-scheduling
+  :hard-wall-clock-bound
   :jvm-heap-bound
-  :gc-scheduling-bound
-  :external-cache-provider-execution-not-in-v8-target
-  :backend-command-cancellation]
+  :gc-scheduling-bound]
  :latest-verification
- {:date "2026-08-08"
-  :dafny {:verified 73 :errors 0}
-  :tla-typecheck :passed
-  :generated-java-smoke
-  {:status :passed :tests 51 :assertions 16176 :failures 0 :errors 0}
+ {:date "2026-08-30"
+  :dafny {:status :pending-fresh-rerun}
+  :tla-typecheck :pending-fresh-rerun
+  :tlc-exhaustive {:status :pending-fresh-rerun}
+  :apalache-bounded-check :pending-fresh-rerun
+  :apalache-inductive-check :pending-fresh-rerun
+  :apalache-retained-mutants :pending-fresh-rerun
   :source-refinement :not-established}}

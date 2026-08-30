@@ -4,17 +4,13 @@
   {:remember-answers true
    :subproblem-cache
    {:enabled? false
-    :projection-max-weight 17
-    :denotation-max-weight 19
-    :max-inflight 2
-    :managed-proof-max-atoms 3}}}
+    :denotation-max-entries 19
+    :answer-max-entries 17}}}
  :before-fix
  {:outcome :rejected
   :type :eacl/invalid-config
   :unknown-keys [:subproblem-cache]}
  :latent-defaults
  {:enabled? true
-  :projection-max-weight 4194304
-  :denotation-max-weight 4194304
-  :max-inflight 256
-  :managed-proof-max-atoms 256}}
+  :denotation-max-entries 4096
+  :answer-max-entries 1024}}

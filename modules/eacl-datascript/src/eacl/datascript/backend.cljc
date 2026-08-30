@@ -232,7 +232,10 @@
          :branch nil}
         source-lifecycle
         (fn []
-          (or (some-> (:source-lifecycle-state opts) deref)
+          (or (some-> (:runtime-lifecycle-state opts)
+                      deref
+                      :source-lifecycle)
+              (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))
         adapter-options (select-keys opts adapter-config-keys)
         adapter-cache (volatile! nil)

@@ -15,7 +15,6 @@
    :max-probes 1000000
    :max-output-units 100000
    :max-allocation-proxy 10000000
-   :max-publication-attempts 1024
    :candidate-window 10000})
 
 (def ^:private aggregate-limit-keys
@@ -283,18 +282,15 @@
         ledger-delta (request-counters/delta ledger-before ledger-after)
         candidates (:candidates-examined ledger-delta)
         probes (:probes ledger-delta)
-        publication-attempts (:publications ledger-delta)
         allocation-proxy
-        (+ commands transitions fetched-values candidates probes
-           publication-attempts output-units)]
+        (+ commands transitions fetched-values candidates probes output-units)]
     {:commands commands
      :transitions transitions
      :fetched-values fetched-values
      :candidates-examined candidates
      :probes probes
      :output-units output-units
-     :allocation-proxy allocation-proxy
-     :publication-attempts publication-attempts}))
+     :allocation-proxy allocation-proxy}))
 
 (def ^:private limit->counter
   {:max-commands :commands
@@ -303,8 +299,7 @@
    :max-candidates-examined :candidates-examined
    :max-probes :probes
    :max-output-units :output-units
-   :max-allocation-proxy :allocation-proxy
-   :max-publication-attempts :publication-attempts})
+   :max-allocation-proxy :allocation-proxy})
 
 (def empty-aggregate-counters
   {:commands 0
@@ -313,8 +308,7 @@
    :candidates-examined 0
    :probes 0
    :output-units 0
-   :allocation-proxy 0
-   :publication-attempts 0})
+   :allocation-proxy 0})
 
 (defn check-aggregate-limits!
   [limits counters demand-index]

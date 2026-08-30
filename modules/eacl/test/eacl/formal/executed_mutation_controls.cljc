@@ -10,7 +10,6 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
-            [eacl.formal.current-cache-refinement :as cache-refinement]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
@@ -22,6 +21,7 @@
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.spicedb.parser :as parser]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (defn- production-decision
@@ -181,33 +181,10 @@
    {:status :rejected :reason :compiled-rule-mismatch}
    {:status :certified}))
 
-(defn continuation-race-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :subproblem-cache-decision
-   {:decision :publication
-    :ticket-current? false
-    :complete? true
-    :valid? true
-    :weight 1
-    :budget 10}
-   :drop-publication
-   :retain-publication))
-
-(defn- audit-snapshot-object
-  []
-  #?(:clj (Object.)
-     :cljs (js-obj)))
-
 (def audit-source-scope
   {:backend :mutation-control
    :source-id :source
    :branch nil})
-
-(def audit-lineage
-  {:source-scope audit-source-scope
-   :source-lifecycle :lifecycle})
 
 (defn- audit-basis-key
   [revision]
@@ -219,23 +196,21 @@
           :basis-kind :ordinary
           :revision revision
           :exact-locator revision
-          :backend-snapshot-id revision)
+          :backend-snapshot-id {:basis revision})
    :adapter-fingerprint :mutation-control
    :identity-contract :mutation-control/v1})
 
 (defn- audit-basis-context
   [revision]
-  {:snapshot (audit-snapshot-object)
-   :snapshot-order revision
-   :exact-basis-key (audit-basis-key revision)
-   :cache-basis revision
-   :managed-subproblem-scope audit-lineage
+  {:exact-basis-key (audit-basis-key revision)
    :managed-key-fn
-   (constantly {:schema-generation 10 :dependency-stamp 20})})
+   (constantly {:schema-generation 1
+                :dependency-identity [[1 1]]
+                :dependency-stamp 1})})
 
 (defn numeric-ancestry-killed?
-  "Kills the obsolete order-as-ancestry rule against the replacement contract:
-  equal complete frames permit reuse in either revision direction."
+  "Kills backward managed reuse: equal proof never makes a future computation
+  admissible for an older selected snapshot."
   []
   (let [run
         (fn []
@@ -245,7 +220,7 @@
                 (fn [revision value]
                   (cache/resolve-basis!
                    store (audit-basis-context revision)
-                   :same-query :decision boolean?
+                   {:operation :can? :id :same-query}
                    (fn []
                      (swap! computations inc)
                      value)))
@@ -254,22 +229,19 @@
             {:older-value (:value older)
              :older-tier (:cache-tier older)
              :computations @computations}))
-        expected {:older-value true
-                  :older-tier :managed-current
-                  :computations 1}
-        original cache/resolve-basis!]
+        expected {:older-value false
+                  :older-tier nil
+                  :computations 2}]
     (and
      (= expected (run))
      (not=
       expected
-      (with-redefs [cache/resolve-basis!
-                    (fn [store context semantic-key kind valid-value? compute]
-                      (original
-                       store
-                       (if (= 1 (:snapshot-order context))
-                         (dissoc context :managed-key-fn)
-                         context)
-                       semantic-key kind valid-value? compute))]
+      (with-redefs [subproblem/lookup-eligible!
+                    (fn [store tier storage-key _eligible?]
+                      ;; Mutate only the request-relative managed guard.
+                      ;; Resident shape/ABI validity is an ingress invariant;
+                      ;; ordinary lookup deliberately has no callback.
+                      (subproblem/lookup! store tier storage-key))]
         (run))))))
 
 (defn wrong-frontier-killed?
@@ -305,44 +277,6 @@
     :exact nil}
    :scope-mismatch
    :current))
-
-(defn cache-fail-open-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :subproblem-cache-decision
-   {:decision :lookup :candidate :failed}
-   :start-independent-computation
-   :use-completed-value))
-
-(defn current-cache-missing-entry-hit-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :current-cache-decision
-   {:stage :exact-entry :available? false}
-   :probe-managed-entry
-   :use-exact-entry))
-
-(defn current-cache-specialization-partition-killed?
-  []
-  (let [equivalent?
-        (fn []
-          (every?
-           (fn [[stage available?]]
-             (= (production-decision
-                 :current-cache-decision
-                 {:stage stage :available? available?})
-                (cache/specialized-current-cache-action stage available?)))
-           cache-refinement/current-cache-domain))]
-    (and
-     (equivalent?)
-     (false?
-      (with-redefs [cache-refinement/current-cache-mapping
-                    (assoc cache-refinement/current-cache-mapping
-                           [:managed-entry false]
-                           :use-managed-entry)]
-        (equivalent?))))))
 
 (defn mismatched-indexed-request-scope-response-killed?
   []
@@ -413,20 +347,6 @@
                 :fetched-values 1}]
     (portable-mutation-killed?
      portable/decide :indexed-scan-response input expected mutant)))
-
-(defn over-budget-publication-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :subproblem-cache-decision
-   {:decision :publication
-    :ticket-current? true
-    :complete? true
-    :valid? true
-    :weight 11
-    :budget 10}
-   :drop-publication
-   :retain-publication))
 
 (defn enumeration-route-forces-recursive-killed?
   []
@@ -511,7 +431,7 @@
               :basis-kind :ordinary
               :revision 7
               :exact-locator 7
-              :backend-snapshot-id 7}
+              :backend-snapshot-id {:basis 7}}
         separated?
         (fn []
           (not=
@@ -1739,20 +1659,14 @@ definition document {
    :missing-de-duplication missing-de-duplication-killed?
    :incomplete-dependency incomplete-dependency-killed?
    :numeric-ancestry numeric-ancestry-killed?
-   :continuation-race continuation-race-killed?
    :wrong-frontier wrong-frontier-killed?
    :cursor-scope cursor-scope-killed?
-   :cache-fail-open cache-fail-open-killed?
-   :current-cache-missing-entry-hit current-cache-missing-entry-hit-killed?
-   :current-cache-specialization-partition
-   current-cache-specialization-partition-killed?
    :mismatched-indexed-request-scope-response
    mismatched-indexed-request-scope-response-killed?
    :ordered-merge-wrong-comparator ordered-merge-wrong-comparator-killed?
    :acyclic-merge-emits-overlap-twice
    acyclic-merge-emits-overlap-twice-killed?
    :adapter-negative-eid-admitted adapter-negative-eid-admitted-killed?
-   :over-budget-publication over-budget-publication-killed?
    :enumeration-route-forces-recursive enumeration-route-forces-recursive-killed?
    :acyclic-work-allows-recursive-budget acyclic-work-allows-recursive-budget-killed?
    :consistency-malformed-exact-treated-absent

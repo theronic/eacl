@@ -30,8 +30,7 @@
 
 (defn- reusable-subproblem-hits
   [stats]
-  (+ (get-in stats [:subproblems :projection-hits] 0)
-     (get-in stats [:subproblems :denotation-hits] 0)))
+  (get-in stats [:subproblems :denotation-hits] 0))
 
 (defn- managed-client
   [conn options]
@@ -237,13 +236,29 @@
         (eacl/lookup-resources authorization previous-query)
         previous-hit
         (eacl/lookup-resources authorization previous-query)]
-    (testing "adjacent reverse navigation reuses the visited current page"
+    (testing "Next/Previous oscillation reuses only completed internal answers"
       (is (= [(second documents)] (:data page-2)))
       (is (false? (:cached? page-2)))
       (is (true? (:cached? page-2-hit)))
       (is (= [(first documents)] (:data previous-page)))
-      (is (true? (:cached? previous-page)))
-      (is (true? (:cached? previous-hit))))
+      (is (false? (:cached? previous-page))
+          "the first reverse request has its own direction and boundary key")
+      (is (true? (:cached? previous-hit))
+          "the repeated reverse request reuses its completed internal answer")
+      (is (= (:cache-basis page-1) (:cache-basis previous-page)
+             (:cache-basis previous-hit))
+          "oscillation stays on the exact selected snapshot")
+      (is (= (select-keys (:page-info page-1)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info previous-page)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info previous-hit)
+                          [:has-next-page? :has-previous-page?])))
+      (is (every? some?
+                  [(get-in previous-page [:page-info :start-cursor])
+                   (get-in previous-page [:page-info :end-cursor])
+                   (get-in previous-hit [:page-info :start-cursor])
+                   (get-in previous-hit [:page-info :end-cursor])])))
     (testing "current recovery becomes cacheable after re-evaluation"
       (eacl/delete-relationship! authorization (second relationships))
       (let [data (error-data
@@ -251,7 +266,7 @@
         (is (= :eacl.pagination/stale-cursor (:type data)))
         (is (= :frame-changed (:reason data)))))))
 
-(deftest unrelated-write-preserves-authenticated-page-cache-identity-test
+(deftest unrelated-write-preserves-completed-answer-proof-identity-test
   (let [conn (datascript/create-conn)
         authorization
         (managed-client conn {})
@@ -278,7 +293,7 @@
         (eacl/lookup-resources authorization original-page-2-query)]
     (is (= [(second documents)] (:data original-page-2)))
     (is (false? (:cached? original-page-2)))
-    (ds/transact! conn [{:eacl/id "unrelated-page-cache-write"}])
+    (ds/transact! conn [{:eacl/id "unrelated-completed-answer-write"}])
     (let [recovered-page-2
           (eacl/lookup-resources authorization original-page-2-query)
           fresh-page-1
@@ -302,7 +317,7 @@
         (is (= [(second documents)] (:data fresh-page-2)))
         (is (true? (:cached? fresh-page-2)))))))
 
-(deftest repeated-relationship-page-uses-client-private-navigation-cache-test
+(deftest repeated-relationship-page-uses-completed-answer-cache-test
   (let [conn (datascript/create-conn)
         client (managed-client conn {})
         _ (seed! conn client)

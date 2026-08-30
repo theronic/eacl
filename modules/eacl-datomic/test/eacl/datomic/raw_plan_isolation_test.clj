@@ -5,22 +5,17 @@
   when the facade's per-call random lifecycle became process-stable).
 
   Sealed plans embed relation eids and permission arms, so a plan compiled
-  from a d/filter view (which hides definition datoms but not the schema
-  stamp) or a d/with speculative value (which shares the later committed
-  basis) answers wrongly for the plain database, and vice versa. Plan reuse
-  is therefore restricted to ordinary views of a stamped schema generation;
-  everything else compiles per call."
+  from a d/filter view or d/with speculative value must never escape that raw
+  call. The raw facade uses a fresh plain memo context per immutable value."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as schema]
-            [eacl.engine.v8 :as engine]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
@@ -83,13 +78,11 @@ definition doc {
           alice (spice-object :user "alice")
           doc (spice-object :doc "doc1")]
       (testing "filtered view first cannot poison the plain view"
-        (engine/expire-plans!)
         (is (false? (impl/can? filtered alice :view doc))
             "the filtered view hides the owner arm")
         (is (true? (impl/can? db alice :view doc))
             "the plain view keeps its owner arm"))
       (testing "plain view first cannot leak its plan into the filtered view"
-        (engine/expire-plans!)
         (is (true? (impl/can? db alice :view doc)))
         (is (false? (impl/can? filtered alice :view doc)))))))
 
@@ -149,7 +142,6 @@ definition doc {
       (is (= (d/basis-t speculative) (d/basis-t committed))
           "the aliasing precondition: identical basis")
       (testing "speculative plan first must not answer for the committed basis"
-        (engine/expire-plans!)
         (is (true? (impl/can? speculative alice :view doc))
             "the speculative view grants through its extra editor arm")
         (is (false? (impl/can? committed alice :view doc))

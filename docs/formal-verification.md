@@ -13,13 +13,15 @@ stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 release-assurance tree under `formal/stable-discovery/` (47 Dafny leaves, two
 TLC families, executable refinement bridges, mutation controls; see
 [docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
-Dafny kernel remains the production authority for the pure decisions that
-surround the engine — consistency planning, current-cache decisions, cursor
-continuation, and page-request normalization — through `eacl.verified-kernel`
+Dafny kernel remains the production authority for the remaining pure decisions
+that surround the engine — consistency planning, cursor continuation, and
+page-request normalization — through `eacl.verified-kernel`
 on the JVM and its portable CLJC decision twin on ClojureScript, differentially
 certified against the generated JavaScript oracle. The generated JavaScript
 adapter is formal-smoke-only and no runtime option can select an alternate
-engine. Browser answers are advisory and deployments must re-check
+engine. The former generated current-cache availability decision has been
+deleted; cache storage is modeled as an ordinary partial map and cannot define
+an authorization result. Browser answers are advisory and deployments must re-check
 authorization on the server.
 
 The measured performance consequences and recommended cache-free reference,
@@ -112,9 +114,9 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions (live decisions) |
 | `IndexedBatching.dfy` | **retired** bounded ordered scan waves and crossing law of the generated indexed traversal; same disposition |
 | `IndexedBatchCompleteness.dfy` | **retired** proof-only pending-scan ghost views; same disposition |
-| `CurrentCache.dfy` | exact-basis/managed admission, complete exact identity and lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-basis rendering |
+| `CurrentCache.dfy` | exact-basis/managed admission, complete exact identity including backend snapshot/cache-basis equality, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-basis rendering |
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
-| `ScalarFrontierCoherence.dfy` | globally ordered native generations, scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication |
+| `ScalarFrontierCoherence.dfy` | globally ordered native generations, full canonical dependency-generation identity, derived scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |

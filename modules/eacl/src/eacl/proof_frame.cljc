@@ -2,8 +2,8 @@
   "Request-scoped ordered-generation proofs for managed cache reuse.
 
   A frame is bound to one immutable adapter. It acquires only canonical,
-  complete dependency evidence, derives scalar frontiers centrally, and never
-  extends a completed closure with evidence from another snapshot."
+  complete dependency evidence, derives bounded proof identities centrally,
+  and never extends a completed closure with evidence from another snapshot."
   (:require [eacl.backend.v8 :as backend]))
 
 (def default-maximum-relation-count 4096)
@@ -271,38 +271,41 @@
   [proof]
   (= :complete (:status proof)))
 
+(defn- dependency-identity?
+  [value]
+  (and (vector? value)
+       (every? #(and (vector? %)
+                     (= 2 (count %))
+                     (generation? (first %))
+                     (generation? (second %)))
+               value)
+       (= (mapv first value)
+          (canonical-relation-ids (mapv first value)))))
+
+(defn- dependency-frontier
+  [dependency-identity]
+  (reduce
+   (fn [frontier [_ generation]]
+     (max frontier generation))
+   0
+   dependency-identity))
+
 (defn descriptor?
-  "True only for the canonical constant-size managed-reuse descriptor."
+  "True only for a closed, canonical managed-reuse proof descriptor."
   [value]
   (and (map? value)
-       (= #{:schema-generation :dependency-stamp} (set (keys value)))
+       (= #{:schema-generation :dependency-identity :dependency-stamp}
+          (set (keys value)))
        (generation? (:schema-generation value))
-       (generation? (:dependency-stamp value))))
+       (dependency-identity? (:dependency-identity value))
+       (generation? (:dependency-stamp value))
+       (= (:dependency-stamp value)
+          (dependency-frontier (:dependency-identity value)))))
 
 (defn descriptor
-  "Returns the constant-size completed-cache identity for a complete proof."
+  "Returns the complete completed-cache identity for a complete proof."
   [proof]
   (when (complete? proof)
-    (select-keys proof [:schema-generation :dependency-stamp])))
-
-(defn subset-descriptor
-  "Derives a subset frontier only from a complete request proof.
-
-  Relations outside the proved closure fail closed; no provider call extends
-  the frame."
-  [proof relation-ids]
-  (when (complete? proof)
-    (let [canonical (canonical-relation-ids
-                     (if (vector? relation-ids)
-                       relation-ids
-                       [relation-ids]))
-          stamps (:relation-generation-map proof)]
-      (when (and canonical
-                 (every? #(contains? stamps %) canonical))
-        {:schema-generation (:schema-generation proof)
-         :dependency-stamp
-         (reduce
-          (fn [frontier relation-id]
-            (max frontier (get stamps relation-id)))
-          0
-          canonical)}))))
+    {:schema-generation (:schema-generation proof)
+     :dependency-identity (:relation-generations proof)
+     :dependency-stamp (:dependency-stamp proof)}))

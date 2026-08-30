@@ -14,7 +14,13 @@
       :codec :eacl-id-immutable-v1
       :recursive-traversal-limits nil}
      :closure-digest "ZCHBJRO35D25DLXi2ge9zplZznjWQ3TtBKFqhbjT-t4"
-     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :frame
+     {:dependency-identity
+      [[3 536870915] [4 536870917] [5 536870917] [6 536870917]
+       [7 536870917] [8 536870917] [9 536870917] [10 536870917]
+       [11 536870917] [12 536870917] [13 536870917] [14 536870917]]
+      :dependency-stamp 536870917
+      :schema-generation 536870915}
      :identity-contract :selected-internal/immutable-external-injective-v3
      :lineage
      {:source-lifecycle "operator-engine-union-baseline"
@@ -52,7 +58,13 @@
       :codec :eacl-id-immutable-v1
       :recursive-traversal-limits nil}
      :closure-digest "ZCHBJRO35D25DLXi2ge9zplZznjWQ3TtBKFqhbjT-t4"
-     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :frame
+     {:dependency-identity
+      [[3 536870915] [4 536870917] [5 536870917] [6 536870917]
+       [7 536870917] [8 536870917] [9 536870917] [10 536870917]
+       [11 536870917] [12 536870917] [13 536870917] [14 536870917]]
+      :dependency-stamp 536870917
+      :schema-generation 536870915}
      :identity-contract :selected-internal/immutable-external-injective-v3
      :lineage
      {:source-lifecycle "operator-engine-union-baseline"
@@ -91,7 +103,14 @@
       :codec :eacl-id-immutable-v1
       :recursive-traversal-limits nil}
      :closure-digest "RKkEkYxSNAtRwfHN7XfLWPt4pG0aDHcFrudIngfKop8"
-     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :frame
+     {:dependency-identity
+      [[3 536870915] [4 536870917] [5 536870917] [6 536870917]
+       [7 536870917] [8 536870917] [9 536870915] [10 536870917]
+       [11 536870917] [12 536870917] [13 536870917] [14 536870917]
+       [15 536870917] [16 536870917]]
+      :dependency-stamp 536870917
+      :schema-generation 536870915}
      :identity-contract :selected-internal/immutable-external-injective-v3
      :lineage
      {:source-lifecycle "operator-engine-union-baseline"
@@ -131,7 +150,14 @@
       :codec :eacl-id-immutable-v1
       :recursive-traversal-limits nil}
      :closure-digest "RKkEkYxSNAtRwfHN7XfLWPt4pG0aDHcFrudIngfKop8"
-     :frame {:dependency-stamp 536870917 :schema-generation 536870915}
+     :frame
+     {:dependency-identity
+      [[3 536870915] [4 536870917] [5 536870917] [6 536870917]
+       [7 536870917] [8 536870917] [9 536870915] [10 536870917]
+       [11 536870917] [12 536870917] [13 536870917] [14 536870917]
+       [15 536870917] [16 536870917]]
+      :dependency-stamp 536870917
+      :schema-generation 536870915}
      :identity-contract :selected-internal/immutable-external-injective-v3
      :lineage
      {:source-lifecycle "operator-engine-union-baseline"

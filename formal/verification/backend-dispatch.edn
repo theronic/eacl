@@ -36,7 +36,10 @@
     ;; checks capture immutable implementations once. Their fixed-arity
     ;; invokers retain request metering, observers, runtime guards, typed
     ;; failures, and the same literal operation-key closure.
-    :invoke-call-count 49
+    ;; 49 -> 48 (2026-08-30): derived-schema cache construction now receives
+    ;; explicit lifecycle/basis identity and no longer falls back to a second
+    ;; adapter :snapshot-id observation.
+    :invoke-call-count 48
    :operations
    #{:snapshot-id
      :basis-kind
@@ -56,7 +59,7 @@
      :schema-generation
      :proof-frame}}
   :cljs
-  {:invoke-call-count 49
+  {:invoke-call-count 48
    :operations
    #{:snapshot-id
      :basis-kind

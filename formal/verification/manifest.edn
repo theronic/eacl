@@ -67,7 +67,7 @@
     :allocation-retained-heap-and-latency-platform-contracts]}
   :pagination-and-cursor-kernel
   {:status :passed
-   :verified-obligations 40
+   :verified-obligations 38
    :source "formal/dafny/PageWindow.dfy"
    :report "formal/verification/pagination-kernel.edn"
    :integration-status :production-routing-passed}
@@ -101,21 +101,20 @@
    :conditional-public-normalization-finite-selection-decision-and-logical-call-bound}
   :basis-first-cache
   {:status :passed
-   :verified-obligations 32
+   :verified-obligations 38
    :source "formal/dafny/CurrentCache.dfy"
    :report "formal/verification/basis-first-cache.edn"
    :integration-status
-   :generated-selection-routed-and-all-three-backends-regression-passed
-   :claim :conditional-basis-first-cache-refinement}
+   :host-exact-first-managed-second-with-generated-storage-policy-absent
+   :claim :conditional-key-and-causal-cache-refinement}
   :subproblem-cache
   {:status :passed
-   :verified-obligations 73
+   :verified-obligations 41
    :source "formal/dafny/SubproblemCache.dfy"
    :report "formal/verification/subproblem-cache.edn"
    :integration-status
-   :atomic-managed-datascript-and-all-backend-contracts-passed
-   :claim
-   :conditional-exact-and-managed-atomic-projection-refinement}
+   :semantic-partial-map-with-standard-lru-host-conformance
+   :claim :conditional-semantic-cache-boundary-refinement}
   :speculative-cache-coherence
   {:status :passed
    :verified-obligations 11
@@ -173,7 +172,7 @@
   {:status :passed
    :verified-obligations 35
    :whole-tree-obligation-delta-since-phase-a 39
-   :whole-tree-obligations 9385
+   :whole-tree-obligations 9358
    :generated-policy-leaf-obligations 20
    :proof-refinement-leaf-obligations 15
    :sources
@@ -208,7 +207,7 @@
    :conditional-least-fixed-point-and-traversal-order-refinement}
   :complete-public-engine
   {:status :passed
-   :verified-obligations 9385
+   :verified-obligations 9358
    :report "formal/verification/final-assurance-audit.md"
    :integration-status
    :recursive-generated-authority-and-acyclic-generated-decisions-with-source-specializations-routed
@@ -386,14 +385,14 @@
  {:status :passed
   :report "formal/verification/mutation-control.edn"
   :score 1.0
-  :killed 56
-  :registered 56
-  :retired-invalid-controls 74}
+  :killed 64
+  :registered 64
+  :retired-invalid-controls 77}
  :source-closure
  {:report "formal/verification/public-source-closure.json"
-  :source-files 101
-  :public-roots 70
-  :reachable-definitions 2115}
+  :source-files 104
+  :public-roots 89
+  :reachable-definitions 2277}
  :stable-discovery
  {:gate "formal/stable-discovery/verify-fast.sh"
   :dafny-leaves 47

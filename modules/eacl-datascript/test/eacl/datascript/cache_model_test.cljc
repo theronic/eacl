@@ -41,6 +41,12 @@
    :page-info (select-keys (:page-info page)
                            [:has-next-page? :has-previous-page?])})
 
+(defn- without-cache-provenance
+  [value]
+  (if (map? value)
+    (dissoc value :cached? :cache-basis)
+    value))
+
 (defn- assert-same-answers!
   [cached uncached user-id account-id label]
   (let [user (spice-object :user user-id)
@@ -70,7 +76,27 @@
           (str label " count-resources"))
       (is (= (answer (eacl/count-subjects uncached (dissoc reverse-query :first)))
              (answer (eacl/count-subjects cached (dissoc reverse-query :first))))
-          (str label " count-subjects")))))
+          (str label " count-subjects")))
+    (doseq [[operation call request]
+            [[:check-permission
+              #(eacl/check-permission cached %)
+              {:subject user :permission :admin :resource account}]
+             [:lookup-resources
+              #(eacl/lookup-resources cached %) forward]
+             [:lookup-subjects
+              #(eacl/lookup-subjects cached %) reverse-query]
+             [:count-resources
+              #(eacl/count-resources cached %) (dissoc forward :first)]
+             [:count-subjects
+              #(eacl/count-subjects cached %)
+              (dissoc reverse-query :first)]]]
+      (let [enabled (call request)
+            repeated (call request)
+            bypassed (call (assoc request :cache? false))]
+        (is (= (without-cache-provenance enabled)
+               (without-cache-provenance repeated)
+               (without-cache-provenance bypassed))
+            (str label " " operation " per-request bypass"))))))
 
 (defn- assert-retained-publication-order!
   [conn cached user-id account-id seed step newer-first?]

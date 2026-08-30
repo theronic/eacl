@@ -5,6 +5,7 @@
   nREPL. The 10k suite is the diagnostic gate; the 50k suite is the release
   acceptance gate."
   (:require [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [datascript.core :as ds]
@@ -14,9 +15,29 @@
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine]))
 
+(defn- repository-root
+  []
+  (loop [candidate (.getCanonicalFile (io/file "."))]
+    (cond
+      (and (.isDirectory (io/file candidate "formal"))
+           (.isDirectory (io/file candidate "modules")))
+      candidate
+
+      (nil? (.getParentFile candidate))
+      (throw
+       (ex-info
+        "Could not locate the EACL repository root."
+        {:start (.getCanonicalPath (io/file "."))}))
+
+      :else
+      (recur (.getParentFile candidate)))))
+
 (def manifest
   (edn/read-string
-   (slurp "formal/verification/explorer-v7-performance.edn")))
+   (slurp
+    (io/file
+     (repository-root)
+     "formal/verification/explorer-v7-performance.edn"))))
 
 (defn- median
   [values]

@@ -1,5 +1,6 @@
 (ns eacl.engine.v8
   (:require [eacl.backend.v8 :as backend]
+            [eacl.cache.derived-schema :as derived-schema]
             [eacl.core :refer [spice-object]]
             [eacl.engine.least-path :as least-path]
             [eacl.engine.physical :as physical]
@@ -15,7 +16,6 @@
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
             [eacl.operator.vector-evaluator :as operator-vector]
-            [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.secure-format :as secure-format]
@@ -49,7 +49,6 @@
 
 (def ^:private default-page-size 1000)
 (def ^:private max-page-size 10000)
-(def ^:private projection-key-version 2)
 (def ^:dynamic *backend-work-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
@@ -104,6 +103,16 @@
 
 (def ^:private warned-schema-conditions (atom #{}))
 
+(defn- claim-bounded-once!
+  [claimed value limit]
+  (loop []
+    (let [current @claimed]
+      (cond
+        (contains? current value) false
+        (>= (count current) limit) false
+        (compare-and-set! claimed current (conj current value)) true
+        :else (recur)))))
+
 (defn- warn
   "Reports a schema-resolution condition at most ONCE per distinct
   [message data] per process (a schema with one dangling relation
@@ -114,20 +123,12 @@
   (if *schema-warning-reporter*
     (*schema-warning-reporter* message data)
     (let [condition [message data]]
-      (when-not (contains? @warned-schema-conditions condition)
-        (when (contains?
-               (swap! warned-schema-conditions
-                      (fn [seen]
-                        (if (or (contains? seen condition)
-                                (>= (count seen) 256))
-                          seen
-                          (conj seen condition))))
-               condition)
-          #?(:clj
-             (binding [*out* *err*]
-               (println message (pr-str data)))
-             :cljs
-             (.warn js/console message (pr-str data))))))))
+      (when (claim-bounded-once! warned-schema-conditions condition 256)
+        #?(:clj
+           (binding [*out* *err*]
+             (println message (pr-str data)))
+           :cljs
+           (.warn js/console message (pr-str data)))))))
 
 (defn object-eid
   "Resolves an external object id through the snapshot adapter."
@@ -429,25 +430,29 @@
                :relation-name target-relation-name})
         []))))
 
-;; --- Selected-snapshot permission-path cache (issue #74) ---------------------
+;; --- Selected-snapshot derived schema cache ----------------------------------
 ;;
-;; A client owns derived-schema generations keyed by backend, source scope, and
-;; the schema assertion generation visible in the selected immutable snapshot.
-;; Supported schema writers publish that generation atomically. Missing or
-;; malformed generations disable cross-snapshot derived-state reuse.
-;;
-;; Permission paths, dependency closures, and recursive-routing decisions are
-;; memoized inside one proof generation. Their cold compilation cost is paid
-;; once per queried permission root and schema proof, then reused. Low-level
-;; functions remain uncached unless a client binds *schema-cache*, so arbitrary
-;; d/with/filter/as-of values cannot publish derived state into another
-;; snapshot's generation.
+;; Certified client requests retain individual immutable artifacts in one
+;; standard LRU.  Complete source/lifecycle, adapter, schema-generation,
+;; artifact, and semantic identity are ordinary opaque keys; there is no outer
+;; generation registry or nested shared atom map.  Uncertified/raw requests use
+;; only the plain atom maps created by `request-schema-cache` and discard them
+;; with the request.
 
 (def ^:dynamic *schema-cache*
-  "The client-owned schema cache bound by eacl.datomic.core.
+  "The selected request's shared derived partitions or request-local memos.
 
   nil means raw/arbitrary-db evaluation and is deliberately uncached."
   nil)
+
+(def derived-schema-cache-abi
+  "Compatibility identity for individual cross-request schema derivations."
+  {:format :eacl.engine.v8/derived-schema-v1
+   :engine-version engine-version
+   :backend-adapter-version backend/adapter-version
+   :permission-expression backend/permission-expression-capability
+   :sealed-plan-version sealed-plan/plan-version
+   :operator-plan-version operator-plan/plan-version})
 
 (defn schema-version
   "The certified EACL schema generation visible in this immutable backend
@@ -456,46 +461,24 @@
   [snapshot]
   (backend/invoke snapshot :schema-generation))
 
-(defn make-schema-cache
-  "Creates a derived-schema generation for one selected schema proof.
-
-  A nil proof deliberately disables derived-state latching."
-  ([snapshot]
-   (make-schema-cache snapshot (schema-version snapshot)))
-  ([snapshot known-schema-generation]
-   (make-schema-cache snapshot nil known-schema-generation))
-  ([snapshot basis-identity known-schema-generation]
-   {:backend-id (backend/backend-id snapshot)
-    :source-scope
-    (some-> basis-identity
-            (select-keys
-             [:backend :source-id :branch :source-lifecycle]))
-    :database-id
-    (:database-id
-     (or (:backend-snapshot-id basis-identity)
-         (backend/invoke snapshot :snapshot-id)))
-    :schema-version known-schema-generation
-    ;; Client-owned memo of the parsed public schema for this generation
-    ;; (request validation reads it on the miss path); the engine never
-    ;; fills it. Left nil-valued for unstamped generations by the clients.
-    :parsed-schema (atom nil)
-    :validation-catalog (atom nil)
-    :expression-metrics (atom {})
-    :sealed-plans (atom {})
-    :permission-roots (atom {})
-    :permission-paths (atom {})
-    :traversal-permissions (atom {})
-    :recursive-cycle-guards (atom {})
-    :relationship-dependencies (atom {})
-    :direct-grant-relations (atom {})}))
+(defn- local-schema-cache
+  []
+  {:schema-version nil
+   :request-local? true
+   :parsed-schema (atom nil)
+   :validation-catalog (atom nil)
+   :expression-metrics (atom {})
+   :sealed-plans (atom {})
+   :permission-roots (atom {})
+   :permission-paths (atom {})
+   :relationship-dependencies (atom {})})
 
 (defn- derived-cache-active?
   "True when the bound schema cache may serve derived state.
 
-  Two regimes: a stamped client generation (non-nil :schema-version,
-  proof-keyed, shared across requests) or a request-local context
-  (:request-local? true, one immutable snapshot, discarded at request
-  end). Raw evaluation with no binding stays deliberately uncached."
+  Two regimes: a stamped client context backed by standard-LRU partitions or
+  a plain request-local context discarded at request end. Raw evaluation with
+  no binding stays deliberately uncached."
   []
   (and *schema-cache*
        (or (some? (:schema-version *schema-cache*))
@@ -504,22 +487,10 @@
 (defn request-schema-cache
   "Derived-schema context scoped to ONE request on ONE immutable snapshot.
 
-  Retains permission paths, roots, routing analysis inputs, cycle guards,
-  dependency closures, and compiled/certified recursive plans for the
-  duration of a single raw-facade call, eliminating the audited
-  duplicate work (repeated cold path walks, duplicate plan
-  compile+certify) without publishing anything across requests or
-  snapshots — write-schema! remains the only cross-request invalidation
-  signal, and speculative/filtered/historical database values get a
-  fresh context per call by construction.
-
-  Deliberately carries NO :traversal-analysis: raw routing keeps the
-  per-root recursive-permission-query? classification (the compatibility
-  branch of traversal-permission?), so a single-root raw call never pays
-  the whole-schema certified analysis and the certified analysis remains
-  exclusive to client generation caches. :schema-version stays nil so
-  can? performs zero proof reads; enumeration identities read the
-  adapter's memoized proof.
+  Retains only the parsed schema/catalog, expression decodes, permission
+  roots/paths/dependencies, and compiled plans used more than once during a
+  raw-facade call. Nothing is published across requests or snapshots.
+  :schema-version stays nil so raw can? performs no schema-proof read.
 
   DataScript/Datahike raw callers invoke the engine directly on an
   adapter — bind this via engine/*schema-cache* there; the Datomic raw
@@ -528,25 +499,42 @@
   Sealed plans and validation catalogs live in this context too, so an
   uncertified request still prepares each root at most once without publishing
   any artifact across requests."
-  ([snapshot]
-   (request-schema-cache snapshot nil))
-  ([snapshot _options]
-   {:backend-id (backend/backend-id snapshot)
-    :source-scope nil
-    :schema-version nil
-    :request-local? true
-    :parsed-schema (atom nil)
-    :validation-catalog (atom nil)
-    :expression-metrics (atom {})
-    :sealed-plans (atom {})
-    :permission-roots (atom {})
-    :permission-paths (atom {})
-    :traversal-permissions (atom {})
-    :recursive-cycle-guards (atom {})
-    :relationship-dependencies (atom {})
-    :direct-grant-relations (atom {})}))
+  ([]
+   (local-schema-cache))
+  ([_snapshot]
+   (local-schema-cache))
+  ([_snapshot _options]
+   (local-schema-cache)))
 
-(defrecord ^:private CompletedDerivedValue [value])
+(defn- derived-value-valid?
+  [artifact value]
+  (case artifact
+    :parsed-schema (map? value)
+    :validation-catalog (map? value)
+    :expression-decodes (map? value)
+    :sealed-plans (map? value)
+    :permission-roots (boolean? value)
+    :permission-paths (vector? value)
+    :relationship-dependencies (vector? value)
+    false))
+
+(defn- derived-semantic-key
+  [semantic]
+  {:semantic semantic
+   :expression-limits
+   (expression-persistence/effective-expression-limits)})
+
+(defn- memoized-partition-derived!
+  [partition semantic build]
+  (let [artifact (:artifact partition)
+        valid? #(derived-value-valid? artifact %)
+        semantic (derived-semantic-key semantic)
+        found (derived-schema/lookup! partition semantic)]
+    (if (:found? found)
+      (:value found)
+      (let [value (build)]
+        (derived-schema/publish! partition semantic value valid?)
+        value))))
 
 (defn memoized-derived!
   "Reads one installed immutable artifact before allocating or building.
@@ -555,130 +543,79 @@
   make one bounded compare-and-install attempt. A publication loser may use
   its own completed value; failures are never installed or shared."
   [slot build]
-  (let [current @slot]
-    (cond
-      (instance? CompletedDerivedValue current)
-      (:value current)
-
-      ;; Development hot reload and pre-rollout in-process generations may
-      ;; still contain the previous completed delay representation.
-      (delay? current)
-      @current
-
-      (some? current)
-      current
-
-      :else
-      (let [value (build)]
-        (compare-and-set! slot nil (->CompletedDerivedValue value))
-        value))))
+  (if (derived-schema/partition? slot)
+    (memoized-partition-derived! slot :singleton build)
+    (let [current @slot]
+      (if (some? current)
+        current
+        (let [value (build)]
+          (compare-and-set! slot nil value)
+          value)))))
 
 (defn- memoized-map-derived!
-  "Map-keyed counterpart of `memoized-derived!` for generation registries.
+  "Map-keyed counterpart of `memoized-derived!`.
   A miss builds under the caller and makes one bounded installation attempt;
   no request ever waits on another request's delay or inherits its failure."
   [registry key build]
-  (let [current (get @registry key ::missing)]
-    (cond
-      (instance? CompletedDerivedValue current)
-      (:value current)
+  (if (derived-schema/partition? registry)
+    (memoized-partition-derived! registry key build)
+    (let [semantic (derived-semantic-key key)
+          snapshot @registry]
+      (if (contains? snapshot semantic)
+        (get snapshot semantic)
+        (let [value (build)
+              state @registry]
+          (when-not (contains? state semantic)
+            (compare-and-set!
+             registry state
+             (assoc state semantic value)))
+          value)))))
 
-      ;; Development hot reload may retain a completed pre-rollout delay.
-      (delay? current)
-      @current
+(defn- schema-cache-identity
+  [snapshot basis-identity schema-generation]
+  (let [backend-id (backend/backend-id snapshot)]
+    {:abi derived-schema-cache-abi
+     :source
+     (select-keys basis-identity
+                  [:backend :source-id :branch :source-lifecycle])
+     :adapter
+     {:backend backend-id
+      :fingerprint (backend/fingerprint snapshot)
+      :identity-contract (backend/identity-contract snapshot)
+      :operator-capability (backend/operator-capability-identity snapshot)}
+     :schema-generation schema-generation}))
 
-      (not= ::missing current)
-      current
-
-      :else
-      (let [value (build)
-            state @registry]
-        (when-not (contains? state key)
-          (compare-and-set!
-           registry state (assoc state key (->CompletedDerivedValue value))))
-        value))))
-
-(defn schema-cache-key
-  "Identity of schema-derived state for one selected immutable snapshot.
-
-  The key deliberately contains no listener/client counter. A missed callback
-  cannot make a cache entry cross a source or schema proof boundary."
-  ([snapshot]
-   (throw
-    (ex-info
-     "Cross-request derived state requires complete basis identity."
-     {:type :eacl/invalid-basis-identity
-      :eacl/error :eacl/invalid-basis-identity
-      :backend (backend/backend-id snapshot)})))
-  ([snapshot schema-generation]
-   (schema-cache-key snapshot nil schema-generation))
-  ([snapshot basis-identity schema-generation]
-   (when-not (map? basis-identity)
-     (throw
-      (ex-info
-       "Cross-request derived state requires complete basis identity."
-       {:type :eacl/invalid-basis-identity
-        :eacl/error :eacl/invalid-basis-identity
-        :backend (backend/backend-id snapshot)})))
-   [engine-version
-    (backend/backend-id snapshot)
-    (backend/fingerprint snapshot)
-    (select-keys basis-identity [:source-id :branch])
-    (:source-lifecycle basis-identity)
-    schema-generation]))
-
-(def ^:private maximum-schema-cache-generations 64)
-
-(defn- trim-schema-generations
-  [generations protected-key]
-  (let [overflow (- (count generations) maximum-schema-cache-generations)]
-    (if (pos? overflow)
-      (apply dissoc
-             generations
-             (take overflow
-                   (sort-by pr-str (remove #{protected-key}
-                                           (keys generations)))))
-      generations)))
+(defn- shared-schema-cache
+  [store snapshot basis-identity schema-generation]
+  (let [identity
+        (schema-cache-identity snapshot basis-identity schema-generation)
+        part #(derived-schema/artifact-partition store identity %)]
+    {:schema-version schema-generation
+     :parsed-schema (part :parsed-schema)
+     :validation-catalog (part :validation-catalog)
+     :expression-metrics (part :expression-decodes)
+     :sealed-plans (part :sealed-plans)
+     :permission-roots (part :permission-roots)
+     :permission-paths (part :permission-paths)
+     :relationship-dependencies (part :relationship-dependencies)}))
 
 (defn schema-cache-for!
-  "Returns a bounded derived generation keyed by selected source and the
-  adapter-certified EACL schema generation.
+  "Returns stateless LRU partitions for one complete certified schema identity.
 
-  Installation is one nonblocking atomic update. A request retains its
-  immutable generation even if a later install evicts it from the registry."
+  Without a schema generation or complete basis identity, returns a fresh
+  request-local memo context. Individual misses compute independently and
+  publish only completed artifacts into the shared count-bounded store."
   ([registry snapshot]
    (request-schema-cache snapshot))
   ([registry snapshot schema-generation]
    (request-schema-cache snapshot))
-  ([registry snapshot basis-identity schema-generation]
-   (let [;; Without a certified schema generation, cross-snapshot reuse must
-         ;; fail closed. A fresh request-local cache still avoids repeating pure
-         ;; schema derivations within this one immutable selected snapshot.
-         request-local? (or (nil? schema-generation)
-                            (nil? basis-identity))]
-     (if request-local?
-       (request-schema-cache snapshot)
-       (let [key (schema-cache-key
-                  snapshot basis-identity schema-generation)
-             existing (get @registry key)]
-         (if existing
-           existing
-           (let [created
-                 (make-schema-cache
-                  snapshot
-                  basis-identity
-                  schema-generation)
-                 selected (volatile! created)]
-             (swap! registry
-                    (fn [generations]
-                      (if-let [installed (get generations key)]
-                        (do
-                          (vreset! selected installed)
-                          generations)
-                        (trim-schema-generations
-                         (assoc generations key created)
-                         key))))
-             @selected)))))))
+  ([store snapshot basis-identity schema-generation]
+   (if (or (nil? schema-generation)
+           (nil? basis-identity)
+           (nil? store))
+     (request-schema-cache snapshot)
+     (shared-schema-cache
+      store snapshot basis-identity schema-generation))))
 
 (defn- permission-paths-cache-key
   [resource-type permission-name]
@@ -720,21 +657,11 @@
   (if-not (and (derived-cache-active?)
                (some? (:permission-roots *schema-cache*)))
     (permission-root-defined-uncached? db resource-type permission-name)
-    (let [cache-key
-          (permission-paths-cache-key resource-type permission-name)
-          cache-atom (:permission-roots *schema-cache*)
-          snapshot @cache-atom]
-      (if (contains? snapshot cache-key)
-        (get snapshot cache-key)
-        (let [defined?
-              (permission-root-defined-uncached?
-               db resource-type permission-name)]
-          (get
-           (swap! cache-atom
-                  #(if (contains? % cache-key)
-                     %
-                     (assoc % cache-key defined?)))
-           cache-key))))))
+    (memoized-map-derived!
+     (:permission-roots *schema-cache*)
+     (permission-paths-cache-key resource-type permission-name)
+     #(permission-root-defined-uncached?
+       db resource-type permission-name))))
 
 (defn calc-permission-paths
   "Returns path maps with resolved relation eids, cheapest-to-check first.
@@ -797,17 +724,10 @@
   [db resource-type permission-name]
   (if-not (derived-cache-active?)
     (calc-permission-paths db resource-type permission-name)
-    (let [cache-key (permission-paths-cache-key resource-type permission-name)
-          cache-atom (:permission-paths *schema-cache*)
-          snapshot @cache-atom]
-      (if (contains? snapshot cache-key)
-        (get snapshot cache-key)
-        (let [paths (calc-permission-paths db resource-type permission-name)]
-          (get (swap! cache-atom
-                      #(if (contains? % cache-key)
-                         %
-                         (assoc % cache-key paths)))
-               cache-key))))))
+    (memoized-map-derived!
+     (:permission-paths *schema-cache*)
+     (permission-paths-cache-key resource-type permission-name)
+     #(calc-permission-paths db resource-type permission-name))))
 (defn- permission-query-node
   [resource-type permission-name]
   [resource-type permission-name])
@@ -886,20 +806,11 @@
   (try
     (if-not (derived-cache-active?)
       (calc-permission-relationship-eids db resource-type permission-name)
-      (let [cache-key
-            (permission-paths-cache-key resource-type permission-name)
-            cache-atom (:relationship-dependencies *schema-cache*)
-            snapshot @cache-atom]
-        (if (contains? snapshot cache-key)
-          (get snapshot cache-key)
-          (let [dependencies
-                (calc-permission-relationship-eids
-                 db resource-type permission-name)]
-            (get (swap! cache-atom
-                        #(if (contains? % cache-key)
-                           %
-                           (assoc % cache-key dependencies)))
-                 cache-key)))))
+      (memoized-map-derived!
+       (:relationship-dependencies *schema-cache*)
+       (permission-paths-cache-key resource-type permission-name)
+       #(calc-permission-relationship-eids
+         db resource-type permission-name)))
     (catch #?(:clj Exception :cljs :default) error
       (if (= :eacl.schema/operator-plan-required (:type (ex-data error)))
         (let [root [resource-type permission-name]
@@ -952,30 +863,16 @@
 
 (defn direct-match-datoms-in-relationship-index
   [snapshot subject-type subject-eid relation-eid resource-type resource-eid]
-  (let [resolved
-        (subproblem/resolve-layered-bound!
-         :projection
-         [projection-key-version
-          :direct-match?
-          subject-type subject-eid relation-eid resource-type resource-eid]
-         {:valid? boolean?
-          :weight-fn (constantly 96)}
-         relation-eid
-         (fn []
-           (record-backend-work! :direct-match-probes)
-           (boolean
-            (backend/invoke snapshot
-                            :direct-match?
-                            subject-type
-                            subject-eid
-                            relation-eid
-                            resource-type
-                            resource-eid))))]
-    (when (:cached? resolved)
-      (subproblem/record-avoided-backend-operation!))
-    (if (:value resolved)
-      [true]
-      [])))
+  (record-backend-work! :direct-match-probes)
+  (if (backend/invoke snapshot
+                      :direct-match?
+                      subject-type
+                      subject-eid
+                      relation-eid
+                      resource-type
+                      resource-eid)
+    [true]
+    []))
 
 (defn all-permission-nodes
   "The engine's only consumer of the required `:all-permission-nodes` adapter
@@ -1081,12 +978,6 @@
     :operator-scope-domain operator-cursor-scope/scope-domain
     :operator-recursive-checkpoint-version
     operator-recursive/checkpoint-version}})
-
-(defn expire-plans!
-  "Compatibility no-op. Sealed plans are owned by derived-schema generations;
-  clearing a runtime's generation registry makes them unreachable."
-  []
-  nil)
 
 (defn certify-plan-read-scope!
   "Rejects a compiled plan that can read outside its permission closure.
@@ -1576,25 +1467,20 @@
   (physical/with-admission *service-admission* thunk))
 
 (defn ^:no-doc stable-checkpoints
-  "Accepts a stable-page checkpoint store (raw atom) or the client's scoped
-  continuation context (fn-map with its own bounds and eviction); anything
-  else degrades to deterministic replay."
+  "Accepts a standard-LRU-backed stable-page checkpoint store or the client's
+  scoped continuation context; anything else degrades to deterministic
+  replay."
   [cache]
   (cond
     (and (map? cache)
          (true? (:opaque-values? cache))
-         (fn? (:peek cache))
          (fn? (:get cache))
          (fn? (:hit! cache))
          (fn? (:miss! cache))
          (fn? (:put! cache)))
     cache
 
-    (and cache
-         #?(:clj (instance? clojure.lang.IAtom cache)
-            :cljs (instance? Atom cache))
-         (map? @cache)
-         (contains? @cache :entries))
+    (stable-page/checkpoint-store? cache)
     cache))
 
 (defn checkpoint-key

@@ -3,16 +3,19 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [clojure.set :as set]
+            [clojure.string :as str]
             [datascript.core :as ds]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.backend.writer :as writer]
             [eacl.cache :as cache]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
+            [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
@@ -35,6 +38,43 @@
     (eacl/create-relationship!
      client (eacl/->Relationship user :owner account))
     {:conn conn :client client :user user :account account}))
+
+(def ^:private authorization-scan-schema
+  "definition user {}
+   definition document {
+     relation candidate: user
+     relation viewer: user
+     permission view = viewer
+   }")
+
+(defn- authorization-scan-fixture
+  []
+  (let [conn (datascript/create-conn)
+        writer-client (datascript/make-client conn {:cache cache/no-cache})
+        marker (eacl/spice-object :user "marker")
+        sparse (eacl/spice-object :user "sparse")
+        documents
+        (mapv #(eacl/spice-object :document (str "document-" %)) (range 4))]
+    (eacl/write-schema! writer-client authorization-scan-schema)
+    (ds/transact!
+     conn
+     (mapv (fn [id] {:eacl/id id})
+           (concat ["marker" "sparse"] (map :id documents))))
+    (eacl/create-relationships!
+     writer-client
+     (vec
+      (concat
+       (map #(eacl/->Relationship marker :candidate %) documents)
+       [(eacl/->Relationship sparse :viewer (nth documents 0))
+        (eacl/->Relationship sparse :viewer (nth documents 3))])))
+    {:conn conn :sparse sparse}))
+
+(defn- authorization-scan-summary
+  [page]
+  {:resource-ids (mapv #(get-in % [:resource :id]) (:data page))
+   :bounded? (get-in page [:page-info :bounded?])
+   :has-next-page? (get-in page [:page-info :has-next-page?])
+   :cached? (:cached? page)})
 
 (defn- structural-children
   [value]
@@ -67,6 +107,63 @@
     {:value value
      :provider-calls @provider-calls
      :db-calls @db-calls}))
+
+(defn- runtime-cache-lifecycle
+  [client]
+  @(get-in client [:runtime :runtime-lifecycle-state]))
+
+(defn- lifecycle-children
+  [lifecycle]
+  (into {}
+        (filter (comp some? val))
+        (select-keys lifecycle
+                     [:basis-cache-store :continuation-cache-store
+                      :cursor-codec-cache :cursor-construction-cache
+                      :derived-schema-caches])))
+
+(defn- late-publication-context
+  [source-lifecycle]
+  {:exact-basis-key
+   {:key-version 2
+    :backend :datascript
+    :basis-identity
+    {:backend :datascript
+     :source-id :runtime-lifecycle-test
+     :branch nil
+     :source-lifecycle source-lifecycle
+     :basis-kind :ordinary
+     :revision 1
+     :exact-locator 1
+    :backend-snapshot-id {:runtime-lifecycle-test 1}}
+    :adapter-fingerprint :runtime-lifecycle-test
+    :identity-contract :runtime-lifecycle-test}})
+
+(defn- error-data
+  [f]
+  (try
+    (f)
+    nil
+    (catch #?(:clj Throwable :cljs :default) error
+      (ex-data error))))
+
+(defn- completed-answer-entry-index
+  ([snapshot operation]
+   (completed-answer-entry-index snapshot operation nil))
+  ([snapshot operation limited?]
+   (first
+    (keep-indexed
+     (fn [index {:keys [tier key]}]
+       (let [[entry-operation semantic-key] (get-in key [2 4])
+             internal-query (get-in semantic-key [:query :internal])]
+         (when (and (= :answer tier)
+                    (= operation entry-operation)
+                    (= operation (:operation semantic-key))
+                    (or (nil? limited?)
+                        (and (map? internal-query)
+                             (= limited?
+                                (contains? internal-query :count-limit)))))
+           index)))
+     (:entries snapshot)))))
 
 (declare observed-failure)
 
@@ -383,7 +480,7 @@
            (:forbidden-operation-errors value)))
     (is (empty?
          (set/intersection
-          #{:conn :source :writer :selected-snapshot
+          #{:conn :writer :selected-snapshot
             :acquire-current! :acquire-authoritative!
             :acquire-at-least! :acquire-exact!}
           (set (filter keyword? reachable)))))
@@ -430,6 +527,609 @@
           "the old lineage remains unreachable from the cleared runtime")
       (finally
         (eacl/release! selected)))))
+
+(deftest retained-snapshot-detects-same-token-full-source-incarnation-test
+  (let [{:keys [conn user account]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        selected (eacl/snapshot client)
+        initial (runtime-cache-lifecycle client)
+        source-lifecycle (:source-lifecycle initial)]
+    (try
+      (is (identical? (:source-incarnation initial)
+                      (get-in selected [:basis :source-incarnation])))
+      (is (true? (eacl/can? selected user :admin account)))
+
+      ;; Narrow answer clearing preserves the source incarnation, so this
+      ;; retained immutable basis may populate the newly installed answer LRU.
+      (orchestration/clear-answer-cache! client)
+      (let [narrowed (runtime-cache-lifecycle client)]
+        (is (identical? (:source-incarnation initial)
+                        (:source-incarnation narrowed)))
+        (is (zero? (:entries (datascript/cache-stats client))))
+        (is (true? (eacl/can? selected user :admin account)))
+        (is (pos? (:entries (datascript/cache-stats client))))
+
+        ;; A full rotation may intentionally reuse the coordinated external
+        ;; token. Its private incarnation still retires the retained basis and
+        ;; keeps every newly installed cache child unreachable from it.
+        (datascript/expire-cache! client source-lifecycle)
+        (let [rotated (runtime-cache-lifecycle client)]
+          (is (= source-lifecycle (:source-lifecycle rotated)))
+          (is (not (identical? (:source-incarnation narrowed)
+                               (:source-incarnation rotated))))
+          (is (zero? (:entries (datascript/cache-stats client))))
+          (is (true? (eacl/can? selected user :admin account)))
+          (is (zero? (:entries (datascript/cache-stats client))))))
+      (finally
+        (eacl/release! selected)))))
+
+(deftest source-selection-and-cache-capture-share-one-runtime-lifecycle-test
+  (let [{:keys [conn user account]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        before (runtime-cache-lifecycle client)
+        rotated? (atom false)
+        context-input (atom nil)
+        original-source-lifecycle source/source-lifecycle
+        original-make-context request-context/make-context]
+    (with-redefs
+     [source/source-lifecycle
+      (fn [basis-source]
+        (when (compare-and-set! rotated? false true)
+          (datascript/expire-cache! client "selection-race-l1"))
+        (original-source-lifecycle basis-source))
+      request-context/make-context
+      (fn [input]
+        (reset! context-input input)
+        (original-make-context input))]
+      (is (true? (eacl/can? client user :admin account))))
+    (let [after (runtime-cache-lifecycle client)
+          captured-runtime (:runtime @context-input)]
+      (is @rotated?)
+      (is (= "selection-race-l1" (:source-lifecycle after)))
+      (is (= "selection-race-l1"
+             (get-in @context-input
+                     [:basis-identity :source-lifecycle])))
+      (is (identical? (:basis-cache-store after)
+                      (:basis-cache-store captured-runtime)))
+      (is (identical? (:continuation-cache-store after)
+                      (:continuation-cache-store captured-runtime)))
+      (is (identical? (:derived-schema-caches after)
+                      (:derived-registry @context-input)))
+      (is (not (identical? (:basis-cache-store before)
+                           (:basis-cache-store captured-runtime))))
+      (is (pos? (:entries (datascript/cache-stats client)))))))
+
+(deftest same-token-full-rotation-retries-source-selection-on-new-incarnation-test
+  (let [{:keys [conn user account]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        before (runtime-cache-lifecycle client)
+        source-lifecycle (:source-lifecycle before)
+        rotated? (atom false)
+        context-input (atom nil)
+        original-source-lifecycle source/source-lifecycle
+        original-make-context request-context/make-context]
+    (with-redefs
+     [source/source-lifecycle
+      (fn [basis-source]
+        (when (compare-and-set! rotated? false true)
+          ;; The external token is deliberately unchanged. The private
+          ;; incarnation must still force selection to release and retry.
+          (datascript/expire-cache! client source-lifecycle))
+        (original-source-lifecycle basis-source))
+      request-context/make-context
+      (fn [input]
+        (reset! context-input input)
+        (original-make-context input))]
+      (is (true? (eacl/can? client user :admin account))))
+    (let [after (runtime-cache-lifecycle client)
+          captured-runtime (:runtime @context-input)]
+      (is @rotated?)
+      (is (= source-lifecycle (:source-lifecycle after)))
+      (is (not (identical? (:source-incarnation before)
+                           (:source-incarnation after))))
+      (is (identical? (:basis-cache-store after)
+                      (:basis-cache-store captured-runtime)))
+      (is (not (identical? (:basis-cache-store before)
+                           (:basis-cache-store captured-runtime)))))))
+
+(deftest narrow-clear-rotates-only-authorization-and-continuation-test
+  (let [{:keys [conn]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        before (runtime-cache-lifecycle client)
+        revision-before (orchestration/cache-content-revision client)]
+    (orchestration/clear-answer-cache! client)
+    (let [after (runtime-cache-lifecycle client)]
+      (is (not (identical? before after)))
+      (is (not (identical? (:token before) (:token after))))
+      (is (identical? (:source-incarnation before)
+                      (:source-incarnation after)))
+      (is (= (:source-lifecycle before) (:source-lifecycle after)))
+      (is (not (identical? (:basis-cache-store before)
+                           (:basis-cache-store after))))
+      (is (not (identical? (:continuation-cache-store before)
+                           (:continuation-cache-store after))))
+      (doseq [child [:cursor-codec-cache :cursor-construction-cache
+                     :derived-schema-caches]]
+        (is (identical? (get before child) (get after child)) (name child)))
+      (is (> (orchestration/cache-content-revision client)
+             revision-before)))))
+
+(deftest full-rotation-detaches-every-runtime-cache-child-test
+  (let [{:keys [conn]} (fixture)
+        client
+        (datascript/make-client conn {:cache {:max-entries 16}})
+        before (runtime-cache-lifecycle client)]
+    (datascript/expire-cache! client "full-rotation-l1")
+    (let [after (runtime-cache-lifecycle client)]
+      (is (= "full-rotation-l1" (:source-lifecycle after)))
+      (is (not (identical? (:source-incarnation before)
+                           (:source-incarnation after))))
+      (doseq [[child old-value] (lifecycle-children before)]
+        (is (some? old-value) (str child " precondition"))
+        (is (not (identical? old-value (get after child))) (name child))))))
+
+(deftest late-old-runtime-publication-is-unreachable-test
+  (let [{:keys [conn]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        before (runtime-cache-lifecycle client)
+        old-store (:basis-cache-store before)
+        old-cache-lifecycle (cache/capture-cache-lifecycle old-store)
+        context
+        (assoc (late-publication-context (:source-lifecycle before))
+               :cache-lifecycle old-cache-lifecycle)]
+    (datascript/expire-cache! client "late-publication-l1")
+    (is (= true
+           (:value
+            (cache/resolve-basis!
+             old-store context {:operation :can?
+                                :id :late-runtime-publication}
+             (constantly true)))))
+    (is (pos? (:entries (cache/basis-cache-stats old-store))))
+    (let [installed (runtime-cache-lifecycle client)]
+      (is (not (identical? old-store (:basis-cache-store installed))))
+      (is (zero? (:entries
+                  (cache/basis-cache-stats
+                   (:basis-cache-store installed))))))))
+
+(deftest publication-racing-rotation-cannot-regress-runtime-revision-test
+  (let [{:keys [conn]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        before (runtime-cache-lifecycle client)
+        old-store (:basis-cache-store before)
+        old-cache-lifecycle (cache/capture-cache-lifecycle old-store)
+        context
+        (assoc (late-publication-context (:source-lifecycle before))
+               :cache-lifecycle old-cache-lifecycle)
+        revision-before (orchestration/cache-content-revision client)
+        revision-after-publication (atom nil)
+        injected? (atom false)
+        original-factory #?(:clj cache/basis-cache-for-option :cljs nil)]
+    ;; The first candidate is fully constructed off-side. Before the outer CAS
+    ;; can install it, publish into the still-current child. That publication
+    ;; must invalidate the rotation CAS so the retry incorporates its revision.
+    #?(:clj
+       (with-redefs
+        [cache/basis-cache-for-option
+         (fn
+           ([value]
+            (original-factory value))
+           ([value options]
+            (let [candidate (original-factory value options)]
+              (when (compare-and-set! injected? false true)
+                (cache/resolve-basis!
+                 old-store context {:operation :can? :id :before-rotation}
+                 (constantly true))
+                (reset! revision-after-publication
+                        (orchestration/cache-content-revision client)))
+              candidate)))]
+         (orchestration/clear-answer-cache! client))
+       :cljs
+       (do
+         ;; JavaScript has no parallel publication thread; preserve the same
+         ;; revision and detachment assertions around a sequential boundary.
+         (cache/resolve-basis!
+          old-store context {:operation :can? :id :before-rotation}
+          (constantly true))
+         (reset! injected? true)
+         (reset! revision-after-publication
+                 (orchestration/cache-content-revision client))
+         (orchestration/clear-answer-cache! client)))
+    (let [revision-after-rotation
+          (orchestration/cache-content-revision client)]
+      (is @injected?)
+      (is (> @revision-after-publication revision-before))
+      (is (> revision-after-rotation @revision-after-publication))
+      ;; A later publication through the detached child remains valid for its
+      ;; in-flight owner, but cannot dirty the newly installed outer lifecycle.
+      (cache/resolve-basis!
+       old-store context {:operation :can? :id :after-rotation}
+       (constantly true))
+      (is (= revision-after-rotation
+             (orchestration/cache-content-revision client))))))
+
+(deftest restore-failure-never-installs-candidate-runtime-test
+  (let [{:keys [conn]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        bounds {:max-entries 16}
+        snapshot (orchestration/export-cache-snapshot client bounds)
+        before (runtime-cache-lifecycle client)
+        error
+        (error-data
+         #(orchestration/restore-cache-snapshot!
+           client (assoc snapshot :format :eacl.cache/basis-snapshot-v1)
+           bounds))]
+    (is (= :eacl/incompatible-cache-snapshot (:type error)))
+    (is (identical? before (runtime-cache-lifecycle client)))))
+
+(deftest tampered-completed-answer-restore-fails-off-side-test
+  (let [{:keys [conn user account]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 64}})
+        base-query
+        {:subject user
+         :resource/type :account
+         :permission :admin}
+        _ (eacl/count-resources client base-query)
+        _ (eacl/count-resources client (assoc base-query :count-limit 1))
+        _ (eacl/read-relationships
+           client {:subject/type :user :first 10})
+        _ (eacl/expand-permission-tree
+           client {:resource account :permission :admin})
+        bounds {:max-entries 64}
+        snapshot (orchestration/export-cache-snapshot client bounds)
+        unbounded-index
+        (completed-answer-entry-index
+         snapshot :count-resources false)
+        bounded-index
+        (completed-answer-entry-index
+         snapshot :count-resources true)
+        page-index
+        (completed-answer-entry-index snapshot :read-relationships)
+        tree-index
+        (completed-answer-entry-index snapshot :expand-permission-tree)
+        page-value (get-in snapshot [:entries page-index :value :value])
+        tree-value (get-in snapshot [:entries tree-index :value :value])]
+    (is (some? unbounded-index))
+    (is (some? bounded-index))
+    (is (some? page-index))
+    (is (some? tree-index))
+    (doseq [[label index invalid-value]
+            [[:negative-and-missing-contract
+              unbounded-index {:count -7}]
+             [:unbounded-truncation-field
+              unbounded-index
+              {:count 1 :limit -1 :truncated? false}]
+             [:wrong-unbounded-limit
+              unbounded-index {:count 1 :limit 1}]
+             [:wrong-bounded-limit
+              bounded-index
+              {:count 1 :limit 2 :truncated? false}]
+             [:truncated-without-reaching-limit
+              bounded-index
+              {:count 0 :limit 1 :truncated? true}]
+             [:bounded-count-exceeds-limit
+              bounded-index
+              {:count 2 :limit 1 :truncated? false}]
+             [:missing-bounded-truncation-field
+              bounded-index {:count 1 :limit 1}]
+             [:page-flag-is-not-boolean
+              page-index
+              (assoc-in page-value
+                        [:page-info :has-next-page?]
+                        :forged)]
+             [:page-shape-is-not-closed
+              page-index
+              (assoc page-value :cached? true)]
+             [:tree-shape-is-not-closed
+              tree-index
+              (assoc tree-value :forged true)]]]
+      (testing (name label)
+        (let [before (runtime-cache-lifecycle client)
+              revision-before
+              (orchestration/cache-content-revision client)
+              tampered
+              (assoc-in snapshot
+                        [:entries index :value :value]
+                        invalid-value)
+              error
+              (error-data
+               #(orchestration/restore-cache-snapshot!
+                 client tampered bounds))]
+          (is (= :eacl/incompatible-cache-snapshot (:type error)))
+          (is (identical? before (runtime-cache-lifecycle client)))
+          (is (= revision-before
+                 (orchestration/cache-content-revision client))))))
+    (testing "exact answer value basis must agree with its composite key"
+      (let [before (runtime-cache-lifecycle client)
+            revision-before (orchestration/cache-content-revision client)
+            tampered
+            (assoc-in snapshot
+                      [:entries unbounded-index :value :cache-basis]
+                      {:forged-snapshot-id true})
+            error
+            (error-data
+             #(orchestration/restore-cache-snapshot!
+               client tampered bounds))]
+        (is (= :eacl/incompatible-cache-snapshot (:type error)))
+        (is (identical? before (runtime-cache-lifecycle client)))
+        (is (= revision-before
+               (orchestration/cache-content-revision client)))))))
+
+(deftest successful-restore-installs-one-fresh-complete-runtime-test
+  (let [{:keys [conn]} (fixture)
+        client
+        (datascript/make-client conn {:cache {:max-entries 16}})
+        bounds {:max-entries 16}
+        snapshot (orchestration/export-cache-snapshot client bounds)
+        before (runtime-cache-lifecycle client)
+        revision-before (orchestration/cache-content-revision client)]
+    (is (= {:restored? true :entry-count 0}
+           (orchestration/restore-cache-snapshot! client snapshot bounds)))
+    (let [after (runtime-cache-lifecycle client)]
+      (is (= (:source-lifecycle before) (:source-lifecycle after)))
+      (is (not (identical? (:source-incarnation before)
+                           (:source-incarnation after))))
+      (doseq [[child old-value] (lifecycle-children before)]
+        (is (not (identical? old-value (get after child))) (name child)))
+      (is (> (orchestration/cache-content-revision client)
+             revision-before)))))
+
+(deftest restored-answers-never-cross-client-expression-limit-policy-test
+  (let [{:keys [conn user account]} (fixture)
+        permissive
+        (datascript/make-client conn {:cache {:max-entries 16}})
+        demand {:subject user :permission :admin :resource account}
+        _ (is (true? (eacl/can? permissive demand)))
+        bounds {:max-entries 16}
+        snapshot
+        (orchestration/export-cache-snapshot permissive bounds)
+        strict
+        (datascript/make-client
+         conn
+         {:cache {:max-entries 16}
+          :expression-limits {:maximum-source-nodes 0}})]
+    (is (pos? (:entry-count snapshot)))
+    (is (= (:entry-count snapshot)
+           (:entry-count
+            (orchestration/restore-cache-snapshot!
+             strict snapshot bounds))))
+    (let [failure (error-data #(eacl/can? strict demand))]
+      (is (= :eacl.schema/expression-limit (:type failure)))
+      (is (= :node-count (:dimension failure)))
+      (is (= 0 (:maximum failure)))
+      (is (pos? (:actual failure))))))
+
+(deftest restored-answers-never-cross-client-candidate-window-policy-test
+  (let [{:keys [conn sparse]} (authorization-scan-fixture)
+        permissive
+        (datascript/make-client
+         conn
+         {:cache {:max-entries 32}
+          :aggregate-limits {:candidate-window 10}})
+        strict
+        (datascript/make-client
+         conn
+         {:cache {:max-entries 32}
+          :aggregate-limits {:candidate-window 2}})
+        query
+        {:resource/type :document
+         :resource/relation :candidate
+         :authorization
+         {:subject sparse :permission :view :on :resource}
+         :first 2}
+        permissive-page (eacl/read-relationships permissive query)
+        strict-cache-free-page
+        (eacl/read-relationships strict (assoc query :cache? false))
+        bounds {:max-entries 32}
+        snapshot
+        (orchestration/export-cache-snapshot permissive bounds)]
+    (is (= {:resource-ids ["document-0" "document-3"]
+            :bounded? false
+            :has-next-page? false
+            :cached? false}
+           (authorization-scan-summary permissive-page)))
+    (is (= {:resource-ids ["document-0"]
+            :bounded? true
+            :has-next-page? true
+            :cached? false}
+           (authorization-scan-summary strict-cache-free-page)))
+    (is (pos? (:entry-count snapshot)))
+    (is (= (:entry-count snapshot)
+           (:entry-count
+            (orchestration/restore-cache-snapshot!
+             strict snapshot bounds))))
+    ;; The normalized client default is part of the answer key. Restored
+    ;; mappings computed with a larger candidate window cannot alias this
+    ;; strict client's shorter, bounded page.
+    (is (= (authorization-scan-summary strict-cache-free-page)
+           (authorization-scan-summary
+            (eacl/read-relationships strict query))))))
+
+(deftest restore-validates-once-across-same-lineage-cas-loss-test
+  (let [{:keys [conn]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        bounds {:max-entries 16}
+        snapshot (orchestration/export-cache-snapshot client bounds)
+        before (runtime-cache-lifecycle client)
+        restore-calls (atom 0)
+        intervening (atom nil)
+        original-restore cache/restore-basis-snapshot!
+        result
+        (with-redefs
+         [cache/restore-basis-snapshot!
+          (fn [store candidate-snapshot candidate-bounds]
+            (swap! restore-calls inc)
+            (let [result
+                  (original-restore
+                   store candidate-snapshot candidate-bounds)]
+              (orchestration/clear-answer-cache! client)
+              (reset! intervening (runtime-cache-lifecycle client))
+              result))]
+          (orchestration/restore-cache-snapshot! client snapshot bounds))
+        after (runtime-cache-lifecycle client)]
+    (is (= {:restored? true :entry-count 0} result))
+    (is (= 1 @restore-calls))
+    (is (not (identical? before @intervening)))
+    (is (not (identical? @intervening after)))
+    (is (= (:source-lifecycle before) (:source-lifecycle after)))))
+
+(deftest telemetry-disabled-lifecycle-operations-do-not-mutate-observers-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn {:cache {:max-entries 4 :telemetry? false}})
+        bounds {:max-entries 4}
+        snapshot (orchestration/export-cache-snapshot client bounds)
+        runtime-metrics
+        (get (:runtime client)
+             ::orchestration/runtime-cache-lifecycle-metrics)
+        observer-mutations (atom 0)
+        watch-key ::telemetry-disabled]
+    (add-watch runtime-metrics watch-key
+               (fn [& _] (swap! observer-mutations inc)))
+    (try
+      (orchestration/clear-answer-cache! client)
+      (orchestration/restore-cache-snapshot! client snapshot bounds)
+      (datascript/expire-cache! client "telemetry-disabled-lifecycle")
+      (is (zero? @observer-mutations)
+          "disabled telemetry performs no cumulative observer mutation")
+      (let [stats (datascript/cache-stats client)]
+        (is (false? (:telemetry-enabled? stats)))
+        (is (zero? (:expirations stats)))
+        (is (zero? (:restores stats))))
+      (finally
+        (remove-watch runtime-metrics watch-key)))))
+
+(deftest lifecycle-accounting-never-serializes-resident-keys-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {:cache {:max-entries 4}})
+        bounds {:max-entries 4}
+        empty-snapshot (orchestration/export-cache-snapshot client bounds)
+        oversized-id (str/join (repeat (inc (* 1024 1024)) "x"))
+        publish!
+        (fn []
+          (let [lifecycle (runtime-cache-lifecycle client)
+                store (:basis-cache-store lifecycle)
+                result
+                (cache/resolve-basis!
+                 store
+                 (late-publication-context (:source-lifecycle lifecycle))
+                 {:operation :can? :id oversized-id}
+                 (constantly true))]
+            (is (true? (:value result)))
+            (is (= 1 (:entries (cache/basis-cache-stats store))))))]
+    (publish!)
+    (is (map? (datascript/cache-stats client)))
+    (let [large-snapshot
+          (orchestration/export-cache-snapshot client bounds)]
+      (is (= 1 (:entry-count large-snapshot)))
+      (is (nil? (orchestration/clear-answer-cache! client)))
+      (is (= {:restored? true :entry-count 1}
+             (orchestration/restore-cache-snapshot!
+              client large-snapshot bounds)))
+      (is (= 1 (:entries
+                (cache/basis-cache-stats
+                 (:basis-cache-store
+                  (runtime-cache-lifecycle client)))))))
+    ;; Restoring another snapshot must also account for a detached store whose
+    ;; resident key is larger than the canonical codec's ordinary token bound.
+    (is (= {:restored? true :entry-count 0}
+           (orchestration/restore-cache-snapshot!
+            client empty-snapshot bounds)))
+    (publish!)
+    ;; Full expiry has the same detached-store accounting obligation.
+    (is (nil? (datascript/expire-cache!
+               client "oversized-key-lifecycle-expiry")))
+    (publish!)
+    (is (nil? (orchestration/clear-answer-cache! client)))
+    (is (zero? (:entries
+                (cache/basis-cache-stats
+                 (:basis-cache-store
+                  (runtime-cache-lifecycle client))))))))
+
+(deftest narrow-clear-preserves-sticky-proof-health-test
+  (testing "disablement and per-reason reporting survive narrow clear"
+    (let [conn (datascript/create-conn)
+          reports (atom [])
+          client
+          (datascript/make-client
+           conn {:cache {:max-entries 4}
+                 :proof-contract-reporter #(swap! reports conj %)})
+          diagnostic
+          {:status :contract-violation :reason :malformed-frame}
+          before-store
+          (:basis-cache-store (runtime-cache-lifecycle client))]
+      (cache/record-proof-diagnostic! before-store diagnostic)
+      (orchestration/clear-answer-cache! client)
+      (let [after-store
+            (:basis-cache-store (runtime-cache-lifecycle client))]
+        (is (not (identical? before-store after-store)))
+        (is (identical? (:managed-lifting-disabled? before-store)
+                        (:managed-lifting-disabled? after-store)))
+        (is (identical? (:reported-contract-violations before-store)
+                        (:reported-contract-violations after-store)))
+        (is (true? (:managed-lifting-disabled?
+                    (cache/basis-cache-stats after-store))))
+        (cache/record-proof-diagnostic! after-store diagnostic)
+        (is (= [diagnostic] @reports)))
+      (datascript/expire-cache! client "proof-health-full-expiry")
+      (is (false? (:managed-lifting-disabled?
+                   (cache/basis-cache-stats
+                    (:basis-cache-store
+                     (runtime-cache-lifecycle client)))))
+          "full expiry begins a fresh proof-health lifecycle")))
+  (testing "a detached in-flight violation disables the installed store"
+    (let [conn (datascript/create-conn)
+          reports (atom [])
+          client
+          (datascript/make-client
+           conn {:cache {:max-entries 4}
+                 :proof-contract-reporter #(swap! reports conj %)})
+          diagnostic
+          {:status :contract-violation :reason :future-generation}
+          captured-store
+          (:basis-cache-store (runtime-cache-lifecycle client))]
+      (orchestration/clear-answer-cache! client)
+      (let [installed-store
+            (:basis-cache-store (runtime-cache-lifecycle client))]
+        (is (false? (:managed-lifting-disabled?
+                     (cache/basis-cache-stats installed-store))))
+        ;; Models an in-flight request that captured the detached store before
+        ;; clear and finishes proof validation after the replacement CAS.
+        (cache/record-proof-diagnostic! captured-store diagnostic)
+        (is (true? (:managed-lifting-disabled?
+                    (cache/basis-cache-stats installed-store))))
+        (cache/record-proof-diagnostic! installed-store diagnostic)
+        (is (= [diagnostic] @reports))))))
+
+(deftest restore-loses-to-concurrent-source-rotation-test
+  (let [{:keys [conn]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        bounds {:max-entries 16}
+        snapshot (orchestration/export-cache-snapshot client bounds)
+        restore-calls (atom 0)
+        winner (atom nil)
+        source-lifecycle
+        (:source-lifecycle (runtime-cache-lifecycle client))
+        original-restore cache/restore-basis-snapshot!
+        error
+        (with-redefs
+         [cache/restore-basis-snapshot!
+          (fn [store candidate-snapshot candidate-bounds]
+            (swap! restore-calls inc)
+            (let [result
+                  (original-restore
+                   store candidate-snapshot candidate-bounds)]
+              (datascript/expire-cache! client source-lifecycle)
+              (reset! winner (runtime-cache-lifecycle client))
+              result))]
+          (error-data
+           #(orchestration/restore-cache-snapshot!
+             client snapshot bounds)))]
+    (is (= :eacl/cache-restore-lifecycle-conflict (:type error)))
+    (is (= 1 @restore-calls))
+    (is (identical? @winner (runtime-cache-lifecycle client)))
+    (is (= source-lifecycle
+           (:source-lifecycle (runtime-cache-lifecycle client))))))
 
 (deftest cursor-consumption-dispatches-on-snapshot-target-test
   (let [{:keys [conn client user]} (fixture)

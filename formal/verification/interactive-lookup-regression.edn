@@ -49,9 +49,9 @@
  :cursor-and-population-follow-up
  {:cache-disabled-semantics
   {:completed-answer-cache :neither-read-nor-populated
-   :subproblem-cache :neither-read-nor-populated
+   :exact-denotation-cache :neither-read-nor-populated
    :continuation-checkpoint-cache :neither-read-nor-populated
-   :page-navigation-cache :neither-read-nor-populated
+   :page-navigation-cache :absent
    :request-local-derived-memoization :retained
    :persistent-derived-schema-registry :populated-on-generation-miss
    :persistent-cursor-codec :populated-on-artifact-miss}

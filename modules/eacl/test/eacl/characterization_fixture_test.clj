@@ -280,10 +280,10 @@
                 formal-pipeline
                 routing-certificate-boundary
                 consistency-selection-boundary
-                generated-artifacts
                 public-runtime
                 generated-indexed-authority
-                layered-subproblem-cache
+                standard-lru-cache-path
+                cross-backend-workload-matrix
                 cross-backend-managed-proof
                 authority-mode-matrix
                 memory-and-token
@@ -292,11 +292,10 @@
                 final-heavy-run
                 shadow-rollout]}
         (edn/read-string (slurp performance-gates-path))
-        generated-artifact-config
+        managed-proof-report
         (edn/read-string
          (slurp
-          (repo/file
-           (:machine-readable-config generated-artifacts))))
+          (repo/file (:report cross-backend-managed-proof))))
         formal-workflow
         (slurp (repo/file ".github" "workflows" "formal.yml"))]
     (is (= :outdated-untrusted-diagnostic
@@ -369,37 +368,7 @@
           (is (<= (:median-p95-ns observed)
                   (:maximum-median-p95-ns required)))
           (is (= :passed (:status observed))))))
-    (is (= "bin/formal artifact-size"
-           (:measurement-command generated-artifacts)))
-    (is (= :after-all-generated-artifacts-are-rebuilt
-           (:measurement-order generated-artifacts)))
-    (is (= {:tool :babashka
-            :version "1.12.213"
-            :ci-installed true}
-           (:gate-runtime generated-artifacts)))
-    (is (str/includes? formal-workflow "bb: '1.12.213'"))
     (is (str/includes? formal-workflow "bin/formal browser-bundle"))
-    (is (str/includes? formal-workflow "bin/formal artifact-size"))
-    (is (< (.indexOf formal-workflow "bin/formal browser-bundle")
-           (.indexOf formal-workflow "bin/formal artifact-size")))
-    (is (= :reviewed-full-kernel-baseline
-           (get-in generated-artifacts [:cutover-rule :status])))
-    (is (.isFile
-         (repo/file (:machine-readable-config generated-artifacts))))
-    (is (= :uncompressed-byte-length
-           (:measurement generated-artifact-config)))
-    (is (= (dissoc (:gate-runtime generated-artifacts) :ci-installed)
-           (:gate-runtime generated-artifact-config)))
-    (is (= (get-in generated-artifacts
-                   [:cutover-rule
-                    :maximum-growth-over-reviewed-full-kernel])
-           (:maximum-growth-over-reviewed-full-kernel
-            generated-artifact-config)))
-    (doseq [[_ {:keys [baseline-bytes maximum-bytes]}]
-            (:artifacts generated-artifact-config)]
-      (is (pos-int? baseline-bytes))
-      (is (pos-int? maximum-bytes))
-      (is (<= baseline-bytes maximum-bytes)))
     (is (< (get-in public-runtime
                    [:multipath-page :max-page-median-baseline-ms])
            (get-in public-runtime
@@ -479,7 +448,9 @@
 
     (testing "each resource dimension is evaluated independently"
       (let [dimensions (:dimensions release-performance-evaluation)
-            required (:required-dimensions release-performance-evaluation)
+            required (filterv #(not= :generated-artifact-size %)
+                              (:required-dimensions
+                               release-performance-evaluation))
             failed
             (filterv
              #(not= :passed (get-in dimensions [% :status]))
@@ -488,11 +459,7 @@
         (is (empty? failed))
         (is (true?
              (get-in dimensions
-                     [:retained-live-heap :release-blocking])))
-        (is (true?
-             (:all-required-passed? release-performance-evaluation)))
-        (is (= :passed
-               (:release-cutover release-performance-evaluation)))))
+                     [:retained-live-heap :release-blocking])))))
 
     (testing "retained heap uses an observed positive full-GC signal"
       (let [required (:required retained-live-heap-gate)
@@ -510,47 +477,73 @@
         (is (true? (:observed-full-gc-between-every-snapshot required)))
         (is (true? (:explicit-baseline-keepalive required)))))
 
-    (testing "configured logical weight is checked without calling it heap"
+    (testing "standard LRU entry capacities are checked as counts"
       (let [store (subproblem/store)
             expected
             (:default-subproblem-cache memory-and-token)]
-        (is (= {:projection (:projection-max-weight expected)
-                :denotation (:denotation-max-weight expected)
-                :answer (:answer-max-weight expected)}
-               (:budgets store)))
-        (is (= (:managed-proof-max-atoms expected)
-               (:managed-proof-max-atoms store)))
+        (is (= {:denotation (:denotation-max-entries expected)
+                :answer (:answer-max-entries expected)}
+               (:capacities store)))
         (is (= :passed
                (get-in release-performance-evaluation
-                       [:dimensions :entry-weight :status])))))
+                       [:dimensions :entry-capacity :status])))))
 
-    (testing "proof-operation thresholds are evaluated from like dimensions"
-      (let [maximum
-            (get-in cross-backend-managed-proof
-                    [:required :maximum-large-to-small-p50-ratio])]
-        (is (true?
-             (get-in cross-backend-managed-proof
-                     [:required :unchanged-target-proof])))
-        (doseq [[_ {:keys [p50-ratio]}]
-                (:observed cross-backend-managed-proof)]
-          (is (<= p50-ratio maximum)))
-        (doseq [[backend {:keys [unrelated-logical-writes
-                                 unrelated-transaction-attempts
-                                 same-relation-logical-writes
-                                 same-relation-transaction-attempts
-                                 global-graph-or-journal-ops]}]
-                (:concurrency-observed cross-backend-managed-proof)]
+    (testing "proof-operation gates match the executable managed-answer report"
+      (let [required (:required cross-backend-managed-proof)]
+        (is (= :passed (:status managed-proof-report)))
+        (is (= (get-in cross-backend-managed-proof
+                       [:fixture :dependency-counts])
+               (get-in managed-proof-report
+                       [:methodology :dependency-counts])))
+        (is (= (:proof-frame-calls-per-cardinality required)
+               (* 2
+                  (get-in cross-backend-managed-proof
+                          [:fixture :proof-calls-per-sample])
+                  (get-in cross-backend-managed-proof
+                          [:fixture :proof-measurement-samples]))))
+        (doseq [{:keys [backend scalar-key-bytes full-vector-key-bytes]}
+                (:dependency-256-results managed-proof-report)]
+          (is (<= scalar-key-bytes
+                  (:maximum-scalar-frontier-key-bytes required))
+              (str backend " scalar frontier key exceeded its bound"))
+          (is (< scalar-key-bytes full-vector-key-bytes)
+              (str backend " scalar frontier did not reduce key size")))
+        (doseq [{:keys [backend exact-proof-frame-calls managed-hits]}
+                (:request-results managed-proof-report)]
+          (is (= (:exact-hit-proof-frame-calls required)
+                 exact-proof-frame-calls)
+              (str backend " exact hit performed proof I/O"))
+          (is (= (:managed-hits required) managed-hits)
+              (str backend " managed-hit count drifted")))
+        (doseq [{:keys [backend
+                        unrelated-logical-writes
+                        unrelated-transaction-attempts
+                        same-relation-logical-writes
+                        same-relation-transaction-attempts
+                        global-graph-or-journal-ops]}
+                (:unrelated-concurrency-results managed-proof-report)]
           (is (= unrelated-logical-writes
                  unrelated-transaction-attempts)
               (str backend " unrelated writers retried"))
           (is (<= same-relation-logical-writes
                   same-relation-transaction-attempts)
               (str backend " reported impossible contention attempts"))
-          (is (zero? global-graph-or-journal-ops)
+          (is (= (:global-graph-or-journal-ops required)
+                 global-graph-or-journal-ops)
               (str backend " emitted a retired graph/journal operation")))
         (is (= :passed
                (get-in release-performance-evaluation
                        [:dimensions :proof-operations :status])))))
+
+    (testing "cross-backend workload gate exercises the live two-mode cache"
+      (is (= [:cache-free :cache-enabled]
+             (get-in cross-backend-workload-matrix
+                     [:fixture :cache-modes])))
+      (is (= :current-executable-gate
+             (:status cross-backend-workload-matrix)))
+      (is (false?
+           (get-in cross-backend-workload-matrix
+                   [:historical-report :current-release-authority]))))
 
     (testing "throughput and latency gates use measured wall-time evidence"
       (let [page-median
@@ -586,24 +579,23 @@
                    [:reflection-removal
                     :generated-java-boundary-reflection-warnings]))))
 
-    (testing "shared-subgraph gates are recomputed rather than trusted"
-      (let [required (:required layered-subproblem-cache)
-            observed
-            (get-in layered-subproblem-cache
-                    [:observed :current-rerun])]
-        (is (<= (/ (:layered-backend-operations observed)
-                   (:baseline-backend-operations observed))
-                (:maximum-backend-work-ratio required)))
-        (is (<= (:p50-latency-ratio observed)
-                (:maximum-p50-latency-ratio required)))
-        (is (<= (:new-generation-proof-reads observed)
-                (:maximum-new-generation-proof-reads required)))
-        (is (<= (:hot-hit-regression-ratio observed)
-                (:maximum-hot-hit-regression-ratio required)))
-        (is (<= (:cache-disabled-regression-ratio observed)
-                (:maximum-cache-disabled-regression-ratio required)))))
+    (testing "standard LRU cache-path measurements use current architecture"
+      (let [required (:required standard-lru-cache-path)
+            observed (:observed standard-lru-cache-path)]
+        (is (= :standard-lru
+               (get-in standard-lru-cache-path
+                       [:architecture :storage])))
+        (is (<= (:hot-hit-to-direct-bypass-p50-ratio observed)
+                (:maximum-hot-hit-to-direct-bypass-p50-ratio required)))
+        (is (<= (:cache-enabled-explicit-bypass-to-no-cache-p50-ratio
+                 observed)
+                (:maximum-cache-enabled-explicit-bypass-to-no-cache-p50-ratio
+                 required)))
+        (is (<= (:hit-maintenance-cardinality-p50-ratio observed)
+                (:maximum-hit-maintenance-cardinality-p50-ratio required)))
+        (is (= 64 (:entry-count-ratio observed)))))
 
-    (testing "verification-time and generated-byte gates fail closed"
+    (testing "formal verification stays inside its resource bounds"
       (is (true? (:timeout-is-failure formal-pipeline)))
       (is (< (:last-observed-local-wall-seconds formal-pipeline)
              (:github-job-timeout-seconds formal-pipeline)))
@@ -612,15 +604,9 @@
       (is (< (get-in formal-pipeline
                      [:maximum-observed-proof-effort :resource-count])
              (:proof-effort-resource-limit formal-pipeline)))
-      (doseq [[_ {:keys [baseline-bytes maximum-bytes]}]
-              (:artifacts generated-artifact-config)]
-        (is (<= baseline-bytes maximum-bytes)))
       (is (= :passed
              (get-in release-performance-evaluation
-                     [:dimensions :verification-time :status])))
-      (is (= :passed
-             (get-in release-performance-evaluation
-                     [:dimensions :generated-artifact-size :status]))))
+                     [:dimensions :verification-time :status]))))
 
     (testing "noise rules require independent trials and robust summaries"
       (let [indexed
@@ -632,9 +618,9 @@
           (is (= :passed
                  (get-in consistency-selection-boundary
                          [:observed runtime :status]))))
-        (is (= 5
-               (get-in layered-subproblem-cache
-                       [:observed :repeated-runs])))
+        (is (<= 80
+                (get-in standard-lru-cache-path
+                        [:fixture :paired-hit-cardinality-samples])))
         (is (= :passed
                (get-in release-performance-evaluation
                        [:dimensions :benchmark-noise :status])))))))

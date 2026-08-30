@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
+            [eacl.cache.derived-schema :as derived-schema]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as context]
@@ -76,7 +77,7 @@
   [{:keys [release-fn ledger registry]
     :or {release-fn (fn [_])
          ledger (counters/make-ledger)
-         registry (atom {})}}]
+         registry (derived-schema/store)}}]
   (let [schema-generation-calls (atom 0)
         acquire-calls (atom 0)
         release-calls (atom 0)
@@ -140,7 +141,10 @@
                     (context/derived context)))
     (is (= 3 (context/schema-generation context)))
     (is (= 1 @schema-generation-calls))
-    (is (= 1 (count @registry)))
+    (is (= {:entry-count 0
+            :max-entries derived-schema/default-max-entries}
+           (derived-schema/stats registry))
+        "constructing partition handles does not retain a generation map")
     (is (= :complete
            (:status
             (proof-frame/resolve! (context/proof-frame context) [11]))))
@@ -156,12 +160,6 @@
                  (identical? (context/contract context)
                              execution/*contract*)
                  (identical? ledger counters/*ledger*))))))
-
-    (context/buffer-publication! context {:kind :answer})
-    (context/buffer-publication! context {:kind :cursor})
-    (is (= [{:kind :answer} {:kind :cursor}]
-           (context/take-publications! context)))
-    (is (= [] (context/take-publications! context)))
 
     (is (true? (context/close! context)))
     (is (true? (context/closed? context)))
@@ -201,7 +199,7 @@
 (deftest uncertified-generation-uses-one-request-local-floor-test
   (let [generation-calls (atom 0)
         adapter (test-adapter generation-calls nil)
-        registry (atom {})
+        registry (derived-schema/store)
         basis-identity
         {:backend :request-context-test
          :source-id ::source
@@ -223,7 +221,7 @@
       (is (identical? (context/derived request-context)
                       (context/derived request-context)))
       (is (= 1 @generation-calls))
-      (is (empty? @registry))
+      (is (zero? (:entry-count (derived-schema/stats registry))))
       (is (= :borrowed (context/ownership request-context)))
       (finally
         (context/close! request-context)))))
@@ -246,7 +244,7 @@
     (is (= [::reader] @release-tokens))
     (is (source/released? selected))))
 
-(deftest failed-close-is-retryable-and-discards-publications-test
+(deftest failed-close-is-retryable-test
   (let [attempts (atom 0)
         {:keys [context selected]}
         (make-selected-context
@@ -254,12 +252,10 @@
           (fn [_]
             (when (= 1 (swap! attempts inc))
               (throw (ex-info "injected" {:type :test/release}))))})]
-    (context/buffer-publication! context {:kind :answer})
     (is (= :eacl/snapshot-release-failed
            (:type (error-data #(context/close! context)))))
     (is (false? (context/closed? context)))
     (is (false? (source/released? selected)))
-    (is (= [] (context/take-publications! context)))
     (is (true? (context/close! context)))
     (is (= 2 @attempts))))
 

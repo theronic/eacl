@@ -38,7 +38,6 @@
   :lookup-cursor-changed-proof-rejection
   :lookup-cursor-exact-fallback
   :relationship-cursor-continuation
-  :current-cache-selection
   :recursive-routing-certificate
   :indexed-scan-response-validation
   :indexed-source-plan-certification
@@ -350,8 +349,8 @@
    {:identity
     [:source-scope :snapshot-id :native-revision :exact-locator]
     :client-local-exact-locator-included true}
-   :current-cache-generated-selection true
-   :exact-basis-generated-selection true
+   :cache-storage-policy-generated-selection false
+   :exact-and-managed-selection :explicit-host-composite-key-lookup
    :tests 7 :assertions 192 :status :passed}
   :cljs-public-state-trace
   {:namespace eacl.formal.production-kernel-test

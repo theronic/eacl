@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [clojure.string :as str]
+            [eacl.cache.standard-lru :as lru]
             [eacl.causal-token :as token]
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]))
@@ -494,8 +495,9 @@
         (is (true? (:authenticated? authenticated)))
         (is (true? (:expired? authenticated)))
         (is (= 110 (:expired-at authenticated)))
-        (is (empty? @decode-work)
-            "self-minted tokens need neither decryption nor re-authentication"))
+        (is (= 1 (:authentication-passes @decode-work))
+            "an expired resident is evicted and authenticated as a miss")
+        (is (= 1 (:decryption-passes @decode-work))))
       (is (= :expired
              (:reason
               (error-data
@@ -548,12 +550,79 @@
           "token publication preserves construction contexts"))
     (is (= {:built-from :three}
            (cursor/memoized-context! codec-cache :three (build :three))))
-    (is (= {:built-from :two}
-           (cursor/memoized-context! codec-cache :two (build :two))))
     (is (= {:built-from :one}
            (cursor/memoized-context! codec-cache :one (build :one)))
-        "the oldest context is rebuilt after bounded eviction")
-    (is (= {:one 2 :two 1 :three 1} @builds))))
+        "a frequently used context survives insertion past capacity")
+    (is (= {:built-from :two}
+           (cursor/memoized-context! codec-cache :two (build :two)))
+        "the least recently used context is rebuilt")
+    (is (= {:built-from :one}
+           (cursor/memoized-context! codec-cache :one (build :one))))
+    (is (= {:one 1 :two 2 :three 1} @builds))))
+
+(deftest private-cursor-context-cache-retains-nil-and-false-test
+  (let [codec-cache (cursor/codec-cache {:max-entries 2})
+        nil-builds (atom 0)
+        false-builds (atom 0)
+        nil-build #(do (swap! nil-builds inc) nil)
+        false-build #(do (swap! false-builds inc) false)]
+    (is (nil? (cursor/memoized-context! codec-cache :nil nil-build)))
+    (is (nil? (cursor/memoized-context! codec-cache :nil nil-build)))
+    (is (false? (cursor/memoized-context! codec-cache :false false-build)))
+    (is (false? (cursor/memoized-context! codec-cache :false false-build)))
+    (is (= 1 @nil-builds))
+    (is (= 1 @false-builds))))
+
+(deftest private-cursor-cache-failure-is-only-a-cache-miss-test
+  (let [codec-cache (cursor/codec-cache {:max-entries 2})
+        cached-options (assoc options :cursor-codec-cache codec-cache)
+        value {:v 10 :scope :store-failure}
+        builds (atom 0)]
+    (with-redefs [lru/lookup!
+                  (fn [_ _]
+                    (throw (ex-info "lookup failed" {})))
+                  lru/put-if-absent!
+                  (fn [_ _ _]
+                    (throw (ex-info "publication failed" {})))]
+      (is (= :context
+             (cursor/memoized-context!
+              codec-cache :context
+              #(do (swap! builds inc) :context))))
+      (let [token (cursor/cursor->token value cached-options)]
+        (is (string? token))
+        (is (= value (cursor/token->cursor token cached-options)))))
+    (is (= 1 @builds))))
+
+(deftest private-cursor-token-cache-is-lru-test
+  (let [codec-cache (cursor/codec-cache {:max-entries 2})
+        cached-options (assoc options :cursor-codec-cache codec-cache)
+        a {:v 10 :scope :a :edge {:kind :lookup-eid :value 1}}
+        b {:v 10 :scope :b :edge {:kind :lookup-eid :value 2}}
+        c {:v 10 :scope :c :edge {:kind :lookup-eid :value 3}}
+        work (atom {})]
+    (binding [cursor/*codec-work* work]
+      (let [a-token (cursor/cursor->token a cached-options)
+            _ (cursor/cursor->token b cached-options)]
+        (dotimes [_ 100]
+          (is (= a-token (cursor/cursor->token a cached-options))))
+        (is (string? (cursor/cursor->token c cached-options)))
+        (is (= a-token (cursor/cursor->token a cached-options))
+            "a hot token survives insertion past capacity")
+        (is (= 3 (:encode-calls @work)))
+        (is (string? (cursor/cursor->token b cached-options)))
+        (is (= 4 (:encode-calls @work))
+            "the least recently used token is reminted")))
+    (is (= 4 (:encode-calls @work)))))
+
+(deftest private-cursor-codec-cache-requires-safe-positive-capacity-test
+  (is (= 1024 (:max-entries (cursor/codec-cache)))
+      "the standalone cursor constructor shares the public cache default")
+  (doseq [capacity [0 -1 1.5
+                    #?(:clj 9007199254740992N
+                       :cljs 9007199254740992)]]
+    (let [data (error-data #(cursor/codec-cache {:max-entries capacity}))]
+      (is (= :eacl/invalid-config (:type data)))
+      (is (= :max-entries (:option data))))))
 
 (deftest encrypted-cursors-reuse-client-private-key-context-test
   (let [codec-cache (cursor/codec-cache {:max-entries 4})
@@ -573,6 +642,31 @@
         "the first cursor derives and encodes the configured key context")
     (is (= 1 (:key-context-cache-hits @work))
         "the next distinct cursor reuses key derivation without reusing a token")))
+
+(deftest encrypted-cursor-key-context-cache-is-lru-test
+  (let [third-key (vec (range 64 96))
+        codec-cache (cursor/codec-cache {:max-entries 2})
+        three-key-options
+        {:keyring {:old old-key
+                   :current current-key
+                   :third third-key}
+         :cursor-codec-cache codec-cache}
+        work (atom {})
+        encode!
+        (fn [kid n]
+          (cursor/cursor->token
+           {:v 10 :scope kid :edge {:kind :lookup-eid :value n}}
+           (assoc three-key-options :current-kid kid)))]
+    (binding [cursor/*codec-work* work]
+      (is (string? (encode! :old 1)))
+      (is (string? (encode! :current 2)))
+      (is (string? (encode! :old 3)))
+      (is (string? (encode! :third 4)))
+      (is (string? (encode! :old 5))
+          "a hot key context survives insertion past capacity")
+      (is (string? (encode! :current 6))))
+    (is (= 4 (:key-context-builds @work)))
+    (is (= 2 (:key-context-cache-hits @work)))))
 
 (deftest cursor-construction-cache-does-not-cache-tokens-test
   (let [construction-cache (cursor/codec-cache {:max-entries 4})
@@ -610,6 +704,45 @@
               (mapv #(cursor/token->cursor
                       % (dissoc cached-options :cursor-codec-cache))
                     tokens))))))
+
+#?(:clj
+   (deftest encrypted-cursor-authenticator-idle-pool-is-bounded-test
+     (let [authenticate
+           ((ns-resolve 'eacl.cursor 'pooled-authenticator) current-key)
+           pool
+           (some
+            (fn [^java.lang.reflect.Field field]
+              (.setAccessible field true)
+              (let [value (.get field authenticate)]
+                (when (instance? java.util.concurrent.ArrayBlockingQueue value)
+                  value)))
+            (.getDeclaredFields (class authenticate)))
+           messages (mapv #(str "concurrent-authentication-" %) (range 64))
+           ready (java.util.concurrent.CountDownLatch. (count messages))
+           start (java.util.concurrent.CountDownLatch. 1)
+           tags
+           (mapv
+            (fn [message]
+              (future
+                (.countDown ready)
+                (.await start)
+                (authenticate message)))
+            messages)
+           ready? (.await ready 10 java.util.concurrent.TimeUnit/SECONDS)]
+       (.countDown start)
+       (let [actual (mapv #(deref % 10000 ::timeout) tags)]
+         (is ready? "the concurrent burst reached the start barrier")
+         (is (some? pool) "the authenticator captures its bounded idle pool")
+         (is (= (mapv #(secure/hmac-sha-256 current-key %) messages)
+                actual)
+             "concurrent borrowers never share one mutable Mac")
+         (when pool
+           (is (= 8 (+ (.size ^java.util.concurrent.ArrayBlockingQueue pool)
+                       (.remainingCapacity
+                        ^java.util.concurrent.ArrayBlockingQueue pool)))
+               "one key context can retain at most eight idle Macs")
+           (is (<= (.size ^java.util.concurrent.ArrayBlockingQueue pool) 8)
+               "excess burst instances are discarded rather than retained"))))))
 
 (deftest encrypted-cursor-operation-count-and-growth-test
   (let [small

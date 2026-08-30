@@ -3,15 +3,6 @@
  :source "formal/dafny/ExecutionContract.dfy"
  :verified-obligations 23
  :classification :proof-only-host-control-model
- :cache-attempt-contract
- {:supported-fields
-  [:evaluation-reserve-ms :maximum-atomic-attempts]
-  :rejected-decorative-fields
-  [:stage-timeout-ms
-   :maximum-encoded-bytes
-   :maximum-decoded-weight
-   :maximum-candidates]
-  :provider-stores :rejected-before-request-execution}
  :claims
  [:demand-preserves-certified-evaluator-route
   :complete-evaluation-uses-fixed-point-for-every-defined-root
@@ -44,10 +35,22 @@
    eacl.engine.v8/complete-acyclic-page]
   :artifact-admission-and-hit
   [eacl.subproblem-cache/publish!
-   eacl.subproblem-cache/lookup!]
+   eacl.subproblem-cache/lookup!
+   eacl.subproblem-cache/lookup-eligible!]
   :deadline
   [eacl.execution/check!
    eacl.engine.v8/run-generated-traversal]
+  :cache-stage-publication
+  [eacl.execution/cache-stage-available?
+   eacl.subproblem-cache/publish!
+   eacl.engine.stable-page/checkpoint-put!]
+  :cache-stage-lookup
+  [eacl.execution/cache-stage-available?
+   eacl.cache/resolve-basis!
+   eacl.cache/resolve-managed-read-only!
+   eacl.subproblem-cache/lookup!
+   eacl.subproblem-cache/lookup-eligible!
+   eacl.engine.stable-page/checkpoint-hit]
   :generated-demand-state
   [eacl.engine.v8/generated-forward-result
    eacl.engine.v8/generated-reverse-result]
@@ -75,17 +78,12 @@
    eacl.datomic.impl.indexed/with-engine-bindings]
   :limit-cache-identity
   [eacl.client.orchestration/cached-engine-result
-   eacl.cache/resolve!
+   eacl.cache/resolve-basis!
+   eacl.cache/resolve-managed-read-only!
    eacl.engine.v8/recursive-denotation-key]
   :limit-cursor-identity
   [eacl.relay/cursor-scope
-   eacl.client.orchestration/continuation-context]
-  :cache-attempt-normalization
-  [eacl.execution/normalize-cache-attempt
-   eacl.execution/cache-stage-available?]
-  :cache-publication-bound
-  [eacl.client.orchestration/cached-engine-result
-   eacl.subproblem-cache/publish!]}
+   eacl.client.orchestration/continuation-context]}
  :boundary-map
  {:quantum :generated-quantum
   :adapter-command :adapter-command
@@ -101,7 +99,13 @@
   :natural-completion :graph-exhausted}
  :executable-evidence
  [eacl.execution-test/execution-contract-normalization-test
-  eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test
+  eacl.subproblem-cache-test/request-ineligible-publication-is-rejected-before-validation-test
+  eacl.subproblem-cache-test/request-ineligible-lookup-skips-store-metrics-and-recency-test
+  eacl.cache-test/cancellation-observed-by-exact-lookup-stops-managed-proof-test
+  eacl.engine.stable-page-test/checkpoint-nonregression-test
+  eacl.engine.stable-page-test/request-ineligible-checkpoint-publication-is-a-no-op-test
+  eacl.engine.stable-page-test/request-ineligible-checkpoint-lookup-does-not-probe-or-touch-test
+  eacl.engine.continuation-reuse-test/client-checkpoint-context-enforces-admission-count-cap-test
   eacl.engine.stable-discovery-gate-test/independent-oracle-equality-test
   eacl.engine.point-check-test/probe-check-equals-enumeration-oracle-test
   eacl.engine.point-check-test/probe-check-cost-is-bounded-by-intermediates-test
@@ -126,6 +130,10 @@
  :production-authority
  {:demand-transitions :generated-indexed-traversal
   :deadline-composition :host-control-flow
+  :cache-stage-publication
+  :host-control-formal-premise-and-executable-race-regression
+  :cache-stage-lookup
+  :host-control-zero-probe-zero-touch-zero-managed-proof-refinement
   :classification :model-to-code-cross-checked-not-mechanized-source-refinement}
  :non-claims
  [:backend-command-cancellation

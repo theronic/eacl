@@ -45,16 +45,7 @@
    [:client :schema-generation :authoritative-expression-fields
     :effective-expression-limits]
    :admission-limits :immutable-client-configuration
-   :durable false}
-  :relationship
-  {:authority :already-demanded-read-work
-   :cache-key
-   [:backend :source-id :branch :source-lifecycle :high-watermark
-    :direction :normalized-descriptor]
-   :completeness-order [:sample :exact]
-   :maximum-entries 4096
-   :durable false
-   :semantic-plan-input false}}
+   :durable false}}
  :lifecycle
  [{:backend :datascript
    :modes [:clj :cljs]
@@ -111,7 +102,9 @@
   :database-absence-confirmed true
   :elapsed-ms 72589.04025}
  :execution
- {:focused-affected-clj
+ {:historical-qualification
+  :captured-before-relationship-observation-and-datomic-io-stats-removal
+  :focused-affected-clj
   {:command
    "clojure -X:test :nses '[eacl.schema.expression-persistence-test eacl.metrics-test eacl.datascript.contract-test eacl.datascript.storage-test eacl.datahike.storage-test eacl.datomic.schema-test eacl.datomic.io-stats-test eacl.migrations.v6-to-v7-test eacl.migrations.v7-to-v8-test]'"
    :tests 99 :assertions 1189 :failures 0 :errors 0}

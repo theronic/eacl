@@ -53,6 +53,11 @@
   (-decide [_ operation input]
     (f operation input)))
 
+(deftest kernel-predicate-is-direct-protocol-satisfaction
+  (is (false? (verified/kernel? nil)))
+  (is (false? (verified/kernel? {})))
+  (is (true? (verified/kernel? (->FunctionKernel (fn [_ _] nil))))))
+
 (deftest normalized-kernel-selection-is-reused
   (let [selection
         {:kernel (->FunctionKernel (fn [_ _] :use-exact-entry))}]
@@ -104,34 +109,6 @@
            #?(:clj clojure.lang.ExceptionInfo
               :cljs cljs.core.ExceptionInfo)
            (decide result))))))
-
-(deftest current-cache-stage-boundary-is-strict
-  (let [input {:stage :exact-entry :available? true}
-        decide
-        (fn [kernel value]
-          (verified/decide
-           {:kernel kernel}
-           :current-cache-decision
-           value))]
-    (is (= :use-exact-entry
-           (decide
-            (->FunctionKernel
-             (fn [_ _] :use-exact-entry))
-            input)))
-    (is (thrown?
-         #?(:clj clojure.lang.ExceptionInfo
-            :cljs cljs.core.ExceptionInfo)
-         (decide
-          (->FunctionKernel
-           (fn [_ _] :use-exact-entry))
-          (assoc input :unknown true))))
-    (is (thrown?
-         #?(:clj clojure.lang.ExceptionInfo
-            :cljs cljs.core.ExceptionInfo)
-         (decide
-          (->FunctionKernel
-           (fn [_ _] :use-managed-entry))
-          input)))))
 
 (defn- expected-consistency-plan
   [{:keys [mode capability-supported?]}]
@@ -242,33 +219,6 @@
              #?(:clj clojure.lang.ExceptionInfo
                 :cljs cljs.core.ExceptionInfo)
              (decide operation input result)))))))
-
-(deftest subproblem-cache-transition-boundary-is-strict
-  (let [input {:decision :lookup
-               :candidate :missing}
-        decide
-        (fn [input result]
-          (verified/decide
-           {:kernel (->FunctionKernel (fn [_ _] result))}
-           :subproblem-cache-decision
-           input))]
-    (is (= :start-independent-computation
-           (decide input :start-independent-computation)))
-    (is (thrown?
-         #?(:clj clojure.lang.ExceptionInfo
-            :cljs cljs.core.ExceptionInfo)
-         (decide input :use-completed-value)))
-    (is (thrown?
-         #?(:clj clojure.lang.ExceptionInfo
-            :cljs cljs.core.ExceptionInfo)
-         (decide
-          {:decision :publication
-           :ticket-current? true
-           :complete? true
-           :valid? true
-           :weight 1
-           :budget 1}
-          :drop-publication)))))
 
 (deftest ordered-merge-chunk-boundary-is-strict
   (let [input {:direction :asc

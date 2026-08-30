@@ -83,16 +83,27 @@ and relationship.
   `eacl.engine.v8/permission-relationship-eids` compute reachable
   permission-node and relation dependencies. `formal/dafny/CurrentCache.dfy`
   proves the normalized-rule dependency frame consumed by the basis-first
-  cache; `ScalarFrontierCoherence.dfy` proves the supported scalar-frontier
-  lifting condition.
+  cache; `ScalarFrontierCoherence.dfy` proves the ordered-history frame theorem
+  and requires equality of the complete canonical dependency-generation vector
+  for managed-key matching. Its scalar frontier is derived proof metadata, not
+  key authority.
 - Each certified adapter's independent `schema-generation` operation reads the
   schema assertion generation, while `proof-frame` reads one native committed
   generation for every relation in the complete canonical dependency closure.
   Missing evidence forces exact-only evaluation; malformed or above-revision
   evidence disables managed lifting for the runtime lifecycle.
 - `eacl.cache` keeps completed entries client-private and requires lifecycle,
-  semantic request, schema generation, and scalar dependency-frontier
-  agreement before returning a managed value.
+  semantic request, canonical dependency identity, schema generation, complete
+  dependency-generation-vector agreement, and immutable computed revision at or below
+  the selected revision before returning a managed value. Historical bases
+  remain exact-only.
+- Portable export admits an exact completed answer only when its immutable
+  cache basis, computed revision, and exact locator equal the backend snapshot
+  identity, revision, and locator in the complete exact key. A
+  process-local managed promotion with a different anchor is omitted; its
+  managed mapping remains portable, is admitted only by validated off-side
+  restore, and is then readable only through a matching managed key and the
+  receiving request's causal-revision check.
 - `eacl.backend.v8` names completeness and change-coverage as adapter
   obligations; certification is required for a composed assurance claim.
 
@@ -103,9 +114,16 @@ and relationship.
   scope for Datomic, DataScript CLJ/CLJS, and Datahike.
 - Cache differential, recursive-cache, consistency-cache, and
   cache-review-regression suites compare enabled and disabled behavior.
-- `CurrentCache` proves exact-basis isolation and the normalized-rule
-  dependency frame; `ScalarFrontierCoherence` proves equal complete scalar
-  proofs preserve deterministic denotation. The removed `CacheKernel` graph
+- `CurrentCache` proves exact-basis isolation, historical exact-only
+  eligibility, full selected-basis equality for exact answers, the portable
+  direct three-field anchor condition, rejection of differently anchored managed
+  promotions from portable exact export, and the normalized-rule dependency
+  frame;
+  `ScalarFrontierCoherence` requires equal canonical dependency identity and
+  its complete dependency-generation vector,
+  proves equal complete scalar proofs preserve deterministic denotation along
+  ordered forward history, and rejects a future candidate for an older
+  selection. The removed `CacheKernel` graph
   ancestry model had no production consumer and contributes no release claim.
 
 **Residual trust.** Deterministic complete dependency extraction, adapter proof

@@ -2,16 +2,14 @@
 
 This tree contains the source of EACL's verification evidence. It does not
 claim that an operation is verified merely because a tool ran successfully.
-The coverage claim is controlled by
-[`verification/assurance-matrix.edn`](verification/assurance-matrix.edn) and
-the generated release manifest.
+Claims are scoped by the model, its production mapping, executable differential
+tests, and the trusted-boundary documentation.
 
 ## Layout
 
-- `stable-discovery/` contains the release-assurance tree of the shipped
-  enumeration engine: 47 Dafny leaves, two TLC families, five executable
-  refinement bridges and the randomized refinement campaign
-  (`verify-fast.sh`, 651 obligations; see its README).
+- `stable-discovery/` contains the semantic models, executable refinement
+  bridges, and randomized refinement campaign for the shipped enumeration
+  engine.
 - `dafny/` contains the executable mathematical semantics, the generated
   decision kernels, and proof lemmas. The `AcyclicEngine`, `RecursiveEngine`,
   `OrderedMerge`, `RoutingCertificate`, `CursorCost` and `Indexed*` leaves
@@ -20,12 +18,17 @@ the generated release manifest.
   `openspec/changes/adopt-stable-discovery-enumeration/tasks.md`.
 - `tla/` contains bounded temporal models used to discover hostile cache,
   cursor, snapshot, continuation, subproblem-publication, proof-frame, and
-  source-switch histories. `EaclOperatorSafety.tla` adds the abstract operator
+  source-switch histories. `EaclCacheStorage.tla` is the consolidated
+  partial-map cache authority. Apalache checks bounded histories and retained
+  partial-publication, partial-hit fail-open,
+  detached-store-publication, retired-store-identity ABA, and
+  managed-proof-bypass controls.
+  `EaclOperatorSafety.tla` adds the abstract operator
   publication, logical-cursor, checkpoint, cache-lifecycle, and completed
   negative-premise histories.
 - `counterexamples/` retains minimized witnesses and their bug ledger.
 - `verification/` records the decision inventory, trusted boundary, assurance
-  matrix, tool-selection research, baselines, and release-manifest inputs.
+  matrix, tool-selection research, and performance baselines.
 - `verification/temporal-model.md` records the detailed transition scope,
   bounded configurations, induction obligations, and claim boundary.
 - `verification/adapter-certification.edn` is the machine-readable record of
@@ -42,10 +45,11 @@ as source.
 ## Commands
 
 Run `bin/formal bootstrap` once, then the individual verification/build/model
-commands listed by `bin/formal`. `bin/formal all` also runs the release
-manifest gate and therefore intentionally exits nonzero while complete-engine
-verified status is withheld. The larger scheduled temporal bound is available
-as `bin/formal apalache-scheduled`.
+commands listed by `bin/formal`. `bin/formal all` runs the semantic proofs,
+generated-runtime builds, source inventory, bounded temporal checks, and
+negative controls. It does not run release manifests, generated-byte checks,
+or exhaustive global exploration. The larger bounded temporal campaign is
+available as `bin/formal apalache-scheduled`.
 
 `dafny/NativeGenerationCoherence.dfy` supersedes mutation-graph ancestry as
 the managed-cache coherence argument. It proves the forward-history frame from
@@ -141,11 +145,9 @@ assertion-batch time and deterministic Z3 resource ceilings. A successful
 per-module CSV inputs from which it was derived; these measure proof search,
 not EACL runtime resources.
 
-`bin/formal artifact-size` runs after the Java, JavaScript, and browser builds.
-It measures each generated representation from the current build against
-`verification/generated-artifact-size.edn` and fails above its reviewed
-full-kernel growth bound. A source or class byte count is not a proxy for
-allocation, retained heap, solver effort, or latency.
+`bin/formal artifact-size` remains an optional generated-output diagnostic. It
+is not a correctness or publication gate; runtime allocation, retained heap,
+work, and latency are measured by their product workloads.
 
 `bin/formal source-closure` checks the locked CLJ/CLJS static call-closure
 ledger for the named shared, generated-provider, and backend roots declared in `bin/public-source-closure.mjs`. The ledger
@@ -159,14 +161,9 @@ semantics. `backend-dispatch.edn` separately checks that every CLJ and CLJS
 dispatch site uses one of exactly the required literal operation keys it pins
 (the required snapshot operations plus `:proof-frame`).
 
-## Assurance status
+## Claim boundary
 
-The release status is **conditionally verified**, with unqualified verified
-status withheld until independent review. A theorem becomes releasable only
-when:
-
-1. its Dafny obligation passes without an admitted lemma;
-2. its boundary and differential checks pass;
-3. every adapter assumption named by the operation is certified;
-4. the cross-runtime and mutation gates named in the assurance matrix pass;
-5. the generated verification manifest records exact source and tool digests.
+A semantic claim requires its proof, production mapping, backend assumptions,
+cross-runtime differential tests, and negative controls to pass. Dependency
+version strings, generated byte totals, evidence counts, and source digests do
+not establish functional correctness.

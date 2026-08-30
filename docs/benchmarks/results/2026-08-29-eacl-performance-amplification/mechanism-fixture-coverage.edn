@@ -41,11 +41,6 @@
    :scale-points [1000 10000 100000]
    :model :amortized-constant-touch
    :tolerance {:kind :capacity-derived :maximum-record-factor 2}}
-  {:id :continuation-recency-filter
-   :generator :fixed-capacity-continuation-churn
-   :scale-points [1000 10000 100000]
-   :model :amortized-constant-update
-   :tolerance {:kind :capacity-derived :maximum-record-factor 2}}
   {:id :zero-successor-scheduling
    :generator :terminal-grant-transitions
    :scale-points [1000 10000 100000]
@@ -71,21 +66,6 @@
    :scale-points [1 100 10000]
    :model :one-basis-capture-no-cache-requery
    :tolerance {:kind :exact :post-capture-snapshot-calls 0}}
-  {:id :eager-proof-frame
-   :generator :compatible-exact-cache-hit-series
-   :scale-points [1 1000 100000]
-   :model :unused-state-not-constructed
-   :tolerance {:kind :exact :unused-proof-frames 0}}
-  {:id :eager-request-memo-slots
-   :generator :compatible-exact-cache-hit-series
-   :scale-points [1 1000 100000]
-   :model :unused-state-not-constructed
-   :tolerance {:kind :exact :unused-memo-atoms 0}}
-  {:id :eager-publication-buffer
-   :generator :cache-disabled-point-series
-   :scale-points [1 1000 100000]
-   :model :unused-state-not-constructed
-   :tolerance {:kind :exact :unused-publication-buffers 0}}
   {:id :native-membership-double-normalization
    :generator :distinct-probes-one-descriptor
    :scale-points [256 1024 4096]
@@ -101,46 +81,16 @@
    :scale-points [1000 10000 100000]
    :model :zero-disabled-observer-mutation
    :tolerance {:kind :exact :observer-mutations 0}}
-  {:id :plan-and-memo-hit-candidate-allocation
-   :generator :resident-schema-plan-and-request-memo
-   :scale-points [1000 10000 100000]
-   :model :completed-value-first
-   :tolerance {:kind :exact :candidate-builds-on-hit 0}}
   {:id :independent-completed-cache-misses
    :generator :promise-controlled-identical-cold-burst
    :scale-points [2 8 32]
    :model :independent-request-work
    :tolerance {:kind :exact :waiters 0 :owner-failure-inheritance 0}}
-  {:id :shared-parsed-schema-delay
-   :generator :promise-controlled-schema-build-failure
-   :scale-points [2 8 32]
-   :model :independent-build-and-bounded-install
-   :tolerance {:kind :exact :waiters 0 :failure-publications 0}}
-  {:id :shared-validation-catalog-delay
-   :generator :promise-controlled-catalog-build-failure
-   :scale-points [2 8 32]
-   :model :independent-build-and-bounded-install
-   :tolerance {:kind :exact :waiters 0 :failure-publications 0}}
-  {:id :shared-expression-decode-delay
-   :generator :promise-controlled-expression-decode-failure
-   :scale-points [2 8 32]
-   :model :independent-build-and-bounded-install
-   :tolerance {:kind :exact :waiters 0 :poisoned-slots 0}}
-  {:id :shared-sealed-plan-delay
-   :generator :promise-controlled-plan-seal-failure
-   :scale-points [2 8 32]
-   :model :independent-build-and-bounded-install
-   :tolerance {:kind :exact :waiters 0 :poisoned-slots 0}}
-  {:id :finite-current-cache-decision
-   :generator :complete-stage-availability-domain
-   :scale-points [1 10000 1000000]
-   :model :complete-finite-refinement
-   :tolerance {:kind :exact :partition-differences 0}}
-  {:id :restored-entry-operation-validation
-   :generator :authenticated-wrong-operation-shape-snapshot
+  {:id :validated-ingress-resident-invariant
+   :generator :invalid-live-publication-and-authenticated-wrong-shape-snapshot
    :scale-points [1 16 256]
    :model :semantic-invariant
-   :tolerance {:kind :exact :wrong-shaped-hits 0}}
+   :tolerance {:kind :exact :invalid-resident-mappings 0}}
   {:id :completed-cache-compatibility-identity
    :generator :old-new-compiler-and-value-abi-matrix
    :scale-points [1 16 256]

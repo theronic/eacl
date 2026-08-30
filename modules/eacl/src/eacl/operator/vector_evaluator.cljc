@@ -355,12 +355,7 @@
               (throw error))))))))
 
 (def ^:private point-cache-options
-  {:valid? boolean?
-   :weight-fn (constantly 160)})
-
-(def ^:private leaf-cache-options
-  {:valid? boolean?
-   :weight-fn (constantly 128)})
+  {:valid? boolean?})
 
 (defn- semantic-candidate-key [candidate]
   (select-keys candidate required-candidate-keys))
@@ -371,15 +366,11 @@
    (:fingerprint plan) permission node-id scope-identity
    (semantic-candidate-key candidate)])
 
-(defn- leaf-cache-key [probe]
-  [:operator-acyclic-direct-membership 1
-   (:direction probe) (:descriptor probe) (:candidate probe)])
-
 (defn check-cached-many-eids
   "Evaluates an aligned acyclic vector with proof-compatible completed point
-  and direct-leaf reuse. Cache hits only fill already demanded decisions. All
-  point and leaf misses remain private until the entire demanded vector
-  succeeds; cache-disabled execution performs no cache work."
+  reuse. Cache hits only fill already demanded decisions. Point misses remain
+  private until the entire demanded vector succeeds; cache-disabled execution
+  performs no cache work."
   [{:keys [plan candidates permission node-id scope-identity] :as options}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
@@ -399,8 +390,7 @@
                (let [key (point-cache-key
                           plan permission node-id scope-identity candidate)]
                  (if-let [resolved
-                          (subproblem/lookup!
-                           store :denotation key point-cache-options)]
+                          (subproblem/lookup-denotation! key)]
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
@@ -408,35 +398,9 @@
                    {:candidate candidate :key key :cached? false})))
              candidates)
             misses (mapv :candidate (remove :cached? looked-up))
-            leaf-hits (atom #{})
-            leaf-lookup
-            (fn [probe]
-              (let [key (leaf-cache-key probe)]
-                (if-let [resolved
-                         (subproblem/lookup!
-                          store :projection key leaf-cache-options)]
-                  (do
-                    (swap! leaf-hits conj key)
-                    (subproblem/record-avoided-backend-operation! store)
-                    (:value resolved))
-                  direct/cache-miss)))
-            leaf-publication
-            (fn [entries]
-              (when subproblem/*populate?*
-                (let [published (atom @leaf-hits)]
-                  (doseq [[probe decision] entries
-                          :let [key (leaf-cache-key probe)]
-                          :when (not (contains? @published key))]
-                    (swap! published conj key)
-                    (subproblem/publish!
-                     store :projection key leaf-cache-options decision)))))
             miss-decisions
             (if (seq misses)
-              (check-many-eids
-               (assoc options
-                      :candidates misses
-                      :cache-lookup leaf-lookup
-                      :cache-publish-many! leaf-publication))
+              (check-many-eids (assoc options :candidates misses))
               [])
             decisions-by-key
             (into {}
@@ -455,8 +419,8 @@
         (when subproblem/*populate?*
           (doseq [{:keys [candidate key cached?]} looked-up
                   :when (not cached?)]
-            (subproblem/publish!
-             store :denotation key point-cache-options
+            (subproblem/publish-denotation!
+             key point-cache-options
              (get decisions-by-key (semantic-candidate-key candidate)))))
         (add-stat! :point-cache-hits (count (filter :cached? looked-up)))
         (add-stat! :point-cache-misses (count misses))

@@ -16,10 +16,9 @@
    :peak-vs-cumulative-separation
    :no-cross-dimensional-proof-substitution]
   :required-dimensions
-  {:represented-admission-weight :logical-gauge
+  {:retained-cache-entries :logical-gauge
    :represented-candidates :logical-gauge
    :request-owned-computations :external-concurrency-gauge
-   :publication-attempts :request-counter
    :backend-scan-or-probe-operations :request-counter
    :logical-response-items :request-counter
    :abstract-collection-operations :request-counter
@@ -28,9 +27,8 @@
    :elapsed-nanoseconds :monotonic-duration}
   :substitution-policy :no-cross-dimensional-proof-substitution
   :current-production-claims
-  {:represented-admission-weight :proved-conditionally
+  {:retained-cache-entries :bounded-by-positive-configured-capacity
    :request-owned-computations :bounded-only-by-external-caller-concurrency
-   :publication-attempts :finite-client-configured-bound
    :cache-waiting-callers 0
    :backend-scan-or-probe-operations :measured-fixture-specific
    :logical-response-items :proved-for-named-model-transitions
@@ -212,8 +210,9 @@
   :host-runtime-measurement-with-deterministic-semantic-counters-unchanged
   :status :passed}
 
- :explicit-completion-shared-subgraph-cache-benchmark
- {:backend :datascript
+ :historical-retired-projection-benchmark
+ {:classification :historical-retired-architecture
+  :backend :datascript
   :fixture
   {:distinct-top-level-permissions 80
    :shared-arrow-depth 48
@@ -239,7 +238,9 @@
   :maximum-allowed-ratio 0.75
   :qualification
   :explicit-completion-only-equal-compiled-root-bodies-share-complete-semantic-denotations-under-the-proved-fixed-point-and-indexed-refinement-conditions
-  :status :passed}
+  :current-release-authority false
+  :superseded-by :standard-lru-cache-path
+  :status :historical-superseded-by-two-tier-completed-artifact-cache}
 
  :formal-pipeline
  {:scope :all-30-dafny-modules
@@ -957,90 +958,49 @@
   :routing :removed
   :status :retained-counterexample}
 
- :layered-subproblem-cache
- {:fixture
-  {:backend :datascript
-   :managed-coherence true
-   :evaluation :complete-denotation
-   :demand-mode-managed-completion false
-   :permission-depth 48
-   :distinct-queries 80
-   :completed-answer-hits 0
-   :unrelated-write-between-warmup-and-measurement true}
-  :required
-  {:maximum-backend-work-ratio 0.50
-   :maximum-p50-latency-ratio 0.75
-   :maximum-new-generation-proof-reads 50
-   :maximum-hot-hit-regression-ratio 1.05
-   :maximum-cache-disabled-regression-ratio 1.05}
- :observed
-  {:repeated-runs 5
-   :historical-pre-demand-bounded
-   {:repeated-runs 5
-   :baseline-backend-operations 3920
-   :layered-backend-operations 0
-   :p50-latency-ratio-range [0.4981661538461538 0.5600387252924566]
-   :managed-projection-hits 49
-   :new-generation-proof-reads 49
-   :hit-cardinality
-   {:small-entries 64
-    :large-entries 4096
-    :entry-count-ratio 64
-    :p50-latency-ratio 1.074889746035696}
-   :cached-recursive-page
-   {:small-closure-items 64
-    :large-closure-items 131072
-    :closure-size-ratio 2048
-    :page-size 20
-    :p50-latency-ratio 1.008695652173913}
-   :hot-hit-regression-ratio 1.0
-   :cache-disabled-regression-ratio 1.0035726495726496
-   :status :superseded-by-explicit-completion-route}
-   :current-rerun
-   {:date "2026-08-08"
-    :tests 6
-    :assertions 20
-    :evaluation :complete-denotation
-    :certified-root-route :acyclic
-    :selected-evaluator-route :generated-fixed-point
-    :baseline-backend-operations 5120
-    :layered-backend-operations 0
-    :completed-answer-only-five-run-median-p50-ms 3.4185
-    :layered-subproblem-five-run-median-p50-ms 0.140375
-    :paired-p50-latency-ratio-range
-    [0.03914322618740082 0.043954153669253454]
-    :median-paired-p50-latency-ratio 0.041063331870703525
-    :p50-latency-ratio 0.041063331870703525
-    :managed-denotation-hits 1
-    :acyclic-denotation-hits 79
-    :new-generation-proof-reads 1
-    :median-hot-hit-regression-ratio 1.0016484163428705
-    :median-cache-disabled-regression-ratio 1.0001917191361416
-    :hot-hit-regression-ratio 1.0016484163428705
-    :cache-disabled-regression-ratio 1.0001917191361416
-    :median-hit-cardinality-p50-ratio 1.0729001264222502
-    :median-cached-recursive-page-p50-ratio 1.0184929480224874
-    :miss-finalization
-    {:resource-dimension :actual-host-computation-lifecycle
-     :small-entries 64
-     :large-entries 4096
-     :entry-count-ratio 64
-     :misses-per-batch 20
-     :median-p50-latency-ratio 1.0168809523809523
-     :interpretation
-     :bounded-independent-publication-does-not-introduce-entry-count-linear-finalization}}}
- :raw-sample-source
+ :standard-lru-cache-path
+ {:architecture
+  {:denotation :exact-completed-semantic-artifact
+   :answer [:exact-completed-answer :managed-completed-answer]
+   :storage :standard-lru
+   :miss-coordination :independent-computation
+   :publication :validated-put-if-absent}
+  :source
   "modules/eacl-datascript/test/eacl/bench/subproblem_cache_test.clj"
+  :benchmarks
+  [eacl.bench.subproblem-cache-test/hot-hit-and-cache-free-regression-benchmark
+   eacl.bench.subproblem-cache-test/hit-maintenance-does-not-regress-linearly-with-entry-count]
+  :fixture
+  {:backend :datascript
+   :hot-answer-depth 16
+   :paired-hot-hit-samples 400
+   :paired-explicit-bypass-samples 200
+   :hit-cardinality-small-entries 64
+   :hit-cardinality-large-entries 4096
+   :paired-hit-cardinality-samples 80}
+  :required
+  {:maximum-hot-hit-to-direct-bypass-p50-ratio 1.05
+   :maximum-cache-enabled-explicit-bypass-to-no-cache-p50-ratio 1.05
+   :maximum-hit-maintenance-cardinality-p50-ratio 4.0}
+  :observed
+  {:date "2026-08-30"
+   ;; Rebound by the final host-sensitive rerun after production freezes.
+   :hot-hit-to-direct-bypass-p50-ratio 0.462
+   :cache-enabled-explicit-bypass-to-no-cache-p50-ratio 1.001
+   :hit-maintenance-cardinality-p50-ratio 1.328
+   :entry-count-ratio 64}
+  :qualification
+  :same-process-paired-host-regression-evidence-not-a-portable-latency-or-complexity-theorem
   :status :passed}
 
  :cross-backend-workload-matrix
- {:report "formal/verification/cross-backend-workload.edn"
-  :source
+ {:source
   "modules/eacl-datomic/test/eacl/bench/cross_backend_workload_test.clj"
+  :benchmark
+  eacl.bench.cross-backend-workload-test/all-backend-cache-mode-workload-matrix-test
   :fixture
   {:backends [:datomic :datahike :datascript]
-   :cache-modes
-   [:cache-free :completed-answer-only :layered-current]
+   :cache-modes [:cache-free :cache-enabled]
    :users 32
    :permitted-users 16
    :recursive-groups 32
@@ -1062,58 +1022,33 @@
    :count-subjects
    :forward-cursor
    :reverse-cursor]
+  :required
+  {:same-checksum-across-every-backend-and-cache-mode true
+   :positive-p50-elapsed-time true
+   :positive-p50-caller-thread-allocation true
+   :complete-eleven-sample-vectors true}
   :resource-dimensions
   {:elapsed-wall-time :milliseconds-per-operation
    :caller-thread-allocation :allocated-bytes-per-operation
    :backend-work :executed-scan-or-probe-count
    :retained-live-heap :not-measured
    :whole-process-allocation :not-measured}
-  :observed
-  {:raw-latency-samples 1188
-   :raw-allocation-samples 1188
-   :result-checksums-equal-across-backends-and-cache-modes true
-   :layered-over-completed-answer-p50-ratios
-   {:datomic
-    {:shared-arrow
-     {:latency 0.16713044058094415
-      :caller-thread-allocation 0.2064272862994296}
-     :recursive-scc
-     {:latency 0.16581404238162312
-      :caller-thread-allocation 0.21306288434834358}
-     :mixed-principals
-     {:latency 0.2831810445339299
-      :caller-thread-allocation 0.34046398100027764}}
-    :datahike
-    {:shared-arrow
-     {:latency 0.09039383622543172
-      :caller-thread-allocation 0.07660434689803247}
-     :recursive-scc
-     {:latency 0.08931339903204497
-      :caller-thread-allocation 0.07970986029825733}
-     :mixed-principals
-     {:latency 0.15552322455282652
-      :caller-thread-allocation 0.14344811517575146}}
-    :datascript
-    {:shared-arrow
-     {:latency 0.14718045535252738
-      :caller-thread-allocation 0.1338003056546103}
-     :recursive-scc
-     {:latency 0.14235815528384213
-      :caller-thread-allocation 0.13901881577548633}
-     :mixed-principals
-     {:latency 0.2597992783987962
-      :caller-thread-allocation 0.24241584676320066}}}}
-  :test-result
-  {:tests 1
-   :assertions 619
-   :failures 0
-   :errors 0}
+  :historical-report
+  {:path "formal/verification/cross-backend-workload.edn"
+   :architecture
+   [:cache-free :completed-answer-only :retired-layered-current]
+   :current-release-authority false}
   :qualification
-  :caller-thread-allocation-is-not-retained-heap-or-whole-process-allocation
-  :status :baseline-recorded}
+  :executable-semantic-and-sample-shape-gate-caller-thread-allocation-is-not-retained-heap-or-whole-process-allocation
+  :status :current-executable-gate}
 
  :cross-backend-managed-proof
  {:report "formal/verification/managed-proof-cost.edn"
+  :source
+  "modules/eacl-datomic/test/eacl/bench/managed_proof_cost_test.clj"
+  :benchmarks
+  [eacl.bench.managed-proof-cost-test/cross-backend-scalar-frontier-and-request-cost-test
+   eacl.bench.managed-proof-cost-test/unrelated-relation-writers-have-no-global-retry-test]
   :resource-dimensions
   {:logical-relationship-writes :count
    :committed-datom-events :count
@@ -1127,43 +1062,21 @@
   {:backends [:datomic :datahike :datascript]
    :target-relation :reader
    :unrelated-relation :auditor
-   :unrelated-edge-count 1024
-   :proof-calls-per-sample 500
-   :measurement-samples 31}
+   :dependency-counts [0 1 8 64 256]
+   :proof-calls-per-sample 200
+   :proof-measurement-samples 31
+   :exact-calls-per-sample 100
+   :request-measurement-samples 31}
   :required
-  {:unchanged-target-proof true
-   :maximum-large-to-small-p50-ratio 5.0
+  {:maximum-scalar-frontier-key-bytes 96
+   :scalar-key-smaller-than-full-vector-for-nonempty-proof true
+   :proof-frame-calls-per-cardinality 12400
+   :exact-hit-proof-frame-calls 0
+   :managed-hits 31
    :unrelated-writes-equal-transaction-attempts true
    :global-graph-or-journal-ops 0}
- :observed
-  {:datomic
-   {:create-datom-events 6
-    :delete-datom-events 4
-    :p50-ratio 1.0340335210449016}
-   :datahike
-   {:create-datom-events 6
-    :delete-datom-events 4
-    :p50-ratio 0.8473024564035252}
-   :datascript
-   {:create-datom-events 6
-    :delete-datom-events 4
-    :p50-ratio 0.9636125474650942}}
- :concurrency-observed
- {:datomic {:unrelated-logical-writes 2
-            :unrelated-transaction-attempts 2
-            :same-relation-logical-writes 2
-            :same-relation-transaction-attempts 3
-            :global-graph-or-journal-ops 0}
-  :datahike {:unrelated-logical-writes 2
-             :unrelated-transaction-attempts 2
-             :same-relation-logical-writes 2
-             :same-relation-transaction-attempts 2
-             :global-graph-or-journal-ops 0}
-  :datascript {:unrelated-logical-writes 2
-               :unrelated-transaction-attempts 2
-               :same-relation-logical-writes 2
-               :same-relation-transaction-attempts 2
-               :global-graph-or-journal-ops 0}}
+  :qualification
+  :report-values-are-host-specific-regression-evidence-while-operation-counts-and-result-assertions-are-executable
   :status :passed}
 
  :authority-mode-matrix
@@ -1355,12 +1268,10 @@
 
  :memory-and-token
  {:maximum-retained-page-eids 16384
-  :default-continuation-store-max-weight-bytes 16777216
+  :default-continuation-store-max-entries 1024
   :default-subproblem-cache
-  {:projection-max-weight 4194304
-   :denotation-max-weight 4194304
-   :answer-max-weight 16777216 ; completed immutable answer tier
-   :managed-proof-max-atoms 256}
+  {:denotation-max-entries 4096
+   :answer-max-entries 1024} ; completed immutable answer tier
   :recursive-4000-result-gc-stabilized-delta-bytes
   {:minimum -3760
    :median -3440
@@ -1417,25 +1328,24 @@
    {:status :passed
     :release-blocking true
     :source :retained-live-heap-gate}
-   :entry-weight
+   :entry-capacity
    {:status :passed
-    :source :runtime-defaults-and-weighted-store-regressions}
+    :source :runtime-defaults-and-standard-lru-regressions}
    :proof-operations
    {:status :passed
     :source :cross-backend-managed-proof}
    :throughput
    {:status :passed
     :source
-    [:verified-authority-backward-pagination
-     :verified-authority-shared-subgraph-cache]
+    [:verified-authority-backward-pagination :public-runtime]
     :release-blocking true}
    :page-bounded-pagination-work
    {:status :passed
     :source :verified-authority-backward-pagination
     :release-blocking true}
-   :shared-subgraph-cache-latency
+   :cache-path-latency
    {:status :passed
-    :source :verified-authority-shared-subgraph-cache
+    :source :standard-lru-cache-path
     :release-blocking true}
    :verification-time
    {:status :passed
@@ -1448,15 +1358,15 @@
    :source
     [:generated-indexed-authority
      :generated-consistency-boundary
-     :layered-subproblem-cache
+     :standard-lru-cache-path
      :generated-retained-live-heap]}}
   :required-dimensions
   [:retained-live-heap
-   :entry-weight
+   :entry-capacity
    :proof-operations
    :throughput
    :page-bounded-pagination-work
-   :shared-subgraph-cache-latency
+   :cache-path-latency
    :verification-time
    :generated-artifact-size
    :benchmark-noise]
@@ -1517,12 +1427,15 @@
     :datahike-cache-disabled-microseconds 17.647
     :datahike-completed-hit-microseconds 12.191}
    :blocking-finding nil}
-  :completed-hit-cost-breakdown-nanoseconds-per-operation
-  {:db 65.5036
-   :entid 1016.588
-   :capture-basic-context 6747.4854
-   :current-cache 3755.0542
-   :cached-basic-authorization 6756.4004}
+  :historical-completed-hit-cost-breakdown
+  {:classification :retired-current-cache-stage-measurement
+   :current-release-authority false
+   :nanoseconds-per-operation
+   {:db 65.5036
+    :entid 1016.588
+    :capture-basic-context 6747.4854
+    :retired-current-cache-stage 3755.0542
+    :cached-basic-authorization 6756.4004}}
   :recursive-4000
   {:continuation-ms 134.093834
    :completed-hit-ms 59.3165
@@ -1531,9 +1444,9 @@
    :work-ratio 80.53975
    :thresholds-met true}
   :cutover-decision
-  {:current-cache-blocked false
+  {:two-tier-standard-lru-blocked false
    :verified-authority-decision :not-evaluated-by-this-cache-gate
-   :reason :proof-per-hit-path-removed}}
+   :reason :exact-hit-is-ordinary-keyed-lookup-managed-hit-retains-causal-proof}}
 
  :explorer-demand-page-proof-and-alias-cutover
  {:date "2026-08-08"

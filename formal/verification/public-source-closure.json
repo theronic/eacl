@@ -13,11 +13,11 @@
   "sources": [
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/backend.clj",
-      "sha256": "13ac3401d823ff6bf07e1ac60f8260338bb13e6aca7f934557f921ea0ee9ae6d"
+      "sha256": "b8f1ef479369a54182464941617f33464b1cb688dd8cd842472721b8b509e803"
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/core.clj",
-      "sha256": "e093e30e4e4331e969b8a17c22fbf3290ce15cef3138d5cc984096c217a58568"
+      "sha256": "51576c1c70cdd59fafa8a22825381a7c522953265577228d58f92ff743171ae1"
     },
     {
       "path": "modules/eacl-datahike/src/eacl/datahike/db.clj",
@@ -81,11 +81,11 @@
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/backend.cljc",
-      "sha256": "50c9aa48c32bbefd32e5cf93dc9cb1cf0c20861aa439c283e1cde62dcf175a41"
+      "sha256": "8b15285678d3f65c1498ac2b52d7b17b292a1d2b2708c8606466c3dca4e756b8"
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/core.cljc",
-      "sha256": "3c0fef11d4cb1cfd34687c8eed578605497617cb9f0baed5e7b9dd4a791463ad"
+      "sha256": "bfaa1db22ca2933d6360e171489c7065bacd7f758d4339d15d4ed9aec132f202"
     },
     {
       "path": "modules/eacl-datascript/src/eacl/datascript/db.cljc",
@@ -109,15 +109,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/backend.clj",
-      "sha256": "51126e76465226195dea2b68cc7555f049ddae488ea050a347fb12db6779e7ee"
-    },
-    {
-      "path": "modules/eacl-datomic/src/eacl/datomic/cache.clj",
-      "sha256": "b2b276e1ab09cb704607ea2c9d94c6ee5e00f67bd1aadc4aa3254f1fcbb41230"
-    },
-    {
-      "path": "modules/eacl-datomic/src/eacl/datomic/cache_store_contract.clj",
-      "sha256": "5db689ca236a6c6a27ce2b6d63babc9a73b481b7896c48748c431af37ad5c6b0"
+      "sha256": "1877a1397378cb01b958782b91c4b7001ba48eecb24930cdcfe8bebeef251659"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/codec.clj",
@@ -125,7 +117,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/consistency.clj",
-      "sha256": "6644f672cde802590da87e53b98a0db01accee8dc58f7a45dd88203c3a1c67c0"
+      "sha256": "0a09179f705fe757411744238e9d182df98c91a9bee3c0fe192b542d85e06ccc"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/core.clj",
@@ -133,7 +125,7 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/db.clj",
-      "sha256": "2a96a9a421ac32d161d8a47b97a3e5f3be67d94da0d594acae1a48992da3d90a"
+      "sha256": "3037802c406c332dbc916f602a057c248ee7c61b49a9a0dfaeb557411ecf1d86"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/impl.clj",
@@ -145,15 +137,11 @@
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/impl/indexed.clj",
-      "sha256": "c25e702406cc7213a51a14cfd4e28799da9eec4a971f77d90ee6534d60969faa"
+      "sha256": "debeeecffa78beef647fb904910de0867f568d600159071202dcf5414bac37f2"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/integrity.clj",
       "sha256": "1ec81b72b217f2b31255413375611316b39d190d6383532adce32467edc59981"
-    },
-    {
-      "path": "modules/eacl-datomic/src/eacl/datomic/io_stats.clj",
-      "sha256": "daed313709df50f5cb620330c1eafd47cddaa3669d38b205b98a77282ae8fd5b"
     },
     {
       "path": "modules/eacl-datomic/src/eacl/datomic/safe_retraction.clj",
@@ -173,7 +161,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/authorization/batch.cljc",
-      "sha256": "fd4fac67d7e6f424691bda80a6eaec87561de0fb44628a2d857321e8442dfbe7"
+      "sha256": "d7bb6a5e5ecdc6fad5784385559b49f981859f9ab887c77ee2d6823fb6e2c194"
     },
     {
       "path": "modules/eacl/src/eacl/authorization/filters.cljc",
@@ -181,7 +169,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/backend/direct_membership.cljc",
-      "sha256": "984a19e1681ececa645fbcca1da62dce633b96ea511c6651cce331e50c6468a8"
+      "sha256": "98341cb46b4a918c6e9c7b3139adda96a870072a691128d09ce3be3535470f4c"
     },
     {
       "path": "modules/eacl/src/eacl/backend/source.cljc",
@@ -197,7 +185,19 @@
     },
     {
       "path": "modules/eacl/src/eacl/cache.cljc",
-      "sha256": "91e37195656e378ae56b00b835dd8a25476e75171ebbfbfcfb15a011c510a29c"
+      "sha256": "01d51a7f14a26a194ab6262c8c4a1e1b59d79f276977f911119c7957f5c43c7d"
+    },
+    {
+      "path": "modules/eacl/src/eacl/cache/derived_schema.cljc",
+      "sha256": "d2b357bb314582a761098fd6e582fa4a789aed195e51f2e8de22de20a0ff231b"
+    },
+    {
+      "path": "modules/eacl/src/eacl/cache/key.cljc",
+      "sha256": "e8e93d39e4be783453bb51060fef387bfa2347a2cc86396ab39f60e6d13ea2f4"
+    },
+    {
+      "path": "modules/eacl/src/eacl/cache/standard_lru.cljc",
+      "sha256": "7804253bc3d6b13d509479697ad0b7b7c3a4115499607c55efc1cdf4d0d35251"
     },
     {
       "path": "modules/eacl/src/eacl/cache_identity.cljc",
@@ -209,7 +209,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/client/orchestration.cljc",
-      "sha256": "50247de37712329bf2aba5532f7036f47f6b18adb42661f1b37e91c3a900cd99"
+      "sha256": "8be87298bd3579c1bc9c233f916f8d0bdac8a0ed533eca13988f455ce2da17db"
     },
     {
       "path": "modules/eacl/src/eacl/consistency.cljc",
@@ -217,7 +217,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/continuation.cljc",
-      "sha256": "47e22b69981a00ad6910321f5a9b96e0e80e1a38110d7a9ded6f5c05446015ba"
+      "sha256": "7980d9717164dda57f702e79a5f9c07253bc722cd76af0a8991a92a158f7ecd9"
     },
     {
       "path": "modules/eacl/src/eacl/core.cljc",
@@ -225,7 +225,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/cursor.cljc",
-      "sha256": "5fc66bd3d170c04e5846c89f34dea738454129577822e297c61f1e68840100a8"
+      "sha256": "bc62f181c036e0fa34a3b823be7e8fb6d88fee731abb3fbbead81a7b1bacb002"
     },
     {
       "path": "modules/eacl/src/eacl/engine/least_path.cljc",
@@ -233,11 +233,11 @@
     },
     {
       "path": "modules/eacl/src/eacl/engine/physical.cljc",
-      "sha256": "d379e29556da13874690a71bc107e4d1ebef3d70ab6ead3a5c70c4d4f8d4db87"
+      "sha256": "ebc43af94e227aee97a766dc9496b0047ba1f14aa164d517a6ffcf12ef7386a3"
     },
     {
       "path": "modules/eacl/src/eacl/engine/portable_decisions.cljc",
-      "sha256": "d2b19bf813dc3eb58d0817d1679e2b2db90a5c3361337792884c68624edc0270"
+      "sha256": "e2e8537df085d6c55eac82ef34646e245b454007fc12d53b17db4dc20ef71f22"
     },
     {
       "path": "modules/eacl/src/eacl/engine/portable_indexed.cljc",
@@ -253,7 +253,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/engine/stable_page.cljc",
-      "sha256": "26693db47207f1eac98158bd578e49f61b49b8e15e16b2219e0c7167db1354c5"
+      "sha256": "12c9a111df52d205b133fe467f83a3820ab7f75ee86c66654b5ae38a94b0ec47"
     },
     {
       "path": "modules/eacl/src/eacl/engine/stable_reducer.cljc",
@@ -265,7 +265,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/engine/v8.cljc",
-      "sha256": "27ed2a66a912a67b957a9cd903226fd891e5e271ac4b7c1efc6a57ac864497ff"
+      "sha256": "9dca7194fa4ea450dfd9ab4d053704a6be39dc27d8be2ddeadfd8253bd38fcb4"
     },
     {
       "path": "modules/eacl/src/eacl/exact_integer.cljc",
@@ -273,27 +273,19 @@
     },
     {
       "path": "modules/eacl/src/eacl/execution.cljc",
-      "sha256": "0b868dd4bdb03f06d8423a9d83cb8967e96ba4827b8fdd97533ae5326ebfa5b1"
-    },
-    {
-      "path": "modules/eacl/src/eacl/formal/current_cache_refinement.cljc",
-      "sha256": "b9a1f1c4355b93773a01bafdef62d7023492e89b59b17a128b2cab3f504c46db"
+      "sha256": "6701c7fbd703e29135713a3c1a4307c342790fd088a3f55524593b4236786865"
     },
     {
       "path": "modules/eacl/src/eacl/formal/generated_runtime.clj",
-      "sha256": "79ebebc49ba07c86376428f159b9672c04b63aff9d31a0cde12d1d41888bc04d"
+      "sha256": "77c84a3dfd074f623ae5833cfde49317c276573557dbcdfad7e874f6df2eafb5"
     },
     {
       "path": "modules/eacl/src/eacl/formal/production_kernel.clj",
-      "sha256": "164c37d42dfb84a700ff3ecf6ddf066a9f9f990f329ab2c15f9d20ecf20ad2bd"
+      "sha256": "e0fa6958a066ea38c3d7d477e7532b4c5effc0d14c76cda6366c8a21678fe278"
     },
     {
       "path": "modules/eacl/src/eacl/formal/production_kernel_cljs.cljs",
-      "sha256": "1db67a643f34fdad19341f13e64fbc09a3ef365a13a2e52b62d4d355364abbca"
-    },
-    {
-      "path": "modules/eacl/src/eacl/metrics.cljc",
-      "sha256": "befeeea18930b7ad7c40f0ba068b32779d902492b33e431bd6c35e6e3a4039cb"
+      "sha256": "410f605fc912c384bfc1f8ffeec3757f9ffe42554654afa3e3b6bc60df062495"
     },
     {
       "path": "modules/eacl/src/eacl/operator/batch_schedule.cljc",
@@ -313,7 +305,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/operator/evaluator.cljc",
-      "sha256": "6119086fd7636aaced95aba282e4839a76d67072c6b8242aa8b13a33bb5e7c60"
+      "sha256": "c627b24362679e214b8b11e4f873311aa3d4966b6993d93aaedea9a5c735c83b"
     },
     {
       "path": "modules/eacl/src/eacl/operator/lookup.cljc",
@@ -325,7 +317,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/operator/recursive.cljc",
-      "sha256": "e4d6a6050aa75a765bae4a2b2f446aacbc003bdd9cd9eebfd44f6df8d4057fde"
+      "sha256": "0bdda385807fe456184631c7a7cf661307c1f4436fb0973c0355a2453b73ee84"
     },
     {
       "path": "modules/eacl/src/eacl/operator/seekable.cljc",
@@ -333,7 +325,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/operator/vector_evaluator.cljc",
-      "sha256": "f9b26d5c4890baebb9c7e66ac9e1f4a57b430a51e671ed1e3effd0b5258b7b61"
+      "sha256": "44df2b7c14a6d127921cde8310339b58b27967402abe9b18a28912f5d07988d3"
     },
     {
       "path": "modules/eacl/src/eacl/permission_tree.cljc",
@@ -341,7 +333,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/proof_frame.cljc",
-      "sha256": "b20158e313fbdbef221f235ec1e3831931262c6af269e3877ecf939889eef506"
+      "sha256": "96fc5e94333307ffc9ee63ccc339be4a07904f9854c9a22b94a8616739bc05d5"
     },
     {
       "path": "modules/eacl/src/eacl/relationships/endpoint_pair.cljc",
@@ -365,11 +357,11 @@
     },
     {
       "path": "modules/eacl/src/eacl/relay.cljc",
-      "sha256": "3f352bb4b52d22e7c7605f7574a8a1b67dd6f66199fb624df552e3a7577a58f9"
+      "sha256": "422c51fa7da19573fc2c362b5b864d50353c77b97d72dc561f66f757cac01a9a"
     },
     {
       "path": "modules/eacl/src/eacl/request/context.cljc",
-      "sha256": "de1b93330e3a8b99fb2a22dfabd2e10d6a27e8abbad2a4235346b7dfb3662a84"
+      "sha256": "f2b012b7da7c08e8bec8988af42b06e43cf407c996052bd3112de3eef4bdb294"
     },
     {
       "path": "modules/eacl/src/eacl/request/counters.cljc",
@@ -393,7 +385,7 @@
     },
     {
       "path": "modules/eacl/src/eacl/schema/expression_persistence.cljc",
-      "sha256": "eac35394a315ad81de2d3770e1b63732f1e4985392cc524cdc0e796daaeb764c"
+      "sha256": "6317d48e472c4994dfb127c6b4f08abf2f98a35d50ec93fe4692101a64237630"
     },
     {
       "path": "modules/eacl/src/eacl/schema/expression_policy.cljc",
@@ -425,11 +417,11 @@
     },
     {
       "path": "modules/eacl/src/eacl/subproblem_cache.cljc",
-      "sha256": "383f1e47338bd89acab87a7727a188203c1ac670a2faf647c356ba684d17c724"
+      "sha256": "8d1e229c9557d28f9e2222c29c8147eaeae3ade25f47061576b597e408f39a93"
     },
     {
       "path": "modules/eacl/src/eacl/verified_kernel.cljc",
-      "sha256": "da1e7f143ce2087f0ee4737e7ed3a32c4dfe0bc4a68ae983e4353ed47368f228"
+      "sha256": "2108a5b24e6f9c6fa0e517d65277227ec1d6461a6f42a39cdd60e4ff82ab4118"
     }
   ],
   "scope": {
@@ -441,8 +433,6 @@
       "eacl.engine.v8/count-subjects",
       "eacl.engine.relationships/execute-page",
       "eacl.engine.relationships/execute-plan",
-      "eacl.relay/lookup-visited-page",
-      "eacl.relay/remember-visited-page!",
       "eacl.relay/select-continuation-adapter",
       "eacl.relay/prepare-page-query",
       "eacl.relay/internalize-page-query",
@@ -455,10 +445,11 @@
       "eacl.cache/export-basis-snapshot",
       "eacl.cache/restore-basis-snapshot!",
       "eacl.cache/cache-content-revision",
-      "eacl.subproblem-cache/resolve!",
-      "eacl.subproblem-cache/resolve-bound!",
-      "eacl.subproblem-cache/resolve-layered-bound!",
       "eacl.subproblem-cache/lookup!",
+      "eacl.subproblem-cache/lookup-eligible!",
+      "eacl.subproblem-cache/publish!",
+      "eacl.subproblem-cache/lookup-denotation!",
+      "eacl.subproblem-cache/publish-denotation!",
       "eacl.subproblem-cache/export-snapshot",
       "eacl.subproblem-cache/restore-store",
       "eacl.consistency/select",
@@ -526,10 +517,10 @@
       "eacl.datalevin.core/make-client",
       "eacl.datalevin.core/db"
     ],
-    "rootCount": 91,
-    "unionInternalDefinitionCount": 2288,
-    "unionInternalDefinitionIdsSha256": "eb6a7217be77454d10a232099e436c2042c7b41c984f8edd75fcd772b8bbbb12",
-    "unionDefinitionLocationsSha256": "99302601d941d70d05c35c32915b8cde2257be88e8ca1b79530f2c3b96ef72b4",
+    "rootCount": 90,
+    "unionInternalDefinitionCount": 2297,
+    "unionInternalDefinitionIdsSha256": "04a3b179d317f71f4f6bac0f383e7d098cf28cd1b2ae537f63824a1fe550fa0c",
+    "unionDefinitionLocationsSha256": "5bf30297ffeccac33b9d3ecd07d0a6b1519b17ec26073b5a4bafd7f58825a0ed",
     "definitionsBySource": {
       "modules/eacl-datahike/src/eacl/datahike/backend.clj": {
         "count": 26,
@@ -627,10 +618,6 @@
         "count": 2,
         "idsSha256": "c44ba8e5106ff11d12edf937a45597832371e92e4eeda556ab40952f1f7d7dc4"
       },
-      "modules/eacl-datomic/src/eacl/datomic/io_stats.clj": {
-        "count": 1,
-        "idsSha256": "bb3fbeeff2130e21852bfff62f038706c08f74ab5053f4ff4ecf86e9f03c01c9"
-      },
       "modules/eacl-datomic/src/eacl/datomic/schema.clj": {
         "count": 42,
         "idsSha256": "55db80766d6e9e1cb6bccbb00c4125df0fbbdf7687eb5211e6d0a92ae09ad97a"
@@ -672,32 +659,44 @@
         "idsSha256": "ef9aa3e16ca9d3be217a0b624ada6fb3b9b79218743c4f8afd945b1dd76abc90"
       },
       "modules/eacl/src/eacl/cache.cljc": {
-        "count": 63,
-        "idsSha256": "7aa974b7b6971f7d543af4401597fa20e8996fdc8e2c7bc88afb1f39b6859ef3"
+        "count": 84,
+        "idsSha256": "87f41910daa62691184f4524c35dcd832db857fc28877fc94b1b475e3fd66045"
+      },
+      "modules/eacl/src/eacl/cache/derived_schema.cljc": {
+        "count": 19,
+        "idsSha256": "4994381ea4f9e294ee0a1c53320466c853bd605a247a82fafa132775c566ce78"
+      },
+      "modules/eacl/src/eacl/cache/key.cljc": {
+        "count": 9,
+        "idsSha256": "694b43741d1c52a60722b269b9efb02be25e7c0f8c15fb5a088ec8604f72291b"
+      },
+      "modules/eacl/src/eacl/cache/standard_lru.cljc": {
+        "count": 15,
+        "idsSha256": "881762b3df316722cb8076847fa82db7ec6d1d1f84d636d6e7972f962d327225"
       },
       "modules/eacl/src/eacl/causal_token.cljc": {
         "count": 17,
         "idsSha256": "75c0ad0273fa5828aca5833652de740c7b968ed2565099995d8ca177fdc1d1b4"
       },
       "modules/eacl/src/eacl/client/orchestration.cljc": {
-        "count": 112,
-        "idsSha256": "1b0d670f8943cce96c0cc39ebb27cf258c865e5efb16cd51872a56863564ad9d"
+        "count": 128,
+        "idsSha256": "050d268720f37098e5552a06167c25abadefcd71c6084695febd8ecefe5367c8"
       },
       "modules/eacl/src/eacl/consistency.cljc": {
         "count": 24,
         "idsSha256": "da7b5ef9fd58040239d6641c0e71bc5df3d2a3cdf446322cfacdab31fb264e5e"
       },
       "modules/eacl/src/eacl/continuation.cljc": {
-        "count": 25,
-        "idsSha256": "8724eda80406e3c8529e90d51e119c211badaa3159f5db66a0a251af08dabb74"
+        "count": 18,
+        "idsSha256": "fc277fbf632ebd227940cce3a9ffb9aaf6824c3fcc6f918afbc27158a0128f98"
       },
       "modules/eacl/src/eacl/core.cljc": {
         "count": 65,
         "idsSha256": "7ea0191b3e5eeac4f5a3f3b7d5b1ce0b59354d035c97ecf7195f940856c0aa98"
       },
       "modules/eacl/src/eacl/cursor.cljc": {
-        "count": 39,
-        "idsSha256": "7e407194f78858f7462d779ecef28777f1ac2efedebc5eec7fd43deb86fb659c"
+        "count": 49,
+        "idsSha256": "7cf6de3ec41eacd6621f20d95697ca8d763b26e74f5ae8d5e6bb16711e7016a6"
       },
       "modules/eacl/src/eacl/engine/least_path.cljc": {
         "count": 46,
@@ -708,8 +707,8 @@
         "idsSha256": "d97376a86bfe358244e4af81e146bd274c5e51f1dace27903bcfb62385fc1d32"
       },
       "modules/eacl/src/eacl/engine/portable_decisions.cljc": {
-        "count": 30,
-        "idsSha256": "3b57b5ac046321cf325a2e81ccb3433021abb7f96b035a9f068fd66e09f04ab2"
+        "count": 28,
+        "idsSha256": "c4229967da413facf27cfebd09dead58a9c90f19fdcd96bb2293ae06125f7edc"
       },
       "modules/eacl/src/eacl/engine/portable_indexed.cljc": {
         "count": 48,
@@ -724,8 +723,8 @@
         "idsSha256": "5f3a4ac2eeec35fb215bd606874583921bf6a05a1b32b80f35d740531cac4dee"
       },
       "modules/eacl/src/eacl/engine/stable_page.cljc": {
-        "count": 14,
-        "idsSha256": "dbc9f553fe40d7a7d9d749b2fdca73f801ee5ee6355e3fbecffe9e399763b365"
+        "count": 15,
+        "idsSha256": "7fe12f31723daed0f3cd44e69783b335f1fe99ff6f3a55210b064523fc6a7bff"
       },
       "modules/eacl/src/eacl/engine/stable_reducer.cljc": {
         "count": 56,
@@ -737,31 +736,23 @@
       },
       "modules/eacl/src/eacl/engine/v8.cljc": {
         "count": 114,
-        "idsSha256": "96dad43b1dd10c4183866e9db0c89dce537bdce57efd9c494e2dc6bc950c9a23"
+        "idsSha256": "84ecdb73e004b87d1689507e0128286d5b93263cc8ed133ddaa30d84da67ddb8"
       },
       "modules/eacl/src/eacl/exact_integer.cljc": {
         "count": 2,
         "idsSha256": "7a21b54a6d4ef4988273f3ae0b7faafc3981137b80ab7d89aa72f21db6549f69"
       },
       "modules/eacl/src/eacl/execution.cljc": {
-        "count": 27,
-        "idsSha256": "1ca0651bd420d5203a2e7b0bdf4070ae3f460ca0fa2cd10f8aee9fc67446a735"
-      },
-      "modules/eacl/src/eacl/formal/current_cache_refinement.cljc": {
-        "count": 7,
-        "idsSha256": "19eb0976f83372a56df8660c09ee977c8d277e5c7018142f7535e774d2131c8d"
+        "count": 24,
+        "idsSha256": "f3c8ebd435a822bf69244e2d2fcfa7fc7e8f8453fbd60cbc583ef5b295646aea"
       },
       "modules/eacl/src/eacl/formal/production_kernel_cljs.cljs": {
-        "count": 3,
-        "idsSha256": "1da7c88301159a3cf3491f95be0ad93864b5a93b6fcc4109edd2c38c4ecd6bd8"
+        "count": 2,
+        "idsSha256": "7ca9dabbf42d1845ca2bd913af5d0db50d148bc082f47762c0f71db66d1d414c"
       },
       "modules/eacl/src/eacl/formal/production_kernel.clj": {
-        "count": 87,
-        "idsSha256": "f6bccf27eabed34d1ce5d80d0ee15966460d508f41d697992a35f89bb0ac3c3b"
-      },
-      "modules/eacl/src/eacl/metrics.cljc": {
-        "count": 15,
-        "idsSha256": "2d8e8bf4a33586cf9efdf14a43e114b42287d88ec05e50ff9207180da9160d94"
+        "count": 82,
+        "idsSha256": "194d3a28efe2c33228fc193c2fd84b20f52075f872f94489b9a8ba7847f9b79c"
       },
       "modules/eacl/src/eacl/operator/batch_schedule.cljc": {
         "count": 5,
@@ -792,24 +783,24 @@
         "idsSha256": "3ebdb7296bbca4539414c24522afb0615833f9da5e7eb33c29ea8ed328937109"
       },
       "modules/eacl/src/eacl/operator/recursive.cljc": {
-        "count": 67,
-        "idsSha256": "2bb14b5d41ab0b9492154c5c6415bcd6baaffe05a06e37a7c10564a46d2cacba"
+        "count": 65,
+        "idsSha256": "8431b3ce188bf7a250fb3b92f2bf919324b4c82a146bd38a2e55967f069ad3cd"
       },
       "modules/eacl/src/eacl/operator/seekable.cljc": {
         "count": 17,
         "idsSha256": "fafde832c195bc54eab7ab7819fe015addf234de1bb5ec2731049c011c0b5804"
       },
       "modules/eacl/src/eacl/operator/vector_evaluator.cljc": {
-        "count": 22,
-        "idsSha256": "b9f10b322720238047ff6b2b43415f645b9fe35ee3103b8c22b759befb61a15b"
+        "count": 20,
+        "idsSha256": "29ad4e5c1519c137819c25b727b07ddb8afc2fc927030af13ba61e4f28d6d8bc"
       },
       "modules/eacl/src/eacl/permission_tree.cljc": {
         "count": 20,
         "idsSha256": "04ea7b002708c3b3a44bac0ef707458d30f38712156fe512c85672c246d82e49"
       },
       "modules/eacl/src/eacl/proof_frame.cljc": {
-        "count": 19,
-        "idsSha256": "2e3c5d1013def5958dfe62917b75b3927e15ef6ffcf5ef0c29d0eabeab6ee760"
+        "count": 20,
+        "idsSha256": "96bd27f83a89f613d7093887193afcc31849900cfc47ae85acae498b320953ec"
       },
       "modules/eacl/src/eacl/relationships/endpoint_pair.cljc": {
         "count": 7,
@@ -828,8 +819,8 @@
         "idsSha256": "fb4e5788ec3bdcef44e445bbeaf59b2a34727116072b77ddfd4f0f6747e11894"
       },
       "modules/eacl/src/eacl/relay.cljc": {
-        "count": 66,
-        "idsSha256": "98ba19fc9cabfbba008fd48df7527bcb3835bd20a1f40514039d35e18b00fb48"
+        "count": 46,
+        "idsSha256": "c1c6996c2a1fe73929650571d91a5b54698e597920434d5f6b90e5ff2af26ea1"
       },
       "modules/eacl/src/eacl/request/context.cljc": {
         "count": 29,
@@ -852,8 +843,8 @@
         "idsSha256": "588e16d482e50afb5c094ef56a53f13789824b791f05a5be408314a6aa7ffac1"
       },
       "modules/eacl/src/eacl/schema/expression_persistence.cljc": {
-        "count": 17,
-        "idsSha256": "19d2b42f8ef36487b1de71594252b4acc44e605714a4caa499ff8fc7bcb1b789"
+        "count": 16,
+        "idsSha256": "f2a43a56a123891150f5b153e03b883eb756870906fdce2f8e06e6eaee6128e4"
       },
       "modules/eacl/src/eacl/schema/expression_policy.cljc": {
         "count": 10,
@@ -888,30 +879,112 @@
         "idsSha256": "a0426d61a9a2b2a034eb4d7085c6bbc1aacfcfd1720b2c6a3352f87b79825524"
       },
       "modules/eacl/src/eacl/subproblem_cache.cljc": {
-        "count": 57,
-        "idsSha256": "fe9cd3e12fc9328af1c60ada7330a3358aef1c3ec7516be96e332e7a0d8cf651"
+        "count": 49,
+        "idsSha256": "6d23a413e7ba390021c77947568b7ac1da719a3b89f898c3d3446010388bd99d"
       },
       "modules/eacl/src/eacl/verified_kernel.cljc": {
-        "count": 106,
-        "idsSha256": "5dbddf51a638b9183ab4496bab1b426b078aae0131b9d4a0ede52b5b26ebb670"
+        "count": 97,
+        "idsSha256": "9630fd2ab578a3a6ec00c04b55fa072d913b50849aa89e5d66586881f7d6bf7d"
       }
     },
     "exclusions": {
       "adapterSemantics": "backend-dispatch.edn closes literal operation keys, but adapter operation semantics remain named trusted obligations rather than source-refined theorems",
-      "assurance": "presence in this closure does not imply theorem coverage"
+      "assurance": "presence in this closure does not imply theorem coverage",
+      "intentionalNonMigrations": [
+        {
+          "owner": "request-local stable-page execution",
+          "state": "bounded checkpoint atom",
+          "reason": "semantic resume state, not shared cross-request retention"
+        },
+        {
+          "owner": "DataScript adapter",
+          "state": "capacity-one volatile database wrapper",
+          "reason": "identical-database basis optimization, not a multi-entry store"
+        },
+        {
+          "owner": "request evaluator",
+          "state": "memos, visited sets, queues, and worklists",
+          "reason": "request-owned algorithmic state"
+        },
+        {
+          "owner": "database backends",
+          "state": "backend-owned node and index caches",
+          "reason": "outside EACL authorization retention ownership"
+        },
+        {
+          "owner": "consistency selection",
+          "state": "authoritative snapshot and causal state",
+          "reason": "correctness state must not be evictable"
+        }
+      ]
+    },
+    "policySpecificDecisionGuard": {
+      "status": "passed",
+      "forbiddenTokens": [
+        "current-cache-decision",
+        "subproblem-cache-decision",
+        "current-cache-refinement",
+        "specialized-current-cache-action",
+        "current-cache-specialization",
+        "PageNavigationCache",
+        "page-navigation-cache",
+        "lookup-visited-page",
+        "remember-visited-page!",
+        "CacheValidationUpdate",
+        "(defprotocol CacheStore",
+        "ExactGeneration",
+        "ManagedGeneration",
+        "sighting-transition",
+        "touch-generation!",
+        "install-exact-generation!",
+        "select-exact-generation!",
+        "install-managed-generation!",
+        "select-managed-generation!",
+        "compact-entry-order",
+        "compact-tombstone-order",
+        "remember-tombstone",
+        "publication-weight-ceiling",
+        "maybe-compact-lru",
+        "touch-entry!",
+        "default-projection-max-weight",
+        "default-denotation-max-weight",
+        "default-answer-max-weight",
+        "relationship-observation",
+        "resolve-independent!",
+        "resolve-exact!",
+        "resolve-bound!",
+        "resolve-layered-bound!",
+        "managed-subproblem-key",
+        "subset-descriptor",
+        "*managed-store*",
+        "*managed-key-fn*",
+        "*managed-scope*",
+        "managed-proof-max-atoms",
+        "projection-max-entries",
+        "(defn get!",
+        "(defn put!"
+      ]
     }
   },
   "attribution": {
     "inlineDefrecordMethods": "unattributed usages inside exact clj-kondo defrecord source spans are assigned to the containing record root",
-    "inlineDefrecordCount": 84
+    "inlineDefrecordCount": 72
   },
   "roots": {
     "eacl.engine.v8/can?": {
-      "internalDefinitionCount": 487,
-      "internalDefinitionIdsSha256": "88d635387d229b592682c3a53466b5a3a462d79958a9bf922ded37c2b910b8cd",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 476,
+      "internalDefinitionIdsSha256": "9c2d75dde43ed9ce4ade2a9b4b3ec316866d7d21518ef5a21ae765bb9b7edad8",
+      "externalCallCount": 18,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/intersection",
         "clojure.string/join",
@@ -924,11 +997,19 @@
       ]
     },
     "eacl.engine.v8/lookup-resources": {
-      "internalDefinitionCount": 826,
-      "internalDefinitionIdsSha256": "ab51ea92917005775042bbd5a5eeb6f76f09a6405a388b4e1937eac2e123424f",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 807,
+      "internalDefinitionIdsSha256": "24167c34499031f8f0289f1adf8bca74f81b3bfe250073641f02159bd1674d8b",
+      "externalCallCount": 18,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/intersection",
         "clojure.string/join",
@@ -941,11 +1022,19 @@
       ]
     },
     "eacl.engine.v8/lookup-subjects": {
-      "internalDefinitionCount": 826,
-      "internalDefinitionIdsSha256": "9af3536986a5392944628b4b8715c2c4d99bbc196c6890d11d056e8fa5e3880d",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 807,
+      "internalDefinitionIdsSha256": "f4920ca845f1f7f74c0da03638e50109c5dbeccfb4c6fc81b64d47d0c60b8d7e",
+      "externalCallCount": 18,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/intersection",
         "clojure.string/join",
@@ -958,11 +1047,19 @@
       ]
     },
     "eacl.engine.v8/count-resources": {
-      "internalDefinitionCount": 692,
-      "internalDefinitionIdsSha256": "ca326eeeef340f965e80c18170054870d8151ebe254a3f165196a26a3bc0a912",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 682,
+      "internalDefinitionIdsSha256": "c9087c7d32e0ab8406a629b17c0bab033184848e69e793619652c8307fa11de6",
+      "externalCallCount": 18,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/intersection",
         "clojure.string/join",
@@ -975,11 +1072,19 @@
       ]
     },
     "eacl.engine.v8/count-subjects": {
-      "internalDefinitionCount": 692,
-      "internalDefinitionIdsSha256": "33e32674452d50ccd448b1a89fda1b128f38f6c7ba7b44aba968790c77ec4161",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 682,
+      "internalDefinitionIdsSha256": "44769dd31902734f2d714a73024bde70eee0287b4e55aae90e0469d767e2007b",
+      "externalCallCount": 18,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/intersection",
         "clojure.string/join",
@@ -992,8 +1097,8 @@
       ]
     },
     "eacl.engine.relationships/execute-page": {
-      "internalDefinitionCount": 130,
-      "internalDefinitionIdsSha256": "8b1a95dcbfd06e056da5dfb0616d0618061240253c7a2b6e385208ef941b0a59",
+      "internalDefinitionCount": 121,
+      "internalDefinitionIdsSha256": "57efb1eee6df92ea27f24af08067d772217d38791eb25d09aa975e8304a77057",
       "externalCallCount": 1,
       "externalCalls": [
         "unresolved/js/Number.isSafeInteger"
@@ -1005,36 +1110,22 @@
       "externalCallCount": 0,
       "externalCalls": []
     },
-    "eacl.relay/lookup-visited-page": {
-      "internalDefinitionCount": 55,
-      "internalDefinitionIdsSha256": "b09bd59ec49c2c134d1ef5414280c5afaf71c8658c9d2e79889cc00fbda899d6",
-      "externalCallCount": 2,
-      "externalCalls": [
-        "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger"
-      ]
-    },
-    "eacl.relay/remember-visited-page!": {
-      "internalDefinitionCount": 94,
-      "internalDefinitionIdsSha256": "834b2ed389f8fd80214ece39789c7f1544ef125f83b5238f345e00e094f43b6e",
-      "externalCallCount": 8,
-      "externalCalls": [
-        "cljs.reader/read-string",
-        "clojure.edn/read-string",
-        "clojure.string/join",
-        "clojure.string/replace",
-        "goog.crypt/stringToUtf8ByteArray",
-        "unresolved/js/Math.floor",
-        "unresolved/js/Number.isSafeInteger",
-        "unresolved/js/String.fromCharCode"
-      ]
-    },
     "eacl.relay/select-continuation-adapter": {
-      "internalDefinitionCount": 329,
-      "internalDefinitionIdsSha256": "ad480ec55c843a0a8fbfa679df8171e27703a5557e023c7eaef49e5b51368a40",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 338,
+      "internalDefinitionIdsSha256": "dee8e7d77e04fb651ddeff8a2dbc26a4d1096c33b7745f8dbf63be885d0f9845",
+      "externalCallCount": 23,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1050,11 +1141,21 @@
       ]
     },
     "eacl.relay/prepare-page-query": {
-      "internalDefinitionCount": 333,
-      "internalDefinitionIdsSha256": "3d1e8148b1583e183682f3213bf3652ee6a947877e7ea3c2ef252d6c57d27378",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 342,
+      "internalDefinitionIdsSha256": "0370bd337d26e1fc757ca6f82dfdb8a6fa432fad63d4a3814fc73ef11a848e09",
+      "externalCallCount": 23,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1070,11 +1171,21 @@
       ]
     },
     "eacl.relay/internalize-page-query": {
-      "internalDefinitionCount": 281,
-      "internalDefinitionIdsSha256": "fd313f6f8f3301cfa806b2380125e9e78cac03ba174895e715c89d0f79359f72",
-      "externalCallCount": 13,
+      "internalDefinitionCount": 290,
+      "internalDefinitionIdsSha256": "3c62396da9d4caf83c7a5cb8e4871caa06056a4886ab5dded5845dc0eac5cece",
+      "externalCallCount": 23,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1090,11 +1201,21 @@
       ]
     },
     "eacl.relay/externalize-page": {
-      "internalDefinitionCount": 187,
-      "internalDefinitionIdsSha256": "243d72bef4cd23c883d5c5dcc060e2a7514cb588a90953fab78e93c3e56d5d4f",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 177,
+      "internalDefinitionIdsSha256": "2d579abe3f0b1b7467450d09dff62dd03f7a61da7b3368f2fe5c9ca04589f800",
+      "externalCallCount": 20,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1107,11 +1228,21 @@
       ]
     },
     "eacl.relay/externalize-relationship-page": {
-      "internalDefinitionCount": 187,
-      "internalDefinitionIdsSha256": "7b9e3d190fef42ee8c2b20ff5ac2319e9352e07eddbbe231c55a2ce90bd596b3",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 177,
+      "internalDefinitionIdsSha256": "ca7125480aee717afa8340bc44579d825a2dbd403b9206836db8aa6432fe3560",
+      "externalCallCount": 20,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1124,11 +1255,21 @@
       ]
     },
     "eacl.cursor/cursor->token": {
-      "internalDefinitionCount": 61,
-      "internalDefinitionIdsSha256": "fbf2f9d702b8e6dc32ad83ed9cee5050cde95605d84afbdd7bdb49c5a9054cbd",
-      "externalCallCount": 8,
+      "internalDefinitionCount": 78,
+      "internalDefinitionIdsSha256": "e0a17b122079064daf7201c804b611bb1e85f83050b3d553f916762ac4f6191b",
+      "externalCallCount": 18,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1139,11 +1280,19 @@
       ]
     },
     "eacl.cursor/token->cursor": {
-      "internalDefinitionCount": 63,
-      "internalDefinitionIdsSha256": "f6d06b90fe645408cce54076bd27316ff7117ed3710be5cf167c76954274450b",
-      "externalCallCount": 10,
+      "internalDefinitionCount": 78,
+      "internalDefinitionIdsSha256": "cbca5a56a6445568f9af44a8a9e0c4995e3b56b3dd9ade137f5aa368308e012f",
+      "externalCallCount": 18,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1156,88 +1305,166 @@
       ]
     },
     "eacl.cache/resolve-basis!": {
-      "internalDefinitionCount": 199,
-      "internalDefinitionIdsSha256": "a1507f55c68665984f6e7d759d1270785d6c5d7fbd134f299b3d29bdb16291fb",
-      "externalCallCount": 2,
+      "internalDefinitionCount": 114,
+      "internalDefinitionIdsSha256": "55ae5ef57419eb6ad5253c2f0d8813b46b61d1d2e9f8abcb63ecc1fc9861c865",
+      "externalCallCount": 11,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
+        "clojure.set/difference",
         "unresolved/js/Math.floor",
         "unresolved/js/Number.isSafeInteger"
       ]
     },
     "eacl.cache/resolve-managed-read-only!": {
-      "internalDefinitionCount": 56,
-      "internalDefinitionIdsSha256": "f9a3a06529528ce4f552dd34d3a29f3b97e140119f6c6494f82f3c14fd157824",
-      "externalCallCount": 1,
+      "internalDefinitionCount": 61,
+      "internalDefinitionIdsSha256": "25ede3ebd818c46bed9aba233b187545938829e73c1ff96c5db16d1f0511b542",
+      "externalCallCount": 8,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.set/difference",
         "unresolved/js/Number.isSafeInteger"
       ]
     },
     "eacl.cache/export-basis-snapshot": {
-      "internalDefinitionCount": 15,
-      "internalDefinitionIdsSha256": "abd1f7cac230c24ce390d65e4251d9f77e4db44e69015aaf874af658027501ca",
-      "externalCallCount": 0,
-      "externalCalls": []
+      "internalDefinitionCount": 96,
+      "internalDefinitionIdsSha256": "6615167d821a4c0dd373b28f796ec57bebd1b0a028f4b13a6f6b90788f669e4d",
+      "externalCallCount": 4,
+      "externalCalls": [
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "unresolved/js/Number.isSafeInteger"
+      ]
     },
     "eacl.cache/restore-basis-snapshot!": {
-      "internalDefinitionCount": 39,
-      "internalDefinitionIdsSha256": "2564623ed3b316a1b7d8acd1daa810291db75b740d2c089ac2cd7b652dcccb68",
-      "externalCallCount": 1,
+      "internalDefinitionCount": 115,
+      "internalDefinitionIdsSha256": "5aa94a6dba76e89c8aacdbc317e25fd00532e989aa803e45551c5c6115d58331",
+      "externalCallCount": 10,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
+        "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
+        "clojure.edn/read-string",
+        "clojure.string/join",
         "unresolved/js/Number.isSafeInteger"
       ]
     },
     "eacl.cache/cache-content-revision": {
-      "internalDefinitionCount": 3,
-      "internalDefinitionIdsSha256": "315b35dd6b2d5a61d6a894e3d5c4582e44c6761e01eece6f3edfce929fe8a185",
+      "internalDefinitionCount": 4,
+      "internalDefinitionIdsSha256": "4ccd1c5e55713f7cda68df72a4e0e2f33018464d594834a0f78fbcc0cf4d569e",
       "externalCallCount": 0,
       "externalCalls": []
     },
-    "eacl.subproblem-cache/resolve!": {
-      "internalDefinitionCount": 29,
-      "internalDefinitionIdsSha256": "cc69c4f07aba86169d38f0b6ec0e321f24fbb1cfd31af5f39f637cd1ae84b27d",
-      "externalCallCount": 1,
+    "eacl.subproblem-cache/lookup!": {
+      "internalDefinitionCount": 7,
+      "internalDefinitionIdsSha256": "ea885498677a624f3a057930a2baa2922c376e6515a062ff55f8e886e777bbdd",
+      "externalCallCount": 6,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup"
+      ]
+    },
+    "eacl.subproblem-cache/lookup-eligible!": {
+      "internalDefinitionCount": 9,
+      "internalDefinitionIdsSha256": "67fbdd9f1c07a48db1c9ee746c617da01a47a9479b82cea1c2ecfd2af8d434ac",
+      "externalCallCount": 6,
+      "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup"
+      ]
+    },
+    "eacl.subproblem-cache/publish!": {
+      "internalDefinitionCount": 23,
+      "internalDefinitionIdsSha256": "aa3c1d0cc153563eaa7acff779cb4f8310695e73af024c4edf2011a90c4c4c75",
+      "externalCallCount": 5,
+      "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/miss",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/miss",
         "unresolved/js/Math.floor"
       ]
     },
-    "eacl.subproblem-cache/resolve-bound!": {
-      "internalDefinitionCount": 30,
-      "internalDefinitionIdsSha256": "cd7c45bd982c1dff1f87726d09b3421fb84f2aae1a89f7ae32b5bf346307716f",
-      "externalCallCount": 1,
+    "eacl.subproblem-cache/lookup-denotation!": {
+      "internalDefinitionCount": 13,
+      "internalDefinitionIdsSha256": "129d15708001a8282634ebe133f6d2d9d606f8639cd3405bba5b3ff2e8263c09",
+      "externalCallCount": 6,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup"
+      ]
+    },
+    "eacl.subproblem-cache/publish-denotation!": {
+      "internalDefinitionCount": 27,
+      "internalDefinitionIdsSha256": "1023eac7b04b38f3ce8fcb42689cd0b04e7a8a1552f8572e9ac2ee4cbfe1360f",
+      "externalCallCount": 5,
+      "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/miss",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/miss",
         "unresolved/js/Math.floor"
       ]
     },
-    "eacl.subproblem-cache/resolve-layered-bound!": {
-      "internalDefinitionCount": 40,
-      "internalDefinitionIdsSha256": "b4924d9782c14f0d14f1f1747b6e477c80867a9a77a385592bd847abef1351d2",
-      "externalCallCount": 2,
+    "eacl.subproblem-cache/export-snapshot": {
+      "internalDefinitionCount": 38,
+      "internalDefinitionIdsSha256": "e5fbc37ce64f4d72d7bbe8f6af88e049b0662683677b7e90962dd128aef4c738",
+      "externalCallCount": 4,
       "externalCalls": [
-        "unresolved/js/Math.floor",
+        "cljs.reader/read-string",
+        "clojure.edn/read-string",
+        "clojure.string/join",
         "unresolved/js/Number.isSafeInteger"
       ]
     },
-    "eacl.subproblem-cache/lookup!": {
-      "internalDefinitionCount": 11,
-      "internalDefinitionIdsSha256": "f5a5fce70823e11dd591f7adf6db3781695aa5777ce2227c267ee8c4e6f4752f",
-      "externalCallCount": 0,
-      "externalCalls": []
-    },
-    "eacl.subproblem-cache/export-snapshot": {
-      "internalDefinitionCount": 10,
-      "internalDefinitionIdsSha256": "3c6292e1847ccf3fa1a81b4671afd5beb3e8d5ba0ca03b05fc894e4441b82d03",
-      "externalCallCount": 0,
-      "externalCalls": []
-    },
     "eacl.subproblem-cache/restore-store": {
-      "internalDefinitionCount": 18,
-      "internalDefinitionIdsSha256": "cda2dfcfd309584dbbec1940f327523e123cee1fed46a2fcd8629bd4e8d0fefa",
-      "externalCallCount": 0,
-      "externalCalls": []
+      "internalDefinitionCount": 47,
+      "internalDefinitionIdsSha256": "f3ced09a21d1c0f68d2bbce4d18b007deab3e82dbf5cd3548fc57aa25b082187",
+      "externalCallCount": 10,
+      "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
+        "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
+        "clojure.edn/read-string",
+        "clojure.string/join",
+        "unresolved/js/Number.isSafeInteger"
+      ]
     },
     "eacl.consistency/select": {
-      "internalDefinitionCount": 275,
-      "internalDefinitionIdsSha256": "87b80545b727feab98588ec3695f32ecf616abe14c899b04f8ca820e98eef575",
+      "internalDefinitionCount": 266,
+      "internalDefinitionIdsSha256": "a32f5ea3db2203e37de31f921f2376925d19c985ed4ee70fc6652f0324500cad",
       "externalCallCount": 11,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1291,8 +1518,8 @@
       ]
     },
     "eacl.formal.production-kernel/GeneratedJavaKernel": {
-      "internalDefinitionCount": 85,
-      "internalDefinitionIdsSha256": "0b70dee6ff7dee89af2b3880babce6bf5de0f2a0e9dd0f55d622a2edf0b557c4",
+      "internalDefinitionCount": 81,
+      "internalDefinitionIdsSha256": "0a55ce9495679be9cc5d4ae882f0b8a401f7a8b8ce028a249d55f07d8acfcd58",
       "externalCallCount": 0,
       "externalCalls": []
     },
@@ -1303,8 +1530,8 @@
       "externalCalls": []
     },
     "eacl.engine.portable-decisions/PortableDecisionKernel": {
-      "internalDefinitionCount": 29,
-      "internalDefinitionIdsSha256": "ab3489e32f760f73d3b8a20b3e93c08b0c1e2a786b2dfc92fe86b963679ce4a1",
+      "internalDefinitionCount": 27,
+      "internalDefinitionIdsSha256": "5efe3f64c81e4e2817d0235a466849e8bd5ee1efc64cb4e9bf85a56ed6898266",
       "externalCallCount": 0,
       "externalCalls": []
     },
@@ -1477,8 +1704,8 @@
       "externalCalls": []
     },
     "eacl.client.orchestration/Acl": {
-      "internalDefinitionCount": 422,
-      "internalDefinitionIdsSha256": "1478c7f81b98bb564c12434ebef3cf268e68aa214f48c773a9d59ee0cc735e58",
+      "internalDefinitionCount": 413,
+      "internalDefinitionIdsSha256": "954dc305962359e1387fedf1fdcd6bba0e4e12eb86084ae1bf3e4dd65a53f462",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1499,12 +1726,25 @@
       ]
     },
     "eacl.client.orchestration/Snapshot": {
-      "internalDefinitionCount": 1348,
-      "internalDefinitionIdsSha256": "06029beef9c680763c41814d32075c65f60dd5670b02956d9cf86a2757bf9130",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 1347,
+      "internalDefinitionIdsSha256": "195ed4ab1c1a0e78a71f0bc0702e87df27c89fa58b8b4429c196d1a75ba7b6cb",
+      "externalCallCount": 28,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
+        "clojure.set/difference",
         "clojure.set/intersection",
         "clojure.set/union",
         "clojure.string/join",
@@ -1521,8 +1761,8 @@
       ]
     },
     "eacl.client.orchestration/speculative-with-snapshot": {
-      "internalDefinitionCount": 68,
-      "internalDefinitionIdsSha256": "2656d8dcf6f6fbe4eb11ddb205f61a5c650413bb7f70217bb29f5095da34b5fc",
+      "internalDefinitionCount": 75,
+      "internalDefinitionIdsSha256": "bce9aba59bd7da3ac91cb643e1982bfbf2251144f47c72cf80146e1d496e0b96",
       "externalCallCount": 2,
       "externalCalls": [
         "clojure.set/union",
@@ -1530,8 +1770,8 @@
       ]
     },
     "eacl.client.orchestration/speculative-with-schema-snapshot": {
-      "internalDefinitionCount": 63,
-      "internalDefinitionIdsSha256": "bc7d15cac573b0445f6af5f2c1da03b019ec2d47086f93235c51f8fddef37b2f",
+      "internalDefinitionCount": 70,
+      "internalDefinitionIdsSha256": "79b2368d6531b5654aba7ffa8d7c374a869b97b242d3e4e5f0c83ea26c4f2a48",
       "externalCallCount": 2,
       "externalCalls": [
         "clojure.set/union",
@@ -1539,8 +1779,8 @@
       ]
     },
     "eacl.client.orchestration/export-cache-snapshot": {
-      "internalDefinitionCount": 438,
-      "internalDefinitionIdsSha256": "9b097e90ada5a6ca413951b060e30e24640da9210c44986807408583456565e3",
+      "internalDefinitionCount": 484,
+      "internalDefinitionIdsSha256": "e4363978c48fb726bf17713f19f77cdaf2104d8553f1890da82593d3d8e612c1",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1561,11 +1801,17 @@
       ]
     },
     "eacl.client.orchestration/restore-cache-snapshot!": {
-      "internalDefinitionCount": 459,
-      "internalDefinitionIdsSha256": "6825e133fb9299967c1a597b3bad25d23e7954112912a3ab9749ff469f3bf314",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 540,
+      "internalDefinitionIdsSha256": "d941a52a26bfa842dc1ea1d2ff3cff53d4a6b955a41bfb5f6746adb7f9c65fe2",
+      "externalCallCount": 21,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1583,8 +1829,8 @@
       ]
     },
     "eacl.client.orchestration/cache-content-revision": {
-      "internalDefinitionCount": 426,
-      "internalDefinitionIdsSha256": "5686a412f2616530e8c109df2a1eb304e737a3ae9855ca993d1cdaee5aa75a1f",
+      "internalDefinitionCount": 417,
+      "internalDefinitionIdsSha256": "5ed9b186343ec5e657552528ef99a37dacf86fdc154dc3be55487e52965be1e2",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1605,11 +1851,13 @@
       ]
     },
     "eacl.client.orchestration/make-client": {
-      "internalDefinitionCount": 143,
-      "internalDefinitionIdsSha256": "7ca6307a54714d1d5a44bac85954468d2a0e3db0e53f15e8fe5a1ee1572c0ab6",
-      "externalCallCount": 8,
+      "internalDefinitionCount": 145,
+      "internalDefinitionIdsSha256": "422ed5c395ecf2d1c836c7a5e13bc1c53146a1a3c3846877f41d71a5f808d8ea",
+      "externalCallCount": 10,
       "externalCalls": [
+        "cljs.cache/lru-cache-factory",
         "cljs.reader/read-string",
+        "clojure.core.cache/lru-cache-factory",
         "clojure.edn/read-string",
         "clojure.string/join",
         "com.rpl.specter/transform",
@@ -1620,11 +1868,21 @@
       ]
     },
     "eacl.datomic.core/make-client": {
-      "internalDefinitionCount": 608,
-      "internalDefinitionIdsSha256": "fa1f86e2a1bf9246b89a8f481e1fc2b011cf938997d8e0020ea54f200bc44c02",
-      "externalCallCount": 32,
+      "internalDefinitionCount": 604,
+      "internalDefinitionIdsSha256": "84be41996166080ad2930c5dddca0b4c7ec316135b9c00458a685f38049ebbde",
+      "externalCallCount": 42,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/difference",
         "clojure.set/intersection",
@@ -1659,12 +1917,25 @@
       ]
     },
     "eacl.datomic.core/db": {
-      "internalDefinitionCount": 1351,
-      "internalDefinitionIdsSha256": "cf23bbf9f1fe71ef4b161a57cbc2286ca5acc47e1ea944b99267ce19dd8afba7",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 1350,
+      "internalDefinitionIdsSha256": "113fc10064eb2fce47df616424c1e253ac38bd182e34707b9dc06e443a08057a",
+      "externalCallCount": 28,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
+        "clojure.set/difference",
         "clojure.set/intersection",
         "clojure.set/union",
         "clojure.string/join",
@@ -1681,8 +1952,8 @@
       ]
     },
     "eacl.datomic.core/export-cache-snapshot": {
-      "internalDefinitionCount": 441,
-      "internalDefinitionIdsSha256": "e3e1e08ef87fffe73832757659f11602c2e26c9cf8fde35efff31860217b965b",
+      "internalDefinitionCount": 487,
+      "internalDefinitionIdsSha256": "1022ecbe01161466d0e88ccd6c16396181db8e535a1900e60a098523bce14926",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1703,11 +1974,17 @@
       ]
     },
     "eacl.datomic.core/restore-cache-snapshot!": {
-      "internalDefinitionCount": 462,
-      "internalDefinitionIdsSha256": "b98399c7302c4a60434bc9c27819b4fb9cd3138d59fef30d3002facdfba8e613",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 543,
+      "internalDefinitionIdsSha256": "a0e7e35af37eb4f7523615b7ca4e701aa762f333e01097e6c2e1465669f3d44e",
+      "externalCallCount": 21,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1725,8 +2002,8 @@
       ]
     },
     "eacl.datomic.core/cache-content-revision": {
-      "internalDefinitionCount": 429,
-      "internalDefinitionIdsSha256": "0b377dfa85721b34094643edc6bb35dbff3b5201f5908434aef71c23a056876b",
+      "internalDefinitionCount": 420,
+      "internalDefinitionIdsSha256": "46694855a62ecc295db615a2b3c57f24e8c9b458b583293c32d581c6a9cbddc3",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1753,12 +2030,25 @@
       "externalCalls": []
     },
     "eacl.datomic.core/basis-instant": {
-      "internalDefinitionCount": 1362,
-      "internalDefinitionIdsSha256": "6ba78c74d091420acdc7798fea55b7c49b8fc2b3839687ae36aaf296b56adff1",
-      "externalCallCount": 17,
+      "internalDefinitionCount": 1361,
+      "internalDefinitionIdsSha256": "d315879913a9a24e1e2a8525e2f1af8204c1b4a3537540df77bb6ebfd0487953",
+      "externalCallCount": 30,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
+        "clojure.set/difference",
         "clojure.set/intersection",
         "clojure.set/union",
         "clojure.string/join",
@@ -1777,11 +2067,19 @@
       ]
     },
     "eacl.migrations.v7-to-v8/migrate!": {
-      "internalDefinitionCount": 202,
-      "internalDefinitionIdsSha256": "822de49691a90e1f552991267625f6aec1d8d67f945aa4119af0fc403b079c83",
-      "externalCallCount": 20,
+      "internalDefinitionCount": 213,
+      "internalDefinitionIdsSha256": "469953bff197ebda73c0425872564596b39f54e19b242901bdd1b38416bcbf21",
+      "externalCallCount": 28,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/difference",
         "clojure.set/intersection",
@@ -1804,11 +2102,21 @@
       ]
     },
     "eacl.datahike.core/make-client": {
-      "internalDefinitionCount": 597,
-      "internalDefinitionIdsSha256": "965c3bdd9067c78245bf4fa85c838acb2ad35dc1d7d0eeeb109b4c24c3ee0034",
-      "externalCallCount": 25,
+      "internalDefinitionCount": 601,
+      "internalDefinitionIdsSha256": "fc72e24da79dbaaa60db7870fed92eb42e950a6590febcb1a305d08f2d08d537",
+      "externalCallCount": 35,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/difference",
         "clojure.set/intersection",
@@ -1836,12 +2144,25 @@
       ]
     },
     "eacl.datahike.core/db": {
-      "internalDefinitionCount": 1351,
-      "internalDefinitionIdsSha256": "83c1727cb70037ce21acc4f36f5c5bb50cd9378cc15b4883424fc57684923497",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 1350,
+      "internalDefinitionIdsSha256": "bc1748ba3614a819058810594d489511d0f57190f22b7658309d6ba4da765755",
+      "externalCallCount": 28,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
+        "clojure.set/difference",
         "clojure.set/intersection",
         "clojure.set/union",
         "clojure.string/join",
@@ -1858,8 +2179,8 @@
       ]
     },
     "eacl.datahike.core/export-cache-snapshot": {
-      "internalDefinitionCount": 441,
-      "internalDefinitionIdsSha256": "fbb06acfc99875957a394f1d850a7409e58830b5f387c60aa63bdea1966e106e",
+      "internalDefinitionCount": 487,
+      "internalDefinitionIdsSha256": "120eaaafa3bf63cac0311623a0edace2fe8fa3b7962f2736e5065ddbc0d49f7f",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1880,11 +2201,17 @@
       ]
     },
     "eacl.datahike.core/restore-cache-snapshot!": {
-      "internalDefinitionCount": 462,
-      "internalDefinitionIdsSha256": "4a42fe074da033566fed93b743d5c99bd68cd0b3071d06a19f65433454cffbd3",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 543,
+      "internalDefinitionIdsSha256": "78255886c588d44d4fb64c60b007fbf2f9f3899a0325ec8644909c682bf6c195",
+      "externalCallCount": 21,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.string/join",
         "clojure.string/replace",
@@ -1902,8 +2229,8 @@
       ]
     },
     "eacl.datahike.core/cache-content-revision": {
-      "internalDefinitionCount": 429,
-      "internalDefinitionIdsSha256": "a06c861e05b4ba0b743427b5747b40888f6d5a4c4d3f86b2c64400ecffac859c",
+      "internalDefinitionCount": 420,
+      "internalDefinitionIdsSha256": "014937c8dc26d91f0e2fb7668085cc80ab29f06e636d4662a6ec5bc74ab1ad0e",
       "externalCallCount": 15,
       "externalCalls": [
         "cljs.reader/read-string",
@@ -1924,11 +2251,19 @@
       ]
     },
     "eacl.datahike.migrations.v7-to-v8/migrate!": {
-      "internalDefinitionCount": 181,
-      "internalDefinitionIdsSha256": "d3a5117f75ed2fd8b7432f8114fa7574230b7c9939ab9d83c0eacb84d88b88f8",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 192,
+      "internalDefinitionIdsSha256": "34b255b14b2eb24b285b75537a14774da10fb48d8e021dd32dc9c887233e60a0",
+      "externalCallCount": 22,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/difference",
         "clojure.string/join",
@@ -1953,11 +2288,19 @@
       ]
     },
     "eacl.datahike.schema/migrate-v7-permissions!": {
-      "internalDefinitionCount": 180,
-      "internalDefinitionIdsSha256": "ecc212ca92003ddd7a3af051cf5a184e2d5df779966bc119815fb3f33238332d",
-      "externalCallCount": 14,
+      "internalDefinitionCount": 191,
+      "internalDefinitionIdsSha256": "a52d14e35ce25afcfc219e3f158c4fae9e13c25b8d5e1b79ef2d8d2d978ab3a5",
+      "externalCallCount": 22,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/difference",
         "clojure.string/join",
@@ -1984,11 +2327,21 @@
       ]
     },
     "eacl.datascript.core/make-client": {
-      "internalDefinitionCount": 533,
-      "internalDefinitionIdsSha256": "24492be961b5d3dd9184b03374508a7dd9de07e69eb81d2d5864433b3219d94e",
-      "externalCallCount": 25,
+      "internalDefinitionCount": 537,
+      "internalDefinitionIdsSha256": "bc5ca3cec9ad28af32ca4548ff63d120e4a0bb80dc01457fc584d75ab07fee24",
+      "externalCallCount": 35,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/difference",
         "clojure.set/intersection",
@@ -2016,12 +2369,25 @@
       ]
     },
     "eacl.datascript.core/db": {
-      "internalDefinitionCount": 1351,
-      "internalDefinitionIdsSha256": "4d98a9f61fe80bf4871557b79e5331f704bdf50b73f6f68e714093499c07419f",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 1350,
+      "internalDefinitionIdsSha256": "bc039d05c7da18c8ef8d44ab1ce37a7f40b96038644a39cf930e81393f7c54bf",
+      "externalCallCount": 28,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
+        "clojure.set/difference",
         "clojure.set/intersection",
         "clojure.set/union",
         "clojure.string/join",
@@ -2038,11 +2404,21 @@
       ]
     },
     "eacl.datalevin.core/make-client": {
-      "internalDefinitionCount": 588,
-      "internalDefinitionIdsSha256": "7c2ba1c503a1aaeb7d1ad1e4b20fedcbc556aebe37b463181327bd3548f6a171",
-      "externalCallCount": 29,
+      "internalDefinitionCount": 592,
+      "internalDefinitionIdsSha256": "579c8ad5529c0765b647b2d3831c7e04d685eba0dae5d0e763826b15c67ac072",
+      "externalCallCount": 39,
       "externalCalls": [
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
         "clojure.set/difference",
         "clojure.set/intersection",
@@ -2074,12 +2450,25 @@
       ]
     },
     "eacl.datalevin.core/db": {
-      "internalDefinitionCount": 1351,
-      "internalDefinitionIdsSha256": "e0c7de55c1ecfc638b7828f4c89ee529486cbecf50da862fe84e96cf209f288d",
-      "externalCallCount": 15,
+      "internalDefinitionCount": 1350,
+      "internalDefinitionIdsSha256": "a466da1eebe46c7f909b75d69d3e42a543e71be150558d0bd683a08fc1a87aaa",
+      "externalCallCount": 28,
       "externalCalls": [
+        "cljs.cache/evict",
+        "cljs.cache/has?",
+        "cljs.cache/hit",
+        "cljs.cache/lookup",
+        "cljs.cache/lru-cache-factory",
+        "cljs.cache/miss",
         "cljs.reader/read-string",
+        "clojure.core.cache/evict",
+        "clojure.core.cache/has?",
+        "clojure.core.cache/hit",
+        "clojure.core.cache/lookup",
+        "clojure.core.cache/lru-cache-factory",
+        "clojure.core.cache/miss",
         "clojure.edn/read-string",
+        "clojure.set/difference",
         "clojure.set/intersection",
         "clojure.set/union",
         "clojure.string/join",

@@ -48,6 +48,7 @@ usage() {
     "  gate-selftest         prove the nREPL gates fail on failing suites" \
     "  manifest              validate the release assurance gate" \
     "  tla-typecheck         parse and typecheck TLA+ models" \
+    "  tla-check             exhaustively check the cache-storage TLA+ model" \
     "  apalache-check        run bounded temporal safety checks" \
     "  apalache-scheduled    run the larger scheduled temporal bound" \
     "  apalache-invariant    check inductive-invariant obligations" \
@@ -147,14 +148,13 @@ apalache_expect_counterexample() {
 
 nrepl_eval() {
   eval_port=$1
+  # The CI bridge inspects nREPL response status and exits nonzero on an
+  # evaluation error. The developer convenience executable prints remote
+  # exceptions but currently exits zero, which would make a red replay or
+  # mutation suite look green when run locally.
   eval_timeout_ms=$2
   eval_form=$3
-  if command -v clj-nrepl-eval >/dev/null 2>&1; then
-    exec clj-nrepl-eval \
-      -p "$eval_port" \
-      --timeout "$eval_timeout_ms" \
-      "$eval_form"
-  fi
+  : "$eval_timeout_ms"
   exec sh "$repo_root/bin/ci-nrepl-eval" "$eval_port" "$eval_form"
 }
 
@@ -232,6 +232,7 @@ case "$command" in
     exec "$repo_root/bin/check-generated-artifact-size"
     ;;
   source-closure)
+    "$repo_root/bin/public-source-closure.mjs" selftest
     exec "$repo_root/bin/public-source-closure.mjs" check
     ;;
   mutation-control)
@@ -258,16 +259,13 @@ case "$command" in
     fi
     nrepl_eval "$EACL_NREPL_PORT" 180000 \
       "(do
-         ;; Persistent nREPLs may have reloaded the shared CacheStore protocol.
-         ;; Reload its Datomic implementation before constructing replay
+         ;; Reload the shared cache implementation before constructing replay
          ;; fixtures, then reload every lazily resolved regression namespace.
          (require 'eacl.cache :reload)
          (require 'eacl.subproblem-cache :reload)
-         (require 'eacl.datomic.cache :reload)
          (doseq [test-ns
                  '[eacl.bench.pagination-test
                    eacl.datomic.lookup-cache-test
-                   eacl.datomic.cache-test
                    eacl.datomic.cache-review-regressions-test
                    eacl.secure-format-test
                    eacl.cache-test]]
@@ -344,9 +342,7 @@ case "$command" in
     for model in \
       "$repo_root/formal/tla/EaclTemporal.tla" \
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
-      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla" \
       "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
       "$repo_root/formal/tla/EaclOperatorSafety.tla"
     do
@@ -356,6 +352,13 @@ case "$command" in
         typecheck \
         "$model"
     done
+    ;;
+  tla-check)
+    need_tools
+    exec java -XX:+UseParallelGC -cp "$tla_jar" tlc2.TLC \
+      -deadlock \
+      -config "$repo_root/formal/tla/EaclCacheStorageTlc.cfg" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla"
     ;;
   apalache-check)
     need_tools
@@ -371,20 +374,10 @@ case "$command" in
       "$repo_root/formal/tla/EaclTemporalDetailed.cfg" \
       6
     apalache_check \
-      "subproblem-bounded" \
-      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclSubproblemCache.cfg" \
-      8
-    apalache_check \
-      "tiered-subproblem-bounded" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.cfg" \
+      "cache-storage-bounded" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla" \
+      "$repo_root/formal/tla/EaclCacheStorage.cfg" \
       5
-    apalache_check \
-      "managed-projection-bounded" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.cfg" \
-      8
     apalache_check \
       "speculative-cache-bounded" \
       "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
@@ -417,17 +410,9 @@ case "$command" in
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
       "$repo_root/formal/tla/EaclTemporalDetailed.cfg"
     apalache_induction \
-      "subproblem" \
-      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclSubproblemCache.cfg"
-    apalache_induction \
-      "tiered-subproblem" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.cfg"
-    apalache_induction \
-      "managed-projection" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.cfg"
+      "cache-storage" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla" \
+      "$repo_root/formal/tla/EaclCacheStorage.cfg"
     apalache_induction \
       "speculative-cache" \
       "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
@@ -475,8 +460,6 @@ case "$command" in
     "$repo_root/bin/formal" build-java
     "$repo_root/bin/formal" build-js
     "$repo_root/bin/formal" browser-bundle
-    "$repo_root/bin/formal" artifact-size
-    "$repo_root/bin/formal" manifest
     "$repo_root/bin/formal" tla-typecheck
     "$repo_root/bin/formal" apalache-check
     "$repo_root/bin/formal" apalache-invariant

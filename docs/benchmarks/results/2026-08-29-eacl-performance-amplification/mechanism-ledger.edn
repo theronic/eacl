@@ -11,31 +11,21 @@
     :routed-response-vector-recopy
     :stable-retained-maximum-rescan
     :stable-sidecar-recency-filter
-    :continuation-recency-filter
     :zero-successor-scheduling
     :one-successor-scheduling
     :public-boundary-revalidation
     :fixed-counter-key-validation
     :duplicate-adapter-snapshot-id
-    :eager-proof-frame
-    :eager-request-memo-slots
-    :eager-publication-buffer
     :native-membership-double-normalization
     :completed-hit-recency-mutation
     :completed-hit-telemetry-mutation
-    :plan-and-memo-hit-candidate-allocation
     :independent-completed-cache-misses
-    :shared-parsed-schema-delay
-    :shared-validation-catalog-delay
-    :shared-expression-decode-delay
-    :shared-sealed-plan-delay
-    :finite-current-cache-decision
     :rank-cost-duplicate-authority
     :datomic-unconditional-exact-sync}
   :refuted
   #{:terminal-scan-evidence :captured-adapter-invoker}
   :correctness-required
-  #{:restored-entry-operation-validation
+  #{:validated-ingress-resident-invariant
     :completed-cache-compatibility-identity
     :cache-flight-contract-reconciliation}}
  :rows
@@ -119,16 +109,6 @@
    :operation :lookup-resources
    :scale-points [1000 10000 100000]
    :disposition :reproduced}
-  {:id :continuation-recency-filter
-   :scope :continuation-cache
-   :live-source {:path "modules/eacl/src/eacl/continuation.cljc"
-                 :symbol "put!"}
-   :reproducer :fixed-capacity-continuation-churn
-   :primary :recency-or-tombstone-elements-scanned
-   :fixture :continued-recursive-pages
-   :operation :lookup-resources
-   :scale-points [1000 10000 100000]
-   :disposition :reproduced}
   {:id :zero-successor-scheduling
    :scope :stable-scheduler
    :live-source {:path "modules/eacl/src/eacl/engine/stable_reducer.cljc"
@@ -189,36 +169,6 @@
   :operation :check-permission
   :scale-points [1 100 10000]
    :disposition :reproduced}
-  {:id :eager-proof-frame
-   :scope :request-context
-   :live-source {:path "modules/eacl/src/eacl/request/context.cljc"
-                 :symbol "make-context"}
-   :reproducer :constructor-allocation-trace
-   :primary :objects-allocated-before-first-proof-use
-   :fixture :compatible-exact-cache-hit
-  :operation :check-permission
-  :scale-points [1 1000 100000]
-   :disposition :reproduced}
-  {:id :eager-request-memo-slots
-   :scope :request-context
-   :live-source {:path "modules/eacl/src/eacl/request/context.cljc"
-                 :symbol "make-context"}
-   :reproducer :constructor-allocation-trace
-   :primary :memo-atoms-allocated-before-use
-   :fixture :compatible-exact-cache-hit
-  :operation :check-permission
-  :scale-points [1 1000 100000]
-   :disposition :reproduced}
-  {:id :eager-publication-buffer
-   :scope :request-context
-   :live-source {:path "modules/eacl/src/eacl/request/context.cljc"
-                 :symbol "make-context"}
-   :reproducer :constructor-allocation-trace
-   :primary :publication-state-allocated-before-use
-   :fixture :cache-disabled-point-check
-  :operation :check-permission
-  :scale-points [1 1000 100000]
-   :disposition :reproduced}
   {:id :native-membership-double-normalization
    :scope :direct-membership
    :live-source {:path "modules/eacl/src/eacl/backend/direct_membership.cljc"
@@ -259,82 +209,22 @@
   :operation :check-permission
   :scale-points [1000 10000 100000]
    :disposition :reproduced}
-  {:id :plan-and-memo-hit-candidate-allocation
-   :scope :derived-cache-hit
-   :live-source {:path "modules/eacl/src/eacl/engine/v8.cljc"
-                 :symbol "memoized-derived!"}
-   :reproducer :resident-hit-allocation-trace
-   :primary :delay-allocations-per-hit
-   :fixture :resident-schema-and-sealed-plan
-  :operation :check-permissions
-  :scale-points [1000 10000 100000]
-   :disposition :reproduced}
   {:id :independent-completed-cache-misses
    :scope :cache-coordination
    :live-source {:path "modules/eacl/src/eacl/subproblem_cache.cljc"
-                 :symbol "resolve-independent!"}
+                 :symbols ["lookup!" "publish!"]}
    :reproducer :promise-controlled-concurrent-miss
    :primary :no-waits-and-independent-deadlines
    :fixture :identical-cold-key-burst
   :operation :check-permission
   :scale-points [2 8 32]
    :disposition :reproduced}
-  {:id :shared-parsed-schema-delay
-   :scope :derived-cache-coordination
-   :live-source {:path "modules/eacl/src/eacl/client/orchestration.cljc"
-                 :symbol "request-schema"}
-   :reproducer :promise-controlled-concurrent-build
-   :primary :peer-waits-and-failure-inheritance
-   :fixture :cold-schema-generation
-  :operation :check-permission
-  :scale-points [2 8 32]
-   :disposition :reproduced}
-  {:id :shared-validation-catalog-delay
-   :scope :derived-cache-coordination
-   :live-source {:path "modules/eacl/src/eacl/client/orchestration.cljc"
-                 :symbol "request-schema"}
-   :reproducer :promise-controlled-concurrent-build
-   :primary :peer-waits-and-failure-inheritance
-   :fixture :cold-schema-catalog
-  :operation :check-permission
-  :scale-points [2 8 32]
-   :disposition :reproduced}
-  {:id :shared-expression-decode-delay
-   :scope :derived-cache-coordination
-   :live-source {:path "modules/eacl/src/eacl/schema/expression_persistence.cljc"
-                 :symbol "decode-entity-with-metadata"}
-   :reproducer :promise-controlled-concurrent-decode
-   :primary :peer-waits-and-failure-inheritance
-   :fixture :cold-structural-expression
-  :operation :check-permission
-  :scale-points [2 8 32]
-   :disposition :reproduced}
-  {:id :shared-sealed-plan-delay
-   :scope :derived-cache-coordination
-   :live-source {:path "modules/eacl/src/eacl/engine/v8.cljc"
-                 :symbol "stable-plan"}
-   :reproducer :promise-controlled-concurrent-seal
-   :primary :peer-waits-and-failure-inheritance
-   :fixture :cold-sealed-plan
-  :operation :lookup-resources
-  :scale-points [2 8 32]
-   :disposition :reproduced}
-  {:id :finite-current-cache-decision
-   :scope :verified-host-specialization
-   :live-source {:path "modules/eacl/src/eacl/cache.cljc"
-                 :symbol "current-cache-action"}
-   :reproducer :complete-finite-domain-differential
-   :primary :decision-invocations-and-equivalence
-   :fixture :all-stage-availability-pairs
-  :operation :check-permission
-  :scale-points [1 10000 1000000]
-   :disposition :reproduced}
-  {:id :restored-entry-operation-validation
-   :scope :cache-restore-correctness
+  {:id :validated-ingress-resident-invariant
+   :scope :cache-ingress-correctness
    :live-source {:path "modules/eacl/src/eacl/subproblem_cache.cljc"
-                 :symbol "restore-store"}
-   :reproducer :cross-operation-malformed-restored-value
-   :primary :operation-specific-cache-value-shape
+                 :symbols ["publish!" "restore-store"]}
+   :reproducer :malformed-publication-and-restored-value
+   :primary :complete-key-provenance-and-semantic-payload-validity
    :fixture :authenticated-structurally-valid-wrong-value
   :operation :lookup-resources
   :scale-points [1 16 256]
@@ -352,7 +242,7 @@
   {:id :cache-flight-contract-reconciliation
    :scope :durable-cache-contracts
    :live-source {:path "modules/eacl/src/eacl/subproblem_cache.cljc"
-                 :symbol "resolve-independent!"}
+                 :symbols ["lookup!" "publish!"]}
    :reproducer :source-and-spec-inventory
    :primary :no-flight-symbols-waits-or-metrics
    :fixture :four-cache-main-specs

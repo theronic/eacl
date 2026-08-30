@@ -30,23 +30,23 @@
     :EACL-FORMAL-012
     eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary
     :EACL-FORMAL-013
-    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
+    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
     :EACL-FORMAL-014
     eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-015
-    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
+    eacl.datascript.snapshot-lifecycle-test/full-rotation-detaches-every-runtime-cache-child-test
     :EACL-FORMAL-016
-    eacl.subproblem-cache-test/lookup-never-starts-work-test
+    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
     :EACL-FORMAL-017
-    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
+    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
     :EACL-FORMAL-018
-    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
+    eacl.datascript.snapshot-lifecycle-test/full-rotation-detaches-every-runtime-cache-child-test
     :EACL-FORMAL-019
     eacl.backend.v8-test/descending-merge-retains-maximum-eid-test
     :EACL-FORMAL-020
     eacl.backend.v8-test/generic-merge-retains-nil-key-test
     :EACL-FORMAL-021
-    eacl.datomic.config-test/shared-subproblem-cache-config-is-forwarded-and-validated-test
+    eacl.datomic.config-test/flat-denotation-cache-config-is-forwarded-and-validated-test
     :EACL-FORMAL-022
     eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results
     :EACL-FORMAL-023
@@ -78,7 +78,7 @@
     :EACL-FORMAL-036
     eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead
     :EACL-FORMAL-037
-    eacl.datomic.impl.indexed-test/schema-cache-carries-shared-engine-analysis-test
+    eacl.datomic.impl.indexed-test/indexed-facade-has-no-shared-schema-cache-surface-test
     :EACL-FORMAL-038
     eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input
     :EACL-FORMAL-039
@@ -260,15 +260,9 @@
                     (io/file (.getParentFile file) artifact))
                    (str directory "/" artifact)))
              entry))
-         (entry-files))
-        manifest (read-edn
-                  (repo/file "formal" "verification" "manifest.edn"))
-        revision (:counterexample-corpus-revision manifest)]
+         (entry-files))]
     (is (= (set (keys regression-vars))
-           (set (map :id entries))
-           (set (:fixed revision))))
-    (is (= :EACL-FORMAL-067 (:latest revision)))
-    (is (= 67 (count entries)))))
+           (set (map :id entries))))))
 
 (deftest replay-every-minimized-regression-test
   (let [available

@@ -1,4 +1,4 @@
-{:schema-version 1
+{:schema-version 2
  :date "2026-08-27"
  :status :conditionally-verified-implementation-audited
  :change :isolate-public-snapshots-from-caller-db
@@ -42,19 +42,10 @@
   {:tier :managed-completed-answer
    :speculative-disposition :validated-read-only
    :enforcement eacl.cache/resolve-managed-read-only!}
-  {:tier :managed-subproblem
-   :speculative-disposition :committed-read-only-no-publication
-   :enforcement eacl.cache/resolve-managed-read-only!}
   {:tier :schema-derived-generation
    :speculative-disposition :request-local-floor-only
    :enforcement eacl.client.orchestration/snapshot-opts}
-  {:tier :relationship-observations
-   :speculative-disposition :disabled
-   :enforcement eacl.client.orchestration/snapshot-opts}
   {:tier :continuation-checkpoint
-   :speculative-disposition :lookup-and-publication-disabled
-   :enforcement eacl.client.orchestration/snapshot-opts}
-  {:tier :visited-page
    :speculative-disposition :lookup-and-publication-disabled
    :enforcement eacl.client.orchestration/snapshot-opts}
   {:tier :cursor-codec-and-construction

@@ -1,6 +1,13 @@
 {:schema-version 1
  :date "2026-08-03"
- :status :measured
+ :status :historical-retired-layered-cache-measurement
+ :current-release-authority false
+ :replacement
+ {:source
+  "modules/eacl-datomic/test/eacl/bench/cross_backend_workload_test.clj"
+  :cache-modes [:cache-free :cache-enabled]
+  :gate
+  "formal/verification/performance-gates.edn#cross-backend-workload-matrix"}
  :source "modules/eacl-datomic/test/eacl/bench/cross_backend_workload_test.clj"
  :host {:os :macos
         :arch :arm64

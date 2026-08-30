@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is]]
             [datascript.core :as ds]
+            [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -11,6 +12,15 @@
             [eacl.operator.plan :as plan]
             [eacl.operator.vector-evaluator :as vector-evaluator]
             [eacl.subproblem-cache :as subproblem]))
+
+(defn- test-exact-key
+  [semantic]
+  (let [identity {:tier :denotation
+                  :source-lifecycle {:source :test :lifecycle :operator}
+                  :abi :test-authorization-v2
+                  :semantic semantic
+                  :reuse [:basis 1]}]
+    (cache-key/exact-denotation-key identity)))
 
 (def schema
   "definition user {}
@@ -240,9 +250,11 @@
           cached-options
           {:adapter adapter :plan operator-plan :candidates candidates
            :scope-identity [:fixed-seed seed]}
-          cold (binding [subproblem/*store* store]
+          cold (binding [subproblem/*store* store
+                         subproblem/*exact-denotation-key-fn* test-exact-key]
                  (vector-evaluator/check-cached-many-eids cached-options))
-          warm (binding [subproblem/*store* store]
+          warm (binding [subproblem/*store* store
+                         subproblem/*exact-denotation-key-fn* test-exact-key]
                  (vector-evaluator/check-cached-many-eids cached-options))]
       (is (= expected scalar-result vector-result reverse-result
              cache-free cold warm)
@@ -292,6 +304,7 @@
         run
         (fn [scope stats]
           (binding [subproblem/*store* store
+                    subproblem/*exact-denotation-key-fn* test-exact-key
                     vector-evaluator/*vector-stats* stats]
             (vector-evaluator/check-cached-many-eids
              {:adapter adapter :plan operator-plan
@@ -309,8 +322,9 @@
         "a complete point hit never enters vector evaluation")
     (is (zero? (:point-cache-hits @changed-stats)))
     (is (= 16 (:point-cache-misses @changed-stats)))
-    (is (pos? (:projection-hits (subproblem/stats store)))
-        "a changed point proof may still reuse exact-basis leaf decisions")))
+    (is (not (contains? (subproblem/stats store) :projection-hits))
+        "physical direct decisions are not retained as shared subproblems")
+    (is (not (contains? (:tiers (subproblem/stats store)) :projection)))))
 
 (deftest failed-acyclic-vector-publishes-neither-leaves-nor-points-test
   (let [{:keys [adapter user documents eid]} (fixture)
@@ -327,14 +341,15 @@
            (throw (ex-info "Injected vector provider failure."
                            {:type :eacl.test/injected-provider-failure}))))
         error
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (error-data
            #(vector-evaluator/check-cached-many-eids
              {:adapter failing :plan operator-plan
               :candidates [candidate] :scope-identity :failure})))
         stats (subproblem/stats store)]
     (is (= :eacl.test/injected-provider-failure (:type error)))
-    (is (zero? (get-in stats [:tiers :projection :entries])))
+    (is (not (contains? (:tiers stats) :projection)))
     (is (zero? (get-in stats [:tiers :denotation :entries])))))
 
 (deftest acyclic-point-cache-eviction-never-changes-denotation-test
@@ -346,19 +361,21 @@
                  :subject-type :user :subject-eid (eid user)
                  :resource-type :document :resource-eid (eid document)})
               (take 16 documents))
-        store (subproblem/store {:denotation-max-weight 640})
+        store (subproblem/store {:denotation-max-entries 4})
         options {:adapter adapter :plan operator-plan
                  :candidates candidates :scope-identity :eviction}
         first-result
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (vector-evaluator/check-cached-many-eids options))
         after-first (subproblem/stats store)
         second-result
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (vector-evaluator/check-cached-many-eids options))]
     (is (= first-result second-result))
-    (is (<= (get-in after-first [:tiers :denotation :weight]) 640))
-    (is (pos? (:evictions after-first)))))
+    (is (= {:entries 4 :max-entries 4}
+           (get-in after-first [:tiers :denotation])))))
 
 #?(:clj
    (deftest concurrent-acyclic-misses-compute-independently-and-publish-safely-test
@@ -392,7 +409,8 @@
                    store (subproblem/store)
                    evaluate
                    (fn [value]
-                     (binding [subproblem/*store* store]
+                     (binding [subproblem/*store* store
+                               subproblem/*exact-denotation-key-fn* test-exact-key]
                        (first
                         (vector-evaluator/check-cached-many-eids
                          {:adapter concurrent-adapter :plan operator-plan

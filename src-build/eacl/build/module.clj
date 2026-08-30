@@ -14,7 +14,6 @@
     "eacl/formal/production_kernel.clj"
     "eacl/formal/production_kernel_cljs.cljs"
     "AcyclicEngine/__default.class"
-    "CurrentCache/__default.class"
     "IndexedTraversal/__default.class"
     "dafny/DafnySequence.class"
     "EaclKernel.browser.js"
@@ -394,15 +393,22 @@
             (when version
               [(namespace dependency) (name dependency) version])))
          expected-dependencies)
+        dependency-matches
+        (re-seq
+         #"(?s)<dependency>\s*<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>\s*<version>([^<]+)</version>.*?</dependency>"
+         pom)
         actual-dependency-set
         (into
          #{}
          (map (fn [[_ group artifact dependency-version]]
                 [group artifact dependency-version]))
-         (re-seq
-          #"(?s)<dependency>\s*<groupId>([^<]+)</groupId>\s*<artifactId>([^<]+)</artifactId>\s*<version>([^<]+)</version>\s*</dependency>"
-          pom))
-        scm-tag (or (System/getenv "GITHUB_SHA") "HEAD")]
+         dependency-matches)
+        scm-tag (or (System/getenv "GITHUB_SHA") "HEAD")
+        datahike-block
+        (some (fn [[block group artifact]]
+                (when (= ["org.replikativ" "datahike"] [group artifact])
+                  block))
+              dependency-matches)]
     (doseq [required
             [(str "<groupId>" (namespace lib) "</groupId>")
              (str "<artifactId>" (name lib) "</artifactId>")
@@ -433,26 +439,21 @@
          :module module-id
          :expected expected-dependency-set
          :actual actual-dependency-set})))
-    (doseq [[dependency {:mvn/keys [version]}] expected-dependencies
-            :when version
-            :let [dependency-pattern
-                  (re-pattern
-                   (str "(?s)<dependency>\\s*<groupId>"
-                        (java.util.regex.Pattern/quote
-                         (namespace dependency))
-                        "</groupId>\\s*<artifactId>"
-                        (java.util.regex.Pattern/quote (name dependency))
-                        "</artifactId>\\s*<version>"
-                        (java.util.regex.Pattern/quote version)
-                        "</version>\\s*</dependency>"))]]
-      (when-not (re-find dependency-pattern pom)
-        (throw
-         (ex-info
-          "Generated POM is missing an exact direct dependency."
-          {:type :eacl.build/dependency-mismatch
-           :module module-id
-           :dependency dependency
-           :version version}))))
+    (when (and (= :eacl-datahike module-id)
+               (not (and datahike-block
+                         (string/includes?
+                          datahike-block
+                          "<groupId>com.github.pkpkpk</groupId>")
+                         (string/includes?
+                          datahike-block
+                          "<artifactId>cljs-cache</artifactId>"))))
+      (throw
+       (ex-info
+        "Datahike must exclude the upstream cljs-cache provider."
+        {:type :eacl.build/dependency-mismatch
+         :module module-id
+         :dependency 'org.replikativ/datahike
+         :exclusion 'com.github.pkpkpk/cljs-cache})))
     true))
 
 (defn audit-built!

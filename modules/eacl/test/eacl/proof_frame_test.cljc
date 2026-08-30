@@ -47,11 +47,10 @@
     (is (= 7 (:schema-generation proof)))
     (is (= [1 2 3] (:relation-ids proof)))
     (is (= [[1 10] [2 21] [3 15]] (:relation-generations proof)))
-    (is (= {:schema-generation 7 :dependency-stamp 21}
+    (is (= {:schema-generation 7
+            :dependency-identity [[1 10] [2 21] [3 15]]
+            :dependency-stamp 21}
            (proof-frame/descriptor proof)))
-    (is (= {:schema-generation 7 :dependency-stamp 15}
-           (proof-frame/subset-descriptor proof [1 3])))
-    (is (nil? (proof-frame/subset-descriptor proof [4])))
     (is (identical? proof (proof-frame/resolve! frame [1 2 3])))
     (is (= [[1 2 3]] @calls)
         "one canonical closure is acquired once in one request")))
@@ -63,20 +62,38 @@
           (adapter (constantly []) true 4))
          [])]
     (is (= :complete (:status proof)))
-    (is (= {:schema-generation 4 :dependency-stamp 0}
+    (is (= {:schema-generation 4
+            :dependency-identity []
+            :dependency-stamp 0}
            (proof-frame/descriptor proof)))))
 
 (deftest descriptor-shape-is-closed-and-portable
   (is (true?
        (proof-frame/descriptor?
-        {:schema-generation 4 :dependency-stamp 9})))
+        {:schema-generation 4
+         :dependency-identity [[1 9]]
+         :dependency-stamp 9})))
   (doseq [invalid
           [nil
            {}
            {:schema-generation 4}
-           {:schema-generation 4 :dependency-stamp 9 :mode :exact-basis}
-           {:schema-generation -1 :dependency-stamp 9}
-           {:schema-generation 4 :dependency-stamp 1.5}]]
+           {:schema-generation 4 :dependency-stamp 9}
+           {:schema-generation 4
+            :dependency-identity [[1 9]]
+            :dependency-stamp 9
+            :mode :exact-basis}
+           {:schema-generation -1
+            :dependency-identity [[1 9]]
+            :dependency-stamp 9}
+           {:schema-generation 4
+            :dependency-identity [[1 9]]
+            :dependency-stamp 1.5}
+           {:schema-generation 4
+            :dependency-identity [[2 9] [1 9]]
+            :dependency-stamp 9}
+           {:schema-generation 4
+            :dependency-identity [[1 8]]
+            :dependency-stamp 9}]]
     (is (false? (proof-frame/descriptor? invalid)) (pr-str invalid))))
 
 (deftest proof-frame-reads-schema-generation-only-through-certified-operation

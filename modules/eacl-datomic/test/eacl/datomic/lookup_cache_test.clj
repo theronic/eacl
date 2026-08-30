@@ -3,7 +3,6 @@
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn
                                                   with-mem-conns]]
@@ -269,13 +268,7 @@
 (deftest disabled-cache-uses-the-indexed-path-and-provider-is-rejected-test
   (with-mem-conn [conn schema/v7-schema]
     (let [disabled (core/make-client conn {:cache shared-cache/no-cache})
-          broken-store
-          (reify cache/CacheStore
-            (lookup [_ _] (throw (ex-info "unavailable" {})))
-            (store! [_ _ _ _ _] (throw (ex-info "unavailable" {})))
-            (evict! [_ _] nil)
-            (clear! [_] nil)
-            (stats [_] {}))
+          unsupported-provider (Object.)
           query {:subject (spice-object :user "alice")
                  :permission :admin
                  :resource/type :account}]
@@ -283,7 +276,8 @@
       (is (= ["a-1"]
              (mapv :id (:data (eacl/lookup-resources disabled query)))))
       (let [error (try
-                    (core/make-client conn {:cache {:store broken-store}})
+                    (core/make-client
+                     conn {:cache {:store unsupported-provider}})
                     nil
                     (catch clojure.lang.ExceptionInfo ex ex))]
         (is (some? error))
@@ -488,25 +482,28 @@
                  (core/make-client conn {:cache {:ttl-ms 0}})))
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache {:remember-answers :yes}})))
-    (testing "the closed shared-cache configuration is accepted"
-      (is (some? (core/make-client
-                  conn {:cache {:admit-on-repeat? true}})))
+    (testing "the closed count-bounded cache configuration is accepted"
       (is (some? (core/make-client conn {:cache {:max-entries 8}})))
-      (is (some? (core/make-client conn {:cache {:retained-bases 2}})))
       (is (some? (core/make-client
-                  conn {:cache {:subproblem-cache
-                                {:answer-max-weight 1024}}}))))
-    (is (thrown? clojure.lang.ExceptionInfo
-                 (core/make-client conn {:cache {:namespace ""}})))
-    (is (thrown? clojure.lang.ExceptionInfo
-                 (core/make-client conn {:cache {:checkpoints :yes}})))
+                  conn {:cache {:max-entries 5
+                                :denotation-max-entries 6}}))))
+    (doseq [removed [{:admit-on-repeat? true}
+                     {:retained-bases 2}
+                     {:namespace "legacy"}
+                     {:checkpoints :yes}
+                     {:subproblem-cache {}}
+                     {:subproblem-cache {:projection-max-entries 7}}
+                     {:subproblem-cache {:managed-proof-max-atoms 7}}
+                     {:subproblem-cache {:answer-max-weight 1024}}]]
+      (is (thrown? clojure.lang.ExceptionInfo
+                   (core/make-client conn {:cache removed}))))
     (testing "custom cache adapters are rejected because they cannot control the private stores"
-      (let [error (try
-                    (core/make-client
-                     conn {:cache (cache/local-store {:max-entries 8})})
-                    nil
-                    (catch clojure.lang.ExceptionInfo ex ex))]
-        (is (= :unsupported-provider-store (:reason (ex-data error))))))
+      (doseq [option [(Object.) {:store (Object.)}]]
+        (let [error (try
+                      (core/make-client conn {:cache option})
+                      nil
+                      (catch clojure.lang.ExceptionInfo ex ex))]
+          (is (= :unsupported-provider-store (:reason (ex-data error)))))))
     (testing "the cache option configures the client's private stores"
       (let [store-of #(:basis-cache-store (:runtime (core/make-client conn %)))]
         (testing "nil and absent both mean the default adapter"
@@ -516,9 +513,9 @@
           (is (nil? (store-of {:cache shared-cache/no-cache}))))
         (testing "nested or direct adapters are rejected"
           (is (thrown? clojure.lang.ExceptionInfo
-                       (store-of {:cache {:store cache/no-cache}})))
+                       (store-of {:cache {:store shared-cache/no-cache}})))
           (is (thrown? clojure.lang.ExceptionInfo
-                       (store-of {:cache (cache/local-store)}))))
+                       (store-of {:cache (Object.)}))))
         (testing "booleans are rejected rather than interpreted"
           ;; They read as a flag in a slot that holds a cache, and they left
           ;; nil ambiguous between "the default" and "none".
@@ -777,23 +774,6 @@
                                             :security-key "provenance0000000000000000000000"})]
           (is (false? (:cached? (eacl/lookup-resources plain query))))
           (is (false? (:cached? (eacl/count-resources plain query)))))))))
-
-(deftest cache-entries-do-not-expire-on-a-timer-test
-  ;; Relation stamps are the staleness bound, so age is not a reason to drop an
-  ;; entry. A ttl used to be applied by default and silently capped to the
-  ;; page-token lifetime, which meant a hot entry was discarded on a clock.
-  (let [now (atom 0)
-        store (cache/local-store {:clock (fn [] @now)})]
-    (is (true? (cache/store! store [:k] {:eacl.cache/kind :can? :v 1} 10 nil)))
-    (swap! now + (* 1000 60 60 24 365))
-    (is (some? (cache/lookup store [:k]))
-        "a year later the entry is still there")
-    (testing "an explicit :ttl-ms still expires"
-      (let [ttl-store (cache/local-store {:clock (fn [] @now)})]
-        (is (true? (cache/store! ttl-store [:k] {:eacl.cache/kind :can? :v 1} 10 1000)))
-        (is (some? (cache/lookup ttl-store [:k])))
-        (swap! now + 1001)
-        (is (nil? (cache/lookup ttl-store [:k])))))))
 
 (deftest default-client-cache-has-no-ttl-test
   (with-mem-conn [conn schema/v7-schema]

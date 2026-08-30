@@ -1,8 +1,8 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 141
- :historical-clojure-mutant-count 129
- :historical-model-mutant-count 12
+ :historical-mutant-count 142
+ :historical-clojure-mutant-count 128
+ :historical-model-mutant-count 14
  :mutants
  [{:id :wrong-arrow-direction
    :mechanism :executed-production
@@ -42,18 +42,9 @@
      :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :numeric-ancestry
    :mechanism :executed-production
-   :mutation :reject-lower-order-equal-frame-as-not-an-ancestor
-   :target-symbol "cache/resolve-basis!"
+   :mutation :accept-future-equal-proof-candidate-for-older-selection
+   :target-symbol "subproblem/lookup-eligible!"
    :detector "numeric-ancestry-killed?"
-   :control {:kind :clojure :runtimes [:clj :cljs]}
-   :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
-  {:id :continuation-race
-   :mechanism :executed-production
-   :mutation :retain-publication-after-ticket-replacement
-   :target-symbol "portable/decide"
-   :detector "continuation-race-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test
@@ -72,24 +63,6 @@
    :mutation :ignore-operation-and-query-scope
    :target-symbol "portable/decide"
    :detector "cursor-scope-killed?"
-   :control {:kind :clojure :runtimes [:clj :cljs]}
-   :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
-  {:id :cache-fail-open
-   :mechanism :executed-production
-   :mutation :return-incomplete-candidate
-   :target-symbol "portable/decide"
-   :detector "cache-fail-open-killed?"
-   :control {:kind :clojure :runtimes [:clj :cljs]}
-   :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
-  {:id :current-cache-missing-entry-hit
-   :mechanism :executed-production
-   :mutation :select-exact-hit-when-entry-is-missing
-   :target-symbol "portable/decide"
-   :detector "current-cache-missing-entry-hit-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test
@@ -126,15 +99,6 @@
    :mutation :accept-negative-internal-eid
    :target-symbol "portable/decide"
    :detector "adapter-negative-eid-admitted-killed?"
-   :control {:kind :clojure :runtimes [:clj :cljs]}
-   :killed-by
-    {:test
-     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
-  {:id :over-budget-publication
-   :mechanism :executed-production
-   :mutation :retain-over-budget-completed-entry
-   :target-symbol "portable/decide"
-   :detector "over-budget-publication-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test
@@ -283,16 +247,6 @@
    :target-symbol "parser/parse-schema"
    :consumer-symbol "operator-evaluator/check-eids"
    :detector "operator-wrong-precedence-killed?"
-   :control {:kind :clojure :runtimes [:clj :cljs]}
-   :killed-by
-   {:test
-    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
-  {:id :current-cache-specialization-partition
-   :mechanism :executed-production
-   :mutation :change-one-host-specialization-partition
-   :target-symbol "cache-refinement/current-cache-mapping"
-   :consumer-symbol "cache/specialized-current-cache-action"
-   :detector "current-cache-specialization-partition-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
    {:test
@@ -576,35 +530,52 @@
 
   {:id :partial-denotation-hit
    :mechanism :executed-model
-   :mutation :allow-partial-denotation-as-cache-hit
+   :mutation :publish-partial-value-into-completed-store
    :control {:kind :apalache
-             :model "formal/tla/EaclTieredSubproblemCache.tla"
-             :config "formal/tla/mutations/EaclTieredPartialHit.cfg"
-             :length 4}
+             :model "formal/tla/EaclCacheStorage.tla"
+             :config "formal/tla/mutations/EaclCachePartialPublication.cfg"
+             :length 1}
    :killed-by {:gate :apalache-mutation-control}}
   {:id :late-orphan-publication
    :mechanism :executed-model
-   :mutation :publish-expired-lifecycle-callback
+   :mutation :publish-completion-from-detached-private-store-instance
    :control {:kind :apalache
-             :model "formal/tla/EaclTieredSubproblemCache.tla"
-             :config "formal/tla/mutations/EaclTieredOrphanPublication.cfg"
+             :model "formal/tla/EaclCacheStorage.tla"
+             :config "formal/tla/mutations/EaclCacheOrphanPublication.cfg"
              :length 4}
    :killed-by {:gate :apalache-mutation-control}}
-  {:id :coupled-tier-budgets
+  {:id :cache-fail-open
    :mechanism :executed-model
-   :mutation :borrow-denotation-capacity-for-projection
+   :mutation :return-partial-value-as-completed-hit
    :control {:kind :apalache
-             :model "formal/tla/EaclTieredSubproblemCache.tla"
-             :config "formal/tla/mutations/EaclTieredCoupledBudgets.cfg"
-             :length 4}
+             :model "formal/tla/EaclCacheStorage.tla"
+             :config "formal/tla/mutations/EaclCacheFailOpen.cfg"
+             :length 2}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :continuation-race
+   :mechanism :executed-model
+   :mutation :reuse-retired-private-store-instance-with-captured-work
+   :control {:kind :apalache
+             :model "formal/tla/EaclCacheStorage.tla"
+             :config "formal/tla/mutations/EaclCacheStoreInstanceReuse.cfg"
+             :length 3}
    :killed-by {:gate :apalache-mutation-control}}
   {:id :managed-proof-bypass
    :mechanism :executed-model
-   :mutation :reuse-managed-projection-with-mismatched-proof
+   :mutation :reuse-managed-completed-answer-with-mismatched-proof
    :control {:kind :apalache
-             :model "formal/tla/EaclManagedProjectionCache.tla"
-             :config "formal/tla/mutations/EaclManagedProofBypass.cfg"
+             :model "formal/tla/EaclCacheStorage.tla"
+             :config "formal/tla/mutations/EaclCacheManagedProofBypass.cfg"
              :length 4}
+   :killed-by {:gate :apalache-mutation-control}}
+  {:id :managed-publication-proof-drift
+   :mechanism :executed-model
+   :mutation :publish-managed-answer-under-proof-not-captured-by-computation
+   :control {:kind :apalache
+             :model "formal/tla/EaclCacheStorage.tla"
+             :config
+             "formal/tla/mutations/EaclCacheManagedPublicationProofDrift.cfg"
+             :length 3}
    :killed-by {:gate :apalache-mutation-control}}
   {:id :speculative-cache-publication
    :mechanism :executed-model
@@ -672,7 +643,15 @@
    :killed-by {:gate :apalache-mutation-control}}]
 
  :retired-mutant-groups
- [{:reason :pre-change-detector-had-no-named-executable-mutation-target
+ [{:reason :policy-specific-cache-authority-removed
+   :disposition
+   "The generated stage/availability, logical-weight, and coupled-budget decisions were deleted. Partial installation, a distinct partial-hit fail-open path, detached-store-instance publication, retired-store-identity ABA reuse, managed-proof bypass, and managed-publication proof drift remain active against the consolidated semantic partial-map model."
+   :ids
+   [:current-cache-missing-entry-hit
+    :current-cache-specialization-partition
+    :over-budget-publication
+    :coupled-tier-budgets]}
+  {:reason :pre-change-detector-had-no-named-executable-mutation-target
    :disposition
    "Removed from the scored registry instead of preserving a literal-only or decision-by-source-text false kill. Reintroduction requires a named target and an executed detector."
    :ids

@@ -187,45 +187,31 @@
         options (cond-> {:direction :asc}
                   (some? bound)
                   (assoc :bound-eid bound :inclusive-bound? false))
-        cache-key [:operator-recursive-arrow-chunk 1
-                   descriptor options chunk-size]
-        resolved
-        (subproblem/resolve-layered-bound!
-         :projection cache-key
-         {:valid? vector?
-          :weight-fn #(max 128 (+ 128 (* 16 (count %))))}
-         (:relation-eid descriptor)
-         (fn []
-           (execution/check! execution/*contract*
-                             :operator-recursive/arrow-scan-before
-                             {:commands (:commands @counters)
-                              :values (:values @counters)})
-           (let [next-commands (inc (:commands @counters))]
-             (limit-counter! limits counters :commands
-                             :maximum-commands next-commands)
-             (let [chunk
-                   (into [] (take chunk-size)
-                         (resource->subjects!
-                          (:resource-type descriptor)
-                          (:resource-eid descriptor)
-                          (:relation-eid descriptor)
-                          (:intermediate-type descriptor)
-                          options))]
-               (vswap! counters assoc :commands next-commands)
-               (request-counters/add-commands!)
-               (request-counters/add-fetched-values! (count chunk))
-               (execution/check! execution/*contract*
-                                 :operator-recursive/arrow-scan-after
-                                 {:commands next-commands
-                                  :fetched-values (count chunk)})
-               chunk))))
-        values (:value resolved)
+        _ (execution/check! execution/*contract*
+                            :operator-recursive/arrow-scan-before
+                            {:commands (:commands @counters)
+                             :values (:values @counters)})
+        next-commands (inc (:commands @counters))
+        _ (limit-counter! limits counters :commands
+                          :maximum-commands next-commands)
+        values
+        (into [] (take chunk-size)
+              (resource->subjects!
+               (:resource-type descriptor)
+               (:resource-eid descriptor)
+               (:relation-eid descriptor)
+               (:intermediate-type descriptor)
+               options))
+        _ (vswap! counters assoc :commands next-commands)
+        _ (request-counters/add-commands!)
+        _ (request-counters/add-fetched-values! (count values))
+        _ (execution/check! execution/*contract*
+                            :operator-recursive/arrow-scan-after
+                            {:commands next-commands
+                             :fetched-values (count values)})
         next-values (+ (:values @counters) (count values))]
     (limit-counter! limits counters :values :maximum-values next-values)
     (vswap! counters assoc :values next-values)
-    (when (:cached? resolved)
-      (add-counter! counters :shared-scan-cache-hits)
-      (subproblem/record-avoided-backend-operation!))
     (execution/check! execution/*contract*
                       :operator-recursive/arrow-scan-complete
                       {:commands (:commands @counters)
@@ -507,7 +493,7 @@
                      (:target-relation partition))}))
                values)
               dependencies (mapv :dependency
-                                  (filter :dependency expanded))
+                                 (filter :dependency expanded))
               probes (mapv :probe (filter :probe expanded))
               first-slot (count (:dependencies spec))
               dependencies
@@ -886,16 +872,11 @@
                           (get consumers fact [])))]
             (recur state)))))))
 
-(defn- direct-cache-key [probe]
-  [:operator-recursive-direct-membership 1
-   (:direction probe) (:descriptor probe) (:candidate probe)])
-
-(def ^:private direct-cache-options
-  {:valid? boolean?
-   :weight-fn (constantly 128)})
+(defn- direct-memo-key [probe]
+  [(:direction probe) (:descriptor probe) (:candidate probe)])
 
 (defn- attach-base-decisions!
-  [adapter nodes limits counters pending-publications]
+  [adapter nodes limits counters direct-decisions]
   (let [entries
         (vec
          (mapcat
@@ -911,34 +892,17 @@
     (if (zero? probe-count)
       nodes
       (let [physical (atom {})
-            reused (atom #{})
             cache-lookup
             (fn [probe]
-              (let [key (direct-cache-key probe)]
-                (if-let [[_ decision] (get @pending-publications key)]
-                  (do
-                    (swap! reused conj key)
-                    decision)
-                  (if-let [store subproblem/*store*]
-                    (if-let [resolved
-                             (subproblem/lookup!
-                              store :projection key direct-cache-options)]
-                      (do
-                        (swap! reused conj key)
-                        (subproblem/record-avoided-backend-operation! store)
-                        (:value resolved))
-                      direct/cache-miss)
-                    direct/cache-miss))))
+              (get @direct-decisions (direct-memo-key probe)
+                   direct/cache-miss))
             decisions
             (binding [direct/*physical-stats* physical]
               (direct/dispatch adapter (mapv second entries) cache-lookup))
             _
             (doseq [[[_ probe] decision] (map vector entries decisions)
-                    :let [key (direct-cache-key probe)]
-                    :when (not (contains? @reused key))]
-              ;; Publication is deferred until every demand-discovery round,
-              ;; exact fixed point, and checkpoint limit has succeeded.
-              (swap! pending-publications assoc key [probe decision]))
+                    :let [key (direct-memo-key probe)]]
+              (swap! direct-decisions assoc key decision))
             true-heads
             (into #{}
                   (keep (fn [[[head _] decision]]
@@ -948,7 +912,7 @@
                       (:adapter-commands @physical 0))
         (add-counter! counters :direct-fetched-values
                       (:adapter-fetched-values @physical 0))
-        (add-counter! counters :direct-cache-hits
+        (add-counter! counters :direct-memo-hits
                       (:cache-hits @physical 0))
         (reduce-kv
          (fn [result q spec]
@@ -958,14 +922,6 @@
                          :base-true? (or (:base-true? spec)
                                          (contains? true-heads q)))))
          {} nodes)))))
-
-(defn- publish-direct-decisions! [pending-publications]
-  (when-let [store subproblem/*store*]
-    (when subproblem/*populate?*
-      (doseq [[key [_ decision]]
-              (sort-by (comp pr-str key) @pending-publications)]
-        (subproblem/publish!
-         store :projection key direct-cache-options decision)))))
 
 (defn- checkpoint-weight
   [facts join-states completed-components completed-strata]
@@ -1072,11 +1028,10 @@
                           :transitions 0 :maximum-queue 0
                           :checkpoint-weight 0 :duplicate-facts 0
                           :demand-rounds 0 :arrow-chunks 0
-                          :shared-scan-cache-hits 0
                           :direct-adapter-commands 0
-                          :direct-fetched-values 0 :direct-cache-hits 0
+                          :direct-fetched-values 0 :direct-memo-hits 0
                           :late-anchor-initialized-slots 0})
-              pending-direct-publications (atom {})
+              direct-decisions (atom {})
               resource->subjects!
               (backend/scan-invoker adapter :resource->subjects)
               initial-nodes
@@ -1085,7 +1040,7 @@
               (loop [nodes
                      (attach-base-decisions!
                       adapter initial-nodes limits counters
-                      pending-direct-publications)
+                      direct-decisions)
                      wave-width
                      (min batch-schedule/maximum-width
                           (max 1 (count root-questions)))]
@@ -1126,7 +1081,7 @@
                         (recur
                          (attach-base-decisions!
                           adapter nodes limits counters
-                          pending-direct-publications)
+                          direct-decisions)
                          (min batch-schedule/maximum-width
                               (* 2 wave-width))))))))
               _ (vswap! counters assoc :questions (count nodes))
@@ -1198,7 +1153,6 @@
              "Demand-bounded and exact recursive evaluation disagreed."
              {:bounded bounded-decisions
               :exact (:decisions result)}))
-          (publish-direct-decisions! pending-direct-publications)
           (observe! @counters)
           result)))))
 
@@ -1217,8 +1171,7 @@
                   :resource-eid resource-eid}]))))))
 
 (def ^:private point-cache-options
-  {:valid? boolean?
-   :weight-fn (constantly 160)})
+  {:valid? boolean?})
 
 (defn- point-cache-key
   [plan permission scope-identity candidate]
@@ -1250,8 +1203,7 @@
                (let [key (point-cache-key
                           plan permission scope-identity candidate)]
                  (if-let [resolved
-                          (subproblem/lookup!
-                           store :denotation key point-cache-options)]
+                          (subproblem/lookup-denotation! key)]
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
@@ -1279,8 +1231,8 @@
                     :when (and (not cached?)
                                (not (contains? @published key)))]
               (swap! published conj key)
-              (subproblem/publish!
-               store :denotation key point-cache-options
+              (subproblem/publish-denotation!
+               key point-cache-options
                (get miss-decisions candidate)))))
         {:decisions decisions
          :counters

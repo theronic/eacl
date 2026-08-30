@@ -4,7 +4,7 @@
   eacl.datomic.differential-test encodes the same invariants but evaluates raw
   eacl.datomic.impl against a bare db, so it never enters the cache or the
   consistency plumbing at all. Every finding in the 2026-07-31 adversarial
-  review lived in that gap — most sharply a recursive page-cache key that
+  review lived in that gap — most sharply a recursive completed-answer key that
   omitted the pagination direction, so a `:last/:before` page was served to a
   later `:first/:after` request with the same cursor and size.
 
@@ -16,7 +16,6 @@
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
@@ -57,10 +56,7 @@
    [:default {}]
    [:explicit-default {:cache {}}]
    [:constant-eviction {:cache {:max-entries 1
-                                :subproblem-cache
-                                {:projection-max-weight 8192
-                                 :denotation-max-weight 8192
-                                 :answer-max-weight 4096}}}]])
+                                :denotation-max-entries 1}}]])
 
 (defn- client
   [conn config]
@@ -403,8 +399,8 @@
         (is (= (walk-forward oracle query 3)
                (walk-forward acl query 3)))))))
 
-(deftest recursive-page-cache-is-direction-scoped-test
-  ;; Minimal reproduction of the review's C1. recursive-page-request-key omitted
+(deftest recursive-completed-answer-key-is-direction-scoped-test
+  ;; Minimal reproduction of the review's C1. The recursive page identity omitted
   ;; the pagination direction, so {:last N :before C} was stored under exactly
   ;; the key {:first N :after C} read back. The caller silently received the
   ;; page BEFORE the cursor — or an empty page, which stops a paginating client

@@ -33,11 +33,7 @@
    indexed-resume]
   :cache-and-cursors
   [exact-selection
-   continuation-decision
-   candidate-state
-   subproblem-cache-decision
-   current-cache-stage
-   current-cache-decision]
+   continuation-decision]
   :results
   [work-counters
    sequence-outcome

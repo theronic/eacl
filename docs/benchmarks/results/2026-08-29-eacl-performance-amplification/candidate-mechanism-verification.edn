@@ -1,4 +1,10 @@
 {:evidence/version 1
+ :authority-status :historical-candidate-verification
+ :superseded-by
+ ["formal/verification/subproblem-cache.edn"
+  "formal/verification/performance-gates.edn"]
+ :interpretation
+ "This preserves measurements from the superseded candidate architecture. Deleted generated cache-specialization references describe that historical source base and are not current authority."
  :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
  :candidate-production-manifest-sha256
  "9a2e05402636c1558870b53778cd914e41f1a1d8186c1e5cc771e3927b40b989"

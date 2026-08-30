@@ -52,6 +52,13 @@ the originating client/connection lifecycle.
 List operations use `:first`/`:after` and `:last`/`:before`; see the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
 
+Serverless hosts may persist completed authorization entries with
+`export-cache-snapshot`, `restore-cache-snapshot!`, and
+`cache-content-revision`. The host owns authentication and the encoded-byte
+bound before decoding. EACL validates the trusted decoded snapshot and its
+count bound before atomically replacing the visible cache; snapshots exclude
+DataScript database values and process-local identity.
+
 `expand-permission-tree` uses the shared portable shallow-expansion kernel and
 returns a token for the same selected immutable DataScript DB as the tree.
 DataScript CLJ and CLJS have identical topology/error contracts. Native scan

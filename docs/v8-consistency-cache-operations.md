@@ -11,7 +11,7 @@ result rendering, and cursor construction all use that value.
 | omitted / `:minimize-latency` | reuse client pin | reuse client pin | reuse client pin | reuse/acquire the adapter's qualified owned pin | exact-first, then automatic proof-backed reuse when certified |
 | `:fully-consistent` | bounded zero-argument `d/sync` | authoritative head barrier when supported | serialized connection head | new owned read snapshot under the sole-writer topology | enabled for the selected ordinary basis |
 | `:at-least-as-fresh` | targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | bounded acquire/check/release retry | enabled only when selection is an ordinary basis |
-| `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | unsupported | exact-first; managed reuse when the historical value has a readable contract-valid frame |
+| `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | unsupported | identical exact composite key only |
 
 These modes select a basis only when the target is an `acl`. On a retained
 snapshot they are assertions: omitted or minimize-latency evaluates that basis;
@@ -42,14 +42,15 @@ collection of the named commit can make that snapshot unavailable.
 
 ## Automatic basis cache
 
-Every client owns a bounded basis cache. Exact answers are attached to the
-selected immutable database identity and are checked first without proof. On
-an exact miss, deterministic requests on any admissible basis automatically
-attempt a complete ordered-generation proof when that value can read one. A
-proof-backed answer may serve an older or newer selected basis in the same
-lineage—complete source scope plus source lifecycle—when normalized operation,
-result shape, schema generation, and scalar dependency frontier are equal.
-Selected revision order is not part of that equality proof.
+Every client owns flat, count-bounded standard-LRU tiers. Exact answers are
+attached to the complete selected immutable database identity and are checked
+first without proof. On an exact miss, a deterministic ordinary current basis
+may attempt one complete ordered-generation proof. A proof-backed answer may
+serve only a causally later ordinary basis in the same lineage when normalized
+operation identity, schema generation, complete dependency identity, and
+dependency frontier are equal. The value's computed revision must be less than
+or equal to the selected revision. Historical bases never consult the managed
+tier.
 
 Missing, partial, oversized, unsupported, or exceptionally unavailable proof
 evidence falls back to evaluation and exact caching for the selected value. A
@@ -58,13 +59,13 @@ contract violation: authorization and exact caching continue, while managed
 lifting becomes sticky-disabled until lifecycle expiry. Neither case permits
 partial-proof reuse.
 
-Authenticated exact requests use the same bounded exact-basis tier as ordinary
-selected bases. The key includes source scope and lifecycle, native revision
-and locator, basis kind, adapter and identity contracts, engine ABI, result
-shape, demand, and answer-affecting limits. Historical requests probe the
-managed tier only when their own immutable value supplies a complete readable
-frame. Public IDs, tokens, cursors, cache basis, and other metadata are rebuilt
-from the selected adapter on every hit.
+Authenticated exact requests use the same exact-basis LRU as ordinary selected
+bases. The key includes source scope and lifecycle, native revision and
+locator, basis kind, adapter and identity contracts, engine/compiler/value ABI,
+result shape, demand, and answer-affecting structural and aggregate limits.
+Historical requests can reuse only an identical exact key. Public IDs, tokens,
+cursors, cache basis, and other metadata are rebuilt from the selected adapter
+on every hit.
 
 Disable caching:
 
@@ -79,7 +80,7 @@ Disable caching:
 
 Or pass `:cache? false` on one request. Pass `:populate-cache? false` to retain
 lookups and request-local memoization while suppressing completed answers,
-managed subproblems, checkpoints, and visited pages. Both options are excluded
+exact denotations, and continuation checkpoints. Both options are excluded
 from semantic and cursor identity; `:cache? false` dominates either populate
 value. `cache-stats` reports exact and proof-backed hits, misses, bypasses,
 proof-unavailable and contract-violation reasons, publications, expirations,
@@ -164,7 +165,10 @@ ordinary typed stale/basis-conflict outcome.
 Continuation state is a private performance optimization. Eviction replays the
 authenticated prefix on the already selected snapshot and does not select a
 different lifecycle. `:populate-cache? false` leaves validation and page data
-unchanged while suppressing checkpoint and visited-page publication.
+unchanged while suppressing completed-answer and checkpoint publication.
+Relay always rebuilds public identifiers and opaque cursors from the resolved
+internal answer; it retains no separate externalized-page or boundary-alias
+store.
 
 Provider restart preserves cursors only when the source identity is durable.
 The same Datomic database, durable Datahike store, and Datalevin store retain
@@ -186,14 +190,14 @@ check for each consumed object.
 
 ## Assurance boundary
 
-Dafny proves the finite cache decision distinguishes exact-basis and managed
-hit/miss actions; it also proves lifecycle isolation, proof completeness,
-scalar-frontier preservation under globally ordered atomic relation stamps,
-and that an adaptive reducer restricted to the certified plan closure has the
-same transitions, emissions, order, and boundary positions at equal closure
-slices. Existing pagination leaves establish the corresponding forward suffix
-and reverse prefix. The production sealed-plan read-scope guard is mutation
-controlled. It does not prove
+Dafny models cache storage as a bounded partial map of complete keys to
+validated completed values with arbitrary eviction and independent miss
+computation. Separate refinements prove exact-first/managed-second resolution,
+ordinary-only forward managed reuse, lifecycle isolation, proof completeness,
+and scalar-frontier preservation under globally ordered atomic relation
+stamps. Reducer proofs establish the same transitions, emissions, order, and
+boundary positions at equal certified closure slices. The production
+sealed-plan read-scope guard is mutation controlled. The models do not prove
 Datomic I/O effects or future cancellation, Datahike history retention, or the
 truthfulness of a canonical cache key. Those are explicit adapter assumptions
 covered by deterministic effect tests and real-backend evidence. Database

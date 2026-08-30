@@ -1,46 +1,100 @@
-{:schema-version 1
- :semantics-version 1
- :status :conditional-basis-first-cache-refinement
+{:schema-version 3
+ :semantics-version 3
+ :status :pending-post-simplification-reverification
  :classification :proof-and-production-regression
  :proof
  {:source "formal/dafny/CurrentCache.dfy"
-  :verified-obligations 32
+  :verified-obligations :pending-fresh-rerun
   :claims
-  [:cache-eligibility-does-not-select-engine-authority
-   :generated-current-cache-stage-selection
-   :current-cache-hit-requires-available-entry
-   :exact-only-hit-requires-available-entry
-   :exact-only-miss-computes-without-managed-fallback
-   :numeric-revision-alone-cannot-establish-exact-identity
-   :current-cache-bypass-requires-ineligible-or-inactive-generation
-   :cache-computation-requires-selected-basis-miss
+  [:numeric-revision-alone-cannot-establish-exact-identity
    :inadmissible-basis-bypass-and-complete-identity-admission
    :exact-basis-hit-is-same-selected-basis
-   :late-publication-is-unreachable-after-lifecycle-expiry
-   :forward-relevant-write-raises-scalar-dependency-stamp
+   :every-admitted-exact-key-uses-portable-locator-domain
+   :every-validated-exact-answer-uses-portable-locator-domain
+   :exact-answer-key-revision-equals-selected-snapshot-order
+   :exact-answer-key-matches-full-selected-basis
+   :direct-exact-cache-basis-is-derived-from-exact-key-backend-snapshot
+   :direct-exact-answer-uses-selected-revision-locator-and-backend-snapshot
+   :direct-exact-answer-has-portable-anchor
+   :managed-promotion-preserves-computed-revision-exact-locator-and-cache-basis
+   :managed-promotion-with-different-anchor-is-not-portable
+   :managed-promoted-exact-entry-allows-computed-revision-at-or-below-key-revision
+   :historical-basis-is-exact-only-and-never-managed-tier-eligible
+   :inadmissible-basis-is-never-managed-tier-eligible
+   :managed-promoted-exact-answer-requires-ordinary-basis
+   :forward-relevant-write-raises-dependency-stamp
    :relevant-relationship-projection-frame
    :direct-self-and-arrow-rule-derivation-frame
    :least-fixed-point-managed-cache-frame
    :selected-snapshot-public-result-rendering]}
+ :host-resolution
+ {:sequence [:exact-composite-key :managed-composite-key :compute]
+  :ordinary-derived-authorities
+  {:selected-revision :exact-basis-key-revision
+   :cache-basis :exact-basis-key-backend-snapshot-identity
+   :managed-source :exact-basis-key-source-lineage-and-adapter-identity
+   :operation :semantic-key-operation
+   :answer-validator :semantic-key-operation-and-answer-shape}
+  :ordinary-redundant-caller-inputs :absent
+  :speculative-managed-read-only-explicit-inputs
+  [:selected-revision :managed-source]
+  :answer-envelope
+  {:format :eacl.cache/completed-answer-v2
+   :exact-locator-domain
+   [:nil :safe-natural-zero-through-9007199254740991
+    :nonempty-string-at-most-4096-host-count-units]
+   :immutable-computation-anchor
+   [:cache-basis :computed-revision :computed-exact-locator]
+   :exact-key-revision :selected-snapshot-order
+   :direct-exact-anchor
+   {:source :selected-snapshot
+    :cache-basis-input :derived-from-exact-key-backend-snapshot-identity
+    :caller-supplied-cache-basis false}
+   :portable-exact-export
+   {:cache-basis :equal-to-exact-key-backend-snapshot-identity
+    :computed-revision :equal-to-exact-key-revision
+    :computed-exact-locator :equal-to-exact-key-locator
+    :different-anchor-managed-promotion :omitted
+    :managed-source-entry :retained-for-validated-restore-and-local-causal-check}
+   :managed-promotion
+   {:payload-rewritten false
+    :immutable-anchor-rewritten false
+    :basis-class :ordinary-only
+    :computed-revision-relation :less-than-or-equal-to-exact-key-revision
+    :soundness-witness :managed-proof-validation-at-selected-snapshot}}
+  :generated-stage-selection :absent
+  :generated-availability-selection :absent
+  :host-publication-eligibility
+  :cache-stage-available-neither-deadline-expired-nor-cancelled
+  :host-lookup-eligibility
+  {:guard-position :before-exact-probe-and-managed-proof-construction
+   :unavailable-result :independent-computation
+   :lookup-probes 0
+   :recency-touches 0
+   :managed-proof-reads 0}
+  :storage-policy-authorization-authority false
+  :cache-disabled-path :compute}
  :production-regression
  {:namespaces
   [eacl.cache-test
-   eacl.datomic.cache-test
    eacl.datomic.cache-review-regressions-test
    eacl.datomic.cache-differential-test
    eacl.datomic.consistency-cache-test
    eacl.datomic.lookup-cache-test
    eacl.datomic.recursive-cache-test]
-  :status :passed}
+  :status :pending-final-cutover-rerun}
  :state-trace-differential
  {:runner eacl.formal.differential-runner
   :namespace eacl.formal.state-trace-differential-test
   :adapters [:datomic :datascript :datahike]
   :cache-modes [:enabled :disabled]
-  :status :passed}
- :removed-proof-only-predecessor
- {:source "formal/dafny/CacheKernel.dfy"
-  :reason :superseded-graph-ancestry-model-with-no-production-consumer
-  :replacement
-  ["formal/dafny/CurrentCache.dfy"
-   "formal/dafny/ScalarFrontierCoherence.dfy"]}}
+  :status :pending-final-cutover-rerun}
+ :removed-authority
+ [{:source "modules/eacl/src/eacl/formal/current_cache_refinement.cljc"
+   :reason :host-stage-and-availability-policy-is-not-semantic-authority}
+  {:source "formal/verification/current-cache-specialization.edn"
+   :reason :finite-host-specialization-was-deleted-with-the-generated-policy}]
+ :retained-proof-sources
+ ["formal/dafny/CurrentCache.dfy"
+  "formal/dafny/SubproblemCache.dfy"
+  "formal/dafny/ScalarFrontierCoherence.dfy"]}

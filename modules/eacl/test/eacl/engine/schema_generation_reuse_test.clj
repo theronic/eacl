@@ -1,7 +1,31 @@
 (ns eacl.engine.schema-generation-reuse-test
   (:require [clojure.test :refer [deftest is testing]]
+            [eacl.cache.derived-schema :as derived-schema]
             [eacl.engine.sealed-plan :as sealed-plan]
-            [eacl.engine.v8 :as engine]))
+            [eacl.engine.v8 :as engine]
+            [eacl.schema.expression-persistence :as expression-persistence]
+            [eacl.schema.expression-policy :as expression-policy]))
+
+(defn- derived-identity
+  []
+  {:abi engine/derived-schema-cache-abi
+   :source {:backend :test
+            :source-id :schema-generation-test
+            :branch nil
+            :source-lifecycle "schema-generation-test/initial"}
+   :adapter {:backend :test
+             :fingerprint :schema-generation-test-v1
+             :identity-contract :immutable-v1
+             :operator-capability {:mode :scalar}}
+   :schema-generation 1})
+
+(defn- shared-plan-cache
+  [store]
+  {:schema-version 1
+   :expression-metrics (atom {})
+   :sealed-plans
+   (derived-schema/artifact-partition
+    store (derived-identity) :sealed-plans)})
 
 (defn- unstamped-request-cache
   []
@@ -116,3 +140,55 @@
                  (set results)))
           (binding [engine/*schema-cache* schema-cache]
             (is (contains? (engine/stable-plan :db root) :build))))))))
+
+(deftest concurrent-shared-plan-misses-remain-request-owned-test
+  (let [root [:document :view]
+        store (derived-schema/store 8)
+        schema-cache (shared-plan-cache store)
+        request-count 8
+        ready (java.util.concurrent.CountDownLatch. request-count)
+        release (java.util.concurrent.CountDownLatch. 1)
+        builds (java.util.concurrent.atomic.AtomicLong.)]
+    (with-redefs [engine/permission-relationship-eids (fn [& _] [])
+                  sealed-plan/seal-plan
+                  (fn [& _]
+                    (let [build (.getAndIncrement builds)]
+                      (.countDown ready)
+                      (.await release)
+                      {:rules [] :build build}))]
+      (let [workers
+            (mapv (fn [_]
+                    (future
+                      (binding [engine/*schema-cache* schema-cache]
+                        (engine/stable-plan :db root))))
+                  (range request-count))]
+        (is (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+        (is (= request-count (.get builds)))
+        (.countDown release)
+        (let [results (mapv #(deref % 5000 ::timed-out) workers)]
+          (is (= (set (map #(hash-map :rules [] :build %)
+                           (range request-count)))
+                 (set results)))
+          (binding [engine/*schema-cache* schema-cache]
+            (is (contains? (set results)
+                           (engine/stable-plan :db root))))
+          (is (= {:entry-count 1 :max-entries 8}
+                 (derived-schema/stats store))))))))
+
+(deftest shared-plan-keys-include-effective-expression-limits-test
+  (let [store (derived-schema/store 4)
+        slot (:sealed-plans (shared-plan-cache store))
+        default expression-policy/default-client-limits
+        changed (assoc default :maximum-source-nodes 513)]
+    (is (= {:profile :default}
+           (binding [expression-persistence/*expression-limits* default]
+             (engine/memoized-derived! slot #(hash-map :profile :default)))))
+    (is (= {:profile :changed}
+           (binding [expression-persistence/*expression-limits* changed]
+             (engine/memoized-derived! slot #(hash-map :profile :changed)))))
+    (is (= {:profile :default}
+           (binding [expression-persistence/*expression-limits* default]
+             (engine/memoized-derived!
+              slot #(throw (ex-info "default profile rebuilt" {}))))))
+    (is (= {:entry-count 2 :max-entries 4}
+           (derived-schema/stats store)))))

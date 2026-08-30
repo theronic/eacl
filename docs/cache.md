@@ -1,542 +1,300 @@
 # EACL cache
 
-EACL's cache is a bounded, client-private optimization. The selected immutable
-database value and the cache-free evaluator remain authoritative: a miss,
-rejected entry, unavailable proof, eviction, or disabled cache recomputes the
-operation and cannot turn a deny into an allow.
+EACL caching is a bounded, client-private optimization. The selected immutable
+database value and the cache-free evaluator remain authoritative. Absence,
+eviction, a rejected malformed publication/restore entry, an unavailable proof,
+a storage error, or a disabled cache always falls back to independent
+evaluation; cache availability cannot change an authorization result.
 
-## Consumer contract
+## Storage strategy
 
-One public operation selects one immutable database value. Schema resolution,
-normalization, traversal, proof acquisition, result rendering, and cursor
-construction all use that selected value. A long-running request may continue
-against its older selected value while later transactions commit.
+All reusable shared EACL stores use standard least-recently-used retention:
 
-EACL guarantees cache coherence only when authorization-relevant mutations use
-supported EACL paths:
+- Clojure uses `org.clojure/core.cache`;
+- ClojureScript uses the pinned `com.github.theronic/cljs-cache` fork; and
+- EACL's small CLJC adapter supplies local atoms, explicit absence, atomic LRU
+  touches, absent-key publication, eviction, clearing, and portable iteration.
 
-- schema changes use `eacl/write-schema!`;
-- relationship additions, deletions, repairs, and object cleanup use EACL APIs
-  or EACL-produced transaction data transacted intact; and
-- permissioned identity/liveness and entity deletion use documented EACL
-  cleanup or `:eacl.fn/retractEntity` paths.
+The atoms are expected to change on a hit because an LRU must record use.
+EACL never substitutes FIFO: a frequently used old entry remains hot while the
+least recently used entry is evicted. Cache transformations contain no loader,
+validator, proof acquisition, or request computation, so an atom retry can
+repeat only a pure library operation.
 
-Unrelated application datoms are outside this requirement. Splitting EACL
-transaction data or directly changing authorization schema, relationship
-tuples, permissioned identity, or entity liveness is unsupported and can leave
-a managed entry stale.
+There is no single-flight owner. Concurrent misses compute independently and
+race best-effort publication. Each request returns its own completed result
+even when another publisher wins.
 
-The maintained Datalevin fork makes this mutation contract executable for its
-datom transaction and administrative APIs. A persisted store policy guards and
-freezes every physical EACL attribute except application identity, verifies
-schema and relation stamps after transaction-function and `retractEntity`
-expansion, materializes each stamp from the committing `max-tx`, and requires a
-per-open token held by the EACL writer. Consequently an unadmitted protected
-write, including direct retraction of an entity that owns relationship tuples,
-aborts instead of silently invalidating proof. Use `delete-object!` or
-`eacl.datalevin.safe-retraction/transact-retract-entity!` for those deletions.
-Raw KV writes, direct file modification, and opening the directory with an
-upstream artifact that lacks the policy remain outside the trusted boundary.
+## Flat stores and complete keys
 
-Caching does not alter results:
+Exact and proof-managed reuse are modes in complete composite keys, not nested
+cache backends or retained-generation registries. A v2 key includes its domain,
+source scope and lifecycle, adapter and identity contracts, authorization ABI,
+semantic operation identity, and either:
 
-- `eacl.cache/no-cache` disables it for a client;
-- `:cache? false` bypasses lookup and publication for one operation;
-- `:populate-cache? false` keeps lookup and request-local memoization enabled
-  while suppressing completed-answer, managed-subproblem, checkpoint, and
-  visited-page publication for one operation;
-- failed, timed-out, partial, malformed, or unproved work is never published
-  as a completed result; and
-- cache data is never written to the application database.
+- one complete immutable basis identity for exact reuse; or
+- one complete schema/dependency proof descriptor for managed reuse.
 
-## Cache layers
+Full persistent-value equality is the collision authority on both runtimes.
+EACL does not shorten correctness identity to an unverified digest.
+Continuation keys likewise retain the complete version, backend, lineage,
+adapter, identity-contract, operation, and canonical-query scope as persistent
+key material rather than storing only a digest.
 
-| Layer | Reuse scope | Purpose |
+Completed-answer semantic identity includes the normalized query, operation,
+evaluation and demand, stable result ordering, engine/compiler/value ABI,
+adapter identity, recursive traversal limits, expression limits, permission
+tree limits, and normalized aggregate limits. The aggregate limits are part of
+identity because limits such as `:candidate-window` can change page boundaries
+and flags, not merely execution cost.
+
+Resolution is deliberately small:
+
+1. Look up the exact composite key.
+2. For an ordinary current basis only, look up one proof-managed key.
+3. Otherwise evaluate against the selected immutable value.
+4. Publish the completed value under eligible keys.
+
+Managed values flow forward only: their computed revision must be less than or
+equal to the selected revision. Historical `:as-of` bases use identical exact
+keys only. A speculative snapshot is not exact-cacheable; after proving its
+effects disjoint, it may read a committed managed value through a complete
+managed source identity, but it never publishes reusable state.
+
+Validated publication and validated off-side restore are the only supported
+ways to install answer or subproblem entries. Exact hits are therefore ordinary
+membership reads plus the standard LRU touch; they do not repeat operation,
+shape, or ABI validation. Managed hits add only the computed-revision check
+above. Derived-schema artifacts are likewise validated once before direct LRU
+publication. Every live answer, subproblem, and derived-artifact publisher
+requires an explicit callable validator; there is no implicit trusting
+validator overload. Direct application mutation of EACL's private runtime
+records or backing cache atoms is unsupported. Cursor authentication and any
+configured cursor expiry remain request-dependent and are still checked on
+every use.
+
+## Store inventory
+
+| Store | Contents | Retention |
 | --- | --- | --- |
-| Exact completed answer | Same semantic operation and complete immutable basis identity | Skips the complete operation with no proof read; ordinary and retained historical generations share one bounded composite-key tier |
-| Proof-backed completed answer | Same semantic operation, lineage, schema generation, and dependency frontier | Reuses across either revision direction when the selected basis has a readable complete frame |
-| Identity projection | Same backend, identity contract, and internal id | Shares `internal-id->object` renderings while a page is externalized |
-| Sealed plan | Same source scope, lifecycle, schema generation, and permission root | Reuses the compiled stable-discovery plan across requests and unrelated transactions; `expire-cache!` drops it |
-| Schema-derived generation | Same engine ABI, adapter/source scope, lifecycle, and certified schema generation | Shares parsed validation catalogs, permission roots and paths, dependency closures, routing analysis, direct-grant relations, cycle guards, and sealed plans |
-| Structural expression metrics | Same client, schema generation, authoritative expression fields, and effective client-limit profile | Reuses bounded payload decoding, source/DAG validation, and normalization results; no derived metric or admission policy is stored in the database |
-| Relationship observations | Same backend/source/lifecycle, immutable basis high-watermark, normalized descriptor, and direction | Records samples, selectivity, exact exhausted counts, and optional physical-I/O evidence from reads the caller already demanded |
-| Latest checkpoint | One client, query, lineage, complete plan frame, plan fingerprint, traversal, anchor, page size, and authenticated boundary | Resumes history-free reducer state plus its lookahead on the same or an equal-frame basis; native revision is not part of the key |
-| Visited page | One authenticated query and exact immutable basis | Reuses an already-externalized page (and learns the adjacent opposite-direction page); external identity rendering is not covered by frame equality |
+| Answer | Completed point, page, count, and permission-tree results | Standard LRU |
+| Denotation | Completed Boolean denotations | Standard LRU |
+| Continuation | Validated latest traversal/checkpoint state | Standard LRU |
+| Stable-page checkpoint | Request-local or standalone resumable reducer state | Standard LRU |
+| Cursor codec/construction | Authenticated token and construction contexts | Independent standard LRUs |
+| Derived schema | Parsed schema, dependency closures, roots, and sealed plans | Flat standard LRU |
 
-Completed-answer keys include the normalized operation, principal, permission,
-query, bounds, evaluation mode, and result shape. Public IDs and metadata are
-rendered from the selected database after an internal result is resolved.
-Partially processed worklists and incomplete pages are not completed answers.
+Request-local schema memos, evaluator worklists, and recursion sets remain
+ordinary request state. Stable-page checkpoints are semantic execution state,
+but their bounded multi-key retention still uses the standard LRU adapter;
+only an authenticated ordinal-and-boundary match touches recency. Database-
+engine caches and authoritative source/basis/generation state are not EACL
+cache backends.
 
-Aggregate batch, scan-route, and enumerate-route results use these same layers;
-they do not have a weaker side cache. The exact key binds the operation and
-complete normalized aggregate shape, including authorization or direct-
-relationship clauses, page direction/demand, candidate window, and selected
-snapshot. Proof-backed aggregate reuse additionally binds every direct
-relationship dependency used by the filter. A request-local repeated decision
-may remove work inside one aggregate but is not reported as a durable
-`:cached? true` result. Datalevin applies the same exact-first, proof-backed
-aggregate rules as the other ordered-generation adapters: an unrelated commit
-may reuse a complete aggregate page, while a changed dependency frame misses.
+On the JVM, one cursor key-context value contains a nonblocking idle object
+pool capped at eight initialized JCA `Mac` instances. It is not keyed result
+retention: concurrent borrowers never share a mutable authenticator, a full
+pool discards the returned burst instance, and the owning key context remains
+bounded by its standard LRU.
 
-## Certified schema generation
+The stable reducer's `:sidecar` is linear traversal state, not reusable cache
+storage. Each entry is the unread portion of one already-fetched physical
+chunk, its index is consumed exactly once by that traversal/checkpoint, and
+oldest-first release is bounded execution scheduling rather than result reuse.
+Replacing that immutable CLJ/CLJS checkpoint state with an atom-backed LRU
+would add synchronization to every released value and change the state-machine
+representation. Likewise, the saturating 256-condition schema-warning set is
+diagnostic output deduplication only: it never supplies an authorization value
+or changes evaluation.
 
-Every bundled adapter implements the independent `:schema-generation`
-operation. It reads EACL's transactionally maintained schema stamp with at
-most one index probe, and the selected adapter memoizes that result. A managed
-schema write advances the stamp; a relationship-only or unrelated write does
-not. Datalevin reads this scalar stamp and each requested scalar relation stamp
-from the same owned immutable reader used by the authorization request.
+The generated-Java adapter has two capacity-one volatile conversion slots for
+the most recent fuel integer and the most recent traversal-limits object.
+Capacity one makes FIFO and LRU identical; a race merely replaces one pure,
+equivalent conversion with another. These scalar marshaling shortcuts and the
+request-counter thread-local binding-frame pointer are not multi-key cache
+backends.
 
-A certified stamp selects one bounded, client-owned derived generation. Its
-key contains the engine ABI, backend and adapter identity, source scope,
-lifecycle, and schema generation—never the native database revision. All
-pure schema artifacts, including sealed plans and validation catalogs, live
-inside that generation. A relationship write can therefore advance the
-native revision without causing definition reads or plan sealing on the next
-request.
+The former externalized `PageNavigationCache`, relationship-observation cache,
+and unused Datomic `CacheStore`/`LocalStore` provider contracts were deleted.
+Relay rebuilds public identifiers and signed cursors from a completed internal
+page. A first unseen reverse page may recompute; an identical retry can hit the
+ordinary completed-answer key.
 
-If an adapter cannot certify a schema generation, EACL creates the same
-derived slots in a request-local floor and discards them when the request
-ends. It never falls back to native revision keying and has no process-global
-sealed-plan FIFO. `expire-cache!` clears the client's generation registry;
-ordinary relationship writes leave it intact.
+Physical operator chunks and direct Boolean probes, plus Relay identity
+conversion, are deliberately not shared cache artifacts. Cross-backend
+measurements found their standard-LRU bookkeeping slower and more allocating
+for the common one- and 16-value cases; request-local evaluator memoization and
+backend execution bounds remain authoritative. The retained shared tiers are
+therefore exact denotations and exact/managed completed answers only.
 
-## Derived metrics and refresh
+## Capacity and page retention
 
-Structural expression metrics are exact derivatives of the canonical
-permission payload. A cold schema read verifies the canonical payload and its
-identity fields, enforces that client's source and normalized-DAG limits, and
-caches the completed result in the certified schema generation. The cache key
-contains the effective limit profile, so validation performed for a looser
-client cannot admit the same expression for a stricter client. No policy
-digest or policy-limit value is stored durably. Relationship cardinality and
-selectivity are different: application data changes continuously, so EACL
-records only high-watermark-scoped observations produced by already-demanded
-scans and membership batches. A short final chunk can prove an exact count; a
-bounded probe otherwise remains a sample or lower bound.
-
-The backend `refresh-metrics!` functions accept `:scope` as `:structural`,
-`:relationships`, or `:all`. The default clear/observe refresh performs no
-backend read and cannot open a new index stream. `:eager? true` eagerly
-recomputes only the bounded structural schema data. An optional explicit
-`:read-through` names one public check, lookup, or count operation; EACL runs
-that operation with completed-answer caching bypassed, and ordinary limits,
-deadlines, cancellation, ordering, and cursor rules still apply.
-
-Datomic can attach I/O stats to supported reads. EACL stores those values only
-as physical cache/storage-tier telemetry; it never treats them as relationship
-cardinality. Other adapters rely on the same portable logical counters and may
-provide no physical telemetry. Observations do not change permission meaning,
-the sealed semantic plan, public result order, or cursor lineage.
-
-## Exact-first lookup
-
-For a completed operation on an admitted basis EACL resolves:
-
-1. an exact answer for the selected immutable database value;
-2. a proof-backed answer when complete proof is available;
-3. engine evaluation, optionally using safe cached subproblems; and
-4. publication into every eligible exact and proof-backed tier.
-
-An exact hit performs no ordered-generation proof reads and no schema reads;
-the independent schema-generation operation is not forced on that path.
-Request validation runs on the miss path against the schema parsed once per schema
-generation (a hit implies the request validated under an equal generation;
-an unstamped database validates against a direct read). A proof-backed hit is
-promoted into the exact store for the selected value, so the next identical
-request on that value is exact.
-
-## Explicit speculative snapshots
-
-`eacl/with` and `eacl/with-schema` establish speculative provenance through a
-trusted EACL call path. EACL does not try to recognize a caller's native
-database value: a Datomic `d/with` value can intentionally collide with
-different committed content on database identity, basis `t`, and
-`:db/txInstant`. Raw database values therefore have no public snapshot
-constructor.
-
-A speculative operation never consults the exact completed-answer tier. It
-also publishes no completed answer, subproblem, projection, schema artifact,
-plan, checkpoint, visited page, cursor proof, or other derived value that can
-outlive the request. Request-local evaluator memoization is permitted and is
-discarded when the operation returns. Repeating a speculative miss may
-recompute by design.
-
-The operation may read an existing committed managed proof only after ordinary
-validation authenticates it at the speculative snapshot's committed root and
-its complete semantic dependencies are disjoint from every cumulative
-speculative effect. Relationship and stable schema-component dimensions are
-checked separately. Identity, existence, ordering, or application effects
-that the adapter cannot completely classify make the effect certificate
-unknown and disable all managed read-through for that snapshot. The operation
-still evaluates correctly against its speculative database and remains
-publication-free.
-
-Effects come from the native in-memory transaction report's actual emitted
-datoms, so relationship mutations expanded by transaction functions are not
-missed. Prospective schema effects come from the same pure replacement planner
-used by committed `write-schema!`. Effect sets only grow across chained
-`with`/`with-schema` calls; an apparent restoration never re-enables an
-affected committed proof. Cache coherence uses no transaction-log scan,
-listener, `d/log`, or `d/tx-range` operation.
-
-Ordinary and authenticated historical selections share one bounded exact-basis
-tier. Its composite identity includes backend and source scope, configured
-lifecycle, native revision and exact locator, basis kind, adapter fingerprint
-and identity contract, engine/order ABI, normalized semantic request, result
-kind, demand, and every answer-affecting limit. Equal numeric revisions alone
-are insufficient. Each retained basis owns its exact answers and subproblem
-store. A historical miss evaluates on the already selected immutable adapter
-and may probe managed proof-backed entries when that historical value can read
-a complete contract-valid frame in the native revision domain. An unreadable
-historical frame remains exact-only. Public tokens, cursor envelopes, cache
-basis, external IDs, and selected-basis metadata are rebuilt on every hit.
-
-Caller-constructed database values are not accepted as source bases and cannot
-enter the completed-answer cache. Basis admission requires the source adapter's
-complete semantic identity; a missing lifecycle, revision, locator, basis kind,
-adapter fingerprint, identity contract, or ABI component fails before lookup or
-publication.
-
-## Automatic proof-backed coherence
-
-Every deterministic cacheable request on an admissible basis is automatically
-eligible after its exact miss when its complete frame is readable.
-
-Lineage is the complete source scope paired with the operator lifecycle:
+Capacities are positive cross-runtime safe integer entry counts:
 
 ```clojure
-{:source-scope {:backend backend :source-id source-id :branch branch}
- :source-lifecycle lifecycle}
+{:cache
+ {:max-entries 2048
+  :denotation-max-entries 4096}}
 ```
 
-For any two selected values in one lineage, a reusable completed answer must
-have equal:
+`:max-entries` sizes the completed-answer, continuation, and cursor LRUs.
+`:denotation-max-entries` independently sizes exact Boolean denotations. The store
+uses 1,024 for every `:max-entries` consumer when that single public option is
+omitted. It does not claim that an entry count or an old logical weight estimate is a byte
+measurement. The removed nested `:subproblem-cache` map, projection-tier, and
+managed-proof-retention options fail
+closed instead of preserving an unused cache surface.
 
-- lineage;
-- normalized semantic operation and result shape;
-- schema assertion generation; and
-- scalar dependency frontier.
+A completed page with at most 1,000 result items may be retained. A page with
+1,001 through the public 10,000-item maximum is returned unchanged but is not
+published. This is a retention rule, not a public page-size limit. Scalar,
+count, and permission-tree results are unaffected.
 
-Revision order is not a reuse predicate. The formal history orders values to
-reason about intervening commits, but its equality conclusion is symmetric.
-An older retained basis can therefore reuse a newer answer, and a newer basis
-can reuse an older answer, when their lineage and complete proof are equal.
-`EqualScalarProofAlsoPreservesAnOlderSelectedSnapshot` states the older-selected
-case explicitly.
+Removed weight, retained-generation, recency, repeat-admission, publication-
+attempt, provider-store, and relationship-observation options fail closed as
+typed invalid configuration. `eacl.cache/no-cache` is the only client-level
+cache sentinel.
 
-Durable backends persist source identity across reopen. Non-durable sources
-mint one fresh identity per live source—DataScript per connection, Datahike
-memory stores even when the caller supplies a fixed store id, and Datomic
-`mem` databases through their generated database id. A configuration label is
-never accepted as lineage for a recreated non-durable source.
-
-The dependency set is the complete canonical set of relationship relations
-that can affect the normalized request under the selected schema. Its frontier
-is the maximum stored native transaction generation over that set, or `0` for
-an empty set. The constant-size cache descriptor is therefore:
-
-```clojure
-{:schema-generation schema-generation
- :dependency-stamp maximum-dependency-generation}
-```
-
-The scalar maximum is sound because every supported mutation commits its tuple
-changes and stamps every affected relation atomically with the same native
-transaction generation, and that generation is later than every relation
-generation visible before the commit. If a relevant relation changed after
-`S`, its first mutation must make the frontier at `T` greater than the frontier
-at `S`. An unrelated transaction changes neither the dependency slices nor the
-frontier. A schema change advances the schema generation.
-
-The proof would not be sound under independently monotone relation counters:
-`{A 10, B 5}` could become `{A 10, B 7}` without changing the maximum. The
-bundled adapters instead use globally ordered native committed transactions.
-This backend ordering and atomic-stamping behavior is certified by adapter
-tests; the database engines themselves are part of the trusted boundary.
-
-No listener, wall clock, TTL, transaction-log scan, relationship-content scan,
-mutation journal, graph head, or database-global cache CAS is validity
-evidence. Relation-local commit guards may retry competing writers to the same
-relation; unrelated relations share no EACL coordination point.
-
-## Proof frame and unavailability
-
-Each request owns one lazy proof frame bound to its exact adapter, lineage, and
-immutable database value. Equal dependency closures share their resolved
-evidence. The adapter's `:proof-frame` operation returns only the canonical
-vector `[[relation-id generation] ...]`; the independent certified
-`:schema-generation` operation supplies the schema component. Core requires
-the selected revision, schema generation, and every relation generation to be
-portable non-negative exact integers in one domain, and requires schema and
-relation generations to be at or below the selected revision. It then derives
-the scalar frontier and can derive subset frontiers only from relations already
-in the proved closure. The frame never combines evidence from another adapter,
-lineage, or snapshot.
-
-Proof is unavailable when:
-
-- the adapter does not advertise certified ordered generations;
-- schema or relation generations are absent;
-- dependency extraction is incomplete or non-canonical;
-- the complete closure exceeds 4,096 relations, or a managed subproblem
-  exceeds its configured `:managed-proof-max-atoms` bound;
-- the provider throws;
-- the selected value cannot read the historical generations it names;
-- the request uses a filtered or caller-constructed value, or a speculative
-  value lacks the complete committed-root/disjointness certificate;
-- caching is disabled, the response is incomplete, or the operation is not
-  deterministic; or
-- a custom identity codec lacks its stable deterministic contract.
-
-An unavailable proof is exact-only for that request. It is not an availability
-or authorization error and never uses partial evidence or substitutes an
-initial generation. A complete changed proof is a normal managed miss, not
-proof unavailability. `cache-stats` reports `:proof-unavailable` and
-`:proof-unavailable-reasons`.
-
-Malformed shape, wrong cardinality, duplicate or non-canonical relation ids,
-non-integer generations, and generations above the selected revision are
-adapter contract violations, not ordinary unavailability. The request still
-evaluates authoritatively on its exact selected basis; exact caching and token
-issuance continue. The client atomically disables managed lifting until
-`expire-cache!`. `cache-stats` exposes the sticky flag and violation counts by
-reason. An optional `:proof-contract-reporter` runs once per reason per
-lifecycle. Cursor validation treats violated evidence as unavailable and
-therefore uses exact fallback or returns a typed stale outcome; it never treats
-two violations as proof equality.
-
-## Custom identity codecs
-
-Built-in `:eacl/id` conversion is deterministic and proof-eligible. A custom
-`:entid->object-id`/`:object-id->lookup-ref` codec receives an opaque
-client-local fingerprint and exact caching by default. It gains cross-snapshot
-proof-backed completed-answer reuse only when the client supplies both:
-
-```clojure
-{:adapter-fingerprint [:my-app/id-codec 1]
- :adapter-deterministic? true}
-```
-
-The application must certify that the codec is deterministic, injective, and
-round-trips every permissioned identity. Proof-equivalent cursor continuation
-has the stronger requirement that one internal object's public identity never
-changes within a source lineage; custom codecs must additionally set
-`:identity-immutable? true`. Without that explicit immutability contract,
-cursors remain exact-basis-bound even when managed completed answers are
-enabled. Processes that exchange cursors must use the same portable
-fingerprint, codec, and identity contract.
-
-The built-in codec defaults to `:identity-immutable? true`. This is a supported
-writer premise, not a property enforced by Datomic, Datahike, or DataScript's
-physical schema: applications MUST treat `:eacl/id` as immutable for an
-entity's lifetime. Set `:identity-immutable? false` when that premise does not
-hold; EACL then rejects cross-basis cursors instead of risking a hybrid public
-stream after an ID reassignment.
-
-## Capacity, concurrency, and configuration
-
-Completed answers and identity projections have separate weighted
-least-recently-used budgets (the `:denotation` tier budget is still accepted
-by the store configuration but no engine path publishes into it). A value
-heavier than its tier's admission ceiling is rejected rather than displacing
-the tier. `:max-entries` bounds the
-second-sighting window and client-private continuation/navigation stores; the
-answer weight budget bounds completed answers.
-
-Identical concurrent misses compute independently. Requests never wait on an
-EACL cache semaphore or inherit another request's failure. Completed results
-race bounded best-effort publication. Late publication from an expired
-lifecycle is unreachable from the replacement lifecycle.
-
-Historical exact entries share the answer tier's weight/LRU/admission bounds;
-retaining more immutable generations does not make memory unbounded. Eviction
-causes exact recomputation and is never interpreted as token or cursor expiry.
-
-Typical configuration:
-
-```clojure
-(def acl
-  (eacl.datomic.core/make-client
-   conn
-   {:cache
-    {:max-entries 4096
-     :subproblem-cache
-     {:enabled? true
-      :projection-max-weight (* 8 1024 1024)
-      :denotation-max-weight (* 8 1024 1024)
-      :answer-max-weight (* 16 1024 1024)
-      :managed-proof-max-atoms 256}}}))
-```
-
-Datomic accepts `{:cache {:remember-answers :on-repeat}}`; Datahike and
-DataScript accept `{:cache {:admit-on-repeat? true}}` for second-sighting
-completed-answer admission.
-
-Disable all answer caching:
-
-```clojure
-(require '[eacl.cache :as cache])
-
-(eacl.datomic.core/make-client conn {:cache cache/no-cache})
-(eacl.datahike.core/make-client conn {:cache cache/no-cache})
-(eacl.datascript.core/make-client conn {:cache cache/no-cache})
-```
-
-Bypass one call:
+## Per-request controls
 
 ```clojure
 (eacl/check-permission
  acl
- {:subject subject :permission :view :resource resource :cache? false})
-```
-
-Read existing cache state without publishing cross-request state:
-
-```clojure
-(eacl/check-permission
- acl
- {:subject subject
+ {:subject user
   :permission :view
-  :resource resource
-  :populate-cache? false})
+  :resource document
+  :cache? false})
 ```
 
-Every cache-capable public read accepts this option, including batch, count,
-relationship, permission-tree, and paginated operations. It is excluded from
-cache, cursor, and continuation identities. With `:cache? false` it is accepted
-but irrelevant because lookup and publication are both bypassed.
+- `:cache? false` bypasses answer, exact-denotation, and continuation lookup and
+  publication for the operation. Derived-schema and cursor-construction LRUs
+  remain independent client infrastructure.
+- `:populate-cache? false` keeps lookup and request-local memoization but
+  suppresses completed-answer, exact-denotation, and continuation
+  publication.
 
-Use the bypass as a semantic oracle and measure representative workloads before
-tuning for latency.
+Both controls are excluded from semantic identity. Invalid, timed-out,
+cancelled, partial, or unproved authorization answers, denotations, and
+continuation checkpoints are never retained: their publication boundary
+rechecks the bound execution contract before touching an LRU. Fully constructed
+derived-schema and cursor-codec/token artifacts remain independent infrastructure
+because request cancellation cannot invalidate their closed value, identity,
+authentication, or expiry contract. A local cache backend exception is treated
+as a miss or failed best-effort publication, not as an authorization failure.
 
-## Recovery and lifecycle expiry
+## Lifecycle and clearing
 
-Ordinary supported forward transactions require no manual expiry. After an
-unsupported authorization mutation:
+The runtime installs one coherent cache lifecycle alongside a private source
+incarnation. Request basis selection and cache capture must observe the same
+incarnation.
 
-1. quiesce or drain affected authorization traffic in every process;
-2. repair invalid tuples, schema, identity, or liveness through a supported
-   path;
-3. expire or recreate every affected client in every process; and
-4. resume only after repair and rotation finish.
+- `clear-answer-cache!` performs a narrow rotation of authorization answer,
+  exact-denotation, and continuation children. It preserves derived schema and
+  cursor state and keeps the same source incarnation. Sticky managed-proof
+  distrust and per-reason reporter deduplication also remain in force; only
+  full expiry resets proof health.
+- `expire-cache!` performs a full rotation with a fresh source incarnation and
+  fresh cache children. Supply a coordinated new public source-lifecycle token
+  when multiple processes exchange cursors or cache snapshots.
+- restore constructs and validates fresh LRUs off-side, then atomically installs
+  one complete new lifecycle.
 
-Use the exact backend call:
+An in-flight request may finish using its detached old stores but cannot dirty
+the newly installed lifecycle. A retained immutable `Snapshot` remains
+evaluable after rotation; if either its public lifecycle or private source
+incarnation differs, it is retired from all reusable runtime children and
+cannot repopulate them. A narrow clear deliberately preserves that ability.
+
+`cache-content-revision` is a conservative process-local dirty hint for
+authorization answer/denotation content. It advances on their mapping
+publication or eviction and on explicit clear, expiry, or restore, so it never
+misses a portable mapping change. It may also advance when a managed hit is
+promoted to a process-local exact mapping that portable export deliberately
+omits. It does not advance for continuation, cursor, or derived-schema
+retention, lookup metrics, database writes, or an LRU hit touch. A host that
+must suppress every redundant upload can compare the deterministic exported
+snapshot after observing a revision change.
+
+## Portable cache snapshot v2
 
 ```clojure
-(eacl.datomic.core/expire-cache! acl)
-(eacl.datahike.core/expire-cache! acl)
-(eacl.datascript.core/expire-cache! acl)
+(def bounds {:max-entries 5000})
+(def snapshot
+  (eacl.datahike.core/export-cache-snapshot acl bounds))
+
+;; Only after authenticating and size-bounding the external envelope:
+(eacl.datahike.core/restore-cache-snapshot! acl snapshot bounds)
 ```
 
-When several processes exchange cursors or revision tokens, generate one new
-bounded lifecycle value and pass it as the second argument to every call.
-Expiry swaps exact, proof-backed, subproblem, schema-plan, cursor,
-continuation, navigation, and checkpoint state.
+Snapshot v2 exports a deterministic, flat sequence of complete keys and
+completed values. It excludes library-private priority maps and recency ticks,
+database values, continuations, cursor state, metrics, and process-local
+tokens. A process-local exact entry created by promoting a managed hit is also
+omitted; its portable managed mapping remains and can be promoted again after
+restore. Canonical ordering does not apply the ordinary secure-token byte
+ceiling to already admitted semantic keys; the external authenticated envelope
+is the byte-bounded boundary. Statistics and lifecycle accounting do not
+serialize resident keys. Snapshot v1 is rejected.
 
-`prepare-cache-coherence!` initializes missing generation state but cannot
-discover an old unstamped mutation. An identical `write-schema!` can be a
-database no-op. Neither is a flush. Cache expiry also does not repair a ghost
-relationship; use safe retraction, `delete-object!`, or the backend integrity
-tools first.
+The restore API accepts trusted, already decoded immutable data. A host that
+persists or receives bytes must authenticate the envelope and enforce an
+encoded-byte bound before decoding. Restore then validates the closed snapshot
+shape, entry count, composite keys, operation-specific value contracts,
+computed revisions, managed-answer proof keys, and tier capacities. Validation and LRU
+construction happen off-side; any failure leaves the visible runtime unchanged.
 
-Rotate lifecycle state after reset, restore, branch replacement, or any event
-that can reuse or regress native revisions. Equal revision numbers from
-different source histories are not comparable.
+Portable entries may be irrelevant to a receiving client's policy. Because
+expression and aggregate limits are in semantic keys, a stricter client simply
+misses an entry created under looser limits and executes its own contract.
 
-Treat Datomic excision and Datahike purge/cutoff, branch force, reset, or other
-destructive history operations as explicit lifecycle replacement. Quiesce
-affected authorization traffic, complete the destructive operation, rotate
-the shared lifecycle and all clients/caches, deliberately retire or retain the
-appropriate signing keys and wire versions, then resume. An unchanged
-lifecycle provides no safety across concurrent history destruction.
+## Continuations and cursors
 
-## Cursors and time travel
+Public cursors authenticate query, ordering, source lineage, selected basis,
+proof context, and boundary. Opaque traversal state remains in a count-bounded
+continuation LRU. A resident value is held after its LRU touch and then
+validated once for context, plan identity, progress, and replay safety. Invalid
+state is evicted. Optional expiry belongs to the authenticated cursor token and
+is checked during cursor decoding, not stored as a continuation-entry TTL.
+Cache eviction is a performance miss: EACL replays the authenticated prefix on
+the already selected basis or returns the documented stale/basis-conflict
+outcome; it never silently selects another basis.
 
-Cursors authenticate the operation, normalized query, engine and ordering ABI,
-adapter and identity contracts, native revision and exact locator, boundary,
-and one continuation context: `lineage`, `frame`, and `closure-digest`.
-Lineage is the source scope plus source lifecycle. The frame is the certified
-schema generation plus the scalar frontier over the complete canonical
-relation closure; the closure itself is represented by a domain-separated
-digest. Cursor validation, answer lookup, checkpoint lookup, and cursor
-re-minting consume the same request-owned frame, so each relation generation
-is read at most once per closure in one request.
+Cursor age is independent of cache retention. Cursors do not expire by default;
+`:cursor-ttl-seconds` is an explicit application policy.
 
-A later basis may continue the boundary only inside the same lineage with an
-equal frame and closure digest. Transactions outside the closure therefore do
-not invalidate forward or reverse pagination. A schema write or mutation of a
-relation inside the closure changes the frame and can never continue on the
-changed basis. The sealed-plan read-scope guard rejects a compiled reducer that
-could scan a relation outside that closure.
+## Coherence and recovery
 
-After a changed or unavailable frame, an `acl` may select the cursor's original
-immutable basis only when its source advertises exact selection and the
-request's freshness floor permits it. Acceptance then compares authenticated
-source scope, lifecycle, revision, and exact locator; it does not read a proof
-frame from the historical value. Datomic and appropriately configured
-Datahike sources provide this fallback. DataScript and Datalevin are
-current-only and return `:eacl.pagination/stale-cursor` with reason
-`:frame-changed` when the current frame differs. No backend emulates history
-with a hidden retained-value registry.
+Cache coherence assumes authorization mutations use EACL APIs or intact
+EACL-produced transaction data. Schema changes, relationship changes,
+permissioned identity/liveness changes, repair, cleanup, and secured entity
+deletion are in that contract. Unrelated application datoms are unrestricted.
 
-Cursor lifetime follows source identity, not process lifetime. Reopening the
-same durable Datomic database, durable Datahike store, or Datalevin store keeps
-the lineage and accepts an equal-frame cursor. Recreating a DataScript
-connection, an in-memory Datahike store, or an independent Datomic memory
-database mints a fresh live-source id; an old cursor is rejected with
-`:source-scope` before any frame read, even with identical data, the default
-constant lifecycle, and shared token keys. Restore, reset, purge, excision, or
-branch replacement requires lifecycle rotation.
+After an unsupported authorization mutation, database restore/reset, branch or
+history replacement, or another operation that may reuse native revision
+identity:
 
-Cursors carry no expiry unless a positive `:cursor-ttl-seconds` is configured.
-The bounded client-private codec cache reuses an identical self-minted token
-only while its authenticated expiry remains in the future. A cache hit still
-checks the clock, the exact expiry instant is rejected, and the next encode
-mints a fresh token. Tokens not minted by that cache always traverse the full
-authenticated decoder.
-Cache TTL, answer eviction, page-navigation eviction, and checkpoint eviction
-do not limit cursor age; they only cause deterministic replay. An old cursor
-continues the original historical enumeration. Consumers that require current
-authorization at object-consumption time must make a separate current check.
-`:populate-cache? false` is excluded from cursor identity and does not change
-validation or page contents; it suppresses checkpoint and visited-page
-publication for that request.
+1. Quiesce affected authorization traffic in every process.
+2. Repair the data through a supported path.
+3. Fully expire or recreate every affected EACL client, coordinating the public
+   lifecycle token where values are exchanged.
+4. Resume traffic.
 
-Datalevin also exposes `eacl.datalevin.core/clear-answer-cache!` for an
-operational answer-cache clear that preserves its persisted source lifecycle
-and certified schema-derived plans. This is useful for miss-path measurement
-and bounded-cache administration; it is deliberately weaker than lifecycle
-expiry and is not valid recovery after restore, rollback, or unsupported
-mutation.
+Cache expiry does not repair ghost relationships, and rewriting an unchanged
+schema is not a cache flush.
 
-An admissible `as-of` value can use proof-backed reuse when it can read the
-schema and relation generations visible at that value and they pass the same
-domain and ceiling checks. Datomic retains relation-version history for this
-purpose; Datahike requires readable retained history. `since`, filtered, and
-caller-constructed values remain outside managed reuse. Explicit EACL
-speculative snapshots use only the committed-root, complete-disjoint-proof
-path described above; they never use exact native-basis reuse. Exact historical
-evaluation is always authoritative.
+## Observability
 
-## Metrics and evidence
+Backend `cache-stats` reports actual entry counts/capacities and behavioral
+counters such as exact/managed hits, misses, publications, bypasses, proof
+unavailability, retention-ineligible pages, storage errors, expirations, and
+restores. Counts are diagnostics, never validity evidence. With
+`{:cache {:telemetry? false}}`, answer, denotation, and continuation counters do
+not mutate, including cumulative clear, expiry, and restore accounting across
+lifecycle rotation; standard LRU recency and mandatory semantic work counters
+remain active.
 
-Each backend exposes `cache-stats`, including exact/proof-backed hits, misses,
-bypasses, proof-unavailable reasons, sticky proof-contract violations, puts,
-expirations, admission rejections, evictions, live weights, and avoided backend
-work. Its `:continuations` section reports checkpoint hits, publications,
-replacements, occupancy, and miss reasons (`:absent`, `:evicted`,
-`:boundary-mismatch`, `:overweight`, `:plan-mismatch`, and
-`:population-disabled`). Lookup and count responses
-also expose `:cached?` and `:cache-basis`; `can?` returns only a Boolean.
-
-The cache-free evaluator is the behavioral oracle. Differential and randomized
-tests compare cached and bypassed results across all bundled backends. Dafny
-proves the scalar-frontier theorem and distinguishes exact-basis and managed
-cache decisions under the documented adapter
-obligations. Backend I/O effects, temporal-history retention, future
-cancellation, and canonical-key truthfulness are certified adapter assumptions,
-not kernel theorems. Backend certification and real-store regressions establish
-the executable trusted boundary. See [formal verification](formal-verification.md) and the
-[scalar-frontier measurements](benchmarks/results/2026-08-11-scalar-frontier-coherence.md).
+`refresh-metrics!` drops cached derived structural artifacts and clears their
+metrics. With `{:eager? true}` it rereads the bounded permission schema to
+repopulate those artifacts; it does not scan relationships or mutate the
+backend. The reset is a point-in-time observation: concurrent requests may
+publish newly derived artifacts and metrics immediately around it.

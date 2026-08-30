@@ -13,5 +13,5 @@
  :fix
  "The final v8 cache deletes flight selection and store locks. Independent work captures one opaque lifecycle; clear replaces it, and bounded compare-and-set publication rejects a detached lifecycle without waiting or mutating the new generation."
  :closing-evidence
- ["eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test"
+ ["eacl.cache-test/lifecycle-rotation-detaches-data-and-content-revision-test"
   "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

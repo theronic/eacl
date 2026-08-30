@@ -97,41 +97,6 @@
     :history-divergence
     :else :accept))
 
-(defn- subproblem-cache-decision
-  [{:keys [decision] :as input}]
-  (case decision
-    :lookup
-    (if (= :complete (:candidate input))
-      :use-completed-value
-      :start-independent-computation)
-    :admission
-    (if (and (not (:candidate-present? input))
-             (< (:attempted-publications input) (:maximum-attempts input)))
-      :attempt-publication
-      :skip-publication)
-    :publication
-    (if (and (:ticket-current? input)
-             (:complete? input)
-             (:valid? input)
-             (pos? (:weight input))
-             (<= (:weight input) (:budget input)))
-      :retain-publication
-      :drop-publication)))
-
-(defn- current-cache-decision
-  [{:keys [stage available?]}]
-  (case stage
-    (:eligibility :generation)
-    (if available? :probe-exact-entry :bypass-current-cache)
-    :exact-entry
-    (if available? :use-exact-entry :probe-managed-entry)
-    :exact-only-entry
-    (if available?
-      :use-exact-entry
-      :compute-exact-value)
-    :managed-entry
-    (if available? :use-managed-entry :compute-selected-value)))
-
 (defn- merge-step
   [{:keys [direction left-head right-head]}]
   (cond
@@ -627,8 +592,6 @@
     :cursor-continuation (continuation-decision input)
     :consistency-plan (consistency-plan input)
     :consistency-validation (consistency-validation input)
-    :current-cache-decision (current-cache-decision input)
-    :subproblem-cache-decision (subproblem-cache-decision input)
     :ordered-merge-step (merge-step input)
     :ordered-merge-chunk (merge-chunk input)
     :recursive-routing-certificate (routing-certificate input)

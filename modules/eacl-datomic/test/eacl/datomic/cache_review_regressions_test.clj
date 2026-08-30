@@ -10,7 +10,6 @@
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl]
@@ -161,7 +160,8 @@
                        (set (map (comp :id :resource) (:data page-2))))))))
 
       (testing "schema derivation comes from each selected immutable snapshot"
-        (is (seq @(:derived-schema-caches (:runtime early))))))))
+        (is (pos? (get-in (core/cache-stats early)
+                          [:structural-metrics :entry-count])))))))
 
 (deftest cursor-minted-on-an-unstamped-database-still-paginates-test
   ;; The other half: when the database genuinely has no stamp at page-one time,
@@ -309,6 +309,7 @@
                  :permission :admin
                  :resource/type :account
                  :first 3}
+          stats-before-page-1 (core/cache-stats acl)
           page-1 (eacl/lookup-resources acl query)
           stats-after-page-1 (core/cache-stats acl)
           page-2-query
@@ -322,22 +323,33 @@
               (dissoc :first)
               (assoc :last 3
                      :before (get-in page-2 [:page-info :start-cursor])))
+          stats-before-previous (core/cache-stats acl)
           previous-page (eacl/lookup-resources acl previous-query)
-          previous-hit (eacl/lookup-resources acl previous-query)]
+          stats-after-previous (core/cache-stats acl)
+          previous-hit (eacl/lookup-resources acl previous-query)
+          stats-after-previous-hit (core/cache-stats acl)]
       (is (= ["acct0" "acct1" "acct2"] (mapv :id (:data page-1))))
       (is (= ["acct3" "acct4" "acct5"] (mapv :id (:data page-2))))
-      (is (= 1 (:puts stats-after-page-1))
-          "page one publishes one private exact-basis answer")
-      (is (= (inc (:puts stats-after-page-1))
-             (:puts stats-after-page-2))
-          "a current cursor page publishes once")
+      (is (= (inc (:misses stats-before-page-1))
+             (:misses stats-after-page-1)))
+      (is (= (inc (:misses stats-after-page-1))
+             (:misses stats-after-page-2))
+          "a new current cursor page has one completed-answer miss")
+      (is (= (inc (:exact-hits stats-after-page-2))
+             (:exact-hits stats-after-hit))
+          "an identical current cursor request has one exact answer hit")
       (is (false? (:cached? page-2)))
       (is (true? (:cached? page-2-hit)))
       (is (= ["acct0" "acct1" "acct2"]
              (mapv :id (:data previous-page))))
-      (is (true? (:cached? previous-page))
-          "direction-agnostic boundary aliases reuse the already cached page")
-      (is (true? (:cached? previous-hit)))
+      (is (false? (:cached? previous-page))
+          "the first reverse request computes under its own semantic key")
+      (is (true? (:cached? previous-hit))
+          "the repeated reverse request reuses its completed internal answer")
+      (is (= (inc (:misses stats-before-previous))
+             (:misses stats-after-previous)))
+      (is (= (inc (:exact-hits stats-after-previous))
+             (:exact-hits stats-after-previous-hit)))
       (eacl/delete-relationship!
        acl
        (->Relationship (spice-object :user "alice")
@@ -352,7 +364,8 @@
         (is (= (:data recovered-1) (:data recovered-2)))
         (is (nil? (get-in recovered-1
                           [:page-info :cursor-recovery])))
-        (is (true? (:cached? recovered-1)))
+        (is (false? (:cached? recovered-1))
+            "first historical recovery has its own complete exact key")
         (is (true? (:cached? recovered-2)))
         (is (= (:bypasses before-recovery)
                (:bypasses after-recovery)))))))
@@ -393,7 +406,7 @@
       (doseq [config [{:cache shared-cache/no-cache}
                       {}
                       {:cache {}}
-                      {:cache {:admit-on-repeat? true}}]]
+                      {:cache {:max-entries 1}}]]
         (let [acl (core/make-client conn (assoc config :security-key token-key))
               data (:data (eacl/lookup-resources acl query))]
           (is (every? #(instance? eacl.core.SpiceObject %) data)

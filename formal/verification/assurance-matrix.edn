@@ -4,14 +4,14 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 105
+  :source-files 103
   :public-roots 91
-  :reachable-definitions 2288
+  :reachable-definitions 2322
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
-   :clj-invoke-sites 49
-   :cljs-invoke-sites 49
+   :clj-invoke-sites 48
+   :cljs-invoke-sites 48
    :literal-operation-keys 21
    :status :static-operation-key-closure-established
    :assurance :not-adapter-semantic-proof}
@@ -43,7 +43,7 @@
               'eacl.cache
               'eacl.subproblem-cache]}
   {:source "formal/dafny/CurrentCache.dfy"
-   :class :generated-production
+   :class :proof-only-key-and-causal-refinement
    :consumer ['eacl.cache]}
   {:source "formal/dafny/SpeculativeCacheCoherence.dfy"
    :class :proof-only-production-assurance
@@ -199,7 +199,7 @@
    :class :spec-only-interface-contract
    :consumer ['eacl.consistency]}
   {:source "formal/dafny/SubproblemCache.dfy"
-   :class :generated-production
+   :class :proof-only-semantic-cache-boundary
    :consumer ['eacl.subproblem-cache]}
   {:source "formal/dafny/TemporalSafety.dfy"
    :class :semantic-foundation
@@ -445,7 +445,7 @@
            "formal/stable-discovery/RuntimeCheckpointComposition.dfy"]
    :premises
    [:same-lineage
-    :equal-certified-schema-generation-and-scalar-frontier
+    :equal-certified-schema-generation-and-complete-dependency-generation-vector
     :complete-canonical-relation-closure
     :sealed-plan-read-scope-guard-passed
     :immutable-snapshot
@@ -474,6 +474,7 @@
    :entry-points ['eacl.engine.v8/checkpoint-key
                   'eacl.engine.stable-page/state-at-boundary
                   'eacl.engine.stable-page/checkpoint-put!
+                  'eacl.engine.stable-page/checkpoint-hit
                   'eacl.engine.stable-reducer/history-free
                   'eacl.engine.stable-reducer/resume]
    :theorems
@@ -482,8 +483,7 @@
     :sealed-plan-descriptors-stay-inside-certified-closure
     :equal-scalar-frame-preserves-every-closure-slice
     :equal-frame-resume-preserves-next-page-state-boundary-and-resource-outcome
-    :native-revision-is-not-checkpoint-semantic-identity
-    :visited-public-pages-remain-exact-basis-keyed]
+    :native-revision-is-not-checkpoint-semantic-identity]
    :dafny
    ["formal/stable-discovery/ReducerCheckpoint.dfy"
     "formal/stable-discovery/RuntimeCheckpointComposition.dfy"
@@ -491,13 +491,16 @@
     "formal/dafny/ScalarFrontierCoherence.dfy"]
    :premises
    [:same-lineage
-    :equal-certified-schema-generation-and-scalar-frontier
+    :equal-certified-schema-generation-and-complete-dependency-generation-vector
     :complete-canonical-plan-relation-closure
     :sealed-plan-read-scope-guard-passed
     :equal-sealed-plan-fingerprint-and-order-abi
     :authenticated-boundary-ordinal-and-identity
     :closed-history-free-state-and-lookahead
-    :cumulative-resource-counters-retained]
+    :cumulative-resource-counters-retained
+    :cache-stage-available-at-checkpoint-publication
+    :cache-stage-available-before-checkpoint-probe-or-touch
+    :checkpoint-admitted-identity-count-at-most-configured-cap]
    :adapter-obligations
    [:immutable-snapshot
     :durable-source-lineage-truthfulness
@@ -508,7 +511,20 @@
    :production-authoritative
    {:checkpoint-key :frame-keyed-host-control-mutation-controlled
     :resume :history-free-host-runtime-formally-composed
-    :public-cursor-order :checkpoint-subordinate-after-acceptance}
+    :public-cursor-order :checkpoint-subordinate-after-acceptance
+    :checkpoint-retention :request-local-standard-lru
+    :checkpoint-default-max-entry-admissions 1000000
+    :checkpoint-publication-order
+    [:availability-check :semantic-admission-count-check
+     :continuation-callback-or-standalone-lru]
+    :over-cap-checkpoint-publication
+    [:drop :zero-callback-effects :zero-lru-effects :zero-telemetry-effects]
+    :checkpoint-lookup-order
+    [:non-touch-peek :ordinal-and-boundary-acceptance :identity-checked-touch]
+    :rejected-checkpoint-refresh false
+    :unavailable-cache-stage-checkpoint-hit
+    [:miss :zero-store-probes :zero-recency-touches]
+    :expired-or-cancelled-checkpoint-publication false}
    :remaining
    [:mechanized-host-checkpoint-key-source-refinement
     :backend-proof-construction-refinement
@@ -743,7 +759,7 @@
    :backend-certification [:datomic :datascript :datahike :datalevin]
    :production-mutations {:registered 10 :killed 10 :survived 0}
    :source-closure
-   {:source-files 105 :public-roots 91 :reachable-definitions 2288}
+   {:source-files 103 :public-roots 91 :reachable-definitions 2322}
    :production-authoritative
    :enabled-after-conformance-storage-and-performance-qualification
    :remaining []
@@ -758,35 +774,85 @@
   {:operation :cache-reuse
    :entry-points ['eacl.cache
                   'eacl.subproblem-cache]
-   :theorems [:exact-basis-hit-is-same-selected-basis
-              :exact-only-hit-requires-available-entry
-              :exact-only-miss-computes-without-managed-fallback
+   :theorems [:complete-composite-key-field-separation
+              :valid-store-includes-complete-key-resident-contract-and-fresh-semantic-value-invariant
+              :resident-provenance-is-validated-separately-from-semantic-payload-equality
+              :resident-lookup-needs-no-repeated-validation
+              :accepted-hit-equals-fresh-evaluation
+              :managed-hit-retains-per-request-causal-check
+              :exact-first-managed-second-resolution
+              :cache-bypass-returns-independent-evaluation
+              :cache-disabled-request-is-storage-isolated
+              :cache-disabled-request-has-zero-lookup-and-publication-attempts
+              :unavailable-cache-stage-skips-lookup-and-touch
+              :unavailable-cache-stage-skips-answer-lookup-proof-and-touch
+              :unavailable-cache-stage-is-storage-isolated
+              :exact-answer-hit-skips-managed-proof-read
+              :valid-store-resolution-matches-independent-evaluation
+              :arbitrary-eviction-can-only-turn-hit-into-miss
+              :arbitrary-eviction-preserves-resolved-result
+              :page-retention-eligibility-is-publication-only
+              :validated-publication-preserves-valid-store
+              :cache-stage-publication-eligibility-requires-not-expired-and-not-cancelled
+              :expired-or-cancelled-candidate-cannot-publish
+              :unavailable-cache-stage-cannot-publish
+              :optional-publication-drop-is-valid-store-identity-transition
+              :validated-off-side-restore-establishes-valid-store
+              :authorized-store-transition-preserves-valid-store-by-induction
+              :arbitrary-eviction-preserves-valid-store
+              :exact-basis-hit-is-same-selected-basis
               :numeric-revision-alone-cannot-establish-exact-identity
+              :every-admitted-exact-key-uses-portable-locator-domain
+              :every-validated-exact-answer-uses-portable-locator-domain
+              :exact-answer-key-revision-equals-selected-snapshot-order
+              :exact-answer-key-matches-full-selected-basis
+              :direct-exact-cache-basis-is-derived-from-exact-key-backend-snapshot
+              :direct-exact-answer-uses-selected-revision-locator-and-backend-snapshot
+              :direct-exact-answer-has-portable-anchor
+              :managed-promotion-preserves-computed-revision-exact-locator-and-cache-basis
+              :managed-promotion-with-different-anchor-is-not-portable
+              :managed-promoted-exact-resident-may-be-valid-but-nonportable
+              :validated-managed-answer-may-populate-later-exact-key
+              :historical-basis-is-exact-only-and-never-managed-tier-eligible
+              :managed-promoted-exact-answer-requires-ordinary-basis
+              :future-managed-candidate-cannot-reuse-for-older-selection
+              :denotation-keys-are-exact-only
+              :managed-keys-are-answer-tier-only
+              :exact-managed-answer-alternatives-share-semantic-source-and-abi-fields
+              :different-managed-dependency-identity-cannot-match
+              :different-managed-dependency-generation-identity-cannot-match
+              :managed-key-match-requires-full-dependency-generation-vector
               :managed-atomic-relation-projection-frame
-              :managed-source-schema-scalar-frontier-key-separation
+              :managed-source-schema-dependency-generation-vector-key-separation
+              :managed-proof-generations-do-not-exceed-computed-revision
               :equal-scalar-proof-preserves-every-deterministic-denotation
-              :equal-scalar-proof-also-preserves-an-older-selected-snapshot
               :changed-relation-slice-requires-changed-stamp
               :forward-scalar-stamp-invalidation
-              :late-publication-unreachable
               :inadmissible-basis-bypass-and-complete-identity-admission
-              :projection-chunk-concatenation
               :equal-root-rule-bodies-have-equal-semantic-denotations
-              :acyclic-subproblem-call-stack-independence
-              :partial-recursive-publication-rejection
-              :subproblem-weight-bound
-              :subproblem-represented-candidate-bound
-              :incomplete-candidate-computes-independently
+              :partial-value-publication-rejection
+              :exact-and-managed-modes-share-one-tier-store
+              :managed-key-resolution-requires-explicit-host-eligibility
+              :every-miss-begins-a-request-owned-computation-token
+              :one-request-can-own-distinct-simultaneous-identical-misses
+              :managed-publication-uses-computation-captured-proof-descriptor
               :request-owned-miss-computation
-              :bounded-best-effort-publication
-              :compatible-publication-winner-retained
-              :linearized-lifecycle-lookup-and-publication-selection]
+              :concurrent-identical-misses-have-distinct-request-owner-identities
+              :semantic-source-lifecycle-is-distinct-from-private-store-instance
+              :publication-step-requires-computation-captured-installed-store-instance
+              :private-store-instance-identity-is-never-reused
+              :monotone-store-replacement-prevents-aba-reauthorization
+              :replacement-store-instance-starts-empty-and-valid
+              :fresh-validated-restore-detaches-prior-store-instance
+              :fresh-validated-restore-preserves-tier-and-capacity
+              :detached-candidate-cannot-publish-into-installed-store]
    :dafny ["formal/dafny/CurrentCache.dfy"
            "formal/dafny/RootDenotation.dfy"
            "formal/dafny/IndexedRootDenotation.dfy"
            "formal/dafny/ScalarFrontierCoherence.dfy"
            "formal/dafny/SubproblemCache.dfy"
            "formal/dafny/TemporalSafety.dfy"]
+   :tla ["formal/tla/EaclCacheStorage.tla"]
    :adapter-obligations [:immutable-snapshot
                          :truthful-complete-exact-basis-key
                          :complete-source-scope-plus-lifecycle-lineage
@@ -797,19 +863,55 @@
                          :complete-compiled-dependencies
                          :proof-generations-share-native-revision-domain
                          :proof-generations-at-or-below-selected-revision
+                         :exact-locator-ingress-validates-closed-portable-token-domain
+                         :completed-answer-v2-retains-computed-exact-locator
+                         :completed-answer-v2-retains-computed-revision
+                         :completed-answer-v2-retains-backend-cache-basis
+                         :portable-exact-answer-cache-basis-revision-and-locator-equal-exact-key
+                         :managed-source-entry-survives-portable-export-for-validated-restore-and-local-causal-check
+                         :managed-promotion-only-after-selected-snapshot-proof-validation
+                         :managed-promotion-preserves-rather-than-rewrites-immutable-anchor
+                         :managed-tier-eligibility-derived-from-selected-basis-class
+                         :managed-reuse-only-when-computed-revision-is-at-or-below-selected-revision
+                         :managed-key-uses-complete-canonical-dependency-generation-vector
+                         :semantic-source-lifecycle-and-private-store-instance-remain-distinct
+                         :store-replacement-installs-a-fresh-never-reused-private-store-instance
+                         :live-publication-validator-truthfully-enforces-complete-key-value-contract-and-semantic-result
+                         :live-publication-rechecks-cache-stage-availability-after-computation
+                         :cache-stage-availability-is-false-after-deadline-expiry-or-cancellation
+                         :restore-input-is-an-authenticated-supported-eacl-export
+                         :off-side-restore-validator-enforces-closed-key-value-provenance-and-capacity-contract
+                         :resident-values-remain-immutable-after-admission
+                         :private-store-backing-state-is-not-mutated-outside-authorized-transitions
                          :atomic-relation-stamped-writer-contract
                          :selected-snapshot-rendering
                          :source-fingerprint
-                         :request-owned-computation-accounting]
+                         :request-owned-computation-accounting
+                         :managed-publication-uses-the-proof-descriptor-captured-by-that-computation
+                         :simultaneous-miss-invocations-have-distinct-ghost-identities
+                         :cache-disabled-host-clears-answer-and-denotation-bindings
+                         :unavailable-cache-stage-guard-precedes-exact-probe-managed-proof-and-managed-probe]
    :runtime-targets [:clj-java :cljs-javascript]
-   :ci [:generated-production-kernel
+   :ci [:locked-dafny-verification
+        :consolidated-cache-temporal-model
+        :standard-lru-portable-trace
         :authoritative-rejection-regression
-        :cross-runtime-vectors
-        :cross-adapter-state-trace]
-   :derived-metrics-report
-   "formal/verification/derived-metrics-cache.edn"}]
+        :cross-adapter-state-trace]}]
  :removed-models
  [{:source "formal/dafny/CacheKernel.dfy"
    :reason :superseded-graph-ancestry-model-with-no-production-consumer
    :replacement ["formal/dafny/CurrentCache.dfy"
-                 "formal/dafny/ScalarFrontierCoherence.dfy"]}]}
+                 "formal/dafny/ScalarFrontierCoherence.dfy"]}
+  {:sources
+   ["formal/tla/EaclSubproblemCache.tla"
+    "formal/tla/EaclTieredSubproblemCache.tla"
+    "formal/tla/EaclManagedProjectionCache.tla"]
+   :reason :generation-weight-and-tier-policy-models-were-nonsemantic
+   :replacement ["formal/tla/EaclCacheStorage.tla"]}
+  {:sources
+   ["modules/eacl/src/eacl/formal/current_cache_refinement.cljc"
+    "formal/verification/current-cache-specialization.edn"]
+   :reason :generated-stage-and-availability-policy-was-deleted
+   :replacement ["formal/dafny/CurrentCache.dfy"
+                 "formal/dafny/ScalarFrontierCoherence.dfy"
+                 "formal/dafny/SubproblemCache.dfy"]}]}

@@ -3,7 +3,9 @@
  :mvn/repos {"central" {:url "https://repo1.maven.org/maven2/"}
              "clojars" {:url "https://repo.clojars.org/"}}
  :deps {org.clojure/clojure {:mvn/version "1.12.5"}
-        org.replikativ/datahike {:mvn/version "0.8.1759"}
+        org.replikativ/datahike
+        {:mvn/version "0.8.1759"
+         :exclusions [com.github.pkpkpk/cljs-cache]}
         org.replikativ/konserve-jdbc {:mvn/version "0.2.97"}
         org.replikativ/konserve-dynamodb {:mvn/version "0.1.32"}
         com.h2database/h2 {:mvn/version "2.1.214"}

@@ -26,8 +26,6 @@
     :cursor-continuation
     :consistency-plan
     :consistency-validation
-    :current-cache-decision
-    :subproblem-cache-decision
     :ordered-merge-step
     :ordered-merge-chunk
     :recursive-routing-certificate
@@ -62,29 +60,9 @@
   (-read-indexed-result [kernel direction state]
     "Reads the completed public render result and dimensional counters."))
 
-#?(:clj
-   (defonce ^:private kernel-classes
-     ;; Classes already known to satisfy DecisionKernel. `satisfies?` on the
-     ;; JVM walks the class hierarchy against the protocol's extension map on
-     ;; every call (the generated kernels are `extend`ed Java classes, not
-     ;; direct interface implementations), which measured ~10 µs per call and
-     ;; runs several times per request. Only positive answers are memoized:
-     ;; a class cannot stop satisfying a protocol, but a negative answer could
-     ;; become stale if the protocol were extended later.
-     (java.util.concurrent.ConcurrentHashMap.)))
-
 (defn kernel?
   [candidate]
-  #?(:clj
-     (if (nil? candidate)
-       false
-       (let [^java.util.concurrent.ConcurrentHashMap known kernel-classes
-             c (class candidate)]
-         (or (.containsKey known c)
-             (and (satisfies? DecisionKernel candidate)
-                  (do (.put known c Boolean/TRUE) true)))))
-     :cljs
-     (satisfies? DecisionKernel candidate)))
+  (satisfies? DecisionKernel candidate))
 
 (defn indexed-traversal-kernel?
   [candidate]
@@ -277,84 +255,6 @@
        "A selected adapter cannot exist without a selected value."
        {:operation operation
         :field :selected-adapter?}))
-    input))
-
-(defn- validate-subproblem-cache-input!
-  [input]
-  (let [operation :subproblem-cache-decision]
-    (require-value!
-     operation
-     :decision
-     #{:lookup :admission :publication}
-     (:decision input))
-    (case (:decision input)
-      :lookup
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :candidate})
-        (require-value!
-         operation
-         :candidate
-         #{:missing :computing :complete :failed}
-         (:candidate input)))
-
-      :admission
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :candidate-present?
-           :attempted-publications :maximum-attempts})
-        (require-value!
-         operation
-         :candidate-present?
-         boolean?
-         (:candidate-present? input))
-        (doseq [field [:attempted-publications :maximum-attempts]]
-          (require-value!
-           operation field safe-natural? (get input field))))
-
-      :publication
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :ticket-current? :complete? :valid?
-           :weight :budget})
-        (doseq [field [:ticket-current? :complete? :valid?]]
-          (require-value! operation field boolean? (get input field)))
-        (doseq [field [:weight :budget]]
-          (require-value!
-           operation field safe-natural? (get input field)))))
-    input))
-
-(def ^:private current-cache-stages
-  #{:eligibility :generation :exact-entry :exact-only-entry
-    :managed-entry})
-
-(def ^:private current-cache-actions
-  #{:bypass-current-cache
-    :probe-exact-entry
-    :use-exact-entry
-    :probe-managed-entry
-    :use-managed-entry
-    :compute-selected-value
-    :compute-exact-value})
-
-(defn- validate-current-cache-input!
-  [input]
-  (let [operation :current-cache-decision]
-    (exact-keys!
-     operation :input input #{:stage :available?})
-    (require-value!
-     operation :stage current-cache-stages (:stage input))
-    (require-value!
-     operation :available? boolean? (:available? input))
     input))
 
 (def ^:private ordered-merge-steps
@@ -1636,9 +1536,6 @@
     :consistency-plan (validate-consistency-plan-input! input)
     :consistency-validation
     (validate-consistency-selection-input! input)
-    :current-cache-decision (validate-current-cache-input! input)
-    :subproblem-cache-decision
-    (validate-subproblem-cache-input! input)
     :ordered-merge-step (validate-ordered-merge-input! input)
     :ordered-merge-chunk (validate-ordered-merge-chunk-input! input)
     :recursive-routing-certificate
@@ -1798,54 +1695,6 @@
     :else
     :accept))
 
-(def subproblem-cache-actions
-  #{:start-independent-computation
-    :use-completed-value
-    :attempt-publication
-    :skip-publication
-    :retain-publication
-    :drop-publication})
-
-(defn- validate-subproblem-cache-result!
-  [result]
-  (require-value!
-   :subproblem-cache-decision
-   :result
-   subproblem-cache-actions
-   result))
-
-(defn- expected-subproblem-cache-action
-  [{:keys [decision] :as input}]
-  (case decision
-    :lookup
-    (if (= :complete (:candidate input))
-      :use-completed-value
-      :start-independent-computation)
-
-    :admission
-    (if (and (not (:candidate-present? input))
-             (< (:attempted-publications input)
-                (:maximum-attempts input)))
-      :attempt-publication
-      :skip-publication)
-
-    :publication
-    (if (and (:ticket-current? input)
-             (:complete? input)
-             (:valid? input)
-             (pos? (:weight input))
-             (<= (:weight input) (:budget input)))
-      :retain-publication
-      :drop-publication)))
-
-(defn- validate-current-cache-result!
-  [result]
-  (require-value!
-   :current-cache-decision
-   :result
-   current-cache-actions
-   result))
-
 (defn- validate-ordered-merge-result!
   [result]
   (require-value!
@@ -1871,29 +1720,6 @@
       (require-value!
        operation [:result field] safe-natural? (get result field)))
     result))
-
-(defn- expected-current-cache-action
-  [{:keys [stage available?]}]
-  (case stage
-    (:eligibility :generation)
-    (if available?
-      :probe-exact-entry
-      :bypass-current-cache)
-
-    :exact-entry
-    (if available?
-      :use-exact-entry
-      :probe-managed-entry)
-
-    :exact-only-entry
-    (if available?
-      :use-exact-entry
-      :compute-exact-value)
-
-    :managed-entry
-    (if available?
-      :use-managed-entry
-      :compute-selected-value)))
 
 (defn- expected-enumeration-route
   [{:keys [schema-identity certificate-schema-identity
@@ -2301,10 +2127,6 @@
     :consistency-plan (validate-consistency-plan-result! result)
     :consistency-validation
     (validate-consistency-selection-result! result)
-    :current-cache-decision
-    (validate-current-cache-result! result)
-    :subproblem-cache-decision
-    (validate-subproblem-cache-result! result)
     :ordered-merge-step (validate-ordered-merge-result! result)
     :ordered-merge-chunk (validate-ordered-merge-chunk-result! result)
     :recursive-routing-certificate
@@ -2400,23 +2222,6 @@
          "Generated snapshot validation contradicts its validated input."
          {:operation operation
           :kind (:kind input)
-          :result result}))
-      (when (and (= :current-cache-decision operation)
-                 (not= result
-                       (expected-current-cache-action input)))
-        (boundary-error!
-         "Generated current-cache action contradicts its validated stage."
-         {:operation operation
-          :stage (:stage input)
-          :available? (:available? input)
-          :result result}))
-      (when (and (= :subproblem-cache-decision operation)
-                 (not= result
-                       (expected-subproblem-cache-action input)))
-        (boundary-error!
-         "Generated subproblem-cache action contradicts its validated state."
-         {:operation operation
-          :decision (:decision input)
           :result result}))
       (when (= :recursive-routing-certificate operation)
         (let [node-count (:node-count input)

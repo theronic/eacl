@@ -227,7 +227,7 @@
   :role :historical-technique-source-only
   :assurance :none
   :lesson
-   :cache-weight-request-computation-publication-attempts-and-host-resources-are-distinct}
+   :retained-cache-entries-request-owned-computation-and-host-resources-are-distinct}
  :evidence
  {:dafny
   {:commands

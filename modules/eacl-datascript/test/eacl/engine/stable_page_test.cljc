@@ -10,11 +10,18 @@
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
             #?(:clj [eacl.baseline.capture :as capture])
+            [eacl.cache.standard-lru :as lru]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.engine.checkpoint-fixtures :as portable]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-page :as page]
-            [eacl.engine.stable-reducer :as reducer]))
+            [eacl.engine.stable-reducer :as reducer]
+            [eacl.execution :as execution]))
+
+(defn- checkpoint-at
+  [store key]
+  (let [{:keys [found? value]} (lru/peek-entry (:storage store) key)]
+    (when found? value)))
 
 (def ^:private security-key "stable-page-test-key-0123456789abcdef")
 
@@ -154,9 +161,12 @@
             _ (page/page fresh-options)
             key (page/checkpoint-key
                  (page/execution-binding options))
-            _ (swap! fresh-store update-in [:entries key]
-                     (fn [entry] (assoc entry :pending [])))
-            corrupted-ordinal (:ordinal (get-in @fresh-store [:entries key]))
+            resident (checkpoint-at fresh-store key)
+            corrupted (-> resident
+                          (assoc :pending [])
+                          (update-in [:state :transitions] inc))
+            _ (page/checkpoint-put! fresh-store key corrupted)
+            corrupted-ordinal (:ordinal (checkpoint-at fresh-store key))
             mutant (:data (page/page (assoc fresh-options :after cursor-1)))]
         (is (= 5 corrupted-ordinal)
             "the corrupted checkpoint is the page-1 boundary")
@@ -172,13 +182,151 @@
     (page/checkpoint-put! store "k" newer)
     (page/checkpoint-put! store "k" older)
     (testing "mutation control: older progress never replaces newer"
-      (is (= newer (get-in @store [:entries "k"]))))
+      (is (= newer (checkpoint-at store "k"))))
+    (testing "a later boundary wins even when reducer transitions are equal"
+      (let [same-work-later-boundary
+            {:ordinal 9 :boundary "b9" :pending []
+             :state {:transitions 100 :admitted #{}}}]
+        (page/checkpoint-put! store "k" same-work-later-boundary)
+        (is (= same-work-later-boundary
+               (checkpoint-at store "k")))))
     (testing "overweight checkpoints are dropped without failing"
       (let [bounded (page/make-checkpoint-store {:max-entry-admissions 1})
             heavy {:ordinal 1 :boundary "b" :pending []
                    :state {:transitions 1 :admitted #{1 2 3}}}]
         (page/checkpoint-put! bounded "k" heavy)
-        (is (nil? (get-in @bounded [:entries "k"])))))))
+        (is (nil? (checkpoint-at bounded "k")))))))
+
+(deftest request-ineligible-checkpoint-publication-is-a-no-op-test
+  (let [store (page/make-checkpoint-store)
+        callback-puts (atom 0)
+        context {:required? false
+                 :opaque-values? true
+                 :get (constantly nil)
+                 :hit! (constantly false)
+                 :miss! (constantly nil)
+                 :put! (fn [& _] (swap! callback-puts inc) true)}
+        checkpoint {:ordinal 1 :boundary :edge :pending []
+                    :state {:transitions 1 :admitted #{}}}
+        clock (atom 0)
+        token (execution/cancellation-token)
+        contract
+        (binding [execution/*monotonic-nanos* #(deref clock)]
+          (execution/normalize
+           {:execution-timeout-ms 100}
+           :lookup-resources
+           {:first 1 :cancellation-token token}))]
+    (execution/cancel! token)
+    (binding [execution/*contract* contract
+              execution/*monotonic-nanos* #(deref clock)]
+      (is (nil? (page/checkpoint-put! store :raw checkpoint)))
+      (is (nil? (page/checkpoint-put! context :client checkpoint))))
+    (is (nil? (checkpoint-at store :raw)))
+    (is (zero? @callback-puts)
+        "client continuation storage is not called after cancellation")))
+
+(deftest request-ineligible-checkpoint-lookup-does-not-probe-or-touch-test
+  (doseq [mode [:cancelled :deadline-expired]]
+    (testing (name mode)
+      (let [checkpoint
+            (fn [ordinal boundary]
+              {:ordinal ordinal :boundary boundary :pending []
+               :state {:transitions ordinal :admitted #{}}})
+            hot (checkpoint 1 :hot)
+            cold (checkpoint 1 :cold)
+            newer (checkpoint 1 :new)
+            store (page/make-checkpoint-store {:max-entries 2})
+            clock (atom 0)
+            token (execution/cancellation-token)
+            contract
+            (binding [execution/*monotonic-nanos* #(deref clock)]
+              (execution/normalize
+               {:execution-timeout-ms 1}
+               :lookup-resources
+               {:first 1 :cancellation-token token}))
+            raw-probes (atom 0)
+            context-calls (atom [])
+            context
+            {:required? false
+             :opaque-values? true
+             :get (fn [& _]
+                    (swap! context-calls conj :get)
+                    hot)
+             :hit! (fn [& _]
+                     (swap! context-calls conj :hit)
+                     true)
+             :miss! (fn [& _]
+                      (swap! context-calls conj :miss)
+                      nil)
+             :put! (constantly true)}]
+        (page/checkpoint-put! store :hot hot)
+        (page/checkpoint-put! store :cold cold)
+        (if (= :cancelled mode)
+          (execution/cancel! token)
+          (reset! clock 1000000))
+        (let [peek-entry lru/peek-entry]
+          (with-redefs [lru/peek-entry
+                        (fn [& args]
+                          (swap! raw-probes inc)
+                          (apply peek-entry args))]
+            (binding [execution/*contract* contract
+                      execution/*monotonic-nanos* #(deref clock)]
+              (is (nil? (page/checkpoint-hit store :hot 1 :hot)))
+              (is (nil? (page/checkpoint-hit context :hot 1 :hot))))))
+        (is (zero? @raw-probes))
+        (is (empty? @context-calls))
+        (page/checkpoint-put! store :new newer)
+        (is (nil? (checkpoint-at store :hot))
+            "the rejected lookup did not keep the oldest checkpoint hot")
+        (is (= cold (checkpoint-at store :cold)))
+        (is (= newer (checkpoint-at store :new)))))))
+
+(deftest checkpoint-store-is-lru-and-rejected-boundaries-do-not-touch-test
+  (let [checkpoint
+        (fn [ordinal boundary]
+          {:ordinal ordinal :boundary boundary :pending []
+           :state {:transitions ordinal :admitted #{}}})
+        hot (checkpoint 1 :hot)
+        cold (checkpoint 1 :cold)
+        newer (checkpoint 1 :new)]
+    (testing "an accepted old checkpoint remains hot"
+      (let [store (page/make-checkpoint-store {:max-entries 2})]
+        (page/checkpoint-put! store :hot hot)
+        (page/checkpoint-put! store :cold cold)
+        (is (= hot (page/checkpoint-hit store :hot 1 :hot)))
+        (page/checkpoint-put! store :new newer)
+        (is (= hot (page/checkpoint-hit store :hot 1 :hot)))
+        (is (nil? (page/checkpoint-hit store :cold 1 :cold)))
+        (is (= newer (page/checkpoint-hit store :new 1 :new)))))
+    (testing "a rejected boundary is not LRU usage"
+      (let [store (page/make-checkpoint-store {:max-entries 2})]
+        (page/checkpoint-put! store :rejected hot)
+        (page/checkpoint-put! store :retained cold)
+        (is (nil? (page/checkpoint-hit store :rejected 2 :hot)))
+        (page/checkpoint-put! store :new newer)
+        (is (nil? (page/checkpoint-hit store :rejected 1 :hot)))
+        (is (= cold (page/checkpoint-hit store :retained 1 :cold)))
+        (is (= newer (page/checkpoint-hit store :new 1 :new)))))))
+
+(deftest checkpoint-store-failure-is-a-performance-miss-test
+  (let [store (page/make-checkpoint-store)
+        checkpoint {:ordinal 1 :boundary :edge :pending []
+                    :state {:transitions 1 :admitted #{}}}]
+    (page/checkpoint-put! store :resident checkpoint)
+    (testing "lookup failure replays"
+      (with-redefs [lru/peek-entry
+                    (fn [_ _] (throw (ex-info "peek failed" {})))]
+        (is (nil? (page/checkpoint-hit store :resident 1 :edge)))))
+    (testing "touch failure cannot invalidate the held checkpoint"
+      (with-redefs [lru/hit-if-value!
+                    (fn [_ _ _] (throw (ex-info "touch failed" {})))]
+        (is (= checkpoint
+               (page/checkpoint-hit store :resident 1 :edge)))))
+    (testing "publication failure is dropped"
+      (with-redefs [lru/put-if-absent!
+                    (fn [_ _ _] (throw (ex-info "put failed" {})))]
+        (is (nil? (page/checkpoint-put! store :missing checkpoint)))
+        (is (nil? (checkpoint-at store :missing)))))))
 
 (deftest backward-navigation-test
   (let [env (seeded :explorer-acyclic)
@@ -265,7 +413,7 @@
         page-1 (page/page options)
         cursor (get-in page-1 [:page-info :end-cursor])
         key (page/checkpoint-key (page/execution-binding options))
-        admissions (get-in @store [:entries key :state :admissions])
+        admissions (get-in (checkpoint-at store key) [:state :admissions])
         error-data
         (fn [candidate]
           (try (page/page candidate) nil
@@ -341,9 +489,9 @@
     (testing "the same page-1 boundary at two bases has two checkpoint identities"
       (is (= (:data page-1) (:data page-1-moved)))
       (is (not= (key-at (:adapter env)) (key-at moved)))
-      (is (= 2 (count (:entries @store))))
-      (is (contains? (:entries @store) (key-at (:adapter env))))
-      (is (contains? (:entries @store) (key-at moved))))
+      (is (= 2 (lru/entry-count (:storage store))))
+      (is (= #{(key-at (:adapter env)) (key-at moved)}
+             (into #{} (map first) (lru/entries (:storage store))))))
     (testing "the new basis's continuation equals its own pure replay"
       (let [cursor (get-in page-1-moved [:page-info :end-cursor])
             via-store (:data (page/page (assoc moved-options :after cursor)))

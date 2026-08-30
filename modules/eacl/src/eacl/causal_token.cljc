@@ -59,6 +59,16 @@
        (not (neg? value))
        (<= value maximum-exact-integer)))
 
+(defn exact-locator?
+  "True for the closed portable locator domain shared by basis identities,
+  completed-cache provenance, and causal tokens."
+  [value]
+  (or (nil? value)
+      (natural-revision? value)
+      (and (string? value)
+           (not-empty value)
+           (<= (count value) maximum-scope-characters))))
+
 (defn validate-source-lifecycle!
   [value]
   (when-not (and (bounded-canonical-value? value)
@@ -77,12 +87,7 @@
                    (or (nil? branch) (bounded-canonical-value? branch))
                    (bounded-canonical-value? source-lifecycle)
                    (natural-revision? revision)
-                   (or (nil? exact-locator)
-                       (natural-revision? exact-locator)
-                       (and (string? exact-locator)
-                            (not-empty exact-locator)
-                            (<= (count exact-locator)
-                                maximum-scope-characters)))
+                   (exact-locator? exact-locator)
                    (integer? issued-at)
                    (integer? expires-at)
                    (not (neg? issued-at))
