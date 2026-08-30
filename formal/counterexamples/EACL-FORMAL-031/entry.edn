@@ -13,4 +13,4 @@
  :fix
  "The obsolete Babashka manifest gate and exact tool-version assertion were removed. Production ClojureScript size and graph checks run as ordinary executable tests against freshly built bundles."
  :closing-evidence
- ["eacl.formal.cljs-production-gate-test/production-cljs-bundle-is-native-small-and-oracle-free-test"]}
+ ["eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test"]}

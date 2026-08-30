@@ -13,4 +13,4 @@
  :fix
  "The obsolete multi-artifact manifest gate was retired. The executable production ClojureScript test rebuilds the runtime, enforces payload ceilings that affect browser performance, and rejects generated-oracle code in the production graph."
  :closing-evidence
- ["eacl.formal.cljs-production-gate-test/production-cljs-bundle-is-native-small-and-oracle-free-test"]}
+ ["eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test"]}

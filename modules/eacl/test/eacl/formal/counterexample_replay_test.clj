@@ -60,13 +60,13 @@
     :EACL-FORMAL-027
     eacl.backend.v8-test/runtime-guards-reject-negative-internal-eids-test
     :EACL-FORMAL-028
-    eacl.formal.cljs-production-gate-test/production-cljs-bundle-is-native-small-and-oracle-free-test
+    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
     :EACL-FORMAL-029
     eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test
     :EACL-FORMAL-030
     eacl.formal.production-kernel-test/generated-java-checks-linear-routing-certificates
     :EACL-FORMAL-031
-    eacl.formal.cljs-production-gate-test/production-cljs-bundle-is-native-small-and-oracle-free-test
+    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
     :EACL-FORMAL-032
     eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-033
