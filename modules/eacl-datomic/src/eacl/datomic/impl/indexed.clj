@@ -8,7 +8,6 @@
 (def default-recursive-traversal-limits
   engine/default-recursive-traversal-limits)
 
-(def ^:dynamic *schema-cache* nil)
 (def ^:dynamic *recursive-traversal-limits*
   default-recursive-traversal-limits)
 (def ^:dynamic *recursive-traversal-stats* nil)
@@ -43,31 +42,6 @@
   [db]
   (ddb/schema-version db))
 
-(defn database-id
-  [db]
-  (str (.id ^datomic.Database db)))
-
-(defn make-schema-cache
-  ([db]
-   (make-schema-cache db (schema-version db)))
-  ([db known-schema-version]
-   (assoc
-    (engine/make-schema-cache
-     (backend/basis-adapter db {})
-     known-schema-version)
-    :database-id (database-id db))))
-
-(defn evict-permission-paths-cache!
-  ([]
-   (when *schema-cache*
-     (evict-permission-paths-cache! *schema-cache*)))
-  ([schema-cache]
-   (reset! (:permission-paths schema-cache) {})
-   (reset! (:traversal-permissions schema-cache) {})
-   (reset! (:relationship-dependencies schema-cache) {})
-   (some-> (:direct-grant-relations schema-cache) (reset! {}))
-   nil))
-
 (defn- basis-adapter
   [db]
   (backend/basis-adapter
@@ -78,7 +52,7 @@
 
 (defmacro ^:private with-engine-bindings
   [& body]
-  `(binding [engine/*schema-cache* *schema-cache*
+  `(binding [engine/*schema-cache* (engine/request-schema-cache)
              engine/*recursive-traversal-limits*
              *recursive-traversal-limits*
              engine/*recursive-traversal-stats*
@@ -97,20 +71,9 @@
 
 (defn get-permission-paths
   [db resource-type permission-name]
-  (if-not (some? (:schema-version *schema-cache*))
-    (calc-permission-paths db resource-type permission-name)
-    (let [key [resource-type permission-name]
-          cache (:permission-paths *schema-cache*)
-          cached @cache]
-      (if (contains? cached key)
-        (get cached key)
-        (let [paths (calc-permission-paths
-                     db resource-type permission-name)]
-          (get (swap! cache
-                      #(if (contains? % key)
-                         %
-                         (assoc % key paths)))
-               key))))))
+  (with-engine-bindings
+    (engine/get-permission-paths
+     (basis-adapter db) resource-type permission-name)))
 
 (defn permission-relationship-eids
   [db resource-type permission-name]

@@ -22,7 +22,7 @@ clojure -M:dev -e "
            'eacl.datascript.backend
            'eacl.datahike.core 'eacl.datahike.impl 'eacl.datahike.backend
            'eacl.datomic.core 'eacl.datomic.impl 'eacl.datomic.backend
-           'eacl.datomic.cache 'eacl.datomic.consistency))
+           'eacl.datomic.consistency))
 (println :reflection-gate-compiled)" >"$log" 2>&1
 compile_status=$?
 

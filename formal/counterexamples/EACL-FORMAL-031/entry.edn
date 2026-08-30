@@ -11,8 +11,6 @@
  :root-cause
  "The generated-artifact size gate was implemented as a Babashka executable, but the formal GitHub Actions job installed Clojure, clj-kondo, and Node without installing Babashka. Every proof and generated build passed before the gate failed with /usr/bin/env: bb: No such file or directory."
  :fix
- "The formal workflow now installs the exact Babashka 1.12.213 version used locally before invoking the post-build artifact gate, and the quantitative gate regression asserts both the runtime declaration and build-before-measurement order."
+ "The obsolete Babashka manifest gate and exact tool-version assertion were removed. Production ClojureScript size and graph checks run as ordinary executable tests against freshly built bundles."
  :closing-evidence
- ["GitHub Actions run 30911913172 job 92000487051"
-  "eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"
-  "formal mutation :generated-artifact-gate-runtime-not-installed"]}
+ ["eacl.formal.cljs-production-gate-test/production-cljs-bundle-is-native-small-and-oracle-free-test"]}

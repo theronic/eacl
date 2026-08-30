@@ -204,14 +204,17 @@ backend time travel.
   avoiding numeric `max-tx` collisions after reset.
 - Datalevin uses backend/source/lifecycle/revision identity and performs exact
   selected-revision reuse only. It does not fingerprint physical schema.
-- A bounded LRU retains exact generations; each owns its answers and
-  subproblem/projection store. No schema or relationship proof calculation
-  occurs on an exact hit.
+- Independent bounded standard LRUs retain exact denotation and completed
+  answer entries. Exact and managed answer modes live only in complete flat
+  keys; denotations are exact-only and there is no retained-generation
+  container. No schema or relationship proof calculation occurs on an exact
+  hit.
 - Publication captures the generation/lifecycle. A delayed computation cannot
   repopulate a newer or explicitly expired lifecycle.
-- Retained historical exact answers share one bounded weighted/LRU composite
-  store. Exact requests never bind this as a partial traversal store and never
-  consult managed relation/schema proof.
+- Historical exact entries coexist in the same count-bounded standard LRU as
+  other entries in their tier. Exact requests never consult managed
+  relation/schema proof. Completed pages above 1,000 results are returned but
+  are not retained; scalar, count, and tree answers are unaffected.
 
 ### Managed-current tier
 
@@ -226,8 +229,7 @@ transaction outside that contract requires the recovery procedure in
 [cache behavior and recovery](cache.md). Native-revision token issuance and
 selection are independent of the cache.
 
-Managed reuse covers completed answers (and, for page rendering, identity
-projections) under one relation-stamp framing:
+Managed reuse covers completed answers under one relation-stamp framing:
 
 - The semantic query key contains normalized internal object IDs, operation,
   permission, result kind, and relevant configuration.
@@ -610,9 +612,11 @@ The locked Dafny run completes 8,793 proof efforts across 30 source-project
 invocations with zero errors, admissions, warnings, or timeouts. The count
 includes dependency obligations repeated by multiple top-level invocations; it
 is pipeline work, not a count of unique theorems. Since 2026-08-14 the
-generated kernel is authoritative for the pure decisions around the engine
-(consistency plan, current-cache decision, cursor continuation, page-request
-normalization); enumeration itself runs on the hand-written CLJC
+generated kernel is authoritative for the remaining pure decisions around the
+engine (consistency plan, cursor continuation, and page-request normalization).
+The former generated current-cache availability stage has been deleted: cache
+storage is now an ordinary proof-only partial-map boundary whose eviction policy
+cannot change authorization results. Enumeration itself runs on the hand-written CLJC
 stable-discovery engine on both targets, verified by the separate
 `formal/stable-discovery/` assurance tree and differentially certified against
 the independent fixed-point oracle. Host runtimes, collection semantics, cryptography, FFI
@@ -669,7 +673,8 @@ redesign:
 | DataScript repeated `can?` | 7.2 µs | 26.8 µs | 3.7× |
 | Datahike repeated `can?` | 12.2 µs | 17.6 µs | 1.4× |
 
-Datomic's private current-cache lookup itself measured about 1.5 µs. The
+Historically, Datomic's former private current-cache lookup measured about
+1.5 µs. The
 current forced-authority heavy suite passes 17 tests and 4,058 assertions. On
 the latest fixed-heap run:
 

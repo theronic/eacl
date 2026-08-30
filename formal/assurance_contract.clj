@@ -628,10 +628,9 @@
       indexed-plan-decision indexed-seed-decision indexed-limits
       indexed-projection-value indexed-command-value indexed-counters-value
       compile-indexed-plan indexed-init indexed-drive indexed-continue-page
-      indexed-resume]
+     indexed-resume]
      :cache-and-cursors
-     [exact-selection continuation-decision candidate-state
-      subproblem-cache-decision current-cache-stage current-cache-decision]
+     [exact-selection continuation-decision]
      :results
      [work-counters sequence-outcome boolean-outcome count-outcome
       authorization-outcome page-decision keyset-page-decision

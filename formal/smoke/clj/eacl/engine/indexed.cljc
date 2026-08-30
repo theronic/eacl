@@ -20,10 +20,6 @@
   (when cursor-id
     (dec cursor-id)))
 
-(defn permission-paths-cache-key
-  [backend resource-type permission-name]
-  [(spi/cache-stamp backend) resource-type permission-name])
-
 (defn- sha256-hex
   [x]
   #?(:clj
@@ -94,24 +90,6 @@
             (throw (ex-info "Stale cursor: the permission paths for this query changed since the cursor was minted. Restart pagination."
                             {:type :eacl/stale-cursor})))))
       (warn "Cursor without a schema fingerprint accepted (minted before fingerprints existed)." {}))))
-
-(defn evict-permission-paths-cache!
-  [cache-atom]
-  (reset! cache-atom {}))
-
-(defn get-permission-paths
-  [cache-atom calc-permission-paths-fn backend resource-type permission-name]
-  (let [cache-key (permission-paths-cache-key backend resource-type permission-name)]
-    (if-let [cached (get @cache-atom cache-key)]
-      cached
-      (let [paths (calc-permission-paths-fn backend resource-type permission-name)]
-        (swap! cache-atom
-               (fn [cache]
-                 (let [updated (assoc cache cache-key paths)]
-                   (if (> (count updated) 1000)
-                     {cache-key paths}
-                     updated))))
-        paths))))
 
 (defn resolve-self-relation
   [backend resource-type target-relation-name]

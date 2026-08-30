@@ -5,6 +5,7 @@
   portable value and must not escape its constructing thread or request."
   (:require [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
+            [eacl.cache.derived-schema :as derived-schema]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
@@ -219,7 +220,7 @@
             registry
             (or derived-registry
                 (:derived-schema-caches runtime)
-                (atom {}))
+                (derived-schema/store))
             ledger
             (or counter-ledger
                 (:request-counter-ledger runtime)
@@ -263,7 +264,6 @@
               :derived-delay derived-delay
               :memos-delay (delay (atom {}))
               :counter-ledger ledger
-              :publication-buffer-delay (delay (atom []))
               :owner-thread #?(:clj (Thread/currentThread) :cljs nil)
               :close-state (atom :open)})]
         (record! ledger :context-constructions)
@@ -344,36 +344,6 @@
                       {:memo-kind memo-kind :key key}))
   (memoized-state! (active-state context) memo-kind key build))
 
-(defn buffer-publication!
-  "Buffers one valid artifact for publication after semantic success."
-  [context publication]
-  (swap! (force (:publication-buffer-delay
-                 (state-of (assert-open! context))))
-         conj publication)
-  nil)
-
-(defn take-publications!
-  "Atomically drains and returns the buffered publication artifacts."
-  [context]
-  (let [buffer-delay
-        (:publication-buffer-delay (state-of (assert-open! context)))]
-    (if-not (realized? buffer-delay)
-      []
-      (let [buffer @buffer-delay]
-        (loop []
-          (let [current @buffer]
-            (if (compare-and-set! buffer current [])
-              current
-              (recur))))))))
-
-(defn discard-publications!
-  [context]
-  (let [buffer-delay
-        (:publication-buffer-delay (state-of (assert-open! context)))]
-    (when (realized? buffer-delay)
-      (reset! @buffer-delay [])))
-  nil)
-
 (defn call-with-context
   "Runs synchronous `f` with the context's contract and counter ledger bound."
   [context f]
@@ -386,7 +356,7 @@
         (f context)))))
 
 (defn close!
-  "Discards unpublished artifacts and releases owned snapshot state once.
+  "Releases owned snapshot state once.
 
   Returns true for the successful cleanup call and false after closure. A
   failed provider release restores retryability."
@@ -400,17 +370,13 @@
           :closing (context-close-in-progress!)
           :open
           (if (compare-and-set! close-state :open :closing)
-            (do
-              (let [buffer-delay (:publication-buffer-delay state)]
-                (when (realized? buffer-delay)
-                  (reset! @buffer-delay [])))
-              (try
-                (when-let [selected (:selected-snapshot state)]
-                  (when (source/release! selected)
-                    (record! (:counter-ledger state) :releases)))
-                (reset! close-state :closed)
-                true
-                (catch #?(:clj Throwable :cljs :default) error
-                  (reset! close-state :open)
-                  (throw error))))
+            (try
+              (when-let [selected (:selected-snapshot state)]
+                (when (source/release! selected)
+                  (record! (:counter-ledger state) :releases)))
+              (reset! close-state :closed)
+              true
+              (catch #?(:clj Throwable :cljs :default) error
+                (reset! close-state :open)
+                (throw error)))
             (recur)))))))

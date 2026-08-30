@@ -9,8 +9,7 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.operator.plan :as operator-plan]
-            [eacl.request.counters :as request-counters]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.request.counters :as request-counters]))
 
 (def default-limits
   {:maximum-transitions 100000
@@ -132,47 +131,27 @@
                        :fetched-values (:arrow-values @counters)})
     (let [options (cond-> {:direction :asc}
                     bound (assoc :bound-eid bound :inclusive-bound? false))
-          cache-key
-          [:operator-acyclic-arrow-scan 1
-           {:resource-type resource-type
-            :resource-eid resource-eid
-            :relation-eid (:via-relation-eid partition)
-            :intermediate-type (:intermediate-type partition)
-            :options options
-            :physical-chunk-size (:physical-chunk-size limits)}]
-          resolved
-          (subproblem/resolve-layered-bound!
-           :projection cache-key
-           {:valid? vector?
-            :weight-fn #(max 128 (+ 128 (* 16 (count %))))}
-           (:via-relation-eid partition)
-           (fn []
-             (let [next-command (inc (:arrow-commands @counters))]
-               (when (> next-command (:maximum-arrow-commands limits))
-                 (limit! :arrow-commands
-                         (:maximum-arrow-commands limits) next-command))
-               (let [values
-                     (into []
-                           (take (:physical-chunk-size limits))
-                           (resource->subjects!
-                            resource-type resource-eid
-                            (:via-relation-eid partition)
-                            (:intermediate-type partition)
-                            options))]
-                 (vswap! counters assoc :arrow-commands next-command)
-                 (request-counters/add-commands!)
-                 (request-counters/add-fetched-values! (count values))
-                 (add-stat! :adapter-commands 1)
-                 (add-stat! :adapter-fetched-values (count values))
-                 values))))
-          values (:value resolved)
+          next-command (inc (:arrow-commands @counters))
+          _ (when (> next-command (:maximum-arrow-commands limits))
+              (limit! :arrow-commands
+                      (:maximum-arrow-commands limits) next-command))
+          values
+          (into []
+                (take (:physical-chunk-size limits))
+                (resource->subjects!
+                 resource-type resource-eid
+                 (:via-relation-eid partition)
+                 (:intermediate-type partition)
+                 options))
+          _ (vswap! counters assoc :arrow-commands next-command)
+          _ (request-counters/add-commands!)
+          _ (request-counters/add-fetched-values! (count values))
+          _ (add-stat! :adapter-commands 1)
+          _ (add-stat! :adapter-fetched-values (count values))
           next-values (+ (:arrow-values @counters) (count values))]
       (when (> next-values (:maximum-arrow-values limits))
         (limit! :arrow-values (:maximum-arrow-values limits) next-values))
       (vswap! counters assoc :arrow-values next-values)
-      (when (:cached? resolved)
-        (add-stat! :shared-scan-cache-hits 1)
-        (subproblem/record-avoided-backend-operation!))
       (execution/check! execution/*contract*
                         :operator-point/arrow-scan-after
                         {:commands (:arrow-commands @counters)

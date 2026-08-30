@@ -347,7 +347,10 @@
          :branch (:branch (db-config static-db))}
         source-lifecycle
         (fn []
-          (or (some-> (:source-lifecycle-state opts) deref)
+          (or (some-> (:runtime-lifecycle-state opts)
+                      deref
+                      :source-lifecycle)
+              (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))
         adapter-options (select-keys opts adapter-config-keys)
         borrowed

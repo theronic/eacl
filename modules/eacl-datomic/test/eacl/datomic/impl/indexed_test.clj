@@ -1256,107 +1256,12 @@
                   :permission :view
                   :resource/type :server}))))))))
 
-(deftest permission-paths-caching-test
-  (let [db (d/db *conn*)]
-    (testing "A client generation caches permission paths"
-      (let [calc-calls (atom 0)
-            orig-calc impl.indexed/calc-permission-paths
-            client-cache (assoc (impl.indexed/make-schema-cache db)
-                                :schema-version (d/squuid))]
-        (binding [impl.indexed/*schema-cache* client-cache]
-          (with-redefs [impl.indexed/calc-permission-paths (fn [& args]
-                                                             (swap! calc-calls inc)
-                                                             (apply orig-calc args))]
-            ;; First call - should compute
-            (let [paths1 (impl.indexed/get-permission-paths db :account :view)]
-              (is (pos? (count paths1)))
-              (is (pos? @calc-calls) "Should have called calc-permission-paths")
-
-              (reset! calc-calls 0)
-
-              ;; Second call - should be cached
-              (let [paths2 (impl.indexed/get-permission-paths db :account :view)]
-                (is (pos? (count paths2)))
-                (is (= paths1 paths2))
-                (is (zero? @calc-calls) "Should use cache, not call calc-permission-paths")
-
-                ;; Evict this client generation
-                (impl.indexed/evict-permission-paths-cache!)
-
-                ;; Third call - should recompute
-                (let [paths3 (impl.indexed/get-permission-paths db :account :view)]
-                  (is (pos? (count paths3)))
-                  (is (pos? @calc-calls) "Should call calc-permission-paths after eviction"))))))))))
-
-(deftest schema-cache-carries-shared-engine-analysis-test
-  ;; The retired routing analysis (:traversal-analysis, :recursive-plans)
-  ;; is gone; the generation cache now carries only the live derivations —
-  ;; permission paths and the relationship dependency sets that drive
-  ;; answer-cache invalidation — and eviction clears them.
-  (with-mem-conn [conn schema/v7-schema]
-    (let [cache (impl.indexed/make-schema-cache (d/db conn))]
-      (is (some? (:permission-paths cache)))
-      (is (some? (:relationship-dependencies cache)))
-      (reset! (:permission-paths cache) {:probe :cached})
-      (reset! (:relationship-dependencies cache) {:probe :cached})
-      (impl.indexed/evict-permission-paths-cache! cache)
-      (is (= {} @(:permission-paths cache)))
-      (is (= {} @(:relationship-dependencies cache))))))
-
-(deftest permission-paths-cache-is-scoped-per-database-test
-  (with-mem-conn [conn1 schema/v7-schema]
-    (with-mem-conn [conn2 schema/v7-schema]
-      (fixtures/install-expression-schema! conn1)
-      @(d/transact conn1 fixtures/entity-fixtures)
-      (fixtures/install-expression-schema! conn2)
-      @(d/transact conn2 fixtures/entity-fixtures)
-
-      (let [db1 (d/db conn1)
-            db2 (d/db conn2)
-            cache1 (assoc (impl.indexed/make-schema-cache db1) :schema-version (d/squuid))
-            cache2 (assoc (impl.indexed/make-schema-cache db2) :schema-version (d/squuid))
-            paths1 (binding [impl.indexed/*schema-cache* cache1]
-                     (impl.indexed/get-permission-paths db1 :server :view))
-            paths2 (binding [impl.indexed/*schema-cache* cache2]
-                     (impl.indexed/get-permission-paths db2 :server :view))]
-        (is (= (count paths1) (count paths2)))
-        (is (not= (:database-id cache1) (:database-id cache2)))
-        (is (not (identical? (:permission-paths cache1)
-                             (:permission-paths cache2)))
-            "separate clients own separate cache generations")))))
-
-(deftest permission-paths-cache-is-scoped-per-schema-test
-  ;; Each client owns one generation. A client write swaps that generation;
-  ;; historic db values are evaluated only with an explicitly matching cache
-  ;; (or uncached through the low-level API).
-  (with-mem-conn [conn schema/v7-schema]
-    (schema/write-schema! conn "definition user {}
-       definition account {
-         relation owner: user
-         relation viewer: user
-         permission view = owner + viewer
-       }")
-    (let [db-before    (d/db conn)
-          cache-before (impl.indexed/make-schema-cache db-before)
-          before-paths (binding [impl.indexed/*schema-cache* cache-before]
-                         (impl.indexed/get-permission-paths db-before :account :view))]
-      (schema/write-schema! conn "definition user {}
-         definition account {
-           relation owner: user
-           relation viewer: user
-           relation auditor: user
-           permission view = owner + viewer + auditor
-         }")
-      (let [db-after         (d/db conn)
-            cache-after      (impl.indexed/make-schema-cache db-after)
-            after-paths      (binding [impl.indexed/*schema-cache* cache-after]
-                               (impl.indexed/get-permission-paths db-after :account :view))
-            historical-paths (binding [impl.indexed/*schema-cache* cache-before]
-                               (impl.indexed/get-permission-paths db-before :account :view))]
-        (is (< (count before-paths) (count after-paths)))
-        (is (= before-paths historical-paths))
-        (is (not= (:schema-version cache-before) (:schema-version cache-after))
-            "write-schema! created a new generation stamp")))))
+(deftest indexed-facade-has-no-shared-schema-cache-surface-test
+  (is (nil? (ns-resolve 'eacl.datomic.impl.indexed '*schema-cache*)))
+  (is (nil? (ns-resolve 'eacl.datomic.impl.indexed 'make-schema-cache)))
+  (is (nil? (ns-resolve 'eacl.datomic.impl.indexed
+                        'evict-permission-paths-cache!)))
+  (is (nil? (ns-resolve 'eacl.engine.v8 'make-schema-cache))))
 
 (deftest string-object-id-resolution-test
   ;; d/entid on a bare string throws a raw IllegalArgumentException, which

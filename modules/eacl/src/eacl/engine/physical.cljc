@@ -13,8 +13,7 @@
   (:require [clojure.string]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
-            [eacl.execution :as execution]
-            [eacl.metrics :as metrics]))
+            [eacl.execution :as execution]))
 
 ;; ---------------------------------------------------------------------------
 ;; Three-outcome classification (task 7.1)
@@ -82,8 +81,6 @@
 
           :else
           [])]
-    (when metrics/*store*
-      (metrics/record-scan! descriptor result))
     result))
 
 (defn classified-fetch-fn

@@ -8,7 +8,6 @@
             [eacl.causal-token :as causal-token]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.backend :as datomic-backend]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn with-mem-conns]]
             [eacl.datomic.schema :as schema]
@@ -69,7 +68,7 @@
     (catch clojure.lang.ExceptionInfo e
       (ex-data e))))
 
-(deftest readable-as-of-basis-lifts-from-a-newer-equal-proof-test
+(deftest readable-as-of-basis-rejects-a-future-equal-proof-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
           old-token (:zed/token (seed! conn client))
@@ -83,12 +82,22 @@
              {:subject alice
               :permission :admin
               :resource account
+              :consistency (consistency/at-exact-snapshot old-token)})
+            repeated-older
+            (eacl/check-permission
+             client
+             {:subject alice
+              :permission :admin
+              :resource account
               :consistency (consistency/at-exact-snapshot old-token)})]
         (is (true? (:allowed? newer)))
         (is (false? (:cached? newer)))
         (is (true? (:allowed? older)))
-        (is (true? (:cached? older))
-            "a readable equal as-of proof lifts in the older direction")))))
+        (is (false? (:cached? older))
+            "a value computed at a future revision cannot serve an older request")
+        (is (true? (:allowed? repeated-older)))
+        (is (true? (:cached? repeated-older))
+            "the completed older computation is retained under its exact key")))))
 
 (deftest readable-as-of-basis-misses-when-its-proof-differs-test
   (with-mem-conn [conn schema/v7-schema]
@@ -169,12 +178,12 @@
           (is (= (:misses before) (:misses after)))
           (is (= (inc (:exact-hits before)) (:exact-hits after))))))))
 
-(deftest native-on-repeat-admits-on-the-second-sighting-test
+(deftest native-lru-admits-the-first-completed-value-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client
           (core/make-client
            conn
-           {:cache {:admit-on-repeat? true}})
+           {:cache {:max-entries 8}})
           _ (seed! conn client)
           alice (spice-object :user "alice")
           account (spice-object :account "acct")
@@ -187,7 +196,7 @@
         (is (true? (eacl/can? client alice :admin account)))
         (is (true? (eacl/can? client alice :admin account)))
         (is (true? (eacl/can? client alice :admin account)))
-        (is (= 2 @calls))))))
+        (is (= 1 @calls))))))
 
 (deftest can-results-obey-all-cache-consistency-modes-test
   (with-mem-conn [conn schema/v7-schema]
@@ -218,26 +227,26 @@
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 2 @calls)
-                "the readable historical proof lifts the matching answer"))
+            (is (= 3 @calls)
+                "historical selection is identical-exact only, never managed"))
 
           (testing "fully-consistent observes the relationship deletion"
             (is (false? (eacl/can? client alice :admin account)))
-            (is (= 2 @calls)
+            (is (= 3 @calls)
                 "the exact-basis deletion result is reused"))
 
           (testing "at-least-as-fresh accepts the current cached revision"
             (is (false? (eacl/can? client alice :admin account
                                    (consistency/at-least-as-fresh
                                     deleted-token))))
-            (is (= 2 @calls)))
+            (is (= 3 @calls)))
 
           (testing "and repeated exact selection remains snapshot-correct"
             (is (true? (eacl/can? client alice :admin account
                                   (consistency/at-exact-snapshot
                                    created-token))))
-            (is (= 2 @calls)
-                "the promoted exact entry remains snapshot-correct")))))))
+            (is (= 3 @calls)
+                "the historical exact entry remains snapshot-correct")))))))
 
 (deftest missing-external-ids-never-enter-the-result-cache-test
   (with-mem-conn [conn schema/v7-schema]
@@ -546,7 +555,7 @@
         (is (empty? @history-operations)
             "database identity is rejected before selecting the cursor basis")))))
 
-(deftest forged-zed-token-is-rejected-before-revision-work-test
+(deftest forged-zed-token-is-rejected-before-basis-selection-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
@@ -562,11 +571,7 @@
                     d/as-of
                     (fn [& _]
                       (swap! operations conj :as-of)
-                      (throw (ex-info "must not time travel" {})))
-                    cache/safe-entry-value
-                    (fn [& _]
-                      (swap! operations conj :cache)
-                      (throw (ex-info "must not access cache" {})))]
+                      (throw (ex-info "must not time travel" {})))]
         (try
           (eacl/can? client
                      (spice-object :user "alice")

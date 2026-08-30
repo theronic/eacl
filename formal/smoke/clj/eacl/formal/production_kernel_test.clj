@@ -4,6 +4,8 @@
    [clojure.test :refer [deftest is testing]]
    [eacl.backend.source :as source]
    [eacl.backend.v8 :as backend]
+   [eacl.cache.key :as cache-key]
+   [eacl.cache.standard-lru :as lru]
    [eacl.consistency :as consistency]
    [eacl.core :refer [spice-object]]
    [eacl.engine.v8 :as engine]
@@ -13,6 +15,49 @@
    [eacl.relay :as relay]
    [eacl.subproblem-cache :as subproblem]
    [eacl.verified-kernel :as verified]))
+
+(defn- private-production-value
+  [symbol]
+  (some-> (ns-resolve 'eacl.formal.production-kernel symbol) deref))
+
+(deftest unicode-decode-memo-is-fail-open-standard-lru-test
+  (let [store (private-production-value 'unicode-memo)
+        interned (private-production-value 'dafny-unicode-interned)
+        values
+        (mapv #(dafny.DafnySequence/asUnicodeString (str "type-" %))
+              (range 130))
+        hot (first values)]
+    (try
+      (lru/clear! store)
+      (doseq [value (take 64 values)]
+        (is (= (.verbatimString value) (interned value))))
+      (is (= "type-0" (interned hot)) "a hit refreshes the hot key")
+      (is (= "type-64" (interned (nth values 64))))
+      (is (:found? (lru/peek-entry store hot)))
+      (is (false? (:found? (lru/peek-entry store (nth values 1))))
+          "the cold least-recent key is evicted instead of first-fill lockout")
+      (doseq [value (drop 65 values)]
+        (is (= "type-0" (interned hot)))
+        (is (= (.verbatimString value) (interned value))))
+      (is (:found? (lru/peek-entry store hot))
+          "a repeatedly used key survives sustained cold-key churn")
+      (is (= 64 (lru/entry-count store)))
+      (testing "lookup failure falls back to direct decoding"
+        (is (= "fallback-lookup"
+               (with-redefs [lru/lookup!
+                             (fn [& _] (throw (ex-info "lookup" {})))]
+                 (interned
+                  (dafny.DafnySequence/asUnicodeString
+                   "fallback-lookup"))))))
+      (testing "publication failure returns the already decoded value"
+        (is (= "fallback-publication"
+               (with-redefs [lru/put-if-absent!
+                             (fn [& _] (throw (ex-info "publish" {})))]
+                 (interned
+                  (dafny.DafnySequence/asUnicodeString
+                   "fallback-publication"))))))
+      (finally
+        (lru/clear! store)))))
 
 (def selection
   {:kernel production/generated-java-kernel})
@@ -673,7 +718,7 @@
                     subproblem/*decision-kernel* selection]
             (engine/lookup-resources adapter query')))
         generated-cache
-        (engine/make-schema-cache adapter 1)
+        (engine/request-schema-cache adapter)
         generated-first
         (run-forward generated-cache query)
         after (get-in generated-first [:page-info :end-cursor])
@@ -690,11 +735,11 @@
                     subproblem/*decision-kernel* selection]
             (engine/lookup-subjects adapter reverse-query)))
         generated-reverse
-        (run-reverse (engine/make-schema-cache adapter 1))
+        (run-reverse (engine/request-schema-cache adapter))
         run-operation
         (fn [operation]
           (binding [engine/*schema-cache*
-                    (engine/make-schema-cache adapter 1)
+                    (engine/request-schema-cache adapter)
                     subproblem/*decision-kernel* selection]
             (operation)))
         can-operation
@@ -798,52 +843,6 @@
              :cursor-graph 0
              :exact nil}))))
   )
-
-(deftest generated-java-subproblem-cache-decisions
-  (is (= :use-completed-value
-         (verified/decide
-          selection
-          :subproblem-cache-decision
-          {:decision :lookup
-           :candidate :complete})))
-  (is (= :skip-publication
-         (verified/decide
-          selection
-           :subproblem-cache-decision
-          {:decision :admission
-           :candidate-present? false
-           :attempted-publications 8
-           :maximum-attempts 8})))
-  (is (= :drop-publication
-         (verified/decide
-          selection
-          :subproblem-cache-decision
-          {:decision :publication
-           :ticket-current? true
-           :complete? true
-           :valid? true
-           :weight 1025
-           :budget 1024}))))
-
-(deftest generated-java-current-cache-decisions
-  (doseq [[input expected]
-          [[{:stage :eligibility :available? false}
-            :bypass-current-cache]
-           [{:stage :generation :available? true}
-            :probe-exact-entry]
-           [{:stage :exact-entry :available? false}
-            :probe-managed-entry]
-           [{:stage :exact-only-entry :available? true}
-            :use-exact-entry]
-           [{:stage :exact-only-entry :available? false}
-            :compute-exact-value]
-           [{:stage :managed-entry :available? true}
-            :use-managed-entry]]]
-    (is (= expected
-           (verified/decide
-            selection
-            :current-cache-decision
-            input)))))
 
 (deftest generated-java-ordered-merge-step-decisions
   (doseq [[input expected]
@@ -1637,23 +1636,27 @@
             [:status :items :start-ordinal
              :has-next? :has-previous?])))))
 
-(deftest production-subproblem-store-uses-generated-java-decisions
-  (let [store (subproblem/store {:projection-max-weight 1024
-                                 :denotation-max-weight 1024})
+(deftest production-subproblem-store-uses-flat-jvm-lru-storage
+  (let [store (subproblem/store {:denotation-max-entries 2
+                                 :answer-max-entries 2})
+        key (cache-key/exact-denotation-key
+             {:tier :denotation
+              :source-lifecycle :formal-smoke
+              :abi :formal-smoke-v1
+              :semantic :key
+              :reuse :exact-basis})
         computes (atom 0)]
-    (binding [subproblem/*decision-kernel* selection]
-      (is (= 7
-             (:value
-              (subproblem/resolve!
-               store :projection :key {}
-               #(do (swap! computes inc) 7)))))
-      (is (= 7
-             (:value
-              (subproblem/resolve!
-               store :projection :key {}
-               #(do (swap! computes inc) 8))))))
+    (is (nil? (subproblem/lookup! store :denotation key)))
+    (let [value (do (swap! computes inc) 7)]
+      (is (:published?
+           (subproblem/publish!
+            store :denotation key {:valid? integer?} value))))
+    (is (= 7
+           (:value (subproblem/lookup! store :denotation key))))
     (is (= 1 @computes))
-    (is (= 1 (:hits (subproblem/stats store))))))
+    (is (= 1 (:hits (subproblem/stats store))))
+    (is (= #{:denotation :answer}
+           (set (keys (:tiers (subproblem/stats store))))))))
 
 (deftest generated-java-full-authorization-boundary
   (let [evaluate

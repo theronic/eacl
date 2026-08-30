@@ -859,45 +859,6 @@ module ScalarFrontierCoherence {
     );
   }
 
-  lemma EqualScalarProofAlsoPreservesAnOlderSelectedSnapshot(
-    history: seq<Snapshot>,
-    dependencies: seq<Relation>,
-    newerCachedRequest: NormalizedRequest,
-    olderSelectedRequest: NormalizedRequest,
-    evaluator: AuthorizationInput -> AuthorizationAnswer
-  )
-    requires OrderedSupportedHistory(history)
-    requires DependencySlotsValidForHistory(history, dependencies)
-    requires history[0].lifecycle == history[|history| - 1].lifecycle
-    requires history[0].schemaGeneration ==
-             history[|history| - 1].schemaGeneration
-    requires DependencyFrontier(history[0], dependencies) ==
-             DependencyFrontier(history[|history| - 1], dependencies)
-    requires newerCachedRequest == olderSelectedRequest
-    ensures evaluator(
-              InputAt(
-                history[|history| - 1],
-                dependencies,
-                newerCachedRequest
-              )
-            ) ==
-            evaluator(
-              InputAt(
-                history[0],
-                dependencies,
-                olderSelectedRequest
-              )
-            )
-  {
-    EqualScalarProofPreservesEveryDeterministicDenotation(
-      history,
-      dependencies,
-      olderSelectedRequest,
-      newerCachedRequest,
-      evaluator
-    );
-  }
-
   lemma EmptyDependencyScalarProofUsesInitialFrontier(
     snapshot: Snapshot
   )
@@ -1010,7 +971,8 @@ module ScalarFrontierCoherence {
     cached.adapterIdentity == selected.adapterIdentity &&
     cached.lifecycle == selected.lifecycle &&
     cached.schemaGeneration == selected.schemaGeneration &&
-    FrameFrontier(cached) == FrameFrontier(selected)
+    cached.dependencies == selected.dependencies &&
+    cached.generations == selected.generations
   }
 
   lemma IncompleteFrameCannotMatch(
@@ -1050,6 +1012,27 @@ module ScalarFrontierCoherence {
     requiredClasses: set<DependencyClass>
   )
     requires cached.schemaGeneration != selected.schemaGeneration
+    ensures !FramesCanMatch(cached, selected, requiredClasses)
+  {
+  }
+
+  lemma DifferentDependencyClosureCannotMatch(
+    cached: ProofFrame,
+    selected: ProofFrame,
+    requiredClasses: set<DependencyClass>
+  )
+    requires cached.dependencies != selected.dependencies
+    ensures !FramesCanMatch(cached, selected, requiredClasses)
+  {
+  }
+
+
+  lemma DifferentDependencyGenerationIdentityCannotMatch(
+    cached: ProofFrame,
+    selected: ProofFrame,
+    requiredClasses: set<DependencyClass>
+  )
+    requires cached.generations != selected.generations
     ensures !FramesCanMatch(cached, selected, requiredClasses)
   {
   }
@@ -1264,7 +1247,8 @@ module ScalarFrontierCoherence {
   datatype ManagedCandidate<T> = ManagedCandidate(
     request: NormalizedRequest,
     proof: ProofFrame,
-    computation: ComputationState<T>
+    computation: ComputationState<T>,
+    computedRevision: nat
   )
 
   predicate CandidateCanPublish<T>(
@@ -1272,18 +1256,53 @@ module ScalarFrontierCoherence {
     requiredClasses: set<DependencyClass>
   ) {
     candidate.computation.Completed? &&
-    CompleteFrame(candidate.proof, requiredClasses)
+    CompleteFrame(candidate.proof, requiredClasses) &&
+    candidate.proof.schemaGeneration <= candidate.computedRevision &&
+    FrameFrontier(candidate.proof) <= candidate.computedRevision
   }
 
-  predicate CandidateCanReuse<T>(
+  lemma PublishedCandidateProofDoesNotExceedComputedRevision<T>(
+    candidate: ManagedCandidate<T>,
+    requiredClasses: set<DependencyClass>
+  )
+    requires CandidateCanPublish(candidate, requiredClasses)
+    ensures candidate.proof.schemaGeneration <= candidate.computedRevision
+    ensures FrameFrontier(candidate.proof) <= candidate.computedRevision
+  {
+  }
+
+  // This is only the finite managed-key and causal eligibility check. Semantic
+  // equality is established separately by MatchingSnapshotFrames... from two
+  // snapshot-valid frames in one ordered supported history.
+  predicate CandidateMatchesManagedKey<T>(
     candidate: ManagedCandidate<T>,
     selectedRequest: NormalizedRequest,
     selectedProof: ProofFrame,
+    selectedRevision: nat,
     requiredClasses: set<DependencyClass>
   ) {
     CandidateCanPublish(candidate, requiredClasses) &&
+    candidate.computedRevision <= selectedRevision &&
     candidate.request == selectedRequest &&
     FramesCanMatch(candidate.proof, selectedProof, requiredClasses)
+  }
+
+  lemma FutureCandidateCannotReuseOlderSelection<T>(
+    candidate: ManagedCandidate<T>,
+    selectedRequest: NormalizedRequest,
+    selectedProof: ProofFrame,
+    selectedRevision: nat,
+    requiredClasses: set<DependencyClass>
+  )
+    requires selectedRevision < candidate.computedRevision
+    ensures !CandidateMatchesManagedKey(
+              candidate,
+              selectedRequest,
+              selectedProof,
+              selectedRevision,
+              requiredClasses
+            )
+  {
   }
 
   lemma InProgressCandidateCannotPublish<T>(
@@ -1299,13 +1318,15 @@ module ScalarFrontierCoherence {
     candidate: ManagedCandidate<T>,
     selectedRequest: NormalizedRequest,
     selectedProof: ProofFrame,
+    selectedRevision: nat,
     requiredClasses: set<DependencyClass>
   )
     requires candidate.request.demand != selectedRequest.demand
-    ensures !CandidateCanReuse(
+    ensures !CandidateMatchesManagedKey(
               candidate,
               selectedRequest,
               selectedProof,
+              selectedRevision,
               requiredClasses
             )
   {
@@ -1315,31 +1336,18 @@ module ScalarFrontierCoherence {
     candidate: ManagedCandidate<T>,
     selectedRequest: NormalizedRequest,
     selectedProof: ProofFrame,
+    selectedRevision: nat,
     requiredClasses: set<DependencyClass>
   )
     requires candidate.request != selectedRequest
-    ensures !CandidateCanReuse(
+    ensures !CandidateMatchesManagedKey(
               candidate,
               selectedRequest,
               selectedProof,
+              selectedRevision,
               requiredClasses
             )
   {
   }
 
-  predicate PublicationReachable(
-    capturedLifecycle: nat,
-    activeLifecycle: nat
-  ) {
-    capturedLifecycle == activeLifecycle
-  }
-
-  lemma LatePublicationCannotReachRotatedLifecycle(
-    capturedLifecycle: nat,
-    activeLifecycle: nat
-  )
-    requires capturedLifecycle != activeLifecycle
-    ensures !PublicationReachable(capturedLifecycle, activeLifecycle)
-  {
-  }
 }

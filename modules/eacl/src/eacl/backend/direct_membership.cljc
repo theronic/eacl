@@ -7,7 +7,6 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.exact-integer :as exact-integer]
-            [eacl.metrics :as metrics]
             [eacl.request.counters :as request-counters]))
 
 (def request-version 1)
@@ -182,10 +181,6 @@
            {:expected (count candidates) :actual (count result)}))
         (when-not (every? boolean? result)
           (contract-violation! adapter :aligned-boolean-vector :redacted))
-        (when metrics/*store*
-          (metrics/record-membership! (:descriptor request)
-                                      (:direction request)
-                                      candidates result))
         result))))
 
 (defn direct-match-many?

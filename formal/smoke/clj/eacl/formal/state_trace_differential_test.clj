@@ -384,9 +384,6 @@
       (is (false? (:cached? first-uncached)))
       (is (true? (:cached? exact-hit)))
       (is (pos?
-           (get @calls :current-cache-decision 0))
-          "cache eligibility and hit/miss selection cross generated authority")
-      (is (pos?
            (get @calls :relationship-page 0))
           "lookup pagination normalization crosses generated authority")
       (is (= ["document-1" "document-2"]

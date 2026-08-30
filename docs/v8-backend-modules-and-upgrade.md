@@ -13,7 +13,7 @@ depend on one adapter module; backend authors depend on core.
 | `eacl-datahike` | Clojure/JVM | current connection DB; durable temporal history when enabled, otherwise conditional retained-commit selection | certified generation reuse | authenticated; proof-equivalent current continuation or configuration-honest exact reconstruction |
 | `eacl-datascript` | Clojure and ClojureScript | current connection DB; no arbitrary exact selection | certified generation reuse | authenticated proof-equivalent current continuation |
 | `eacl-datalevin` | Clojure/JVM | fresh owned native read snapshot at the local embedded head; causal-floor polling; no historical exact selection | certified ordered-generation reuse | authenticated proof-equivalent current continuation |
-| `eacl` | Clojure and ClojureScript | supplied by an adapter | shared generation registry and request-local fallback | shared protocol, engine, proof, and cache implementation |
+| `eacl` | Clojure and ClojureScript | supplied by an adapter | flat standard-LRU artifacts and request-local fallback | shared protocol, engine, proof, and cache implementation |
 
 Capabilities are configuration-specific and are validated before
 authorization. Ordinary calls select one current immutable snapshot and do not
@@ -92,11 +92,12 @@ disabled:
 
 Every bundled adapter also certifies EACL's schema generation independently
 of ordered relationship-generation proofs. The selected adapter memoizes the
-one-probe read. A bounded generation registry reuses validation catalogs,
-permission paths, dependency closures, routing analysis, direct-grant
-relations, and sealed plans across relationship-only revisions. Datalevin also
-lifts completed answers and managed subproblems when its complete scalar proof
-frame remains equal across revisions.
+one-probe read. One flat bounded LRU reuses validation catalogs, permission
+paths, dependency closures, routing analysis, direct-grant relations, and
+sealed plans by complete source/lifecycle/adapter/schema/artifact keys across
+relationship-only revisions; it has no generation container or registry.
+Datalevin also lifts completed answers when its complete scalar proof frame
+remains equal across revisions. Shared denotations remain exact-basis only.
 An uncertified third-party adapter receives the same reuse within one request
 only; native revision is not used as a derived-state fallback.
 

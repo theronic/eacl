@@ -530,10 +530,8 @@
               after-bypass (datascript/cache-stats client)]
           (is (false? (:allowed? bypass)))
           (is (false? (:cached? bypass)))
-          (is (= (dissoc before-bypass :bypasses
-                         :relationship-observations)
-                 (dissoc after-bypass :bypasses
-                         :relationship-observations)))
+          (is (= (dissoc before-bypass :bypasses)
+                 (dissoc after-bypass :bypasses)))
           (is (= (inc (:bypasses before-bypass))
                  (:bypasses after-bypass))))))))
 

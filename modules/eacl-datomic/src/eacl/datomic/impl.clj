@@ -25,27 +25,21 @@
 
 (defmacro ^:private with-request-engine
   "Builds ONE snapshot adapter for the call and binds the shared engine
-  context: a caller-supplied impl.indexed schema cache wins; otherwise a
-  request-local derived context scoped to this adapter's immutable
-  snapshot (eliminating duplicate proof reads, path walks, and plan
-  compiles inside one raw request without cross-request publication).
+  context: a request-local derived context scoped to this adapter's immutable
+  snapshot eliminates duplicate proof reads, path walks, and plan compiles
+  inside one raw request without cross-request publication.
 
   The request-local generation also owns the structural expression cache, so
   the root-existence probe and subsequent plan compilation share one decode
   per immutable permission entity.
 
-  A caller-supplied schema cache (the public client, or a v7-compat caller
-  binding impl.indexed/*schema-cache*) keeps the pre-existing contract: no
-  stamp read here because the bound generation already carries the plan
-  identity. The raw facade otherwise prepares derived state per call and
+  The managed public client owns the only cross-request derived-schema LRU.
+  This raw compatibility facade always prepares derived state per call and
   publishes nothing across database values."
   [[adapter-sym db] & body]
   `(let [db# ~db
-         bound-cache# impl.indexed/*schema-cache*
          ~adapter-sym (backend/basis-adapter db# {})
-         schema-cache#
-         (or bound-cache#
-             (engine/request-schema-cache ~adapter-sym))]
+         schema-cache# (engine/request-schema-cache ~adapter-sym)]
      (binding [engine/*schema-cache* schema-cache#
                expression-persistence/*structural-cache*
                (:expression-metrics schema-cache#)

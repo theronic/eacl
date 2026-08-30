@@ -104,7 +104,7 @@
         (try (d/release first-conn) (catch Throwable _))
         (d/delete-database config)))))
 
-(deftest readable-as-of-db-lifts-from-a-newer-equal-proof-test
+(deftest readable-as-of-db-does-not-lift-a-newer-managed-entry-backward-test
   (let [conn (datahike/create-conn nil {:commit-graph? false
                                         :keep-history? true})
         authorization (client conn)]
@@ -116,19 +116,61 @@
         (d/transact conn [{:eacl/id "newer-unrelated"}])
         (let [newer
               (eacl/check-permission authorization user :view document)
-              older
-              (eacl/check-permission
-               authorization
-               {:subject user
-                :permission :view
-                :resource document
-                :consistency
-                (consistency/at-exact-snapshot old-token)})]
+              older-request
+              {:subject user
+               :permission :view
+               :resource document
+               :consistency
+               (consistency/at-exact-snapshot old-token)}
+              older (eacl/check-permission authorization older-request)
+              older-hit (eacl/check-permission authorization older-request)]
           (is (true? (:allowed? newer)))
           (is (false? (:cached? newer)))
           (is (true? (:allowed? older)))
-          (is (true? (:cached? older))
-              "the readable AsOfDB frame lifts in the older direction")))
+          (is (false? (:cached? older))
+              "managed values flow only toward causally later revisions")
+          (is (true? (:cached? older-hit))
+              "the repeated historical request uses its identical exact key")))
+      (finally
+        (d/release conn)))))
+
+(deftest historical-bases-use-identical-exact-keys-only-test
+  (let [conn (datahike/create-conn nil {:commit-graph? false
+                                        :keep-history? true})
+        authorization (client conn)]
+    (try
+      (seed! conn authorization)
+      (let [older-token
+            (:zed/token
+             (eacl/create-relationship! authorization relationship))
+            demand
+            {:subject user
+             :permission :view
+             :resource document}
+            older-demand
+            (assoc demand :consistency
+                   (consistency/at-exact-snapshot older-token))
+            older (eacl/check-permission authorization older-demand)
+            older-hit (eacl/check-permission authorization older-demand)
+            after-older (datahike/cache-stats authorization)]
+        (is (true? (:allowed? older)))
+        (is (false? (:cached? older)))
+        (is (true? (:cached? older-hit)))
+        (d/transact conn [{:eacl/id "newer-unrelated"}])
+        (let [newer-token
+              (eacl/with-snapshot
+                [snapshot (eacl/snapshot authorization)]
+                (eacl/basis-token snapshot))
+              newer-demand
+              (assoc demand :consistency
+                     (consistency/at-exact-snapshot newer-token))
+              newer (eacl/check-permission authorization newer-demand)
+              after-newer (datahike/cache-stats authorization)]
+          (is (true? (:allowed? newer)))
+          (is (false? (:cached? newer))
+              "proof-equivalent historical bases never use the managed tier")
+          (is (= (:managed-hits after-older)
+                 (:managed-hits after-newer)))))
       (finally
         (d/release conn)))))
 
@@ -295,13 +337,29 @@
         (eacl/lookup-resources authorization previous-query)
         previous-hit
         (eacl/lookup-resources authorization previous-query)]
-    (testing "adjacent reverse navigation reuses the visited current page"
+    (testing "Next/Previous oscillation reuses only completed internal answers"
       (is (= [(second documents)] (:data page-2)))
       (is (false? (:cached? page-2)))
       (is (true? (:cached? page-2-hit)))
       (is (= [(first documents)] (:data previous-page)))
-      (is (true? (:cached? previous-page)))
-      (is (true? (:cached? previous-hit))))
+      (is (false? (:cached? previous-page))
+          "the first reverse request has its own direction and boundary key")
+      (is (true? (:cached? previous-hit))
+          "the repeated reverse request reuses its completed internal answer")
+      (is (= (:cache-basis page-1) (:cache-basis previous-page)
+             (:cache-basis previous-hit))
+          "oscillation stays on the exact selected snapshot")
+      (is (= (select-keys (:page-info page-1)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info previous-page)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info previous-hit)
+                          [:has-next-page? :has-previous-page?])))
+      (is (every? some?
+                  [(get-in previous-page [:page-info :start-cursor])
+                   (get-in previous-page [:page-info :end-cursor])
+                   (get-in previous-hit [:page-info :start-cursor])
+                   (get-in previous-hit [:page-info :end-cursor])])))
     (testing "changed proof falls back to the exact cursor snapshot"
       (eacl/delete-relationship! authorization (second relationships))
       (let [before (datahike/cache-stats authorization)
@@ -318,7 +376,7 @@
         (is (= (:bypasses before) (:bypasses after))
             "exact replay uses only the matching immutable page/answer tier")))))
 
-(deftest repeated-relationship-page-uses-client-private-navigation-cache-test
+(deftest repeated-relationship-page-uses-completed-answer-cache-test
   (let [conn (datahike/create-conn)
         authorization (client conn)
         _ (seed! conn authorization)

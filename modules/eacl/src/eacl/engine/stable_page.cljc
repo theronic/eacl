@@ -17,8 +17,10 @@
     stale-cursor — when they make a page unreachable."
   (:require [clojure.string :as string]
             [eacl.backend.v8 :as backend]
+            [eacl.cache.standard-lru :as lru]
             [eacl.engine.physical :as physical]
             [eacl.engine.stable-reducer :as reducer]
+            [eacl.execution :as execution]
             [eacl.secure-format :as secure-format]))
 
 (def token-version 1)
@@ -149,96 +151,124 @@
 ;; Latest-only checkpoint store (task 6.4)
 ;; ---------------------------------------------------------------------------
 
+(defrecord CheckpointStore [storage max-entry-admissions])
+
+(def ^:private default-max-entry-admissions 1000000)
+
+(defn ^:no-doc checkpoint-store?
+  [value]
+  (instance? CheckpointStore value))
+
 (defn make-checkpoint-store
-  "Bounded in-process latest-only checkpoint store. `:max-entries` bounds
-  the identity count; `:max-entry-admissions` is the per-checkpoint weight
-  cap (an overweight checkpoint is dropped without failing the request)."
+  "Standard-LRU-backed latest-only checkpoint store. `:max-entries` bounds
+  the identity count; `:max-entry-admissions` is a semantic per-checkpoint
+  retention cap (an overweight checkpoint is dropped without failing the
+  request)."
   ([] (make-checkpoint-store {}))
   ([{:keys [max-entries max-entry-admissions]
-     :or {max-entries 64 max-entry-admissions 1000000}}]
-   (atom {:entries {} :order [] :max-entries max-entries
-          :max-entry-admissions max-entry-admissions})))
+     :or {max-entries 64
+          max-entry-admissions default-max-entry-admissions}}]
+   (->CheckpointStore
+    (lru/store max-entries)
+    max-entry-admissions)))
 
 (defn context-store?
   "A client-scoped continuation context (`eacl.continuation/private-context`):
-  fn-map storage whose own bounds and eviction replace the atom store's."
+  fn-map storage with its own bounds and eviction, distinct from the
+  standalone checkpoint store."
   [store]
   (and (map? store)
-       (fn? (:peek store))
        (fn? (:get store))
        (fn? (:hit! store))
        (fn? (:miss! store))
        (fn? (:put! store))))
 
-(defn- checkpoint-weight
-  "Conservative retained-heap estimate for a client-store entry; the store's
-  weight budget treats these as approximate bytes, not exact JVM layout."
+(defn- checkpoint-progress
   [checkpoint]
-  (+ 2048
-     (* 96 (count (:admitted (:state checkpoint))))
-     (* 256 (count (:stack (:state checkpoint))))
-     (* 96 (count (:pending checkpoint)))))
+  [(:ordinal checkpoint) (get-in checkpoint [:state :transitions])])
+
+(defn- progress-newer?
+  [[candidate-ordinal candidate-transitions]
+   [resident-ordinal resident-transitions]]
+  (or (> candidate-ordinal resident-ordinal)
+      (and (= candidate-ordinal resident-ordinal)
+           (> candidate-transitions resident-transitions))))
+
+(defn- retention-eligible-checkpoint?
+  [store checkpoint]
+  (try
+    (let [maximum (if (checkpoint-store? store)
+                    (:max-entry-admissions store)
+                    (get store :max-entry-admissions
+                         default-max-entry-admissions))]
+      (<= (count (get-in checkpoint [:state :admitted])) maximum))
+    (catch #?(:clj Exception :cljs :default) _ false)))
 
 (defn checkpoint-put!
-  "Publishes synchronously; for one key only a strictly greater scalar
-  transition ordinal replaces the retained checkpoint (nonregressing)."
+  "Publishes synchronously; for one key only a later delivered boundary, or
+  greater traversal progress at the same boundary, replaces the retained
+  checkpoint (nonregressing)."
   [store key checkpoint]
   (cond
+    (not (execution/cache-stage-available?))
+    nil
+
+    (not (retention-eligible-checkpoint? store checkpoint))
+    nil
+
     (context-store? store)
-    ;; The read-compare-put pair is not atomic across requests; losing that
-    ;; race retains an older checkpoint, which only costs a later replay.
-    (let [existing ((:peek store) key)]
-      (when-not (and existing
-                     (>= (:transitions (:state existing))
-                         (:transitions (:state checkpoint))))
-        ((:put! store) key checkpoint (checkpoint-weight checkpoint)))
-      nil)
+    ;; The client context compares progress outside storage and closes the
+    ;; concurrent older/newer race with expected-value LRU replacement.
+    (try
+      ((:put! store) key checkpoint)
+      nil
+      (catch #?(:clj Exception :cljs :default) _ nil))
 
-    store
-    (do
-      (swap! store
-             (fn [{:keys [entries order max-entries max-entry-admissions]
-                   :as state}]
-               (let [existing (get entries key)]
-                 (cond
-                   (> (count (:admitted (:state checkpoint)))
-                      max-entry-admissions)
-                   state ;; overweight: dropped, request unaffected
-
-                   (and existing
-                        (>= (:transitions (:state existing))
-                            (:transitions (:state checkpoint))))
-                   state ;; nonregressing: never replace with older progress
-
-                   :else
-                   (let [order (conj (vec (remove #{key} order)) key)
-                         entries (assoc entries key checkpoint)
-                         evict (when (> (count order) max-entries)
-                                 (first order))]
-                     (cond-> (assoc state
-                                    :entries entries
-                                    :order order)
-                       evict (-> (update :entries dissoc evict)
-                                 (update :order subvec 1))))))))
-      nil)))
+    (checkpoint-store? store)
+    (try
+      (let [storage (:storage store)
+            candidate-progress (checkpoint-progress checkpoint)]
+        (loop []
+          (let [{:keys [found? value]} (lru/peek-entry storage key)]
+            (if found?
+              (when (progress-newer?
+                     candidate-progress (checkpoint-progress value))
+                (when-not (lru/replace-if! storage key value checkpoint)
+                  (recur)))
+              (when-not (lru/put-if-absent! storage key checkpoint)
+                (recur))))))
+      nil
+      (catch #?(:clj Exception :cljs :default) _ nil))))
 
 (defn ^:no-doc checkpoint-hit
   "A checkpoint serves a continuation only when its delivered boundary
   ordinal and constant-size boundary identity both match the token."
   [store key ordinal boundary]
-  (when-let [entry (cond
-                     (context-store? store) ((:get store) key)
-                     store (get (:entries @store) key))]
-    (if (and (= ordinal (:ordinal entry))
-             (= boundary (:boundary entry)))
-      (do
-        (when (context-store? store)
-          ((:hit! store)))
-        entry)
-      (do
-        (when (context-store? store)
-          ((:miss! store) :boundary-mismatch))
-        nil))))
+  (when (execution/cache-stage-available?)
+    (try
+      (when-let [entry
+                 (cond
+                   (context-store? store) ((:get store) key)
+                   (checkpoint-store? store)
+                   (let [{:keys [found? value]}
+                         (lru/peek-entry (:storage store) key)]
+                     (when found? value)))]
+        (if (and (= ordinal (:ordinal entry))
+                 (= boundary (:boundary entry)))
+          (do
+            ;; The caller already holds an authenticated immutable checkpoint.
+            ;; A lost touch race or store failure affects only future retention.
+            (try
+              (if (context-store? store)
+                ((:hit! store) key entry)
+                (lru/hit-if-value! (:storage store) key entry))
+              (catch #?(:clj Exception :cljs :default) _ nil))
+            entry)
+          (do
+            (when (context-store? store)
+              ((:miss! store) :boundary-mismatch))
+            nil)))
+      (catch #?(:clj Exception :cljs :default) _ nil))))
 
 ;; ---------------------------------------------------------------------------
 ;; Page execution
@@ -292,9 +322,9 @@
   under the exhaustion guard."
   [{:keys [service-admission checkpoint-key]} thunk]
   (physical/with-replay-admission
-   service-admission
-   (or checkpoint-key ::anonymous-replay)
-   #(guard-exhaustion thunk)))
+    service-admission
+    (or checkpoint-key ::anonymous-replay)
+    #(guard-exhaustion thunk)))
 
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:

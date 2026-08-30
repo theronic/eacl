@@ -72,12 +72,10 @@ CursorCurrent == 3
 CursorExact == 4
 CursorRejected == 5
 ContinuationResumed == 6
-PageCacheHit == 7
-DeterministicReplay == 8
+DeterministicReplay == 7
 Outcomes == {NoOutcome, CacheHit, CacheMiss,
              CursorCurrent, CursorExact, CursorRejected,
-             ContinuationResumed, PageCacheHit,
-             DeterministicReplay}
+             ContinuationResumed, DeterministicReplay}
 
 NoReject == 0
 RejectedAuthentication == 1
@@ -194,18 +192,12 @@ VARIABLES
   continuationGraph,
   \* @type: Int;
   continuationOffset,
-  \* @type: Bool;
-  pagePresent,
-  \* @type: Int;
-  pageGraph,
-  \* @type: Int;
-  pageOffset,
   \* @type: Int;
   decisionGraph,
   \* @type: Int;
   decisionOffset,
   \* @type: Int;
-  pageGraphUsed,
+  resultGraphUsed,
   \* @type: Bool;
   replayed
 
@@ -224,8 +216,8 @@ vars ==
     cursorProof, cursorSource, cursorOffset,
     cursorExpiresAt,
     continuationPresent, continuationGraph, continuationOffset,
-    pagePresent, pageGraph, pageOffset, decisionGraph, decisionOffset,
-    pageGraphUsed, replayed>>
+    decisionGraph, decisionOffset,
+    resultGraphUsed, replayed>>
 
 TypeOK ==
   /\ active \in SUBSET Histories
@@ -277,12 +269,9 @@ TypeOK ==
   /\ continuationPresent \in BOOLEAN
   /\ continuationGraph \in active
   /\ continuationOffset \in Nat
-  /\ pagePresent \in BOOLEAN
-  /\ pageGraph \in active
-  /\ pageOffset \in Nat
   /\ decisionGraph \in active
   /\ decisionOffset \in Nat
-  /\ pageGraphUsed \in active
+  /\ resultGraphUsed \in active
   /\ replayed \in BOOLEAN
 
 CausalClosure ==
@@ -352,11 +341,10 @@ RejectedFailsClosed ==
     /\ rejectReason # NoReject
 
 ContinuationRaceTransparent ==
-  outcome \notin {ContinuationResumed, PageCacheHit,
-                  DeterministicReplay} \/
+  outcome \notin {ContinuationResumed, DeterministicReplay} \/
     /\ decisionReturned
     /\ computationGraph = decisionGraph
-    /\ pageGraphUsed = decisionGraph
+    /\ resultGraphUsed = decisionGraph
     /\ selectedGraph = head
 
 Safety ==
@@ -422,12 +410,9 @@ Init ==
   /\ continuationPresent = FALSE
   /\ continuationGraph = 0
   /\ continuationOffset = 0
-  /\ pagePresent = FALSE
-  /\ pageGraph = 0
-  /\ pageOffset = 0
   /\ decisionGraph = 0
   /\ decisionOffset = 0
-  /\ pageGraphUsed = 0
+  /\ resultGraphUsed = 0
   /\ replayed = FALSE
 
 PublishSnapshot(newWriter, newWrite, newProof, newAvailability) ==
@@ -452,7 +437,7 @@ PublishSnapshot(newWriter, newWrite, newProof, newAvailability) ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = newGraph
-    /\ pageGraphUsed' = newGraph
+    /\ resultGraphUsed' = newGraph
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<source, now, dependencyScope,
@@ -465,8 +450,7 @@ PublishSnapshot(newWriter, newWrite, newProof, newAvailability) ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 ManagedGraphWrite ==
   \E candidate \in [Scopes -> Proofs],
@@ -507,7 +491,7 @@ MoveHead(moveKind) ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = target
-    /\ pageGraphUsed' = target
+    /\ resultGraphUsed' = target
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, ancestors, proof, proofAvailable, writer,
@@ -521,8 +505,7 @@ MoveHead(moveKind) ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 CloneHead == MoveHead(CloneMove)
 ResetHead == MoveHead(ResetMove)
@@ -540,7 +523,7 @@ ExpireRetained ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, head, ancestors, proof, proofAvailable, writer,
@@ -554,8 +537,7 @@ ExpireRetained ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 AdvanceTime ==
   \E nextTime \in Times:
@@ -568,7 +550,7 @@ AdvanceTime ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, head, ancestors, proof, proofAvailable, writer,
@@ -582,8 +564,7 @@ AdvanceTime ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 CachePut ==
   \E scope \in Scopes, query \in Queries, value \in BOOLEAN:
@@ -604,7 +585,7 @@ CachePut ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, head, ancestors, proof, proofAvailable, writer,
@@ -616,8 +597,7 @@ CachePut ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 TamperCache ==
   \E graph \in active, scope \in Scopes, candidateProof \in Proofs,
@@ -638,7 +618,7 @@ TamperCache ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, head, ancestors, proof, proofAvailable, writer,
@@ -650,8 +630,7 @@ TamperCache ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 CacheRead ==
   \E scope \in Scopes, query \in Queries:
@@ -674,7 +653,7 @@ CacheRead ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = eligible
     /\ decisionGraph' = IF eligible THEN cacheGraph ELSE head
-    /\ pageGraphUsed' = IF eligible THEN cacheGraph ELSE head
+    /\ resultGraphUsed' = IF eligible THEN cacheGraph ELSE head
     /\ replayed' = FALSE
     /\ telemetry' = telemetry + 1
     /\ UNCHANGED
@@ -688,8 +667,7 @@ CacheRead ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 CacheProviderFailure ==
   \E scope \in Scopes, query \in Queries:
@@ -702,7 +680,7 @@ CacheProviderFailure ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ telemetry' = telemetry + 1
     /\ UNCHANGED
@@ -716,8 +694,7 @@ CacheProviderFailure ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 TelemetryCAS ==
   \E expectedGeneration \in Nat:
@@ -732,7 +709,7 @@ TelemetryCAS ==
     /\ rejectReason' = NoReject
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, head, ancestors, proof, proofAvailable, writer,
@@ -745,8 +722,7 @@ TelemetryCAS ==
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorOffset,
         cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset, decisionOffset>>
+        continuationPresent, continuationGraph, continuationOffset, decisionOffset>>
 
 CursorMint ==
   \E operation \in Operations, query \in Queries,
@@ -773,7 +749,7 @@ CursorMint ==
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
     /\ decisionOffset' = 0
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, head, ancestors, proof, proofAvailable, writer,
@@ -783,8 +759,7 @@ CursorMint ==
         cachePresent, cacheAuthenticated, cacheGraph, cacheScope,
         cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
         telemetry,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset>>
+        continuationPresent, continuationGraph, continuationOffset>>
 
 TamperCursor ==
   \E operation \in Operations, query \in Queries,
@@ -811,7 +786,7 @@ TamperCursor ==
     /\ decisionReturned' = FALSE
     /\ decisionGraph' = head
     /\ decisionOffset' = 0
-    /\ pageGraphUsed' = head
+    /\ resultGraphUsed' = head
     /\ replayed' = FALSE
     /\ UNCHANGED
       <<active, head, ancestors, proof, proofAvailable, writer,
@@ -821,8 +796,7 @@ TamperCursor ==
         cachePresent, cacheAuthenticated, cacheGraph, cacheScope,
         cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
         telemetry,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset>>
+        continuationPresent, continuationGraph, continuationOffset>>
 
 CursorResume ==
   \E operation \in Operations, query \in Queries,
@@ -886,7 +860,7 @@ CursorResume ==
     /\ decisionReturned' = accepted
     /\ decisionGraph' = selectedDecisionGraph
     /\ decisionOffset' = cursorOffset
-    /\ pageGraphUsed' = selectedDecisionGraph
+    /\ resultGraphUsed' = selectedDecisionGraph
     /\ replayed' = FALSE
     /\ cursorOffset' =
       IF accepted THEN cursorOffset + 1 ELSE cursorOffset
@@ -899,8 +873,7 @@ CursorResume ==
         cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
         cursorDirection, cursorResultKind, cursorGraph, cursorScope,
         cursorProof, cursorSource, cursorExpiresAt,
-        continuationPresent, continuationGraph, continuationOffset,
-        pagePresent, pageGraph, pageOffset>>
+        continuationPresent, continuationGraph, continuationOffset>>
 
 PublishContinuation ==
   /\ cursorPresent
@@ -915,68 +888,7 @@ PublishContinuation ==
   /\ decisionReturned' = FALSE
   /\ decisionGraph' = head
   /\ decisionOffset' = cursorOffset
-  /\ pageGraphUsed' = head
-  /\ replayed' = FALSE
-  /\ UNCHANGED
-    <<active, head, ancestors, proof, proofAvailable, writer,
-      snapshotWrite, retained, source, now, lastHeadMove,
-      dependencyScope, selectedOperation, selectedQuery,
-      selectedDirection, selectedResultKind, selectedConflict,
-      cachePresent, cacheAuthenticated, cacheGraph, cacheScope,
-      cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
-      telemetry,
-      cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
-      cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-      cursorProof, cursorSource, cursorOffset,
-      cursorExpiresAt,
-      pagePresent, pageGraph, pageOffset>>
-
-PublishPage ==
-  /\ cursorPresent
-  /\ pagePresent' = TRUE
-  /\ pageGraph' = cursorGraph
-  /\ pageOffset' = cursorOffset
-  /\ selectedGraph' = head
-  /\ computationGraph' = head
-  /\ exactGraph' = head
-  /\ outcome' = NoOutcome
-  /\ rejectReason' = NoReject
-  /\ decisionReturned' = FALSE
-  /\ decisionGraph' = head
-  /\ decisionOffset' = cursorOffset
-  /\ pageGraphUsed' = head
-  /\ replayed' = FALSE
-  /\ UNCHANGED
-    <<active, head, ancestors, proof, proofAvailable, writer,
-      snapshotWrite, retained, source, now, lastHeadMove,
-      dependencyScope, selectedOperation, selectedQuery,
-      selectedDirection, selectedResultKind, selectedConflict,
-      cachePresent, cacheAuthenticated, cacheGraph, cacheScope,
-      cacheProof, cacheQuery, cacheSource, cacheValue, cacheGeneration,
-      telemetry,
-      cursorPresent, cursorAuthenticated, cursorOperation, cursorQuery,
-      cursorDirection, cursorResultKind, cursorGraph, cursorScope,
-      cursorProof, cursorSource, cursorOffset,
-      cursorExpiresAt,
-      continuationPresent, continuationGraph, continuationOffset>>
-
-RetryPublication ==
-  /\ cursorPresent
-  /\ continuationPresent' = TRUE
-  /\ continuationGraph' = cursorGraph
-  /\ continuationOffset' = cursorOffset
-  /\ pagePresent' = TRUE
-  /\ pageGraph' = cursorGraph
-  /\ pageOffset' = cursorOffset
-  /\ selectedGraph' = head
-  /\ computationGraph' = head
-  /\ exactGraph' = head
-  /\ outcome' = NoOutcome
-  /\ rejectReason' = NoReject
-  /\ decisionReturned' = FALSE
-  /\ decisionGraph' = head
-  /\ decisionOffset' = cursorOffset
-  /\ pageGraphUsed' = head
+  /\ resultGraphUsed' = head
   /\ replayed' = FALSE
   /\ UNCHANGED
     <<active, head, ancestors, proof, proofAvailable, writer,
@@ -993,7 +905,6 @@ RetryPublication ==
 
 EvictContinuation ==
   /\ continuationPresent' = FALSE
-  /\ pagePresent' = FALSE
   /\ selectedGraph' = head
   /\ computationGraph' = head
   /\ exactGraph' = head
@@ -1002,7 +913,7 @@ EvictContinuation ==
   /\ decisionReturned' = FALSE
   /\ decisionGraph' = head
   /\ decisionOffset' = cursorOffset
-  /\ pageGraphUsed' = head
+  /\ resultGraphUsed' = head
   /\ replayed' = FALSE
   /\ UNCHANGED
     <<active, head, ancestors, proof, proofAvailable, writer,
@@ -1016,32 +927,26 @@ EvictContinuation ==
       cursorDirection, cursorResultKind, cursorGraph, cursorScope,
       cursorProof, cursorSource, cursorOffset,
       cursorExpiresAt,
-      continuationGraph, continuationOffset, pageGraph, pageOffset>>
+      continuationGraph, continuationOffset>>
 
 ContinuationFetch ==
   /\ outcome \in {CursorCurrent, CursorExact}
-  /\ LET pageEligible ==
-           /\ pagePresent
-           /\ pageGraph = decisionGraph
-           /\ pageOffset = decisionOffset
-         continuationEligible ==
+  /\ LET continuationEligible ==
            /\ continuationPresent
            /\ continuationGraph = decisionGraph
            /\ continuationOffset = decisionOffset
      IN
      /\ outcome' =
-       IF pageEligible
-       THEN PageCacheHit
-       ELSE IF continuationEligible
-            THEN ContinuationResumed
-            ELSE DeterministicReplay
-     /\ replayed' = ~(pageEligible \/ continuationEligible)
+       IF continuationEligible
+       THEN ContinuationResumed
+       ELSE DeterministicReplay
+     /\ replayed' = ~continuationEligible
   /\ selectedGraph' = head
   /\ computationGraph' = decisionGraph
   /\ exactGraph' = decisionGraph
   /\ rejectReason' = NoReject
   /\ decisionReturned' = TRUE
-  /\ pageGraphUsed' = decisionGraph
+  /\ resultGraphUsed' = decisionGraph
   /\ UNCHANGED
     <<active, head, ancestors, proof, proofAvailable, writer,
       snapshotWrite, retained, source, now, lastHeadMove,
@@ -1055,7 +960,7 @@ ContinuationFetch ==
       cursorProof, cursorSource, cursorOffset,
       cursorExpiresAt,
       continuationPresent, continuationGraph, continuationOffset,
-      pagePresent, pageGraph, pageOffset, decisionGraph, decisionOffset>>
+      decisionGraph, decisionOffset>>
 
 Next ==
   \/ ManagedGraphWrite
@@ -1079,8 +984,6 @@ Next ==
   \/ TamperCursor
   \/ CursorResume
   \/ PublishContinuation
-  \/ PublishPage
-  \/ RetryPublication
   \/ EvictContinuation
   \/ ContinuationFetch
 

@@ -2,7 +2,6 @@
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
   (:require [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
-            [eacl.cache-identity :as cache-identity]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
@@ -30,94 +29,6 @@
   acquire another basis. The ordinary target marker is checked as well so a
   Snapshot evaluation nested in unrelated dynamic work still fails closed."
   nil)
-
-(defrecord PageNavigationCache [state max-entries])
-
-(def ^:private empty-page-order
-  #?(:clj clojure.lang.PersistentQueue/EMPTY
-     :cljs (.-EMPTY cljs.core/PersistentQueue)))
-
-(def ^:private empty-page-cache-metrics
-  {:publications 0
-   :replacements 0
-   :aliases 0
-   :evictions 0
-   :compactions 0
-   :queue-pops 0
-   :compacted-records 0
-   :boundary-writes 0
-   :boundary-removals 0})
-
-(defn- empty-page-cache-state
-  []
-  {:tick 0
-   :queue empty-page-order
-   :entries {}
-   :stamps {}
-   :boundaries {}
-   :by-start {}
-   :by-end {}
-   :metrics empty-page-cache-metrics})
-
-(defn page-navigation-cache
-  "Creates a bounded, client-private cache of visited Relay page requests.
-
-  The cache stores public pages only for the immutable snapshot against which
-  they were produced. It also learns the opposite-direction request for an
-  adjacent page, allowing a first Back/Forward traversal to reuse EACL's
-  already-computed answer."
-  ([]
-   (page-navigation-cache {}))
-  ([{:keys [max-entries]
-     :or {max-entries 2048}}]
-   (when-not (and (integer? max-entries) (pos? max-entries))
-     (throw
-      (ex-info
-       "Relay page-navigation cache :max-entries must be positive."
-       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-        :max-entries max-entries})))
-   (->PageNavigationCache
-    (atom (empty-page-cache-state))
-    max-entries)))
-
-(defn clear-page-navigation-cache!
-  [cache]
-  (when cache
-    (when-not (instance? PageNavigationCache cache)
-      (throw
-       (ex-info
-        "Expected an EACL Relay page-navigation cache."
-        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-    (reset! (:state cache) (empty-page-cache-state)))
-  nil)
-
-(defn page-navigation-cache-stats
-  "Returns bounded page-cache structure and publication-side diagnostics.
-
-  This reader does not mutate cache state. Hits deliberately have no counters,
-  preserving the cache's immutable read path."
-  [cache]
-  (when cache
-    (when-not (instance? PageNavigationCache cache)
-      (throw
-       (ex-info
-        "Expected an EACL Relay page-navigation cache."
-        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-    (let [state @(:state cache)]
-      (assoc (:metrics state)
-             :max-entries (:max-entries cache)
-             :entries (count (:entries state))
-             :stamp-entries (count (:stamps state))
-             :boundary-owners (count (:boundaries state))
-             :start-boundaries (count (:by-start state))
-             :end-boundaries (count (:by-end state))
-             :order-records (count (:queue state))
-             :order-record-ceiling
-             (max 64 (* 2 (:max-entries cache)))))))
-
-(def ^:private relay-page-keys
-  #{:first :last :after :before :consistency :cache? :populate-cache?
-    :cancellation-token})
 
 (def ^:private cursor-transport-keys
   "Relay window controls do not define the authorized result set. They remain
@@ -196,20 +107,6 @@
        "eacl/cursor/query-scope/v8"
        scope-input))))
 
-(defn- navigation-boundary-scope
-  "Boundary-alias scope for the client-private page-navigation cache.
-
-  The navigation `generation` already pins the exact immutable snapshot
-  (native revision included), so this digest deliberately omits the schema stamp:
-  it correlates adjacent pages within one generation and carries no
-  validation authority."
-  [operation query]
-  (secure/canonical-digest
-   "eacl/cursor/query-scope/v6"
-   [cursor-emission-order-version
-    operation
-    (scoped-query-form query)]))
-
 (defn- local-lineage
   "Fail-closed identity for a raw, unmanaged adapter.
 
@@ -223,277 +120,6 @@
     :source-id {:unmanaged-basis (backend/invoke adapter :snapshot-id)}
     :branch nil}
    :source-lifecycle nil})
-
-(defn- page-generation
-  [adapter opts]
-  (let [basis (:snapshot-semantic-identity opts)]
-    {:backend (backend/backend-id adapter)
-     :source-scope
-     (if basis
-       (select-keys basis [:backend :source-id :branch :source-lifecycle])
-       (let [{:keys [source-scope source-lifecycle]}
-             (local-lineage adapter)]
-         (assoc source-scope :source-lifecycle source-lifecycle)))
-     :native-revision
-     (if basis
-       (select-keys basis [:revision :exact-locator])
-       (consistency/native-revision adapter))
-     :adapter-fingerprint (backend/fingerprint adapter)
-     :identity-contract (backend/identity-contract adapter)}))
-
-(defn- page-request-key
-  [generation operation query]
-  [generation operation
-   (-> (cache-identity/successful-result-query query)
-       (dissoc :consistency)
-       ;; Public pages contain cursors authenticated to the consistency mode.
-       ;; Reusing an already externalized page across modes would return a
-       ;; cursor that its receiving request must reject as a query mismatch.
-       (assoc :consistency
-              (select-keys
-               (public-consistency/descriptor (:consistency query))
-               [:mode])))])
-
-(defn- page-boundary-key
-  [generation operation query token]
-  [generation (navigation-boundary-scope operation query) token])
-
-(defn- remove-owned-boundary
-  [index boundary request-key]
-  (if (and boundary (= request-key (get index boundary)))
-    [(dissoc index boundary) 1]
-    [index 0]))
-
-(defn- remove-page-request
-  [state request-key]
-  (if (contains? (:entries state) request-key)
-    (let [[by-start start-removals]
-          (remove-owned-boundary
-           (:by-start state)
-           (get-in state [:boundaries request-key :start-boundary])
-           request-key)
-          [by-end end-removals]
-          (remove-owned-boundary
-           (:by-end state)
-           (get-in state [:boundaries request-key :end-boundary])
-           request-key)]
-      (-> state
-          (assoc :by-start by-start :by-end by-end)
-          (update :entries dissoc request-key)
-          (update :stamps dissoc request-key)
-          (update :boundaries dissoc request-key)
-          (update-in [:metrics :boundary-removals]
-                     + start-removals end-removals)))
-    state))
-
-(defn- enforce-page-capacity
-  [state max-entries]
-  (loop [state state]
-    (if (<= (count (:entries state)) max-entries)
-      state
-      (let [queue (:queue state)]
-        (when (empty? queue)
-          (throw
-           (ex-info
-            "Page-navigation cache order metadata is inconsistent."
-            {:type :eacl/internal-error
-             :eacl/error :eacl/internal-error
-             :entries (count (:entries state))
-             :max-entries max-entries})))
-        (let [[stamp request-key] (peek queue)
-              state (-> state
-                        (assoc :queue (pop queue))
-                        (update-in [:metrics :queue-pops] inc))
-              current-stamp
-              (get-in state [:stamps request-key])]
-          (if (= stamp current-stamp)
-            (recur
-             (-> (remove-page-request state request-key)
-                 (update-in [:metrics :evictions] inc)))
-            (recur state)))))))
-
-(defn- compact-page-order
-  [state]
-  (let [queue (:queue state)
-        threshold (max 64 (* 2 (count (:entries state))))]
-    (if (<= (count queue) threshold)
-      state
-      (let [before (count queue)
-            compacted
-            (into empty-page-order
-                  (filter
-                   (fn [[stamp request-key]]
-                     (= stamp (get (:stamps state) request-key))))
-                  queue)]
-        (-> state
-            (assoc :queue compacted)
-            (update-in [:metrics :compactions] inc)
-            (update-in [:metrics :compacted-records]
-                       + (- before (count compacted))))))))
-
-(defn- put-page-request
-  [state request-key page start-boundary end-boundary alias? max-entries]
-  (let [replacement? (contains? (:entries state) request-key)
-        existing-boundaries (get-in state [:boundaries request-key])
-        ;; A synthesized alias can be identical to an already published real
-        ;; request (Next -> Previous -> Next). Retain that real entry's direct
-        ;; boundary ownership so later oscillations do not degrade to misses.
-        start-boundary
-        (or start-boundary
-            (when alias? (:start-boundary existing-boundaries)))
-        end-boundary
-        (or end-boundary
-            (when alias? (:end-boundary existing-boundaries)))
-        state (remove-page-request state request-key)
-        stamp (inc (:tick state))
-        boundary-writes (+ (if start-boundary 1 0)
-                           (if end-boundary 1 0))
-        state
-        (cond->
-         (-> state
-             (assoc :tick stamp)
-             ;; Keep completed pages directly addressable on the immutable hit
-             ;; path; stamps and eviction ownership live in side indexes.
-             (assoc-in [:entries request-key] page)
-             (assoc-in [:stamps request-key] stamp)
-             (assoc-in [:boundaries request-key]
-                       {:start-boundary start-boundary
-                        :end-boundary end-boundary})
-             (update :queue conj [stamp request-key])
-             (update-in [:metrics :publications] inc)
-             (update-in [:metrics :boundary-writes] + boundary-writes))
-          replacement? (update-in [:metrics :replacements] inc)
-          alias? (update-in [:metrics :aliases] inc)
-          start-boundary (assoc-in [:by-start start-boundary] request-key)
-          end-boundary (assoc-in [:by-end end-boundary] request-key))]
-    (-> state
-        (enforce-page-capacity max-entries)
-        compact-page-order)))
-
-(defn- page-cache-enabled?
-  [cache opts]
-  (and cache
-       (:completed-cache? opts)
-       (nil? (:cursor-ttl-seconds opts))))
-
-(defn lookup-visited-page
-  "Returns a page already visited under this exact immutable snapshot.
-
-  Cursor selection/authentication must happen before this function. A hit
-  therefore reuses computation, not consistency or trust decisions."
-  [adapter opts operation query]
-  (let [cache (:page-navigation-cache opts)]
-    (execution/check! (:execution-contract opts) :page-cache-lookup)
-    (when (page-cache-enabled? cache opts)
-      (when-not (instance? PageNavigationCache cache)
-        (throw
-         (ex-info
-          "Expected an EACL Relay page-navigation cache."
-          {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-      (some->
-       (get-in
-        @(:state cache)
-        [:entries
-         (page-request-key
-          (page-generation adapter opts)
-          operation
-          query)])
-       (assoc :cached? true)))))
-
-(defn remember-visited-page!
-  "Stores one current page and learns any adjacent opposite-direction alias."
-  [adapter opts operation query page]
-  (let [cache (:page-navigation-cache opts)]
-    (execution/check! (:execution-contract opts) :page-cache-publication)
-    (when (and (:populate-cache-request? opts true)
-               (page-cache-enabled? cache opts))
-      (when-not (instance? PageNavigationCache cache)
-        (throw
-         (ex-info
-          "Expected an EACL Relay page-navigation cache."
-          {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-      (let [generation (page-generation adapter opts)
-            request-key
-            (page-request-key generation operation query)
-            scope-key
-            #(page-boundary-key
-              generation operation query %)
-            start-token
-            (get-in page [:page-info :start-cursor])
-            end-token
-            (get-in page [:page-info :end-cursor])
-            after-token (:after query)
-            before-token (:before query)
-            base-query
-            (apply dissoc query relay-page-keys)]
-        (swap!
-         (:state cache)
-         (fn [state]
-           (let [previous-key
-                 (when after-token
-                   (get-in state [:by-end (scope-key after-token)]))
-                 previous-page
-                 (when previous-key
-                   (get-in state [:entries previous-key]))
-                 next-key
-                 (when before-token
-                   (get-in state [:by-start (scope-key before-token)]))
-                 next-page
-                 (when next-key
-                   (get-in state [:entries next-key]))
-                 state
-                 (put-page-request
-                  state request-key page
-                  (when start-token (scope-key start-token))
-                  (when end-token (scope-key end-token))
-                  false
-                  (:max-entries cache))
-                 state
-                 ;; The alias answers the opposite-direction query with the
-                 ;; stored adjacent page verbatim, which is only the correct
-                 ;; answer when that page holds exactly the aliased size:
-                 ;; the boundary index carries no page size, so without the
-                 ;; count guard a {:last N} request could be served a page
-                 ;; of any size.
-                 (if (and previous-page
-                          start-token
-                          (integer? (:first query))
-                          (= (:first query)
-                             (count (:data previous-page))))
-                   (put-page-request
-                    state
-                    (page-request-key
-                     generation
-                     operation
-                     (assoc base-query
-                            :last (:first query)
-                            :before start-token))
-                    previous-page
-                    nil
-                    nil
-                    true
-                    (:max-entries cache))
-                   state)]
-             (if (and next-page
-                      end-token
-                      (integer? (:last query))
-                      (= (:last query)
-                         (count (:data next-page))))
-               (put-page-request
-                state
-                (page-request-key
-                 generation
-                 operation
-                 (assoc base-query
-                        :first (:last query)
-                        :after end-token))
-                next-page
-                nil
-                nil
-                true
-                (:max-entries cache))
-               state)))))))
-  page)
 
 (def ^:private exact-snapshot-closure-digest
   (secure/canonical-digest
@@ -1151,40 +777,21 @@
         (update-in [:page-info :start-cursor] encode-edge)
         (update-in [:page-info :end-cursor] encode-edge))))
 
-(def ^:private identity-key-version 1)
-
-(defn- cached-internal-id->object
+(defn- internal-id->object
   [adapter opts internal-id]
   (request-counters/add! :identity-conversions)
   (execution/check! (:execution-contract opts) :render-identity)
-  (let [resolved
-        (subproblem/resolve-bound!
-         :projection
-         [identity-key-version
-          :internal-id->object
-          (backend/backend-id adapter)
-          (backend/identity-contract adapter)
-          internal-id]
-         {:valid? some?
-          :weight-fn
-          (fn [value]
-            (+ 96
-               (if (string? value)
-                 (* 2 (count value))
-                 160)))}
-         #(backend/invoke adapter :internal-id->object internal-id))]
+  (let [external-id (backend/invoke adapter :internal-id->object internal-id)]
     (execution/check! (:execution-contract opts) :rendered-identity)
-    (when (:cached? resolved)
-      (subproblem/record-avoided-backend-operation!))
-    (:value resolved)))
+    external-id))
 
 (defn- resolve-external-identities!
   [adapter opts operation internal-ids]
   (let [resolved
         (mapv
          (fn [internal-id]
-           [internal-id
-            (cached-internal-id->object adapter opts internal-id)])
+            [internal-id
+            (internal-id->object adapter opts internal-id)])
          (distinct internal-ids))
         missing
         (into [] (keep (fn [[internal-id external-id]]

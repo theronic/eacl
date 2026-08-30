@@ -14,4 +14,4 @@
  "The final v8 cache deletes computation slots, permits, shared flights, and recursive self-bypass. Every miss performs its own request-bounded computation and publication is a bounded nonblocking optimization."
  :closing-evidence
  ["eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"
-  "eacl.subproblem-cache-test/independent-identical-misses-never-wait-test"]}
+  "eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test"]}

@@ -79,14 +79,17 @@ sealed reducer may scan, so an equal frame in one lineage excludes the
 changed-slice hazard and makes the history-free state reusable across an
 unrelated write. The entry contains complete history-free reducer state, the
 undelivered lookahead segment, and the authenticated boundary identity. It is
-replaced only by strictly greater transition progress and remains bounded by
-entry count and weight. A miss always replays and validates the boundary before
-publishing a page.
+replaced only by strictly greater transition progress and remains bounded by a
+standard-LRU entry count. Only a checkpoint whose ordinal and boundary match
+the authenticated cursor is an LRU hit; a rejected candidate does not become
+hot. A miss always replays and validates the boundary before publishing a
+page.
 
 `:populate-cache? false` permits checkpoint lookup but suppresses publication;
-the next page replays correctly. Visited public pages remain exact-basis-keyed
-because external identifier rendering is outside the frame. The standalone
-`eacl_sd1.` token and its private checkpoint key also remain exact-basis-bound.
+the next page replays correctly. Relay has no externalized visited-page cache;
+it rebuilds public identifiers and signed cursors from the completed internal
+page. The standalone `eacl_sd1.` token and its private checkpoint key remain
+exact-basis-bound.
 
 Rejection classes (all typed, never silent). Public clients surface them
 under the `:eacl.pagination/*` and `:eacl.recursive-traversal/*` keys;
@@ -184,22 +187,21 @@ omitted option installs no bulkhead.
 
 ## Cache artifacts and metrics
 
-The engine keeps exactly two cache artifacts: the latest-only progress
-checkpoint per execution identity, and completed answers (the existing
-answer cache; its key gains the composite fingerprint at the public
-routing step). Byte and node caching belongs to the storage layer.
-Partial traversals and flat subproblem denotations are never reused.
+The stable engine keeps two cross-request artifacts: the latest progress
+checkpoint per execution identity and completed answers whose flat composite
+key includes the plan fingerprint at the public routing step. Both use the
+client's standard-LRU stores. Fetched relationship chunks and incomplete
+traversals remain request-local and are never published.
 
 Per-layer telemetry (`eacl.engine.physical/telemetry`) reports reducer
 transitions, logical scan commands, values fetched, logical admissions,
 results discovered, maximum stack, and retained-buffer high-water marks —
 plus adapter attempts when the counting retry wrapper is installed.
-Storage-layer counters (node-cache hits/misses, remote GETs/PUTs) are
-observed at the storage layer and never inferred. Checkpoint stores report
-hits, publications, replacements, entry count, live weight, and classified
-misses (`:absent`, `:evicted`, `:boundary-mismatch`, `:overweight`,
-`:plan-mismatch`, `:population-disabled`). Overweight publication affects only
-acceleration; the request and subsequent deterministic replay remain correct.
+Storage-layer counters are observed at the storage layer and never inferred.
+The continuation store reports hits, publications, replacements, approximate
+evictions, errors, actual entry count/capacity, and classified misses such as
+`:absent` and `:boundary-mismatch`. Eviction affects only acceleration; the
+request and subsequent deterministic replay remain correct.
 
 ## Topology qualification
 

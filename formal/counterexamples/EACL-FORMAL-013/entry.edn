@@ -11,6 +11,5 @@
  :fix
  "The final v8 cache has no registered flights. Read-only lookup never starts work; identical misses compute independently and can only race bounded nonblocking publication, so self-wait is structurally impossible."
  :closing-evidence
- ["eacl.subproblem-cache-test/independent-identical-misses-never-wait-test"
-  "eacl.subproblem-cache-test/lookup-never-starts-work-test"
+ ["eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test"
   "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

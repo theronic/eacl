@@ -26,8 +26,8 @@ proof data falls back to exact evaluation.
 Serverless hosts may persist completed authorization entries with
 `export-cache-snapshot`, `restore-cache-snapshot!`, and
 `cache-content-revision`. The host owns authentication and the encoded-byte
-bound before decoding; the EACL bounds describe retained cache weight and
-entry count. Snapshots exclude Datomic database values and process-local
+bound before decoding; EACL validates the trusted decoded snapshot and its
+count bound. Snapshots exclude Datomic database values and process-local
 identity. Restore validates before atomically replacing the visible cache.
 
 ## Prospective snapshots

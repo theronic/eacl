@@ -29,6 +29,25 @@
      #(ds/transact! conn [{:eacl/id "speculative-user"}
                           {:eacl/id "speculative-account"}]))))
 
+(deftest portable-cache-api-round-trip-test
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        bounds {:max-entries 64}
+        before (datascript/cache-content-revision client)
+        snapshot (datascript/export-cache-snapshot client bounds)
+        restored
+        (datascript/restore-cache-snapshot! client snapshot bounds)]
+    (is (= :eacl.cache/basis-snapshot-v2 (:format snapshot)))
+    (is (zero? (:entry-count snapshot)))
+    (is (true? (:restored? restored)))
+    (is (> (datascript/cache-content-revision client) before))))
+
+(deftest default-cache-capacity-has-one-public-authority-test
+  (let [client (datascript/make-client (datascript/create-conn) {})
+        stats (datascript/cache-stats client)]
+    (is (= 1024 (get-in stats [:subproblems :tiers :answer :max-entries])))
+    (is (= 1024 (get-in stats [:continuations :max-entries])))))
+
 (deftest missing-anchor-validation-reuses-derived-schema-test
   (let [conn (datascript/create-conn)
         client (datascript/make-client conn {})
@@ -70,14 +89,11 @@
        :cljs
        (exercise!))))
 
-(deftest cache-only-metrics-refresh-preserves-results-and-cursors-test
+(deftest structural-metrics-refresh-preserves-results-and-cursors-test
   (let [conn (datascript/create-conn)
-        ;; Relationship observations are opt-in; this contract exercises the
-        ;; recording and refresh machinery, so it is the consumer.
         client (datascript/make-client
                 conn {:security-key
-                      "metrics-refresh00000000000000000"
-                      :relationship-observations? true})
+                      "metrics-refresh00000000000000000"})
         alice (eacl/spice-object :user "metrics-alice")
         documents (mapv #(eacl/spice-object
                           :document (str "metrics-d" %))
@@ -104,65 +120,43 @@
     (let [cold (eacl/lookup-resources client query)
           cold-stats (datascript/cache-stats client)]
       (is (= (subvec documents 0 2) (:data cold)))
-      (is (pos? (get-in cold-stats
-                        [:relationship-observations :entry-count])))
+      (is (not (contains? cold-stats :relationship-observations)))
       (is (pos? (get-in cold-stats
                         [:structural-metrics :entry-count])))
 
-      (testing "default refresh performs no backend read and keeps cursors valid"
+      (testing "default refresh clears only structural artifacts"
         (let [observed (atom [])
               refresh-report
               (binding [backend/*invoke-observer* #(swap! observed conj %)]
-                (datascript/refresh-metrics!
-                 client {:scope :relationships}))]
+                (datascript/refresh-metrics! client))]
           (is (empty? @observed))
-          (is (= 0 (get-in refresh-report
-                           [:relationship-observations :entry-count])))
+          (is (:structural-refreshed? refresh-report))
+          (is (zero? (get-in refresh-report
+                             [:structural-metrics :entry-count])))
           (let [continued
                 (eacl/lookup-resources
                  client (assoc query :after
                                (get-in cold [:page-info :end-cursor])))]
             (is (= (subvec documents 2 4) (:data continued))))))
 
-      (testing "an explicit bounded read-through repopulates organically"
-        (let [report
-              (datascript/refresh-metrics!
-               client
-               {:scope :relationships
-                :read-through {:operation :lookup-resources
-                               :request (dissoc query :cache?)}})]
-          (is (= (:data cold)
-                 (get-in report [:read-through-result :data])))
-          (is (pos? (get-in report
-                            [:relationship-observations :entry-count]))))
-        (let [report
-              (datascript/refresh-metrics!
-               client
-               {:scope :relationships
-                :read-through
-                {:operation :count-resources
-                 :request (dissoc query :first :cache?)}})]
-          (is (= 6 (get-in report [:read-through-result :count])))
-          (is (pos? (get-in report
-                            [:relationship-observations
-                             :exact-entry-count])))))
-
-      (testing "a new database high-watermark gets a distinct observation"
-        (let [before (get-in (datascript/cache-stats client)
-                             [:relationship-observations :entry-count])]
-          (ds/transact! conn [{:eacl/id "metrics-unrelated"}])
-          (is (= (:data cold)
-                 (:data (eacl/lookup-resources client query))))
-          (is (> (get-in (datascript/cache-stats client)
-                         [:relationship-observations :entry-count])
-                 before))))
-
-      (testing "eager structural refresh derives metrics without durable data"
-        (let [report (datascript/refresh-metrics!
-                      client {:scope :structural :eager? true})]
+      (testing "eager refresh derives structural metrics without durable data"
+        (let [report (datascript/refresh-metrics! client {:eager? true})]
           (is (:structural-refreshed? report))
+          (is (pos? (get-in report [:structural-metrics :entry-count])))
           (is (pos? (get-in (datascript/cache-stats client)
-                            [:structural-metrics :entry-count]))))))))
+                            [:structural-metrics :entry-count])))))
+
+      (testing "removed relationship observation options fail closed"
+        (let [data
+              (try
+                (datascript/make-client
+                 conn {:relationship-observations? true})
+                nil
+                (catch #?(:clj Exception :cljs :default) error
+                  (ex-data error)))]
+          (is (= :eacl/invalid-config (:type data)))
+          (is (= [:relationship-observations?]
+                 (:unknown-keys data))))))))
 
 (def ^:private permission-tree-schema
   "definition user {}
@@ -685,8 +679,7 @@
 
 (defn- reusable-denotation-hits
   [stats]
-  (+ (get-in stats [:subproblems :denotation-hits] 0)
-     (get-in stats [:subproblems :recursive-component-hits] 0)))
+  (get-in stats [:subproblems :denotation-hits] 0))
 
 (def ^:private denotation-key-separation-schema
   "definition user {}
@@ -783,6 +776,7 @@
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-cache-differential! client)
     (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-authorization-target-matrix!
      {:writable client
@@ -820,7 +814,7 @@
       (contract/assert-v8-recursive-safety-limit!
        (datascript/make-client
         conn
-        {:cache cache/no-cache
+        {:cache {}
          :recursive-traversal-limits {limit-key 1}})))))
 
 ;; Retired with the old engines (task 9.2): certified the
@@ -881,7 +875,7 @@
       (eacl/->Relationship other-user :owner document-1)])
 
     (is (true? (decision user :read_a server-1 true)))
-    (let [before (datascript/cache-stats client)]
+    (let [_before (datascript/cache-stats client)]
       ;; This advances the exact graph generation without touching either
       ;; relation used by the server permission.
       (eacl/create-relationships!
@@ -901,11 +895,9 @@
         (is (= (:executed-backend-operations @bypass-work)
                (:executed-backend-operations @cached-work))
             "a cold demand cache attempt performs the same semantic work as bypass")
-        (is (= (get-in before
-                       [:subproblems :managed-projection-hits])
-               (get-in after
-                       [:subproblems :managed-projection-hits]))
-            "demand mode does not lift partial projections across generations")))
+        (is (not (contains? (:subproblems after)
+                            :managed-projection-hits))
+            "demand mode has no shared partial-projection cache")))
 
     ;; A write to the depended-on relation must select a different managed key,
     ;; not reuse the previous negative projection.
@@ -1015,6 +1007,73 @@
     (eacl/create-relationships! client contract/smoke-relationships)
     client))
 
+(deftest cache-disabled-reentrant-evaluation-clears-outer-denotation-context-test
+  (let [nested-client (seeded-client)
+        outer-conn (datascript/create-conn)
+        outer-client* (atom nil)
+        armed? (atom false)
+        callback-count (atom 0)
+        nested-observation (atom nil)
+        object-id->lookup-ref
+        (fn [object-id]
+          (when (and @armed?
+                     (= 2 (swap! callback-count inc)))
+            ;; The relationship-filtered route performs this second conversion
+            ;; inside the outer cached computation. Re-entering through a
+            ;; supported codec callback must not let the nested bypass inherit
+            ;; the outer request's exact-denotation store or key constructor.
+            (let [before (:subproblems
+                          (datascript/cache-stats @outer-client*))
+                  allowed?
+                  (eacl/can?
+                   nested-client
+                   (assoc {:subject (contract/->user "user-1")
+                           :permission :reboot
+                           :resource (contract/->server "server-1")}
+                          :cache? false))
+                  after (:subproblems
+                         (datascript/cache-stats @outer-client*))]
+              (reset! nested-observation
+                      {:allowed? allowed?
+                       :before (select-keys before
+                                            [:lookup-probes :puts])
+                       :after (select-keys after
+                                           [:lookup-probes :puts])
+                       :before-entries
+                       (get-in before [:tiers :denotation :entries])
+                       :after-entries
+                       (get-in after [:tiers :denotation :entries])})))
+          [:eacl/id object-id])
+        outer-client
+        (datascript/make-client
+         outer-conn
+         {:object-id->lookup-ref object-id->lookup-ref})]
+    (reset! outer-client* outer-client)
+    (eacl/write-schema! outer-client contract/smoke-schema)
+    (seed-objects! outer-conn)
+    (eacl/create-relationships!
+     outer-client contract/smoke-relationships)
+    (reset! callback-count 0)
+    (reset! armed? true)
+    (let [page
+          (eacl/lookup-resources
+           outer-client
+           {:subject (contract/->user "user-1")
+            :permission :view
+            :resource/type :server
+            :resource/relationship
+            {:relation :account
+             :subject (contract/->account "account-1")}
+            :first 1})]
+      (is (= ["server-1"] (mapv :id (:data page))))
+      (is (= true (:allowed? @nested-observation)))
+      (is (= (:before @nested-observation)
+             (:after @nested-observation))
+          "a cache-disabled nested request performs no outer-store probes or puts")
+      (is (= (:before-entries @nested-observation)
+             (:after-entries @nested-observation))
+          "a cache-disabled nested request cannot publish under the outer basis"))))
+
 (defn- stable-page-answer
   [page]
   {:data (:data page)
@@ -1092,11 +1151,7 @@
               "lookup bypass remains an execution policy")
           (is (true? (:cached? hit-after-bypass))
               "bypass does not alter or evict the compatible resident value"))))
-    (let [stats (datascript/cache-stats client)]
-      (is (pos? (:exact-hits stats)))
-      (is (pos? (get-in stats [:page-navigation :entries])))
-      (is (<= (get-in stats [:page-navigation :entries])
-              (get-in stats [:page-navigation :max-entries]))))))
+    (is (pos? (:exact-hits (datascript/cache-stats client))))))
 
 (deftest warm-cache-reuse-obeys-current-deadline-and-cancellation-test
   (let [client (seeded-client)
@@ -1164,8 +1219,6 @@
 
     (testing "expiry during externalization prevents response and publication"
       (eacl/lookup-resources client page-query)
-      (relay/clear-page-navigation-cache!
-       (get-in client [:runtime :page-navigation-cache]))
       (let [clock (atom 0)
             original relay/externalize-page
             data
@@ -1178,10 +1231,7 @@
                (thrown-data
                 #(eacl/lookup-resources
                   client (assoc page-query :timeout-ms 100)))))]
-        (is (= :eacl.execution/deadline-exceeded (:type data))))
-      (is (zero?
-           (get-in (datascript/cache-stats client)
-                   [:page-navigation :entries]))))))
+        (is (= :eacl.execution/deadline-exceeded (:type data)))))))
 
 (defn- thrown-data
   [f]

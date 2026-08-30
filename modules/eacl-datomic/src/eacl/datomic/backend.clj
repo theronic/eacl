@@ -440,7 +440,10 @@
         {:source-id (connection-source-id conn) :branch nil}
         source-lifecycle
         (fn []
-          (or (some-> (:source-lifecycle-state opts) deref)
+          (or (some-> (:runtime-lifecycle-state opts)
+                      deref
+                      :source-lifecycle)
+              (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))
         adapter-options (select-keys opts adapter-config-keys)
         borrowed

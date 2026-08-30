@@ -265,9 +265,12 @@
                     (swap! calc-calls inc)
                     (apply orig-calc args))]
       (let [subject (spice-object :user "user-1")
-            resource (spice-object :server "server-1")]
-        (is (not= (:derived-schema-caches (:runtime client-1))
-                  (:derived-schema-caches (:runtime client-2))))
+            resource (spice-object :server "server-1")
+            store-1 (:derived-schema-caches
+                     @(get-in client-1 [:runtime :runtime-lifecycle-state]))
+            store-2 (:derived-schema-caches
+                     @(get-in client-2 [:runtime :runtime-lifecycle-state]))]
+        (is (not (identical? store-1 store-2)))
         (eacl/can? client-1 subject :view resource)
         (eacl/can? client-2 subject :view resource)
         (is (= 2 @calc-calls))

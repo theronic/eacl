@@ -18,6 +18,11 @@
    :eacl-datascript 'eacl.datascript.core
    :eacl-datalevin 'eacl.datalevin.core})
 
+(def ^:private snapshot-api-function-names
+  ["export-cache-snapshot"
+   "restore-cache-snapshot!"
+   "cache-content-revision"])
+
 (defn- temporary-directory
   [prefix]
   (.toFile
@@ -144,7 +149,7 @@
    "(defn- packaged-class-major []\n"
    "  (with-open [input (DataInputStream.\n"
    "                     (io/input-stream\n"
-   "                      (io/resource \"CurrentCache/__default.class\")))]\n"
+   "                      (io/resource \"EaclKernel/__default.class\")))]\n"
    "    (.readInt input)\n"
    "    (.readUnsignedShort input)\n"
    "    (.readUnsignedShort input)))\n\n"
@@ -159,6 +164,13 @@
    "         (biginteger 1))]\n"
    "    (assert (instance? WireResult_Accepted result))\n"
    "    (assert (= [7N] (mapv bigint (.dtor_items result)))))\n"
+   (when (contains? #{:eacl-datomic :eacl-datahike :eacl-datascript}
+                    module-id)
+     (apply str
+            (map (fn [function-name]
+                   (str "  (assert (resolve '"
+                        entry-point "/" function-name "))\n"))
+                 snapshot-api-function-names)))
    (when (= :eacl-datalevin module-id)
      (datalevin-smoke-source))
    "  (println \"EACL Maven smoke passed\"))\n"))

@@ -11,9 +11,6 @@
  :root-cause
  "The release report compared a stale foundation baseline only to a stale foundation maximum and labelled the generated-artifact-size dimension passed without measuring artifacts rebuilt from the current full generated kernel."
  :fix
- "A deterministic post-build CI check now measures Java source bytes, Java class bytes, JavaScript-with-runtime bytes, and browser-bundle bytes independently against reviewed full-kernel baselines and fails above 125 percent growth."
+ "The obsolete multi-artifact manifest gate was retired. The executable production ClojureScript test rebuilds the runtime, enforces payload ceilings that affect browser performance, and rejects generated-oracle code in the production graph."
  :closing-evidence
- ["bin/check-generated-artifact-size"
-  "bin/formal artifact-size"
-  ".github/workflows/formal.yml post-build artifact-size gate"
-  "eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"]}
+ ["eacl.formal.cljs-production-gate-test/production-cljs-bundle-is-native-small-and-oracle-free-test"]}
