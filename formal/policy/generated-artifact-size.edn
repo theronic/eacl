@@ -1,8 +1,5 @@
 {:schema-version 1
  :measurement :uncompressed-byte-length
- :gate-runtime
- {:tool :babashka
-  :version "1.12.213"}
  :maximum-growth-over-reviewed-full-kernel 1.25
  :reviewed-baseline-change
  [:ordinal-rebase-and-backward-render-cleanup
