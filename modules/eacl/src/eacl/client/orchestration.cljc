@@ -38,6 +38,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.backend.writer :as backend-writer]
             [eacl.cache :as cache]
+            [eacl.cache-identity :as cache-identity]
             [eacl.causal-token :as causal-token]
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
@@ -1670,8 +1671,8 @@
                   answer
                   (cached-engine-result
                    request-context adapter opts :count-resources
-                   {:public (dissoc query :consistency :cache? :populate-cache?
-                                    :cancellation-token)
+                   {:public (-> (cache-identity/successful-result-query query)
+                                (dissoc :consistency))
                     :internal internal-query}
                    (:resource/type internal-query)
                    (:permission internal-query)
@@ -1847,8 +1848,8 @@
                   answer
                   (cached-engine-result
                    request-context adapter opts :count-subjects
-                   {:public (dissoc query :consistency :cache? :populate-cache?
-                                    :cancellation-token)
+                   {:public (-> (cache-identity/successful-result-query query)
+                                (dissoc :consistency))
                     :internal internal-query}
                    (:type (:resource internal-query))
                    (:permission internal-query)
@@ -3155,6 +3156,11 @@
              :entry-count structural-entry-count}
             :relationship-observations
             (metrics/stats (:relationship-observations opts)))
+      (:page-navigation-cache opts)
+      (assoc :page-navigation
+             (relay/page-navigation-cache-stats
+              (:page-navigation-cache opts)))
+
       continuation-store
       (assoc :continuations
              (continuation/stats continuation-store)))))

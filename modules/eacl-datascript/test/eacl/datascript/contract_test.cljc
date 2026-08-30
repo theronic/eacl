@@ -10,6 +10,8 @@
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as schema]
             [eacl.engine.v8 :as engine]
+            [eacl.execution :as execution]
+            [eacl.relay :as relay]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as consistency]
@@ -1012,6 +1014,174 @@
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     client))
+
+(defn- stable-page-answer
+  [page]
+  {:data (:data page)
+   :page-info
+   (select-keys (:page-info page)
+                [:has-next-page? :has-previous-page?])})
+
+(defn- stable-count-answer
+  [answer]
+  (select-keys answer [:count :limit :truncated?]))
+
+(declare thrown-data)
+
+(deftest successful-result-caches-ignore-invocation-controls-test
+  (let [client (seeded-client)
+        user (contract/->user "user-1")
+        server (contract/->server "server-1")
+        cases
+        [[:read-relationships
+          #(eacl/read-relationships client %)
+          {:resource/type :server :first 1}
+          stable-page-answer]
+         [:lookup-resources
+          #(eacl/lookup-resources client %)
+          {:subject user
+           :permission :view
+           :resource/type :server
+           :first 1}
+          stable-page-answer]
+         [:lookup-subjects
+          #(eacl/lookup-subjects client %)
+          {:resource server
+           :permission :view
+           :subject/type :user
+           :first 1}
+          stable-page-answer]
+         [:count-resources
+          #(eacl/count-resources client %)
+          {:subject user
+           :permission :view
+           :resource/type :server}
+          stable-count-answer]
+         [:count-subjects
+          #(eacl/count-subjects client %)
+          {:resource server
+           :permission :view
+           :subject/type :user}
+          stable-count-answer]]]
+    (doseq [[label invoke request answer] cases]
+      (testing (name label)
+        (let [token-a (eacl/cancellation-token)
+              token-b (eacl/cancellation-token)
+              first-request
+              (assoc request
+                     :timeout-ms 11000
+                     :cancellation-token token-a
+                     :cache? true
+                     :populate-cache? true)
+              second-request
+              (assoc request
+                     :timeout-ms 23000
+                     :cancellation-token token-b
+                     :cache? true
+                     :populate-cache? false)
+              cold (invoke first-request)
+              hit (invoke second-request)
+              bypass (invoke (assoc second-request :cache? false))
+              hit-after-bypass (invoke first-request)]
+          (is (= (answer cold) (answer hit) (answer bypass)
+                 (answer hit-after-bypass)))
+          (is (false? (:cached? cold)))
+          (is (true? (:cached? hit))
+              "a changed live timeout/token must not fragment identity")
+          (is (false? (:cached? bypass))
+              "lookup bypass remains an execution policy")
+          (is (true? (:cached? hit-after-bypass))
+              "bypass does not alter or evict the compatible resident value"))))
+    (let [stats (datascript/cache-stats client)]
+      (is (pos? (:exact-hits stats)))
+      (is (pos? (get-in stats [:page-navigation :entries])))
+      (is (<= (get-in stats [:page-navigation :entries])
+              (get-in stats [:page-navigation :max-entries]))))))
+
+(deftest warm-cache-reuse-obeys-current-deadline-and-cancellation-test
+  (let [client (seeded-client)
+        user (contract/->user "user-1")
+        count-query {:subject user
+                     :permission :view
+                     :resource/type :server}
+        page-query (assoc count-query :first 1)
+        _ (eacl/count-resources client count-query)
+        _ (is (true? (:cached?
+                      (eacl/count-resources client count-query))))
+        cancelled (eacl/cancellation-token)]
+    (eacl/cancel! cancelled)
+    (is (= :eacl.execution/cancelled
+           (:type
+            (thrown-data
+             #(eacl/count-resources
+               client (assoc count-query
+                             :timeout-ms 1000
+                             :cancellation-token cancelled))))))
+
+    (testing "expiry before lookup cannot turn a warm value into a response"
+      (let [clock-calls (atom 0)]
+        (is (= :eacl.execution/deadline-exceeded
+               (:type
+                (binding
+                 [execution/*monotonic-nanos*
+                  #(if (= 1 (swap! clock-calls inc)) 0 1000000)]
+                  (thrown-data
+                   #(eacl/count-resources
+                     client (assoc count-query :timeout-ms 1)))))))))
+
+    (testing "expiry after completed-cache acquisition is still authoritative"
+      (let [clock (atom 0)
+            original cache/resolve-basis!
+            data
+            (binding [execution/*monotonic-nanos* #(deref clock)]
+              (with-redefs
+               [cache/resolve-basis!
+                (fn [& args]
+                  (let [result (apply original args)]
+                    (reset! clock 100000000)
+                    result))]
+               (thrown-data
+                #(eacl/count-resources
+                  client (assoc count-query :timeout-ms 100)))))]
+        (is (= :eacl.execution/deadline-exceeded (:type data)))))
+
+    (testing "cancellation after completed-cache acquisition is authoritative"
+      (let [token (eacl/cancellation-token)
+            original cache/resolve-basis!
+            data
+            (with-redefs
+             [cache/resolve-basis!
+              (fn [& args]
+                (let [result (apply original args)]
+                  (eacl/cancel! token)
+                  result))]
+             (thrown-data
+              #(eacl/count-resources
+                client (assoc count-query
+                              :timeout-ms 1000
+                              :cancellation-token token))))]
+        (is (= :eacl.execution/cancelled (:type data)))))
+
+    (testing "expiry during externalization prevents response and publication"
+      (eacl/lookup-resources client page-query)
+      (relay/clear-page-navigation-cache!
+       (get-in client [:runtime :page-navigation-cache]))
+      (let [clock (atom 0)
+            original relay/externalize-page
+            data
+            (binding [execution/*monotonic-nanos* #(deref clock)]
+              (with-redefs
+               [relay/externalize-page
+                (fn [& args]
+                  (reset! clock 100000000)
+                  (apply original args))]
+               (thrown-data
+                #(eacl/lookup-resources
+                  client (assoc page-query :timeout-ms 100)))))]
+        (is (= :eacl.execution/deadline-exceeded (:type data))))
+      (is (zero?
+           (get-in (datascript/cache-stats client)
+                   [:page-navigation :entries]))))))
 
 (defn- thrown-data
   [f]
