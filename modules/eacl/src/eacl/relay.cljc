@@ -2,6 +2,7 @@
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
   (:require [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
+            [eacl.cache-identity :as cache-identity]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
@@ -32,6 +33,32 @@
 
 (defrecord PageNavigationCache [state max-entries])
 
+(def ^:private empty-page-order
+  #?(:clj clojure.lang.PersistentQueue/EMPTY
+     :cljs (.-EMPTY cljs.core/PersistentQueue)))
+
+(def ^:private empty-page-cache-metrics
+  {:publications 0
+   :replacements 0
+   :aliases 0
+   :evictions 0
+   :compactions 0
+   :queue-pops 0
+   :compacted-records 0
+   :boundary-writes 0
+   :boundary-removals 0})
+
+(defn- empty-page-cache-state
+  []
+  {:tick 0
+   :queue empty-page-order
+   :entries {}
+   :stamps {}
+   :boundaries {}
+   :by-start {}
+   :by-end {}
+   :metrics empty-page-cache-metrics})
+
 (defn page-navigation-cache
   "Creates a bounded, client-private cache of visited Relay page requests.
 
@@ -50,10 +77,7 @@
        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
         :max-entries max-entries})))
    (->PageNavigationCache
-    (atom {:order []
-           :entries {}
-           :by-start {}
-           :by-end {}})
+    (atom (empty-page-cache-state))
     max-entries)))
 
 (defn clear-page-navigation-cache!
@@ -64,12 +88,32 @@
        (ex-info
         "Expected an EACL Relay page-navigation cache."
         {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-    (reset! (:state cache)
-            {:order []
-             :entries {}
-             :by-start {}
-             :by-end {}}))
+    (reset! (:state cache) (empty-page-cache-state)))
   nil)
+
+(defn page-navigation-cache-stats
+  "Returns bounded page-cache structure and publication-side diagnostics.
+
+  This reader does not mutate cache state. Hits deliberately have no counters,
+  preserving the cache's immutable read path."
+  [cache]
+  (when cache
+    (when-not (instance? PageNavigationCache cache)
+      (throw
+       (ex-info
+        "Expected an EACL Relay page-navigation cache."
+        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
+    (let [state @(:state cache)]
+      (assoc (:metrics state)
+             :max-entries (:max-entries cache)
+             :entries (count (:entries state))
+             :stamp-entries (count (:stamps state))
+             :boundary-owners (count (:boundaries state))
+             :start-boundaries (count (:by-start state))
+             :end-boundaries (count (:by-end state))
+             :order-records (count (:queue state))
+             :order-record-ceiling
+             (max 64 (* 2 (:max-entries cache)))))))
 
 (def ^:private relay-page-keys
   #{:first :last :after :before :consistency :cache? :populate-cache?
@@ -200,8 +244,8 @@
 (defn- page-request-key
   [generation operation query]
   [generation operation
-   (-> query
-       (dissoc :consistency :cancellation-token)
+   (-> (cache-identity/successful-result-query query)
+       (dissoc :consistency)
        ;; Public pages contain cursors authenticated to the consistency mode.
        ;; Reusing an already externalized page across modes would return a
        ;; cursor that its receiving request must reject as a query mismatch.
@@ -214,37 +258,117 @@
   [generation operation query token]
   [generation (navigation-boundary-scope operation query) token])
 
-(defn- remove-index-value
-  [index request-key]
-  (into {}
-        (remove (fn [[_ indexed-key]]
-                  (= request-key indexed-key)))
-        index))
+(defn- remove-owned-boundary
+  [index boundary request-key]
+  (if (and boundary (= request-key (get index boundary)))
+    [(dissoc index boundary) 1]
+    [index 0]))
 
-(defn- evict-page-request
+(defn- remove-page-request
   [state request-key]
-  (-> state
-      (update :entries dissoc request-key)
-      (update :by-start remove-index-value request-key)
-      (update :by-end remove-index-value request-key)))
+  (if (contains? (:entries state) request-key)
+    (let [[by-start start-removals]
+          (remove-owned-boundary
+           (:by-start state)
+           (get-in state [:boundaries request-key :start-boundary])
+           request-key)
+          [by-end end-removals]
+          (remove-owned-boundary
+           (:by-end state)
+           (get-in state [:boundaries request-key :end-boundary])
+           request-key)]
+      (-> state
+          (assoc :by-start by-start :by-end by-end)
+          (update :entries dissoc request-key)
+          (update :stamps dissoc request-key)
+          (update :boundaries dissoc request-key)
+          (update-in [:metrics :boundary-removals]
+                     + start-removals end-removals)))
+    state))
+
+(defn- enforce-page-capacity
+  [state max-entries]
+  (loop [state state]
+    (if (<= (count (:entries state)) max-entries)
+      state
+      (let [queue (:queue state)]
+        (when (empty? queue)
+          (throw
+           (ex-info
+            "Page-navigation cache order metadata is inconsistent."
+            {:type :eacl/internal-error
+             :eacl/error :eacl/internal-error
+             :entries (count (:entries state))
+             :max-entries max-entries})))
+        (let [[stamp request-key] (peek queue)
+              state (-> state
+                        (assoc :queue (pop queue))
+                        (update-in [:metrics :queue-pops] inc))
+              current-stamp
+              (get-in state [:stamps request-key])]
+          (if (= stamp current-stamp)
+            (recur
+             (-> (remove-page-request state request-key)
+                 (update-in [:metrics :evictions] inc)))
+            (recur state)))))))
+
+(defn- compact-page-order
+  [state]
+  (let [queue (:queue state)
+        threshold (max 64 (* 2 (count (:entries state))))]
+    (if (<= (count queue) threshold)
+      state
+      (let [before (count queue)
+            compacted
+            (into empty-page-order
+                  (filter
+                   (fn [[stamp request-key]]
+                     (= stamp (get (:stamps state) request-key))))
+                  queue)]
+        (-> state
+            (assoc :queue compacted)
+            (update-in [:metrics :compactions] inc)
+            (update-in [:metrics :compacted-records]
+                       + (- before (count compacted))))))))
 
 (defn- put-page-request
-  [state request-key page max-entries]
-  (let [order
-        (conj
-         (into [] (remove #(= request-key %)) (:order state))
-         request-key)
+  [state request-key page start-boundary end-boundary alias? max-entries]
+  (let [replacement? (contains? (:entries state) request-key)
+        existing-boundaries (get-in state [:boundaries request-key])
+        ;; A synthesized alias can be identical to an already published real
+        ;; request (Next -> Previous -> Next). Retain that real entry's direct
+        ;; boundary ownership so later oscillations do not degrade to misses.
+        start-boundary
+        (or start-boundary
+            (when alias? (:start-boundary existing-boundaries)))
+        end-boundary
+        (or end-boundary
+            (when alias? (:end-boundary existing-boundaries)))
+        state (remove-page-request state request-key)
+        stamp (inc (:tick state))
+        boundary-writes (+ (if start-boundary 1 0)
+                           (if end-boundary 1 0))
         state
-        (assoc state
-               :order order
-               :entries (assoc (:entries state) request-key page))
-        overflow (- (count order) max-entries)]
-    (if-not (pos? overflow)
-      state
-      (let [victims (take overflow order)]
-        (reduce evict-page-request
-                (assoc state :order (vec (drop overflow order)))
-                victims)))))
+        (cond->
+         (-> state
+             (assoc :tick stamp)
+             ;; Keep completed pages directly addressable on the immutable hit
+             ;; path; stamps and eviction ownership live in side indexes.
+             (assoc-in [:entries request-key] page)
+             (assoc-in [:stamps request-key] stamp)
+             (assoc-in [:boundaries request-key]
+                       {:start-boundary start-boundary
+                        :end-boundary end-boundary})
+             (update :queue conj [stamp request-key])
+             (update-in [:metrics :publications] inc)
+             (update-in [:metrics :boundary-writes] + boundary-writes))
+          replacement? (update-in [:metrics :replacements] inc)
+          alias? (update-in [:metrics :aliases] inc)
+          start-boundary (assoc-in [:by-start start-boundary] request-key)
+          end-boundary (assoc-in [:by-end end-boundary] request-key))]
+    (-> state
+        (enforce-page-capacity max-entries)
+        compact-page-order)))
 
 (defn- page-cache-enabled?
   [cache opts]
@@ -319,15 +443,11 @@
                    (get-in state [:entries next-key]))
                  state
                  (put-page-request
-                  state request-key page (:max-entries cache))
-                 state
-                 (cond-> state
-                   start-token
-                   (assoc-in [:by-start (scope-key start-token)]
-                             request-key)
-                   end-token
-                   (assoc-in [:by-end (scope-key end-token)]
-                             request-key))
+                  state request-key page
+                  (when start-token (scope-key start-token))
+                  (when end-token (scope-key end-token))
+                  false
+                  (:max-entries cache))
                  state
                  ;; The alias answers the opposite-direction query with the
                  ;; stored adjacent page verbatim, which is only the correct
@@ -349,6 +469,9 @@
                             :last (:first query)
                             :before start-token))
                     previous-page
+                    nil
+                    nil
+                    true
                     (:max-entries cache))
                    state)]
              (if (and next-page
@@ -365,6 +488,9 @@
                         :first (:last query)
                         :after end-token))
                 next-page
+                nil
+                nil
+                true
                 (:max-entries cache))
                state)))))))
   page)

@@ -1,0 +1,274 @@
+{:format :eacl.performance/cache-identity-final-confirmation-v1
+ :captured-on "2026-08-30"
+ :candidate-parent-commit "858a73a62dfcdf05a5341787f806796d55fd2aff"
+ :baseline-source-commit "858a73a62dfcdf05a5341787f806796d55fd2aff"
+ :source-bound-sha256
+ {"modules/eacl/src/eacl/cache_identity.cljc"
+  "8f0d895edb16c436f33a887b370d90b2b0599dcc9cf3f2e2c08dff6441203493"
+  "modules/eacl/src/eacl/cache.cljc"
+  "91e37195656e378ae56b00b835dd8a25476e75171ebbfbfcfb15a011c510a29c"
+  "modules/eacl/src/eacl/client/orchestration.cljc"
+  "50247de37712329bf2aba5532f7036f47f6b18adb42661f1b37e91c3a900cd99"
+  "modules/eacl/src/eacl/relay.cljc"
+  "3f352bb4b52d22e7c7605f7574a8a1b67dd6f66199fb624df552e3a7577a58f9"
+  "modules/eacl/test/eacl/cache_test.cljc"
+  "e6498825c71cd70a7e1135930cb9293674a7310a19aed427adcb940abb580a88"
+  "modules/eacl/test/eacl/relay_test.cljc"
+  "f8abadcfdeacfba3add2b523e441c3def8e9970f8324d5e8e19508fed3a09245"
+  "modules/eacl-datascript/test/eacl/datascript/contract_test.cljc"
+  "a0c298ae02e79becca0ed40fba5122af22ee93dcd3495aa0c3460f5f93edc48b"
+  "modules/eacl-datascript/test/eacl/bench/page_cache_performance_test.clj"
+  "aab68eb0868d82798844753d271d3d77463d377e923622b5accf7d04d4b82c53"}
+ :environment
+ {:os "macOS 26.4.1 (25E253)"
+  :architecture :aarch64
+  :machine "Apple M4 Max"
+  :memory-bytes 38654705664
+  :logical-processors 14
+  :java "Eclipse Temurin 26.0.2+10"
+  :maximum-heap-bytes 9663676416}
+ :cache-mechanism
+ {:command
+  "clojure -X:test :includes '[:benchmark]' :patterns '[\"^eacl[.]bench[.]page-cache-performance-test$\"]'"
+  :result {:tests 1 :assertions 8 :failures 0 :errors 0}
+  :sampling {:public-warmups 10
+             :public-samples 40
+             :capacity-warmups 20
+             :capacity-samples 80
+             :publication-block-size 8
+             :direct-hit-batch-size 4096
+             :premeasurement-churn-multiple 4
+             :interleaving :alternating-forward-reverse}
+  :varying-timeout-public-page
+  {:fixture {:documents 256 :page-size 128}
+   :legacy-timeout-bearing-identity
+   {:p50-microseconds 1282.542
+    :p50-allocated-bytes 988584
+    :all-misses? true}
+   :canonical-successful-result-identity
+   {:p50-microseconds 191.459
+    :p50-allocated-bytes 75944
+    :all-hits? true}
+   :latency-reduction 0.8507191187501072
+   :allocation-reduction 0.9231790115963843
+   :semantic-results-equal? true
+   :minimum-latency-reduction 0.25
+   :passed? true}
+  :full-cache-publication
+  [{:capacity 64
+    :premeasurement-churn-transitions 256
+    :legacy-p50-microseconds 118.75
+    :candidate-p50-microseconds 28.833
+    :latency-reduction 0.7571957894736843
+    :candidate-resident-entries 64
+    :candidate-order-records 64}
+   {:capacity 512
+    :premeasurement-churn-transitions 2048
+    :legacy-p50-microseconds 669.792
+    :candidate-p50-microseconds 25.792
+    :latency-reduction 0.9614925230519326
+    :candidate-resident-entries 512
+    :candidate-order-records 512}
+   {:capacity 2048
+    :premeasurement-churn-transitions 8192
+    :legacy-p50-microseconds 3059.625
+    :candidate-p50-microseconds 28.333
+    :latency-reduction 0.9907397148343343
+    :allocation-reduction 0.9802420301273106
+    :minimum-latency-reduction 0.50
+    :candidate-resident-entries 2048
+    :candidate-order-records 2048
+    :passed? true}]
+  :direct-hit
+  [{:capacity 64
+    :legacy-p50-microseconds 268.5
+    :candidate-p50-microseconds 264.583
+    :latency-reduction 0.01458845437616374
+    :passed? true}
+   {:capacity 512
+    :legacy-p50-microseconds 267.75
+    :candidate-p50-microseconds 277.291
+    :latency-reduction -0.0356339869281046
+    :passed? true}
+   {:capacity 2048
+    :legacy-p50-microseconds 265.75
+    :candidate-p50-microseconds 263.125
+    :latency-reduction 0.009877704609595472
+    :passed? true}]
+  :publication-scale-ratio-2048-over-64 0.9826587590607984
+  :maximum-publication-scale-ratio 2.5
+  :direct-hit-scale-ratio-2048-over-64 0.9944894418764622
+  :maximum-direct-hit-scale-ratio 2.5
+  :maximum-direct-hit-regression 0.10
+  :all-gates-passed? true}
+ :frozen-pr-160-release-confirmation
+ {:frozen-record
+  "docs/benchmarks/results/2026-08-29-eacl-performance-amplification/release-acceptance.edn"
+  :baseline-worktree "/private/tmp/eacl-performance-20260829-baseline"
+  :baseline-commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+  :sampling {:warmups-per-artifact 10
+             :paired-blocks 40
+             :block-order-seed 290829
+             :confidence-resamples 10000
+             :confidence-seed 87231}
+  :release-win
+  {:id :recursive-star-exact-count
+   :result [4096 -1 false]
+   :baseline-p50-allocated-bytes 73628856
+   :candidate-p50-allocated-bytes 19816328
+   :allocation-reduction 0.73086
+   :latency-reduction-estimate 0.6013986749
+   :latency-reduction-lower-95 0.5821046306
+   :latency-reduction-upper-95 0.6118244855
+   :minimum-practical-reduction 0.20
+   :passed? true}
+  :safety-lanes
+  [{:id :point-check-latency
+    :result [true false]
+    :baseline-p50-nanoseconds 637375
+    :candidate-p50-nanoseconds 646542
+    :degradation-estimate -0.00395
+    :upper-degradation-95 0.0253008
+    :maximum-degradation 0.05
+    :passed? true}
+   {:id :bounded-page-latency
+    :result [50 true]
+    :baseline-p50-nanoseconds 1283917
+    :candidate-p50-nanoseconds 1197333
+    :degradation-estimate -0.07979
+    :upper-degradation-95 -0.05131
+    :maximum-degradation 0.05
+    :passed? true}
+   {:id :completed-hit-latency
+    :result [true true]
+    :baseline-p50-nanoseconds 415458
+    :candidate-p50-nanoseconds 427083
+    :degradation-estimate 0.0105707
+    :upper-degradation-95 0.0499633
+    :maximum-degradation 0.05
+    :passed? true}
+   {:id :cljs-portable-wall-time
+    :result [4096 -1 false]
+    :baseline-p50-nanoseconds 62570958
+    :candidate-p50-nanoseconds 29408459
+    :degradation-estimate -0.52478
+    :upper-degradation-95 -0.51945
+    :maximum-degradation 0.10
+    :passed? true}]
+  :semantic-and-mandatory-work-parity? true
+  :all-gates-passed? true}
+ :datomic-multi-cardinality
+ {:database-id "eacl-solidjs-442c3a9c-b81d-4d42-8df5-d5450ff19bcd"
+  :basis-t 1008733
+  :verified-fixture
+  {:forward-datoms 3007047
+   :reverse-datoms 3007047
+   :public-ids 1007069
+   :distinct-servers 1000000}
+  :lanes
+  [{:requested-cardinality 30000
+    :result-count 30000
+    :count-limit 30000
+    :truncated? true
+    :elapsed-nanoseconds 253162958}
+   {:requested-cardinality 100000
+    :result-count 100000
+    :count-limit 100000
+    :truncated? true
+    :elapsed-nanoseconds 882248333}
+   {:requested-cardinality 1000000
+    :result-count 1000000
+    :count-limit -1
+    :truncated? false
+    :elapsed-nanoseconds 9604333833}]
+  :exact-acquisition-probe
+  {:equal-or-ahead-skipped-sync? true
+   :behind-synchronized-once? true
+   :selected-exact-revision? true}
+  :passed? true}
+ :complete-benchmark-battery
+ {:command
+  "clojure -X:test :includes '[:benchmark]' :excludes '[:formal-artifact]'"
+  :result {:tests 16 :assertions 865 :failures 0 :errors 0}
+  :coverage
+  #{:cross-backend-workload-matrix
+    :managed-proof-and-writer-concurrency
+    :pagination
+    :recursive-performance
+    :explorer-10000
+    :explorer-40000
+    :explorer-50000
+    :explorer-100000
+    :page-cache-capacities-64-512-2048
+    :subproblem-cache
+    :datomic-30000-100000-1000000}}
+ :semantic-safety
+ {:tests
+  #{:successful-result-query-removes-only-invocation-controls
+    :lookup-page-identity-control-independent-and-boundary-sensitive
+    :restored-timeout-bearing-answer-key-unreachable
+    :successful-result-caches-ignore-invocation-controls
+    :warm-cache-reuse-obeys-current-deadline-and-cancellation
+    :visited-page-identity-excludes-invocation-controls
+    :warm-visited-page-enforces-current-deadline-and-cancellation
+    :adjacent-page-alias-retains-direction-and-size-semantics
+    :page-navigation-cache-metadata-capacity-bounded}
+  :cold-miss? true
+  :fixed-timeout-hit? true
+  :varying-timeout-hit? true
+  :count-hit? true
+  :adjacent-forward-reverse-alias? true
+  :deadline-typed-failure? true
+  :cancellation-typed-failure? true
+  :snapshot-abi-unchanged? true
+  :cljs-parity? true}
+ :qualification
+ {:focused-jvm {:tests 89 :assertions 1002 :failures 0 :errors 0}
+  :full-jvm {:tests 1093 :assertions 33459 :failures 0 :errors 0}
+  :datascript-cljs {:tests 480 :assertions 9798 :failures 0 :errors 0}
+  :datalevin-and-shared {:tests 389 :assertions 9528 :failures 0 :errors 0}
+  :isolated-modules
+  {:core {:tests 338 :assertions 5188 :failures 0 :errors 0}
+   :datomic {:tests 654 :assertions 17334 :failures 0 :errors 0}
+   :datascript {:tests 597 :assertions 12318 :failures 0 :errors 0}
+   :datahike {:tests 412 :assertions 8159 :failures 0 :errors 0}}
+  :generated-java-differential
+  {:tests 53 :assertions 18091 :failures 0 :errors 0}
+  :generated-cljs-none
+  {:tests 50 :assertions 11993 :failures 0 :errors 0}
+  :advanced-cljs-formal
+  {:tests 50 :assertions 11993 :failures 0 :errors 0}
+  :advanced-cljs-datascript
+  {:tests 480 :assertions 9798 :failures 0 :errors 0}
+  :production-bundle
+  {:tests 1 :assertions 31 :failures 0 :errors 0}
+  :verified-authority-heavy
+  {:tests 9 :assertions 776 :failures 0 :errors 0}
+  :verified-authority-nonbenchmark
+  {:tests 623 :assertions 38336 :failures 0 :errors 0}
+  :verified-authority-cljs
+  {:tests 223 :assertions 5299 :failures 0 :errors 0}
+  :generators-adversarial-mutation
+  {:tests 15 :assertions 892 :failures 0 :errors 0}
+  :formal-mutation-control
+  {:tests 5 :assertions 167 :failures 0 :errors 0}
+  :counterexample-replay
+  {:tests 71 :assertions 18772 :failures 0 :errors 0}
+  :reflection-gate :passed
+  :source-closure {:source-files 105 :definitions 2288 :status :passed}
+  :dafny {:modules 49 :proof-efforts 9385 :errors 0}
+  :apalache-check :passed
+  :apalache-invariant :passed
+  :apalache-temporal-mutants-killed 12
+  :stable-discovery
+  {:leaves 47 :obligations 651 :randomized-checks 18000 :status :passed}
+  :isolated-jars #{:core :datomic :datascript :datahike}
+  :cold-release-smoke :passed
+  :artifact-size-gates :passed}
+ :decision
+ {:correctness :passed
+  :cache-identity :passed
+  :page-cache-boundedness :passed
+  :performance :passed
+  :complete-battery :passed
+  :qualified? true}}

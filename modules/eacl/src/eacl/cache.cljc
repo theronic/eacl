@@ -7,6 +7,7 @@
   (native completed answers are client-private and never flow through
   portable providers)."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.cache-identity :as cache-identity]
             [eacl.formal.current-cache-refinement :as cache-refinement]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -76,12 +77,11 @@
   Call only after the public cursor has been authenticated and internalized."
   [public-query internal-query]
   {:public
-   (dissoc public-query
-           :consistency :cache? :populate-cache?
-           :after :before :cancellation-token)
+   (-> (cache-identity/successful-result-query public-query)
+       (dissoc :consistency :after :before))
    :internal
-   (dissoc internal-query
-           :consistency :cache? :populate-cache? :cancellation-token)})
+   (-> (cache-identity/successful-result-query internal-query)
+       (dissoc :consistency))})
 
 (defrecord ExactGeneration
            [snapshot order subproblems last-used access-state promoted-access])
