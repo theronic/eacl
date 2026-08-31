@@ -10,7 +10,7 @@ result rendering, and cursor construction all use that value.
 | --- | --- | --- | --- | --- | --- |
 | omitted / `:minimize-latency` | reuse client pin | reuse client pin | reuse client pin | reuse/acquire the adapter's qualified owned pin | exact-first, then automatic proof-backed reuse when certified |
 | `:fully-consistent` | bounded zero-argument `d/sync` | authoritative head barrier when supported | serialized connection head | new owned read snapshot under the sole-writer topology | enabled for the selected ordinary basis |
-| `:at-least-as-fresh` | targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | bounded acquire/check/release retry | enabled only when selection is an ordinary basis |
+| `:at-least-as-fresh` | reuse a sufficient local DB; otherwise targeted `d/sync conn t` and revision validation | selects/waits for a sufficient native revision | selects a sufficient connection-local revision | bounded acquire/check/release retry | enabled only when selection is an ordinary basis |
 | `:at-exact-snapshot` | authenticated targeted catch-up when behind, then exact `d/as-of T` | retained commit or durable temporal selection, configuration-specific | unsupported | unsupported | identical exact composite key only |
 
 These modes select a basis only when the target is an `acl`. On a retained

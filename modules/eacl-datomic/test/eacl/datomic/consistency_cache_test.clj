@@ -489,19 +489,25 @@
   (with-mem-conn [conn schema/v7-schema]
     (let [client (cached-client conn)
           _ (seed! conn client)
-          current-token
-          (with-redefs [d/sync
-                        (fn [& _]
-                          (throw (ex-info "token helpers must not sync" {})))]
-            (core/current-zed-token client))
-          current-payload (token-payload client current-token)]
-      (is (integer? (:revision current-payload)))
-      (is (true?
-           (eacl/can? client
-                      (spice-object :user "alice")
-                      :admin
-                      (spice-object :account "acct")
-                      (consistency/at-least-as-fresh current-token)))))))
+          sync-calls (atom [])]
+      (with-redefs [d/sync
+                    (fn [& args]
+                      (swap! sync-calls conj args)
+                      (throw
+                       (ex-info
+                        "a locally covered freshness floor must not sync"
+                        {})))]
+        (let [current-token (core/current-zed-token client)
+              current-payload (token-payload client current-token)]
+          (is (integer? (:revision current-payload)))
+          (is (true?
+               (eacl/can? client
+                          (spice-object :user "alice")
+                          :admin
+                          (spice-object :account "acct")
+                          (consistency/at-least-as-fresh current-token))))
+          (is (empty? @sync-calls)
+              "token creation and a locally covered read require no sync"))))))
 
 (deftest cross-database-zed-token-is-rejected-test
   (with-mem-conn [conn-a schema/v7-schema]
