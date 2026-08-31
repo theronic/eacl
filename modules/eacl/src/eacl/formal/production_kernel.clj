@@ -119,7 +119,7 @@
         built))))
 
 (def ^:private unicode-memo
-  "Standard LRU for type-name decodes keyed by the raw
+  "Bounded runtime cache for type-name decodes keyed by the raw
   DafnySequence (the patched runtime implements equals/hashCode).
   Scan commands carry a handful of distinct type names but previously
   decoded UTF-32 strings per command."

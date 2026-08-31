@@ -6,6 +6,7 @@
   borrow, exactly one adapter and carry an idempotent release boundary. Native
   handles and release tokens remain private to this namespace."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.causal-token :as causal-token]
             [eacl.exact-integer :as exact-integer]
             [eacl.request.counters :as request-counters]))
 
@@ -97,6 +98,23 @@
     :revision
     :exact-locator
     :backend-snapshot-id})
+
+(defn- retain-semantic-field
+  [known-fields field _]
+  (when (and known-fields (contains? known-fields field))
+    known-fields))
+
+(defn- closed-semantic-identity?
+  [identity]
+  ;; `assert-open!` crosses this boundary on every retained Snapshot read.
+  ;; Count plus required-key membership is equivalent to materializing and
+  ;; comparing `(set (keys identity))`, because map keys are unique, without
+  ;; allocating a key sequence and set for an already closed identity.
+  (and (map? identity)
+       (= (count semantic-identity-keys) (count identity))
+       (identical?
+        semantic-identity-keys
+        (reduce-kv retain-semantic-field semantic-identity-keys identity))))
 
 (def ^:dynamic *source-op-stats*
   "Optional atom counting basis-source operation invocations by keyword."
@@ -368,9 +386,7 @@
        (map? (::execution-constraints candidate))
        (fn? (::release-fn candidate))
        (backend/adapter? (::adapter candidate))
-       (map? (::semantic-identity candidate))
-       (= semantic-identity-keys
-          (set (keys (::semantic-identity candidate))))
+       (closed-semantic-identity? (::semantic-identity candidate))
        (contains? basis-ownerships (::ownership candidate))
        #?(:clj (instance? clojure.lang.Atom (::release-state candidate))
           :cljs (satisfies? IDeref (::release-state candidate)))
@@ -393,6 +409,11 @@
         revision (:revision native-revision)
         order-hint (backend/invoke adapter :order-hint)
         exact-locator (backend/invoke adapter :exact-locator)]
+    ;; Acquisition is the single boundary that turns provider values into a
+    ;; closed selected basis. Validate lifecycle portability here so every
+    ;; selection mode receives the same guarantee without a second source
+    ;; read in the consistency layer.
+    (causal-token/validate-source-lifecycle! lifecycle)
     (when-not (and (map? scope)
                    (contains? scope :source-id)
                    (contains? scope :branch))

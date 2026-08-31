@@ -27,6 +27,30 @@
 (def ^:private memo-kinds
   #{:prepared-roots :dependency-proofs :cursor-proofs :decisions})
 
+(def ^:private semantic-identity-keys
+  (vec source/semantic-identity-keys))
+(def ^:private speculative-identity-keys
+  (conj semantic-identity-keys :speculative-id))
+
+(defn- collect-unknown-context-key
+  [unknown key _]
+  (if (contains? context-input-keys key)
+    unknown
+    (conj (or unknown []) key)))
+
+(defn- retain-map-containing-key
+  [value key]
+  (when (and value (contains? value key))
+    value))
+
+(defn- closed-key-shape?
+  [value required-keys]
+  (and (map? value)
+       (= (count value) (count required-keys))
+       (identical?
+        value
+        (reduce retain-map-containing-key value required-keys))))
+
 (deftype ^:private RequestContext [state])
 
 (defn context?
@@ -51,7 +75,12 @@
 
 (defn- record!
   [ledger counter]
-  (counters/call-with-ledger ledger #(counters/add! counter)))
+  ;; Public orchestration already binds the request's ledger. Avoid creating a
+  ;; nested dynamic binding for the normal path while retaining the standalone
+  ;; `make-context` contract for an explicitly supplied, unbound ledger.
+  (if (identical? ledger counters/*ledger*)
+    (counters/add! counter)
+    (counters/call-with-ledger ledger #(counters/add! counter))))
 
 (defn- context-closed!
   []
@@ -111,28 +140,30 @@
 
 (defn- validate-basis-identity!
   [basis-identity]
-  (let [identity-keys (when (map? basis-identity)
-                        (set (keys basis-identity)))
-        speculative-identity-keys
-        (conj source/semantic-identity-keys :speculative-id)]
-    (when-not (and (map? basis-identity)
-                   (or (= source/semantic-identity-keys identity-keys)
-                       (and (= speculative-identity-keys identity-keys)
-                            (string? (:speculative-id basis-identity))
-                            (seq (:speculative-id basis-identity)))))
-      (invalid-context!
-       "Request context basis identity must be the closed semantic identity."
-       {:basis-identity basis-identity
-        :expected-keys #{source/semantic-identity-keys
-                         speculative-identity-keys}}))))
+  (when-not
+   (or (closed-key-shape? basis-identity semantic-identity-keys)
+       (and (closed-key-shape? basis-identity speculative-identity-keys)
+            (string? (:speculative-id basis-identity))
+            (seq (:speculative-id basis-identity))))
+    (invalid-context!
+     "Request context basis identity must be the closed semantic identity."
+     {:basis-identity basis-identity
+      :expected-keys #{source/semantic-identity-keys
+                       (set speculative-identity-keys)}})))
+
+(defn- lineage-for-validated-basis
+  [basis-identity]
+  {:source-scope
+   {:backend (:backend basis-identity)
+    :source-id (:source-id basis-identity)
+    :branch (:branch basis-identity)}
+   :source-lifecycle (:source-lifecycle basis-identity)})
 
 (defn lineage-for-basis
   "Returns the one history witness used by every cross-basis artifact."
   [basis-identity]
   (validate-basis-identity! basis-identity)
-  {:source-scope
-   (select-keys basis-identity [:backend :source-id :branch])
-   :source-lifecycle (:source-lifecycle basis-identity)})
+  (lineage-for-validated-basis basis-identity))
 
 (defn- release-after-construction-failure!
   [selected ledger error]
@@ -169,16 +200,16 @@
         initial-ledger
         (when (map? input)
           (or counter-ledger
-              (get-in input [:runtime :request-counter-ledger])
+              (:request-counter-ledger runtime)
               counters/*ledger*))]
     (try
       (when-not (map? input)
         (invalid-context! "Request context input must be a map."
                           {:value input}))
-      (when-let [unknown (seq (remove context-input-keys (keys input)))]
+      (when-let [unknown (reduce-kv collect-unknown-context-key nil input)]
         (invalid-context!
          "Request context input contains unknown fields."
-         {:unknown-keys (vec unknown)
+         {:unknown-keys unknown
           :known-keys context-input-keys}))
       (when-not (map? runtime)
         (invalid-context! "Request context runtime must be a map."
@@ -209,7 +240,6 @@
               (source/semantic-identity selected))
             basis-identity (or basis-identity selected-identity)
             _ (validate-basis-identity! basis-identity)
-            lineage (lineage-for-basis basis-identity)
             _
             (when (and selected-identity
                        (not= selected-identity basis-identity))
@@ -217,6 +247,7 @@
                "Request context basis identity differs from acquisition."
                {:basis-identity basis-identity
                 :selected-basis-identity selected-identity}))
+            lineage (lineage-for-validated-basis basis-identity)
             registry
             (or derived-registry
                 (:derived-schema-caches runtime)
@@ -349,11 +380,16 @@
   [context f]
   (when-not (fn? f)
     (invalid-context! "Request context callback must be a function." {}))
-  (let [state (state-of (assert-open! context))]
-    (counters/call-with-ledger
-     (:counter-ledger state)
-     #(binding [execution/*contract* (:contract state)]
-        (f context)))))
+  (let [state (state-of (assert-open! context))
+        ledger (:counter-ledger state)
+        contract (:contract state)]
+    (if (identical? ledger counters/*ledger*)
+      (binding [execution/*contract* contract]
+        (f context))
+      (counters/call-with-ledger
+       ledger
+       #(binding [execution/*contract* contract]
+          (f context))))))
 
 (defn close!
   "Releases owned snapshot state once.

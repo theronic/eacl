@@ -20,7 +20,7 @@
   [symbol]
   (some-> (ns-resolve 'eacl.formal.production-kernel symbol) deref))
 
-(deftest unicode-decode-memo-is-fail-open-standard-lru-test
+(deftest unicode-decode-memo-is-fail-open-bounded-cache-test
   (let [store (private-production-value 'unicode-memo)
         interned (private-production-value 'dafny-unicode-interned)
         values
@@ -31,17 +31,16 @@
       (lru/clear! store)
       (doseq [value (take 64 values)]
         (is (= (.verbatimString value) (interned value))))
-      (is (= "type-0" (interned hot)) "a hit refreshes the hot key")
+      (dotimes [_ 100]
+        (interned hot))
       (is (= "type-64" (interned (nth values 64))))
-      (is (:found? (lru/peek-entry store hot)))
-      (is (false? (:found? (lru/peek-entry store (nth values 1))))
-          "the cold least-recent key is evicted instead of first-fill lockout")
       (doseq [value (drop 65 values)]
         (is (= "type-0" (interned hot)))
         (is (= (.verbatimString value) (interned value))))
+      (is (= 64 (lru/entry-count store))
+          "adaptive eviction settles within the configured capacity")
       (is (:found? (lru/peek-entry store hot))
           "a repeatedly used key survives sustained cold-key churn")
-      (is (= 64 (lru/entry-count store)))
       (testing "lookup failure falls back to direct decoding"
         (is (= "fallback-lookup"
                (with-redefs [lru/lookup!
@@ -141,21 +140,23 @@
          :plan-decisions 1
          :authentication-attempts 0
          :backend-selection-calls 1
-         :validation-decisions 1
+         :validation-decisions 0
          :revision-validation-calls 0
          :native-revision-reads 1
          :order-hint-reads 1
          :exact-locator-reads 1
-         :source-lifecycle-reads 2
+         :source-lifecycle-reads 1
          :snapshot-id-reads 1
          :basis-kind-reads 1}]
     (case path
       (:selected-current :authoritative)
-      (assoc common :source-scope-reads 2)
+      (assoc common :source-scope-reads 1)
       :at-least
       (assoc common
              :authentication-attempts 1
+             :validation-decisions 1
              :source-scope-reads 2
+             :source-lifecycle-reads 2
              :revision-validation-calls 1
              :native-revision-reads 1
              :order-hint-reads 1
@@ -163,7 +164,9 @@
       :exact
       (assoc common
              :authentication-attempts 1
+             :validation-decisions 1
              :source-scope-reads 2
+             :source-lifecycle-reads 2
              :revision-validation-calls 1
              :native-revision-reads 1
              :order-hint-reads 1

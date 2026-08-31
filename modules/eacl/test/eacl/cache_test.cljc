@@ -767,23 +767,36 @@
     (is (= revision-before (cache/cache-content-revision target)))))
 
 (deftest complete-exact-basis-is-the-sole-ordinary-basis-authority-test
-  (let [store (cache/basis-cache)
-        incomplete
-        (update-in (basis-context 7)
-                   [:exact-basis-key :basis-identity]
-                   dissoc :exact-locator)
-        calls (atom 0)
-        invoke
-        #(resolve-test-value!
-          store incomplete (semantic-key :missing-exact-locator)
-          (fn [] (swap! calls inc) :computed))]
-    (dotimes [_ 2]
-      (let [result (invoke)]
-        (is (false? (:cached? result)))
-        (is (= :computed (:value result)))))
-    (is (= 2 @calls))
-    (is (zero? (get-in (cache/basis-cache-stats store)
-                       [:subproblems :tiers :answer :entries]))))
+  (doseq [[case-name invalid-context]
+          [[:missing-inner-field
+            (update-in (basis-context 7)
+                       [:exact-basis-key :basis-identity]
+                       dissoc :exact-locator)]
+           [:unknown-inner-field-at-the-same-count
+            (update-in (basis-context 7)
+                       [:exact-basis-key :basis-identity]
+                       #(-> %
+                            (dissoc :exact-locator)
+                            (assoc :unknown-locator 7)))]
+           [:unknown-outer-field-at-the-same-count
+            (update (basis-context 7) :exact-basis-key
+                    #(-> %
+                         (dissoc :key-version)
+                         (assoc :unknown-version 2)))]]]
+    (let [store (cache/basis-cache)
+          calls (atom 0)
+          invoke
+          #(resolve-test-value!
+            store invalid-context (semantic-key case-name)
+            (fn [] (swap! calls inc) :computed))]
+      (dotimes [_ 2]
+        (let [result (invoke)]
+          (is (false? (:cached? result)) (name case-name))
+          (is (= :computed (:value result)) (name case-name))))
+      (is (= 2 @calls) (name case-name))
+      (is (zero? (get-in (cache/basis-cache-stats store)
+                         [:subproblems :tiers :answer :entries]))
+          (name case-name))))
   (let [store (cache/basis-cache)
         context
         ;; Legacy duplicate fields are deliberately irrelevant: the complete

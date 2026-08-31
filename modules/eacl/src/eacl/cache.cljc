@@ -289,28 +289,31 @@
 (defn exact-basis-key
   "Returns the complete identity of one admissible immutable selected basis."
   [adapter basis-identity]
-  (when (and (map? basis-identity)
-             (= exact-basis-identity-fields (set (keys basis-identity)))
+  (when (and (cache-key/closed-map-fields?
+              basis-identity exact-basis-identity-fields)
              (backend/admissible-basis-kind? (:basis-kind basis-identity)))
     {:key-version 2
      :backend (backend/backend-id adapter)
      :basis-identity
-     (select-keys basis-identity
-                  [:backend :source-id :branch :source-lifecycle
-                   :basis-kind :revision :exact-locator
-                   :backend-snapshot-id])
+     {:backend (:backend basis-identity)
+      :source-id (:source-id basis-identity)
+      :branch (:branch basis-identity)
+      :source-lifecycle (:source-lifecycle basis-identity)
+      :basis-kind (:basis-kind basis-identity)
+      :revision (:revision basis-identity)
+      :exact-locator (:exact-locator basis-identity)
+      :backend-snapshot-id (:backend-snapshot-id basis-identity)}
      :adapter-fingerprint (backend/fingerprint adapter)
      :identity-contract (backend/identity-contract adapter)}))
 
 (defn- valid-exact-basis-key?
   [basis-key]
   (let [identity (:basis-identity basis-key)]
-    (and (map? basis-key)
-         (= exact-basis-key-fields (set (keys basis-key)))
+    (and (cache-key/closed-map-fields? basis-key exact-basis-key-fields)
          (= 2 (:key-version basis-key))
          (keyword? (:backend basis-key))
-         (map? identity)
-         (= exact-basis-identity-fields (set (keys identity)))
+         (cache-key/closed-map-fields?
+          identity exact-basis-identity-fields)
          (= (:backend basis-key) (:backend identity))
          (backend/admissible-basis-kind? (:basis-kind identity))
          (some? (:source-id identity))
@@ -340,7 +343,9 @@
   [basis-key]
   (let [basis (:basis-identity basis-key)]
     {:lineage
-     {:source-scope (select-keys basis [:backend :source-id :branch])
+     {:source-scope {:backend (:backend basis)
+                     :source-id (:source-id basis)
+                     :branch (:branch basis)}
       :source-lifecycle (:source-lifecycle basis)}
      :adapter-fingerprint (:adapter-fingerprint basis-key)
      :identity-contract (:identity-contract basis-key)}))

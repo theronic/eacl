@@ -275,7 +275,7 @@
      :present-malformed-selection-is-not-snapshot-absence
      :selection-plan-needs-no-acquisition-or-validation
      :response-token-uses-closed-selected-identity
-     :selected-current-has-one-selection-and-validation
+     :selected-current-has-one-selection-without-duplicate-validation
      :successful-selection-logical-work-is-constant-bounded]
     :dafny
     ["formal/dafny/ConsistencyDecision.dfy"

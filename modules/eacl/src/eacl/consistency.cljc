@@ -342,21 +342,24 @@
   (case (selection-plan source {:mode mode} options)
       :select-current
       {:selected-snapshot
-       (let [selected
-             (acquire-source-candidate! source :current options)]
-         (validate-source-candidate!
-          source selected :current nil options nil))}
+       ;; `source/acquire!` has already closed and validated the provider's
+       ;; result, adapter identity, ownership, traversal profile, native
+       ;; revision, and source scope. Current selection has no requested
+       ;; revision or authenticated scope to compare, so feeding five
+       ;; constant true observations through the generated validation kernel
+       ;; only repeated that boundary work on every request.
+       (acquire-source-candidate! source :current options)}
 
       :select-authoritative
       {:selected-snapshot
-       (let [selected
-             (acquire-source-candidate!
-              source
-              :authoritative
-              options
-              (:timeout-ms options))]
-         (validate-source-candidate!
-          source selected :authoritative nil options nil))}
+       ;; As above, the authoritative provider operation owns the barrier and
+       ;; `source/acquire!` certifies its returned selected basis. There is no
+       ;; caller token to compare after acquisition.
+       (acquire-source-candidate!
+        source
+        :authoritative
+        options
+        (:timeout-ms options))}
 
       :authenticate-and-select-at-least
       (let [payload (authenticate source options token)

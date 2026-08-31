@@ -71,6 +71,7 @@
   (doseq [invalid
           [(dissoc base-identity :abi)
            (assoc base-identity :unknown true)
+           (-> base-identity (dissoc :abi) (assoc :unknown :abi))
            (assoc base-identity :semantic nil)
            (assoc base-identity :tier "answer")]]
     (let [error (try

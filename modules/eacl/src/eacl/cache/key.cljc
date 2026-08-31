@@ -16,6 +16,21 @@
 (def ^:private authorization-domains
   #{:authorization-answer :authorization-subproblem})
 
+(defn- retain-known-field
+  [known-fields field _]
+  (when (and known-fields (contains? known-fields field))
+    known-fields))
+
+(defn ^:no-doc closed-map-fields?
+  "Checks one closed map shape without allocating a key sequence on success."
+  [value known-fields]
+  (and (map? value)
+       (= (count known-fields) (count value))
+       ;; Persistent maps implement key/value reduction without allocating a
+       ;; key seq. Identity proves that every encountered key was admitted.
+       (identical? known-fields
+                   (reduce-kv retain-known-field known-fields value))))
+
 (defn- invalid-key!
   [message data]
   (throw
@@ -47,8 +62,13 @@
   (when-not (map? identity)
     (invalid-key! "Authorization cache identity must be a map."
                   {:storage-domain storage-domain :identity identity}))
-  (let [actual-fields (set (keys identity))]
-    (when-not (= authorization-fields actual-fields)
+  ;; This constructor is used on every resident answer/page lookup. Check the
+  ;; closed map directly on the successful path; materialize key sets only for
+  ;; the exceptional diagnostic. This is equivalent because map keys are
+  ;; unique: equal count plus membership of every required key admits neither a
+  ;; missing nor an unknown field.
+  (when-not (closed-map-fields? identity authorization-fields)
+    (let [actual-fields (set (keys identity))]
       (invalid-key!
        "Authorization cache identity has missing or unknown fields."
        {:storage-domain storage-domain

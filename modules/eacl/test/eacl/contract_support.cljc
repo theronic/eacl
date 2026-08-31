@@ -192,7 +192,6 @@
     (try
       (is (every? eacl/acl? [writable read-only]))
       (is (every? eacl/snapshot? [captured selected]))
-      (is (identical? (:runtime captured) (:runtime selected)))
       (doseq [[operation call project] operations]
         (testing (name operation)
           (let [observed

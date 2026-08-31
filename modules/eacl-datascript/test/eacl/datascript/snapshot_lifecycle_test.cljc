@@ -532,6 +532,58 @@
       (finally
         (eacl/release! selected)))))
 
+(deftest retained-snapshot-reattaches-only-after-cache-store-rotation-test
+  (let [{:keys [conn user account]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        selected (eacl/snapshot client)
+        prepared-options
+        (get-in selected
+                [:runtime ::orchestration/prepared-runtime-options])
+        prepared-lifecycle (:runtime-cache-lifecycle prepared-options)
+        context-input (atom nil)
+        original-make-context request-context/make-context]
+    (try
+      ;; A retained snapshot must normalize deadline/cancellation state from
+      ;; each read; it cannot reuse the contract from snapshot acquisition.
+      (is (not (contains? prepared-options :execution-contract)))
+      ;; Publication advances the lifecycle record's content revision while
+      ;; retaining the installed stores. The next hit must keep using the
+      ;; prepared map rather than rebuilding it for that bookkeeping change.
+      (is (true? (eacl/can? selected user :admin account)))
+      (let [published (runtime-cache-lifecycle client)]
+        (is (not (identical? prepared-lifecycle published)))
+        (is (identical? (:basis-cache-store prepared-lifecycle)
+                        (:basis-cache-store published)))
+        (with-redefs
+         [request-context/make-context
+          (fn [input]
+            (reset! context-input input)
+            (original-make-context input))]
+          (is (true? (eacl/can? selected user :admin account))))
+        (is (identical?
+             prepared-lifecycle
+             (get-in @context-input [:runtime :runtime-cache-lifecycle]))))
+
+      ;; A narrow clear installs a genuinely new answer store. The retained
+      ;; basis remains valid and must attach that store before evaluating.
+      (orchestration/clear-answer-cache! client)
+      (let [cleared (runtime-cache-lifecycle client)]
+        (reset! context-input nil)
+        (with-redefs
+         [request-context/make-context
+          (fn [input]
+            (reset! context-input input)
+            (original-make-context input))]
+          (is (true? (eacl/can? selected user :admin account))))
+        (is (identical?
+             cleared
+             (get-in @context-input [:runtime :runtime-cache-lifecycle])))
+        (is (identical?
+             (:basis-cache-store cleared)
+             (get-in @context-input [:runtime :basis-cache-store]))))
+      (finally
+        (eacl/release! selected)))))
+
 (deftest retained-snapshot-detects-same-token-full-source-incarnation-test
   (let [{:keys [conn user account]} (fixture)
         client (datascript/make-client conn {:cache {:max-entries 16}})

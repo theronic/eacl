@@ -113,6 +113,37 @@
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
 
+(defn- semantic-identity
+  []
+  {:backend :request-context-test
+   :source-id ::source
+   :branch nil
+   :source-lifecycle ::lifecycle
+   :basis-kind :ordinary
+   :revision 7
+   :exact-locator 7
+   :backend-snapshot-id {:database-id ::database :basis-t 7}})
+
+(deftest lineage-requires-the-exact-semantic-identity-shape-test
+  (let [identity (semantic-identity)
+        expected {:source-scope
+                  {:backend :request-context-test
+                   :source-id ::source
+                   :branch nil}
+                  :source-lifecycle ::lifecycle}]
+    (is (= expected (context/lineage-for-basis identity)))
+    (is (= expected
+           (context/lineage-for-basis
+            (assoc identity :speculative-id "speculative-1"))))
+    (doseq [invalid [(assoc identity :unknown true)
+                     (-> identity
+                         (dissoc :branch)
+                         (assoc :unknown nil))
+                     (assoc identity :speculative-id "")]]
+      (is (= :eacl.request/invalid-context
+             (:type (error-data
+                     #(context/lineage-for-basis invalid))))))))
+
 (deftest context-owns-one-lazy-request-invariant-state-test
   (let [release-tokens (atom [])
         {:keys [context adapter ledger registry acquire-calls release-calls
@@ -160,6 +191,15 @@
                  (identical? (context/contract context)
                              execution/*contract*)
                  (identical? ledger counters/*ledger*))))))
+    (is (true?
+         (counters/call-with-ledger
+          ledger
+          #(context/call-with-context
+            context
+            (fn [_]
+              (and (identical? (context/contract context)
+                               execution/*contract*)
+                   (identical? ledger counters/*ledger*)))))))
 
     (is (true? (context/close! context)))
     (is (true? (context/closed? context)))
@@ -200,15 +240,7 @@
   (let [generation-calls (atom 0)
         adapter (test-adapter generation-calls nil)
         registry (derived-schema/store)
-        basis-identity
-        {:backend :request-context-test
-         :source-id ::source
-         :branch nil
-         :source-lifecycle ::lifecycle
-         :basis-kind :ordinary
-         :revision 7
-         :exact-locator 7
-         :backend-snapshot-id {:database-id ::database :basis-t 7}}
+        basis-identity (semantic-identity)
         request-context
         (context/make-context
          {:runtime {:derived-schema-caches registry}

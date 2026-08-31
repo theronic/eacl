@@ -2651,14 +2651,32 @@
 (defn- snapshot-opts
   [runtime basis]
   (let [opts (runtime-options runtime)
-        current-runtime-lifecycle (:runtime-cache-lifecycle opts)
+        ;; A retained Snapshot keeps its immutable source basis. Consult live
+        ;; state only for source replacement or a real answer-store rotation;
+        ;; content-revision bookkeeping must not rebuild the runtime map.
+        current-runtime-lifecycle
+        (or (some-> (:runtime-lifecycle-state opts) deref)
+            (:runtime-cache-lifecycle opts))
         current-lifecycle (:source-lifecycle current-runtime-lifecycle)
         retained-lifecycle (get-in basis [:identity :source-lifecycle])
         retired?
         (or (not= current-lifecycle retained-lifecycle)
             (not (identical? (:source-incarnation basis)
                              (:source-incarnation
-                              current-runtime-lifecycle))))]
+                              current-runtime-lifecycle))))
+        opts
+        (if (and (not retired?)
+                 current-runtime-lifecycle
+                 (not (identical?
+                       (:basis-cache-store current-runtime-lifecycle)
+                       (:basis-cache-store opts))))
+          ;; Narrow answer-cache clearing deliberately preserves the source
+          ;; incarnation while installing a new basis/continuation store.
+          ;; Ordinary cache publication only replaces the lifecycle record to
+          ;; advance :content-revision; its installed stores remain identical
+          ;; and require no reattachment on the next retained read.
+          (attach-runtime-cache-lifecycle opts current-runtime-lifecycle)
+          opts)]
     (cond-> (assoc opts
                    ::retained-basis basis
                    :authorization-target-kind
@@ -3564,11 +3582,20 @@
           (ensure-execution-contract
            (merge (runtime-options runtime) options)
            :snapshot
-           {:consistency consistency-value})]
+           {:consistency consistency-value})
+          selected
+          (select-request-basis api source opts consistency-value)
+          ;; Selection returns the already attached immutable lifecycle that
+          ;; belongs to this retained basis. Store that normalized map once;
+          ;; per-read contracts are intentionally removed and normalized from
+          ;; each public request as before.
+          prepared-options
+          (dissoc (:runtime-options selected) :execution-contract)
+          snapshot-runtime
+          (map->Runtime {prepared-runtime-options-key prepared-options})]
       (->Snapshot
-       runtime
-       (make-basis
-       (select-request-basis api source opts consistency-value))
+       snapshot-runtime
+       (make-basis selected)
        (reader-api api))))
 
   ISpeculativeAuthorization
