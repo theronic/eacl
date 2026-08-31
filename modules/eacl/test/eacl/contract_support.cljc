@@ -1741,7 +1741,7 @@
 (defn- assert-bounded-checkpoint-replay!
   [client query oracle-stream]
   (when (ordered-generation-proofs? client)
-    (testing "LRU-evicted checkpoints replay from an ordinary absence"
+    (testing "bounded checkpoint retention or replay preserves the page"
       (let [store (continuation/make-store {:max-entries 1})
             lifecycle-state
             (get-in client [:runtime :runtime-lifecycle-state])
@@ -1764,10 +1764,16 @@
             (eacl/lookup-resources
              client (assoc query-a :after cursor))
             after (continuation/stats store)]
+        (is (some? cursor))
         (is (= (take 3 (drop 3 oracle-stream)) (:data second-page)))
         (is (pos? (:evictions before)))
-        (is (> (get-in after [:miss-reasons :absent] 0)
-               (get-in before [:miss-reasons :absent] 0)))))))
+        (is (= 1 (:max-entries before) (:max-entries after)))
+        (is (<= (:entries before) 1))
+        (is (<= (:entries after) 1))
+        (is (or (> (:hits after) (:hits before))
+                (> (get-in after [:miss-reasons :absent] 0)
+                   (get-in before [:miss-reasons :absent] 0)))
+            "the selected policy may retain A or admit B; either a validated hit or deterministic replay must serve A")))))
 
 (defn assert-v8-recursive-contracts!
   [client]

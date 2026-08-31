@@ -118,6 +118,44 @@
               (:value winner)
               candidate)))))))
 
+(defn- portable-retained-copy
+  [value]
+  (try
+    {:supported? true
+     :value (secure/canonicalize value)}
+    (catch #?(:clj Throwable :cljs :default) _
+      {:supported? false})))
+
+(defn- memoized-portable-value!
+  "Memoizes a portable context without retaining caller collection metadata.
+
+  The original key remains the common hit lookup. Canonical copying occurs
+  only after a miss and unsupported artifacts remain ordinary uncached values."
+  [store domain key build hit-counter build-counter]
+  (let [key' (storage-key domain key)
+        hit (safe-lookup store key')]
+    (if (:found? hit)
+      (do
+        (record-work! hit-counter 1)
+        (:value hit))
+      (let [_ (record-work! build-counter 1)
+            candidate (build)
+            retained-key (portable-retained-copy key)
+            retained-value (portable-retained-copy candidate)]
+        (if-not (and (:supported? retained-key)
+                     (:supported? retained-value))
+          candidate
+          (let [retained-key'
+                (storage-key domain (:value retained-key))
+                retained-value (:value retained-value)]
+            (if (safe-put-if-absent!
+                 store retained-key' retained-value)
+              candidate
+              (let [winner (safe-lookup store retained-key')]
+                (if (:found? winner)
+                  (:value winner)
+                  candidate)))))))))
+
 (defn memoized-context!
   "Returns one bounded client-private cursor construction artifact.
 
@@ -132,7 +170,7 @@
     (build)
     (do
       (require-codec-cache! cache)
-      (memoized-value!
+      (memoized-portable-value!
        (:context-store cache)
        :cursor-construction-context
        key
@@ -183,6 +221,20 @@
   [options]
   (merge (select-keys options format-option-keys)
          (:format-options options)))
+
+(defn ^:no-doc plausible-token?
+  "Cheap admission check before a raw token may enter any cache key.
+
+  Authentication and complete structural validation still happen in the
+  decoder. This guard only keeps attacker-sized or obviously foreign strings
+  out of the exact transport-page lookup path."
+  [options token]
+  (let [maximum-size
+        (or (:maximum-size (format-options options))
+            secure/default-maximum-size)]
+    (and (string? token)
+         (<= (count token) maximum-size)
+         (str/starts-with? token cursor-prefix))))
 
 (defn- aead-error!
   [reason data]
@@ -398,13 +450,8 @@
 
 (defn- decode-aead
   [options token]
-  (let [format-options (format-options options)
-        maximum-size
-        (or (:maximum-size format-options)
-            secure/default-maximum-size)]
-    (when-not (and (string? token)
-                   (<= (count token) maximum-size)
-                   (str/starts-with? token cursor-prefix))
+  (let [format-options (format-options options)]
+    (when-not (plausible-token? options token)
       (throw (ex-info "Invalid encrypted cursor."
                       {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
                        :reason :malformed-token})))
@@ -486,6 +533,23 @@
     ;; with retained keys and reads expiry from the protected payload.
     [kid (get keyring kid) (:cursor-ttl-seconds options)]))
 
+(defn ^:no-doc cache-policy-identity
+  "Compact identity of every cursor-codec setting that can accept or mint a
+  token. Exact transport-page caching includes this digest so key rotation or
+  key removal cannot reuse a page authenticated under another client policy."
+  [options]
+  (let [configured (format-options options)
+        current-kid (or (:current-kid configured) :default)
+        keyring (or (:keyring configured)
+                    {:default secure/default-root-key})]
+    (secure/canonical-digest
+     "eacl/cursor/cache-policy/v1"
+     [cursor-version
+      (assoc configured
+             :current-kid current-kid
+             :keyring keyring)
+      (:cursor-ttl-seconds options)])))
+
 (defn- memoizable-cache
   [{:keys [cursor-codec-cache]}]
   (when cursor-codec-cache
@@ -542,7 +606,7 @@
                   (:value token-hit) identity cursor now))
           token
           (do
-            ;; Independent LRU stores can evict in different orders. A
+            ;; Independent bounded stores can evict in different orders. A
             ;; dangling reverse entry is merely a miss, never authority to
             ;; reuse a token. Expired entries are removed after their one
             ;; validation and must be authenticated again if decoded.
@@ -605,8 +669,14 @@
                    :issued-at issued-at
                    :expires-at expires-at})]
              (if cache
-               (remember-token!
-                cache identity cursor token issued-at expires-at)
+               ;; Encoding already validated this portable cursor under the
+               ;; configured bounds. Retain a canonical copy so metadata (which
+               ;; does not affect token bytes or value equality) cannot hide a
+               ;; request-owned mutable object in either codec-cache store.
+               (let [retained-cursor
+                     (secure/canonicalize cursor (format-options options))]
+                 (remember-token!
+                  cache identity retained-cursor token issued-at expires-at))
                token)))))))
 
 (defn expired-cursor-error

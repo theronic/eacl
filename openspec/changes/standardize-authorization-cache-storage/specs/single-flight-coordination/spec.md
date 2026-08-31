@@ -4,21 +4,20 @@
 
 ### Requirement: Cache bounds govern retained state and publication attempts
 
-Cache configuration SHALL bound each shared tier by positive standard LRU entry
+Cache configuration SHALL bound each shared tier by positive standard-cache entry
 count, and each completed miss MAY make one local atomic absent-key insertion.
-Atom contention may retry the pure library state transformation but MUST NOT
-rerun application computation or validation.
+Cache contention MUST NOT rerun application computation or validation.
 The cache contract SHALL NOT claim to bound retained bytes, application
 callback concurrency, semantic work, or service admission. Artifact-specific
 semantic bounds and the 1,000-result completed-page retention guard remain
-separate from LRU capacity. Any optional service-edge overload policy is a
+separate from cache capacity. Any optional service-edge overload policy is a
 separate routed-execution control and MUST NOT become cache state or change
 cache-hit eligibility.
 
 #### Scenario: Cache capacity is saturated
 
 - **WHEN** a valid computed value is offered to a full cache tier
-- **THEN** standard LRU insertion may evict the least recently used resident mapping
+- **THEN** the runtime cache policy may evict a cold resident mapping
 - **AND** the request returns its own value without shared wait
 
 #### Scenario: Optional service admission is saturated

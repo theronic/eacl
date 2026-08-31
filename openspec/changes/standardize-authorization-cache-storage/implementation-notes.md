@@ -3,18 +3,27 @@
 EACL now treats shared cache storage as ordinary bounded keyed retention.
 Authorization meaning lives in complete composite keys and validated immutable
 values; the cache decides only whether a reusable value is currently retained.
-The production policy is LRU on both runtimes.
+The JVM uses Caffeine 3.2.4's W-TinyLFU frequency/recency policy, and CLJS uses
+the theronic `cljs-cache` LRU.
 
 The previous weighted stores, generation registries, repeat-admission windows,
-touch queues, tombstones, compaction paths, separately retained externalized
-pages, and provider-owned cache backends have been removed. Completed pages
+touch queues, tombstones, compaction paths, the externalized route/boundary/
+alias navigation state machine, and provider-owned cache backends have been
+removed. One exact-basis complete transport-page value now avoids repeated
+identity conversion, dependency-context construction, cursor decode, and token
+construction for lookup-resource, lookup-subject, and relationship-read pages
+by retaining the complete authenticated transport page for the default
+non-expiring cursor policy. Canonical public exact keys also let point, count,
+and permission-tree hits avoid backend ID internalization on deterministic
+immutable/injective identity adapters. Completed pages
 containing more than 1,000 results are returned normally but are not retained.
 Scalar, count, Boolean, tree, and other bounded results are unaffected by that
 page-only rule.
 
 ## Selected libraries
 
-- JVM: `org.clojure/core.cache` through EACL's private CLJC adapter.
+- JVM: Caffeine 3.2.4 manual `Cache` with `maximumSize` through EACL's private
+  adapter.
 - CLJS/DataScript demos: `theronic/cljs-cache` at Git SHA
   `4143cc036446a47f0c6dfd9f8dde90363835051c`.
 - Datahike excludes its upstream `com.github.pkpkpk/cljs-cache` dependency so
@@ -27,13 +36,15 @@ product testing.
 
 ## Runtime design
 
-The standard adapter exposes only empty LRU construction, membership, lookup,
-touch, insertion, eviction, enumeration, and replacement. A successful read
-touches the local cache atom so frequently used entries survive cold-key churn.
-All atom retry functions are pure library-state transforms: validation,
-computation, cancellation, deadline handling, proof checks, and cursor
-externalization occur outside them. Misses remain independently owned by each
-request; there is no loader, promise, or single-flight owner.
+The standard adapter exposes only construction, membership-aware lookup, quiet
+peek, absent insertion, eviction, enumeration, clearing, and conditional
+replacement. Stored values are boxed so `nil` and `false` remain distinct from
+absence. Caffeine ordinary reads are nonblocking and record policy use; its
+buffered maintenance may take an internal eviction lock and `maximumSize` is an
+eventual concurrent bound. CLJS records strict LRU use. Validation,
+computation, cancellation, deadline handling, proof checks, rendering, and
+cursor transport occur outside cache callbacks. Misses remain independently
+owned by each request; there is no loader, promise, or single-flight owner.
 
 Exact denotations and exact/managed completed answers use flat v2 composite
 keys. Exact keys contain the selected immutable basis. Managed keys contain
@@ -42,19 +53,60 @@ Exact lookup is ordinary membership; managed reuse adds the forward causal
 check. Validated completed publication and validated off-side restore are the
 only supported entry-installing transitions.
 
+For `can?`, both counts, and permission-tree expansion, the exact semantic
+probe uses a canonical public key before backend identity lookup only when the
+adapter is deterministic, promises immutable/injective external identity, and
+the public IDs satisfy the bounded canonical scalar/vector contract. Other
+cases keep the internal semantic path; tree caching is disabled when no safe
+public key exists. Request query maps/vectors/sets are recursively copied into
+ordinary persistent containers so retained keys do not own caller comparators
+or collection implementations.
+
+The exact transport-page store handles lookup-resource, lookup-subject, and
+relationship-read pages. It is keyed by the complete exact basis, complete raw
+request including the exact cursor token, full authenticated consistency
+descriptor including any exact token or freshness floor, operation,
+cursor-key policy, and render ABI. It retains the complete immutable public
+page only after successful authentication, evaluation, and operation-typed
+validation: lookup items are EACL `SpiceObject` values and relationship-read
+items are EACL `Relationship` values composed from valid SpiceObjects. Custom
+records fail closed. A hit returns before cursor decode, identity or proof
+work, row rendering, and token construction. Cursor TTL disables this tier;
+transport values never cross exact bases or enter portable snapshots. An
+authenticated input token carrying expiry also suppresses publication under a
+non-TTL receiver. Cursor object IDs must be bounded canonical scalars or plain
+vectors: metadata, records, non-vector sequentials, alternate integer
+representations, every map/set ID, and signed zero fail closed before they can
+alias a scope or cache key. Oversized or foreign raw boundaries bypass the
+transport lookup before key construction and continue to bounded decoding.
+
+Successful validated absent-key insertion is cache-publication's linearization
+point. Cancellation or deadline observed before insertion skips publication;
+a late signal may suppress the current response but does not retract an
+already validated immutable value.
+
 Lifecycle clear, expiry, and restore install fresh store instances. Work may
 publish only into the instance it captured, so late work cannot become visible
 after rotation. Narrow answer-cache clear preserves source proof health while
 full rotation replaces every non-exported child. Snapshot restore validates a
 complete candidate off-side and installs it atomically.
+Portable export contains only validated semantic answer/denotation mappings;
+it excludes exact rendered pages and both runtimes' private admission,
+frequency, recency, maintenance, and eviction metadata.
 
 Continuation, cursor context, derived-schema, and bounded stable-page
-checkpoint retention use the same standard LRU boundary. Checkpoint admission,
+checkpoint retention use the same standard-cache boundary. Checkpoint admission,
 latest-progress rules, cursor authentication/expiry, request-local evaluator
 memos, worklists, and authoritative backend state remain outside cache policy.
 The raw Datomic compatibility facade no longer exposes a caller-owned schema
 cache: raw calls receive fresh request-local memos, while managed clients are
-the sole owners of cross-request derived-schema LRU retention.
+the sole owners of cross-request derived-schema retention.
+
+Retained EACL Snapshots assert consistency per read. The read's authenticated
+descriptor and exact/floor token refine the retained cursor/cache selection,
+while the Snapshot creation selection continues to supply backend facts. Thus
+two policies that reach the same basis do not accidentally share consistency
+authority.
 
 ## Correctness model
 
@@ -67,7 +119,7 @@ reuse, page-retention eligibility, and lifecycle detachment.
 The consolidated temporal model covers lookup, publication, eviction, expiry,
 store-instance replacement, partial publication, managed-proof bypass, and
 orphaned lifecycle publication. Bounded negative controls are retained for
-these cache behaviors. LRU internals, dependency coordinates, artifact
+these cache behaviors. Eviction-policy internals, dependency coordinates, artifact
 digests, generated byte counts, and global exhaustive state exploration are
 not authorization claims.
 
@@ -79,43 +131,33 @@ partial-publication, orphan-publication, fail-open, store-instance reuse,
 managed-proof bypass, and managed-publication proof-drift mutants all produced
 the expected counterexamples.
 
-Portable CLJ/CLJS traces cover absence, nil/false values, hot-key churn,
-existing-key updates, capacity, restore order, iteration, safe recency ticks,
-and contention. Cross-backend differential tests compare cache-enabled and
+Portable CLJ/CLJS tests cover absence, nil/false values, hot-key churn,
+existing-key updates, capacity, restore, iteration, CLJS safe recency ticks,
+and contention without requiring identical eviction victims. Cross-backend differential tests compare cache-enabled and
 `:cache? false` point, page, count, recursive, exact, and managed results,
 including ordering, cursors, typed errors, selected snapshots, cancellation,
 and mandatory work limits.
 
 ## Product evidence
 
-The final focused cache and authorization benchmark command is:
+The final gate covers point decisions, both counts, permission trees, and
+first/continued/reverse 64-item lookup and relationship-read pages. Two fresh
+isolated 501-sample runs completed all 5,010 fully realized hits below 1 ms;
+operation p50s were 0.040--0.149 ms and the two run maxima were 0.530 and
+0.708 ms. Runs deliberately mixed with other CPU-heavy suites exposed rare
+4--8 ms wall-clock pauses while the measured thread consumed about 0.06 ms of
+CPU. Those are JVM safepoint/GC or scheduler pauses, not cache lookup work, and
+cannot be converted into a deterministic wall-clock guarantee on a preemptive
+JVM. The uncontended Core target is met without weakening the absolute gate.
 
-```text
-clojure -X:test :nses '[eacl.bench.cross-backend-workload-test eacl.bench.managed-proof-cost-test eacl.bench.pagination-test eacl.bench.recursive-performance-gate-test eacl.bench.explorer-enumeration-test eacl.bench.subproblem-cache-test eacl.cache.standard-lru-test eacl.engine.continuation-reuse-test]'
-```
-
-It passes 55 tests and 1,015 assertions. The current cache-path measurements
-are:
-
-- hot completed-answer hit / cached bypass: `0.4532` (ceiling `1.05`);
-- `:cache? false` / disabled client: `1.0039` (ceiling `1.05`);
-- 4,096-entry / 64-entry hit maintenance: `1.3214` for 64x more retained
-  entries (ceiling `4.0`).
-
-Cross-backend checksums match for cache-enabled and cache-free Datomic,
-Datahike, and DataScript workloads. Managed proof sizes, unrelated writer
-contention, continuation oscillation, LRU contention, checkpoint admission,
-recursive work, and Explorer enumeration gates are green. Host-qualified
-wall-clock Explorer baselines correctly remain non-applicable on a different
-host/JDK; deterministic results and work bounds still run.
-
-The complete DataScript CLJS suite is green under both normal and advanced
-optimization: each mode passes 521 tests and 13,065 assertions. The ordinary
-JVM suite and focused build/formal regression namespaces run through the
-unfiltered `:test` alias; no namespace is hidden by a product-only regex. Exact
-final commands and results are recorded with the published EACL testing branch.
-The frozen-tree unfiltered JVM run passes 1,126 tests and 41,219 assertions
-with zero failures or errors.
+Final CI-parity JVM suites passed with zero failures/errors: core 367 tests /
+6,136 assertions, Datomic 667 / 20,748, DataScript 671 / 16,115, and Datahike
+442 / 10,695. The normal and advanced/elided-assert CLJS runs each passed 557
+tests / 13,701 assertions. Three repeated concurrent hot-retention runs, all
+four module JAR builds, the aggregate release build, the reflection gate, and
+strict validation of both active cache changes also passed. The final
+prepared-runtime-options simplification reduced a retained count hit from
+about 88.1 KB to 76.2 KB allocated and from about 37.4 to 32.7 microseconds.
 
 ## Tester commands
 
@@ -123,9 +165,9 @@ with zero failures or errors.
 clojure -X:test
 clojure -M:datascript-cljs-test
 node target/datascript-cljs-test.js
-clojure -M:cljs-test -m cljs.main -t node -O advanced -o target/datascript-cljs-test-advanced.js -c eacl.datascript.cljs-test-runner
-node target/datascript-cljs-test-advanced.js
-bin/formal source-closure
+clojure -M:test -n eacl.bench.public-cache-hit-acceptance-test
+bin/reflection-gate target/reflection-gate.log
+clojure -T:build-eacl jar
 ```
 
 Run the focused benchmark command in the Product evidence section separately

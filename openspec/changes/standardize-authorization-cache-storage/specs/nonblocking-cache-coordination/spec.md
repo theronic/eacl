@@ -9,7 +9,7 @@ construction and explicit map membership; after its managed key is constructed,
 managed storage lookup additionally performs one finite causal-revision
 comparison.
 Artifact, operation, and ABI validation SHALL occur on supported publication
-or restore ingress, not repeatedly on exact hits. The LRU storage and its atomic
+or restore ingress, not repeatedly on exact hits. Cache storage and its local
 transitions MUST have zero authority to issue backend commands. Request-scoped
 managed-key construction MAY acquire one bounded certified proof frame over
 already discovered canonical relation dependencies; it MUST NOT discover new
@@ -17,12 +17,13 @@ dependencies or scan relationship projections solely for reuse. A candidate
 requiring such additional discovery or scanning SHALL be a miss. Every
 completed publication MUST receive an explicit callable validator and MAY
 invoke one local atomic absent-key update. No publication entry point may
-silently substitute an accept-all validator. The atom
-primitive MAY retry a pure standard-cache hit or miss transformation under
-contention, but MUST NOT invoke semantic computation, validation, I/O, a
-request callback, or another request's result.
+silently substitute an accept-all validator. A runtime cache operation under
+contention MUST NOT invoke semantic computation, validation, I/O, a request
+callback, or another request's result. JVM `getIfPresent` reads SHALL be
+nonblocking; the contract does not classify Caffeine's buffered maintenance or
+eviction as wholly lock-free.
 
-LRU capacities SHALL be validated positive integer entry counts at client
+Cache capacities SHALL be validated positive integer entry counts at client
 construction. Caller-supplied cache providers SHALL be rejected. There SHALL
 be no public weight, recency, repeat-admission, publication-attempt, remote
 candidate, decompression, or loader configuration. No cache setting may enlarge
@@ -49,9 +50,9 @@ semantic demand or the request deadline.
 
 - **WHEN** an exact answer misses and the request already has a complete bounded canonical relation-dependency set
 - **THEN** managed-key construction may issue one certified proof-frame command over that set
-- **AND** LRU membership, causal eligibility, recency, and publication remain local and I/O-free
+- **AND** cache membership, causal eligibility, access-policy recording, and publication remain local and I/O-free
 
-#### Scenario: Invalid LRU capacity
+#### Scenario: Invalid cache capacity
 
 - **WHEN** an enabled shared tier is configured with a non-positive, fractional, non-finite, or cross-runtime-unsafe integer capacity
 - **THEN** client construction rejects the configuration before serving requests
@@ -60,37 +61,40 @@ semantic demand or the request deadline.
 
 - **WHEN** a client supplies removed evaluation-reserve, publication-attempt, weight, recency, or repeat-admission fields
 - **THEN** construction rejects the unsupported fields instead of carrying two cache-policy models
-- **AND** positive LRU capacities remain the only cache-attempt configuration
+- **AND** positive entry capacities remain the only cache-attempt configuration
 
 #### Scenario: Publication state changed
 
-- **WHEN** publishing an already computed artifact observes that the captured tier state is no longer current
-- **THEN** only the pure absent-key LRU transformation may be retried against current state
+- **WHEN** publishing an already computed artifact observes a concurrent mapping change
+- **THEN** only the library's atomic absent-key operation may retry or lose the race
 - **AND** EACL returns the completed public result without rerunning computation
 
 #### Scenario: Publication would exceed the remaining envelope
 
-- **WHEN** cancellation, deadline, lifecycle validity, or the completed-page result-count guard makes an already completed authorization answer, exact denotation, or continuation checkpoint ineligible at publication
+- **WHEN** cancellation or deadline is observed before insertion, or lifecycle validity or the completed-page result-count guard makes an already completed authorization answer, exact denotation, or continuation checkpoint ineligible at publication
 - **THEN** EACL skips publication and returns the completed public result when its request contract permits
 - **AND** request-independent derived-schema and cursor-codec artifacts remain governed by their own closed value, identity, authentication, and expiry contracts
 
 ### Requirement: Publication is bounded and best effort
 
 Cache publication SHALL validate the artifact type, ABI, key agreement,
-page-result eligibility, and captured lifecycle before constructing the next
-LRU value. It MAY then invoke one local atomic absent-key swap whose pure state
-function can be retried by the atom primitive. A same-key winner, validation,
+page-result eligibility, and captured lifecycle before invoking the cache
+operation. It MAY then invoke one local atomic absent-key insertion. A same-key winner, validation,
 capacity configuration, or lifecycle failure SHALL skip or reject insertion
 without changing the authorization result; ordinary capacity pressure MAY
-evict the least recently used mapping.
+make cold mappings eligible for the runtime library's eviction policy.
+The successful validated absent-key insertion SHALL be the publication
+linearization point. A cancellation or deadline signal racing after that point
+MAY still suppress the current response under the request execution contract,
+but SHALL NOT retract the already validated immutable mapping.
 
 A latest-progress continuation MAY instead use a callback-free expected-value
 replacement composed only from standard cache membership, lookup, eviction,
-and miss transformations. Progress comparison SHALL remain outside the atom;
+and conditional replacement. Progress comparison SHALL remain outside cache mutation;
 if the expected mapping changed, the semantic layer may re-read and compare it
 again without rerunning replay or other request computation. Publication peeks
-and failed/stale offers SHALL NOT record LRU use; only actual retrieval and a
-successful insertion or replacement may update recency.
+and failed/stale offers SHALL NOT deliberately record access; only actual
+retrieval and a successful insertion or replacement may update library policy.
 
 #### Scenario: Concurrent publication race
 
@@ -100,9 +104,16 @@ successful insertion or replacement may update recency.
 
 #### Scenario: Publication contention bound
 
-- **WHEN** the cache-tier reference changes during publication
-- **THEN** the atom primitive may retry only its finite pure LRU transform
+- **WHEN** the mapping changes during publication
+- **THEN** the library may retry or fail only its finite local conditional operation
 - **AND** no retry repeats request computation and the already computed authorization result remains held
+
+#### Scenario: Late response cancellation
+
+- **WHEN** publication has linearized and a cancellation or deadline signal is
+  observed before the response is returned
+- **THEN** the request follows its normal cancellation/deadline outcome
+- **AND** the safe immutable mapping remains eligible for later requests
 
 #### Scenario: Oversized artifact
 

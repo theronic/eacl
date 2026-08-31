@@ -14,6 +14,21 @@
    :keyring {:old old-key
              :current current-key}})
 
+(deftest cursor-cache-policy-identity-covers-key-rotation-test
+  (let [identity (cursor/cache-policy-identity options)]
+    (is (= identity (cursor/cache-policy-identity options)))
+    (is (not= identity
+              (cursor/cache-policy-identity
+               (update options :keyring dissoc :old)))
+        "removing a decode key invalidates exact transport entries")
+    (is (not= identity
+              (cursor/cache-policy-identity
+               (assoc options :current-kid :old)))
+        "changing the minting key invalidates exact transport entries")
+    (is (not= identity
+              (cursor/cache-policy-identity
+               (assoc options :cursor-ttl-seconds 10))))))
+
 (def portable-cursor-vector
   "eacl_c5_OmN1cnJlbnQ.AAECAwQFBgcICQoL.QZ_P3mknLrCiPflRU2H_hccCTQDt3aST6krVrhIEy_I4dnWIfbanUmV8cfHj6sDjMhIN8Cd0lHIwkYS96UxCLc_WdfnW2VPzKBMSBiUyisCbhT9UFcFddkxT5ucySUPkLI31YQ68regKJar5aOo90d9lE3m6f7zG_vos_8kHIuEb.sOgle-nVuH1EijEmdIzlDQKGcUjJmxvyjlgYMDrjkUQ")
 
@@ -464,6 +479,54 @@
                  (tamper-compact-authenticator encoded)
                  cached-options))))))))
 
+(deftest private-cursor-codec-cache-does-not-retain-metadata-test
+  (let [request-owned-a (atom :request-a)
+        request-owned-b (atom :request-b)
+        cursor-a
+        {:v 13
+         :scope "metadata-scope"
+         :edge
+         {:kind :stable-edge
+          :result-eid
+          (with-meta [:document 1] {:request-owned request-owned-a})}}
+        cursor-b
+        (assoc-in
+         cursor-a [:edge :result-eid]
+         (with-meta [:document 1] {:request-owned request-owned-b}))
+        codec-cache (cursor/codec-cache {:max-entries 4})
+        cached-options
+        (assoc options
+               :cursor-codec-cache codec-cache
+               :now-seconds 100)
+        nonce (vec (range 12))
+        uncached-token
+        (with-redefs [secure/random-bytes (fn [_] nonce)]
+          (cursor/cursor->token
+           cursor-a (assoc options :now-seconds 100)))
+        cached-token
+        (with-redefs [secure/random-bytes (fn [_] nonce)]
+          (cursor/cursor->token cursor-a cached-options))
+        retained
+        (concat
+         (lru/entries (:token-store codec-cache))
+         (lru/entries (:reverse-token-store codec-cache)))
+        retained-nodes
+        (mapcat #(tree-seq coll? seq %) retained)]
+    (is (= cursor-a cursor-b)
+        "metadata does not participate in Clojure value equality")
+    (is (= uncached-token cached-token)
+        "retention canonicalization does not change token bytes")
+    (is (= cached-token
+           (cursor/cursor->token cursor-b cached-options))
+        "an equal metadata variant reuses the same safe token entry")
+    (is (= cursor-a
+           (cursor/token->cursor cached-token cached-options)))
+    (is (every? #(nil? (meta %)) retained-nodes))
+    (is (not-any? #(or (identical? request-owned-a %)
+                       (identical? request-owned-b %))
+                  retained-nodes)
+        "neither codec store retains request-owned metadata objects")))
+
 (deftest private-cursor-codec-cache-retains-exact-ttl-semantics-test
   (let [value {:v 12
                :scope [:lookup {:subject/id "ttl-user"}]
@@ -512,8 +575,8 @@
              {:v 12 :scope :other}
              (assoc cached-options :now-seconds 110))]
         (is (not= token-1 token-2))
-        ;; max-entries=2 evicts token-1 here. Its eviction must not delete the
-        ;; token-2 reverse lookup for the same cursor.
+        ;; Capacity pressure must not let cleanup of the expired token-1
+        ;; delete token-2's newer reverse lookup for the same cursor.
         (is (string? other-token))
         (is (= token-2
                (cursor/cursor->token
@@ -529,17 +592,21 @@
                    :now-seconds 111)))))))
 
 (deftest private-cursor-construction-context-cache-is-bounded-test
-  (let [codec-cache (cursor/codec-cache {:max-entries 2})
+  (let [codec-cache (cursor/codec-cache {:max-entries 16})
         builds (atom {})
         build
         (fn [key]
           #(do
              (swap! builds update key (fnil inc 0))
              {:built-from key}))]
-    (is (= {:built-from :one}
-           (cursor/memoized-context! codec-cache :one (build :one))))
     (is (= {:built-from :two}
            (cursor/memoized-context! codec-cache :two (build :two))))
+    (doseq [seed (range 14)]
+      (let [key [:seed seed]]
+        (is (= {:built-from key}
+               (cursor/memoized-context! codec-cache key (build key))))))
+    (is (= {:built-from :one}
+           (cursor/memoized-context! codec-cache :one (build :one))))
     (let [token
           (cursor/cursor->token
            {:v 10 :scope :scope :edge {:kind :lookup-eid}}
@@ -548,17 +615,68 @@
       (is (= {:built-from :one}
              (cursor/memoized-context! codec-cache :one (build :one)))
           "token publication preserves construction contexts"))
-    (is (= {:built-from :three}
-           (cursor/memoized-context! codec-cache :three (build :three))))
-    (is (= {:built-from :one}
-           (cursor/memoized-context! codec-cache :one (build :one)))
-        "a frequently used context survives insertion past capacity")
-    (is (= {:built-from :two}
-           (cursor/memoized-context! codec-cache :two (build :two)))
-        "the least recently used context is rebuilt")
+    ;; JVM Window TinyLFU does not promise a particular cold victim. Both it
+    ;; and the CLJS true-LRU adapter must keep a genuinely hot context while
+    ;; one-hit candidates churn through settled bounded storage.
+    (dotimes [candidate 100]
+      (dotimes [_ 10]
+        (cursor/memoized-context! codec-cache :one (build :one)))
+      (let [key [:candidate candidate]]
+        (is (= {:built-from key}
+               (cursor/memoized-context! codec-cache key (build key))))))
     (is (= {:built-from :one}
            (cursor/memoized-context! codec-cache :one (build :one))))
-    (is (= {:one 1 :two 2 :three 1} @builds))))
+    (is (= 1 (get @builds :one))
+        "the hot context is never rebuilt")
+    (is (= 116 (reduce + (vals @builds)))
+        "each distinct cold context is built exactly once")
+    (is (= 16 (lru/entry-count (:context-store codec-cache))))))
+
+(deftest private-cursor-context-cache-does-not-retain-metadata-test
+  (let [codec-cache (cursor/codec-cache {:max-entries 4})
+        request-owned-a (atom :request-a)
+        request-owned-b (atom :request-b)
+        key
+        (fn [request-owned]
+          [:cursor-query-scope
+           {:subject/id
+            (with-meta [:user 1] {:request-owned request-owned})}])
+        context
+        (fn [request-owned]
+          {:scope "metadata-scope"
+           :frame
+           (with-meta [:exact 1] {:request-owned request-owned})})
+        builds (atom 0)
+        first-value
+        (cursor/memoized-context!
+         codec-cache (key request-owned-a)
+         #(do (swap! builds inc) (context request-owned-a)))
+        repeated-value
+        (cursor/memoized-context!
+         codec-cache (key request-owned-b)
+         #(do (swap! builds inc) (context request-owned-b)))
+        retained (lru/entries (:context-store codec-cache))
+        retained-nodes (mapcat #(tree-seq coll? seq %) retained)]
+    (is (= (context request-owned-a) first-value))
+    (is (= first-value repeated-value)
+        "an equal metadata variant reuses the canonical resident context")
+    (is (= 1 @builds))
+    (is (every? #(nil? (meta %)) retained-nodes))
+    (is (not-any? #(or (identical? request-owned-a %)
+                       (identical? request-owned-b %))
+                  retained-nodes)
+        "the context store retains neither query nor value metadata objects")
+    (let [unsupported (atom :unsupported)
+          unsupported-builds (atom 0)
+          build #(do (swap! unsupported-builds inc) unsupported)]
+      (is (identical?
+           unsupported
+           (cursor/memoized-context! codec-cache :unsupported build)))
+      (is (identical?
+           unsupported
+           (cursor/memoized-context! codec-cache :unsupported build)))
+      (is (= 2 @unsupported-builds)
+          "unsupported context artifacts remain fail-open and uncached"))))
 
 (deftest private-cursor-context-cache-retains-nil-and-false-test
   (let [codec-cache (cursor/codec-cache {:max-entries 2})
@@ -593,26 +711,37 @@
         (is (= value (cursor/token->cursor token cached-options)))))
     (is (= 1 @builds))))
 
-(deftest private-cursor-token-cache-is-lru-test
-  (let [codec-cache (cursor/codec-cache {:max-entries 2})
+(deftest private-cursor-token-cache-retains-hot-token-test
+  (let [codec-cache (cursor/codec-cache {:max-entries 16})
         cached-options (assoc options :cursor-codec-cache codec-cache)
         a {:v 10 :scope :a :edge {:kind :lookup-eid :value 1}}
-        b {:v 10 :scope :b :edge {:kind :lookup-eid :value 2}}
-        c {:v 10 :scope :c :edge {:kind :lookup-eid :value 3}}
         work (atom {})]
     (binding [cursor/*codec-work* work]
-      (let [a-token (cursor/cursor->token a cached-options)
-            _ (cursor/cursor->token b cached-options)]
-        (dotimes [_ 100]
-          (is (= a-token (cursor/cursor->token a cached-options))))
-        (is (string? (cursor/cursor->token c cached-options)))
+      (doseq [value (range 2 17)]
+        (is (string?
+             (cursor/cursor->token
+              {:v 10 :scope :seed
+               :edge {:kind :lookup-eid :value value}}
+              cached-options))))
+      (let [a-token (cursor/cursor->token a cached-options)]
+        ;; Interleave genuine use with one-hit candidates. Caffeine combines
+        ;; frequency and recency; the CLJS adapter is true LRU. Neither policy
+        ;; contract exposes a cold-token victim identity.
+        (dotimes [candidate 100]
+          (dotimes [_ 10]
+            (cursor/cursor->token a cached-options))
+          (is (string?
+               (cursor/cursor->token
+                {:v 10 :scope :candidate
+                 :edge {:kind :lookup-eid :value (+ candidate 17)}}
+                cached-options))))
         (is (= a-token (cursor/cursor->token a cached-options))
-            "a hot token survives insertion past capacity")
-        (is (= 3 (:encode-calls @work)))
-        (is (string? (cursor/cursor->token b cached-options)))
-        (is (= 4 (:encode-calls @work))
-            "the least recently used token is reminted")))
-    (is (= 4 (:encode-calls @work)))))
+            "a hot token survives cold churn")
+        (is (= 116 (:encode-calls @work))
+            "only the initial tokens and one-hit candidates are encoded")))
+    (is (= 116 (:encode-calls @work)))
+    (is (= 16 (lru/entry-count (:token-store codec-cache))))
+    (is (= 16 (lru/entry-count (:reverse-token-store codec-cache))))))
 
 (deftest private-cursor-codec-cache-requires-safe-positive-capacity-test
   (is (= 1024 (:max-entries (cursor/codec-cache)))
@@ -643,30 +772,37 @@
     (is (= 1 (:key-context-cache-hits @work))
         "the next distinct cursor reuses key derivation without reusing a token")))
 
-(deftest encrypted-cursor-key-context-cache-is-lru-test
-  (let [third-key (vec (range 64 96))
-        codec-cache (cursor/codec-cache {:max-entries 2})
-        three-key-options
-        {:keyring {:old old-key
-                   :current current-key
-                   :third third-key}
+(deftest encrypted-cursor-key-context-cache-retains-hot-context-test
+  (let [kids (mapv #(keyword (str "key-" %)) (range 17))
+        keyring
+        (into {}
+              (map-indexed
+               (fn [index kid]
+                 [kid (mapv #(mod (+ index %) 256) (range 32))])
+               kids))
+        hot-kid (first kids)
+        codec-cache (cursor/codec-cache {:max-entries 16})
+        key-options
+        {:keyring keyring
          :cursor-codec-cache codec-cache}
         work (atom {})
         encode!
         (fn [kid n]
           (cursor/cursor->token
            {:v 10 :scope kid :edge {:kind :lookup-eid :value n}}
-           (assoc three-key-options :current-kid kid)))]
+           (assoc key-options :current-kid kid)))]
     (binding [cursor/*codec-work* work]
-      (is (string? (encode! :old 1)))
-      (is (string? (encode! :current 2)))
-      (is (string? (encode! :old 3)))
-      (is (string? (encode! :third 4)))
-      (is (string? (encode! :old 5))
-          "a hot key context survives insertion past capacity")
-      (is (string? (encode! :current 6))))
-    (is (= 4 (:key-context-builds @work)))
-    (is (= 2 (:key-context-cache-hits @work)))))
+      (doseq [[index kid] (map-indexed vector (take 15 (rest kids)))]
+        (is (string? (encode! kid index))))
+      (is (string? (encode! hot-kid 15)))
+      (dotimes [index 100]
+        (is (string? (encode! hot-kid (+ index 16)))))
+      (is (string? (encode! (last kids) 116)))
+      (is (string? (encode! hot-kid 117))
+          "a hot key context survives insertion past capacity"))
+    (is (= 17 (:key-context-builds @work)))
+    (is (= 101 (:key-context-cache-hits @work)))
+    (is (= 16 (lru/entry-count (:key-context-store codec-cache))))))
 
 (deftest cursor-construction-cache-does-not-cache-tokens-test
   (let [construction-cache (cursor/codec-cache {:max-entries 4})

@@ -4,18 +4,23 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.cache.standard-lru :as lru]
             [eacl.causal-token :as causal-token]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
+            [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.schema :as schema]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
+            [eacl.proof-frame :as proof-frame]
             [eacl.relay :as relay]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as consistency]
             [eacl.verified-kernel :as verified]))
+
+(defrecord CursorRecordId [value])
 
 (deftest native-speculative-contract-test
   #?(:clj
@@ -627,6 +632,518 @@
         (is (= (count external-ids) (count (distinct external-ids))))
         (is (= eids (mapv #(internalize db %) external-ids)))))))
 
+(deftest immutable-codec-rendered-hit-skips-per-item-identity-and-proof-work-test
+  (let [conn (datascript/create-conn)
+        identity-observations (atom [])
+        internalization-calls (atom 0)
+        client
+        (datascript/make-client
+         conn
+         (custom-codec-options
+          identity-observations
+          {:adapter-fingerprint {:codec :rendered-fast-path :version 1}
+           :adapter-deterministic? true
+           :identity-immutable? true
+           :object-id->lookup-ref
+           (fn [object-id]
+             (swap! internalization-calls inc)
+             [:eacl/id object-id])}))
+        user (eacl/spice-object :user "rendered-user")
+        documents
+        (mapv #(eacl/spice-object :document (str "rendered-document-" %))
+              (range 65))
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 64}
+        backend-work (atom {})
+        cursor-work (atom {})]
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact!
+     conn
+     (into [{:eacl/id (:id user)}]
+           (map (fn [document] {:eacl/id (:id document)}))
+           documents))
+    (eacl/create-relationships!
+     client
+     (mapv #(eacl/->Relationship user :reader %) documents))
+    (binding [backend/*backend-op-stats* backend-work
+              cursor/*codec-work* cursor-work]
+      (let [cold (eacl/lookup-resources client query)]
+        (is (= 64 (count (:data cold))))
+        (is (false? (:cached? cold)))
+        (reset! identity-observations [])
+        (reset! internalization-calls 0)
+        (reset! backend-work {})
+        (reset! cursor-work {})
+        (let [hit (eacl/lookup-resources client query)]
+          (is (= (:data cold) (:data hit)))
+          (is (true? (:cached? hit)))
+          (is (zero? (count @identity-observations))
+              "items and unsigned cursor edges are fully rendered on miss")
+          (is (zero? @internalization-calls)
+              "an exact first-page hit does not internalize its subject")
+          (is (zero? (:proof-frame @backend-work 0))
+              "the complete transport page eliminates proof work on a hit")
+          (is (zero? (:decode-calls @cursor-work 0))))
+        (let [continued
+              (eacl/lookup-resources
+               client
+               (assoc query :after
+                      (get-in cold [:page-info :end-cursor])))
+              continued-query
+              (assoc query :after
+                     (get-in cold [:page-info :end-cursor]))]
+          (is (= 1 (count (:data continued))))
+          (is (= (set documents)
+                 (into (set (:data cold)) (:data continued)))
+              "the retained external edge round-trips into the next page")
+          (reset! identity-observations [])
+          (reset! internalization-calls 0)
+          (reset! backend-work {})
+          (reset! cursor-work {})
+          (let [continued-hit
+                (eacl/lookup-resources client continued-query)]
+            (is (= (:data continued) (:data continued-hit)))
+            (is (true? (:cached? continued-hit)))
+            (is (zero? (count @identity-observations)))
+            (is (zero? @internalization-calls)
+                "the exact raw token is keyed before cursor decode")
+            (is (zero? (:proof-frame @backend-work 0)))
+            (is (zero? (:decode-calls @cursor-work 0))))
+          (let [before-query
+                (-> query
+                    (dissoc :first)
+                    (assoc :last 64
+                           :before
+                           (get-in continued [:page-info :start-cursor])))
+                before-page (eacl/lookup-resources client before-query)]
+            (is (= (:data cold) (:data before-page)))
+            (reset! identity-observations [])
+            (reset! internalization-calls 0)
+            (reset! backend-work {})
+            (reset! cursor-work {})
+            (let [before-hit
+                  (eacl/lookup-resources client before-query)]
+              (is (= (:data before-page) (:data before-hit)))
+              (is (true? (:cached? before-hit)))
+              (is (zero? (count @identity-observations)))
+              (is (zero? @internalization-calls))
+              (is (zero? (:proof-frame @backend-work 0)))
+              (is (zero? (:decode-calls @cursor-work 0))))))))
+    (is (= 3 (:rendered-page-entries
+              (datascript/cache-stats client))))))
+
+(deftest mutable-codec-same-basis-bypasses-rendered-pages-test
+  (let [conn (datascript/create-conn)
+        prefix (atom "first-")
+        identity-calls (atom 0)
+        client
+        (datascript/make-client
+         conn
+         {:security-key "01234567890123456789012345678901"
+          :adapter-fingerprint {:codec :mutable-rendering :version 1}
+          :adapter-deterministic? true
+          :identity-immutable? false
+          :object-id->lookup-ref (fn [object-id] [:eacl/id object-id])
+          :entid->object-id
+          (fn [db eid]
+            (swap! identity-calls inc)
+            (str @prefix (:eacl/id (ds/entity db eid))))})
+        user (eacl/spice-object :user "mutable-rendered-user")
+        document (eacl/spice-object :document "mutable-rendered-document")
+        query {:subject user
+               :permission :view
+               :resource/type :document
+               :first 10}]
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact! conn [{:eacl/id (:id user)}
+                        {:eacl/id (:id document)}])
+    (eacl/create-relationship!
+     client (eacl/->Relationship user :reader document))
+    (is (= ["first-mutable-rendered-document"]
+           (mapv :id (:data (eacl/lookup-resources client query)))))
+    (reset! prefix "second-")
+    (reset! identity-calls 0)
+    (let [same-basis-hit (eacl/lookup-resources client query)]
+      (is (true? (:cached? same-basis-hit))
+          "the safe internal completed answer remains reusable")
+      (is (= ["second-mutable-rendered-document"]
+             (mapv :id (:data same-basis-hit)))
+          "mutable projection code reruns even at an unchanged DB basis")
+      (is (pos? @identity-calls)))
+    (is (= :selected-internal/current-external-injective-v2
+           (get-in client [:runtime :identity-contract])))
+    (is (zero? (:rendered-page-entries
+                (datascript/cache-stats client))))))
+
+(deftest custom-record-identities-are-rejected-before-cursor-type-erasure-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn
+         {:security-key "01234567890123456789012345678901"
+          :adapter-fingerprint {:codec :record-id :version 1}
+          :adapter-deterministic? true
+          :identity-immutable? true
+          :object-id->lookup-ref
+          (fn [object-id]
+            [:eacl/id (if (record? object-id)
+                        (:value object-id)
+                        object-id)])
+          :entid->object-id
+          (fn [db eid]
+            (->CursorRecordId (:eacl/id (ds/entity db eid))))})
+        user (eacl/spice-object :user "record-user")
+        query-user
+        (eacl/spice-object :user (->CursorRecordId (:id user)))
+        document-1 (eacl/spice-object :document "record-document-1")
+        document-2 (eacl/spice-object :document "record-document-2")
+        query {:subject query-user
+               :permission :view
+               :resource/type :document
+               :first 1}]
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact! conn [{:eacl/id (:id user)}
+                        {:eacl/id (:id document-1)}
+                        {:eacl/id (:id document-2)}])
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship user :reader document-1)
+      (eacl/->Relationship user :reader document-2)])
+    (is (true?
+         (eacl/can?
+          client user :view
+          (eacl/spice-object
+           :document (->CursorRecordId (:id document-1)))))
+        "record IDs remain usable for non-cursor operations")
+    (let [error
+          (try
+            (eacl/lookup-resources client query)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) thrown
+              (ex-data thrown)))]
+      (is (= :eacl.pagination/unsupported-cursor-identity (:type error)))
+      (is (= :query (:position error))))
+    (is (zero? (:rendered-page-entries (datascript/cache-stats client))))))
+
+(deftest list-and-vector-custom-identities-cannot-alias-transport-authority-test
+  (let [conn (datascript/create-conn)
+        list-user-id '("same")
+        vector-user-id ["same"]
+        stored-list-user "stored-list-user"
+        stored-vector-user "stored-vector-user"
+        document-list (eacl/spice-object :document "document-list")
+        document-vector (eacl/spice-object :document "document-vector")
+        client
+        (datascript/make-client
+         conn
+         {:security-key "01234567890123456789012345678901"
+          :adapter-fingerprint {:codec :sequential-type :version 1}
+          :adapter-deterministic? true
+          :identity-immutable? true
+          :object-id->lookup-ref
+          (fn [object-id]
+            [:eacl/id
+             (cond
+               (list? object-id) stored-list-user
+               (vector? object-id) stored-vector-user
+               :else object-id)])
+          :entid->object-id
+          (fn [db eid]
+            (:eacl/id (ds/entity db eid)))})
+        list-user (eacl/spice-object :user list-user-id)
+        vector-user (eacl/spice-object :user vector-user-id)
+        query
+        (fn [subject]
+          {:subject subject
+           :permission :view
+           :resource/type :document
+           :first 10})]
+    (is (= list-user-id vector-user-id)
+        "Clojure key equality deliberately equates these identity values")
+    (eacl/write-schema! client custom-codec-cache-schema)
+    (ds/transact! conn [{:eacl/id stored-list-user}
+                        {:eacl/id stored-vector-user}
+                        {:eacl/id (:id document-list)}
+                        {:eacl/id (:id document-vector)}])
+    (eacl/create-relationships!
+     client
+     [(eacl/->Relationship
+       (eacl/spice-object :user stored-list-user) :reader document-list)
+      (eacl/->Relationship
+       (eacl/spice-object :user stored-vector-user) :reader document-vector)])
+    (let [list-error
+          (try
+            (eacl/lookup-resources client (query list-user))
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) thrown
+              (ex-data thrown)))
+          vector-page (eacl/lookup-resources client (query vector-user))
+          vector-hit (eacl/lookup-resources client (query vector-user))]
+      (is (= :eacl.pagination/unsupported-cursor-identity
+             (:type list-error)))
+      (is (= :query (:position list-error)))
+      (is (= [document-vector] (:data vector-page)))
+      (is (= [document-vector] (:data vector-hit)))
+      (is (true? (:cached? vector-hit))))))
+
+(deftest rendered-keys-copy-caller-owned-query-containers-test
+  #?(:clj
+     (let [conn (datascript/create-conn)
+           client
+           (datascript/make-client
+            conn
+            {:security-key "01234567890123456789012345678901"})
+           user (eacl/spice-object :user "plain-key-user")
+           document (eacl/spice-object :document "plain-key-document")
+           request-owned (atom :request)
+           comparator
+           (fn [left right]
+             ;; Deliberately retain request state in the collection policy.
+             @request-owned
+             (compare right left))
+           query
+           (into
+            (sorted-map-by comparator)
+            {:subject user
+             :permission :view
+             :resource/type :document
+             :first 10})]
+       (eacl/write-schema! client custom-codec-cache-schema)
+       (ds/transact! conn [{:eacl/id (:id user)}
+                           {:eacl/id (:id document)}])
+       (eacl/create-relationship! client user :reader document)
+       (is (= [document] (:data (eacl/lookup-resources client query))))
+       (is (true? (:cached? (eacl/lookup-resources client query))))
+       (let [runtime-lifecycle
+             @(get-in client [:runtime :runtime-lifecycle-state])
+             basis-store (:basis-cache-store runtime-lifecycle)
+             rendered-store (:rendered-pages @(:lifecycle basis-store))
+             resident-keys (map first (lru/entries rendered-store))
+             children
+             (fn [value]
+               (cond
+                 (map? value) (concat (keys value) (vals value))
+                 (sequential? value) value
+                 (set? value) value
+                 :else nil))
+             reachable
+             (mapcat
+              #(tree-seq (comp boolean seq children) children %)
+              resident-keys)]
+         (is (seq resident-keys))
+         (is (not-any? #(identical? query %) reachable))
+         (is (not-any? #(instance? clojure.lang.PersistentTreeMap %)
+                       reachable)
+             "the Caffeine key cannot retain the caller's comparator closure")))
+     :cljs
+     (is true)))
+
+(deftest integer-representations-cannot-alias-cursor-authority-test
+  #?(:clj
+     (let [conn (datascript/create-conn)
+           client
+           (datascript/make-client
+            conn
+            {:security-key "01234567890123456789012345678901"
+             :adapter-fingerprint {:codec :integer-class :version 1}
+             :adapter-deterministic? true
+             :identity-immutable? true
+             :object-id->lookup-ref
+             (fn [object-id]
+               [:eacl/id
+                (cond
+                  (instance? clojure.lang.BigInt object-id) "integer-user-big"
+                  (integer? object-id) "integer-user-long"
+                  :else object-id)])
+             :entid->object-id
+             (fn [db eid]
+               (let [stored-id (:eacl/id (ds/entity db eid))]
+                 (case stored-id
+                   "integer-user-big" 1N
+                   "integer-user-long" 1
+                   stored-id)))})
+           stored-long-user (eacl/spice-object :user "integer-user-long")
+           stored-big-user (eacl/spice-object :user "integer-user-big")
+           long-document (eacl/spice-object :document "integer-document-long")
+           big-document (eacl/spice-object :document "integer-document-big")
+           long-user (eacl/spice-object :user 1)
+           big-user (eacl/spice-object :user 1N)
+           query
+           (fn [subject]
+             {:subject subject
+              :permission :view
+              :resource/type :document
+              :first 1})]
+       (is (= (:id long-user) (:id big-user))
+           "Clojure key equality deliberately equates Long and BigInt")
+       (eacl/write-schema! client custom-codec-cache-schema)
+       (ds/transact! conn [{:eacl/id (:id stored-long-user)}
+                           {:eacl/id (:id stored-big-user)}
+                           {:eacl/id (:id long-document)}
+                           {:eacl/id (:id big-document)}])
+       (eacl/create-relationships!
+        client
+        [(eacl/->Relationship stored-long-user :reader long-document)
+         (eacl/->Relationship stored-big-user :reader big-document)])
+       (is (true? (eacl/can? client long-user :view long-document)))
+       (is (false? (eacl/can? client long-user :view big-document)))
+       (is (true? (eacl/can? client big-user :view big-document)))
+       (is (false? (eacl/can? client big-user :view long-document))
+           "non-cursor authorization may still use the custom numeric codec")
+       (let [long-page (eacl/lookup-resources client (query long-user))
+             token (get-in long-page [:page-info :end-cursor])
+             error
+             (try
+               (eacl/lookup-resources
+                client (assoc (query big-user) :after token))
+               nil
+               (catch clojure.lang.ExceptionInfo thrown
+                 (ex-data thrown)))]
+         (is (= [long-document] (:data long-page)))
+         (is (= :eacl.pagination/unsupported-cursor-identity (:type error)))
+         (is (= :query (:position error)))))
+     :cljs
+     (is true)))
+
+(deftest noncanonical-permission-tree-root-identities-do-not-alias-test
+  #?(:clj
+     (let [conn (datascript/create-conn)
+           client
+           (datascript/make-client
+            conn
+            {:security-key "01234567890123456789012345678901"
+             :adapter-fingerprint {:codec :tree-sequential-class :version 1}
+             :adapter-deterministic? true
+             :identity-immutable? true
+             :object-id->lookup-ref
+             (fn [object-id]
+               [:eacl/id
+                (cond
+                  (list? object-id) "tree-document-list"
+                  (vector? object-id) "tree-document-vector"
+                  :else object-id)])
+             :entid->object-id
+             (fn [db eid]
+               (:eacl/id (ds/entity db eid)))})
+           alice (eacl/spice-object :user "tree-alice")
+           stored-vector (eacl/spice-object :document "tree-document-vector")
+           stored-list (eacl/spice-object :document "tree-document-list")
+           tree-subjects
+           (fn [root-id]
+             (get-in
+              (eacl/expand-permission-tree
+               client
+               {:resource (eacl/spice-object :document root-id)
+                :permission :view})
+              [:tree-root :intermediate :children 0 :leaf :subjects]))]
+       (eacl/write-schema! client custom-codec-cache-schema)
+       (ds/transact! conn [{:eacl/id (:id alice)}
+                           {:eacl/id (:id stored-vector)}
+                           {:eacl/id (:id stored-list)}])
+       (eacl/create-relationship!
+        client alice :reader stored-vector)
+       (is (= [alice] (tree-subjects ["same"])))
+       (is (empty? (tree-subjects '("same")))
+           "equal host values distinguished by the codec must not share a completed tree"))
+     :cljs
+     (is true)))
+
+(deftest metadata-sensitive-identities-cannot-alias-page-cursors-test
+  (let [conn (datascript/create-conn)
+        setup (datascript/make-client conn {})
+        stored-user-a (eacl/spice-object :user "metadata-user-a")
+        stored-user-b (eacl/spice-object :user "metadata-user-b")
+        document-a (eacl/spice-object :document "metadata-document-a")
+        document-b (eacl/spice-object :document "metadata-document-b")
+        _ (eacl/write-schema! setup custom-codec-cache-schema)
+        _ (ds/transact! conn [{:eacl/id (:id stored-user-a)}
+                              {:eacl/id (:id stored-user-b)}
+                              {:eacl/id (:id document-a)}
+                              {:eacl/id (:id document-b)}])
+        _ (eacl/create-relationships!
+           setup
+           [(eacl/->Relationship stored-user-a :reader document-a)
+            (eacl/->Relationship stored-user-b :reader document-b)])
+        request-owned-a (atom :request-a)
+        request-owned-b (atom :request-b)
+        external-id
+        (fn [stored-id request-owned]
+          (with-meta [:metadata-sensitive-user]
+            {:stored-id stored-id
+             :request-owned request-owned}))
+        user-a
+        (eacl/spice-object
+         :user (external-id (:id stored-user-a) request-owned-a))
+        user-b
+        (eacl/spice-object
+         :user (external-id (:id stored-user-b) request-owned-b))
+        client
+        (datascript/make-client
+         conn
+         {:security-key "01234567890123456789012345678901"
+          :adapter-fingerprint {:codec :metadata-sensitive :version 1}
+          :adapter-deterministic? true
+          :identity-immutable? true
+          :object-id->lookup-ref
+          (fn [object-id]
+            [:eacl/id (or (:stored-id (meta object-id)) object-id)])
+          :entid->object-id
+          (fn [db eid]
+            (:eacl/id (ds/entity db eid)))})
+        query
+        (fn [subject]
+          {:subject subject
+           :permission :view
+           :resource/type :document
+           :first 10})
+        error-data
+        (fn [f]
+          (try
+            (f)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (ex-data error))))]
+    (is (= (:id user-a) (:id user-b))
+        "Clojure equality deliberately ignores metadata")
+    (is (true? (eacl/can? client user-a :view document-a)))
+    (is (false? (eacl/can? client user-a :view document-b)))
+    (is (true? (eacl/can? client user-b :view document-b)))
+    (is (false? (eacl/can? client user-b :view document-a))
+        "non-cursor operations may still use a request-local metadata codec")
+    (let [legacy-page
+          ;; Simulate a token minted before metadata-free cursor identities
+          ;; became mandatory. Its canonical query scope cannot distinguish
+          ;; these two metadata-sensitive external IDs.
+          (with-redefs [cache/cursor-cache-data? (constantly true)
+                        cache/canonical-cursor-identity? (constantly true)]
+            (eacl/lookup-resources
+             client (assoc (query user-a) :cache? false)))
+          legacy-token (get-in legacy-page [:page-info :end-cursor])
+          cross-query-error
+          (error-data
+           #(eacl/lookup-resources
+             client (assoc (query user-b) :after legacy-token)))]
+      (is (string? legacy-token))
+      (is (= :eacl.pagination/unsupported-cursor-identity
+             (:type cross-query-error)))
+      (is (= :query (:position cross-query-error))
+          "a metadata-equal cursor cannot resume another principal's page"))
+    (doseq [subject [user-a user-b]]
+      (let [data
+            (error-data
+             #(eacl/lookup-resources client (query subject)))]
+        (is (= :eacl.pagination/unsupported-cursor-identity
+               (:type data)))
+        (is (= :query (:position data)))))
+    (is (zero? (:rendered-page-entries
+                (datascript/cache-stats client)))
+        "metadata-bearing public identities are never retained as pages")))
+
 (deftest custom-codec-cursors-require-a-stable-shared-fingerprint-test
   (let [conn (datascript/create-conn)
         setup (datascript/make-client conn {})
@@ -942,8 +1459,7 @@
         conn (datascript/create-conn)
         client (datascript/make-client
                 conn
-                {:cache cache/no-cache
-                 })
+                {:cache cache/no-cache})
         user-ids (mapv #(str "bulk-user-" %) (range relationship-count))
         server-ids (mapv #(str "bulk-server-" %) (range relationship-count))
         object-ids (into user-ids server-ids)]
@@ -999,13 +1515,202 @@
           "continuation must not rebuild a linear relationship proof"))))
 
 (defn- seeded-client
-  []
-  (let [conn   (datascript/create-conn)
-        client (datascript/make-client conn {})]
-    (eacl/write-schema! client contract/smoke-schema)
-    (seed-objects! conn)
-    (eacl/create-relationships! client contract/smoke-relationships)
-    client))
+  ([]
+   (seeded-client {}))
+  ([options]
+   (let [conn   (datascript/create-conn)
+         client (datascript/make-client conn options)]
+     (eacl/write-schema! client contract/smoke-schema)
+     (seed-objects! conn)
+     (eacl/create-relationships! client contract/smoke-relationships)
+     client)))
+
+(deftest expiring-cursors-bypass-complete-transport-page-reuse-test
+  (let [base-client
+        (seeded-client
+         {:security-key "01234567890123456789012345678901"
+          :cursor-ttl-seconds 10})
+        at-time
+        (fn [now]
+          ;; Test-only runtime extension consumed by eacl.cursor/now-seconds.
+          (assoc base-client
+                 :runtime (assoc (:runtime base-client) :now-seconds now)))
+        query {:subject (contract/->user "user-1")
+               :permission :view
+               :resource/type :server
+               :first 1}
+        first-page (eacl/lookup-resources (at-time 100) query)
+        continued-query
+        (assoc query :after (get-in first-page [:page-info :end-cursor]))
+        _ (eacl/lookup-resources (at-time 100) continued-query)
+        hit (eacl/lookup-resources (at-time 100) continued-query)
+        expired
+        (try
+          (eacl/lookup-resources (at-time 110) continued-query)
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo) thrown
+            (ex-data thrown)))]
+    (is (true? (:cached? hit)))
+    (is (= :eacl.pagination/expired-cursor (:type expired))
+        "TTL policy rechecks the authenticated cursor even after a warm hit")
+    (is (= 110 (:expired-at expired)))
+    (is (zero? (:rendered-page-entries
+                (datascript/cache-stats base-client)))
+        "complete transport values are used only for non-expiring cursors")))
+
+(deftest foreign-ttl-cursor-never-becomes-a-no-ttl-transport-hit-test
+  (let [conn (datascript/create-conn)
+        security-key "01234567890123456789012345678901"
+        shared {:security-key security-key
+                :source-lifecycle "cross-policy-cursor-expiry"}
+        setup (datascript/make-client conn shared)
+        _ (eacl/write-schema! setup contract/smoke-schema)
+        _ (seed-objects! conn)
+        _ (eacl/create-relationships! setup contract/smoke-relationships)
+        ttl-base (datascript/make-client
+                  conn (assoc shared :cursor-ttl-seconds 1))
+        current-base (datascript/make-client conn shared)
+        at-time
+        (fn [client now]
+          ;; Test-only runtime extension consumed by eacl.cursor/now-seconds.
+          (assoc client :runtime (assoc (:runtime client)
+                                        :now-seconds now)))
+        query {:subject (contract/->user "user-1")
+               :permission :view
+               :resource/type :server
+               :first 1}
+        ttl-first (eacl/lookup-resources (at-time ttl-base 100) query)
+        token (get-in ttl-first [:page-info :end-cursor])
+        continued-query (assoc query :after token)
+        live-page
+        (eacl/lookup-resources (at-time current-base 100) continued-query)]
+    (is (= 1 (count (:data live-page))))
+    (is (zero? (:rendered-page-entries
+                (datascript/cache-stats current-base)))
+        "authenticated input expiry forbids pre-decode transport publication")
+    (let [error
+          (try
+            (eacl/lookup-resources
+             (at-time current-base 101) continued-query)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) thrown
+              (ex-data thrown)))]
+      (is (= :eacl.pagination/expired-cursor (:type error)))
+      (is (= 101 (:expired-at error))))
+    (is (zero? (:rendered-page-entries
+                (datascript/cache-stats current-base))))))
+
+(deftest transport-page-key-retains-the-authenticated-freshness-floor-test
+  (let [conn (datascript/create-conn)
+        client
+        (datascript/make-client
+         conn {:security-key "01234567890123456789012345678901"})
+        user (eacl/spice-object :user "floor-user")
+        unrelated-user (eacl/spice-object :user "floor-unrelated-user")
+        documents
+        (mapv #(eacl/spice-object :document (str "floor-document-" %))
+              (range 1 4))
+        unrelated-document
+        (eacl/spice-object :document "floor-unrelated-document")]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition document {
+        relation reader: user
+        relation owner: user
+        permission view = reader
+      }")
+    (ds/transact!
+     conn
+     (mapv (fn [object] {:eacl/id (:id object)})
+           (into [user unrelated-user unrelated-document] documents)))
+    (let [lower-floor
+          (:zed/token
+           (eacl/create-relationships!
+            client
+            (mapv #(eacl/->Relationship user :reader %) documents)))
+          first-query
+          {:subject user
+           :permission :view
+           :resource/type :document
+           :first 1
+           :consistency (consistency/at-least-as-fresh lower-floor)}
+          first-page (eacl/lookup-resources client first-query)
+          raw-cursor (get-in first-page [:page-info :end-cursor])
+          higher-floor
+          (:zed/token
+           (eacl/create-relationship!
+            client
+            (eacl/->Relationship
+             unrelated-user :owner unrelated-document)))
+          lower-request (assoc first-query :after raw-cursor :first 2)
+          lower-page (eacl/lookup-resources client lower-request)
+          before-high (datascript/cache-stats client)
+          error
+          (try
+            (eacl/lookup-resources
+             client
+             (assoc lower-request
+                    :consistency
+                    (consistency/at-least-as-fresh higher-floor)))
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) thrown
+              (ex-data thrown)))
+          after-high (datascript/cache-stats client)]
+      (is (= (subvec documents 1 3) (:data lower-page)))
+      (is (= :eacl.consistency/cursor-consistency-conflict (:type error)))
+      (is (= (:rendered-page-hits before-high)
+             (:rendered-page-hits after-high))
+          "a lower-floor page cannot predecode-hit a stricter request"))))
+
+(deftest rendered-lookup-preserves-invalid-boundary-and-size-errors-test
+  (let [client (seeded-client)
+        base {:subject (contract/->user "user-1")
+              :permission :view
+              :resource/type :server}
+        forward (assoc base :first 1)
+        backward (assoc base :last 1)
+        first-page (eacl/lookup-resources client forward)
+        last-page (eacl/lookup-resources client backward)
+        after-query
+        (assoc forward :after (get-in first-page
+                                      [:page-info :end-cursor]))
+        before-query
+        (assoc backward :before (get-in last-page
+                                        [:page-info :start-cursor]))
+        error-data
+        (fn [query]
+          (try
+            (eacl/lookup-resources client query)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (ex-data error))))]
+    ;; Populate every boundary-free and one-boundary key that a present nil
+    ;; could otherwise alias after raw token fields are removed.
+    (doseq [query [forward backward after-query before-query]]
+      (eacl/lookup-resources client query)
+      (is (true? (:cached? (eacl/lookup-resources client query)))))
+
+    (doseq [query [(assoc forward :after nil)
+                   (assoc backward :before nil)]]
+      (is (= :eacl.pagination/invalid-cursor
+             (:type (error-data query)))))
+
+    (doseq [query [(assoc after-query :before nil)
+                   (assoc before-query :after nil)]]
+      (is (contains? #{:eacl.pagination/invalid-cursor
+                       :eacl.pagination/invalid-page-request}
+                     (:type (error-data query)))
+          "a present nil second boundary must not hit a one-boundary page"))
+
+    (doseq [invalid-size ["64" {:value 64}]]
+      (is (= :eacl.pagination/invalid-page-size
+             (:type
+              (error-data (assoc base :first invalid-size))))))))
 
 (deftest cache-disabled-reentrant-evaluation-clears-outer-denotation-context-test
   (let [nested-client (seeded-client)
@@ -1195,9 +1900,9 @@
                   (let [result (apply original args)]
                     (reset! clock 100000000)
                     result))]
-               (thrown-data
-                #(eacl/count-resources
-                  client (assoc count-query :timeout-ms 100)))))]
+                (thrown-data
+                 #(eacl/count-resources
+                   client (assoc count-query :timeout-ms 100)))))]
         (is (= :eacl.execution/deadline-exceeded (:type data)))))
 
     (testing "cancellation after completed-cache acquisition is authoritative"
@@ -1210,27 +1915,28 @@
                 (let [result (apply original args)]
                   (eacl/cancel! token)
                   result))]
-             (thrown-data
-              #(eacl/count-resources
-                client (assoc count-query
-                              :timeout-ms 1000
-                              :cancellation-token token))))]
+              (thrown-data
+               #(eacl/count-resources
+                 client (assoc count-query
+                               :timeout-ms 1000
+                               :cancellation-token token))))]
         (is (= :eacl.execution/cancelled (:type data)))))
 
-    (testing "expiry during externalization prevents response and publication"
+    (testing "expiry after transport-page acquisition prevents a response"
       (eacl/lookup-resources client page-query)
       (let [clock (atom 0)
-            original relay/externalize-page
+            original cache/lookup-rendered-page!
             data
             (binding [execution/*monotonic-nanos* #(deref clock)]
               (with-redefs
-               [relay/externalize-page
+               [cache/lookup-rendered-page!
                 (fn [& args]
-                  (reset! clock 100000000)
-                  (apply original args))]
-               (thrown-data
-                #(eacl/lookup-resources
-                  client (assoc page-query :timeout-ms 100)))))]
+                  (let [result (apply original args)]
+                    (reset! clock 100000000)
+                    result))]
+                (thrown-data
+                 #(eacl/lookup-resources
+                   client (assoc page-query :timeout-ms 100)))))]
         (is (= :eacl.execution/deadline-exceeded (:type data)))))))
 
 (defn- thrown-data
@@ -1240,6 +1946,56 @@
     nil
     (catch #?(:clj Exception :cljs :default) ex
       (ex-data ex))))
+
+(deftest oversized-raw-cursor-bypasses-rendered-cache-key-construction-test
+  (let [client (seeded-client)
+        lookups (atom 0)
+        oversized-token
+        (str cursor/cursor-prefix
+             (apply str (repeat 65536 "x")))
+        original cache/lookup-rendered-page!
+        error
+        (with-redefs
+         [cache/lookup-rendered-page!
+          (fn [& args]
+            (swap! lookups inc)
+            (apply original args))]
+          (thrown-data
+           #(eacl/lookup-resources
+             client
+             {:subject (contract/->user "user-1")
+              :permission :view
+              :resource/type :server
+              :first 1
+              :after oversized-token})))]
+    (is (= :eacl.pagination/invalid-cursor (:type error)))
+    (is (= :malformed-token (:reason error)))
+    (is (zero? @lookups)
+        "oversized unauthenticated input never reaches the transport cache")))
+
+(deftest oversized-object-identities-bypass-rendered-cache-key-construction-test
+  (let [client (seeded-client)
+        lookups (atom 0)
+        deep-id (nth (iterate vector "user-1") 40)
+        wide-id (vec (range 1100))
+        original cache/lookup-rendered-page!]
+    (with-redefs
+     [cache/lookup-rendered-page!
+      (fn [& args]
+        (swap! lookups inc)
+        (apply original args))]
+      (doseq [object-id [deep-id wide-id]]
+        (let [page
+              (eacl/lookup-resources
+               client
+               {:subject (eacl/spice-object :user object-id)
+                :permission :view
+                :resource/type :server
+                :first 1})]
+          (is (empty? (:data page)))
+          (is (false? (:cached? page))))))
+    (is (zero? @lookups)
+        "oversized IDs are rejected before hashing a rendered cache key")))
 
 (deftest expression-admission-limits-are-client-local-test
   (let [schema-source

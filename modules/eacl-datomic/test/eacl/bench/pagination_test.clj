@@ -315,7 +315,7 @@
               #'cursor/cursor->token]
              [:boundary-entity
               #'d/entity]
-             [:boundary-render
+             [:page-render
               #'relay/externalize-page]]
             continuation-breakdown
             (into {}
@@ -346,21 +346,16 @@
         (println "Recursive completed-answer breakdown:"
                  completed-answer-breakdown)
         (is (every? (comp pos? :calls val) continuation-breakdown))
-        (is (pos? (get-in completed-answer-breakdown
-                           [:token-decode :calls]))
-            "completed-answer reads still authenticate every incoming cursor")
         (is (every?
              #(zero? (get-in completed-answer-breakdown [% :calls]))
              [:recursive-engine
               :checkpoint-lookup
-              :checkpoint-store])
-            "completed answers bypass traversal and checkpoint I/O")
-        (is (pos? (get-in completed-answer-breakdown
-                           [:boundary-render :calls]))
-            "internal answers are externalized for every public response")
-        (is (pos? (get-in completed-answer-breakdown
-                           [:token-encrypt :calls]))
-            "fresh opaque boundary tokens are minted during externalization")))))
+              :checkpoint-store
+              :token-decode
+              :token-encrypt
+              :boundary-entity
+              :page-render])
+            "exact transport hits bypass traversal, cursor, identity, and rendering work")))))
 (def ^:private cache-proof-benchmark-schema
   "definition user {}
    definition account {

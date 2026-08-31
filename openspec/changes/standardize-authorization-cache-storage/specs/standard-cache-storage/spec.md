@@ -8,40 +8,51 @@ authorization semantics.
 
 ## ADDED Requirements
 
-### Requirement: Shared cache storage is a count-bounded LRU partial map
+### Requirement: Shared cache storage is a count-bounded adaptive partial map
 
 Every enabled shared cache tier MUST be a finite partial map with a validated
 positive cross-runtime safe-integer entry capacity. Every factory call MUST use
 an empty seed; restore MUST insert validated entries sequentially rather than
 depending on nonempty-seed trimming or tied seed priorities. A successful
-resident lookup MUST atomically apply explicit membership, value capture, and the
-standard cache library's LRU hit transition to the local cache atom, and
-inserting an absent key into a full tier MUST evict the least recently used
-resident entry. The immutable value returned by a successful lookup MUST remain
-usable by that reader even if a later transition evicts its mapping. Disabling
-caching MUST bypass the store rather than constructing a zero-capacity policy
-object.
+resident lookup MUST capture explicit membership and value in one boxed read and notify
+the runtime cache library's frequency/recency policy. Inserting an absent key
+beyond configured capacity MUST make cold entries eligible for library-managed
+eviction. Caffeine eviction MAY lag concurrent writes, so the configured JVM
+capacity is a settled/eventual bound rather than an instantaneous invariant.
+The immutable value returned by a successful lookup MUST remain usable
+by that reader even if a later transition evicts its mapping. Disabling caching
+MUST bypass the store rather than constructing a zero-capacity policy object.
 
-For the portable key and value domain, Clojure and ClojureScript MUST produce
-the same resident keys and values for the same sequential trace of lookups and
-absent-key insertions. Library-private priority maps, ticks, or recency state
-MUST NOT enter EACL configuration, snapshots, metrics, or formal semantics.
+For the portable key and value domain, Clojure and ClojureScript MUST return the
+same values for the same resident keys; exact eviction victims and final
+resident sets are retention policy, not authorization semantics.
+Library-private frequency, priority, tick, or recency state MUST NOT enter EACL
+configuration, snapshots, metrics, or formal semantics.
+
+The JVM implementation MUST use Caffeine's manual cache with
+`maximumSize`; its Window TinyLFU admission and frequency/recency eviction are
+not strict LRU. The CLJS implementation MUST use the selected theronic
+`cljs-cache` LRU. EACL MUST NOT add FIFO, a second admission window, or its own
+frequency/recency sidecar. Ordinary JVM reads MUST remain nonblocking, but the
+contract MUST NOT claim that Caffeine's buffered maintenance and eviction are
+wholly lock-free.
 
 #### Scenario: A hot entry survives cold churn
 
-- **WHEN** one resident key is read repeatedly while distinct cold keys enter a full LRU tier
-- **THEN** each hit updates the library-managed recency state
-- **AND** a less recently used cold mapping is evicted before the hot key
+- **WHEN** one resident key is read repeatedly while distinct cold keys enter a full cache tier
+- **THEN** each hit updates the library-managed frequency/recency state
+- **AND** cold one-use mappings are preferred for eviction before the hot key
 
-#### Scenario: The runtimes replay one trace
+#### Scenario: The runtimes may choose different cold victims
 
 - **WHEN** Clojure and ClojureScript replay the same portable hit/miss trace at the same capacity
-- **THEN** every lookup outcome and the final resident mapping are equal
+- **THEN** authorization outcomes for resident hits are equal
+- **AND** a difference in an unobserved cold victim is permitted
 
 #### Scenario: Capacity or tick approaches a runtime numeric boundary
 
 - **WHEN** configuration exceeds the portable safe-integer capacity contract or a CLJS LRU tick approaches `Number.MAX_SAFE_INTEGER`
-- **THEN** invalid capacity is rejected and library recency normalization preserves the same hot-key eviction order
+- **THEN** invalid capacity is rejected and library recency normalization preserves hot-key retention
 
 ### Requirement: Cache identity is one opaque composite key
 
@@ -53,9 +64,37 @@ source lifecycle, schema and engine identity, operation semantics, and either
 the complete exact selected-basis identity or complete managed dependency
 proof. Continuation, cursor-codec, and derived-schema domains MUST commit to
 their own complete validation identity without inventing exact/managed fields.
+The rendered-page domain MUST be exact-only and commit to the complete selected
+basis, normalized raw page request including the exact boundary token, full
+authenticated consistency descriptor including any exact token or freshness
+floor, operation, cursor-key policy, rendering/ordering ABI, and adapter
+identity contract. Its complete public lookup or relationship-read transport
+value MUST be published only after authentication and operation-typed
+validation and MUST NOT retain a clock, deadline, cancellation object, adapter,
+source, or request object. Lookup items MUST be EACL `SpiceObject` values;
+relationship-read items MUST be EACL `Relationship` values composed from valid
+SpiceObjects; custom records MUST fail closed. Cursor expiry MUST disable this
+domain. An authenticated input cursor carrying an expiry MUST also suppress
+publication in this domain even when the receiving client's current cursor TTL
+is disabled. Object IDs in the rendered request identity MUST be bounded
+canonical scalars or ordinary vectors. Metadata, records, lists, subvectors,
+map entries, alternate integer representations, every map/set ID, and signed
+zero MUST fail closed instead of aliasing an equal cache key. Ordinary query
+maps, vectors, and sets MUST be recursively copied into plain persistent
+containers before retention. Raw boundary input that cannot be a bounded
+current-format cursor MUST bypass rendered-page lookup before key construction
+and follow the ordinary typed rejection path.
 All answer-affecting inputs MUST appear in the key or in a collision-checked
 canonical identity named by it. Storage MUST NOT implement nested generations,
 proof-aware lookup, aliases, or key matching of its own.
+
+Point, count, and permission-tree operations MAY construct an exact semantic
+key from public objects before backend identity internalization only when the
+adapter is deterministic, its contract promises immutable and injective
+external identity, and each object ID satisfies the bounded canonical
+scalar/vector rule above. Other adapters and ID representations MUST use the
+ordinary internal semantic path; permission-tree completed caching MUST be
+disabled when no safe public key can be formed.
 
 Membership MUST be tested explicitly before reading a value so every valid
 cacheable value is distinguishable from absence. Validated publication and
@@ -71,7 +110,7 @@ ordinary lookup by its complete key without repeating shape, operation, or ABI
 validation. A managed resident hit MUST additionally reject a value whose
 immutable computation revision is later than the request's selected revision.
 Application access to or mutation of private cache records, library values, or
-backing atoms is outside the supported contract.
+backing storage is outside the supported contract.
 
 #### Scenario: Exact bases differ
 
@@ -98,19 +137,32 @@ backing atoms is outside the supported contract.
 
 - **WHEN** supported ingress installed a value under its complete exact key
 - **THEN** later exact hits return it by membership without repeating artifact validation
-- **AND** each hit still applies the standard library's LRU recency transition
+- **AND** each hit still applies the selected library's frequency/recency access
+
+#### Scenario: Canonical public exact value is read repeatedly
+
+- **WHEN** `can?`, either count operation, or permission-tree expansion uses a
+  deterministic immutable/injective identity adapter and bounded canonical
+  public IDs
+- **THEN** exact membership is probed before backend identity internalization
+- **AND** a hit performs zero backend ID lookups
 
 ### Requirement: Authorization miss computation is independent and publication contains no computation
 
 An authorization cache miss MUST leave computation owned by the requesting operation under
 its own snapshot, deadline, cancellation, and limits. Only a completely
 computed, immutable, validated value MAY be offered for retention. Publication
-MAY perform one local atomic absent-key swap. Atom contention MAY retry only
-the pure library cache-state transformation; it MUST NOT rerun validation,
-semantic computation, externalization, or any application callback. If the key
-became resident, the request skips its insertion and returns its own completed
-value. EACL MUST NOT use cache loaders, single-flight promises, delays, locks,
-or wrapped lookup-and-compute APIs.
+MAY perform one local atomic absent-key insertion. A successful insertion MUST
+be the cache-publication linearization point. Cancellation or deadline already
+observed before insertion MUST skip publication; a signal observed after
+insertion MUST NOT require retraction of the validated immutable mapping. Cache
+contention MUST NOT
+rerun validation, semantic computation, externalization, or any application
+callback. If the key became resident, the request skips its insertion and
+returns its own completed value. EACL MUST NOT use cache loaders, single-flight
+promises, delays, explicit EACL locks, or wrapped lookup-and-compute APIs; a
+selected cache library may use private amortized maintenance synchronization
+outside EACL's semantic boundary.
 
 Eviction, a lost publication race, disabled caching, or an unavailable tier
 MUST only change future reuse. None may change the current value, error,
@@ -120,17 +172,25 @@ ordering, selected snapshot, cursor, or semantic work limit.
 
 - **WHEN** two requests miss the same composite key concurrently
 - **THEN** both compute independently and return cache-free-equivalent values
-- **AND** publication runs no request computation inside the atomic state transform
+- **AND** publication runs no request computation inside a cache mutation callback
 
-#### Scenario: Publication observes unrelated atom contention
+#### Scenario: Publication observes unrelated cache contention
 
 - **WHEN** the tier state changes while an already completed value is being inserted
-- **THEN** only the pure absent-key LRU transform may be retried against current state
+- **THEN** only the library's atomic absent-key insertion may be retried
 - **AND** the request computation is not repeated or adopted by another request
+
+#### Scenario: Cancellation races successful publication
+
+- **WHEN** a validated immutable value is inserted and cancellation or deadline
+  is observed before the request response completes
+- **THEN** the request follows its execution contract, including suppressing a
+  response when required
+- **AND** the already linearized safe cache mapping is not retracted
 
 ### Requirement: Lifecycle replacement makes late publication unreachable
 
-Each client cache lifecycle MUST own fresh cache-tier atoms. Expiry, restore,
+Each client cache lifecycle MUST own fresh cache-tier instances. Expiry, restore,
 or source-incarnation replacement MUST atomically replace the outer lifecycle
 reference rather than clearing or mutating old tiers in place. An in-flight
 request MAY continue to use an immutable value or tier reference captured from

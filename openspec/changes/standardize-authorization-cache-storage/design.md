@@ -27,9 +27,10 @@ excluded.
 
 - Make one tiny storage adapter the only implementation of shared in-process
   bounded keyed retention.
-- Keep cached values immutable while allowing the standard LRU hit transition
-  to update only the local cache atom; keep computation, cancellation,
-  deadlines, proof validation, and externalization outside atomic transforms.
+- Keep cached values immutable while allowing each runtime library to update
+  only private retention metadata on a hit; keep computation, cancellation,
+  deadlines, proof validation, rendering, and cursor transport outside cache
+  mutation callbacks.
 - Preserve exact and managed reuse, historical exact reuse, cache-free
   equivalence, lifecycle isolation, continuation replay, and atomic restore.
 - Remove policy-specific formal state while retaining proofs over every
@@ -43,10 +44,11 @@ excluded.
 
 - A public 1,000-item page-size limit. This change only declines completed-page
   retention above that result count; the current public maximum remains 10,000.
-- A byte-, heap-, TTL-, LFU-, ARC-, or adaptive eviction policy beyond LRU.
+- A byte-, heap-, or TTL-based capacity policy. JVM admission and eviction use
+  Caffeine's W-TinyLFU policy; this change does not expose policy selection.
 - Remote, externally writable, distributed, or consumer-supplied cache stores.
-- Application access to or mutation of private runtime records, LRU values, or
-  their backing atoms. Supported installation paths are validated publication
+- Application access to or mutation of private runtime records, cache values, or
+  their backing stores. Supported installation paths are validated publication
   and atomic validated restore only.
 - Single-flight computation, cache-owned concurrency, or service admission.
 - Backend storage caches such as Datahike node caches, request-local evaluator
@@ -80,9 +82,10 @@ eviction cannot affect that request.
 This is the correct abstraction because retention only controls future work.
 Proofs cover key separation, value completeness/validity, hit equivalence,
 managed causal eligibility, cache bypass, and lifecycle detachment. They do not
-cover LRU priority order, priority-map representation, or atom retry
-interleavings. The host adapter tests capacity, hot-key behavior, and the
-cross-runtime LRU trace.
+cover eviction priority, library-private policy representation, or concurrent
+maintenance interleavings. Host adapter tests cover capacity, hot-key behavior,
+value identity, and the common storage contract without requiring identical
+eviction victims across runtimes.
 
 Every uncached evaluation installs an explicit empty authorization-cache
 context (`store=nil`, `key-constructor=nil`, `populate?=false`) before invoking
@@ -96,51 +99,50 @@ Alternatives considered:
 
 - Keep generated admission/lookup actions: rejected because those actions
   encode retention mechanics as if they authorize a result.
-- Prove LRU itself: rejected because replacing LRU with arbitrary eviction may
-  change hit rate but cannot change authorization semantics.
+- Prove eviction policy itself: rejected because replacing one bounded policy
+  with arbitrary eviction may change hit rate but cannot change authorization
+  semantics.
 - Leave formal cache models untouched: rejected because they would continue
   certifying deleted generation and weight machinery rather than production.
 
-### 2. Use standard LRU, without an EACL recency sidecar or cache loader
+### 2. Use standard runtime caches without an EACL policy sidecar or loader
 
-CLJ uses `org.clojure/core.cache` and CLJS uses
-`com.github.theronic/cljs-cache`. Both are invoked through their unwrapped LRU
-protocol surface:
+CLJ uses Caffeine 3.2.4's manual `Cache` with `maximumSize`. Ordinary reads use
+`getIfPresent`; quiet peeks use `policy().getIfPresentQuietly`; publication and
+conditional replacement use the concurrent map view. Every stored payload is
+boxed so absence remains distinct from valid `nil` and `false` values. EACL
+does not enable loading, `computeIfAbsent`, single-flight, `recordStats`, or a
+custom executor.
 
-- `lru-cache-factory` constructs an empty positive-capacity value;
-- `has?` distinguishes absence from any valid value;
-- `lookup` obtains the immutable resident value, including through a
-  callback-free publication peek that does not apply a hit;
-- `hit` constructs the next value with library-managed recency;
-- `miss` constructs the next immutable cache value only for an absent key; and
-- `evict` removes a mapping when lifecycle or request-dependent validation
-  requires it.
+CLJS uses the pinned `com.github.theronic/cljs-cache` LRU fork behind the same
+small EACL adapter. It distinguishes membership from valid values, records an
+LRU hit, publishes only absent keys, supports conditional replacement and
+eviction, and exposes portable entry enumeration. Caffeine's weakly consistent
+map view and CLJS sequence order are not semantic ordering contracts.
 
-EACL validates capacity as a positive cross-runtime safe integer, always calls
-the factory with an empty base map, and restores entries sequentially. It never
-depends on library behavior for fractional/infinite thresholds, over-capacity
-seeds, or tied seed priorities. Composite keys use ordinary persistent
-hash/equality values and no custom comparator. Snapshot enumeration uses the
-portable sequence contract rather than assuming a JavaScript iterator.
+EACL validates capacity as a positive cross-runtime safe integer. Composite
+keys use ordinary persistent hash/equality values and no custom comparator.
+Restore inserts validated mappings sequentially; it never depends on seed
+trimming, a particular cold victim, or library-private priority state.
 
-LRU is selected so frequently reused denotations, answers, and continuations
-survive cold-key churn. Its hit mutation is acceptable because it
-changes retention metadata only; the reader's held immutable value and semantic
-eligibility do not depend on whether the touch succeeds. LFU/ARC add more policy
-state, TTL alone does not bound entry count, and FIFO discards a 100-times-used
-entry merely because it arrived first. `lookup-or-miss`, promises, delays, and
-loaders are prohibited because they own or join callback execution. The small
-adapter uses only the library protocol; it does not use the wrapped
-lookup-and-compute surface.
+Caffeine uses Window TinyLFU admission and frequency/recency eviction, while
+CLJS uses LRU. Both retain repeatedly used keys ahead of FIFO-style arrival
+order under representative churn, but exact victims may differ. Caffeine
+`maximumSize` is an eventual bound during concurrent maintenance. Ordinary
+Caffeine reads are nonblocking, while buffered policy maintenance may acquire
+an internal eviction lock; the design therefore does not claim that the whole
+cache is lock-free. Those details affect hit rate and transient occupancy only,
+not authorization semantics.
 
-Exact-denotation, completed-answer, continuation, cursor-codec, and
-derived-schema stores remain separate LRU instances where their lifetimes and
-workloads are already separate. They share one adapter and no EACL recency
-implementation. Exact and managed completed answers share one LRU and differ
-only by key; denotations are exact-only. On the JVM, an LRU-held cursor key
-context may own a fixed-capacity nonblocking pool of eight initialized JCA
-`Mac` objects. That is an object pool rather than keyed result retention:
-excess concurrent borrowers are transient and a full pool discards returns.
+Exact-denotation, completed-answer, exact rendered-page, continuation,
+cursor-codec, and derived-schema stores remain separate cache instances where
+their lifetimes and workloads are separate. They share one adapter and no EACL
+frequency/recency implementation. Exact and managed completed answers share
+one store and differ only by key; denotations and rendered pages are exact-only.
+On the JVM, a cached cursor key context may own a fixed-capacity nonblocking
+pool of eight initialized JCA `Mac` objects. That is an object pool rather than
+keyed result retention: excess concurrent borrowers are transient and a full
+pool discards returns.
 
 Physical operator chunks, direct Boolean leaves, the unused engine direct-match
 wrapper, and Relay identity conversions are not retained. Cross-backend paired
@@ -152,8 +154,10 @@ request-local memoization and engine work bounds remain unchanged.
 
 ### 3. Select dependencies and prevent duplicate CLJS namespaces
 
-The JVM implementation is added explicitly to the root, isolated `eacl`, and
-published build bases.
+Caffeine 3.2.4 is added explicitly to the root and isolated `eacl` dependency
+bases and to published module metadata. Its Java 11 minimum becomes the
+complete JVM module's minimum; Java 17 remains EACL's supported production
+runtime floor.
 
 Source builds pin the tested fork commit:
 
@@ -174,8 +178,8 @@ change.
 
 Alternative: retain the upstream CLJS artifact. Rejected because Datahike pins
 an older unmaintained release, while the fork has current dependency metadata,
-optimized-test coverage, and a place to repair any LRU parity defect found by
-EACL's trace suite.
+optimized-test coverage, and a place to repair CLJS LRU defects found by
+EACL's adapter suite.
 
 ### 4. Put exact/managed eligibility in complete composite keys
 
@@ -213,7 +217,7 @@ candidate computed after the request's selected revision. Exact lookup remains
 first. After an exact miss, managed-key construction may issue one bounded
 certified proof-frame command over the canonical dependency set already
 discovered by ordinary planning; it cannot initiate dependency discovery or a
-relationship-projection scan solely for reuse. The LRU storage path remains
+relationship-projection scan solely for reuse. The cache storage path remains
 local and I/O-free.
 
 Keys use full canonical equality, not a compact digest alone. A digest may be
@@ -229,26 +233,22 @@ Alternative: keep exact and managed generation maps above a standard cache.
 Rejected because the generation map is itself another eviction/cache backend,
 multiplies capacities, and is unnecessary once basis/proof is key material.
 
-### 5. Keep LRU atom updates pure and keep computation outside them
+### 5. Keep computation outside cache operations
 
-Each tier is an atom containing one immutable library cache. The algorithm is:
+Each tier is one library-backed store in the captured lifecycle. The algorithm
+is:
 
 ```text
 lookup:
-  exact: atomically update tier with a pure function that:
-    if not has?(current, key): record explicit absence and return current
-    else record lookup(current, key) as the held value and return hit(current, key)
-  managed: peek without a hit, compare the held computation revision with the
-    request's selected revision, and miss without touching if it is from the future;
-    on acceptance, apply a callback-free identity-conditional hit and retry the
-    peek if eviction or replacement raced it
+  exact: get the boxed resident value and record ordinary library access
+  managed: peek without recording access, compare the held computation revision
+    with the request's selected revision, and reject a value from the future;
+    on acceptance, use a callback-free identity-conditional access update
   return the accepted held value directly
 
 publish completed value:
   validate the complete key, artifact shape/ABI, operation value, and page guard
-  atomically update tier with:
-    if has?(current, key): current
-    else miss(current, key, completed-value)
+  perform one atomic absent-key insertion of the boxed completed value
 ```
 
 Key construction, page-result eligibility, publication-value validation, and
@@ -256,18 +256,15 @@ semantic computation happen before publication mutation. Restore performs the
 same complete key/value validation off-side before atomic lifecycle install.
 The generic answer/subproblem and derived-artifact publishers require their
 operation validator explicitly, so a caller cannot accidentally create a new
-trusted ingress by omitting it.
-Exact lookup membership, value capture, and `hit` occur in one atomic pure
-transform. Managed eligibility runs outside the CAS, followed only on acceptance
-by a resident-object identity-conditional hit. Thus successful retrieval records
-recency while an ineligible future candidate does not. Exact hits perform no repeated
-operation, shape, or ABI validation. The local atom primitive may retry only
-`has?`, `lookup`, `hit`, or the absent-key `miss` transform; it cannot repeat
-I/O, validation, externalization, or an application callback. A lookup returns
-its held immutable value even if a later update evicts the mapping. A miss does
-not adopt a concurrent publisher's object and is never relabeled as a hit.
-Same-key publication keeps the existing valid mapping while every requester
-returns its own completed value.
+trusted ingress by omitting it. Exact hits perform no repeated operation,
+shape, or ABI validation. Managed eligibility runs outside mutation callbacks;
+an ineligible future candidate does not deliberately receive an access update.
+No cache operation executes I/O, validation, rendering, proof acquisition, or
+an application callback. A lookup returns its held immutable value even if a
+later transition evicts the mapping. A miss does not adopt a concurrent
+publisher's object and is never relabeled as a hit. Same-key publication keeps
+the existing valid mapping while every requester returns its own completed
+value.
 
 Ordinary resolution has one authority for each identity dimension: operation is
 read from the normalized semantic key, and revision, source lineage, adapter
@@ -281,24 +278,23 @@ The public cache configuration is likewise flat: `:max-entries` sizes completed
 answers (and the adjacent continuation/cursor stores),
 `:denotation-max-entries` sizes exact Boolean denotations, and one outer
 `:telemetry?` switch applies to answer, denotation, and continuation diagnostics.
-LRU recency remains mandatory when observation is disabled. The former nested
+Library access-policy recording remains active when observation is disabled. The former nested
 `:subproblem-cache` map, answer-capacity override, nested telemetry override,
 and answer-only mode are rejected migration inputs.
 
 The continuation store has one narrow replacement requirement rather than an
 absent-key publication: retained progress for a key must not regress. It first
-peeks without applying an LRU hit and compares immutable checkpoints in the
-continuation semantic layer, then offers a callback-free expected-value
-replacement. The adapter's CAS body uses only standard `has?`, `lookup`,
-`evict`, and `miss`; if the expected value changed, the continuation layer
-repeats its outside-atom comparison. Thus a concurrent older checkpoint cannot
-overwrite newer progress, and neither the progress comparator nor replay work
-can run inside an atom retry. Only an actual retrieval or successful
-publication/replacement records recency; stale, losing, or failed publication
-is not cache use and does not refresh the key.
+peeks without recording ordinary access and compares immutable checkpoints in
+the continuation semantic layer, then offers a callback-free expected-value
+replacement. If the expected value changed, the continuation layer repeats its
+outside-store comparison. Thus a concurrent older checkpoint cannot overwrite
+newer progress, and neither the progress comparator nor replay work runs inside
+a cache mutation callback. Only an actual retrieval or successful publication
+or replacement records access; stale, losing, or failed publication is not
+cache use and does not refresh the key.
 
 This valid-store induction depends on the private ownership boundary. Direct
-application mutation of a cache record, library value, or backing atom is not
+application mutation of a cache record, library value, or backing store is not
 a supported transition and is outside the correctness contract. Cursor
 authentication and configured cursor expiry remain request-dependent and are
 checked during decoding on every use; managed answers retain only their causal
@@ -306,26 +302,30 @@ revision check on every use. The non-exported derived-schema store likewise
 holds the validated artifact directly and has explicit-validator publication
 as its sole live ingress.
 
-This uses ordinary atom/LRU operations rather than a configurable publication
-retry state machine. Atom contention is a performance concern and is measured,
-but it is not request computation coordination.
+This uses ordinary manual-cache operations rather than a configurable
+publication retry state machine. Cache contention is a performance concern and
+is measured, but it is not request computation coordination.
 
 Authorization answer/denotation and stable-page checkpoint lookup check the
-bound execution contract before any LRU read, touch, eligibility predicate, or
+bound execution contract before any cache read, access update, eligibility predicate, or
 metric. An exact miss rechecks before managed-proof acquisition, and a managed
 miss rechecks before cache-bound evaluation. Their publication paths likewise
 recheck immediately before retention. An observed deadline or cancellation
-therefore skips cache access, validation, and LRU mutation; a nil contract
+therefore skips cache access, validation, and cache mutation; a nil contract
 preserves the standalone checkpoint API. These checks are deliberately not
 threaded into derived-schema or cursor-codec/token retention.
 Those stores hold fully constructed request-independent infrastructure artifacts:
 cancellation cannot invalidate a parsed schema/plan or an authenticated codec
-artifact, and cursor authentication plus expiry is checked on every use. They
-remain usable even when per-request authorization caching is disabled.
+artifact, and unknown cursor authentication plus configured expiry is checked on every use. They
+remain usable even when per-request authorization caching is disabled. The
+process-private exact transport tier is the narrow exception: with expiry
+disabled, equality with a previously authenticated complete raw-request key may
+return the held page before repeat decode. Unknown/nonresident tokens still
+authenticate normally, and configuring expiry disables that tier.
 
-The pre-access availability check is the cache-read linearization boundary. If
-cancellation races after it, a standard LRU read may already have touched local
-recency; a second check could not roll that state back. The enclosing execution
+The pre-access availability check is the cache-read boundary. If cancellation
+races after it, the runtime library may already have recorded access; a second
+check could not roll that state back. The enclosing execution
 boundary checks again before returning an authorization result, so the raced
 cancellation is still observed. This gives the strongest factual guarantee
 without adding a misleading non-atomic post-check to every hot hit.
@@ -359,12 +359,12 @@ cursor-codec stores, derived-schema store, and metrics. Snapshot selection and
 cache capture MUST observe the same outer record, or validate and retry a
 source/lifecycle mismatch before lookup. Expiry or successful restore builds a
 complete lifecycle off-side and performs one outer atomic replacement. Old
-requests may read held values and publish only to old tier atoms, which new
+requests may read held values and publish only to old tier stores, which new
 requests cannot reach.
 
 `clear-answer-cache!` is narrower: it atomically replaces only the
-authorization answer, exact-denotation, and continuation child lifecycle and
-content revision while retaining
+authorization answer, exact-denotation, exact rendered-page, and continuation
+child lifecycle and content revision while retaining
 unrelated cursor-codec and derived-schema children. It also shares the
 source-lifecycle proof-health and reported-reason atoms, so managed lifting
 remains disabled and each reason remains report-once across a narrow clear,
@@ -389,27 +389,68 @@ tombstones or expiry queues.
 Alternative: clear each tier in place. Rejected because an in-flight request
 can then repopulate the cleared tier and cross the intended lifecycle boundary.
 
-### 8. Delete, rather than standardize, externalized page navigation
+### 8. Replace page navigation with one exact transport value
 
-`PageNavigationCache` stores a second representation of pages already
-available as completed internal answers or reconstructible from authenticated
-cursors/private continuations. Relay will externalize the current internal page
-directly. Its page/route/boundary maps, aliases, access queue, digests, and
-formal `pagePresent` state are deleted together with source-closure roots and
-private benchmarks.
+`PageNavigationCache` mixes a rendered representation with page/route/boundary
+maps, opposite-direction aliases, an access queue, digests, and formal
+`pagePresent` state. Those navigation mechanisms are deleted together with
+their source-closure roots and private benchmarks. For the default non-expiring
+cursor policy, the replacement is one complete lookup-resource,
+lookup-subject, or relationship-read transport-page value under a complete
+exact-basis raw-request key in the existing lifecycle. The key includes the
+exact cursor token, full authenticated consistency descriptor including an
+exact token or freshness floor, operation, and cursor-key policy; the value is
+published only after successful authentication/evaluation and contains the
+immutable public page.
+It contains no clock, deadline, cancellation object, adapter, source, or request
+object. This is ordinary keyed retention, not navigation state.
+Rendered key inputs and retained values are metadata-free portable data because
+Clojure metadata is absent from value equality/canonical transport and may hide
+request-owned state. Metadata-bearing custom identities use the semantic
+internal-answer path instead. Cursor scopes and emitted edges reject such
+nonportable identities rather than signing an aliased representation. The
+token and construction-context caches canonical-copy request-derived keys and
+values only on misses, preserving the ordinary hit cost while preventing
+metadata retention; the separate signing-key context remains client-owned and
+nonportable by design.
+
+Operation-typed validation admits EACL `SpiceObject` lookup items and EACL
+`Relationship` items composed from SpiceObjects for relationship reads; custom
+records fail closed. Object IDs are bounded canonical scalars/plain vectors;
+map/set IDs are rejected outright. Ordinary request maps, vectors, and sets are
+recursively copied into plain persistent containers so a caller comparator or
+collection implementation cannot remain resident.
+
+The raw token and complete request are the transport key, so lookup happens
+before cursor decode, object-identity internalization, public identity
+conversion, or proof work. An unknown token cannot equal a previously
+authenticated process-private key, and a changed keyring changes cursor-policy
+identity. Cursor TTL disables this tier so current expiry remains authoritative.
+Managed semantic reuse at a newer basis may still populate a new transport
+value under that exact target basis; transport values never cross exact bases.
+
+For deterministic adapters that promise immutable and injective external IDs,
+point, both count, and permission-tree operations also probe a bounded
+canonical public semantic key before backend ID internalization. Other
+identity contracts and ID representations stay on the internal path.
+
+Successful validated insertion is the publication linearization point. A
+cancellation/deadline observed first skips it; a signal racing after it may
+suppress the request response but does not roll back a valid immutable mapping.
 
 Adjacent private continuation reuse remains. A first unseen reverse or
 nonadjacent request may replay once; an end-to-end Next/Previous workload must
 show identical results/cursors and quantify backend work. If that measured
 regression violates existing gates, the change pauses for a semantic-keyed
-internal-answer or continuation fix; it does not recreate aliases or a second
-externalized page cache.
+answer, exact render, or continuation fix; it does not recreate aliases or a
+custom page cache state machine.
 
 ### 9. Migrate only genuine recomputable shared stores
 
 The standard adapter replaces:
 
 - answer and exact-denotation tier state;
+- exact complete transport-page retention;
 - private continuation retention;
 - cursor encoding/construction retention; and
 - the cross-request derived-schema registry.
@@ -422,7 +463,7 @@ is simpler than retaining a second cache policy.
 
 Stable-page checkpoints remain semantic execution state with their existing
 per-checkpoint admission-count cap and latest-progress rules, but their bounded
-multi-identity retention uses the same standard LRU adapter even when the store
+multi-identity retention uses the same standard cache adapter even when the store
 is request-local or standalone-API supplied. Checkpoint comparison stays
 outside storage; only an ordinal-and-boundary-accepted held value receives an
 identity-conditional touch. The DataScript capacity-one adapter wrapper is an
@@ -447,7 +488,8 @@ authoritative or request-local algorithmic state with an evictable map.
 The v2 export contains format/ABI identifiers, stable lifecycle/source
 contract, capacities required by the public restore contract, and a canonical
 sequence of `[composite-key validated-value]` entries by artifact tier. It
-excludes atoms, metrics, backend database values, process-local identities,
+excludes cache objects, metrics, backend database values, process-local
+identities, exact rendered-page values, Caffeine policy/admission state, CLJS
 LRU priority/tick state, weights, tombstones, and continuations not already
 allowed by the public snapshot contract.
 
@@ -459,9 +501,9 @@ the byte-bounded boundary. Ordinary statistics and lifecycle accounting never
 serialize resident keys.
 Restore validates the closed shape, ABI, capacity, duplicate keys, complete
 keys, operation-specific values, causal/lifecycle metadata, and the completed
-page guard into fresh off-side LRU stores by sequentially inserting canonical
-sorted entries. That produces deterministic initial recency after restore;
-preserving pre-export private LRU order is explicitly not part of the contract.
+page guard into fresh off-side stores by sequentially inserting canonical
+sorted entries. Exact eviction priority, admission history, and preservation of
+pre-export private frequency/recency order are explicitly not part of the contract.
 Any failure leaves the installed lifecycle and content revision unchanged.
 
 The API accepts a trusted decoded value. Hosts must authenticate and bound
@@ -492,12 +534,12 @@ release manifests and artifact digests are not product correctness gates.
 
 ## Risks / Trade-offs
 
-- **[Every LRU hit updates a shared atom]** → Keep workload-isolated stores,
+- **[Policy recording adds hit overhead]** → Keep workload-isolated stores,
   benchmark hit latency/allocation/contention on CLJ and CLJS, and rely only on
-  the library priority map rather than an EACL touch sidecar.
-- **[Atom swap retries under contention]** → Keep retry functions pure and free
-  of I/O/application callbacks; measure retry/latency behavior and preserve the
-  request-owned completed value regardless of retention outcome.
+  library-managed policy state rather than an EACL touch sidecar.
+- **[Caffeine maintenance may briefly lag]** → Treat `maximumSize` as an
+  eventual concurrent bound, avoid synchronous cleanup on the request path, and
+  preserve the request-owned completed value regardless of retention outcome.
 - **[Entry count does not bound heap]** → Skip completed pages above 1,000
   results, preserve existing artifact-specific semantic bounds, and add a
   measured byte strategy later rather than relabeling estimates as bytes.
@@ -505,7 +547,7 @@ release manifests and artifact digests are not product correctness gates.
   identities already computed for correctness, benchmark key construction,
   and permit digest acceleration only with full collision checking.
 - **[Expired continuation entries consume slots]** → They are harmless
-  misses, are not LRU-refreshed, and are bounded by entry count; lifecycle
+  misses, receive no deliberate access refresh, and are bounded by entry count; lifecycle
   rotation clears them wholesale.
 - **[Deleting page navigation increases first reverse work]** → Run an
   end-to-end oscillation benchmark and fix internal answer/continuation keys if
@@ -513,23 +555,22 @@ release manifests and artifact digests are not product correctness gates.
 - **[Untrusted snapshot can forge a value]** → Keep restore explicitly
   trusted-value-only, require host authentication/encoded-size bounds, validate
   every key/value off-side, and install atomically.
-- **[CLJ and CLJS equality/LRU edge cases diverge]** → Replay
-  nil/false, comparator-equivalent, existing-key, overfull-seed, capacity,
-  hot-key, hit, eviction, near-safe-integer tick, sequence/iteration, and
-  contention traces in normal and optimized CLJS; construct only empty caches
-  at safe-integer capacities and restore sequentially.
+- **[CLJ and CLJS cache policies diverge]** → Replay nil/false, equality,
+  existing-key, capacity, hot-key, hit, eviction, sequence/iteration, and
+  contention tests against the common contract; test CLJS tick normalization
+  separately and never require identical victims or resident sets.
 - **[Two `cljs.cache` artifacts coexist]** → Exclude the upstream Datahike
   dependency in every source/POM surface and assert the resolved dependency
   tree.
-- **[Formal evidence overstates the new boundary]** → Mark LRU/resource
+- **[Formal evidence overstates the new boundary]** → Mark cache/resource
   behavior as tested host obligations; retain mechanized claims only for
   semantic key/value/lifecycle properties and fail source closure on stale
   policy artifacts.
 
 ## Migration Plan
 
-1. Add the selected dependencies and Datahike exclusion; establish CLJ/CLJS
-   adapter trace tests and verify one CLJS cache provider per source graph.
+1. Add Caffeine 3.2.4, the selected CLJS dependency, and the Datahike exclusion;
+   establish runtime adapter tests and verify one CLJS cache provider per source graph.
 2. Introduce the private standard store and lifecycle types without routing
    production through them. Prove/verify the abstract partial-map model and
    update generated/refinement boundaries.
@@ -541,11 +582,12 @@ release manifests and artifact digests are not product correctness gates.
    the two remaining public capacities.
 4. Migrate continuations, stable-page checkpoints, cursor codecs, and derived-
    schema retention. Preserve semantic validation, checkpoint admission-count
-   and latest-progress rules, and authoritative bounds outside standard LRU
+   and latest-progress rules, and authoritative bounds outside standard cache
    storage.
 5. Remove `PageNavigationCache`, its call sites/models/mutants/benchmarks, the
    unreachable Datomic `LocalStore`/revision checkpoints, unused derived fields,
    and the relationship-observation cache after source-closure confirmation.
+   Add the single exact complete transport-page store to the same lifecycle.
 6. Introduce snapshot/key ABI v2, atomic off-side restore, v1 typed rejection,
    and backend forwarding tests. Remove all old cache configuration/statistics
    fields rather than translating them.

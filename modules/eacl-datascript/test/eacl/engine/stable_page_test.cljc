@@ -276,12 +276,11 @@
         (is (zero? @raw-probes))
         (is (empty? @context-calls))
         (page/checkpoint-put! store :new newer)
-        (is (nil? (checkpoint-at store :hot))
-            "the rejected lookup did not keep the oldest checkpoint hot")
-        (is (= cold (checkpoint-at store :cold)))
-        (is (= newer (checkpoint-at store :new)))))))
+        ;; The zero raw/context probes above establish the no-touch behavior.
+        ;; Window TinyLFU does not expose a strict-LRU victim identity.
+        (is (= 2 (lru/entry-count (:storage store))))))))
 
-(deftest checkpoint-store-is-lru-and-rejected-boundaries-do-not-touch-test
+(deftest checkpoint-store-retains-hot-entries-and-rejections-do-not-touch-test
   (let [checkpoint
         (fn [ordinal boundary]
           {:ordinal ordinal :boundary boundary :pending []
@@ -296,17 +295,19 @@
         (is (= hot (page/checkpoint-hit store :hot 1 :hot)))
         (page/checkpoint-put! store :new newer)
         (is (= hot (page/checkpoint-hit store :hot 1 :hot)))
-        (is (nil? (page/checkpoint-hit store :cold 1 :cold)))
-        (is (= newer (page/checkpoint-hit store :new 1 :new)))))
-    (testing "a rejected boundary is not LRU usage"
-      (let [store (page/make-checkpoint-store {:max-entries 2})]
-        (page/checkpoint-put! store :rejected hot)
-        (page/checkpoint-put! store :retained cold)
+        (is (= 2 (lru/entry-count (:storage store))))))
+    (testing "a rejected boundary is not retention-policy usage"
+      (let [store (page/make-checkpoint-store {:max-entries 2})
+            control (page/make-checkpoint-store {:max-entries 2})]
+        (doseq [candidate [store control]]
+          (page/checkpoint-put! candidate :rejected hot)
+          (page/checkpoint-put! candidate :retained cold))
         (is (nil? (page/checkpoint-hit store :rejected 2 :hot)))
-        (page/checkpoint-put! store :new newer)
-        (is (nil? (page/checkpoint-hit store :rejected 1 :hot)))
-        (is (= cold (page/checkpoint-hit store :retained 1 :cold)))
-        (is (= newer (page/checkpoint-hit store :new 1 :new)))))))
+        (doseq [candidate [store control]]
+          (page/checkpoint-put! candidate :new newer))
+        (is (= (set (lru/entries (:storage control)))
+               (set (lru/entries (:storage store))))
+            "the rejected boundary has the same policy outcome as no read")))))
 
 (deftest checkpoint-store-failure-is-a-performance-miss-test
   (let [store (page/make-checkpoint-store)

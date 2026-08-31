@@ -23,7 +23,7 @@
  :decoded-cursor-payloads
   {:path "exploration/operator-engine/union-only-cursor-payloads.edn"
   :sha256
-  "483bb85611281e3366cb5af236a29121c954fd4c2e85c540c9ffb0bc97a7a1af"
+  "132d2f3301b6b4ce3dd0fa7eea1befe8dc1ad82468bc2ecc2a39762b4b1a9d7f"
   :coverage [:acyclic-forward :acyclic-reverse
              :recursive-forward :recursive-reverse]
   :ciphertext-excluded-because :fresh-encryption-nonce}

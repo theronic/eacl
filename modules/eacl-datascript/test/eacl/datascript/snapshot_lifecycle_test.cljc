@@ -9,6 +9,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.backend.writer :as writer]
             [eacl.cache :as cache]
+            [eacl.causal-token :as causal-token]
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
@@ -17,6 +18,7 @@
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
+            [eacl.secure-format :as secure]
             [eacl.spicedb.consistency :as consistency]))
 
 (def schema
@@ -154,14 +156,16 @@
     (keep-indexed
      (fn [index {:keys [tier key]}]
        (let [[entry-operation semantic-key] (get-in key [2 4])
-             internal-query (get-in semantic-key [:query :internal])]
+             answer-query
+             (or (get-in semantic-key [:query :internal])
+                 (get-in semantic-key [:query :public]))]
          (when (and (= :answer tier)
                     (= operation entry-operation)
                     (= operation (:operation semantic-key))
                     (or (nil? limited?)
-                        (and (map? internal-query)
+                        (and (map? answer-query)
                              (= limited?
-                                (contains? internal-query :count-limit)))))
+                                (contains? answer-query :count-limit)))))
            index)))
      (:entries snapshot)))))
 
@@ -763,7 +767,13 @@
 
 (deftest tampered-completed-answer-restore-fails-off-side-test
   (let [{:keys [conn user account]} (fixture)
-        client (datascript/make-client conn {:cache {:max-entries 64}})
+        client (datascript/make-client
+                conn
+                {:cache {:max-entries 64}
+                 ;; Keep this snapshot-validation fixture on the portable
+                 ;; semantic-answer tier; non-expiring cursors use the faster
+                 ;; process-local rendered transport tier instead.
+                 :cursor-ttl-seconds 3600})
         base-query
         {:subject user
          :resource/type :account
@@ -1171,6 +1181,130 @@
             (eacl/release! new-snapshot))))
       (finally
         (eacl/release! old-snapshot)))))
+
+(defn- retained-snapshot-cursor-consistency-result
+  [request-consistency]
+  (let [{:keys [conn client user]} (fixture)
+        account-2 (eacl/spice-object :account "consistency-account-2")
+        _ (ds/transact! conn [{:eacl/id (:id account-2)}])
+        _ (eacl/create-relationship!
+           client (eacl/->Relationship user :owner account-2))
+        first-snapshot (eacl/snapshot client)]
+    (try
+      (let [query {:subject user
+                   :permission :admin
+                   :resource/type :account
+                   :first 1
+                   :cache? false}
+            first-token (eacl/basis-token first-snapshot)
+            first-page
+            (eacl/lookup-resources
+             first-snapshot
+             (assoc query :consistency
+                    (request-consistency first-token)))
+            cursor (get-in first-page [:page-info :end-cursor])
+            _ (ds/transact! conn [{:eacl/id "consistency-unrelated"}])
+            second-snapshot (eacl/snapshot client)]
+        (try
+          (let [second-token (eacl/basis-token second-snapshot)
+                error
+                (try
+                  (eacl/lookup-resources
+                   second-snapshot
+                   (assoc query
+                          :after cursor
+                          :consistency
+                          (request-consistency second-token)))
+                  nil
+                  (catch #?(:clj clojure.lang.ExceptionInfo
+                            :cljs cljs.core.ExceptionInfo) thrown
+                    (ex-data thrown)))]
+            {:cursor cursor
+             :has-next-page?
+             (get-in first-page [:page-info :has-next-page?])
+             :error error})
+          (finally
+            (eacl/release! second-snapshot))))
+      (finally
+        (eacl/release! first-snapshot)))))
+
+(deftest retained-snapshot-at-least-floor-governs-cursor-reuse-test
+  (let [{:keys [cursor has-next-page? error]}
+        (retained-snapshot-cursor-consistency-result
+         consistency/at-least-as-fresh)]
+    (is (string? cursor))
+    (is (true? has-next-page?))
+    (is (= :eacl.consistency/cursor-consistency-conflict (:type error)))
+    (is (= (:type error) (:eacl/error error)))))
+
+(deftest retained-snapshot-exact-request-governs-cursor-reuse-test
+  (let [{:keys [cursor has-next-page? error]}
+        (retained-snapshot-cursor-consistency-result
+         consistency/at-exact-snapshot)]
+    (is (string? cursor))
+    (is (true? has-next-page?))
+    (is (= :eacl.consistency/cursor-consistency-conflict (:type error)))
+    (is (= (:type error) (:eacl/error error)))))
+
+(deftest transient-acl-at-least-token-is-authenticated-once-test
+  (let [{:keys [conn user]} (fixture)
+        client (datascript/make-client conn {:cache {:max-entries 16}})
+        selected (eacl/snapshot client)
+        token (try
+                (eacl/basis-token selected)
+                (finally
+                  (eacl/release! selected)))
+        request {:subject user
+                 :permission :admin
+                 :resource/type :account
+                 :consistency (consistency/at-least-as-fresh token)}
+        _ (eacl/count-resources client request)
+        calls (atom 0)
+        original-decode (volatile! secure/decode-authenticated)
+        hit
+        (with-redefs [secure/decode-authenticated
+                      (fn [options token]
+                        (swap! calls inc)
+                        (@original-decode options token))]
+          (eacl/count-resources client request))]
+    (is (= 1 (:count hit)))
+    (is (true? (:cached? hit)))
+    (is (= 1 @calls)
+        "ACL selection authenticates once; delegated Snapshot reads reuse it")))
+
+(deftest retained-snapshot-authenticates-every-read-token-test
+  (let [{:keys [client user]} (fixture)
+        selected (eacl/snapshot client)
+        token (eacl/basis-token selected)
+        request {:subject user
+                 :permission :admin
+                 :resource/type :account
+                 :cache? false
+                 :consistency (consistency/at-least-as-fresh token)}
+        tampered-token
+        (str (subs token 0 (dec (count token)))
+             (if (= "A" (subs token (dec (count token)))) "B" "A"))
+        calls (atom 0)
+        original-decode (volatile! secure/decode-authenticated)]
+    (try
+      (with-redefs [secure/decode-authenticated
+                    (fn [options token]
+                      (swap! calls inc)
+                      (@original-decode options token))]
+        (is (= 1 (:count (eacl/count-resources selected request))))
+        (is (= 1 (:count (eacl/count-resources selected request))))
+        (is (= :eacl/invalid-zed-token
+               (:type
+                (error-data
+                 #(eacl/count-resources
+                   selected
+                   (assoc request
+                          :consistency
+                          (consistency/at-least-as-fresh tampered-token)))))))
+        (is (= 3 @calls)
+            "retained Snapshots independently authenticate every raw token"))
+      (finally
+        (eacl/release! selected)))))
 
 (deftest selected-snapshot-releases-on-public-validation-error-test
   (let [{:keys [conn client user account]} (fixture)

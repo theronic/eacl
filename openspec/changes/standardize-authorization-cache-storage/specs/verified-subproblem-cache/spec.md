@@ -5,13 +5,13 @@
 ### Requirement: Subproblem retention is count-bounded and request-independent
 
 Authorization-denotation and completed-answer stores SHALL each have a positive
-standard LRU entry capacity and SHALL contain only completely computed,
+standard-cache entry capacity and SHALL contain only completely computed,
 validated immutable values. Denotation entries SHALL be exact-basis only;
 completed answers MAY use exact or managed keys. Physical projection chunks and
 direct Boolean probes SHALL remain request-owned work and MUST NOT create a
 third shared tier. Each miss SHALL compute under its own request contract and
-MAY atomically insert its already completed value. Atom contention may repeat
-only the pure LRU state transformation. No cache structure may own, join, wait
+MAY atomically insert its already completed value. Cache contention may repeat
+only library-private mutation, never request work. No cache structure may own, join, wait
 for, retry, or bound application callback execution. Failed, cancelled,
 invalid, or partial computations MUST NOT publish or poison later requests.
 Completed pages above the shared 1,000-result eligibility guard skip both exact
@@ -34,7 +34,7 @@ Optional service-edge admission remains separate cache-independent control.
 #### Scenario: Tier reaches capacity
 
 - **WHEN** an absent valid subproblem is published into a full tier
-- **THEN** the least recently used resident mapping is evicted and resident count remains at capacity
+- **THEN** the runtime policy makes cold mappings eligible for eviction and settled resident count remains at capacity
 
 #### Scenario: Concurrent identical misses
 
@@ -86,7 +86,7 @@ concatenation SHALL remain the finite, strictly ordered, unique result required
 by the backend contract, and evaluation MUST NOT realize the complete
 projection beyond the configured chunk boundary merely to populate shared
 storage. Physical projection chunks, terminal empty chunks, and direct Boolean
-probes MUST NOT be admitted to the shared denotation or answer LRUs.
+probes MUST NOT be admitted to the shared denotation or answer stores.
 
 #### Scenario: Small page over a wide adjacency list
 
@@ -128,7 +128,7 @@ graph and MUST NOT retain managed subproblem proof descriptors.
 ### Requirement: Retained weight and publication attempts are bounded
 
 **Reason**: Custom logical-weight budgets and generated admission state are
-replaced by standard LRU entry capacity and direct completed-value insertion.
+replaced by standard-cache entry capacity and direct completed-value insertion.
 The old weight did not establish a byte or whole-process resource bound.
 
 **Migration**: Configure flat positive `:max-entries` for answers and

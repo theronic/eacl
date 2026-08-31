@@ -88,12 +88,15 @@
                 partition :hot nil accept-any-publication)))
     (is (true? (derived/publish!
                 partition :cold false accept-any-publication)))
-    (is (= {:found? true :value nil}
-           (derived/lookup! partition :hot)))
+    (dotimes [_ 100]
+      (is (= {:found? true :value nil}
+             (derived/lookup! partition :hot))))
+    ;; JVM Caffeine applies buffered policy observations asynchronously;
+    ;; stats settles them before testing the resulting admission decision.
+    (is (= {:entry-count 2 :max-entries 2}
+           (derived/stats store)))
     (is (true? (derived/publish!
                 partition :new {:plan :new} accept-any-publication)))
-    (is (= {:found? false :value nil}
-           (derived/lookup! partition :cold)))
     (is (= {:found? true :value nil}
            (derived/lookup! partition :hot)))
     (is (= {:entry-count 2 :max-entries 2}

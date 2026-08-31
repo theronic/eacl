@@ -50,17 +50,22 @@
    :backend-snapshot-id {:revision revision}})
 
 (defn- proof-adapter
-  [revision provider]
-  (backend/make-adapter
-   {:id :relay-test
-    :capabilities {:cache-proofs #{:ordered-generations}}
-    :fingerprint {:adapter :relay-test}
-    :deterministic? true
-    :operations
-    (merge
-     (operation-map revision nil)
-     {:schema-generation (constantly 3)
-      :proof-frame provider})}))
+  ([revision provider]
+   (proof-adapter
+    revision provider
+    :selected-internal/current-external-injective-v2))
+  ([revision provider identity-contract]
+   (backend/make-adapter
+    {:id :relay-test
+     :capabilities {:cache-proofs #{:ordered-generations}}
+     :fingerprint {:adapter :relay-test}
+     :deterministic? true
+     :identity-contract identity-contract
+     :operations
+     (merge
+      (operation-map revision nil)
+      {:schema-generation (constantly 3)
+       :proof-frame provider})})))
 
 (defn- proof-opts
   [selected revision]
@@ -332,6 +337,42 @@
     (is (= 1 @native-revision-calls)
         "both boundary tokens must reuse one immutable snapshot proof")))
 
+(deftest page-cursor-rejects-metadata-bearing-external-edge-test
+  (let [request-owned (atom :request)
+        snapshot
+        (backend/make-adapter
+         {:id :relay-test
+          :capabilities {}
+          :fingerprint {:adapter :metadata-edge}
+          :deterministic? true
+          :operations
+          (assoc
+           (operation-map 1 nil)
+           :internal-id->object
+           (fn [internal-id]
+             (with-meta [:external internal-id]
+               {:request-owned request-owned})))})
+        page
+        (assoc lookup-page
+               :page-info
+               (assoc (:page-info lookup-page)
+                      :start-cursor nil
+                      :end-cursor
+                      {:kind :stable-edge
+                       :result-eid "document-1"}))
+        data
+        (try
+          (relay/externalize-page
+           snapshot {} :lookup-resources lookup-query page)
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo) error
+            (ex-data error)))]
+    (is (= :eacl.pagination/unsupported-cursor-identity
+           (:type data)))
+    (is (= :edge (:position data))
+        "metadata must not be silently discarded before cursor round-trip")))
+
 (deftest prepared-continuation-authenticates-token-once-test
   (let [snapshot (adapter 1 nil true)
         first-page
@@ -349,6 +390,179 @@
                (:after query)))
         (is (= 1 (:decode-calls @work))
             "selection and internalization must share one authenticated decode")))))
+
+(deftest exact-immutable-continuation-skips-proof-and-keeps-cursor-guards-test
+  (let [identity-contract
+        :selected-internal/immutable-external-injective-v3
+        minted-proof-reads (atom 0)
+        original
+        (proof-adapter
+         10
+         (fn [_]
+           (swap! minted-proof-reads inc)
+           [[1 5]])
+         identity-contract)
+        codec-cache (cursor/codec-cache)
+        shared {:security-key "01234567890123456789012345678901"
+                :cursor-codec-cache codec-cache
+                :cursor-ttl-seconds 10}
+        mint-options
+        (merge (proof-opts original 10)
+               shared
+               {:now-seconds 100})
+        page
+        (relay/externalize-page
+         original mint-options
+         :lookup-resources lookup-query lookup-page)
+        start-token (get-in page [:page-info :start-cursor])
+        end-token (get-in page [:page-info :end-cursor])
+        kernel-crossings (atom {})
+        current-proof-reads (atom 0)
+        current
+        (proof-adapter
+         10
+         (fn [_]
+           (swap! current-proof-reads inc)
+           (throw (ex-info "exact continuation read proof" {})))
+         identity-contract)
+        current-options
+        (merge (proof-opts current 10)
+               shared
+               {:now-seconds 105})
+        prepared
+        (relay/prepare-page-query
+         current current-options :lookup-resources
+         (assoc lookup-query :after end-token :before start-token))]
+    (is (pos? @minted-proof-reads))
+    (is (zero? @current-proof-reads)
+        "after and before on the exact immutable basis need no proof provider")
+    (is (= (get-in lookup-page [:page-info :end-cursor])
+           (get-in prepared [:query :after])))
+    (is (= (get-in lookup-page [:page-info :start-cursor])
+           (get-in prepared [:query :before])))
+
+    (testing "query scope rejects before any proof reconstruction"
+      (let [data
+            (binding [verified/*kernel-crossing-stats* kernel-crossings]
+              (try
+                (relay/prepare-page-query
+                 current current-options :lookup-resources
+                 (assoc lookup-query :permission :edit :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error))))]
+        (is (= :query-mismatch (:reason data)))
+        (is (zero? @current-proof-reads))))
+
+    (testing "expiry rejects before any proof reconstruction"
+      (let [data
+            (binding [verified/*kernel-crossing-stats* kernel-crossings]
+              (try
+                (relay/prepare-page-query
+                 current (assoc current-options :now-seconds 110)
+                 :lookup-resources (assoc lookup-query :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error))))]
+        (is (= :eacl.pagination/expired-cursor (:type data)))
+        (is (= 110 (:expired-at data)))
+        (is (zero? @current-proof-reads))))
+
+    (testing "freshness and exact-token conflicts remain request constraints"
+      (doseq [options
+              [(assoc current-options
+                      :cursor-freshness-floor
+                      {:revision 11 :exact-locator 11})
+               (assoc current-options
+                      :cursor-consistency-mode :at-exact-snapshot
+                      :cursor-request-token
+                      {:revision 11 :exact-locator 11})]]
+        (let [data
+              (try
+                (relay/prepare-page-query
+                 current options :lookup-resources
+                 (assoc lookup-query :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error)))]
+          (is (= :eacl.consistency/cursor-consistency-conflict
+                 (:type data)))))
+      (is (zero? @current-proof-reads)))
+
+    (testing "continuation semantic ABI is part of authenticated query scope"
+      (let [changed-abi
+            (update relay/cursor-continuation-semantic-abi :version inc)
+            data
+            (with-redefs [relay/cursor-continuation-semantic-abi changed-abi]
+              (try
+                (relay/prepare-page-query
+                 current current-options :lookup-resources
+                 (assoc lookup-query :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error))))]
+        (is (= :query-mismatch (:reason data)))
+        (is (zero? @current-proof-reads))))
+    (is (<= 2 (get @kernel-crossings :cursor-continuation 0))
+        "scope and expiry guards still cross the verified decision")))
+
+(deftest exact-shortcut-preserves-stale-boundary-errors-test
+  (let [identity-contract
+        :selected-internal/immutable-external-injective-v3
+        original
+        (proof-adapter 10 (constantly [[1 5]]) identity-contract)
+        options (proof-opts original 10)
+        tracked-page
+        (assoc-in
+         lookup-page [:page-info :end-cursor]
+         {:kind :stable-edge
+          :result-eid "document-1"})
+        page
+        (relay/externalize-page
+         original options :lookup-resources lookup-query tracked-page)
+        token (get-in page [:page-info :end-cursor])
+        proof-reads (atom 0)
+        missing
+        (backend/make-adapter
+         {:id :relay-test
+          :capabilities {:cache-proofs #{:ordered-generations}}
+          :fingerprint {:adapter :relay-test}
+          :deterministic? true
+          :identity-contract identity-contract
+          :operations
+          (merge
+           (operation-map 10 nil)
+           {:object-id->internal (constantly nil)
+            :schema-generation (constantly 3)
+            :proof-frame
+            (fn [_]
+              (swap! proof-reads inc)
+              (throw (ex-info "stale boundary read proof" {})))})})
+        missing-options (proof-opts missing 10)
+        error-data
+        (fn [f]
+          (try
+            (f)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (ex-data error))))]
+    (doseq [prepare
+            [#(relay/prepare-page-query
+               missing missing-options :lookup-resources
+               (assoc lookup-query :after token))
+             #(relay/internalize-page-query
+               missing missing-options :lookup-resources
+               (assoc lookup-query :after token))]]
+      (let [data (error-data prepare)]
+        (is (= :eacl.pagination/stale-cursor (:type data)))
+        (is (= :boundary-identity-changed (:reason data)))))
+    (is (zero? @proof-reads)
+        "exact immutable validation rejects the missing edge without proof")))
 
 (deftest cursor-is-bound-to-the-complete-semantic-query-test
   (let [snapshot (adapter 1 nil true)
@@ -485,6 +699,46 @@
     (is (= 1010 (:expired-at (ex-data error))))
     (is (pos? (get @crossings :cursor-continuation 0))
         "the expired token was rejected by a :cursor-continuation kernel decision")))
+
+(deftest cursor-codec-cache-remints-by-current-ttl-test
+  (let [snapshot
+        (proof-adapter
+         10
+         (fn [_relation-ids] [[1 5]]))
+        codec-cache (cursor/codec-cache)
+        base-options
+        (merge
+         (proof-opts snapshot 10)
+         {:security-key "01234567890123456789012345678901"
+          :cursor-codec-cache codec-cache
+          :cursor-ttl-seconds 10})
+        first-page
+        (relay/externalize-page
+         snapshot (assoc base-options :now-seconds 1000)
+         :lookup-resources lookup-query lookup-page)
+        first-token (get-in first-page [:page-info :end-cursor])
+        live-page
+        (relay/externalize-page
+         snapshot (assoc base-options :now-seconds 1001)
+         :lookup-resources lookup-query lookup-page)
+        expired-page
+        (relay/externalize-page
+         snapshot (assoc base-options :now-seconds 1011)
+         :lookup-resources lookup-query lookup-page)
+        reminted-token (get-in expired-page [:page-info :end-cursor])]
+    (is (= first-token (get-in live-page [:page-info :end-cursor]))
+        "live token transport may be reused by the codec cache")
+    (is (not= first-token reminted-token)
+        "an expired token is never reused by the codec cache")
+    (is (= (get-in lookup-page [:page-info :end-cursor])
+           (get-in
+            (relay/prepare-page-query
+             snapshot
+             (assoc base-options :now-seconds 1011)
+             :lookup-resources
+             (assoc lookup-query :after reminted-token))
+            [:query :after]))
+        "the reminted current transport authenticates the retained edge")))
 
 (deftest cursor-without-configured-ttl-remains-age-valid-test
   (let [snapshot (adapter 1 nil true)

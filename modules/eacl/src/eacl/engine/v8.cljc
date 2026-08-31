@@ -426,7 +426,7 @@
 ;; --- Selected-snapshot derived schema cache ----------------------------------
 ;;
 ;; Certified client requests retain individual immutable artifacts in one
-;; standard LRU.  Complete source/lifecycle, adapter, schema-generation,
+;; standard cache. Complete source/lifecycle, adapter, schema-generation,
 ;; artifact, and semantic identity are ordinary opaque keys; there is no outer
 ;; generation registry or nested shared atom map.  Uncertified/raw requests use
 ;; only the plain atom maps created by `request-schema-cache` and discard them
@@ -469,7 +469,7 @@
 (defn- derived-cache-active?
   "True when the bound schema cache may serve derived state.
 
-  Two regimes: a stamped client context backed by standard-LRU partitions or
+  Two regimes: a stamped client context backed by bounded cache partitions or
   a plain request-local context discarded at request end. Raw evaluation with
   no binding stays deliberately uncached."
   []
@@ -1460,7 +1460,7 @@
   (physical/with-admission *service-admission* thunk))
 
 (defn ^:no-doc stable-checkpoints
-  "Accepts a standard-LRU-backed stable-page checkpoint store or the client's
+  "Accepts a standard-cache-backed stable-page checkpoint store or the client's
   scoped continuation context; anything else degrades to deterministic
   replay."
   [cache]

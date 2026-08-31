@@ -7,8 +7,9 @@
 Cache export SHALL serialize a versioned deterministic sequence of validated
 composite keys and operation-specific immutable values plus the minimum
 lifecycle metadata required by the public snapshot contract. It MUST NOT
-serialize library-private priority maps, recency ticks, weight estimates,
-tombstones, access samples, atom-retry state, or atoms.
+serialize exact rendered-page values, library-private admission/eviction state,
+frequency/recency metadata, priority maps, ticks, maintenance buffers, weight
+estimates, tombstones, access samples, cache objects, or backing atoms.
 
 The restore API SHALL accept an already trusted decoded value. A host that
 loads external bytes MUST authenticate and encoded-size-bound them before
@@ -18,15 +19,16 @@ codec's ordinary byte ceiling on an otherwise valid semantic cache key.
 Ordinary statistics and lifecycle accounting MUST enumerate resident mappings
 without serializing their keys.
 
-Restore SHALL decode and validate all entries into fresh off-side LRU tiers
+Restore SHALL decode and validate all entries into fresh off-side cache tiers
 before atomically installing a new lifecycle. A typed snapshot from an older
 key or value ABI MUST be rejected with the documented incompatibility outcome;
 it MUST NOT be partially restored or silently upgraded.
 
-#### Scenario: Snapshot order is deterministic
+#### Scenario: Equivalent snapshots preserve semantic mappings
 
 - **WHEN** two equivalent cache lifecycles are exported
-- **THEN** their serialized public entry sequence and snapshot digest are equal regardless of library-private LRU representation
+- **THEN** restoring either produces the same validated semantic mappings
+- **AND** library-private eviction state and nonportable rendered pages are absent
 
 #### Scenario: A valid semantic key exceeds the ordinary token bound
 
@@ -51,7 +53,8 @@ it MUST NOT be partially restored or silently upgraded.
 
 The `eacl` module SHALL own one private database-neutral cache boundary and
 entry lifecycle without depending on Datomic, DataScript, or Datahike. Its JVM
-implementation SHALL use `org.clojure/core.cache` LRU and its CLJS
+implementation SHALL use Caffeine's manual cache with `maximumSize` and
+its CLJS
 implementation SHALL use the selected `theronic/cljs-cache` LRU.
 Database adapters and consumers MUST NOT supply alternate authorization cache
 providers or depend on either library's private state.
@@ -71,6 +74,6 @@ providers or depend on either library's private state.
 
 - **WHEN** caching is disabled for a client or request
 - **THEN** authorization behavior remains correct and equivalent to uncached execution
-- **AND** answer, subproblem, and continuation shared-store lookup/publication is bypassed
 - **AND** a synchronous nested request clears any inherited answer/subproblem cache bindings before evaluation
-- **AND** independent derived-schema and cursor-construction LRUs MAY still serve their internal non-authorization-cache roles
+- **AND** answer, denotation, exact rendered-page, and continuation shared-store lookup/publication is bypassed
+- **AND** independent derived-schema and cursor-construction caches MAY still serve their internal non-authorization-cache roles

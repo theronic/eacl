@@ -54,7 +54,7 @@
              :replacements 0
              :evictions 0
              :errors 0
-             ;; Diagnostics only; standard LRU remains the retention
+             ;; Diagnostics only; the standard cache remains the retention
              ;; authority. Keeping this counter avoids an O(capacity) scan on
              ;; every publication merely to report sequential evictions.
              :resident-estimate 0
@@ -178,7 +178,7 @@
 (defn- put-latest-checkpoint!
   "Publishes only progress newer than the value currently resident at key.
 
-  Progress comparison runs outside the standard-LRU CAS. The CAS receives an
+  Progress comparison runs outside the standard-cache CAS. The CAS receives an
   immutable expected value, so concurrent older and newer publishers retry
   until the resident mapping is absent, replaced by the candidate, or already
   at least as advanced."

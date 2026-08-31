@@ -9,7 +9,7 @@ from `:cached?` and `:cache-basis`. Count and page cache/cursor identities SHALL
 bind the normalized evaluation mode even though their public response does not
 repeat the caller-supplied mode. Cache statistics SHALL distinguish lookup and
 publication outcomes. `:cache?` SHALL mean only authorization answer,
-denotation, and continuation reuse/publication permission; request-independent
+denotation, exact rendered-page, and continuation reuse/publication permission; request-independent
 derived-schema and cursor-construction infrastructure remains governed by its
 own closed identity and validity contracts.
 
@@ -22,9 +22,9 @@ own closed identity and validity contracts.
 #### Scenario: Cache bypass
 
 - **WHEN** `:cache? false` is supplied
-- **THEN** the response is not labeled a hit and authorization answer, denotation, and continuation statistics record no lookup or publication for that request
-- **AND** EACL performs no authorization answer/denotation/continuation key, lookup, proof-lifting, admission, publication, or cache-coordination work
-- **AND** request-independent derived-schema and cursor-construction LRUs MAY still serve their internal infrastructure roles
+- **THEN** the response is not labeled a hit and authorization answer, denotation, rendered-page, and continuation statistics record no lookup or publication for that request
+- **AND** EACL performs no authorization answer/denotation/rendered-page/continuation key, lookup, proof-lifting, admission, publication, or cache-coordination work
+- **AND** request-independent derived-schema and cursor-construction caches MAY still serve their internal infrastructure roles
 
 #### Scenario: Default page cursor proof
 

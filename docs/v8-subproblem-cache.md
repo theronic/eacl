@@ -1,15 +1,17 @@
 # EACL answer and subproblem cache
 
-Each EACL client owns two flat, independent standard-LRU tiers:
+Each EACL client owns three flat, independently bounded retention tiers:
 
 - `:answer` stores completed point decisions, internal pages, counts, and
   permission trees;
+- `:rendered-page` stores complete exact-basis transport pages for complete raw
+  requests when cursor expiry is disabled;
 - `:denotation` stores completed Boolean denotations.
 
-Clojure uses `org.clojure/core.cache`; ClojureScript uses the pinned theronic
-`cljs-cache` fork. EACL supplies only a small atom-backed adapter. Hits update
-LRU recency, so a frequently used old entry is not evicted merely because it
-arrived first.
+Clojure uses Caffeine's concurrent Window TinyLFU policy; ClojureScript uses
+the pinned theronic `cljs-cache` LRU fork. EACL supplies only a small storage
+adapter. Hits update frequency/recency policy, so a frequently used old entry
+is not evicted merely because it arrived first.
 
 ## Resolution
 
@@ -32,8 +34,8 @@ can become resident.
 
 Validated publication and validated off-side restore are the only supported
 entry-installing transitions. An exact hit is consequently an ordinary
-complete-key membership read plus an LRU touch, with no repeated artifact, ABI,
-or operation validator. A managed hit adds only
+complete-key membership read plus the runtime library's access update, with no
+repeated artifact, ABI, or operation validator. A managed hit adds only
 `computed-revision <= selected-revision`. Exact denotation hits have no managed
 subproblem path. Every live publisher must supply an
 explicit callable artifact validator; no low-level publisher defaults to
@@ -51,10 +53,11 @@ The public configuration uses positive safe-integer entry counts:
   :telemetry? true}}
 ```
 
-The two retained authorization tiers have independent LRU capacities. The
-outer `:max-entries` sizes answers and the adjacent continuation/cursor LRUs;
-all use 1,024 when it is omitted. `:denotation-max-entries` is the only
-additional cache-capacity setting. Logical weight estimators and byte
+The semantic answer and denotation tiers have independent capacities. The
+outer `:max-entries` sizes answers, exact rendered pages, and the adjacent
+continuation/cursor caches; all use 1,024 when it is omitted.
+`:denotation-max-entries` is the only additional cache-capacity setting.
+Logical weight estimators and byte
 budget claims were removed. Physical operator chunks, direct Boolean probes,
 and Relay identity conversion are request work rather than retained shared
 artifacts. Engine traversal, chunk, service-admission, and expression limits
@@ -68,16 +71,16 @@ and not cached. Scalars, counts, and trees do not inherit that page rule.
 
 Misses have no cache owner. Concurrent callers compute independently and race
 an atomic absent-key insertion; a losing publisher still returns its own
-answer. Validators and computations execute outside atom transformations and
-are never repeated by compare-and-set retries. A local LRU exception is a miss
-or failed publication, not an authorization error.
+answer. Validators and computations execute outside storage atomic scopes and
+are never repeated by cache retries. A local cache exception is a miss or
+failed publication, not an authorization error.
 
 ## Snapshot v2
 
 Portable export is a deterministic flat entry sequence. It excludes
-`core.cache`/`cljs-cache` priority maps and recency state. Restore validates
+Caffeine/`cljs-cache` admission, priority, and recency state. Restore validates
 complete keys, managed-answer proof keys, revisions, operation-specific completed value
-contracts, duplicate keys, and count capacity before constructing fresh LRUs
+contracts, duplicate keys, and count capacity before constructing fresh cache tiers
 off-side and installing them atomically. Process-local exact promotions are
 not exported without their live validating transition; the corresponding
 managed mapping remains portable.

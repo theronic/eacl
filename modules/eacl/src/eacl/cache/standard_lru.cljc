@@ -1,15 +1,27 @@
 (ns eacl.cache.standard-lru
-  "Private, cross-runtime storage over the standard immutable LRU protocol.
+  "Private, cross-runtime storage over bounded local caches.
 
   This namespace owns retention only. Callers validate supported ingress and
   perform any request-dependent eligibility checks outside it. In particular,
-  no function here accepts a loader or callback that an atom retry could
-  repeat."
+  no function here accepts a loader or callback that cache concurrency could
+  repeat. JVM storage uses Caffeine's concurrent frequency/recency policy;
+  ClojureScript storage uses cljs-cache's immutable LRU policy."
   (:require [eacl.exact-integer :as exact-integer]
-            #?(:clj [clojure.core.cache :as cache]
-               :cljs [cljs.cache :as cache])))
+            #?(:cljs [cljs.cache :as cache]))
+  #?(:clj
+     (:import [com.github.benmanes.caffeine.cache Cache Caffeine Policy]
+              [java.util Map$Entry]
+              [java.util.concurrent ConcurrentMap])))
 
 (defrecord StandardLruStore [state max-entries])
+
+#?(:clj
+   (do
+     ;; Caffeine reserves nil for absence. Boxing every value both preserves
+     ;; nil/false and gives conditional operations an identity-equality token.
+     (deftype CacheValue [value])
+
+     (def ^:private nil-key (Object.))))
 
 (defn store?
   [value]
@@ -39,135 +51,231 @@
 
 (defn- empty-lru
   [max-entries]
-  ;; Never seed library policy state from caller-controlled or restored maps.
-  ;; Restore is deliberately a sequence of ordinary absent-key publications.
-  (cache/lru-cache-factory {} :threshold max-entries))
+  #?(:clj
+     (-> (Caffeine/newBuilder)
+         (.maximumSize (long max-entries))
+         (.build))
+     :cljs
+     ;; Never seed library policy state from caller-controlled or restored
+     ;; maps. Restore is a sequence of ordinary absent-key publications.
+     (cache/lru-cache-factory {} :threshold max-entries)))
+
+#?(:clj
+   (do
+     (defn- storage-key
+       [key]
+       (if (nil? key) nil-key key))
+
+     (defn- public-key
+       [key]
+       (if (identical? nil-key key) nil key))
+
+     (defn- boxed-value
+       [value]
+       (CacheValue. value))
+
+     (defn- public-value
+       [^CacheValue boxed]
+       (.-value boxed))
+
+     (defn- quiet-box
+       [^Cache storage key]
+       (.getIfPresentQuietly ^Policy (.policy storage) (storage-key key)))
+
+     (defn- storage-map
+       ^ConcurrentMap [^Cache storage]
+       (.asMap storage))))
 
 (defn store
-  "Creates an empty local LRU with a strict positive safe-integer capacity."
+  "Creates an empty bounded local cache with a positive safe-integer capacity."
   [max-entries]
   (when-not (valid-capacity? max-entries)
     (invalid-capacity! max-entries))
-  (->StandardLruStore (atom (empty-lru max-entries)) max-entries))
+  (->StandardLruStore #?(:clj (empty-lru max-entries)
+                         :cljs (atom (empty-lru max-entries)))
+                      max-entries))
 
 (defn lookup!
   "Returns {:found? true :value value} or explicit absence.
 
-  One CAS attempt performs membership, value capture, and the LRU hit against
-  the same immutable cache. The held value remains usable even if another
+  Retrieval records policy usage and holds the immutable value even if another
   operation immediately evicts its key. Any request-dependent eligibility
   check happens after this function returns."
   [store key]
-  (loop []
-    (let [current @(:state store)]
-      (if-not (cache/has? current key)
-        {:found? false
-         :value nil}
-        (let [held-value (cache/lookup current key)
-              next (cache/hit current key)]
-          (if (compare-and-set! (:state store) current next)
-            {:found? true
-             :value held-value}
-            (recur)))))))
+  #?(:clj
+     (let [boxed (.getIfPresent ^Cache (:state store) (storage-key key))]
+       (if (nil? boxed)
+         {:found? false :value nil}
+         {:found? true :value (public-value boxed)}))
+     :cljs
+     (loop []
+       (let [current @(:state store)]
+         (if-not (cache/has? current key)
+           {:found? false
+            :value nil}
+           (let [held-value (cache/lookup current key)
+                 next (cache/hit current key)]
+             (if (compare-and-set! (:state store) current next)
+               {:found? true
+                :value held-value}
+               (recur))))))))
 
 (defn peek-entry
-  "Reads one immutable store snapshot without changing LRU recency.
+  "Reads one resident mapping without changing retention policy state.
 
   This supports publication comparison and off-CAS semantic eligibility.
   Actual retrieval calls `lookup!` or follows with `hit-if-value!` so only an
   accepted resident mapping refreshes recency."
   [store key]
-  (let [current @(:state store)]
-    (if (cache/has? current key)
-      {:found? true
-       :value (cache/lookup current key)}
-      {:found? false
-       :value nil})))
+  #?(:clj
+     (let [boxed (quiet-box (:state store) key)]
+       (if (nil? boxed)
+         {:found? false :value nil}
+         {:found? true :value (public-value boxed)}))
+     :cljs
+     (let [current @(:state store)]
+       (if (cache/has? current key)
+         {:found? true
+          :value (cache/lookup current key)}
+         {:found? false
+          :value nil}))))
 
 (defn hit-if-value!
   "Touches one mapping only while its immutable value is `expected-value`.
 
   Eligibility is decided by the semantic caller before this operation. The
-  expected value is data, not a callback, so CAS retries perform only standard
-  membership, lookup, identity, and hit transformations."
+  expected value is data, not a callback, so retries perform only membership,
+  identity comparison, and a conditional cache update."
   [store key expected-value]
-  (loop []
-    (let [current @(:state store)]
-      (if-not (cache/has? current key)
-        false
-        (let [resident-value (cache/lookup current key)]
-          (if-not (identical? expected-value resident-value)
-            false
-            (if (compare-and-set! (:state store) current
-                                  (cache/hit current key))
-              true
-              (recur))))))))
+  #?(:clj
+     (let [^Cache storage (:state store)
+           key (storage-key key)
+           ^ConcurrentMap mappings (storage-map storage)]
+       (loop []
+         (let [boxed (.getIfPresentQuietly ^Policy (.policy storage) key)]
+           (cond
+             (nil? boxed) false
+             (not (identical? expected-value (public-value boxed))) false
+             (.replace mappings key boxed boxed) true
+             :else (recur)))))
+     :cljs
+     (loop []
+       (let [current @(:state store)]
+         (if-not (cache/has? current key)
+           false
+           (let [resident-value (cache/lookup current key)]
+             (if-not (identical? expected-value resident-value)
+               false
+               (if (compare-and-set! (:state store) current
+                                     (cache/hit current key))
+                 true
+                 (recur)))))))))
 
 (defn put-if-absent!
   "Publishes an already-computed value unless key is already resident.
 
   Returns true only for the successful insertion. A concurrent same-key
-  publication wins without being overwritten or refreshed: publication
-  contention is not a cache read and therefore is not LRU usage. The retry
-  loop performs only pure membership and LRU-miss transformations."
+  publication wins without being overwritten. Computation and validation are
+  always outside cache atomic scopes."
   [store key completed-value]
-  (loop []
-    (let [current @(:state store)]
-      (if (cache/has? current key)
-        false
-        (let [next (cache/miss current key completed-value)]
-          (if (compare-and-set! (:state store) current next)
-            true
-            (recur)))))))
+  #?(:clj
+     (let [^Cache storage (:state store)
+           key (storage-key key)]
+       ;; The quiet probe preserves the common existing-key operation as a
+       ;; non-use. A publisher racing this probe may touch the winner through
+       ;; ConcurrentMap.putIfAbsent; that affects retention only, never values.
+       (if (some? (.getIfPresentQuietly ^Policy (.policy storage) key))
+         false
+         (nil? (.putIfAbsent (storage-map storage)
+                             key
+                             (boxed-value completed-value)))))
+     :cljs
+     (loop []
+       (let [current @(:state store)]
+         (if (cache/has? current key)
+           false
+           (let [next (cache/miss current key completed-value)]
+             (if (compare-and-set! (:state store) current next)
+               true
+               (recur))))))))
 
 (defn replace-if!
   "Atomically replaces one expected resident mapping.
 
-  The expected-value comparison is data, not a callback, so an atom retry can
-  repeat only standard cache membership, lookup, eviction, and miss
-  transformations. A successful replacement is the newest LRU entry. Returns
-  false when the key is absent or its immutable value has changed."
+  The expected-value comparison is data, not a callback. A successful
+  replacement records fresh policy usage. Returns false when the key is absent
+  or its immutable value has changed."
   [store key expected-value replacement-value]
-  (loop []
-    (let [current @(:state store)]
-      (if-not (cache/has? current key)
-        false
-        (let [resident-value (cache/lookup current key)]
-          (if-not (identical? expected-value resident-value)
-            false
-            (let [next (cache/miss (cache/evict current key)
-                                   key
-                                   replacement-value)]
-              (if (compare-and-set! (:state store) current next)
-                true
-                (recur)))))))))
+  #?(:clj
+     (let [^Cache storage (:state store)
+           key (storage-key key)
+           ^ConcurrentMap mappings (storage-map storage)]
+       (loop []
+         (let [boxed (.getIfPresentQuietly ^Policy (.policy storage) key)]
+           (cond
+             (nil? boxed) false
+             (not (identical? expected-value (public-value boxed))) false
+             (.replace mappings key boxed (boxed-value replacement-value)) true
+             :else (recur)))))
+     :cljs
+     (loop []
+       (let [current @(:state store)]
+         (if-not (cache/has? current key)
+           false
+           (let [resident-value (cache/lookup current key)]
+             (if-not (identical? expected-value resident-value)
+               false
+               (let [next (cache/miss (cache/evict current key)
+                                      key
+                                      replacement-value)]
+                 (if (compare-and-set! (:state store) current next)
+                   true
+                   (recur))))))))))
 
 (defn evict!
   "Evicts key if resident, returning whether this call removed a mapping."
   [store key]
-  (loop []
-    (let [current @(:state store)]
-      (if-not (cache/has? current key)
-        false
-        (let [next (cache/evict current key)]
-          (if (compare-and-set! (:state store) current next)
-            true
-            (recur)))))))
+  #?(:clj
+     (some? (.remove (storage-map (:state store)) (storage-key key)))
+     :cljs
+     (loop []
+       (let [current @(:state store)]
+         (if-not (cache/has? current key)
+           false
+           (let [next (cache/evict current key)]
+             (if (compare-and-set! (:state store) current next)
+               true
+               (recur))))))))
 
 (defn clear!
-  "Atomically replaces the current policy value with a fresh empty LRU."
+  "Removes all mappings from this local cache instance."
   [store]
-  (reset! (:state store) (empty-lru (:max-entries store)))
+  #?(:clj (.invalidateAll ^Cache (:state store))
+     :cljs (reset! (:state store) (empty-lru (:max-entries store))))
   nil)
 
 (defn entries
   "Returns a portable immutable snapshot of resident [key value] pairs.
 
-  Iteration order is deliberately not an LRU or serialization contract."
+  Iteration order is deliberately not a retention or serialization contract.
+  Concurrent JVM iteration is weakly consistent, as documented by Caffeine."
   [store]
-  (into [] (seq @(:state store))))
+  #?(:clj
+     (let [^Cache storage (:state store)]
+       (.cleanUp storage)
+       (mapv (fn [^Map$Entry entry]
+               [(public-key (.getKey entry))
+                (public-value (.getValue entry))])
+             (.entrySet (storage-map storage))))
+     :cljs
+     (into [] (seq @(:state store)))))
 
 (defn entry-count
-  "Returns the number of entries in one immutable store snapshot."
+  "Returns the settled resident entry-count estimate."
   [store]
-  (reduce (fn [n _] (inc n)) 0 (seq @(:state store))))
+  #?(:clj
+     (let [^Cache storage (:state store)]
+       (.cleanUp storage)
+       (.estimatedSize storage))
+     :cljs
+     (reduce (fn [n _] (inc n)) 0 (seq @(:state store)))))

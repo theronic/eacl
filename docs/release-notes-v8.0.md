@@ -204,14 +204,14 @@ backend time travel.
   avoiding numeric `max-tx` collisions after reset.
 - Datalevin uses backend/source/lifecycle/revision identity and performs exact
   selected-revision reuse only. It does not fingerprint physical schema.
-- Independent bounded standard LRUs retain exact denotation and completed
+- Independent bounded standard caches retain exact denotation and completed
   answer entries. Exact and managed answer modes live only in complete flat
   keys; denotations are exact-only and there is no retained-generation
   container. No schema or relationship proof calculation occurs on an exact
   hit.
 - Publication captures the generation/lifecycle. A delayed computation cannot
   repopulate a newer or explicitly expired lifecycle.
-- Historical exact entries coexist in the same count-bounded standard LRU as
+- Historical exact entries coexist in the same count-bounded standard cache as
   other entries in their tier. Exact requests never consult managed
   relation/schema proof. Completed pages above 1,000 results are returned but
   are not retained; scalar, count, and tree answers are unaffected.

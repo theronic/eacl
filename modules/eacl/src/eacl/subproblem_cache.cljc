@@ -2,9 +2,9 @@
   "Count-bounded private storage for completed authorization subproblems.
 
   Exact denotation and completed-answer retention use two independent standard
-  LRU stores. This namespace owns key selection, completed-value validation,
-  and publication of request-owned miss results; the LRU adapter owns
-  retention."
+  bounded stores. This namespace owns key selection, completed-value validation,
+  and publication of request-owned miss results; the standard cache adapter
+  owns retention."
   (:refer-clojure :exclude [resolve])
   (:require [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
@@ -14,7 +14,8 @@
             #?(:clj
                [eacl.formal.production-kernel :as production-kernel]
                :cljs
-               [eacl.formal.production-kernel-cljs :as production-kernel])))
+               [eacl.formal.production-kernel-cljs :as production-kernel]))
+  #?(:clj (:import [java.util.concurrent.atomic LongAdder])))
 
 (def ^:dynamic *store*
   "The request-bound answer/denotation store for one cached evaluation."
@@ -54,7 +55,18 @@
   :eacl.subproblem-cache/snapshot-v2)
 
 (defrecord SubproblemStore
-           [tiers capacities content-revision telemetry-enabled? metrics])
+           [tiers capacities content-revision telemetry-enabled? metrics
+            lookup-metrics])
+
+(def ^:private lookup-metric-keys
+  [:lookup-misses :denotation-hits :answer-hits])
+
+(defn- new-lookup-metrics
+  []
+  #?(:clj
+     (into {} (map (fn [metric] [metric (LongAdder.)]))
+           lookup-metric-keys)
+     :cljs nil))
 
 (defn- invalid-config!
   [message data]
@@ -73,7 +85,7 @@
   value)
 
 (defn store
-  "Creates independent count-bounded denotation and answer LRU stores."
+  "Creates independent count-bounded denotation and answer stores."
   ([]
    (store {} nil))
   ([options]
@@ -119,7 +131,8 @@
              :lookup-misses 0
              :denotation-hits 0
              :answer-hits 0
-             :avoided-backend-operations 0})))))
+             :avoided-backend-operations 0})
+      (new-lookup-metrics)))))
 
 (defn store?
   [value]
@@ -142,6 +155,41 @@
   (when (:telemetry-enabled? store)
     (apply swap! (:metrics store) f args))
   nil)
+
+(defn- record-lookup-metric!
+  [store metric]
+  (when (:telemetry-enabled? store)
+    #?(:clj (.increment ^LongAdder (get (:lookup-metrics store) metric))
+       :cljs
+       (swap!
+        (:metrics store)
+        (fn [metrics]
+          (if (= :lookup-misses metric)
+            (-> metrics
+                (update :lookup-probes inc)
+                (update :lookup-misses inc))
+            (-> metrics
+                (update :lookup-probes inc)
+                (update :hits inc)
+                (update metric inc)))))))
+  nil)
+
+(defn- current-metrics
+  [store]
+  #?(:clj
+     (let [lookup
+           (into {}
+                 (map (fn [metric]
+                        [metric
+                         (.sum ^LongAdder
+                               (get (:lookup-metrics store) metric))]))
+                 lookup-metric-keys)
+           hits (+ (:answer-hits lookup) (:denotation-hits lookup))]
+       (assoc (merge @(:metrics store) lookup)
+              :hits hits
+              :lookup-probes (+ hits (:lookup-misses lookup))))
+     :cljs
+     @(:metrics store)))
 
 (defn- record-content-change!
   [store]
@@ -177,7 +225,7 @@
   No field is a byte estimate or a mirror of library-private recency state."
   [store]
   (validate-store! store)
-  (assoc @(:metrics store)
+  (assoc (current-metrics store)
          :telemetry-enabled? (:telemetry-enabled? store)
          :tiers
          (into {}
@@ -271,31 +319,18 @@
             nil))]
     (if-not (:found? resident)
       (do
-        (record-metrics!
-         store
-         #(-> %
-              (update :lookup-probes inc)
-              (update :lookup-misses inc)))
+        (record-lookup-metric! store :lookup-misses)
         nil)
       resident)))
 
 (defn- record-lookup-miss!
   [store]
-  (record-metrics!
-   store
-   #(-> %
-        (update :lookup-probes inc)
-        (update :lookup-misses inc)))
+  (record-lookup-metric! store :lookup-misses)
   nil)
 
 (defn- hit-result!
   [store tier value]
-  (record-metrics!
-   store
-   #(-> %
-        (update :lookup-probes inc)
-        (update :hits inc)
-        (update (tier-hit-metric tier) inc)))
+  (record-lookup-metric! store (tier-hit-metric tier))
   {:value value
    :cached? true
    :cache-tier (exact-cache-tier tier)})
@@ -350,7 +385,7 @@
 
   Supported publication and restore transitions validate values before they
   enter the private store. Nil and false remain distinguishable from absence.
-  Exact lookup is only LRU membership/touch plus metrics. Managed completed
+  Exact lookup is only cache membership/touch plus metrics. Managed completed
   answers use `lookup-eligible!` for their separate causal-revision obligation.
 
   This is a private-runtime hot path: the store, tier, and composite key arrive
@@ -374,8 +409,8 @@
 (defn publish!
   "Publishes one already-computed value under an opaque storage key.
 
-  Validation and page eligibility run once before the pure absent-key LRU
-  transformation. A concurrent same-key publisher wins, while this request
+  Validation and page eligibility run once before the absent-key cache
+  insertion. A concurrent same-key publisher wins, while this request
   still returns its own completed value."
   [store tier storage-key options value]
   (validate-tier! store tier)
@@ -556,11 +591,11 @@
               (every? some? (subvec identity 2 6))))))
 
 (defn restore-store
-  "Constructs fresh standard LRUs from an already trusted decoded v2 value.
+  "Constructs fresh bounded stores from an already trusted decoded v2 value.
 
   `:entry-valid?` is the outer cache's operation-specific closed key/value
   validator. It is invoked exactly once per entry after structural and
-  capacity validation and before any LRU insertion."
+  capacity validation and before any cache insertion."
   ([snapshot options]
    (invalid-config!
     "Cache snapshot restore requires an :entry-valid? callback."
@@ -632,7 +667,7 @@
             "Cache snapshot entry violates its key/value contract."
             {:tier tier :key (:key entry)}))))
      ;; Canonical input order is not trusted; normalize before reconstructing
-     ;; deterministic initial recency in fresh empty LRUs.
+     ;; deterministic initial policy state in fresh empty stores.
      (doseq [{:keys [tier key value]} ordered-entries]
        (when-not (lru/put-if-absent! (get (:tiers destination) tier) key value)
          (incompatible-snapshot!

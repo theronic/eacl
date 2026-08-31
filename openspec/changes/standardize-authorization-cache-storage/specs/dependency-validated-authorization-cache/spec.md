@@ -29,7 +29,7 @@ object-codec, caveat, or adapter option capable of changing the answer.
 
 A managed cache entry SHALL preserve its immutable `computed-at` causal anchor
 and exact locator. Validation against a later selected snapshot MAY emit
-request-local telemetry and a successful lookup MAY update library-managed LRU
+request-local telemetry and a successful lookup MAY update library-managed access-policy
 metadata, but neither may rewrite the resident entry payload. The response
 token SHALL identify the selected snapshot's graph head, not the computation
 point.

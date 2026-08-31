@@ -42,7 +42,9 @@ collection of the named commit can make that snapshot unavailable.
 
 ## Automatic basis cache
 
-Every client owns flat, count-bounded standard-LRU tiers. Exact answers are
+Every client owns flat, count-bounded standard-cache tiers. JVM clients use
+Caffeine 3.2.4 manual caches with `maximumSize` and W-TinyLFU frequency/recency;
+CLJS/DataScript uses the theronic `cljs-cache` LRU. Exact answers are
 attached to the complete selected immutable database identity and are checked
 first without proof. On an exact miss, a deterministic ordinary current basis
 may attempt one complete ordered-generation proof. A proof-backed answer may
@@ -59,13 +61,18 @@ contract violation: authorization and exact caching continue, while managed
 lifting becomes sticky-disabled until lifecycle expiry. Neither case permits
 partial-proof reuse.
 
-Authenticated exact requests use the same exact-basis LRU as ordinary selected
+Authenticated exact requests use the same exact-basis store as ordinary selected
 bases. The key includes source scope and lifecycle, native revision and
 locator, basis kind, adapter and identity contracts, engine/compiler/value ABI,
 result shape, demand, and answer-affecting structural and aggregate limits.
-Historical requests can reuse only an identical exact key. Public IDs, tokens,
-cursors, cache basis, and other metadata are rebuilt from the selected adapter
-on every hit.
+Historical requests can reuse only an identical exact key. With the default
+non-expiring cursor policy, an exact transport-page hit is keyed by the complete
+raw request (including its exact token), exact basis, cursor-key policy, and
+render ABI. Because only a successfully authenticated request can publish that
+process-private entry, a repeat can return the complete public page before
+cursor decode, object-identity internalization, proof work, or token
+construction. Configuring cursor TTL disables this tier so the active clock and
+expiry decision remain authoritative.
 
 Disable caching:
 
@@ -80,7 +87,7 @@ Disable caching:
 
 Or pass `:cache? false` on one request. Pass `:populate-cache? false` to retain
 lookups and request-local memoization while suppressing completed answers,
-exact denotations, and continuation checkpoints. Both options are excluded
+exact denotations, exact rendered pages, and continuation checkpoints. Both options are excluded
 from semantic and cursor identity; `:cache? false` dominates either populate
 value. `cache-stats` reports exact and proof-backed hits, misses, bypasses,
 proof-unavailable and contract-violation reasons, publications, expirations,
@@ -129,6 +136,9 @@ internal object throughout the source lineage. Every process exchanging
 cursors must use the same codec, fingerprint, and identity contract. The
 built-in `:eacl/id` codec assumes immutability; set `:identity-immutable? false`
 to keep cursors exact-basis-bound when the application permits ID mutation.
+Independently, every identity carried in a cursor query scope or emitted edge
+must be metadata-free portable data; EACL rejects a violation with
+`:eacl.pagination/unsupported-cursor-identity`.
 
 ## Cursors
 
@@ -166,9 +176,10 @@ Continuation state is a private performance optimization. Eviction replays the
 authenticated prefix on the already selected snapshot and does not select a
 different lifecycle. `:populate-cache? false` leaves validation and page data
 unchanged while suppressing completed-answer and checkpoint publication.
-Relay always rebuilds public identifiers and opaque cursors from the resolved
-internal answer; it retains no separate externalized-page or boundary-alias
-store.
+Relay retains no page routes, opposite-direction aliases, boundary index, or
+navigation state. Under the default non-expiring cursor policy it may retain
+one complete exact-basis transport page per complete raw request. A hit is an
+ordinary keyed return; TTL-enabled cursors use the authenticated semantic path.
 
 Provider restart preserves cursors only when the source identity is durable.
 The same Datomic database, durable Datahike store, and Datalevin store retain

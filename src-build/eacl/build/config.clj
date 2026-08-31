@@ -19,7 +19,7 @@
     :required-entry "eacl/core.cljc"
     :dependencies
     {'org.clojure/clojure {:mvn/version "1.11.4"}
-     'org.clojure/core.cache {:mvn/version "1.2.263"}
+     'com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
      'instaparse/instaparse {:mvn/version "1.5.0"}}
     :generated-runtime? true}
 

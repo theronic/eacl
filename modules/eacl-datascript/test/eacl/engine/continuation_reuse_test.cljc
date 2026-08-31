@@ -734,47 +734,70 @@
             other-key (assoc key-a 5 99)]
         (page/checkpoint-put! context key-a checkpoint)
         (page/checkpoint-put! context other-key checkpoint)
-        (is (nil? (page/checkpoint-hit context key-a 2 42)))
-        (is (= 1 (:evictions (continuation/stats store))))
+        (let [settled (continuation/stats store)
+              resident-results
+              [(page/checkpoint-hit context key-a 2 42)
+               (page/checkpoint-hit context other-key 2 42)]]
+          (is (= 1 (:entries settled)))
+          (is (= 1 (:evictions settled)))
+          (is (= 1 (count (filter some? resident-results)))
+              "bounded storage retains one candidate without promising which cold victim")
+          (is (= 1 (:hits (continuation/stats store)))))
         (is (nil? (page/checkpoint-hit context key-b 2 42)))
         (is (= 2 (get-in (continuation/stats store)
                          [:miss-reasons :absent]))
             "retention policy does not keep per-key tombstones")))
-    (testing "an accepted checkpoint refreshes LRU recency"
-      (let [store (continuation/make-store {:max-entries 2})
-            context (make-context store)
-            key-c (assoc key-a 2 "plan-c")]
+    (testing "an accepted hot checkpoint survives cold churn"
+      (let [store (continuation/make-store {:max-entries 16})
+            context (make-context store)]
+        (doseq [seed (range 15)]
+          (page/checkpoint-put!
+           context (assoc key-a 2 (str "plan-seed-" seed)) checkpoint))
         (page/checkpoint-put! context key-a checkpoint)
-        (page/checkpoint-put! context key-b checkpoint)
+        ;; Caffeine's Window TinyLFU policy combines frequency and recency and
+        ;; need not select the strict-LRU cold victim. The CLJS implementation
+        ;; is true LRU, but both policies must retain a repeatedly accepted hot
+        ;; checkpoint while one-hit candidates churn through bounded storage.
+        (dotimes [candidate 100]
+          (dotimes [_ 10]
+            (page/checkpoint-hit context key-a 2 42))
+          (page/checkpoint-put!
+           context (assoc key-a 2 (str "plan-c-" candidate)) checkpoint))
         (is (= checkpoint (page/checkpoint-hit context key-a 2 42)))
-        (page/checkpoint-put! context key-c checkpoint)
-        (is (= checkpoint (page/checkpoint-hit context key-a 2 42)))
-        (is (nil? (page/checkpoint-hit context key-b 2 42)))
-        (is (= checkpoint (page/checkpoint-hit context key-c 2 42)))))
-    (testing "a rejected checkpoint boundary does not refresh LRU recency"
+        (let [stats (continuation/stats store)]
+          (is (= 16 (:entries stats)))
+          (is (= 1001 (:hits stats)))
+          (is (= 116 (:puts stats)))
+          (is (= 116 (:publications stats)))
+          (is (= 100 (:evictions stats))))))
+    (testing "a rejected checkpoint boundary does not record a cache hit"
       (let [store (continuation/make-store {:max-entries 2})
             context (make-context store)
             key-c (assoc key-a 2 "plan-c")]
         (page/checkpoint-put! context key-a checkpoint)
         (page/checkpoint-put! context key-b checkpoint)
         (is (nil? (page/checkpoint-hit context key-a 3 42)))
+        (is (= 1 (get-in (continuation/stats store)
+                         [:miss-reasons :boundary-mismatch])))
         (page/checkpoint-put! context key-c checkpoint)
-        (is (nil? (page/checkpoint-hit context key-a 2 42)))
-        (is (= checkpoint (page/checkpoint-hit context key-b 2 42)))
-        (is (= checkpoint (page/checkpoint-hit context key-c 2 42)))))
-    (testing "a stale publication offer is not LRU usage"
+        ;; Window TinyLFU chooses by frequency and recency rather than exposing
+        ;; a strict-LRU victim. The miss metric proves no accepted cache hit.
+        (is (= 2 (:entries (continuation/stats store))))))
+    (testing "a stale publication offer is not retention-policy usage"
       (let [store (continuation/make-store {:max-entries 2})
             context (make-context store)
             key-c (assoc key-a 2 "plan-c")]
         (page/checkpoint-put! context key-a checkpoint)
         (page/checkpoint-put! context key-b checkpoint)
-        (page/checkpoint-put!
-         context key-a (assoc-in checkpoint [:state :transitions] 9))
+        (let [before (continuation/stats store)]
+          (page/checkpoint-put!
+           context key-a (assoc-in checkpoint [:state :transitions] 9))
+          (let [after (continuation/stats store)]
+            (is (= (:publications before) (:publications after)))
+            (is (= (:replacements before) (:replacements after)))
+            (is (= (inc (:puts before)) (:puts after)))))
         (page/checkpoint-put! context key-c checkpoint)
-        (is (nil? (page/checkpoint-hit context key-a 2 42))
-            "the stale offer must not keep the oldest key resident")
-        (is (= checkpoint (page/checkpoint-hit context key-b 2 42)))
-        (is (= checkpoint (page/checkpoint-hit context key-c 2 42)))
+        (is (= 2 (:entries (continuation/stats store))))
         (is (= 1 (:evictions (continuation/stats store))))))
     (testing "population disabled"
       (let [store (continuation/make-store {})

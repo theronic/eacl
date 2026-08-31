@@ -84,8 +84,10 @@
   (let [core-dependencies (config/dependencies :eacl "8.1.0")
         datahike-dependencies
         (config/dependencies :eacl-datahike "8.1.0")]
-    (is (= {:mvn/version "1.2.263"}
-           (get core-dependencies 'org.clojure/core.cache)))
+    (is (= {:mvn/version "3.2.4"}
+           (get core-dependencies
+                'com.github.ben-manes.caffeine/caffeine)))
+    (is (not (contains? core-dependencies 'org.clojure/core.cache)))
     (is (not (contains? core-dependencies
                         'com.github.theronic/cljs-cache))
         "the temporary Git dependency is source-build-only")
@@ -108,8 +110,10 @@
         {:git/url "https://github.com/theronic/cljs-cache.git"
          :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}]
     (doseq [dependencies [root-dependencies core-dependencies]]
-      (is (= {:mvn/version "1.2.263"}
-             (get dependencies 'org.clojure/core.cache)))
+      (is (= {:mvn/version "3.2.4"}
+             (get dependencies
+                  'com.github.ben-manes.caffeine/caffeine)))
+      (is (not (contains? dependencies 'org.clojure/core.cache)))
       (is (= cljs-cache
              (get dependencies 'com.github.theronic/cljs-cache))))
     (doseq [dependencies [root-dependencies

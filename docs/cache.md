@@ -8,18 +8,19 @@ evaluation; cache availability cannot change an authorization result.
 
 ## Storage strategy
 
-All reusable shared EACL stores use standard least-recently-used retention:
+Reusable shared EACL stores use one small private adapter with runtime-specific
+implementations:
 
-- Clojure uses `org.clojure/core.cache`;
-- ClojureScript uses the pinned `com.github.theronic/cljs-cache` fork; and
-- EACL's small CLJC adapter supplies local atoms, explicit absence, atomic LRU
-  touches, absent-key publication, eviction, clearing, and portable iteration.
+- Clojure uses Caffeine 3.2.4's manual cache with `maximumSize` and Window
+  TinyLFU admission plus frequency/recency eviction; and
+- ClojureScript uses the pinned `com.github.theronic/cljs-cache` LRU fork.
 
-The atoms are expected to change on a hit because an LRU must record use.
-EACL never substitutes FIFO: a frequently used old entry remains hot while the
-least recently used entry is evicted. Cache transformations contain no loader,
-validator, proof acquisition, or request computation, so an atom retry can
-repeat only a pure library operation.
+Caffeine is not strict LRU and the runtimes need not evict the same cold key.
+Caffeine ordinary reads are nonblocking. Its buffered maintenance can use
+an internal eviction lock, and `maximumSize` is an eventual bound during
+concurrent writes, so EACL does not claim the whole cache is lock-free. EACL
+adds no access queue, frequency/recency sidecar, loader, validator, proof
+acquisition, rendering, or request computation to cache operations.
 
 There is no single-flight owner. Concurrent misses compute independently and
 race best-effort publication. Each request returns its own completed result
@@ -48,6 +49,14 @@ tree limits, and normalized aggregate limits. The aggregate limits are part of
 identity because limits such as `:candidate-window` can change page boundaries
 and flags, not merely execution cost.
 
+For deterministic adapters whose identity contract promises immutable,
+injective external IDs, `can?`, `count-resources`, `count-subjects`, and
+permission-tree expansion construct a canonical public exact key before any
+backend identity internalization. This fast path accepts only bounded canonical
+public IDs. Other adapters and ID shapes retain the established internal-key
+path; permission-tree completed caching is disabled when no safe public key is
+available.
+
 Resolution is deliberately small:
 
 1. Look up the exact composite key.
@@ -63,31 +72,34 @@ managed source identity, but it never publishes reusable state.
 
 Validated publication and validated off-side restore are the only supported
 ways to install answer or subproblem entries. Exact hits are therefore ordinary
-membership reads plus the standard LRU touch; they do not repeat operation,
+membership reads plus the runtime library's access update; they do not repeat operation,
 shape, or ABI validation. Managed hits add only the computed-revision check
-above. Derived-schema artifacts are likewise validated once before direct LRU
+above. Derived-schema artifacts are likewise validated once before direct cache
 publication. Every live answer, subproblem, and derived-artifact publisher
 requires an explicit callable validator; there is no implicit trusting
 validator overload. Direct application mutation of EACL's private runtime
-records or backing cache atoms is unsupported. Cursor authentication and any
-configured cursor expiry remain request-dependent and are still checked on
-every use.
+records or backing cache stores is unsupported. Unknown or nonresident cursor
+tokens are authenticated normally. A resident process-private transport-page
+key proves that its exact raw token and request were authenticated before
+publication; configuring cursor expiry disables that tier so expiry remains a
+current per-request decision.
 
 ## Store inventory
 
 | Store | Contents | Retention |
 | --- | --- | --- |
-| Answer | Completed point, page, count, and permission-tree results | Standard LRU |
-| Denotation | Completed Boolean denotations | Standard LRU |
-| Continuation | Validated latest traversal/checkpoint state | Standard LRU |
-| Stable-page checkpoint | Request-local or standalone resumable reducer state | Standard LRU |
-| Cursor codec/construction | Authenticated token and construction contexts | Independent standard LRUs |
-| Derived schema | Parsed schema, dependency closures, roots, and sealed plans | Flat standard LRU |
+| Answer | Completed point, page, count, and permission-tree results | Standard cache |
+| Denotation | Completed Boolean denotations | Standard cache |
+| Exact transport page | Complete public page under an exact raw request | Standard cache; nonportable |
+| Continuation | Validated latest traversal/checkpoint state | Standard cache |
+| Stable-page checkpoint | Request-local or standalone resumable reducer state | Standard cache |
+| Cursor codec/construction | Authenticated token and construction contexts | Independent standard caches |
+| Derived schema | Parsed schema, dependency closures, roots, and sealed plans | Flat standard cache |
 
 Request-local schema memos, evaluator worklists, and recursion sets remain
 ordinary request state. Stable-page checkpoints are semantic execution state,
-but their bounded multi-key retention still uses the standard LRU adapter;
-only an authenticated ordinal-and-boundary match touches recency. Database-
+but their bounded multi-key retention still uses the standard cache adapter;
+only an authenticated ordinal-and-boundary match records an ordinary access. Database-
 engine caches and authoritative source/basis/generation state are not EACL
 cache backends.
 
@@ -95,13 +107,13 @@ On the JVM, one cursor key-context value contains a nonblocking idle object
 pool capped at eight initialized JCA `Mac` instances. It is not keyed result
 retention: concurrent borrowers never share a mutable authenticator, a full
 pool discards the returned burst instance, and the owning key context remains
-bounded by its standard LRU.
+bounded by its standard cache.
 
 The stable reducer's `:sidecar` is linear traversal state, not reusable cache
 storage. Each entry is the unread portion of one already-fetched physical
 chunk, its index is consumed exactly once by that traversal/checkpoint, and
 oldest-first release is bounded execution scheduling rather than result reuse.
-Replacing that immutable CLJ/CLJS checkpoint state with an atom-backed LRU
+Replacing that immutable CLJ/CLJS checkpoint state with a shared cache
 would add synchronization to every released value and change the state-machine
 representation. Likewise, the saturating 256-condition schema-warning set is
 diagnostic output deduplication only: it never supplies an authorization value
@@ -114,18 +126,50 @@ equivalent conversion with another. These scalar marshaling shortcuts and the
 request-counter thread-local binding-frame pointer are not multi-key cache
 backends.
 
-The former externalized `PageNavigationCache`, relationship-observation cache,
-and unused Datomic `CacheStore`/`LocalStore` provider contracts were deleted.
-Relay rebuilds public identifiers and signed cursors from a completed internal
-page. A first unseen reverse page may recompute; an identical retry can hit the
-ordinary completed-answer key.
+The former `PageNavigationCache`, relationship-observation cache, and unused
+Datomic `CacheStore`/`LocalStore` provider contracts were deleted. In its place,
+the answer lifecycle owns one ordinary exact-basis transport-page store for
+`lookup-resources`, `lookup-subjects`, and `read-relationships`. Its complete
+key binds the exact basis, complete normalized raw request (including the exact
+`:after`/`:before` token), full authenticated consistency descriptor including
+any exact token or freshness floor, operation, cursor-key policy,
+render/order ABI, and adapter identity contract. Its value is the complete
+immutable public page, including the cursor tokens already minted for that
+authenticated request. It never retains a clock, deadline, cancellation
+object, adapter, source, or request-owned object.
+
+The tier is enabled only for the default non-expiring cursor policy. Exact raw
+token equality against a process-private entry can therefore return before
+cursor decode, per-item identity conversion, proof reconstruction, or token
+construction without accepting an unknown token. A configured
+`:cursor-ttl-seconds` bypasses the tier and uses the normal authenticated
+semantic-answer path. An authenticated input cursor with an embedded expiry
+also forbids transport publication even when the receiving client mints
+non-expiring cursors. Rendered key inputs and custom object IDs inside retained
+values must be recursively metadata-free portable data. Operation-typed
+validation permits EACL's known immutable `SpiceObject` wrapper for lookup
+items and `Relationship` wrappers composed from valid SpiceObjects for
+relationship reads; custom records are rejected. Metadata-bearing identities
+bypass this presentation tier and use the semantic/internal path. Any object ID
+carried in a cursor query scope or authenticated/emitted edge must be a bounded
+canonical scalar or ordinary vector rather than a list, map entry, subvector,
+alternate integer representation, map, or set. Records and JavaScript negative
+zero are rejected too. Ordinary request query maps, vectors, and sets are
+recursively copied into plain persistent containers so the cache does not
+retain caller-owned comparators or collection implementations. EACL returns
+`:eacl.pagination/unsupported-cursor-identity` instead of signing transport
+that erases a codec-significant representation. Oversized or foreign raw cursor
+input bypasses exact transport lookup before cache-key hashing and is rejected
+by the ordinary bounded decoder. There are no routes, boundary indexes,
+opposite-direction aliases, access queues, or navigation state.
 
 Physical operator chunks and direct Boolean probes, plus Relay identity
 conversion, are deliberately not shared cache artifacts. Cross-backend
-measurements found their standard-LRU bookkeeping slower and more allocating
+measurements found their cache bookkeeping slower and more allocating
 for the common one- and 16-value cases; request-local evaluator memoization and
-backend execution bounds remain authoritative. The retained shared tiers are
-therefore exact denotations and exact/managed completed answers only.
+backend execution bounds remain authoritative. The retained authorization
+values are exact denotations, exact/managed completed answers, and the exact
+transport page described above.
 
 ## Capacity and page retention
 
@@ -137,7 +181,8 @@ Capacities are positive cross-runtime safe integer entry counts:
   :denotation-max-entries 4096}}
 ```
 
-`:max-entries` sizes the completed-answer, continuation, and cursor LRUs.
+`:max-entries` sizes completed-answer, exact rendered-page, continuation, and
+cursor stores.
 `:denotation-max-entries` independently sizes exact Boolean denotations. The store
 uses 1,024 for every `:max-entries` consumer when that single public option is
 omitted. It does not claim that an entry count or an old logical weight estimate is a byte
@@ -166,21 +211,24 @@ cache sentinel.
   :cache? false})
 ```
 
-- `:cache? false` bypasses answer, exact-denotation, and continuation lookup and
-  publication for the operation. Derived-schema and cursor-construction LRUs
-  remain independent client infrastructure.
+- `:cache? false` bypasses answer, exact-denotation, exact rendered-page, and
+  continuation lookup and publication for the operation. Derived-schema and
+  cursor-construction caches remain independent client infrastructure.
 - `:populate-cache? false` keeps lookup and request-local memoization but
-  suppresses completed-answer, exact-denotation, and continuation
-  publication.
+  suppresses completed-answer, exact-denotation, exact rendered-page, and
+  continuation publication.
 
-Both controls are excluded from semantic identity. Invalid, timed-out,
-cancelled, partial, or unproved authorization answers, denotations, and
-continuation checkpoints are never retained: their publication boundary
-rechecks the bound execution contract before touching an LRU. Fully constructed
-derived-schema and cursor-codec/token artifacts remain independent infrastructure
-because request cancellation cannot invalidate their closed value, identity,
-authentication, or expiry contract. A local cache backend exception is treated
-as a miss or failed best-effort publication, not as an authorization failure.
+Both controls are excluded from semantic identity. Invalid, partial, or
+unproved authorization answers, denotations, and continuation checkpoints are
+never retained. Cancellation or deadline observed before insertion skips
+publication. A successful validated absent-key insertion is the publication
+linearization point: a signal racing after it may still suppress the current
+response, but does not retract the safe immutable value. Fully constructed
+derived-schema and cursor-codec/token artifacts remain independent
+infrastructure because request cancellation cannot invalidate their closed
+value, identity, authentication, or expiry contract. A local cache backend
+exception is treated as a miss or failed best-effort publication, not as an
+authorization failure.
 
 ## Lifecycle and clearing
 
@@ -189,14 +237,14 @@ incarnation. Request basis selection and cache capture must observe the same
 incarnation.
 
 - `clear-answer-cache!` performs a narrow rotation of authorization answer,
-  exact-denotation, and continuation children. It preserves derived schema and
+  exact-denotation, exact rendered-page, and continuation children. It preserves derived schema and
   cursor state and keeps the same source incarnation. Sticky managed-proof
   distrust and per-reason reporter deduplication also remain in force; only
   full expiry resets proof health.
 - `expire-cache!` performs a full rotation with a fresh source incarnation and
   fresh cache children. Supply a coordinated new public source-lifecycle token
   when multiple processes exchange cursors or cache snapshots.
-- restore constructs and validates fresh LRUs off-side, then atomically installs
+- restore constructs and validates fresh stores off-side, then atomically installs
   one complete new lifecycle.
 
 An in-flight request may finish using its detached old stores but cannot dirty
@@ -204,6 +252,11 @@ the newly installed lifecycle. A retained immutable `Snapshot` remains
 evaluable after rotation; if either its public lifecycle or private source
 incarnation differs, it is retired from all reusable runtime children and
 cannot repopulate them. A narrow clear deliberately preserves that ability.
+Every retained-Snapshot read authenticates and asserts its own consistency
+descriptor, then merges that read's exact token or freshness floor into the
+retained selection while preserving the creation selection's backend facts.
+This prevents two descriptors that happen to select the same basis from
+sharing cursor/cache consistency authority.
 
 `cache-content-revision` is a conservative process-local dirty hint for
 authorization answer/denotation content. It advances on their mapping
@@ -211,7 +264,7 @@ publication or eviction and on explicit clear, expiry, or restore, so it never
 misses a portable mapping change. It may also advance when a managed hit is
 promoted to a process-local exact mapping that portable export deliberately
 omits. It does not advance for continuation, cursor, or derived-schema
-retention, lookup metrics, database writes, or an LRU hit touch. A host that
+retention, lookup metrics, database writes, or a library access update. A host that
 must suppress every redundant upload can compare the deterministic exported
 snapshot after observing a revision change.
 
@@ -226,8 +279,9 @@ snapshot after observing a revision change.
 (eacl.datahike.core/restore-cache-snapshot! acl snapshot bounds)
 ```
 
-Snapshot v2 exports a deterministic, flat sequence of complete keys and
-completed values. It excludes library-private priority maps and recency ticks,
+Snapshot v2 exports a deterministic, flat sequence of complete semantic keys
+and completed values. It excludes exact rendered-page values, library-private
+Caffeine admission/eviction/maintenance state, CLJS LRU priority/tick state,
 database values, continuations, cursor state, metrics, and process-local
 tokens. A process-local exact entry created by promoting a managed hit is also
 omitted; its portable managed mapping remains and can be promoted again after
@@ -240,7 +294,7 @@ The restore API accepts trusted, already decoded immutable data. A host that
 persists or receives bytes must authenticate the envelope and enforce an
 encoded-byte bound before decoding. Restore then validates the closed snapshot
 shape, entry count, composite keys, operation-specific value contracts,
-computed revisions, managed-answer proof keys, and tier capacities. Validation and LRU
+computed revisions, managed-answer proof keys, and tier capacities. Validation and cache
 construction happen off-side; any failure leaves the visible runtime unchanged.
 
 Portable entries may be irrelevant to a receiving client's policy. Because
@@ -251,7 +305,7 @@ misses an entry created under looser limits and executes its own contract.
 
 Public cursors authenticate query, ordering, source lineage, selected basis,
 proof context, and boundary. Opaque traversal state remains in a count-bounded
-continuation LRU. A resident value is held after its LRU touch and then
+continuation store. A resident value is held after its ordinary access and then
 validated once for context, plan identity, progress, and replay safety. Invalid
 state is evicted. Optional expiry belongs to the authenticated cursor token and
 is checked during cursor decoding, not stored as a continuation-entry TTL.
@@ -290,8 +344,11 @@ unavailability, retention-ineligible pages, storage errors, expirations, and
 restores. Counts are diagnostics, never validity evidence. With
 `{:cache {:telemetry? false}}`, answer, denotation, and continuation counters do
 not mutate, including cumulative clear, expiry, and restore accounting across
-lifecycle rotation; standard LRU recency and mandatory semantic work counters
-remain active.
+lifecycle rotation; library access-policy recording and mandatory semantic
+work counters remain active.
+JVM hit/probe counters use contention-distributed `LongAdder` values rather
+than a global metrics atom; a stats read during concurrent traffic is therefore
+a weakly consistent diagnostic snapshot. CLJS keeps its single-threaded atom.
 
 `refresh-metrics!` drops cached derived structural artifacts and clears their
 metrics. With `{:eager? true}` it rereads the bounded permission schema to

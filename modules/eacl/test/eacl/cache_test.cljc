@@ -7,6 +7,7 @@
             [eacl.core :as eacl]
             [eacl.exact-integer :as exact-integer]
             [eacl.execution :as execution]
+            [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem]))
 
 (defrecord TestProvider [])
@@ -150,6 +151,272 @@
                :end-cursor nil
                :has-next-page? false
                :has-previous-page? false}})
+
+(defn- rendered-page
+  [n]
+  {:format cache/rendered-page-entry-format
+   :page
+   {:data (mapv #(eacl/spice-object :document (str "document-" %))
+                (range n))
+    :page-info {:start-cursor nil
+                :end-cursor nil
+                :has-next-page? false
+                :has-previous-page? false}}})
+
+(defn- rendered-relationship-page
+  [n]
+  (assoc-in
+   (rendered-page 0)
+   [:page :data]
+   (mapv
+    (fn [index]
+      (eacl/->Relationship
+       (eacl/spice-object :user (str "user-" index))
+       :reader
+       (eacl/spice-object :document (str "document-" index))))
+    (range n))))
+
+(defrecord CustomCursorId [value])
+
+(deftest concurrent-exact-hit-telemetry-counts-every-hit-test
+  #?(:clj
+     (let [store (cache/basis-cache {:max-entries 8})
+           semantic (semantic-key :concurrent-hot)
+           workers 8
+           iterations 1000]
+       (is (false? (:cached?
+                    (exact! store 1 semantic (constantly :resident)))))
+       (run!
+        deref
+        (doall
+         (repeatedly
+          workers
+          #(future
+             (dotimes [_ iterations]
+               (when-not (= :resident
+                            (:value
+                             (exact! store 1 semantic
+                                     (constantly :wrong))))
+                 (throw
+                  (ex-info "Concurrent exact hit changed value." {}))))))))
+       (let [expected (* workers iterations)
+             stats (cache/basis-cache-stats store)]
+         (is (= expected (:hits stats)))
+         (is (= expected (:exact-hits stats)))
+         (is (zero? (:managed-hits stats)))
+         (is (= expected (get-in stats [:subproblems :hits])))
+         (is (= expected
+                (get-in stats [:subproblems :answer-hits])))))
+     :cljs
+     (is true)))
+
+(deftest rendered-pages-are-exact-read-through-values-test
+  (let [store (cache/basis-cache {:max-entries 8})
+        query (assoc (semantic-key :rendered) :operation :lookup-resources)
+        first-context (basis-context 1)
+        other-basis (basis-context 2)
+        other-query (assoc query :id :other)
+        page (rendered-page 3)]
+    (is (nil? (cache/lookup-rendered-page!
+               store first-context query)))
+    (is (= {:published? true :reason :published}
+           (cache/publish-rendered-page!
+            store first-context query page)))
+    (is (= {:value page
+            :cached? true
+            :cache-tier :exact-rendered-page
+            :cache-basis {:basis 1 :branch nil}}
+           (cache/lookup-rendered-page!
+            store first-context query)))
+    (is (nil? (cache/lookup-rendered-page!
+               store other-basis query))
+        "a public projection never crosses an exact basis")
+    (is (nil? (cache/lookup-rendered-page!
+               store first-context other-query))
+        "the complete rendered request identity remains part of the key")
+    (is (= {:published? false :reason :read-only}
+           (cache/publish-rendered-page!
+            store
+            (assoc first-context :populate-cache? false)
+            other-query page)))
+    (is (nil? (cache/lookup-rendered-page!
+               store first-context other-query)))
+    (let [stats (cache/basis-cache-stats store)]
+      (is (= 1 (:rendered-page-entries stats)))
+      (is (= 1 (:rendered-page-hits stats))))))
+
+(deftest rendered-page-size-guard-rejects-only-oversized-pages-test
+  (let [store (cache/basis-cache {:max-entries 4})
+        query (assoc (semantic-key :size-guard)
+                     :operation :lookup-resources)]
+    (is (true? (cache/rendered-page-entry-valid?
+                (rendered-page 1000))))
+    (is (true?
+         (cache/rendered-page-entry-valid?
+          (assoc-in (rendered-page 1)
+                    [:page :page-info :end-cursor]
+                    "eacl_c5_authenticated"))))
+    (is (false?
+         (cache/rendered-page-entry-valid?
+          (assoc-in (rendered-page 1)
+                    [:page :page-info :end-cursor]
+                    {:unsigned :edge}))))
+    (is (false? (cache/rendered-page-entry-valid?
+                 (rendered-page 1001))))
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store (basis-context 1) query (rendered-page 1001))))
+    (is (zero? (:rendered-page-entries
+                (cache/basis-cache-stats store))))))
+
+(deftest rendered-page-publication-enforces-operation-shape-test
+  (let [store (cache/basis-cache {:max-entries 4})
+        context (basis-context 1)
+        lookup-key (assoc (semantic-key :lookup-shape)
+                          :operation :lookup-resources)
+        relationship-key (assoc (semantic-key :relationship-shape)
+                                :operation :read-relationships)]
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store context lookup-key (rendered-relationship-page 1))))
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store context relationship-key (rendered-page 1))))
+    (is (= {:published? true :reason :published}
+           (cache/publish-rendered-page!
+            store context relationship-key (rendered-relationship-page 1))))))
+
+(deftest rendered-pages-reject-request-owned-metadata-test
+  (let [store (cache/basis-cache {:max-entries 4})
+        request-owned (atom :request)
+        metadata-id
+        (with-meta [:document 1] {:request-owned request-owned})
+        page (assoc-in (rendered-page 1) [:page :data 0 :id] metadata-id)
+        query (assoc (semantic-key :metadata) :operation :lookup-resources)]
+    (is (false? (cache/rendered-page-entry-valid? page)))
+    (is (= {:published? false :reason :invalid-value}
+           (cache/publish-rendered-page!
+            store (basis-context 1) query page)))
+    (is (zero? (:rendered-page-entries
+                (cache/basis-cache-stats store)))
+        "the rendered store never retains the request-owned metadata atom")))
+
+(deftest cursor-identities-reject-record-type-erasure-test
+  (let [custom-id (->CustomCursorId "document-1")
+        page (assoc-in (rendered-page 1) [:page :data 0 :id] custom-id)]
+    (is (false? (cache/cursor-cache-data? custom-id))
+        "canonical cursor bytes would erase a custom record's type")
+    (is (false? (cache/rendered-page-entry-valid? page))
+        "a custom record identity cannot enter exact transport retention")))
+
+(deftest cursor-identities-use-one-canonical-sequential-type-test
+  (is (true? (cache/cursor-cache-data? ["user" 1])))
+  (is (false? (cache/cursor-cache-data? '("user" 1)))
+      "list/vector equality must not alias custom identity authority")
+  (is (true? (cache/canonical-cursor-identity? ["user" 1])))
+  (is (false? (cache/canonical-cursor-identity? '("user" 1))))
+  #?(:clj
+     (do
+       (is (false? (cache/canonical-cursor-identity? (subvec [0 1] 1)))
+           "subvec/vector equality must not alias custom identity authority")
+       (is (false? (cache/canonical-cursor-identity? 1N)))
+       (is (false? (cache/canonical-cursor-identity? (int 1))))
+       (is (true? (cache/canonical-cursor-identity? (long 1)))))
+     :cljs
+     (is (false? (cache/canonical-cursor-identity? (js/Number "-0")))
+         "signed zero must not alias ordinary zero"))
+  (doseq [value
+          [{:b 2 :a 1}
+           #{2 1}
+           (secure/canonicalize {:b 2 :a 1})
+           (secure/canonicalize #{2 1})]]
+    (is (false? (cache/canonical-cursor-identity? value))
+        "map/set IDs are rejected because comparator state is not portable"))
+  #?(:clj
+     (do
+       (is (false?
+            (cache/canonical-cursor-identity?
+             (sorted-map-by #(compare %2 %1)))))
+       (is (false?
+            (cache/canonical-cursor-identity?
+             (sorted-set-by #(compare %2 %1))))))
+     :cljs
+     (is true)))
+
+(deftest cursor-identities-are-bounded-before-cache-key-construction-test
+  (let [deep (nth (iterate vector "id") 40)
+        wide (vec (range 1100))
+        long-string (apply str (repeat 4097 "x"))]
+    (doseq [identity [deep wide long-string]]
+      (is (false? (cache/canonical-cursor-identity? identity))))
+    (is (false? (cache/cursor-cache-data? deep)))
+    (is (true? (cache/cursor-cache-data? wide))
+        "the cursor envelope may support more data than the hot cache key")))
+
+(deftest rendered-page-publication-rechecks-request-after-validation-test
+  (doseq [mode [:cancelled :deadline-expired]]
+    (let [store (cache/basis-cache {:max-entries 4})
+          context (basis-context 1)
+          query (assoc (semantic-key mode) :operation :lookup-resources)
+          page (rendered-page 1)
+          clock (atom 0)
+          token (execution/cancellation-token)
+          contract
+          (binding [execution/*monotonic-nanos* #(deref clock)]
+            (execution/normalize
+             {:execution-timeout-ms 1}
+             :lookup-resources
+             {:cancellation-token token}))]
+      (with-redefs [cache/rendered-page-entry-valid?
+                    (fn
+                      ([_value]
+                       (case mode
+                         :cancelled (execution/cancel! token)
+                         :deadline-expired (reset! clock 1000000))
+                       true)
+                      ([_semantic-key _value]
+                       (case mode
+                         :cancelled (execution/cancel! token)
+                         :deadline-expired (reset! clock 1000000))
+                       true))]
+        (is (= {:published? false :reason :execution-unavailable}
+               (binding [execution/*contract* contract
+                         execution/*monotonic-nanos* #(deref clock)]
+                 (cache/publish-rendered-page!
+                  store context query page)))
+            (name mode)))
+      (is (zero? (:rendered-page-entries
+                  (cache/basis-cache-stats store)))
+          (name mode)))))
+
+(deftest rendered-pages-rotate-with-lifecycle-and-are-not-portable-test
+  (let [store (cache/basis-cache {:max-entries 8})
+        context (basis-context 1)
+        captured (cache/capture-cache-lifecycle store)
+        captured-context (assoc context :cache-lifecycle captured)
+        query (assoc (semantic-key :lifecycle)
+                     :operation :lookup-resources)
+        page (rendered-page 2)
+        bounds {:max-entries 8}]
+    (cache/publish-rendered-page! store captured-context query page)
+    (cache/resolve-basis!
+     store context query (constantly (completed-page 1)))
+    (let [snapshot (cache/export-basis-snapshot store bounds)]
+      (is (= 1 (:entry-count snapshot))
+          "rendered process-local values are absent from portable export")
+      (cache/restore-basis-snapshot! store snapshot bounds))
+    (is (nil? (cache/lookup-rendered-page! store context query))
+        "a new lifecycle starts with a fresh rendered store")
+    (is (= page
+           (:value
+            (cache/lookup-rendered-page!
+             store captured-context query)))
+        "an already-running request remains internally lifecycle-consistent")
+    (cache/publish-rendered-page!
+     store captured-context (assoc query :id :late) page)
+    (is (nil? (cache/lookup-rendered-page!
+               store context (assoc query :id :late)))
+        "late publication into a captured retired lifecycle cannot leak")))
 
 (deftest completed-answer-validation-is-operation-and-query-aware-test
   (let [unbounded
@@ -538,26 +805,38 @@
              {:operation :can? :id :single-authority}
              (constantly false)))))))
 
-(deftest exact-answer-lru-retains-hot-historical-basis-test
-  (let [store (cache/basis-cache {:max-entries 2})
+(deftest exact-answer-retention-preserves-hot-historical-basis-test
+  (let [store (cache/basis-cache {:max-entries 16})
         calls (atom [])
         resolve
         (fn [revision value]
           (exact!
            store revision (semantic-key :same)
            #(do (swap! calls conj revision) value)))]
+    (doseq [revision (range 2 17)]
+      (is (= [:cold revision]
+             (:value (resolve revision [:cold revision])))))
     (is (= :one (:value (resolve 1 :one))))
-    (is (= :two (:value (resolve 2 :two))))
-    (is (true? (:cached? (resolve 1 :wrong))))
-    (is (= :one (:value (resolve 1 :wrong))))
-    (is (= :three (:value (resolve 3 :three))))
-    (is (true? (:cached? (resolve 1 :wrong-again))))
-    (is (= :one (:value (resolve 1 :wrong-again))))
-    (is (false? (:cached? (resolve 2 :two-recomputed))))
-    (is (= :two-recomputed (:value (resolve 2 :two-recomputed))))
-    (is (= [1 2 3 2] @calls))
-    (is (= 2 (get-in (cache/basis-cache-stats store)
-                     [:subproblems :tiers :answer :entries])))))
+    ;; Caffeine uses Window TinyLFU admission with frequency and recency; it
+    ;; deliberately does not expose a strict-LRU victim. Exercise the product
+    ;; property instead: a genuinely hot answer survives one-hit cold churn.
+    ;; The CLJS adapter's true LRU obeys the same trace.
+    (dotimes [candidate 100]
+      (dotimes [_ 10]
+        (resolve 1 :wrong))
+      (let [revision (+ candidate 17)
+            value [:cold revision]]
+        (is (= value (:value (resolve revision value))))))
+    (let [hot (resolve 1 :wrong)
+          stats (cache/basis-cache-stats store)]
+      (is (true? (:cached? hot)))
+      (is (= :one (:value hot)))
+      (is (= (vec (concat (range 2 17) [1] (range 17 117))) @calls)
+          "only the initial answer and one-hit candidates are computed")
+      (is (= 1001 (:exact-hits stats)))
+      (is (= 116 (:misses stats)))
+      (is (= 16 (get-in stats
+                        [:subproblems :tiers :answer :entries]))))))
 
 (deftest exact-hit-does-not-acquire-managed-proof-or-dirty-content-test
   (let [store (cache/basis-cache)
@@ -1041,13 +1320,20 @@
     (is (true?
          (:cached?
           (exact! store 1 (semantic-key :hot) (constantly :wrong)))))
-    (is (false?
-         (:cached?
-          (exact! store 2 (semantic-key :cold)
-                  (constantly :cold-recomputed)))))
+    (let [query (assoc (semantic-key :rendered-telemetry-off)
+                       :operation :lookup-resources)]
+      (cache/publish-rendered-page!
+       store (basis-context 1) query (rendered-page 1))
+      (is (some? (cache/lookup-rendered-page!
+                  store (basis-context 1) query))))
     (let [stats (cache/basis-cache-stats store)]
+      (is (<= (:entries stats) 2)
+          "settled adaptive eviction remains within the configured capacity")
       (is (false? (:telemetry-enabled? stats)))
       (is (zero? (:hits stats)))
+      (is (zero? (:exact-hits stats)))
+      (is (zero? (:managed-hits stats)))
+      (is (zero? (:rendered-page-hits stats)))
       (is (zero? (:misses stats))))))
 
 (deftest proof-contract-violation-disables-only-managed-lifting-test

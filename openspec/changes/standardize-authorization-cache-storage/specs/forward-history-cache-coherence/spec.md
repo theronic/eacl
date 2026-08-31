@@ -8,7 +8,7 @@ The exact-current completed-answer tier SHALL admit and return an entry only
 under a flat composite key containing the canonical immutable snapshot, source
 lifecycle, and complete semantic request for which it was computed. A newer
 current request MUST NOT observe an older exact entry. An explicit exact
-request selecting an older snapshot MAY use the same count-bounded LRU tier
+request selecting an older snapshot MAY use the same count-bounded cache tier
 when its complete exact key remains resident; no nested generation store or
 generation-recency policy is required.
 
@@ -26,11 +26,19 @@ generation-recency policy is required.
 
 - **WHEN** `:at-exact-snapshot` selects canonical snapshot `T` and a completed answer for the identical semantic request at `T` remains retained
 - **THEN** EACL may return it without traversal or managed-proof reads
-- **AND** rebuilds public snapshot metadata and tokens from the selected adapter at `T`
+- **AND** an exact transport-page hit may return the complete previously authenticated public page at `T` when the raw request, full authenticated consistency descriptor, operation, and cursor-key policy are identical and cursor expiry is disabled
+
+#### Scenario: Retained Snapshot read supplies its own bound
+
+- **WHEN** a read through a retained Snapshot supplies an authenticated exact
+  token or freshness floor different from its creation descriptor
+- **THEN** the read asserts that descriptor against the retained basis and uses
+  its own token in cursor/cache consistency identity
+- **AND** the retained creation selection continues to supply backend facts
 
 #### Scenario: Snapshot-exact retention is bounded
 
-- **WHEN** LRU capacity evicts an exact answer
+- **WHEN** cache capacity evicts an exact answer
 - **THEN** a later exact request recomputes on its selected immutable snapshot
 - **AND** eviction does not imply snapshot or cursor expiry
 
@@ -60,4 +68,4 @@ affected EACL clients before serving requests.
 
 - **WHEN** `expire-cache!` atomically installs a fresh client lifecycle
 - **THEN** completed answers, subproblems, continuations, cursor codecs, derived schemas, diagnostics, and token/cursor source identity from the prior lifecycle become unreachable by new requests
-- **AND** no externalized page-navigation store exists to rotate
+- **AND** the exact rendered-page representation rotates in that same lifecycle

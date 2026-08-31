@@ -2,6 +2,7 @@
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
   (:require [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
+            [eacl.cache :as cache]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.cursor :as cursor]
@@ -48,6 +49,87 @@
   the `:stable-edge` boundary carries and `eacl.engine.v8` validates."
   2)
 
+(def cursor-continuation-semantic-abi
+  "Functional meaning of an authenticated continuation boundary.
+
+  Change this value whenever edge identity, dependency-closure construction,
+  or traversal boundary semantics change. Exact database identity alone does
+  not make a boundary produced by a different evaluator ABI composable."
+  {:version 2
+   :envelope 13
+   :edge-identity :external-object-id-v1
+   :dependency-context :relation-closure-v1
+   :emission-order cursor-emission-order-version})
+
+(defn- require-portable-cursor-identity!
+  [position value]
+  (when-not (cache/cursor-cache-data? value)
+    (throw
+     (ex-info
+      "Relay cursor identities must be metadata-free portable data."
+      {:type :eacl.pagination/unsupported-cursor-identity
+       :eacl/error :eacl.pagination/unsupported-cursor-identity
+       :reason :nonportable-data
+       :position position})))
+  value)
+
+(defn- require-canonical-cursor-object-id!
+  [position value]
+  (when-not (cache/canonical-cursor-identity? value)
+    (throw
+     (ex-info
+      "Relay cursor object IDs must use their canonical portable representation."
+      {:type :eacl.pagination/unsupported-cursor-identity
+       :eacl/error :eacl.pagination/unsupported-cursor-identity
+       :reason :noncanonical-data
+       :position position})))
+  value)
+
+(def ^:private cursor-object-id-fields
+  #{:id :subject/id :resource/id})
+
+(defn ^:no-doc cursor-query-data?
+  "True when a page query is portable and every external object ID is already
+  in the exact representation produced by canonical cursor transport."
+  [query]
+  (and
+   (cache/cursor-cache-data? query)
+   (loop [pending [query]]
+     (if-let [value (peek pending)]
+       (let [remaining (pop pending)]
+         (cond
+           (map? value)
+           (let [next-values
+                 (reduce-kv
+                  (fn [values field item]
+                    (if (cursor-object-id-fields field)
+                      (if (cache/canonical-cursor-identity? item)
+                        values
+                        (reduced nil))
+                      (conj values item)))
+                  remaining
+                  value)]
+             (and next-values (recur next-values)))
+
+           (or (vector? value) (set? value))
+           (recur (into remaining value))
+
+           :else
+           (recur remaining)))
+       true))))
+
+(defn- require-portable-cursor-query!
+  [query]
+  (when-not (cursor-query-data? query)
+    (throw
+     (ex-info
+      "Relay cursor query identities must use canonical portable data."
+      {:type :eacl.pagination/unsupported-cursor-identity
+       :eacl/error :eacl.pagination/unsupported-cursor-identity
+       :reason :noncanonical-data
+       :position :query})))
+  query)
+
 (defn- normalized-cursor-query
   [query]
   (-> (apply dissoc query cursor-transport-keys)
@@ -61,9 +143,13 @@
   (when object
     (select-keys object [:type :id :relation])))
 
-(defn- scoped-query-form
+(defn ^:no-doc plain-page-query
+  "Replaces only EACL's known public object wrappers with ordinary maps.
+
+  Custom identity values remain untouched so the cursor/transport record guard
+  can reject record identities whose canonical bytes would lose their type."
   [query]
-  (cond-> (normalized-cursor-query query)
+  (cond-> query
     (:subject query) (update :subject plain-scope-object)
     (:resource query) (update :resource plain-scope-object)
     (get-in query [:authorization :subject])
@@ -73,6 +159,10 @@
     (get-in query [:subject/relationship :resource])
     (update-in [:subject/relationship :resource] plain-scope-object)))
 
+(defn- scoped-query-form
+  [query]
+  (plain-page-query (normalized-cursor-query query)))
+
 (defn- cursor-scope
   "Digest of immutable operation/query/principal/configuration identity.
 
@@ -81,7 +171,9 @@
   changed current schema to reach proof comparison and exact fallback without
   weakening rejection of an actually changed query."
   [_adapter opts operation query]
-  (let [authorized-page?
+  (let [scoped-query
+        (require-portable-cursor-query! (scoped-query-form query))
+        authorized-page?
         (boolean
          (or (:authorization query)
              (:resource/relationship query)
@@ -95,14 +187,14 @@
            (get-in opts [:execution-contract :aggregate-limits])
            :page-demand (select-keys query [:first :last])))
         scope-input
-        [cursor-emission-order-version
-         operation
-         execution-scope
-         (scoped-query-form query)]]
+         [cursor-continuation-semantic-abi
+          operation
+          execution-scope
+         scoped-query]]
     (cursor/memoized-context!
      (or (:cursor-codec-cache opts)
          (:cursor-construction-cache opts))
-     [:cursor-query-scope 8 scope-input]
+     [:cursor-query-scope 9 scope-input]
      #(secure/canonical-digest
        "eacl/cursor/query-scope/v8"
        scope-input))))
@@ -239,7 +331,8 @@
 (defn- request-dependency-context
   [adapter opts]
   (if-let [relation-ids (request-relation-ids adapter opts)]
-    (let [candidate (:request-proof-frame opts)
+    (let [candidate (or (:request-proof-frame opts)
+                        (some-> (:request-proof-frame-delay opts) force))
           frame
           (if (and candidate
                    (identical? adapter (:adapter candidate)))
@@ -291,17 +384,36 @@
   (when edge
     (request-counters/add! :cursor-builds)
     (execution/check! (:execution-contract opts) :cursor-encode)
-    (let [token
+    (let [public-edge
+          (require-portable-cursor-identity!
+           :edge
+           (transform-edge-ids
+            #(do
+               (request-counters/add! :identity-conversions)
+               (require-canonical-cursor-object-id!
+                :edge
+                (backend/invoke adapter :internal-id->object %)))
+            edge))
+          token
           (cursor/cursor->token
            (merge
             {:v 13
              :scope scope
-             :edge (transform-edge-ids
-                    #(do
-                       (request-counters/add! :identity-conversions)
-                       (backend/invoke adapter :internal-id->object %))
-                    edge)}
+             :edge public-edge}
             context)
+           opts)]
+      (execution/check! (:execution-contract opts) :cursor-encoded)
+      token)))
+
+(defn- encode-public-page-edge
+  "Signs one already-externalized unsigned edge without another backend read."
+  [opts scope context edge]
+  (when edge
+    (request-counters/add! :cursor-builds)
+    (execution/check! (:execution-contract opts) :cursor-encode)
+    (let [token
+          (cursor/cursor->token
+           (merge {:v 13 :scope scope :edge edge} context)
            opts)]
       (execution/check! (:execution-contract opts) :cursor-encoded)
       token)))
@@ -453,11 +565,14 @@
 
 (defn- exact-selection-context
   [adapter basis-identity]
-  {:lineage (request-context/lineage-for-basis basis-identity)
-   :native-revision
-   (select-keys basis-identity [:revision :exact-locator])
-   :adapter-fingerprint (backend/fingerprint adapter)
-   :identity-contract (backend/identity-contract adapter)})
+  (cond->
+   {:lineage (request-context/lineage-for-basis basis-identity)
+    :native-revision
+    (select-keys basis-identity [:revision :exact-locator])
+    :adapter-fingerprint (backend/fingerprint adapter)
+    :identity-contract (backend/identity-contract adapter)}
+    (some? (:speculative-id basis-identity))
+    (assoc :speculative-id (:speculative-id basis-identity))))
 
 (defn- exact-selection-matches-cursor?
   [exact envelope]
@@ -478,6 +593,71 @@
 (defn- envelope-dependency-context
   [envelope]
   (select-keys envelope dependency-context-fields))
+
+(defn- current-exact-execution-context
+  "Builds only the independently observable exact execution identity.
+
+  Unlike `current-context`, this does not discover relation dependencies or
+  resolve a proof frame. It is sufficient to accept an already-authenticated
+  cursor only when the selected immutable basis and external identity mapping
+  are exactly the ones that originally minted it."
+  [adapter opts]
+  (when (and (backend/deterministic? adapter)
+             (= :selected-internal/immutable-external-injective-v3
+                (backend/identity-contract adapter)))
+    (when-let [basis-identity (:snapshot-semantic-identity opts)]
+      (let [current (exact-selection-context adapter basis-identity)
+            derived-lineage (:lineage current)
+            request-lineage (:request-lineage opts)]
+        (when (and request-lineage
+                   (not= request-lineage derived-lineage))
+          (throw
+           (ex-info
+            "Request lineage differs from the selected immutable basis."
+            {:type :eacl/backend-contract-violation
+             :eacl/error :eacl/backend-contract-violation
+             :request-lineage request-lineage
+             :derived-lineage derived-lineage})))
+        current))))
+
+(defn- exact-execution-matches-cursor?
+  [current envelope]
+  (and current
+       (= (select-keys current
+                       [:lineage :speculative-id
+                        :adapter-fingerprint :identity-contract
+                        :native-revision])
+          (select-keys envelope
+                       [:lineage :speculative-id
+                        :adapter-fingerprint :identity-contract
+                        :native-revision]))))
+
+(defn- retained-exact-context
+  [adapter opts envelope]
+  (let [current (current-exact-execution-context adapter opts)]
+    (when (exact-execution-matches-cursor? current envelope)
+      (merge current
+             (select-keys envelope [:frame :closure-digest])))))
+
+(defn- exact-continuation-decision
+  [opts _current envelope]
+  ;; Exact execution identity and immutable identity projection were compared
+  ;; independently before this call. The kernel consumes only the equality
+  ;; relation for source/proof, so fixed bounded witnesses avoid re-encoding
+  ;; the same large canonical context twice on every continuation hit.
+  (verified/decide
+   (or (:decision-kernel opts)
+       subproblem/*decision-kernel*)
+   :cursor-continuation
+   {:authenticated? (boolean (:cursor/authenticated? envelope))
+    :scope-matches? (boolean (:cursor/scope-matches? envelope))
+    :expired? (boolean (:cursor/expired? envelope))
+    :source "exact-selected-execution"
+    :cursor-source "exact-selected-execution"
+    :current-proof "exact-selected-dependency"
+    :cursor-proof "exact-selected-dependency"
+    :cursor-graph 0
+    :exact nil}))
 
 (defn- ensure-cursor-satisfies-request!
   [opts envelope]
@@ -562,22 +742,39 @@
   ([adapter opts envelope]
    (validate-context! adapter opts envelope nil))
   ([adapter opts envelope known-context]
-   (let [current (or known-context (current-context adapter opts))]
+   (let [retained
+         (when-not known-context
+           (retained-exact-context adapter opts envelope))
+         current (or known-context retained (current-context adapter opts))
+         decision
+         (if retained
+           (exact-continuation-decision opts current envelope)
+           (continuation-decision opts current envelope))]
      (apply-continuation-decision!
-      adapter
-      current
-      envelope
-      (continuation-decision opts current envelope))
+      adapter current envelope decision)
+     (ensure-cursor-satisfies-request! opts envelope)
      true)))
 
 (defn- select-envelope-context
   [adapter opts envelope]
   (if-not envelope
     {:adapter adapter}
-    (let [current (current-context adapter opts)
-          initial
-          (continuation-decision opts current envelope)]
-      (case initial
+    (let [retained (retained-exact-context adapter opts envelope)]
+      (if retained
+        (let [decision
+              (exact-continuation-decision opts retained envelope)]
+          ;; Authentication, expiry, query scope, and execution identity still
+          ;; cross the ordinary continuation decision. Only the redundant
+          ;; reconstruction of a proof for this same immutable basis is gone.
+          (apply-continuation-decision!
+           adapter retained envelope decision)
+          (ensure-cursor-satisfies-request! opts envelope)
+          {:adapter adapter
+           :continuation-context retained})
+        (let [current (current-context adapter opts)
+              initial
+              (continuation-decision opts current envelope)]
+          (case initial
         :snapshot-unavailable
         (do
           (ensure-cursor-satisfies-request! opts envelope)
@@ -648,8 +845,9 @@
         (do
           (apply-continuation-decision!
            adapter current envelope initial)
+          (ensure-cursor-satisfies-request! opts envelope)
           {:adapter adapter
-           :continuation-context current})))))
+           :continuation-context current})))))))
 
 (defn select-continuation-adapter
   "Uses an equal current proof or a verified exact historical fallback."
@@ -699,9 +897,25 @@
        :boundary-identity-changed)
       edge)))
 
+(defn internalize-prepared-page-query
+  "Internalizes authenticated external boundary edges after a cache miss.
+
+  `prepare-page-query` has already authenticated, scope-checked, and selected
+  the exact adapter for these edges. Deferring this identity lookup lets an
+  exact transport-page hit return without touching backend identity storage."
+  [adapter query]
+  (reduce
+   (fn [query field]
+     (if-let [edge (get query field)]
+       (assoc query field (internalize-continued-edge adapter edge))
+       query))
+   query
+   [:after :before]))
+
 (defn prepare-page-query
   "Authenticates each page token once, selects one safe snapshot, and
-  internalizes its resume edge without rebase or restart states."
+  either internalizes its edge or retains the authenticated external edge for
+  a rendered-cache lookup."
   [adapter opts operation query]
   (let [envelopes
         (->> [:after :before]
@@ -728,15 +942,27 @@
                      (validate-context!
                       page-adapter opts envelope
                       (:continuation-context page-context)))
-                   (assoc query field
-                          (internalize-continued-edge
-                           page-adapter (:edge envelope))))))
+                   (assoc query field (:edge envelope)))))
              query
              envelopes)]
         {:adapter page-adapter
          :selected-snapshot selected
          :continuation-context (:continuation-context page-context)
-         :query prepared-query})
+         ;; A token can carry an expiry even when the receiving client's
+         ;; current minting policy has no TTL. Such a request must never become
+         ;; a pre-decode transport hit after that authenticated input expires.
+         :expiring-cursor-input?
+         (boolean
+          (some (fn [[_ envelope]]
+                  (some? (:cursor/expired-at envelope)))
+                envelopes))
+         :query
+         (if (:defer-cursor-edge-internalization? opts)
+           prepared-query
+           (internalize-prepared-page-query
+            page-adapter prepared-query))
+         :deferred-cursor-edge-internalization?
+         (boolean (:defer-cursor-edge-internalization? opts))})
       (catch #?(:clj Throwable :cljs :default) error
         (when selected
           (source/release! selected))
@@ -747,9 +973,7 @@
   (when-let [envelope
              (decode-envelope adapter opts operation query token)]
     (validate-context! adapter opts envelope)
-    (transform-edge-ids
-     #(backend/invoke adapter :object-id->internal %)
-     (:edge envelope))))
+    (internalize-continued-edge adapter (:edge envelope))))
 
 (defn internalize-page-query
   [adapter opts operation query]
@@ -764,15 +988,20 @@
   [adapter opts operation query page]
   (let [context
         (delay
-          (or (:cursor-dependency-context opts)
+          (or (::retained-cursor-dependency-context opts)
+              (:cursor-dependency-context opts)
               (request-dependency-context adapter opts)))
-        scope (cursor-scope adapter opts operation query)
+        scope
+        (delay
+          (or (::retained-cursor-scope opts)
+              (cursor-scope adapter opts operation query)))
         encode-edge
         (fn [edge]
-          (encode-page-edge
-           adapter opts scope
-           (when edge @context)
-           edge))]
+          (when edge
+            (if (::public-cursor-edges? opts)
+              (encode-public-page-edge opts @scope @context edge)
+              (encode-page-edge
+               adapter opts @scope @context edge))))]
     (-> page
         (update-in [:page-info :start-cursor] encode-edge)
         (update-in [:page-info :end-cursor] encode-edge))))
@@ -818,15 +1047,55 @@
   (let [objects (:data page)
         identities
         (resolve-external-identities!
-         adapter opts operation (map :id objects))]
-    (externalize-page-cursors
-     adapter opts operation query
-     (assoc
-      page :data
-      (mapv
-       (fn [{:keys [type id]}]
-         (spice-object type (get identities id)))
-       objects)))))
+         adapter opts operation (map :id objects))
+        page-info
+        (reduce
+         (fn [page-info field]
+           (if-let [edge (get page-info field)]
+             (assoc
+              page-info field
+              (require-portable-cursor-identity!
+               :edge
+               (transform-edge-ids
+                (fn [internal-id]
+                  (require-canonical-cursor-object-id!
+                   :edge
+                   (if (contains? identities internal-id)
+                     (get identities internal-id)
+                     (internal-id->object adapter opts internal-id))))
+                edge)))
+             page-info))
+         (:page-info page)
+         [:start-cursor :end-cursor])
+        cursor-edge?
+        (boolean
+         (or (:start-cursor page-info)
+             (:end-cursor page-info)))
+        context
+        (when cursor-edge?
+          (or (:cursor-dependency-context opts)
+              (request-dependency-context adapter opts)))
+        scope
+        (when cursor-edge?
+          (cursor-scope adapter opts operation query))
+        public-page
+        (externalize-page-cursors
+         adapter
+         (assoc opts
+                ::retained-cursor-dependency-context
+                context
+                ::retained-cursor-scope
+                scope
+                ::public-cursor-edges? true)
+         operation query
+         {:data
+          (mapv
+           (fn [{:keys [type id]}]
+             (spice-object type (get identities id)))
+           objects)
+          :page-info page-info})]
+    (execution/check! (:execution-contract opts) :rendered-page-return)
+    public-page))
 
 (defn externalize-relationship-page
   [adapter opts operation query page]

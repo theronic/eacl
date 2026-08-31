@@ -6,7 +6,7 @@
   identity live in ordinary opaque cache keys; there is no generation registry
   or nested cache state. Artifacts are validated once before publication and
   then stored directly. Request work and validation stay outside the standard
-  LRU atom transformations."
+  cache transformations."
   (:require [clojure.set :as set]
             [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as standard-lru]
@@ -177,7 +177,7 @@
   "Offers one already completed, validated artifact for absent-key insertion.
 
   An explicit callable validator is mandatory at this sole live-ingress
-  boundary. Validation happens exactly once before the pure standard-LRU
+  boundary. Validation happens exactly once before the standard cache
   publication transform. A same-key winner is retained while the caller keeps
   its own completed value."
   [derived-partition semantic completed-value valid?]

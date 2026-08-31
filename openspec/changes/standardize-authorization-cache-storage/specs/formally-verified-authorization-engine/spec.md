@@ -12,7 +12,7 @@ identical immutable selected-basis identity. Managed entries SHALL additionally
 use a key containing the same schema generation and complete relevant relation
 dependency proof under the explicit forward stamped-writer contract. Arbitrary
 eviction, disabled caching, or a lost publication race SHALL refine a miss and
-MUST NOT alter authorization semantics. Library LRU order and atomic scheduling
+MUST NOT alter authorization semantics. Library eviction policy and concurrent scheduling
 are host-boundary tests, not proof inputs.
 
 #### Scenario: Exact cache hit

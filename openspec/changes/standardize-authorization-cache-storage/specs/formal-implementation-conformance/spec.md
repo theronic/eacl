@@ -9,8 +9,8 @@ map from a complete validated key to a complete valid immutable value.
 Mechanized claims MUST cover composite-key separation, validated-ingress value
 induction,
 hit/fresh-evaluation equality, cache bypass, independent miss computation, and
-lifecycle detachment. LRU retention order, library priority-map representation,
-occupancy bookkeeping, and atom-retry scheduling SHALL be tested host
+lifecycle detachment. Eviction order, library-private policy representation,
+occupancy bookkeeping, and concurrent maintenance scheduling SHALL be tested host
 boundary behavior and MUST NOT be represented as authorization authority.
 
 Portable CLJ/CLJS traces and a narrow production source inventory MUST fail if
@@ -31,5 +31,5 @@ key/value ingress-validation branch.
 
 #### Scenario: Storage policy appears in generated authorization authority
 
-- **WHEN** a generated model or host specialization selects an authorization action from LRU position, capacity, recency, or atomic-update scheduling
+- **WHEN** a generated model or host specialization selects an authorization action from eviction priority, capacity, frequency, recency, or concurrent scheduling
 - **THEN** the conformance gate rejects that mapping as outside the semantic storage boundary

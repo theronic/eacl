@@ -72,14 +72,12 @@
     (subproblem/publish!
      store :denotation (storage-key :denotation :new)
      accept-any-publication :new)
-    (is (= :hot (:value (subproblem/lookup!
-                         store :denotation
-                         (storage-key :denotation :hot)))))
-    (is (nil? (subproblem/lookup!
-               store :denotation (storage-key :denotation :cold))))
-    (is (= :new (:value (subproblem/lookup!
-                         store :denotation
-                         (storage-key :denotation :new)))))
+    (let [resident (subproblem/resident-tier-entries store :denotation)
+          values (set (map :value resident))]
+      (is (= 2 (count resident)))
+      (is (contains? values :hot))
+      (is (= 1 (count (filter values [:cold :new])))
+          "adaptive admission may retain either cold candidate"))
     (is (= :d1 (:value (subproblem/lookup!
                         store :answer
                         (storage-key :answer :a1)))))
@@ -103,9 +101,9 @@
                  #(<= (:revision %) 5))))
       (subproblem/publish!
        store :answer new-key accept-any-publication {:revision 2})
-      (is (nil? (subproblem/lookup! store :answer future-key)))
-      (is (= {:revision 1}
-             (:value (subproblem/lookup! store :answer usable-key))))))
+      ;; Rejection is a semantic miss, not a policy touch. Window TinyLFU does
+      ;; not promise the strict-LRU victim selected after the later insertion.
+      (is (= 2 (count (subproblem/resident-tier-entries store :answer))))))
   (testing "an eligible retrieval does refresh recency"
     (let [store (subproblem/store small-options)
           hot-key (storage-key :answer :hot)
@@ -115,15 +113,22 @@
        store :answer hot-key accept-any-publication {:revision 1})
       (subproblem/publish!
        store :answer cold-key accept-any-publication {:revision 2})
-      (is (= {:revision 1}
-             (:value
-              (subproblem/lookup-eligible!
-               store :answer hot-key (constantly true)))))
+      (let [touches (atom [])
+            original-hit-if-value! lru/hit-if-value!]
+        (is (= {:revision 1}
+               (:value
+                (with-redefs
+                 [lru/hit-if-value!
+                  (fn [tier-store key value]
+                    (swap! touches conj [key value])
+                    (original-hit-if-value! tier-store key value))]
+                 (subproblem/lookup-eligible!
+                  store :answer hot-key (constantly true))))))
+        (is (= [[hot-key {:revision 1}]] @touches)))
       (subproblem/publish!
        store :answer new-key accept-any-publication {:revision 3})
-      (is (= {:revision 1}
-             (:value (subproblem/lookup! store :answer hot-key))))
-      (is (nil? (subproblem/lookup! store :answer cold-key))))))
+      (is (= 2 (count (subproblem/resident-tier-entries
+                       store :answer)))))))
 
 (deftest explicit-membership-retains-nil-and-false-test
   (let [store (subproblem/store small-options)]
@@ -144,6 +149,35 @@
       (is (nil? (:value nil-hit)))
       (is (:cached? false-hit))
       (is (false? (:value false-hit))))))
+
+(deftest concurrent-lookup-telemetry-counts-every-hit-test
+  #?(:clj
+     (let [store (subproblem/store small-options)
+           key (storage-key :answer :concurrent-hot)
+           workers 8
+           iterations 1000]
+       (subproblem/publish!
+        store :answer key accept-any-publication :resident)
+       (run!
+        deref
+        (doall
+         (repeatedly
+          workers
+          #(future
+             (dotimes [_ iterations]
+               (when-not (= :resident
+                            (:value
+                             (subproblem/lookup! store :answer key)))
+                 (throw (ex-info "Concurrent cache hit changed value." {}))))))))
+       (let [expected (* workers iterations)
+             metrics (subproblem/stats store)]
+         (is (= expected (:lookup-probes metrics)))
+         (is (= expected (:hits metrics)))
+         (is (= expected (:answer-hits metrics)))
+         (is (zero? (:lookup-misses metrics)))
+         (is (zero? (:denotation-hits metrics)))))
+     :cljs
+     (is true)))
 
 (deftest invalid-values-never-publish-test
   (let [store (subproblem/store small-options)]
@@ -262,12 +296,10 @@
               "an unavailable cache stage does not mutate telemetry"))
         (subproblem/publish!
          store :answer new-key accept-any-publication :new)
-        (is (nil? (subproblem/lookup! store :answer hot-key))
-            "the rejected lookup did not keep the oldest mapping hot")
-        (is (= :cold
-               (:value (subproblem/lookup! store :answer cold-key))))
-        (is (= :new
-               (:value (subproblem/lookup! store :answer new-key))))))))
+        ;; The raw storage non-probe and unchanged telemetry above establish
+        ;; the no-touch behavior. Victim identity is policy-specific.
+        (is (= 2 (count (subproblem/resident-tier-entries
+                         store :answer))))))))
 
 (deftest publication-requires-an-explicit-callable-validator-test
   (let [store (subproblem/store small-options)

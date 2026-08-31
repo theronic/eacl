@@ -7,9 +7,9 @@
          "target/formal/browser"]
  :deps {org.clojure/clojure {:mvn/version "1.11.4"}
 
-        ;; Standard JVM cache implementation used by EACL's private CLJC
-        ;; storage boundary.
-        org.clojure/core.cache {:mvn/version "1.2.263"}
+        ;; Concurrent JVM cache implementation used by EACL's private CLJC
+        ;; storage boundary. ClojureScript uses the fork below instead.
+        com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
 
         ;; CLJS/DataScript demos use the tested fork directly. JVM Maven
         ;; metadata intentionally does not encode this Git-only dependency.

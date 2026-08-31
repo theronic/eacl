@@ -132,7 +132,7 @@
       (if (:found? resident)
         (:value resident)
         (let [decoded (.verbatimString value)]
-          ;; Decoding belongs to the requesting thread, outside the LRU atom
+          ;; Decoding belongs to the requesting thread, outside cache mutation
           ;; transition. A publication race or private-store failure is only
           ;; an optimization miss and cannot affect the decoded result.
           (try

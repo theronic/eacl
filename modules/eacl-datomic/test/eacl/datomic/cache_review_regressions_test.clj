@@ -8,14 +8,18 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
+            [eacl.backend.v8 :as backend]
             [eacl.cache :as shared-cache]
+            [eacl.causal-token :as causal-token]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
+            [eacl.cursor :as cursor]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as idx]
             [eacl.datomic.schema :as schema]
-            [eacl.engine.v8 :as engine])
+            [eacl.engine.v8 :as engine]
+            [eacl.spicedb.consistency :as consistency])
   (:import [java.nio.charset StandardCharsets]
            [java.util Base64]))
 
@@ -122,6 +126,162 @@
         (is (= 3 (:count (eacl/count-resources
                          acl (assoc query :cache? true)))))
         (is (= 1 @count-calls))))))
+
+(deftest transient-acl-exact-token-is-authenticated-once-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [acl (live-client conn)
+          _ (seed-direct! conn acl 1)
+          selected (eacl/snapshot acl)
+          token (try
+                  (eacl/basis-token selected)
+                  (finally
+                    (eacl/release! selected)))
+          request {:subject (spice-object :user "alice")
+                   :permission :admin
+                   :resource/type :account
+                   :consistency (consistency/at-exact-snapshot token)}
+          _ (eacl/count-resources acl request)
+          calls (atom 0)
+          original-token-data causal-token/token-data
+          hit
+          (with-redefs [causal-token/token-data
+                        (fn [& args]
+                          (swap! calls inc)
+                          (apply original-token-data args))]
+            (eacl/count-resources acl request))]
+      (is (= 1 (:count hit)))
+      (is (true? (:cached? hit)))
+      (is (= 1 @calls)
+          "exact selection authenticates once; delegated Snapshot reuses it"))))
+
+(deftest warm-public-answer-hits-do-no-datomic-identity-lookups-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [boot (live-client conn)
+          _ (seed-direct! conn boot 3)
+          identity-lookups (atom 0)
+          acl
+          (core/make-client
+           conn
+           {:security-key token-key
+            :cache {}
+            ;; This is the default :eacl/id codec with an observation seam.
+            ;; The explicit contract keeps it eligible for public-key lookup.
+            :object-id->lookup-ref
+            (fn [object-id]
+              (swap! identity-lookups inc)
+              [:eacl/id object-id])
+            :adapter-fingerprint :test/default-observed-id-codec
+            :adapter-deterministic? true
+            :identity-immutable? true})
+          alice (spice-object :user "alice")
+          account (spice-object :account "acct0")
+          check {:subject alice :permission :admin :resource account}
+          resource-count {:subject alice
+                          :permission :admin
+                          :resource/type :account}
+          subject-count {:resource account
+                         :permission :admin
+                         :subject/type :user}
+          expansion {:resource account :permission :admin}
+          relationship-query {:subject/type :user
+                              :subject/id "alice"
+                              :resource/type :account
+                              :resource/relation :owner
+                              :first 1}]
+      (testing "point decisions hit before resolving either public object"
+        (is (true? (:allowed? (eacl/check-permission acl check))))
+        (reset! identity-lookups 0)
+        (is (true? (:cached? (eacl/check-permission acl check))))
+        (is (zero? @identity-lookups)))
+
+      (testing "forward counts hit before resolving the subject"
+        (is (= 3 (:count (eacl/count-resources acl resource-count))))
+        (reset! identity-lookups 0)
+        (is (true? (:cached? (eacl/count-resources acl resource-count))))
+        (is (zero? @identity-lookups)))
+
+      (testing "reverse counts hit before resolving the resource"
+        (is (= 1 (:count (eacl/count-subjects acl subject-count))))
+        (reset! identity-lookups 0)
+        (is (true? (:cached? (eacl/count-subjects acl subject-count))))
+        (is (zero? @identity-lookups)))
+
+      (testing "permission-tree hits do not resolve the root again"
+        (is (map? (:tree-root (eacl/expand-permission-tree acl expansion))))
+        (reset! identity-lookups 0)
+        (is (map? (:tree-root (eacl/expand-permission-tree acl expansion))))
+        (is (zero? @identity-lookups)))
+
+      (testing "relationship transport hits neither resolve filters nor render rows"
+        (let [first-page (eacl/read-relationships acl relationship-query)
+              continued-query
+              (assoc relationship-query
+                     :after (get-in first-page [:page-info :end-cursor]))
+              _ (eacl/read-relationships acl continued-query)
+              reverse-query
+              (-> relationship-query (dissoc :first) (assoc :last 1))
+              _ (eacl/read-relationships acl reverse-query)
+              observed (atom [])]
+          (reset! identity-lookups 0)
+          (binding [backend/*invoke-observer*
+                    #(swap! observed conj %)]
+            (is (true? (:cached?
+                        (eacl/read-relationships acl relationship-query))))
+            (is (true? (:cached?
+                        (eacl/read-relationships acl continued-query))))
+            (is (true? (:cached?
+                        (eacl/read-relationships acl reverse-query)))))
+          (is (zero? @identity-lookups))
+          (is (not-any?
+               #{:object-id->internal :internal-id->object}
+               (map :operation @observed))))))))
+
+(deftest retained-snapshot-relationship-transport-hits-do-zero-backend-work-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [boot (live-client conn)
+          _ (seed-direct! conn boot 3)
+          identity-lookups (atom 0)
+          acl
+          (core/make-client
+           conn
+           {:security-key token-key
+            :cache {}
+            :object-id->lookup-ref
+            (fn [object-id]
+              (swap! identity-lookups inc)
+              [:eacl/id object-id])
+            :adapter-fingerprint :test/snapshot-observed-id-codec
+            :adapter-deterministic? true
+            :identity-immutable? true})
+          snapshot (eacl/snapshot acl)
+          first-query {:subject/type :user
+                       :subject/id "alice"
+                       :resource/type :account
+                       :resource/relation :owner
+                       :first 1}]
+      (try
+        (let [first-page (eacl/read-relationships snapshot first-query)
+              continued-query
+              (assoc first-query
+                     :after (get-in first-page [:page-info :end-cursor]))
+              _ (eacl/read-relationships snapshot continued-query)
+              reverse-query (-> first-query (dissoc :first) (assoc :last 1))
+              _ (eacl/read-relationships snapshot reverse-query)
+              observed (atom [])
+              codec-work (atom {})]
+          (reset! identity-lookups 0)
+          (binding [backend/*invoke-observer* #(swap! observed conj %)
+                    cursor/*codec-work* codec-work]
+            (doseq [query [first-query continued-query reverse-query]]
+              (is (true? (:cached?
+                          (eacl/read-relationships snapshot query))))))
+          (is (zero? @identity-lookups))
+          (is (empty? @observed)
+              "a retained Snapshot hit needs no adapter operation")
+          (is (empty? @codec-work)
+              "an exact transport hit neither decodes nor rebuilds a cursor"))
+        (finally
+          (eacl/release! snapshot))))))
 
 ;; --- H2 ---------------------------------------------------------------------
 
@@ -335,9 +495,9 @@
       (is (= (inc (:misses stats-after-page-1))
              (:misses stats-after-page-2))
           "a new current cursor page has one completed-answer miss")
-      (is (= (inc (:exact-hits stats-after-page-2))
-             (:exact-hits stats-after-hit))
-          "an identical current cursor request has one exact answer hit")
+      (is (= (inc (:rendered-page-hits stats-after-page-2))
+             (:rendered-page-hits stats-after-hit))
+          "an identical current cursor request has one rendered-page hit")
       (is (false? (:cached? page-2)))
       (is (true? (:cached? page-2-hit)))
       (is (= ["acct0" "acct1" "acct2"]
@@ -345,11 +505,11 @@
       (is (false? (:cached? previous-page))
           "the first reverse request computes under its own semantic key")
       (is (true? (:cached? previous-hit))
-          "the repeated reverse request reuses its completed internal answer")
+          "the repeated reverse request reuses its exact rendered page")
       (is (= (inc (:misses stats-before-previous))
              (:misses stats-after-previous)))
-      (is (= (inc (:exact-hits stats-after-previous))
-             (:exact-hits stats-after-previous-hit)))
+      (is (= (inc (:rendered-page-hits stats-after-previous))
+             (:rendered-page-hits stats-after-previous-hit)))
       (eacl/delete-relationship!
        acl
        (->Relationship (spice-object :user "alice")
