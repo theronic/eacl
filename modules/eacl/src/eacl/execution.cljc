@@ -5,7 +5,6 @@
   work. Runtime layers may observe the contract and cooperatively check its
   absolute monotonic deadline and caller-owned cancellation token, but never
   replace either control with a fresh relative timeout or token."
-  (:refer-clojure :exclude [next])
   (:require [eacl.authorization.batch :as batch]))
 
 (def default-execution-timeout-ms 30000)
@@ -166,27 +165,32 @@
 
       {:kind :operation})))
 
+(def ^:private forbidden-request-keys
+  [:cache-attempt :recursive-traversal-limits :permission-tree-limits])
+
+(defn- validate-request-controls!
+  "Shared by `normalize` and `refine`: rejects structural safety envelopes
+  posing as per-request demand controls and malformed cancellation tokens."
+  [request]
+  (when-let [forbidden (seq (filter #(contains? request %)
+                                    forbidden-request-keys))]
+    (invalid-request!
+     "Structural safety envelopes are client configuration, not per-request demand controls."
+     {:forbidden-keys (vec forbidden)}))
+  (when-let [cancellation-token (:cancellation-token request)]
+    (when-not (cancellation-token? cancellation-token)
+      (invalid-request!
+       ":cancellation-token must be created by eacl.execution/cancellation-token or implement CooperativeCancellation."
+       {:key :cancellation-token
+        :value-type (some-> cancellation-token type str)}))))
+
 (defn normalize
   "Normalizes one public semantic request into its immutable execution contract."
   [client-options operation request]
   (let [request (or request {})
-        _ (when-let [forbidden
-                     (seq
-                      (filter #(contains? request %)
-                              [:cache-attempt
-                               :recursive-traversal-limits
-                               :permission-tree-limits]))]
-            (invalid-request!
-             "Structural safety envelopes are client configuration, not per-request demand controls."
-             {:forbidden-keys (vec forbidden)}))
+        _ (validate-request-controls! request)
         evaluation (normalize-evaluation (:evaluation request))
         cancellation-token (:cancellation-token request)
-        _ (when (and cancellation-token
-                     (not (cancellation-token? cancellation-token)))
-            (invalid-request!
-             ":cancellation-token must be created by eacl.execution/cancellation-token or implement CooperativeCancellation."
-             {:key :cancellation-token
-              :value-type (some-> cancellation-token type str)}))
         timeout-ms
         (normalize-timeout-ms
          (or (:timeout-ms request)
@@ -218,15 +222,7 @@
   ceiling or install a new clock/token budget."
   [contract client-options operation request]
   (let [request (or request {})
-        _ (when-let [forbidden
-                     (seq
-                      (filter #(contains? request %)
-                              [:cache-attempt
-                               :recursive-traversal-limits
-                               :permission-tree-limits]))]
-            (invalid-request!
-             "Structural safety envelopes are client configuration, not per-request demand controls."
-             {:forbidden-keys (vec forbidden)}))
+        _ (validate-request-controls! request)
         evaluation
         (if (contains? request :evaluation)
           (normalize-evaluation (:evaluation request))
@@ -234,12 +230,6 @@
         _ (when (contains? request :timeout-ms)
             (normalize-timeout-ms (:timeout-ms request)))
         cancellation-token (:cancellation-token request)
-        _ (when (and cancellation-token
-                     (not (cancellation-token? cancellation-token)))
-            (invalid-request!
-             ":cancellation-token must be created by eacl.execution/cancellation-token or implement CooperativeCancellation."
-             {:key :cancellation-token
-              :value-type (some-> cancellation-token type str)}))
         _ (when (and cancellation-token
                      (not (identical? cancellation-token
                                      (:cancellation-token contract))))
@@ -278,7 +268,7 @@
   ([contract]
    (not (pos? (remaining-nanos contract))))
   ([]
-   (and *contract* (expired? *contract*))))
+   (if *contract* (expired? *contract*) false)))
 
 (defn deadline-exceeded!
   [contract stage consumed-work]
@@ -305,6 +295,12 @@
       :stage stage}
       (seq consumed-work) (assoc :consumed-work consumed-work)))))
 
+(defn- resolve-work
+  "Consumed-work may be a map or a 0-arg fn evaluated only on the throw
+  path, so hot callers never build diagnostic maps on success."
+  [consumed-work]
+  (if (fn? consumed-work) (consumed-work) consumed-work))
+
 (defn check!
   ([stage]
    (check! *contract* stage nil))
@@ -312,10 +308,10 @@
    (check! contract stage nil))
   ([contract stage consumed-work]
    (when (and contract (expired? contract))
-     (deadline-exceeded! contract stage consumed-work))
+     (deadline-exceeded! contract stage (resolve-work consumed-work)))
    (when (and contract
               (cancelled? (:cancellation-token contract)))
-     (cancellation-observed! contract stage consumed-work))
+     (cancellation-observed! contract stage (resolve-work consumed-work)))
    contract))
 
 (defn cache-stage-available?

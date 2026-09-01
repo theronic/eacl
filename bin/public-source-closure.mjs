@@ -281,17 +281,28 @@ function buildReport() {
     if (!definition.ns?.startsWith("eacl.")) continue;
     if (definition["defined-by"]?.endsWith("/declare")) continue;
     const id = qualified(definition.ns, definition.name);
+    // A .cljc var may be defined once per platform branch (a reader
+    // conditional wrapping two defns); that is one logical definition
+    // with a row per language, not a conflict. Same-language row or
+    // privacy divergence still fails.
+    const lang = definition.lang ?? "clj";
     const prior = definitions.get(id);
-    if (
-      prior &&
-      (prior.row !== definition.row ||
-        prior.private !== Boolean(definition.private))
-    ) {
-      fail("Conflicting source definitions in closure analysis.", {
-        id,
-        prior,
-        definition,
-      });
+    if (prior) {
+      const sameLangRow = prior.rowsByLang[lang];
+      if (
+        (sameLangRow !== undefined && sameLangRow !== definition.row) ||
+        prior.private !== Boolean(definition.private)
+      ) {
+        fail("Conflicting source definitions in closure analysis.", {
+          id,
+          prior,
+          definition,
+        });
+      }
+      prior.rowsByLang[lang] = definition.row;
+      prior.row = Math.min(prior.row, definition.row);
+      prior.endRow = Math.max(prior.endRow ?? 0, definition["end-row"]);
+      continue;
     }
     definitions.set(id, {
       id,
@@ -301,22 +312,29 @@ function buildReport() {
       private: Boolean(definition.private),
       definedBy: definition["defined-by"],
       sourcePath: definition.filename,
+      rowsByLang: { [lang]: definition.row },
     });
   }
 
   const inlineDefinitionSpans = [...definitions.values()].filter(
     (definition) => definition.definedBy?.endsWith("/defrecord"),
   );
+  // Index spans by file: the per-usage linear scan over every defrecord
+  // span was O(usages x defrecords).
+  const spansByPath = new Map();
+  for (const definition of inlineDefinitionSpans) {
+    const spans = spansByPath.get(definition.sourcePath) ?? [];
+    spans.push(definition);
+    spansByPath.set(definition.sourcePath, spans);
+  }
   const graph = new Map();
   for (const usage of analysis["var-usages"] ?? []) {
     if (!usage.from?.startsWith("eacl.")) continue;
     const attributedDefinition =
       usage["from-var"] ??
-      inlineDefinitionSpans.find(
+      (spansByPath.get(usage.filename) ?? []).find(
         (definition) =>
-          definition.sourcePath === usage.filename &&
-          definition.row <= usage.row &&
-          usage.row <= definition.endRow,
+          definition.row <= usage.row && usage.row <= definition.endRow,
       )?.name;
     if (!attributedDefinition) continue;
     const from = qualified(usage.from, attributedDefinition);
@@ -486,6 +504,8 @@ if (!["check", "write", "json", "selftest"].includes(mode)) {
 }
 
 if (mode === "selftest") {
+  // Positive control: every forbidden token planted in a synthetic source
+  // must be detected by the real scan (an always-empty detector fails here).
   const matches = findForbiddenPolicyMatches(
     forbiddenPolicyTokens.map((token) => ({
       sourcePath: `synthetic/${token}`,
@@ -495,12 +515,32 @@ if (mode === "selftest") {
   const detected = new Set(matches.map(({ token }) => token));
   const missing = forbiddenPolicyTokens.filter((token) => !detected.has(token));
   if (missing.length > 0) {
-    fail("Policy-specific decision guard failed its negative self-test.", {
+    fail("Policy-specific decision guard failed its positive self-test.", {
       missing,
     });
   }
+  // Negative controls: a clean source and a near-miss (token with its last
+  // character doubled) must produce zero matches (an always-match or
+  // over-broad detector fails here).
+  const cleanSources = [
+    { sourcePath: "synthetic/clean", source: "(def unrelated :value)" },
+    ...forbiddenPolicyTokens.map((token) => ({
+      sourcePath: `synthetic/near-miss/${token}`,
+      source: `(def ${token.slice(0, -1)}_x :value)`,
+    })),
+  ];
+  const falsePositives = findForbiddenPolicyMatches(cleanSources);
+  if (falsePositives.length > 0) {
+    fail("Policy-specific decision guard failed its negative self-test.", {
+      falsePositives: falsePositives.slice(0, 5),
+    });
+  }
   process.stdout.write(
-    `${JSON.stringify({ status: "passed", detected: detected.size })}\n`,
+    `${JSON.stringify({
+      status: "passed",
+      detected: detected.size,
+      negativeControls: cleanSources.length,
+    })}\n`,
   );
   process.exit(0);
 }

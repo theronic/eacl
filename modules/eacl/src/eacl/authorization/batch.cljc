@@ -249,19 +249,6 @@
    (:permission demand)
    (get-in demand [:subject :type])])
 
-(defn distinct-root-demands
-  "Returns `[index demand]` pairs for first root encounters in input order."
-  [indexed-demands]
-  (second
-   (reduce
-    (fn [[seen roots] [_ demand :as indexed]]
-      (let [root (root-key demand)]
-        (if (contains? seen root)
-          [seen roots]
-          [(conj seen root) (conj roots indexed)])))
-    [#{} []]
-    indexed-demands)))
-
 (defn scalar-contract
   "Derives a point-check contract without renewing any request-wide control."
   [batch-contract]

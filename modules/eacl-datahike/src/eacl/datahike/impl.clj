@@ -96,41 +96,29 @@
                #(> bound-eid %)))
      values)))
 
+(def ^:private scan-value (comp #(nth % 3) :v))
+
+(defn- endpoint-scan
+  [db endpoint-id attribute prefix cursor-or-options]
+  (let [{:keys [direction bound-eid inclusive-bound?]}
+        (relationship-storage/normalize-scan-options cursor-or-options)
+        datoms (relationship-datoms-on-entity
+                db endpoint-id attribute prefix bound-eid direction)]
+    (apply-scan-bound
+     db (map scan-value datoms)
+     direction bound-eid inclusive-bound?)))
+
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]
-         :or {direction :asc}}
-        (if (map? cursor-or-options)
-          cursor-or-options
-          {:direction :asc
-           :bound-eid cursor-or-options
-           :inclusive-bound? false})
-        _ (case direction :asc nil :desc nil)
-        datoms (relationship-datoms-on-entity
-                db subject-id relationship-storage/forward-attribute
-                [subject-type relation-id resource-type]
-                bound-eid direction)]
-    (apply-scan-bound
-     db (map (comp #(nth % 3) :v) datoms)
-     direction bound-eid inclusive-bound?)))
+  (endpoint-scan db subject-id relationship-storage/forward-attribute
+                 [subject-type relation-id resource-type]
+                 cursor-or-options))
 
 (defn resource->subjects
   [db resource-type resource-id relation-id subject-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]
-         :or {direction :asc}}
-        (if (map? cursor-or-options)
-          cursor-or-options
-          {:direction :asc
-           :bound-eid cursor-or-options
-           :inclusive-bound? false})
-        _ (case direction :asc nil :desc nil)
-        datoms (relationship-datoms-on-entity
-                db resource-id relationship-storage/reverse-attribute
-                [resource-type relation-id subject-type]
-                bound-eid direction)]
-    (apply-scan-bound
-     db (map (comp #(nth % 3) :v) datoms)
-     direction bound-eid inclusive-bound?)))
+  (endpoint-scan db resource-id relationship-storage/reverse-attribute
+                 [resource-type relation-id subject-type]
+                 cursor-or-options))
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]

@@ -107,12 +107,15 @@
      :eacl/error :eacl.request/context-thread-violation
      :operation operation})))
 
-(defn- require-owner-thread!
-  [state operation]
-  #?(:clj
+#?(:clj
+   (defn- require-owner-thread!
+     [state operation]
      (when-not (identical? (:owner-thread state) (Thread/currentThread))
-       (context-thread-violation! operation))
-     :cljs nil))
+       (context-thread-violation! operation)))
+   :cljs
+   (defn- require-owner-thread!
+     [_state _operation]
+     nil))
 
 (defn assert-open!
   "Fails when `context` is closed, closing, or used off its owner thread."

@@ -115,8 +115,6 @@
            :done? (< (count values) chunk)
            :opened? true)))
 
-(declare head)
-
 (defn- head [options cursor]
   (cond
     (< (:index cursor) (count (:buffer cursor)))
@@ -141,16 +139,17 @@
 
 (defn- seek
   [options cursor target]
-  (let [[value cursor] (head options cursor)]
+  (let [[value cursor] (head options cursor)
+        order-direction (:order-direction options)]
     (cond
       (nil? value) [nil cursor]
-      (at-or-beyond? (:order-direction options) value target)
+      (at-or-beyond? order-direction value target)
       [value cursor]
       :else
       (loop [index (inc (:index cursor))]
         (if (< index (count (:buffer cursor)))
           (let [value (nth (:buffer cursor) index)]
-            (if (at-or-beyond? (:order-direction options) value target)
+            (if (at-or-beyond? order-direction value target)
               [value (assoc cursor :index index)]
               (recur (inc index))))
           (let [cursor (refill options cursor target true)]
@@ -158,9 +157,6 @@
             (if (seq (:buffer cursor))
               [(first (:buffer cursor)) cursor]
               [nil cursor])))))))
-
-(defn- same-position? [values]
-  (or (empty? values) (apply = values)))
 
 (defn- furthest
   [order-direction values]
@@ -184,7 +180,8 @@
                       (if-let [operand (first remaining)]
                         (let [[value operand] (seek options operand driver-head)]
                           (if (nil? value)
-                            [heads (into positioned (cons operand (rest remaining)))
+                            [heads (into (conj positioned operand)
+                                         (subvec remaining 1))
                              true]
                             (recur (subvec remaining 1)
                                    (conj heads value)
@@ -192,7 +189,7 @@
                         [heads positioned false]))]
                 (if exhausted?
                   {:emissions emissions :exhausted? true}
-                  (if (same-position? (conj heads driver-head))
+                  (if (every? #(= driver-head %) heads)
                     (let [emissions
                           (conj emissions
                                 {:value driver-head

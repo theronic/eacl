@@ -30,10 +30,8 @@
     eacl.datomic.cache-differential-test
     eacl.datomic.cache-model-test
     eacl.datomic.cache-review-regressions-test
-    eacl.datomic.codec-test
     eacl.datomic.config-test
     eacl.datomic.consistency-cache-test
-    eacl.datomic.consistency-test
     eacl.datomic.consistency-v3-test
     eacl.datomic.contract-test
     eacl.datomic.differential-test
@@ -218,4 +216,7 @@
 
 (defn run-heavy!
   []
-  (run-suite! heavy-namespaces #{}))
+  ;; Heavy suites must also prove the generated authority executed: the
+  ;; empty set made the cutover assertion vacuous for benchmark runs.
+  (run-suite! heavy-namespaces
+              required-generated-authority-operations))

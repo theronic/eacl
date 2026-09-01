@@ -90,25 +90,12 @@
         valid-routing-certificate-input
         [:path-descriptors 0]
         {:kind :relation :head 0 :target 1}))))
-    (doseq [result
-            [(assoc accepted :traversal [true])
-             (assoc accepted :path-checks 1)
-             (assoc accepted :node-checks 3)
-             (assoc accepted :edge-checks 1)
-             {:status :rejected
-              :reason :invalid-component-witness
-              :path-checks 2
-              :node-checks 5
-              :edge-checks 2}
-             {:status :rejected
-              :reason :invalid-dependency-edge
-              :path-checks 2
-              :node-checks 2
-              :edge-checks 3}]]
-      (is (thrown?
-           #?(:clj clojure.lang.ExceptionInfo
-              :cljs cljs.core.ExceptionInfo)
-           (decide result))))))
+    ;; Result-vs-input arithmetic moved offline with the removed runtime
+    ;; re-derivation; the boundary still rejects malformed result shapes.
+    (is (thrown?
+         #?(:clj clojure.lang.ExceptionInfo
+            :cljs cljs.core.ExceptionInfo)
+         (decide (assoc accepted :unknown true))))))
 
 (defn- expected-consistency-plan
   [{:keys [mode capability-supported?]}]
@@ -201,20 +188,16 @@
             (verified/decide
              {:kernel (->FunctionKernel (fn [_ _] result))}
              operation input))]
+      ;; Wrong-but-well-formed answers are certified offline by the
+      ;; differential suites; the runtime boundary rejects malformed
+      ;; inputs and results.
       (doseq [[operation input result]
               [[:consistency-plan
                 (assoc plan :unknown true)
                 :select-current]
                [:consistency-plan
                 plan
-                :select-authoritative]
-               [:consistency-validation
-                (assoc validation
-                       :selection-present? false)
-                :accept]
-               [:consistency-validation
-                validation
-                :history-divergence]]]
+                :not-a-known-decision]]]
         (is (thrown?
              #?(:clj clojure.lang.ExceptionInfo
                 :cljs cljs.core.ExceptionInfo)
@@ -243,24 +226,15 @@
            #?(:clj clojure.lang.ExceptionInfo
               :cljs cljs.core.ExceptionInfo)
            (decide invalid-input result))))
+    ;; Consumed-count/value semantics are certified offline; the runtime
+    ;; boundary rejects malformed result shapes.
     (doseq [invalid-result
-            [(assoc result :left-consumed 4)
-             (assoc result :right-consumed -1)
-             {:values [1]
-              :left-consumed 1
-              :right-consumed 0}
-             (assoc result :values [1 2 4 5])
+            [(assoc result :right-consumed -1)
              (assoc result :unknown true)]]
       (is (thrown?
            #?(:clj clojure.lang.ExceptionInfo
               :cljs cljs.core.ExceptionInfo)
-           (decide input invalid-result))))
-    (is (thrown?
-         #?(:clj clojure.lang.ExceptionInfo
-            :cljs cljs.core.ExceptionInfo)
-         (decide
-          {:direction :asc :left [] :right [2 4]}
-          {:values [2] :left-consumed 0 :right-consumed 1})))))
+           (decide input invalid-result))))))
 
 (deftest keyset-page-boundary-enforces-one-row-lookahead
   (let [input {:direction :asc

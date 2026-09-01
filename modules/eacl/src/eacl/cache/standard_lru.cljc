@@ -268,7 +268,7 @@
                 (public-value (.getValue entry))])
              (.entrySet (storage-map storage))))
      :cljs
-     (into [] (seq @(:state store)))))
+     (into [] @(:state store))))
 
 (defn entry-count
   "Returns the settled resident entry-count estimate."
@@ -278,4 +278,4 @@
        (.cleanUp storage)
        (.estimatedSize storage))
      :cljs
-     (reduce (fn [n _] (inc n)) 0 (seq @(:state store)))))
+     (count @(:state store))))

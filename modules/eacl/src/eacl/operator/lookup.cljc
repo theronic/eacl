@@ -372,7 +372,9 @@
           {:count accumulated :limit (or count-limit -1) :truncated? false
            :exhaustive? (nil? count-limit) :counters counters}
           (let [evaluated (evaluate-emissions options cover-plan emissions)
-                grants (count (filter :accepted? evaluated))
+                grants (reduce (fn [n entry]
+                                 (if (:accepted? entry) (inc n) n))
+                               0 evaluated)
                 next-count (+ accumulated grants)]
             (if (and target (>= next-count target))
               {:count count-limit :limit count-limit :truncated? true

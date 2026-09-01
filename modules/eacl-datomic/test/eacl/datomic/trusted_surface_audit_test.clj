@@ -38,7 +38,7 @@
     (is (var-absent? 'eacl.datomic.consistency/zed-token))
     (is (var-absent? 'eacl.datomic.consistency/token-data))
     (is (var-absent? 'eacl.datomic.consistency/token-revision))
-    (is (var-present? 'eacl.datomic.consistency/derive-signing-key))
+    (is (var-absent? 'eacl.datomic.consistency/derive-signing-key))
     (is (var-absent? 'eacl.datomic.consistency/revision-checkpoints))
     (is (var-absent? 'eacl.datomic.consistency/observe!))
     (is (var-absent?

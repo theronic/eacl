@@ -778,7 +778,11 @@
              ;; is independently restorable; the managed mapping remains and
              ;; can be promoted again after restore.
              (filter snapshot-entry-valid?)
-             (sort-by canonical-entry-token)
+             ;; Decorate-sort: the canonical token is computed once per
+             ;; entry instead of per comparison.
+             (map (fn [entry] [(canonical-entry-token entry) entry]))
+             (sort-by first compare)
+             (map second)
              (take max-entries)
              vec)]
     {:format basis-snapshot-format
@@ -939,7 +943,7 @@
         token? (fn [candidate]
                  (or (nil? candidate)
                      (and (string? candidate)
-                          (not (empty? candidate)))))]
+                          (pos? (count candidate)))))]
     (and (map? value)
          (= rendered-page-entry-fields (set (keys value)))
          (= rendered-page-entry-format (:format value))

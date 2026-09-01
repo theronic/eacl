@@ -62,31 +62,26 @@
                    :type :eacl.operator/active-recursion
                    :eacl/error :eacl.operator/active-recursion))))
 
+(def ^:private known-limit-keys (set (keys default-limits)))
+
 (defn- normalize-limits [overrides]
   (let [overrides (or overrides {})]
     (when-not (map? overrides)
       (invalid! :invalid-limits "Operator limits must be a map."
                 {:value overrides}))
-    (when-let [unknown (seq (remove (set (keys default-limits))
-                                    (keys overrides)))]
+    (when-let [unknown (seq (remove known-limit-keys (keys overrides)))]
       (invalid! :unknown-limit "Operator limits contain unknown keys."
                 {:unknown-keys (vec unknown)
-                 :known-keys (set (keys default-limits))}))
+                 :known-keys known-limit-keys}))
     (when-not (every? (fn [[_ value]] (and (integer? value) (pos? value)))
                       overrides)
       (invalid! :invalid-limit "Operator limits must be positive integers."
                 {:limits overrides}))
     (merge default-limits overrides)))
 
-(defn- acyclic-plan? [plan]
-  (let [certificate (:dependency-certificate plan)]
-    (and (every? #(= 1 (count %)) (:components certificate))
-         (not-any? #(= (:from %) (:to %)) (:edges certificate)))))
+(def ^:private acyclic-plan? operator-plan/certificate-acyclic?)
 
-(defn- plan-index [plan]
-  (into {}
-        (map (fn [{:keys [permission root]}] [permission root]))
-        (:expressions plan)))
+(def ^:private plan-index operator-plan/expression-roots)
 
 (defn- complete-value [memo active key value maximum]
   (when (and (not (contains? memo key))
@@ -201,6 +196,8 @@
                    :eacl/error :eacl.operator/recursive-plan-required
                    :root (:root plan)})))
       (let [limits (normalize-limits limits)
+            maximum-memo-entries (:maximum-memo-entries limits)
+            predicate-programs (:predicate-programs plan)
             roots (plan-index plan)
             root-permission (or permission (:root plan))
             root-id (or node-id (get roots root-permission))
@@ -232,7 +229,7 @@
                   :alias
                   (let [[memo active value]
                         (complete-value memo active key returned
-                                        (:maximum-memo-entries limits))]
+                                        maximum-memo-entries)]
                     (recur stack memo active value))
 
                   :nary
@@ -242,7 +239,7 @@
                     (if decisive?
                       (let [[memo active value]
                             (complete-value memo active key decision
-                                            (:maximum-memo-entries limits))]
+                                            maximum-memo-entries)]
                         (recur stack memo active value))
                       (if-let [child (first remaining)]
                         (recur (conj stack
@@ -256,14 +253,14 @@
                         (let [[memo active value]
                               (complete-value memo active key
                                               (not= :union op)
-                                              (:maximum-memo-entries limits))]
+                                              maximum-memo-entries)]
                           (recur stack memo active value)))))
 
                   :exclusion-left
                   (if-not returned
                     (let [[memo active value]
                           (complete-value memo active key false
-                                          (:maximum-memo-entries limits))]
+                                          maximum-memo-entries)]
                       (recur stack memo active value))
                     (recur (conj stack
                                  {:kind :exclusion-right :key key}
@@ -275,14 +272,14 @@
                   :exclusion-right
                   (let [[memo active value]
                         (complete-value memo active key (not returned)
-                                        (:maximum-memo-entries limits))]
+                                        maximum-memo-entries)]
                     (recur stack memo active value))
 
                   :arrow-child
                   (if returned
                     (let [[memo active value]
                           (complete-value memo active key true
-                                          (:maximum-memo-entries limits))]
+                                          maximum-memo-entries)]
                       (recur stack memo active value))
                     (recur (conj stack next-frame)
                            memo active no-value))
@@ -311,12 +308,12 @@
                             (complete-value memo active key
                                             (active-recursion-outcome
                                              {:key key})
-                                            (:maximum-memo-entries limits))]
+                                            maximum-memo-entries)]
                         (recur stack memo active value))
                       (let [[permission node-id current-subject-type
                              current-subject-eid current-resource-eid] key
                             predicate
-                            (get-in plan [:predicate-programs permission node-id])
+                            (get-in predicate-programs [permission node-id])
                             instruction (:instruction predicate)
                             active (conj active key)]
                         (add-stat! :node-evaluations 1)
@@ -330,7 +327,7 @@
                                  (:descriptor predicate))
                                 [memo active value]
                                 (complete-value memo active key decision
-                                                (:maximum-memo-entries limits))]
+                                                maximum-memo-entries)]
                             (recur stack memo active value))
 
                           :permission-membership
@@ -409,7 +406,7 @@
                           (let [[memo active value]
                                 (complete-value
                                  memo active key false
-                                 (:maximum-memo-entries limits))]
+                                 maximum-memo-entries)]
                             [stack memo active value])
 
                           (< value-index (count values))
@@ -427,7 +424,7 @@
                                   (let [[memo active value]
                                         (complete-value
                                          memo active key true
-                                         (:maximum-memo-entries limits))]
+                                         maximum-memo-entries)]
                                     [stack memo active value])
                                   [(conj stack next-frame)
                                    memo active no-value]))

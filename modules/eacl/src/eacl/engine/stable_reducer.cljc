@@ -60,30 +60,19 @@
    sidecar sidecar-order sidecar-order-index sidecar-clock
    current-sidecar-values maximum-sidecar-buffers maximum-sidecar-values
    maximum-stack discovered result-index results]
-  #?(:clj
-     (ReducerState.
-      stack admitted admissions transitions commands fetched-values
-      (.-fetch_fn state)
-      sidecar sidecar-order sidecar-order-index sidecar-clock
-      current-sidecar-values
-      (.-sidecar_cap state) (.-physical_chunk_size state)
-      (.-max_admissions state) (.-max_commands state)
-      (.-max_transitions state) (.-max_values state) (.-max_stack state)
-      maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
-      (.-base_discovered state)
-      (.-result_sink state) (.-result_window_size state) result-index results)
-     :cljs
-     (ReducerState.
-      stack admitted admissions transitions commands fetched-values
-      (.-fetch_fn state)
-      sidecar sidecar-order sidecar-order-index sidecar-clock
-      current-sidecar-values
-      (.-sidecar_cap state) (.-physical_chunk_size state)
-      (.-max_admissions state) (.-max_commands state)
-      (.-max_transitions state) (.-max_values state) (.-max_stack state)
-      maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
-      (.-base_discovered state)
-      (.-result_sink state) (.-result_window_size state) result-index results)))
+  ;; One constructor call for both platforms — the former reader
+  ;; conditional's arms were byte-identical.
+  (ReducerState.
+   stack admitted admissions transitions commands fetched-values
+   (.-fetch_fn state)
+   sidecar sidecar-order sidecar-order-index sidecar-clock
+   current-sidecar-values
+   (.-sidecar_cap state) (.-physical_chunk_size state)
+   (.-max_admissions state) (.-max_commands state)
+   (.-max_transitions state) (.-max_values state) (.-max_stack state)
+   maximum-sidecar-buffers maximum-sidecar-values maximum-stack discovered
+   (.-base_discovered state)
+   (.-result_sink state) (.-result_window_size state) result-index results))
 
 (defn- schedule-state
   [^ReducerState state stack admitted admissions maximum-stack]
@@ -338,8 +327,8 @@
       (assoc state
              :sidecar-order
              (->> sidecar
-                  (map (fn [[identity entry]]
-                         [identity (:generation entry)]))
+                  (mapv (fn [[identity entry]]
+                          [identity (:generation entry)]))
                   (sort-by second)
                   vec)
              :sidecar-order-index 0)
@@ -451,7 +440,7 @@
         ;; Sparse/empty endpoints never retain a buffer. Avoid constructing
         ;; and hashing a sidecar identity until either a buffer exists or this
         ;; fetch actually needs retention.
-        identity (when-not (empty? sidecar) (work-id item))
+        identity (when (pos? (count sidecar)) (work-id item))
         entry (when identity (get sidecar identity))
         index (:index entry 0)]
     (if (and entry (< index (count (:values entry))))
@@ -464,7 +453,7 @@
       (let [descriptor (or descriptor (item-scan-descriptor item))
             [state values more?] (fetch-values state descriptor
                                                (:bound-eid item))]
-        (if (empty? values)
+        (if (zero? (count values))
           [(retain-buffer state identity [] 0 false) nil nil]
           (let [value (first values)
                 next-index 1
@@ -803,7 +792,7 @@
       (>= (:discovered state) target)
       state
 
-      (empty? (:stack state))
+      (zero? (count (:stack state)))
       state
 
       :else
@@ -830,8 +819,8 @@
                                          (:results state)))
                   :count [])
         admitted (persistent! (:admitted state))]
-    (when-not (or (not collect?)
-                  (= (- (:discovered state) (:base-discovered state 0))
+    (when (and collect?
+               (not= (- (:discovered state) (:base-discovered state 0))
                      (count results)))
       (throw (ex-info "Stable-discovery structural invariant violated."
                       {:eacl/error :eacl.reducer/invariant-violation
@@ -872,11 +861,24 @@
   The default nil costs nothing on the hot path — one check per run."
   nil)
 
-(def ^:dynamic *aggregate-work-stats*
+(def ^:dynamic *reducer-work-stats*
   "Request-owned cumulative work meter used by aggregate resource contracts.
   Unlike *observer-stats*, this state may be consulted by orchestration after
   a semantic quantum completes."
   nil)
+
+(defn ^:no-doc report-work-stats!
+  "Merges one run's public work counters into every distinct bound stats
+  atom; only the keys present in `deltas` are touched. Shared by the
+  reducer, route, and engine reporters, which previously each carried this
+  merge verbatim."
+  [stats-refs deltas]
+  (doseq [stats (distinct (remove nil? stats-refs))]
+    (swap! stats
+           (fn [counters]
+             (reduce-kv (fn [c k v] (update c k (fnil + 0) v))
+                        (or counters {})
+                        deltas)))))
 
 (defn- report-run!
   [before final-state]
@@ -884,23 +886,13 @@
    (- (:commands final-state) (:commands before 0)))
   (request-counters/add-fetched-values!
    (- (:fetched-values final-state) (:fetched-values before 0)))
-  (doseq [stats (distinct (remove nil? [*observer-stats*
-                                        *aggregate-work-stats*]))]
-    (swap! stats
-           (fn [counters]
-             (-> (or counters {})
-                 (update :derived-grants (fnil + 0)
-                         (- (:admissions final-state)
-                            (:admissions before 0)))
-                 (update :advanced-datoms (fnil + 0)
-                         (- (:commands final-state)
-                            (:commands before 0)))
-                 (update :queued-work (fnil + 0)
-                         (- (:transitions final-state)
-                            (:transitions before 0)))
-                 (update :fetched-values (fnil + 0)
-                         (- (:fetched-values final-state)
-                            (:fetched-values before 0)))))))
+  (report-work-stats!
+   [*observer-stats* *reducer-work-stats*]
+   {:derived-grants (- (:admissions final-state) (:admissions before 0))
+    :advanced-datoms (- (:commands final-state) (:commands before 0))
+    :queued-work (- (:transitions final-state) (:transitions before 0))
+    :fetched-values (- (:fetched-values final-state)
+                       (:fetched-values before 0))})
   final-state)
 
 (defn resume

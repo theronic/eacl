@@ -226,12 +226,12 @@
                  :candidate [:document 4]}
                 {:direction :reverse :descriptor reverse
                  :candidate [:user 2]}]
-        original-normalize direct/normalize-request
+        original-validate @#'direct/valid-probe!
         result
-        (with-redefs [direct/normalize-request
-                      (fn [request]
+        (with-redefs [direct/valid-probe!
+                      (fn [probe]
                         (swap! normalizations inc)
-                        (original-normalize request))]
+                        (original-validate probe))]
           (binding [direct/*physical-stats* stats]
             (direct/dispatch
              native probes
@@ -249,7 +249,7 @@
     (is (= 3 (:scalar-equivalent-predicates @stats)))
     (is (= 2 (:adapter-commands @stats)))
     (is (= (count probes) @normalizations)
-        "each external probe is normalized once before grouping")
+        "each external probe is validated once before grouping")
     (is (= 0 (:galloping-reseeks @stats)))
     (is (= 0 (:batch-overread @stats)))))
 

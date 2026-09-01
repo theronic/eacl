@@ -175,7 +175,7 @@
         ;; Counters report only work actually accepted by the envelope. This
         ;; avoids constructing max-exact-integer + 1 in ClojureScript.
         :consumed-work (safe-counters @counters)})
-      (swap! counters update dimension + amount))))
+      (vswap! counters update dimension + amount))))
 
 (defn- check-depth!
   [limits counters depth]
@@ -226,9 +226,15 @@
       (adapter-contract! :unknown-definition-kind))
     definitions))
 
+(def ^:private memo-miss
+  ;; Identity-safe miss sentinel (CLJS does not intern keyword literals).
+  #?(:clj (Object.) :cljs (js/Object.)))
+
 (defn- schedule
   [work assembler child-frames]
-  (into (conj work assembler) (reverse child-frames)))
+  ;; rseq is O(1) on the vectors every caller passes; (vec v) on a vector
+  ;; is identity, so non-vector inputs pay one materialization at most.
+  (into (conj work assembler) (rseq (vec child-frames))))
 
 (defn- assemble-children
   [values child-count]
@@ -253,20 +259,22 @@
   returned; no lazy sequence or internal backend identity escapes."
   [adapter {:keys [limits execution-contract]} resource permission]
   (let [limits (normalize-limits limits)
-        counters (atom {:schema-components 0
-                        :relationship-values 0
-                        :tree-nodes 0
-                        :leaf-subjects 0})
-        schema-cache (atom {})
-        expression-cache (atom {})
-        codec-cache (atom {})
+        ;; Request-local single-threaded state: volatiles, not atoms.
+        counters (volatile! {:schema-components 0
+                             :relationship-values 0
+                             :tree-nodes 0
+                             :leaf-subjects 0})
+        schema-cache (volatile! {})
+        expression-cache (volatile! {})
+        codec-cache (volatile! {})
         check! (fn [stage]
                  (execution/check!
-                  execution-contract stage (safe-counters @counters)))
+                  execution-contract stage #(safe-counters @counters)))
         definitions!
         (fn [kind resource-type name]
           (let [cache-key [kind resource-type name]]
-            (if (contains? @schema-cache cache-key)
+            (if-not (identical? memo-miss
+                                (get @schema-cache cache-key memo-miss))
               (get @schema-cache cache-key)
               (let [operation (if (= :relation kind)
                                 :relation-defs
@@ -295,12 +303,13 @@
                     (definition-sequence!
                       kind resource-type name raw)
                     _ (check! :permission-tree-definition-read)]
-                (swap! schema-cache assoc cache-key definitions)
+                (vswap! schema-cache assoc cache-key definitions)
                 definitions))))
         expression!
         (fn [resource-type permission-name]
           (let [cache-key [resource-type permission-name]]
-            (if (contains? @expression-cache cache-key)
+            (if-not (identical? memo-miss
+                                (get @expression-cache cache-key memo-miss))
               (get @expression-cache cache-key)
               (let [entity
                     (adapter-call!
@@ -315,14 +324,15 @@
                                  [(:resource-type resolved)
                                   (:permission-name resolved)]))
                   (adapter-contract! :expression-identity-mismatch))
-                (swap! expression-cache assoc cache-key resolved)
+                (vswap! expression-cache assoc cache-key resolved)
                 resolved))))
         render-internal!
         (fn [type internal-id]
           (when-not (exact-integer/natural? internal-id)
             (adapter-contract! :invalid-internal-identity))
           (let [cache-key [type internal-id]]
-            (if (contains? @codec-cache cache-key)
+            (if-not (identical? memo-miss
+                                (get @codec-cache cache-key memo-miss))
               (get @codec-cache cache-key)
               (do
                 (check! :permission-tree-render)
@@ -338,7 +348,7 @@
                      "The selected backend could not externalize a scanned object."
                      {:reason :missing-external-identity}))
                   (let [rendered (eacl/spice-object type external-id)]
-                    (swap! codec-cache assoc cache-key rendered)
+                    (vswap! codec-cache assoc cache-key rendered)
                     rendered))))))
         scan-relation!
         (fn [resource-descriptor relation-definitions leaf?]
@@ -700,5 +710,7 @@
                            :children (vec children)}})])
 
                 (adapter-contract! :unknown-work-frame))]
-          (check! :permission-tree-work-transition)
+          ;; The loop-top check! covers the recur boundary; a second check
+          ;; here doubled the per-transition deadline cost for the same
+          ;; observable cut points.
           (recur next-work next-values))))))

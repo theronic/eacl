@@ -174,15 +174,23 @@ case "$command" in
     resource_summary="$output_root/dafny-verification.json"
     rm -rf "$resource_output_dir"
     mkdir -p "$resource_output_dir"
-    for source in $(dafny_sources); do
-      source_name=$(basename "$source" .dfy)
-      "$dafny" verify \
-        --verification-time-limit "$dafny_time_limit" \
-        --resource-limit "$dafny_resource_limit" \
-        --log-format \
-        "csv;LogFileName=$resource_output_dir/$source_name.csv" \
-        "$source"
-    done
+    # Parallel per-file verification: wall-clock drops to the slowest
+    # file while the one-CSV-per-file layout (and the per-basename
+    # minimum-proof-effort mapping built on it) is unchanged. Any child
+    # failure fails the pipeline (xargs exits non-zero under set -e).
+    export EACL_DAFNY_BIN="$dafny" \
+           EACL_DAFNY_TIME="$dafny_time_limit" \
+           EACL_DAFNY_RES="$dafny_resource_limit" \
+           EACL_DAFNY_OUT="$resource_output_dir"
+    printf '%s\n' $(dafny_sources) | \
+      xargs -P "${EACL_DAFNY_JOBS:-4}" -n 1 sh -c '
+        source="$0"
+        source_name=$(basename "$source" .dfy)
+        exec "$EACL_DAFNY_BIN" verify \
+          --verification-time-limit "$EACL_DAFNY_TIME" \
+          --resource-limit "$EACL_DAFNY_RES" \
+          --log-format "csv;LogFileName=$EACL_DAFNY_OUT/$source_name.csv" \
+          "$source"'
     exec node "$repo_root/bin/summarize-dafny-verification.mjs" \
       "$resource_output_dir" \
       "$dafny_resource_limit" \
@@ -222,8 +230,19 @@ case "$command" in
     ;;
   browser-bundle)
     need_tools
-    "$repo_root/bin/formal" compile-js
-    npm ci --ignore-scripts --prefix "$repo_root/formal/smoke/js"
+    # Reuse a fresh compile-js output and installed smoke dependencies:
+    # build-js immediately before this ran both, and re-running them
+    # doubled the heaviest steps of every formal job for identical bytes.
+    newest_dfy=$(ls -t "$repo_root"/formal/dafny/*.dfy | head -1)
+    if [ ! -f "$output_root/js/EaclKernel.js" ] || \
+       [ "$newest_dfy" -nt "$output_root/js/EaclKernel.js" ]; then
+      "$repo_root/bin/formal" compile-js
+    else
+      echo "browser-bundle: reusing fresh compile-js output"
+    fi
+    if [ ! -d "$repo_root/formal/smoke/js/node_modules" ]; then
+      npm ci --ignore-scripts --prefix "$repo_root/formal/smoke/js"
+    fi
     node "$repo_root/formal/smoke/js/build_browser_bundle.mjs"
     cp "$repo_root/formal/smoke/js/browser_smoke.html" \
       "$output_root/browser/index.html"
@@ -444,6 +463,15 @@ case "$command" in
              (:config control)
              (:length control)]))))' \
       "$repo_root/formal/mutations/registry.edn" >"$controls_file"
+    control_count=$(grep -c . "$controls_file" || true)
+    if [ "$control_count" -eq 0 ]; then
+      # A gate that iterates an empty control set exits green having
+      # proven nothing; fail closed instead.
+      echo "apalache-mutation-control: registry yielded zero controls" >&2
+      rm -f "$controls_file"
+      exit 1
+    fi
+    echo "apalache-mutation-control: executing $control_count registered mutants"
     tab=$(printf '\t')
     while IFS="$tab" read -r mutant_id model_path config_path length
     do

@@ -18,7 +18,10 @@ gate_started_at=$(date +%s)
 # the least-path and reducer-read-scope leaves (obligations 541 -> 651): the critical path is
 # the source-refinement JVM, and the prior ceiling was already exactly
 # at the wall on a loaded workstation.
-gate_hard_limit_seconds=12
+# Iteration-speed guardrail (not a proof property); CI overrides it via
+# EACL_VERIFY_FAST_LIMIT_SECONDS because shared runners make a 12 s
+# wall-clock ceiling inherently flaky.
+gate_hard_limit_seconds=${EACL_VERIFY_FAST_LIMIT_SECONDS:-12}
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 model_root="$repo_root/formal/stable-discovery"

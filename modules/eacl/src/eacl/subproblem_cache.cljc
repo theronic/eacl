@@ -5,7 +5,6 @@
   bounded stores. This namespace owns key selection, completed-value validation,
   and publication of request-owned miss results; the standard cache adapter
   owns retention."
-  (:refer-clojure :exclude [resolve])
   (:require [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
             [eacl.execution :as execution]
@@ -508,8 +507,10 @@
   Standard-cache recency and priority internals are intentionally omitted."
   [store tier]
   (->> (resident-tier-entries store tier)
-       (sort-by canonical-entry-sort-key)
-       vec))
+       ;; Decorate-sort: canonical key computed once per entry.
+       (map (fn [entry] [(canonical-entry-sort-key entry) entry]))
+       (sort-by first compare)
+       (mapv second)))
 
 (defn snapshot-value
   "Builds the flat v2 value from already selected tier entries."
@@ -518,8 +519,9 @@
   (let [entries
         (->> snapshot-tier-priority
              (mapcat #(get tier->entries % []))
-             (sort-by canonical-entry-sort-key)
-             vec)]
+             (map (fn [entry] [(canonical-entry-sort-key entry) entry]))
+             (sort-by first compare)
+             (mapv second))]
     {:format snapshot-format
      :entries entries
      :entry-count (count entries)}))
@@ -596,11 +598,11 @@
   `:entry-valid?` is the outer cache's operation-specific closed key/value
   validator. It is invoked exactly once per entry after structural and
   capacity validation and before any cache insertion."
-  ([snapshot options]
+  ([_snapshot _options]
    (invalid-config!
     "Cache snapshot restore requires an :entry-valid? callback."
     {:option :entry-valid?}))
-  ([snapshot options content-revision]
+  ([_snapshot _options _content-revision]
    (invalid-config!
     "Cache snapshot restore requires an :entry-valid? callback."
     {:option :entry-valid?}))
@@ -643,7 +645,11 @@
         "Cache snapshot contains duplicate tier/key mappings." {})))
    (let [ordered-entries
          (try
-           (vec (sort-by canonical-entry-sort-key (:entries snapshot)))
+           (->> (:entries snapshot)
+                (map (fn [entry]
+                       [(canonical-entry-sort-key entry) entry]))
+                (sort-by first compare)
+                (mapv second))
            (catch #?(:clj Throwable :cljs :default) _
              (incompatible-snapshot!
               "Cache snapshot key is not canonical portable data." {})))

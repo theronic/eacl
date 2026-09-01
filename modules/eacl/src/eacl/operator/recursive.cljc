@@ -114,7 +114,13 @@
   (pr-str q))
 
 (defn- sorted-questions [questions]
-  (sort-by question-key questions))
+  ;; Decorate-sort-undecorate: `sort-by question-key` re-runs `pr-str` on
+  ;; both operands at every comparison (the same finding
+  ;; `sealed-plan/sort-by-canonical` documents with measurements). The
+  ;; canonical order is unchanged — both compare the same strings.
+  (mapv second
+        (sort-by first compare
+                 (map (fn [q] [(question-key q) q]) questions))))
 
 (defn- candidate->root-question [roots permission candidate]
   (let [root-id (get roots permission)]
@@ -301,8 +307,8 @@
           nodes initial-nodes]
      (execution/check! execution/*contract*
                        :operator-recursive/discovery
-                       {:questions (count nodes)
-                        :queue (- (count queue) index)})
+                       #(hash-map :questions (count nodes)
+                                  :queue (- (count queue) index)))
      (if (= index (count queue))
        nodes
        (let [q (nth queue index)]
@@ -404,7 +410,10 @@
                         component)]))
               components)
         component-key #(question-key (first (nth components %)))
-        starts (vec (sort-by component-key (range (count components))))
+        starts (mapv second
+                    (sort-by first compare
+                             (map (fn [index] [(component-key index) index])
+                                  (range (count components)))))
         order
         (loop [remaining starts visited #{} order []]
           (if-let [start (first remaining)]
@@ -758,6 +767,20 @@
            result)))
      {} component-set)))
 
+(defn- sorted-consumer-bucket
+  "Deterministic consumer order, keys computed once per element. The
+  fact-dequeue loop previously re-sorted every bucket per dequeued fact
+  with `pr-str` inside the comparator."
+  [bucket]
+  (mapv second
+        (sort-by first compare
+                 (map (fn [consumer]
+                        [[(str (:kind consumer))
+                          (question-key (:head consumer))
+                          (:slot consumer)]
+                         consumer])
+                      bucket))))
+
 (defn- enqueue-fact! [state fact limits counters]
   (if (contains? (:facts state) fact)
     (do (add-counter! counters :duplicate-facts) state)
@@ -818,7 +841,8 @@
 
 (defn- run-component!
   [state nodes component completed component-of limits counters]
-  (let [consumers (component-consumers nodes component)
+  (let [consumers (update-vals (component-consumers nodes component)
+                               sorted-consumer-bucket)
         state (assoc state :agenda [] :agenda-index 0)
         state (initialize-component state nodes component completed
                                     component-of limits counters)]
@@ -833,8 +857,8 @@
           (vswap! counters assoc :transitions next-transition)
           (execution/check! execution/*contract*
                             :operator-recursive/fact-transition
-                            {:transitions next-transition
-                             :facts (count (:facts state))})
+                            #(hash-map :transitions next-transition
+                                       :facts (count (:facts state))))
           (let [state
                 (reduce
                  (fn [state {:keys [kind head slot right]}]
@@ -860,10 +884,7 @@
 
                      state))
                  state
-                 (sort-by (juxt (comp str :kind)
-                                (comp question-key :head)
-                                :slot)
-                          (get consumers fact [])))]
+                 (get consumers fact []))]
             (recur state)))))))
 
 (defn- direct-memo-key [probe]
@@ -989,13 +1010,8 @@
      :counters (:counters checkpoint)
      :replayed? true}))
 
-(defn evaluate-many
-  "Evaluates an aligned vector of recursive operator point questions.
-
-  Results are all-or-error.  `:checkpoint`, when supplied, must be a complete
-  compatible portable checkpoint and replays without backend work."
-  [{:keys [adapter plan candidates permission limits checkpoint
-           scope-identity undelivered-boundary]}]
+(defn- validate-many-options!
+  [plan candidates]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Recursive evaluation requires an operator plan."
@@ -1004,9 +1020,25 @@
     (invalid! :invalid-candidates
               "Recursive candidates must be a vector."
               {:value-type (some-> candidates type str)}))
-  (doseq [candidate candidates] (validate-candidate! candidate))
-  (let [limits (normalize-limits limits)
-        roots (operator-plan/expression-roots plan)
+  (doseq [candidate candidates] (validate-candidate! candidate)))
+
+(declare evaluate-many-validated)
+
+(defn evaluate-many
+  "Evaluates an aligned vector of recursive operator point questions.
+
+  Results are all-or-error.  `:checkpoint`, when supplied, must be a complete
+  compatible portable checkpoint and replays without backend work."
+  [{:keys [plan candidates] :as options}]
+  (validate-many-options! plan candidates)
+  (evaluate-many-validated (update options :limits normalize-limits)))
+
+(defn- evaluate-many-validated
+  "Trusted core of `evaluate-many`: options already validated and limits
+  normalized (each caller validates exactly once at its boundary)."
+  [{:keys [adapter plan candidates permission limits checkpoint
+           scope-identity undelivered-boundary]}]
+  (let [roots (operator-plan/expression-roots plan)
         permission (or permission (:root plan))
         root-questions (mapv #(candidate->root-question roots permission %)
                              candidates)
@@ -1177,18 +1209,10 @@
   point reuse. Only unresolved distinct points enter the recursive evaluator;
   no point is published until that whole demanded vector succeeds."
   [{:keys [plan candidates permission scope-identity checkpoint] :as options}]
-  (when-not (operator-plan/operator-plan? plan)
-    (invalid! :operator-plan-required
-              "Recursive evaluation requires an operator plan."
-              {:plan-domain (:domain plan)}))
-  (when-not (vector? candidates)
-    (invalid! :invalid-candidates
-              "Recursive candidates must be a vector."
-              {:value-type (some-> candidates type str)}))
-  (doseq [candidate candidates] (validate-candidate! candidate))
+  (validate-many-options! plan candidates)
   (let [options (assoc options :limits (normalize-limits (:limits options)))]
     (if (or checkpoint (nil? subproblem/*store*))
-      (evaluate-many options)
+      (evaluate-many-validated options)
       (let [permission (or permission (:root plan))
             store subproblem/*store*
             looked-up
@@ -1212,7 +1236,7 @@
                  vec)
             evaluated
             (if (seq misses)
-              (evaluate-many (assoc options :candidates misses))
+              (evaluate-many-validated (assoc options :candidates misses))
               {:decisions [] :counters {}})
             miss-decisions (zipmap misses (:decisions evaluated))
             decisions
@@ -1231,7 +1255,7 @@
         {:decisions decisions
          :counters
          (assoc (:counters evaluated)
-                :point-cache-hits (count (filter :cached? looked-up))
+                :point-cache-hits (- (count looked-up) (count misses))
                 :point-cache-misses (count misses))
          :replayed? false
          :point-cached? (empty? misses)}))))

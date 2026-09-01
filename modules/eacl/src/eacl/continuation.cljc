@@ -122,10 +122,6 @@
       (metric! store kind :errors)
       false)))
 
-(defn- checkpoint-miss!
-  [store kind reason]
-  (miss! store kind reason))
-
 (defn- record-put!
   [store kind replaced? published?]
   (when (:telemetry-enabled? store)
@@ -283,7 +279,7 @@
               (key-for edge) expected-value))
            :miss!
            (fn [reason]
-             (checkpoint-miss!
+             (miss!
               store :recursive-continuation reason))
            :put!
            (fn [edge value]
