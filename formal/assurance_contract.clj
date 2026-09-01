@@ -267,7 +267,10 @@
     :entry-points
     ['eacl.consistency/selection-plan
      'eacl.consistency/select-from-source
-     'eacl.consistency/select]
+     'eacl.consistency/select
+     ;; Host-native production authority; the generated ConsistencyDecision
+     ;; model below remains its offline differential oracle.
+     'eacl.engine.portable-decisions/decide]
     :theorems
     [:unsupported-exact-plan-is-exact-snapshot-unavailable
      :at-least-acceptance-requires-ancestor

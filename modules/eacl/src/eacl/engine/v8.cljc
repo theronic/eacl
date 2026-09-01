@@ -2242,43 +2242,81 @@
 (defn- recursive-operator-count
   "Streams exact recursive operator pages with bounded retained continuation
   state. A bounded count asks for precisely its limit plus one lookahead;
-  an exact count remains explicitly exhaustive."
+  an exact count remains explicitly exhaustive.
+
+  Counting pays no page-presentation work (kernel-boundary-efficiency):
+  the loop resumes on the internal cover boundary directly, so no outer
+  cursor validation, semantic-scope digest, recursive edge, or page-info
+  envelope is built per page, and the shared cover seal, proof identity,
+  and anchor resolution happen once per count instead of once per page.
+  Budget semantics match the paged path: each iteration is one page run
+  with its own reducer budgets, under the same per-page deadline check."
   [db plan traversal query result-type anchor subject-type count-limit]
-  (let [target (when (some? count-limit) (inc count-limit))
-        continuation-cache (stable-page/make-checkpoint-store)]
-    (loop [bound nil
-           accumulated 0]
-      (execution/check! execution/*contract*
-                        :operator-recursive/count-page
-                        {:count accumulated})
-      (let [remaining (when target (- target accumulated))
-            page-size (if remaining
-                        (min operator-batch-schedule/maximum-width remaining)
-                        operator-batch-schedule/maximum-width)
-            page
-            (recursive-operator-lookup-page
-             db plan traversal query
-             {:direction :asc :size page-size :bound bound}
-             (constantly continuation-cache)
-             result-type anchor subject-type nil)
-            next-count (+ accumulated (count (:data page)))
-            more? (get-in page [:page-info :has-next-page?])
-            next-bound (get-in page [:page-info :end-cursor])]
-        (cond
-          (and target (>= next-count target))
-          {:count count-limit :truncated? true}
+  (let [cover-plan (stable-cover-plan db plan)
+        proof-identity (operator-snapshot-proof-identity db)
+        anchor-eid (object-eid db (:id anchor))
+        continuation-cache (stable-page/make-checkpoint-store)
+        cache-fn (constantly continuation-cache)
+        evaluate-batch
+        (fn [nodes]
+          (let [candidates
+                (mapv
+                 (fn [node]
+                   {:direction traversal
+                    :subject-type subject-type
+                    :subject-eid (if (= :forward traversal)
+                                   anchor-eid (:id node))
+                    :resource-eid (if (= :forward traversal)
+                                    (:id node) anchor-eid)})
+                 nodes)]
+            (:decisions
+             (with-public-limit-errors
+               #(with-service-admission
+                  (fn []
+                    (operator-recursive/evaluate-cached-many
+                     {:adapter db
+                      :plan plan
+                      :candidates candidates
+                      :scope-identity proof-identity
+                      :limits (recursive-operator-limits)})))))))
+        target (when (some? count-limit) (inc count-limit))]
+    (if (nil? anchor-eid)
+      {:count 0 :truncated? false}
+      (loop [cover-bound nil
+             accumulated 0]
+        (execution/check! execution/*contract*
+                          :operator-recursive/count-page
+                          {:count accumulated})
+        (let [remaining (when target (- target accumulated))
+              page-size (if remaining
+                          (min operator-batch-schedule/maximum-width remaining)
+                          operator-batch-schedule/maximum-width)
+              page
+              (filtered-lookup-page
+               db cover-plan traversal query
+               {:direction :asc :size page-size :bound cover-bound}
+               cache-fn result-type anchor subject-type
+               {:candidate-window operator-lookup/default-candidate-window
+                :maximum-batch-width operator-batch-schedule/maximum-width
+                :accept-many? evaluate-batch})
+              next-count (+ accumulated (count (:data page)))
+              more? (get-in page [:page-info :has-next-page?])
+              next-bound (get-in page [:page-info :end-cursor])]
+          (cond
+            (and target (>= next-count target))
+            {:count count-limit :truncated? true}
 
-          more?
-          (do
-            (when-not next-bound
-              (page-error!
-               "Recursive count continuation made no cursor progress."
-               {:type :eacl.page/invalid-cursor
-                :eacl/error :eacl.page/invalid-cursor}))
-            (recur next-bound next-count))
+            more?
+            (do
+              (when-not next-bound
+                (page-error!
+                 "Recursive count continuation made no cursor progress."
+                 {:type :eacl.page/invalid-cursor
+                  :eacl/error :eacl.page/invalid-cursor}))
+              (recur next-bound next-count))
 
-          :else
-          {:count next-count :truncated? false})))))
+            :else
+            {:count next-count :truncated? false}))))))
 
 (defn count-resources
   [db {:as query}]

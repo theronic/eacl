@@ -183,10 +183,10 @@
           token-mode?
           (contains? #{:acquire-at-least! :acquire-exact!}
                      acquisition-operation)]
-      (is (= (cond-> {:consistency-plan 1}
-               token-mode?
-               (assoc :consistency-validation 1))
-             @kernel-crossings))
+      ;; Host-native consistency authority: selection and validation run
+      ;; the portable decision procedure with zero generated crossings
+      ;; (kernel-boundary-efficiency delta).
+      (is (= {} @kernel-crossings))
       (is (= {acquisition-operation 1
               :source-scope (if token-mode? 2 1)
               :source-lifecycle (if token-mode? 2 1)}

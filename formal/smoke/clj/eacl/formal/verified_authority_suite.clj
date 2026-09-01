@@ -77,12 +77,13 @@
 
 (def required-generated-authority-operations
   "The generated decision authority the stable-discovery design still
-  routes through on every backend: consistency selection, cursor continuation,
-  and relationship paging.
-  The retired traversal authorities (:enumeration-route, :acyclic-*,
-  :indexed-traversal-*) left with the engines they governed."
-  #{:consistency-plan
-    :cursor-continuation
+  routes through on every backend: cursor continuation and relationship
+  paging. Consistency selection/validation moved to the host-native
+  portable decision procedure (the generated model remains its offline
+  differential oracle), and the retired traversal authorities
+  (:enumeration-route, :acyclic-*, :indexed-traversal-*) left with the
+  engines they governed."
+  #{:cursor-continuation
     :relationship-page})
 
 (defn- count-call!

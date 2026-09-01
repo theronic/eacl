@@ -1,5 +1,6 @@
 (ns eacl.formal.consistency-boundary-benchmark
-  "Absolute wall-time gate for the generated consistency decision boundary.
+  "Absolute wall-time gate for the host-native consistency decision
+  boundary (portable decision procedure; zero generated crossings).
 
   This measures the minimize-latency source plan used before public Acl
   acquisition. The plan reads only source-static capabilities and performs no
@@ -10,6 +11,7 @@
   (:require
    [eacl.backend.source :as source]
    [eacl.consistency :as consistency]
+   [eacl.verified-kernel :as verified]
    [eacl.formal.production-kernel :as production]
    [eacl.spicedb.consistency :as public-consistency]))
 
@@ -75,11 +77,18 @@
           warmup 10
           samples 40}}]
    (let [source (benchmark-source)
+         crossings (atom {})
          observations
-         (mapv
-          (fn [_]
-            (run-batch source repetitions))
-          (range (+ warmup samples)))
+         (binding [verified/*kernel-crossing-stats* crossings]
+           (mapv
+            (fn [_]
+              (run-batch source repetitions))
+            (range (+ warmup samples))))
+         _ (when (seq @crossings)
+             (throw
+              (ex-info
+               "Host-native consistency decisions must perform zero generated crossings."
+               {:crossings @crossings})))
          measured (subvec observations warmup)
          checksums (mapv :checksum measured)
          times (mapv :nanoseconds-per-call measured)]
@@ -95,7 +104,8 @@
        :samples samples
        :response-token false}
       :logical-work
-      {:capability-observations 1
+      {:generated-kernel-crossings 0
+       :capability-observations 1
        :plan-decisions 1
        :authentication-attempts 0
        :backend-selection-calls 0
