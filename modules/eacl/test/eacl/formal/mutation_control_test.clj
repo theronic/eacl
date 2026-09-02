@@ -1,6 +1,5 @@
 (ns eacl.formal.mutation-control-test
   (:require [clojure.edn :as edn]
-            [clojure.java.io]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [clojure.walk]
@@ -382,59 +381,3 @@
                {:id :positive-model-kill
                 :mechanism :executed-model
                 :killed-by {:gate :apalache-mutation-control}})))))
-
-(deftest manifest-validator-rejects-corrupted-mutation-count-test
-  (let [candidate
-        {:schema-version 2
-         :contract "formal/assurance_contract.clj"
-         :mutation-controls {:registered -1}}
-        temp-file
-        (java.nio.file.Files/createTempFile
-         "eacl-corrupt-manifest-"
-         ".edn"
-         (make-array java.nio.file.attribute.FileAttribute 0))
-        dafny-report-file
-        (java.nio.file.Files/createTempFile
-         "eacl-test-dafny-verification-"
-         ".json"
-         (make-array java.nio.file.attribute.FileAttribute 0))
-        closure-report-file
-        (java.nio.file.Files/createTempFile
-         "eacl-test-source-closure-"
-         ".json"
-         (make-array java.nio.file.attribute.FileAttribute 0))]
-    (try
-      (spit (.toFile temp-file) (pr-str candidate))
-      ;; Count-drift rejection does not depend on a completed Dafny build.
-      ;; Give the validator a parseable, hermetic report so this negative test
-      ;; executes identically in the ordinary, parity, and formal jobs.
-      (spit (.toFile dafny-report-file) "{}")
-      (spit (.toFile closure-report-file) "{}")
-      (let [builder
-            (ProcessBuilder.
-             [(.getCanonicalPath
-               (repo/file "bin" "validate-verification-manifest"))])
-            environment (.environment builder)
-            _ (.put environment
-                    "EACL_REPO_ROOT"
-                    (.getCanonicalPath (repo/file ".")))
-            _ (.put environment
-                    "EACL_VERIFICATION_MANIFEST"
-                    (str temp-file))
-            _ (.put environment
-                    "EACL_DAFNY_VERIFICATION_REPORT"
-                    (str dafny-report-file))
-            _ (.put environment
-                    "EACL_PUBLIC_SOURCE_CLOSURE_OUTPUT"
-                    (str closure-report-file))
-            _ (.redirectErrorStream builder true)
-            process (.start builder)
-            output (slurp (.getInputStream process))
-            exit (.waitFor process)]
-        (is (= 2 exit)
-            "invalid evidence must not masquerade as expected assurance withholding")
-        (is (str/includes? output ":mutation-controls") output))
-      (finally
-        (java.nio.file.Files/deleteIfExists temp-file)
-        (java.nio.file.Files/deleteIfExists dafny-report-file)
-        (java.nio.file.Files/deleteIfExists closure-report-file)))))

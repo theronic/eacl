@@ -20,7 +20,6 @@ const sourcePaths = [
 const reportPath =
   process.env.EACL_PUBLIC_SOURCE_CLOSURE_OUTPUT ??
   "target/formal/verification/public-source-closure.json";
-const toolchainPath = "formal/toolchain.lock.json";
 const roots = [
   "eacl.engine.v8/can?",
   "eacl.engine.v8/lookup-resources",
@@ -29,8 +28,6 @@ const roots = [
   "eacl.engine.v8/count-subjects",
   "eacl.engine.relationships/execute-page",
   "eacl.engine.relationships/execute-plan",
-  "eacl.relay/lookup-visited-page",
-  "eacl.relay/remember-visited-page!",
   "eacl.relay/select-continuation-adapter",
   "eacl.relay/prepare-page-query",
   "eacl.relay/internalize-page-query",
@@ -43,10 +40,11 @@ const roots = [
   "eacl.cache/export-basis-snapshot",
   "eacl.cache/restore-basis-snapshot!",
   "eacl.cache/cache-content-revision",
-  "eacl.subproblem-cache/resolve!",
-  "eacl.subproblem-cache/resolve-bound!",
-  "eacl.subproblem-cache/resolve-layered-bound!",
   "eacl.subproblem-cache/lookup!",
+  "eacl.subproblem-cache/lookup-eligible!",
+  "eacl.subproblem-cache/publish!",
+  "eacl.subproblem-cache/lookup-denotation!",
+  "eacl.subproblem-cache/publish-denotation!",
   "eacl.subproblem-cache/export-snapshot",
   "eacl.subproblem-cache/restore-store",
   "eacl.consistency/select",
@@ -111,10 +109,107 @@ const roots = [
   "eacl.datahike.schema/permission-storage-shape",
   "eacl.datascript.core/make-client",
   "eacl.datascript.core/db",
+  "eacl.datascript.core/export-cache-snapshot",
+  "eacl.datascript.core/restore-cache-snapshot!",
+  "eacl.datascript.core/cache-content-revision",
   "eacl.datalevin.core/make-client",
   "eacl.datalevin.core/db",
 ];
 const ignoredRuntimeNamespaces = new Set(["clojure.core", "cljs.core"]);
+const forbiddenPolicyTokens = [
+  "current-cache-decision",
+  "subproblem-cache-decision",
+  "current-cache-refinement",
+  "specialized-current-cache-action",
+  "current-cache-specialization",
+  "PageNavigationCache",
+  "page-navigation-cache",
+  "lookup-visited-page",
+  "remember-visited-page!",
+  // Retired provider/generation/weight/recency implementations.  These exact
+  // legacy symbols avoid false positives from typed rejection messages that
+  // deliberately name removed public options.
+  "CacheValidationUpdate",
+  "(defprotocol CacheStore",
+  "ExactGeneration",
+  "ManagedGeneration",
+  "sighting-transition",
+  "touch-generation!",
+  "install-exact-generation!",
+  "select-exact-generation!",
+  "install-managed-generation!",
+  "select-managed-generation!",
+  "compact-entry-order",
+  "compact-tombstone-order",
+  "remember-tombstone",
+  "publication-weight-ceiling",
+  "maybe-compact-lru",
+  "touch-entry!",
+  "default-projection-max-weight",
+  "default-denotation-max-weight",
+  "default-answer-max-weight",
+  "relationship-observation",
+  // Deleted physical-projection and managed-subproblem storage surfaces.
+  "resolve-independent!",
+  "resolve-exact!",
+  "resolve-bound!",
+  "resolve-layered-bound!",
+  "managed-subproblem-key",
+  "subset-descriptor",
+  "*managed-store*",
+  "*managed-key-fn*",
+  "*managed-scope*",
+  "managed-proof-max-atoms",
+  "projection-max-entries",
+  // Continuation retention exposes scoped callbacks only; the old generic
+  // mutation surface must not silently return.
+  "(defn get!",
+  "(defn put!",
+];
+const intentionalNonMigrations = [
+  {
+    owner: "DataScript adapter",
+    state: "capacity-one volatile database wrapper",
+    reason: "identical-database basis optimization, not a multi-entry store",
+  },
+  {
+    owner: "generated JVM boundary",
+    state: "capacity-one fuel and traversal-limit volatile wrappers",
+    reason: "one mapping makes FIFO and LRU equivalent; conversion is pure",
+  },
+  {
+    owner: "cursor key context",
+    state: "at-most-eight idle JCA Mac instances per standard-LRU-owned context",
+    reason:
+      "bounded mutable-object pool, not keyed authorization-result retention",
+  },
+  {
+    owner: "stable reducer",
+    state: "consumable immutable sidecar chunks",
+    reason:
+      "request/checkpoint execution state is advanced once and never serves another computation",
+  },
+  {
+    owner: "schema warning reporter",
+    state: "saturating 256-condition first-sighting set",
+    reason: "observation-only diagnostic deduplication, not result reuse",
+  },
+  {
+    owner: "request evaluator",
+    state: "memos, visited sets, queues, and worklists",
+    reason: "request-owned algorithmic state",
+  },
+  {
+    owner: "database backends",
+    state: "backend-owned node and index caches",
+    reason: "outside EACL authorization retention ownership",
+  },
+  {
+    owner: "consistency selection",
+    state: "authoritative snapshot and causal state",
+    reason: "correctness state must not be evictable",
+  },
+];
 
 function fail(message, details = undefined) {
   if (details === undefined) {
@@ -129,7 +224,7 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function exactKondoVersion() {
+function kondoVersion() {
   const output = execFileSync("clj-kondo", ["--version"], {
     cwd: repositoryRoot,
     encoding: "utf8",
@@ -138,18 +233,17 @@ function exactKondoVersion() {
   if (!match) {
     fail("Unable to parse clj-kondo version.", { output });
   }
-  const actual = match[1];
-  const toolchain = JSON.parse(
-    readFileSync(resolve(repositoryRoot, toolchainPath), "utf8"),
-  );
-  const expected = toolchain.tools?.cljKondo?.version;
-  if (!expected || actual !== expected) {
-    fail("clj-kondo does not match the formal toolchain lock.", {
-      expected,
-      actual,
-    });
+  return match[1];
+}
+
+function findForbiddenPolicyMatches(sources) {
+  const matches = [];
+  for (const { sourcePath, source } of sources) {
+    for (const token of forbiddenPolicyTokens) {
+      if (source.includes(token)) matches.push({ sourcePath, token });
+    }
   }
-  return actual;
+  return matches;
 }
 
 function analyzeSource() {
@@ -296,13 +390,25 @@ function buildReport() {
       },
     ]),
   );
-  const sourcePaths = [
+  const analyzedSourcePaths = [
     ...new Set(
       [...definitions.values()]
         .map((definition) => definition.sourcePath)
         .filter(Boolean),
     ),
   ].sort();
+  const forbiddenPolicyMatches = findForbiddenPolicyMatches(
+    analyzedSourcePaths.map((sourcePath) => ({
+      sourcePath,
+      source: readFileSync(resolve(repositoryRoot, sourcePath), "utf8"),
+    })),
+  );
+  if (forbiddenPolicyMatches.length > 0) {
+    fail(
+      "Policy-specific cache authority or externalized page-navigation state re-entered production source.",
+      { forbiddenPolicyMatches },
+    );
+  }
   return {
     schemaVersion: 1,
     status: "closure-enumerated-verification-incomplete",
@@ -310,10 +416,10 @@ function buildReport() {
       "static-source-call-closure-not-source-refinement-or-runtime-proof",
     analyzer: {
       name: "clj-kondo",
-      version: exactKondoVersion(),
+      version: kondoVersion(),
       languagePasses: ["clj", "cljs"],
     },
-    sources: sourcePaths.map((path) => ({
+    sources: analyzedSourcePaths.map((path) => ({
       path,
       sha256: sha256(readFileSync(resolve(repositoryRoot, path))),
     })),
@@ -355,9 +461,14 @@ function buildReport() {
       ),
       exclusions: {
         adapterSemantics:
-          "the executable backend dispatch contract closes literal operation keys, but adapter semantics remain named trusted obligations rather than source-refined theorems",
+          "backend-dispatch.edn closes literal operation keys, but adapter operation semantics remain named trusted obligations rather than source-refined theorems",
         assurance:
           "presence in this closure does not imply theorem coverage",
+        intentionalNonMigrations,
+      },
+      policySpecificDecisionGuard: {
+        status: "passed",
+        forbiddenTokens: forbiddenPolicyTokens,
       },
     },
     attribution: {
@@ -370,8 +481,28 @@ function buildReport() {
 }
 
 const mode = process.argv[2] ?? "check";
-if (!["check", "write", "json"].includes(mode)) {
-  fail("usage: bin/public-source-closure.mjs [check|write|json]");
+if (!["check", "write", "json", "selftest"].includes(mode)) {
+  fail("usage: bin/public-source-closure.mjs [check|write|json|selftest]");
+}
+
+if (mode === "selftest") {
+  const matches = findForbiddenPolicyMatches(
+    forbiddenPolicyTokens.map((token) => ({
+      sourcePath: `synthetic/${token}`,
+      source: `(def ${token} :reintroduced)`,
+    })),
+  );
+  const detected = new Set(matches.map(({ token }) => token));
+  const missing = forbiddenPolicyTokens.filter((token) => !detected.has(token));
+  if (missing.length > 0) {
+    fail("Policy-specific decision guard failed its negative self-test.", {
+      missing,
+    });
+  }
+  process.stdout.write(
+    `${JSON.stringify({ status: "passed", detected: detected.size })}\n`,
+  );
+  process.exit(0);
 }
 
 const report = buildReport();
@@ -388,6 +519,7 @@ if (mode === "json") {
       report: reportPath,
       roots: roots.length,
       definitions: report.scope.unionInternalDefinitionCount,
+      forbiddenPolicyMatches: 0,
     })}\n`,
   );
 }

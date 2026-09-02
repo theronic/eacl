@@ -50,17 +50,22 @@
    :backend-snapshot-id {:revision revision}})
 
 (defn- proof-adapter
-  [revision provider]
-  (backend/make-adapter
-   {:id :relay-test
-    :capabilities {:cache-proofs #{:ordered-generations}}
-    :fingerprint {:adapter :relay-test}
-    :deterministic? true
-    :operations
-    (merge
-     (operation-map revision nil)
-     {:schema-generation (constantly 3)
-      :proof-frame provider})}))
+  ([revision provider]
+   (proof-adapter
+    revision provider
+    :selected-internal/current-external-injective-v2))
+  ([revision provider identity-contract]
+   (backend/make-adapter
+    {:id :relay-test
+     :capabilities {:cache-proofs #{:ordered-generations}}
+     :fingerprint {:adapter :relay-test}
+     :deterministic? true
+     :identity-contract identity-contract
+     :operations
+     (merge
+      (operation-map revision nil)
+      {:schema-generation (constantly 3)
+       :proof-frame provider})})))
 
 (defn- proof-opts
   [selected revision]
@@ -114,7 +119,9 @@
     (is (= 13 (:v envelope)))
     (is (= (request-context/lineage-for-basis (basis-identity 10))
            (:lineage envelope)))
-    (is (= {:schema-generation 3 :dependency-stamp 5}
+    (is (= {:schema-generation 3
+            :dependency-identity [[1 5]]
+            :dependency-stamp 5}
            (:frame envelope)))
     (is (string? (:closure-digest envelope)))
     (is (not (contains? envelope :dependency-scope-digest)))
@@ -239,7 +246,9 @@
         "cursor validation and re-minting share one closure resolution")
     (is (= {:revision 11 :exact-locator 11}
            (:native-revision envelope)))
-    (is (= {:schema-generation 3 :dependency-stamp 5}
+    (is (= {:schema-generation 3
+            :dependency-identity [[1 5]]
+            :dependency-stamp 5}
            (:frame envelope)))))
 
 (deftest contract-violating-cursor-proof-falls-back-exact-and-cannot-equal-test
@@ -328,6 +337,42 @@
     (is (= 1 @native-revision-calls)
         "both boundary tokens must reuse one immutable snapshot proof")))
 
+(deftest page-cursor-rejects-metadata-bearing-external-edge-test
+  (let [request-owned (atom :request)
+        snapshot
+        (backend/make-adapter
+         {:id :relay-test
+          :capabilities {}
+          :fingerprint {:adapter :metadata-edge}
+          :deterministic? true
+          :operations
+          (assoc
+           (operation-map 1 nil)
+           :internal-id->object
+           (fn [internal-id]
+             (with-meta [:external internal-id]
+               {:request-owned request-owned})))})
+        page
+        (assoc lookup-page
+               :page-info
+               (assoc (:page-info lookup-page)
+                      :start-cursor nil
+                      :end-cursor
+                      {:kind :stable-edge
+                       :result-eid "document-1"}))
+        data
+        (try
+          (relay/externalize-page
+           snapshot {} :lookup-resources lookup-query page)
+          nil
+          (catch #?(:clj clojure.lang.ExceptionInfo
+                    :cljs cljs.core.ExceptionInfo) error
+            (ex-data error)))]
+    (is (= :eacl.pagination/unsupported-cursor-identity
+           (:type data)))
+    (is (= :edge (:position data))
+        "metadata must not be silently discarded before cursor round-trip")))
+
 (deftest prepared-continuation-authenticates-token-once-test
   (let [snapshot (adapter 1 nil true)
         first-page
@@ -345,6 +390,179 @@
                (:after query)))
         (is (= 1 (:decode-calls @work))
             "selection and internalization must share one authenticated decode")))))
+
+(deftest exact-immutable-continuation-skips-proof-and-keeps-cursor-guards-test
+  (let [identity-contract
+        :selected-internal/immutable-external-injective-v3
+        minted-proof-reads (atom 0)
+        original
+        (proof-adapter
+         10
+         (fn [_]
+           (swap! minted-proof-reads inc)
+           [[1 5]])
+         identity-contract)
+        codec-cache (cursor/codec-cache)
+        shared {:security-key "01234567890123456789012345678901"
+                :cursor-codec-cache codec-cache
+                :cursor-ttl-seconds 10}
+        mint-options
+        (merge (proof-opts original 10)
+               shared
+               {:now-seconds 100})
+        page
+        (relay/externalize-page
+         original mint-options
+         :lookup-resources lookup-query lookup-page)
+        start-token (get-in page [:page-info :start-cursor])
+        end-token (get-in page [:page-info :end-cursor])
+        kernel-crossings (atom {})
+        current-proof-reads (atom 0)
+        current
+        (proof-adapter
+         10
+         (fn [_]
+           (swap! current-proof-reads inc)
+           (throw (ex-info "exact continuation read proof" {})))
+         identity-contract)
+        current-options
+        (merge (proof-opts current 10)
+               shared
+               {:now-seconds 105})
+        prepared
+        (relay/prepare-page-query
+         current current-options :lookup-resources
+         (assoc lookup-query :after end-token :before start-token))]
+    (is (pos? @minted-proof-reads))
+    (is (zero? @current-proof-reads)
+        "after and before on the exact immutable basis need no proof provider")
+    (is (= (get-in lookup-page [:page-info :end-cursor])
+           (get-in prepared [:query :after])))
+    (is (= (get-in lookup-page [:page-info :start-cursor])
+           (get-in prepared [:query :before])))
+
+    (testing "query scope rejects before any proof reconstruction"
+      (let [data
+            (binding [verified/*kernel-crossing-stats* kernel-crossings]
+              (try
+                (relay/prepare-page-query
+                 current current-options :lookup-resources
+                 (assoc lookup-query :permission :edit :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error))))]
+        (is (= :query-mismatch (:reason data)))
+        (is (zero? @current-proof-reads))))
+
+    (testing "expiry rejects before any proof reconstruction"
+      (let [data
+            (binding [verified/*kernel-crossing-stats* kernel-crossings]
+              (try
+                (relay/prepare-page-query
+                 current (assoc current-options :now-seconds 110)
+                 :lookup-resources (assoc lookup-query :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error))))]
+        (is (= :eacl.pagination/expired-cursor (:type data)))
+        (is (= 110 (:expired-at data)))
+        (is (zero? @current-proof-reads))))
+
+    (testing "freshness and exact-token conflicts remain request constraints"
+      (doseq [options
+              [(assoc current-options
+                      :cursor-freshness-floor
+                      {:revision 11 :exact-locator 11})
+               (assoc current-options
+                      :cursor-consistency-mode :at-exact-snapshot
+                      :cursor-request-token
+                      {:revision 11 :exact-locator 11})]]
+        (let [data
+              (try
+                (relay/prepare-page-query
+                 current options :lookup-resources
+                 (assoc lookup-query :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error)))]
+          (is (= :eacl.consistency/cursor-consistency-conflict
+                 (:type data)))))
+      (is (zero? @current-proof-reads)))
+
+    (testing "continuation semantic ABI is part of authenticated query scope"
+      (let [changed-abi
+            (update relay/cursor-continuation-semantic-abi :version inc)
+            data
+            (with-redefs [relay/cursor-continuation-semantic-abi changed-abi]
+              (try
+                (relay/prepare-page-query
+                 current current-options :lookup-resources
+                 (assoc lookup-query :after end-token))
+                nil
+                (catch #?(:clj clojure.lang.ExceptionInfo
+                          :cljs cljs.core.ExceptionInfo) error
+                  (ex-data error))))]
+        (is (= :query-mismatch (:reason data)))
+        (is (zero? @current-proof-reads))))
+    (is (<= 2 (get @kernel-crossings :cursor-continuation 0))
+        "scope and expiry guards still cross the verified decision")))
+
+(deftest exact-shortcut-preserves-stale-boundary-errors-test
+  (let [identity-contract
+        :selected-internal/immutable-external-injective-v3
+        original
+        (proof-adapter 10 (constantly [[1 5]]) identity-contract)
+        options (proof-opts original 10)
+        tracked-page
+        (assoc-in
+         lookup-page [:page-info :end-cursor]
+         {:kind :stable-edge
+          :result-eid "document-1"})
+        page
+        (relay/externalize-page
+         original options :lookup-resources lookup-query tracked-page)
+        token (get-in page [:page-info :end-cursor])
+        proof-reads (atom 0)
+        missing
+        (backend/make-adapter
+         {:id :relay-test
+          :capabilities {:cache-proofs #{:ordered-generations}}
+          :fingerprint {:adapter :relay-test}
+          :deterministic? true
+          :identity-contract identity-contract
+          :operations
+          (merge
+           (operation-map 10 nil)
+           {:object-id->internal (constantly nil)
+            :schema-generation (constantly 3)
+            :proof-frame
+            (fn [_]
+              (swap! proof-reads inc)
+              (throw (ex-info "stale boundary read proof" {})))})})
+        missing-options (proof-opts missing 10)
+        error-data
+        (fn [f]
+          (try
+            (f)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) error
+              (ex-data error))))]
+    (doseq [prepare
+            [#(relay/prepare-page-query
+               missing missing-options :lookup-resources
+               (assoc lookup-query :after token))
+             #(relay/internalize-page-query
+               missing missing-options :lookup-resources
+               (assoc lookup-query :after token))]]
+      (let [data (error-data prepare)]
+        (is (= :eacl.pagination/stale-cursor (:type data)))
+        (is (= :boundary-identity-changed (:reason data)))))
+    (is (zero? @proof-reads)
+        "exact immutable validation rejects the missing edge without proof")))
 
 (deftest cursor-is-bound-to-the-complete-semantic-query-test
   (let [snapshot (adapter 1 nil true)
@@ -368,317 +586,6 @@
                    error
                  (:reason (ex-data error)))))
           (pr-str changed-query)))))
-
-(deftest completed-page-cache-is-partitioned-by-consistency-mode-test
-  (let [snapshot (adapter 1 nil true)
-        page-cache (relay/page-navigation-cache)
-        opts {:page-navigation-cache page-cache
-              :completed-cache? true
-              :snapshot-semantic-identity (basis-identity 1)}
-        at-least-query
-        (assoc lookup-query :consistency
-               {:consistency/mode :at-least-as-fresh
-                :zed/token "opaque-test-token"})
-        authoritative-query
-        (assoc lookup-query :consistency :fully-consistent)
-        public-page
-        (relay/externalize-page
-         snapshot opts :lookup-resources at-least-query lookup-page)]
-    (relay/remember-visited-page!
-     snapshot opts :lookup-resources at-least-query public-page)
-    (is (some? (relay/lookup-visited-page
-                snapshot opts :lookup-resources at-least-query)))
-    (is (nil? (relay/lookup-visited-page
-               snapshot opts :lookup-resources authoritative-query))
-        "a cached public cursor must never cross consistency query scope")))
-
-(deftest read-without-publication-can-read-but-not-write-visited-pages-test
-  (let [snapshot (adapter 1 nil true)
-        page-cache (relay/page-navigation-cache)
-        base-opts {:page-navigation-cache page-cache
-                   :completed-cache? true
-                   :snapshot-semantic-identity (basis-identity 1)}
-        read-only-opts (assoc base-opts :populate-cache-request? false)
-        public-page
-        (relay/externalize-page
-         snapshot base-opts :lookup-resources lookup-query lookup-page)]
-    (relay/remember-visited-page!
-     snapshot read-only-opts :lookup-resources lookup-query public-page)
-    (is (nil? (relay/lookup-visited-page
-               snapshot base-opts :lookup-resources lookup-query)))
-    (relay/remember-visited-page!
-     snapshot base-opts :lookup-resources lookup-query public-page)
-    (is (some? (relay/lookup-visited-page
-                snapshot read-only-opts :lookup-resources lookup-query))
-        "publication control must not disable visited-page lookup")))
-
-(deftest visited-page-identity-excludes-invocation-controls-test
-  (let [snapshot (adapter 1 nil true)
-        page-cache (relay/page-navigation-cache)
-        base-opts {:page-navigation-cache page-cache
-                   :completed-cache? true
-                   :snapshot-semantic-identity (basis-identity 1)}
-        token-a (execution/cancellation-token)
-        token-b (execution/cancellation-token)
-        stored-query
-        (assoc lookup-query
-               :timeout-ms 101
-               :cancellation-token token-a
-               :cache? true
-               :populate-cache? true)
-        lookup-query-with-new-controls
-        (assoc lookup-query
-               :timeout-ms 997
-               :cancellation-token token-b
-               :cache? false
-               :populate-cache? false)]
-    (relay/remember-visited-page!
-     snapshot base-opts :lookup-resources stored-query lookup-page)
-    (let [state-before @(:state page-cache)
-          stats-before (relay/page-navigation-cache-stats page-cache)
-          hits
-          (repeatedly
-           5
-           #(relay/lookup-visited-page
-             snapshot base-opts :lookup-resources
-             lookup-query-with-new-controls))]
-      (is (every? #(= (:data lookup-page) (:data %)) hits))
-      (is (every? :cached? hits))
-      (is (= state-before @(:state page-cache))
-          "hits do not mutate order, diagnostics, or any shared state")
-      (is (= stats-before (relay/page-navigation-cache-stats page-cache))))
-    (doseq [semantic-change
-            [(assoc lookup-query-with-new-controls :first 2)
-             (assoc lookup-query-with-new-controls :permission :edit)]]
-      (is (nil? (relay/lookup-visited-page
-                 snapshot base-opts :lookup-resources semantic-change))))
-    (is (nil?
-         (relay/lookup-visited-page
-          snapshot base-opts :lookup-resources
-          (assoc lookup-query-with-new-controls
-                 :consistency :fully-consistent)))
-        "externalized visited pages remain consistency-mode partitioned")))
-
-(deftest warm-visited-page-enforces-current-deadline-and-cancellation-test
-  (let [snapshot (adapter 1 nil true)
-        page-cache (relay/page-navigation-cache)
-        base-opts {:page-navigation-cache page-cache
-                   :completed-cache? true
-                   :snapshot-semantic-identity (basis-identity 1)}
-        clock (atom 0)
-        live-token (execution/cancellation-token)
-        cancelled-token (execution/cancellation-token)
-        stored-query (assoc lookup-query :timeout-ms 100)
-        live-query (assoc lookup-query
-                          :timeout-ms 10
-                          :cancellation-token live-token)
-        live-contract
-        (binding [execution/*monotonic-nanos* #(deref clock)]
-          (execution/normalize
-           {:execution-timeout-ms 10}
-           :lookup-resources
-           live-query))
-        cancelled-contract
-        (binding [execution/*monotonic-nanos* #(deref clock)]
-          (execution/normalize
-           {:execution-timeout-ms 10}
-           :lookup-resources
-           (assoc live-query :cancellation-token cancelled-token)))]
-    (relay/remember-visited-page!
-     snapshot base-opts :lookup-resources stored-query lookup-page)
-    (binding [execution/*monotonic-nanos* #(deref clock)]
-      (is (true?
-           (:cached?
-            (relay/lookup-visited-page
-             snapshot (assoc base-opts :execution-contract live-contract)
-             :lookup-resources live-query))))
-      (execution/cancel! cancelled-token)
-      (is (= :eacl.execution/cancelled
-             (try
-               (relay/lookup-visited-page
-                snapshot
-                (assoc base-opts :execution-contract cancelled-contract)
-                :lookup-resources
-                (assoc live-query :cancellation-token cancelled-token))
-               nil
-               (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
-                      error
-                 (:type (ex-data error))))))
-      (reset! clock 10000000)
-      (is (= :eacl.execution/deadline-exceeded
-             (try
-               (relay/lookup-visited-page
-                snapshot (assoc base-opts :execution-contract live-contract)
-                :lookup-resources live-query)
-               nil
-               (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default)
-                      error
-                 (:type (ex-data error)))))))
-    (is (= 1 (:entries (relay/page-navigation-cache-stats page-cache))))))
-
-(deftest adjacent-page-alias-retains-direction-and-size-semantics-test
-  (let [snapshot (adapter 1 nil true)
-        page-cache (relay/page-navigation-cache {:max-entries 16})
-        opts {:page-navigation-cache page-cache
-              :completed-cache? true
-              :snapshot-semantic-identity (basis-identity 1)}
-        page-1 {:data [:a]
-                :page-info {:start-cursor "s1" :end-cursor "e1"
-                            :has-next-page? true
-                            :has-previous-page? false}}
-        page-2-one {:data [:b]
-                    :page-info {:start-cursor "s2" :end-cursor "e2"
-                                :has-next-page? true
-                                :has-previous-page? true}}
-        page-2-two {:data [:b :c]
-                    :page-info {:start-cursor "s2-two"
-                                :end-cursor "e2-two"
-                                :has-next-page? false
-                                :has-previous-page? true}}]
-    (relay/remember-visited-page!
-     snapshot opts :lookup-resources lookup-query page-1)
-    (relay/remember-visited-page!
-     snapshot opts :lookup-resources
-     (assoc lookup-query :after "e1")
-     page-2-one)
-    (let [previous
-          (relay/lookup-visited-page
-           snapshot opts :lookup-resources
-           (-> lookup-query
-               (dissoc :first)
-               (assoc :last 1 :before "s2")))]
-      (is (= [:a] (:data previous)))
-      (is (:cached? previous)))
-    (relay/remember-visited-page!
-     snapshot opts :lookup-resources
-     (-> lookup-query
-         (dissoc :first)
-         (assoc :last 1 :before "s2"))
-     page-1)
-    (let [next-again
-          (relay/lookup-visited-page
-           snapshot opts :lookup-resources
-           (assoc lookup-query :after "e1"))]
-      (is (= [:b] (:data next-again)))
-      (is (:cached? next-again))
-      (is (= 2 (:start-boundaries
-                (relay/page-navigation-cache-stats page-cache)))
-          "alias replacement preserves a real page's boundary ownership"))
-    (is (nil?
-         (relay/lookup-visited-page
-          snapshot opts :lookup-resources
-          (-> lookup-query
-              (dissoc :first)
-              (assoc :last 2 :before "s2"))))
-        "direction aliases do not erase requested size")
-    (relay/remember-visited-page!
-     snapshot opts :lookup-resources
-     (assoc lookup-query :first 2 :after "e1")
-     page-2-two)
-    (is (nil?
-         (relay/lookup-visited-page
-          snapshot opts :lookup-resources
-          (-> lookup-query
-              (dissoc :first)
-              (assoc :last 2 :before "s2-two"))))
-        "a two-row next request cannot alias a one-row previous page")))
-
-(deftest page-navigation-cache-metadata-is-capacity-bounded-test
-  (let [snapshot (adapter 1 nil true)]
-    (doseq [capacity [64 512 2048]]
-      (testing (str "capacity " capacity)
-        (let [page-cache
-              (relay/page-navigation-cache {:max-entries capacity})
-              opts {:page-navigation-cache page-cache
-                    :completed-cache? true
-                    :snapshot-semantic-identity (basis-identity 1)}
-              publications (* 4 capacity)]
-          (dotimes [index publications]
-            (relay/remember-visited-page!
-             snapshot opts :lookup-resources
-             (assoc lookup-query
-                    :subject {:type :user :id (str "user-" index)})
-             {:data [(str "document-" index)]
-              :page-info
-              {:start-cursor (str "start-" index)
-               :end-cursor (str "end-" index)
-               :has-next-page? true
-               :has-previous-page? (pos? index)}}))
-          (let [stats (relay/page-navigation-cache-stats page-cache)]
-            (is (= capacity (:entries stats)))
-            (is (= capacity (:stamp-entries stats)))
-            (is (= capacity (:boundary-owners stats)))
-            (is (= capacity (:start-boundaries stats)))
-            (is (= capacity (:end-boundaries stats)))
-            (is (= publications (:publications stats)))
-            (is (= (- publications capacity) (:evictions stats)))
-            (is (= (:evictions stats) (:queue-pops stats)))
-            (is (= (* 2 publications) (:boundary-writes stats)))
-            (is (= (* 2 (:evictions stats))
-                   (:boundary-removals stats)))
-            (is (<= (:order-records stats)
-                    (:order-record-ceiling stats))))
-          (dotimes [index (* 2 capacity)]
-            (relay/remember-visited-page!
-             snapshot opts :lookup-resources lookup-query
-             {:data [:replacement index]
-              :page-info {:start-cursor "replacement-start"
-                          :end-cursor "replacement-end"
-                          :has-next-page? false
-                          :has-previous-page? false}}))
-          (dotimes [index 8]
-            (let [query
-                  (assoc lookup-query
-                         :subject {:type :user
-                                   :id (str "alias-user-" index)})
-                  end-1 (str "alias-end-1-" index)
-                  start-2 (str "alias-start-2-" index)
-                  page-1 {:data [(str "alias-a-" index)]
-                          :page-info
-                          {:start-cursor (str "alias-start-1-" index)
-                           :end-cursor end-1
-                           :has-next-page? true
-                           :has-previous-page? false}}
-                  page-2 {:data [(str "alias-b-" index)]
-                          :page-info
-                          {:start-cursor start-2
-                           :end-cursor (str "alias-end-2-" index)
-                           :has-next-page? false
-                           :has-previous-page? true}}
-                  reverse-query
-                  (-> query
-                      (dissoc :first)
-                      (assoc :last 1 :before start-2))
-                  forward-query (assoc query :after end-1)]
-              (relay/remember-visited-page!
-               snapshot opts :lookup-resources query page-1)
-              (relay/remember-visited-page!
-               snapshot opts :lookup-resources forward-query page-2)
-              (is (= (:data page-1)
-                     (:data
-                      (relay/lookup-visited-page
-                       snapshot opts :lookup-resources reverse-query))))
-              (relay/remember-visited-page!
-               snapshot opts :lookup-resources reverse-query page-1)
-              (is (= (:data page-2)
-                     (:data
-                      (relay/lookup-visited-page
-                       snapshot opts :lookup-resources forward-query))))))
-          (let [stats (relay/page-navigation-cache-stats page-cache)]
-            (is (pos? (:replacements stats)))
-            (is (pos? (:aliases stats)))
-            (is (pos? (:compactions stats)))
-            (is (<= (:entries stats) capacity))
-            (is (= (:entries stats) (:stamp-entries stats)))
-            (is (= (:entries stats) (:boundary-owners stats)))
-            (is (<= (:start-boundaries stats) capacity))
-            (is (<= (:end-boundaries stats) capacity))
-            (is (<= (:order-records stats)
-                    (:order-record-ceiling stats)))
-            (is (<= (+ (:queue-pops stats)
-                       (:compacted-records stats))
-                    (:publications stats))
-                "each stale/current order record is retired at most once")))))))
 
 (deftest cursor-is-bound-to-normalized-traversal-limits-test
   (let [snapshot (adapter 1 nil true)
@@ -792,6 +699,46 @@
     (is (= 1010 (:expired-at (ex-data error))))
     (is (pos? (get @crossings :cursor-continuation 0))
         "the expired token was rejected by a :cursor-continuation kernel decision")))
+
+(deftest cursor-codec-cache-remints-by-current-ttl-test
+  (let [snapshot
+        (proof-adapter
+         10
+         (fn [_relation-ids] [[1 5]]))
+        codec-cache (cursor/codec-cache)
+        base-options
+        (merge
+         (proof-opts snapshot 10)
+         {:security-key "01234567890123456789012345678901"
+          :cursor-codec-cache codec-cache
+          :cursor-ttl-seconds 10})
+        first-page
+        (relay/externalize-page
+         snapshot (assoc base-options :now-seconds 1000)
+         :lookup-resources lookup-query lookup-page)
+        first-token (get-in first-page [:page-info :end-cursor])
+        live-page
+        (relay/externalize-page
+         snapshot (assoc base-options :now-seconds 1001)
+         :lookup-resources lookup-query lookup-page)
+        expired-page
+        (relay/externalize-page
+         snapshot (assoc base-options :now-seconds 1011)
+         :lookup-resources lookup-query lookup-page)
+        reminted-token (get-in expired-page [:page-info :end-cursor])]
+    (is (= first-token (get-in live-page [:page-info :end-cursor]))
+        "live token transport may be reused by the codec cache")
+    (is (not= first-token reminted-token)
+        "an expired token is never reused by the codec cache")
+    (is (= (get-in lookup-page [:page-info :end-cursor])
+           (get-in
+            (relay/prepare-page-query
+             snapshot
+             (assoc base-options :now-seconds 1011)
+             :lookup-resources
+             (assoc lookup-query :after reminted-token))
+            [:query :after]))
+        "the reminted current transport authenticates the retained edge")))
 
 (deftest cursor-without-configured-ttl-remains-age-valid-test
   (let [snapshot (adapter 1 nil true)

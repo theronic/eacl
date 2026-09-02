@@ -6,7 +6,6 @@
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl]
             [eacl.contract-support :as contract]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]

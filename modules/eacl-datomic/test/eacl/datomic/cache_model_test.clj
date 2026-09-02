@@ -3,7 +3,6 @@
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]))
@@ -33,6 +32,12 @@
   {:data (mapv (juxt :type :id) (:data page))
    :page-info (select-keys (:page-info page)
                            [:has-next-page? :has-previous-page?])})
+
+(defn- without-cache-provenance
+  [value]
+  (if (map? value)
+    (dissoc value :cached? :cache-basis)
+    value))
 
 (defn- assert-same-answers!
   [cached uncached user-id account-id label]
@@ -67,7 +72,26 @@
           (str label " count-subjects")))
     (testing (str label " — an uncached client never reports a cache hit")
       (is (false? (:cached? (eacl/count-resources uncached (dissoc forward :first)))))
-      (is (false? (:cached? (eacl/lookup-resources uncached forward)))))))
+      (is (false? (:cached? (eacl/lookup-resources uncached forward)))))
+    (doseq [[operation call request]
+            [[:check-permission
+              #(eacl/check-permission cached %)
+              {:subject user :permission :admin :resource account}]
+             [:lookup-resources
+              #(eacl/lookup-resources cached %) forward]
+             [:lookup-subjects
+              #(eacl/lookup-subjects cached %) reverse]
+             [:count-resources
+              #(eacl/count-resources cached %) (dissoc forward :first)]
+             [:count-subjects
+              #(eacl/count-subjects cached %) (dissoc reverse :first)]]]
+      (let [enabled (call request)
+            repeated (call request)
+            bypassed (call (assoc request :cache? false))]
+        (is (= (without-cache-provenance enabled)
+               (without-cache-provenance repeated)
+               (without-cache-provenance bypassed))
+            (str label " " operation " per-request bypass"))))))
 
 (deftest randomized-cache-and-mutation-differential-test
   (doseq [;; Every write below uses an EACL writer, so any stale answer is a
@@ -79,10 +103,7 @@
               cached (core/make-client
                       conn
                       {:cache {:max-entries 2048
-                               :subproblem-cache
-                               {:projection-max-weight (* 8 1024 1024)
-                                :denotation-max-weight (* 8 1024 1024)
-                                :answer-max-weight (* 2 1024 1024)}}})
+                               :denotation-max-entries 8192}})
               uncached (atom (core/make-client conn {:cache shared-cache/no-cache}))
               user-ids (mapv #(str "user-" %) (range 8))
               account-ids (mapv #(str "account-" %) (range 8))]

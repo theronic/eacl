@@ -65,8 +65,6 @@ VARIABLES
   cursorOffset,
   \* @type: Bool;
   continuationPresent,
-  \* @type: Bool;
-  pagePresent,
   \* @type: Int;
   selectedQuery,
   \* @type: Int;
@@ -82,7 +80,7 @@ vars ==
   <<active, head, ancestors, proof, retained,
     cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
     cursorPresent, cursorGraph, cursorProof, cursorQuery,
-    cursorDirection, cursorOffset, continuationPresent, pagePresent,
+    cursorDirection, cursorOffset, continuationPresent,
     selectedQuery, selectedDirection, outcome, chosenGraph, telemetry>>
 
 TypeOK ==
@@ -104,7 +102,6 @@ TypeOK ==
   /\ cursorDirection \in Directions
   /\ cursorOffset \in Nat
   /\ continuationPresent \in BOOLEAN
-  /\ pagePresent \in BOOLEAN
   /\ selectedQuery \in Queries
   /\ selectedDirection \in Directions
   /\ outcome \in Outcomes
@@ -172,7 +169,6 @@ Init ==
   /\ cursorDirection = 0
   /\ cursorOffset = 0
   /\ continuationPresent = FALSE
-  /\ pagePresent = FALSE
   /\ selectedQuery = 0
   /\ selectedDirection = 0
   /\ outcome = NoOutcome
@@ -193,7 +189,7 @@ PublishChanged ==
     /\ UNCHANGED
       <<cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedQuery, selectedDirection, telemetry>>
 
 PublishProofEquivalent ==
@@ -210,7 +206,7 @@ PublishProofEquivalent ==
     /\ UNCHANGED
       <<cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedQuery, selectedDirection, telemetry>>
 
 MoveHead ==
@@ -222,7 +218,7 @@ MoveHead ==
       <<active, ancestors, proof, retained,
         cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedQuery, selectedDirection, telemetry>>
 
 ExpireRetained ==
@@ -234,7 +230,7 @@ ExpireRetained ==
       <<active, head, ancestors, proof,
         cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedQuery, selectedDirection, telemetry>>
 
 CachePut ==
@@ -249,7 +245,7 @@ CachePut ==
     /\ UNCHANGED
       <<active, head, ancestors, proof, retained,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedQuery, selectedDirection, telemetry>>
 
 TamperCache ==
@@ -263,7 +259,7 @@ TamperCache ==
       <<active, head, ancestors, proof, retained,
         cacheQuery, cacheValue,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedQuery, selectedDirection, telemetry>>
 
 CacheRead ==
@@ -282,7 +278,7 @@ CacheRead ==
       <<active, head, ancestors, proof, retained,
         cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedDirection>>
 
 CacheProviderFailure ==
@@ -295,7 +291,7 @@ CacheProviderFailure ==
       <<active, head, ancestors, proof, retained,
         cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
         cursorPresent, cursorGraph, cursorProof, cursorQuery,
-        cursorDirection, cursorOffset, continuationPresent, pagePresent,
+        cursorDirection, cursorOffset, continuationPresent,
         selectedDirection>>
 
 CursorMint ==
@@ -307,7 +303,6 @@ CursorMint ==
     /\ cursorDirection' = direction
     /\ cursorOffset' = 0
     /\ continuationPresent' = TRUE
-    /\ pagePresent' = FALSE
     /\ outcome' = NoOutcome
     /\ chosenGraph' = head
     /\ UNCHANGED
@@ -343,7 +338,6 @@ CursorResume ==
       IF accepted THEN cursorOffset + 1 ELSE cursorOffset
     /\ continuationPresent' =
       IF accepted THEN TRUE ELSE continuationPresent
-    /\ pagePresent' = IF accepted THEN TRUE ELSE pagePresent
     /\ telemetry' = telemetry + 1
     /\ UNCHANGED
       <<active, head, ancestors, proof, retained,
@@ -353,7 +347,6 @@ CursorResume ==
 
 EvictContinuation ==
   /\ continuationPresent' = FALSE
-  /\ pagePresent' = FALSE
   /\ outcome' = NoOutcome
   /\ chosenGraph' = head
   /\ UNCHANGED
@@ -371,7 +364,7 @@ TelemetryCAS ==
     <<active, head, ancestors, proof, retained,
       cachePresent, cacheGraph, cacheProof, cacheQuery, cacheValue,
       cursorPresent, cursorGraph, cursorProof, cursorQuery,
-      cursorDirection, cursorOffset, continuationPresent, pagePresent,
+      cursorDirection, cursorOffset, continuationPresent,
       selectedQuery, selectedDirection>>
 
 Next ==

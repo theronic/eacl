@@ -68,7 +68,7 @@ real costs, none of them traversal:
 | Sealed-plan cache thrash: `stable-plan` keyed by lifecycle + native revision; the Datomic raw facade minted a random lifecycle per call, so `seal-plan` (~4.3 ms on the 16-rule demo schema) reran on **every request** | ~80 % | key by schema generation identity; process-stable facade lifecycle; `expire-plans!` |
 | `seal-plan` itself: `sort-by encode-canonical` re-encoded and re-validated rules on every comparison (368 encodings for 16 rules) | most of the seal | encode once |
 | `read-schema` on every request (all relations + permissions via `d/q` + `pull`) to validate three keywords | ~35–40 % of what remained | validate on the miss path from a per-generation parsed schema; hits read nothing (Datomic client in #131, Datahike/DataScript client in #135) |
-| `verified-kernel/kernel?` = `satisfies?` on an `extend`ed class, 3–4× per request | ~14 % of a hit | positive-class memo |
+| `verified-kernel/kernel?` = `satisfies?` on an `extend`ed class, 3–4× per request | ~14 % of a hit | originally a positive-class memo; current generated kernels directly implement the protocol, so the later cache-storage simplification deleted that shared memo and uses live protocol satisfaction |
 | **`can?` was O(#subjects holding the permission)**: reverse enumeration with early exit; a denied check on a 5,000-owner account cost **16 ms** | traversal share of a fixed check | membership-probe search, O(intermediates) |
 
 Live results (medians): `check-permission` miss **6.0 ms → 142 µs**, hit

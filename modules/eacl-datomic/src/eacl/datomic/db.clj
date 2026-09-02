@@ -1,7 +1,6 @@
 (ns eacl.datomic.db
   "Datomic-only entity, schema-definition, and ordered adjacency operations."
   (:require [datomic.api :as d]
-            [eacl.datomic.io-stats :as io-stats]
             [eacl.relationships.storage :as relationship-storage]))
 
 (defn object-eid
@@ -100,13 +99,12 @@
   [db resource-type relation-name]
   (when-let [datom (first (relation-datoms
                            db resource-type relation-name))]
-    (io-stats/pull db
-                   '[:db/id
-                     :eacl.relation/subject-type
-                     :eacl.relation/resource-type
-                     :eacl.relation/relation-name]
-                   (:e datom)
-                   :relation-definition-pull)))
+    (d/pull db
+            '[:db/id
+              :eacl.relation/subject-type
+              :eacl.relation/resource-type
+              :eacl.relation/relation-name]
+            (:e datom))))
 
 (defn find-permission-defs
   [db resource-type permission-name]
@@ -116,7 +114,7 @@
         [resource-type permission-name])
        (map :e)
        (map #(dissoc
-              (io-stats/pull db '[*] % :permission-expression-pull)
+              (d/pull db '[*] %)
               ;; Released flat-permission schemas installed these derived
               ;; tuple attributes permanently. After expression migration,
               ;; Datomic materializes nil-filled projections from the shared

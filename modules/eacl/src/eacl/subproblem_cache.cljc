@@ -1,286 +1,238 @@
 (ns eacl.subproblem-cache
-  "Bounded client-private storage for immutable authorization subproblems.
+  "Count-bounded private storage for completed authorization subproblems.
 
-  The store contains performance state only. Every admitted value belongs to
-  one exact selected immutable generation; replacing that generation makes the
-  complete store unreachable."
+  Exact denotation and completed-answer retention use two independent standard
+  bounded stores. This namespace owns key selection, completed-value validation,
+  and publication of request-owned miss results; the standard cache adapter
+  owns retention."
   (:refer-clojure :exclude [resolve])
-  (:require [eacl.execution :as execution]
+  (:require [eacl.cache.key :as cache-key]
+            [eacl.cache.standard-lru :as lru]
+            [eacl.execution :as execution]
+            [eacl.proof-frame :as proof-frame]
+            [eacl.secure-format :as secure-format]
             #?(:clj
                [eacl.formal.production-kernel :as production-kernel]
                :cljs
-               [eacl.formal.production-kernel-cljs :as production-kernel])))
+               [eacl.formal.production-kernel-cljs :as production-kernel]))
+  #?(:clj (:import [java.util.concurrent.atomic LongAdder])))
 
 (def ^:dynamic *store*
-  "The exact-generation subproblem store bound around one cached evaluation.
-
-  nil is the cache-free path and performs no lookup, admission, or metric
-  mutation."
+  "The request-bound answer/denotation store for one cached evaluation."
   nil)
 
-(def ^:dynamic *managed-store*
-  "The schema-generation store used for relation-stamped projection reuse.
+(def ^:dynamic *exact-denotation-key-fn*
+  "Builds a complete exact-denotation composite key from a semantic key.
 
-  This store is bound only for managed current-snapshot evaluation. Historical,
-  raw, arbitrary-DB, cache-disabled, and unstamped evaluations leave it nil."
+  A nil or incomplete binding makes bound cache operations bypass storage.
+  Production cached evaluation binds this constructor so every operator key
+  carries its source lifecycle, exact basis, and ABI identity."
   nil)
-
-(def ^:dynamic *managed-key-fn*
-  "Returns a same-snapshot `{:schema-generation n :dependency-stamp n}` descriptor
-  for one relation dependency, or nil when managed reuse is unavailable."
-  nil)
-
-(def ^:dynamic *managed-scope*
-  "Portable backend/source/branch/lifecycle identity for managed projection keys."
-  nil)
-
-(def ^:dynamic *publication-attempt-limit*
-  "Maximum best-effort CAS publication attempts for the owning request."
-  4)
 
 (def ^:dynamic *populate?*
-  "False for a read-only cache request. Lookups and request-local memoization
-  remain active, but no completed subproblem is published."
+  "False for a read-only cache request. Lookups remain active."
   true)
 
 (def default-decision-kernel
   production-kernel/default-selection)
 
 (def ^:dynamic *decision-kernel*
-  "Generated-kernel selection inherited from the enclosing public client.
-
-  Pure lookup, admission, and publication decisions run through generated
-  code while storage mutation and value computation remain host-runtime
-  responsibilities."
+  "Generated-kernel selection inherited from the enclosing public client."
   default-decision-kernel)
 
-(def ^:private known-tiers #{:projection :denotation :answer})
-(def ^:private default-projection-max-weight (* 4 1024 1024))
-(def ^:private default-denotation-max-weight (* 4 1024 1024))
-(def ^:private default-answer-max-weight (* 16 1024 1024))
-(def ^:private default-managed-proof-max-atoms 256)
-(def ^:private lifecycle-key ::lifecycle)
+(def ^:private known-tiers #{:denotation :answer})
+(def snapshot-tier-priority [:answer :denotation])
+(def ^:private default-denotation-max-entries 4096)
+(def ^:private default-answer-max-entries 1024)
 (def ^:private option-keys
-  #{:projection-max-weight :denotation-max-weight :answer-max-weight
-    :managed-proof-max-atoms :telemetry?})
-
-(defn- tier-hit-metric
-  [tier]
-  (case tier
-    :projection :projection-hits
-    :denotation :denotation-hits
-    :answer :answer-hits))
-
-(defn- managed-tier-hit-metric
-  [tier]
-  (case tier
-    :projection :managed-projection-hits
-    :denotation :managed-denotation-hits
-    :answer :managed-answer-hits))
-
-(defn- exact-cache-tier
-  [tier]
-  (case tier
-    :projection :exact-projection
-    :denotation :exact-denotation
-    :answer :exact-answer))
-
-(declare positive-weight! publication-weight-ceiling)
-
-(defrecord SubproblemStore
-           [state metrics budgets managed-proof-max-atoms content-revision
-            telemetry-enabled?])
+  #{:denotation-max-entries
+    :answer-max-entries
+    :telemetry?})
+(def ^:private publication-option-keys #{:valid?})
 
 (def snapshot-format
-  "Version identifier for the process-neutral subproblem snapshot value."
-  :eacl.subproblem-cache/snapshot-v1)
+  "Version identifier for flat process-neutral subproblem snapshots."
+  :eacl.subproblem-cache/snapshot-v2)
 
-(def snapshot-tier-priority
-  "Stable tier priority used by bounded cache snapshots."
-  [:answer :projection :denotation])
+(defrecord SubproblemStore
+           [tiers capacities content-revision telemetry-enabled? metrics
+            lookup-metrics])
 
-(defn- lifecycle-token
+(def ^:private lookup-metric-keys
+  [:lookup-misses :denotation-hits :answer-hits])
+
+(defn- new-lookup-metrics
   []
-  #?(:clj (Object.)
-     :cljs (js-obj)))
+  #?(:clj
+     (into {} (map (fn [metric] [metric (LongAdder.)]))
+           lookup-metric-keys)
+     :cljs nil))
 
-(defn with-decision-memo
-  "Compatibility wrapper for one top-level authorization computation."
-  [compute]
-  (compute))
+(defn- invalid-config!
+  [message data]
+  (throw
+   (ex-info message
+            (merge {:type :eacl/invalid-config
+                    :eacl/error :eacl/invalid-config}
+                   data))))
 
-(defn- positive-weight!
+(defn- positive-capacity!
   [option value]
-  (when-not (and (integer? value) (pos? value))
-    (throw (ex-info "Subproblem cache weights must be positive integers."
-                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                     :option option
-                     :value value})))
+  (when-not (and (proof-frame/generation? value) (pos? value))
+    (invalid-config!
+     "Subproblem cache capacities must be positive safe integers."
+     {:option option :value value}))
   value)
 
 (defn store
-  "Creates a weighted exact-generation subproblem store.
-
-  Projection, denotation, and completed-answer budgets are deliberately
-  isolated so one large fixed-point result cannot evict every hot
-  relationship chunk, and a page-heavy answer workload cannot starve the
-  traversal tiers. The `:answer` tier additionally enforces a per-entry
-  ceiling of one quarter of its budget; a heavier completed answer is
-  rejected and counted under `:oversized-rejections`."
+  "Creates independent count-bounded denotation and answer stores."
   ([]
    (store {} nil))
   ([options]
    (store options nil))
-  ([{:keys [projection-max-weight denotation-max-weight answer-max-weight
-            managed-proof-max-atoms telemetry?]
-     :or {projection-max-weight default-projection-max-weight
-          denotation-max-weight default-denotation-max-weight
-          answer-max-weight default-answer-max-weight
-          managed-proof-max-atoms default-managed-proof-max-atoms
+  ([{:keys [denotation-max-entries answer-max-entries telemetry?]
+     :or {denotation-max-entries default-denotation-max-entries
+          answer-max-entries default-answer-max-entries
           telemetry? true}
      :as options}
     content-revision]
-   (let [unknown-keys (seq (sort (remove option-keys (keys options))))
-         _
-         (when unknown-keys
-           (throw
-            (ex-info
-             "Unknown subproblem cache option."
-             {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-              :unknown-keys (vec unknown-keys)
-              :known-keys (vec (sort option-keys))})))
-         budgets
-         {:projection
-          (positive-weight! :projection-max-weight projection-max-weight)
-          :denotation
-          (positive-weight! :denotation-max-weight denotation-max-weight)
+   (when-not (map? options)
+     (invalid-config! "Subproblem cache options must be a map."
+                      {:options options}))
+   (let [unknown (seq (sort-by pr-str (remove option-keys (keys options))))]
+     (when unknown
+       (invalid-config!
+        "Unknown subproblem cache option."
+        {:unknown-keys (vec unknown)
+         :known-keys (vec (sort option-keys))})))
+   (when-not (boolean? telemetry?)
+     (invalid-config! "Subproblem cache :telemetry? must be boolean."
+                      {:telemetry? telemetry?}))
+   (let [capacities
+         {:denotation
+          (positive-capacity! :denotation-max-entries
+                              denotation-max-entries)
           :answer
-          (positive-weight! :answer-max-weight answer-max-weight)}
-         managed-proof-max-atoms
-         (positive-weight!
-          :managed-proof-max-atoms managed-proof-max-atoms)]
-     (when-not (boolean? telemetry?)
-       (throw
-        (ex-info "Subproblem cache :telemetry? must be boolean."
-                 {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                  :telemetry? telemetry?})))
+          (positive-capacity! :answer-max-entries answer-max-entries)}]
      (->SubproblemStore
-      (atom
-       (assoc
-        (into {}
-              (map (fn [tier]
-                     [tier {:entries {}
-                            :lru []
-                            :lru-head 0
-                            :weight 0
-                            :clock 0}]))
-              known-tiers)
-        lifecycle-key
-        (lifecycle-token)))
+      (into {} (map (fn [[tier capacity]] [tier (lru/store capacity)]))
+            capacities)
+      capacities
+      content-revision
+      telemetry?
       (atom {:hits 0
-             :misses 0
              :puts 0
-             :evictions 0
-             :eviction-probes 0
-             :oversized-rejections 0
-             :invalid-results 0
-             :failures 0
              :publication-races 0
-             :publication-contention 0
              :publication-rejections 0
-             :detached-publications 0
+             :retention-ineligible-pages 0
+             :store-errors 0
+             :invalid-results 0
              :lookup-probes 0
              :lookup-misses 0
-             :projection-hits 0
              :denotation-hits 0
              :answer-hits 0
-             :acyclic-denotation-hits 0
-             :recursive-component-hits 0
-             :managed-projection-hits 0
-             :managed-denotation-hits 0
-             :managed-answer-hits 0
-             :managed-proof-reads 0
-             :managed-proof-hits 0
-             :managed-proof-failures 0
-             :managed-proof-overflows 0
-             :avoided-backend-operations 0
-             :fetched-projection-values 0})
-      budgets
-      managed-proof-max-atoms
-      content-revision
-      telemetry?))))
+             :avoided-backend-operations 0})
+      (new-lookup-metrics)))))
 
 (defn store?
   [value]
   (instance? SubproblemStore value))
 
-(defn ^:no-doc record-metrics!
+(defn- validate-store!
+  [store]
+  (when-not (store? store)
+    (invalid-config! "Expected an EACL subproblem store." {:store store})))
+
+(defn- validate-tier!
+  [store tier]
+  (validate-store! store)
+  (when-not (contains? known-tiers tier)
+    (invalid-config! "Unknown EACL subproblem cache tier."
+                     {:tier tier :known-tiers known-tiers})))
+
+(defn- record-metrics!
   [store f & args]
   (when (:telemetry-enabled? store)
     (apply swap! (:metrics store) f args))
   nil)
 
+(defn- record-lookup-metric!
+  [store metric]
+  (when (:telemetry-enabled? store)
+    #?(:clj (.increment ^LongAdder (get (:lookup-metrics store) metric))
+       :cljs
+       (swap!
+        (:metrics store)
+        (fn [metrics]
+          (if (= :lookup-misses metric)
+            (-> metrics
+                (update :lookup-probes inc)
+                (update :lookup-misses inc))
+            (-> metrics
+                (update :lookup-probes inc)
+                (update :hits inc)
+                (update metric inc)))))))
+  nil)
+
+(defn- current-metrics
+  [store]
+  #?(:clj
+     (let [lookup
+           (into {}
+                 (map (fn [metric]
+                        [metric
+                         (.sum ^LongAdder
+                               (get (:lookup-metrics store) metric))]))
+                 lookup-metric-keys)
+           hits (+ (:answer-hits lookup) (:denotation-hits lookup))]
+       (assoc (merge @(:metrics store) lookup)
+              :hits hits
+              :lookup-probes (+ hits (:lookup-misses lookup))))
+     :cljs
+     @(:metrics store)))
+
 (defn- record-content-change!
   [store]
-  (when-let [revision (:content-revision store)]
-    (swap! revision inc))
+  (when-let [content-revision (:content-revision store)]
+    (try
+      (if (fn? content-revision)
+        (content-revision)
+        ;; Retain the old atom form for isolated low-level callers. Production
+        ;; lifecycles pass a token-guarded callback so detached stores cannot
+        ;; dirty the currently installed lifecycle's revision.
+        (swap! content-revision inc))
+      (catch #?(:clj Throwable :cljs :default) _
+        ;; Dirty tracking is optional cache bookkeeping. It cannot turn an
+        ;; otherwise valid authorization result into a request failure.
+        nil)))
   nil)
 
-(defn- validate-tier!
-  [store tier]
-  (when-not (store? store)
-    (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                     :store store})))
-  (when-not (contains? known-tiers tier)
-    (throw (ex-info "Unknown EACL subproblem cache tier."
-                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                     :tier tier
-                     :known-tiers known-tiers}))))
+(defn- tier-hit-metric
+  [tier]
+  (case tier
+    :denotation :denotation-hits
+    :answer :answer-hits))
+
+(defn- exact-cache-tier
+  [tier]
+  (case tier
+    :denotation :exact-denotation
+    :answer :exact-answer))
 
 (defn stats
-  [store]
-  (when-not (store? store)
-    (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                     :store store})))
-  (let [state @(:state store)]
-    (assoc @(:metrics store)
-           :telemetry-enabled? (:telemetry-enabled? store)
-           :managed-proof-max-atoms
-           (:managed-proof-max-atoms store)
-           :tiers
-           (into {}
-                 (map (fn [[tier {:keys [entries weight lru lru-head]}]]
-                        [tier {:entries (count entries)
-                               :lru-records (- (count lru) lru-head)
-                               :weight weight
-                               :max-weight (get (:budgets store) tier)}]))
-                 (select-keys state known-tiers)))))
+  "Returns behavioral counters and actual count capacities.
 
-(defn clear!
+  No field is a byte estimate or a mirror of library-private recency state."
   [store]
-  (when-not (store? store)
-    (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                     :store store})))
-  (let [changed? (some (comp seq :entries val)
-                       (select-keys @(:state store) known-tiers))]
-    (reset! (:state store)
-            (assoc
-             (into {}
-                   (map (fn [tier]
-                          [tier {:entries {}
-                                 :lru []
-                                 :lru-head 0
-                                 :weight 0
-                                 :clock 0}]))
-                   known-tiers)
-             lifecycle-key
-             (lifecycle-token)))
-    (when changed?
-      (record-content-change! store)))
-  nil)
+  (validate-store! store)
+  (assoc (current-metrics store)
+         :telemetry-enabled? (:telemetry-enabled? store)
+         :tiers
+         (into {}
+               (map (fn [[tier tier-store]]
+                      [tier {:entries (lru/entry-count tier-store)
+                             :max-entries (get (:capacities store) tier)}]))
+               (:tiers store))))
 
 (defn record-avoided-backend-operation!
   ([]
@@ -291,312 +243,323 @@
       store update :avoided-backend-operations (fnil inc 0)))
    nil))
 
-(defn- remove-entry-if-token!
-  [store tier key token]
-  (let [removed? (volatile! false)]
-    (swap! (:state store)
-           (fn [state]
-             (let [entry (get-in state [tier :entries key])]
-               (if (and entry (identical? token (:token entry)))
-                 (do
-                   (vreset! removed? true)
-                   (-> state
-                       (update-in [tier :entries] dissoc key)
-                       (update-in [tier :weight] - (:weight entry))))
-                 state))))
-    (when @removed?
-      (record-content-change! store))
-    @removed?))
+(defn- validate-publication-options!
+  [options]
+  (when-not (map? options)
+    (invalid-config! "Subproblem cache publication options must be a map."
+                     {:options options}))
+  (let [unknown
+        (seq (sort-by pr-str
+                      (remove publication-option-keys (keys options))))]
+    (when unknown
+      (invalid-config!
+       "Unknown subproblem cache publication option."
+       {:unknown-keys (vec unknown)
+        :known-keys (vec (sort publication-option-keys))})))
+  (when-not (contains? options :valid?)
+    (invalid-config!
+     "Subproblem cache publication requires an explicit :valid? validator."
+     {:required-key :valid?}))
+  (when-not (ifn? (:valid? options))
+    (invalid-config! "Subproblem cache publication :valid? must be callable."
+                     {:valid? (:valid? options)}))
+  options)
 
-(defn- current-lru-record?
-  [entries [access key]]
-  (= access (:access (get entries key))))
+(defn- valid-value?
+  [valid? value]
+  (try
+    (boolean (valid? value))
+    (catch #?(:clj Throwable :cljs :default) _
+      false)))
 
-(defn- compact-lru
-  [tier-state]
-  (let [entries (:entries tier-state)
-        active
-        (into []
-              (filter #(current-lru-record? entries %))
-              (subvec (:lru tier-state)
-                      (:lru-head tier-state)))]
-    (assoc tier-state :lru active :lru-head 0)))
+(defn- completed-page
+  [value]
+  ;; Peel only EACL-owned storage envelopes. Arbitrary scalar/tree maps may
+  ;; legitimately contain a :value key and must not inherit the page rule.
+  (let [candidate
+        (if (and (map? value)
+                 (= :eacl.cache/completed-answer-v2 (:format value))
+                 (= #{:format :value :cache-basis :computed-revision
+                      :computed-exact-locator}
+                    (set (keys value))))
+          (:value value)
+          value)]
+    (when (and (map? candidate)
+               (vector? (:data candidate))
+               (map? (:page-info candidate)))
+      candidate)))
 
-(defn- maybe-compact-lru
-  [tier-state]
-  (let [record-count (count (:lru tier-state))
-        entry-count (count (:entries tier-state))
-        maximum-records (max 1024 (* 2 (max 1 entry-count)))]
-    (if (> record-count maximum-records)
-      (compact-lru tier-state)
-      tier-state)))
+(defn retention-eligible?
+  "True when a completed value is eligible for shared tier retention.
 
-(defn- trim-tier
-  [tier-state maximum-weight protected-key]
-  (loop [current tier-state
-         evictions 0
-         probes 0]
-    (if (<= (:weight current) maximum-weight)
-      [(maybe-compact-lru current) evictions probes]
-      (if-let [[victim-index victim entry access-generation victim-probes]
-               (loop [index (:lru-head current)
-                      victim-probes 0]
-                 (when (< index (count (:lru current)))
-                   (let [[access key] (nth (:lru current) index)
-                         entry (get (:entries current) key)
-                         victim-probes (inc victim-probes)]
-                     (if (and (= access (:access entry))
-                              (not= protected-key key))
-                       [index key entry
-                        (some-> (:access-state entry) deref)
-                        victim-probes]
-                       (recur (inc index) victim-probes)))))]
-        (if (and (integer? access-generation)
-                 (< (:promoted-access entry 0) access-generation))
-          ;; Hits mutate only this entry's tiny access counter. The next
-          ;; capacity-changing publication coalesces every touch since the
-          ;; previous promotion into one second chance. No touch can be lost
-          ;; to a failed store CAS because the counter is never cleared.
-          (let [tick (inc (:clock current))]
-            (recur
-             (-> current
-                 (assoc :clock tick :lru-head (inc victim-index))
-                 (assoc-in [:entries victim :access] tick)
-                 (assoc-in [:entries victim :promoted-access]
-                           access-generation)
-                 (update :lru conj [tick victim]))
-             evictions
-             (+ probes victim-probes)))
-          (recur
-           (-> current
-               (update :entries dissoc victim)
-               (assoc :lru-head (inc victim-index))
-               (update :weight - (:weight entry)))
-           (inc evictions)
-           (+ probes victim-probes)))
-        [(maybe-compact-lru
-          (assoc current :lru-head (count (:lru current))))
-         evictions
-         probes]))))
+  This is intentionally about retention only. It does not validate operation
+  semantics and never changes the value returned to the request."
+  [tier value]
+  (or (not= :answer tier)
+      (let [page (completed-page value)]
+        (or (nil? page) (<= (count (:data page)) 1000)))))
 
-(defn- publication-weight-ceiling
-  "The maximum weight one entry may occupy in `tier`.
+(declare complete-storage-key?)
 
-  Projection and denotation entries may fill their complete tier budget.
-  Completed answers are additionally capped at one quarter of the answer
-  budget so a single oversized page cannot displace every retained answer;
-  a heavier answer is dropped at publication and counted under
-  `:oversized-rejections`."
-  [store tier]
-  (let [budget (get (:budgets store) tier)]
-    (if (= :answer tier)
-      (max 1 (quot budget 4))
-      budget)))
+(defn- validate-storage-key!
+  [tier storage-key]
+  (when-not (complete-storage-key? tier storage-key)
+    (invalid-config! "Cache storage key must be a complete v2 composite key."
+                     {:tier tier :key storage-key}))
+  storage-key)
 
-(defn- touch-entry!
-  [entry]
-  ;; Per-entry access state is intentionally outside the immutable store map.
-  ;; A reader owns the held entry after lookup, so concurrent eviction cannot
-  ;; invalidate either its value or this best-effort recency signal.
-  (when-let [access-state (:access-state entry)]
-    (swap! access-state inc))
+(defn- resident!
+  [store tier storage-key]
+  (let [tier-store (get (:tiers store) tier)
+        resident
+        (try
+          (lru/lookup! tier-store storage-key)
+          (catch #?(:clj Throwable :cljs :default) _
+            (record-metrics! store update :store-errors inc)
+            nil))]
+    (if-not (:found? resident)
+      (do
+        (record-lookup-metric! store :lookup-misses)
+        nil)
+      resident)))
+
+(defn- record-lookup-miss!
+  [store]
+  (record-lookup-metric! store :lookup-misses)
   nil)
 
-(declare lookup!)
+(defn- hit-result!
+  [store tier value]
+  (record-lookup-metric! store (tier-hit-metric tier))
+  {:value value
+   :cached? true
+   :cache-tier (exact-cache-tier tier)})
+
+(defn lookup-eligible!
+  "Looks up one mapping and applies only request-dependent managed eligibility."
+  [store tier storage-key eligible?]
+  (when (execution/cache-stage-available?)
+    (let [tier-store (get (:tiers store) tier)]
+      (loop []
+        (let [resident
+              (try
+                (lru/peek-entry tier-store storage-key)
+                (catch #?(:clj Throwable :cljs :default) _
+                  (record-metrics! store update :store-errors inc)
+                  ::store-error))]
+          (cond
+            (= ::store-error resident)
+            (record-lookup-miss! store)
+
+            (not (:found? resident))
+            (record-lookup-miss! store)
+
+            ;; A future managed value may be ineligible for an older concurrent
+            ;; request while remaining valid for later readers. It is not a
+            ;; retrieval, so rejection neither deletes nor refreshes the mapping.
+            (not (valid-value? eligible? (:value resident)))
+            (record-lookup-miss! store)
+
+            :else
+            (let [touched?
+                  (try
+                    (lru/hit-if-value!
+                     tier-store storage-key (:value resident))
+                    (catch #?(:clj Throwable :cljs :default) _
+                      (record-metrics! store update :store-errors inc)
+                      ::store-error))]
+              (cond
+                (= ::store-error touched?)
+                (record-lookup-miss! store)
+
+                touched?
+                (hit-result! store tier (:value resident))
+
+                ;; Eviction or replacement raced the peek. Re-read and apply
+                ;; eligibility to the mapping that can actually be touched.
+                :else
+                (recur)))))))))
+
+(defn lookup!
+  "Looks up and touches one already validated immutable exact mapping.
+
+  Supported publication and restore transitions validate values before they
+  enter the private store. Nil and false remain distinguishable from absence.
+  Exact lookup is only cache membership/touch plus metrics. Managed completed
+  answers use `lookup-eligible!` for their separate causal-revision obligation.
+
+  This is a private-runtime hot path: the store, tier, and composite key arrive
+  from validated configuration and EACL key constructors. Direct application
+  calls or mutation of its backing atoms are outside the supported contract."
+  [store tier storage-key]
+  (when (execution/cache-stage-available?)
+    (when-let [resident (resident! store tier storage-key)]
+      (hit-result! store tier (:value resident)))))
+
+(defn- request-publication-rejection
+  []
+  (when-not (execution/cache-stage-available?)
+    (if (execution/expired?) :deadline-expired :cancelled)))
+
+(defn- reject-publication!
+  [store reason]
+  (record-metrics! store update :publication-rejections inc)
+  {:published? false :reason reason})
 
 (defn publish!
-  "Best-effort nonblocking publication of one already-computed value.
+  "Publishes one already-computed value under an opaque storage key.
 
-  Publication never owns semantic computation and never waits for another
-  request. A compatible existing entry wins; CAS contention is retried only up
-  to `maximum-attempts`; lifecycle detachment and capacity rejection are normal
-  non-failing outcomes."
-  ([store tier key options value]
-   (publish! store tier key options value 4))
-  ([store tier key options value maximum-attempts]
-   (publish! store tier key options value maximum-attempts
-             (get @(:state store) lifecycle-key)))
-  ([store tier key {:keys [valid? weight-fn]
-                    :or {valid? (constantly true)
-                         weight-fn (constantly 1)}} value maximum-attempts
-    lifecycle]
-   (validate-tier! store tier)
-   ;; Publication is optional performance work. Once the request deadline has
-   ;; expired, return the already-computed value without mutating cache state.
-   ;; This also prevents a late request from publishing into a lifecycle that
-   ;; remained otherwise valid.
-   (when-not (and (fn? valid?)
-                  (fn? weight-fn)
-                  (integer? maximum-attempts)
-                  (pos? maximum-attempts))
-     (throw
-      (ex-info
-       "Subproblem publication options are invalid."
-       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config :tier tier})))
-   (let [deadline-expired? (execution/expired?)
-         valid-value?
-         (try
-           (boolean (valid? value))
-           (catch #?(:clj Throwable :cljs :default) _ false))
-         weight
-         (when valid-value?
-           (try
-             (positive-weight! :entry-weight (weight-fn value))
-             (catch #?(:clj Throwable :cljs :default) _ nil)))
-         ceiling (publication-weight-ceiling store tier)]
-     (cond
-       deadline-expired?
-       (do
-         (record-metrics! store update :publication-rejections inc)
-         {:published? false :reason :deadline-expired})
+  Validation and page eligibility run once before the absent-key cache
+  insertion. A concurrent same-key publisher wins, while this request
+  still returns its own completed value."
+  [store tier storage-key options value]
+  (validate-tier! store tier)
+  (validate-publication-options! options)
+  (let [storage-key (validate-storage-key! tier storage-key)
+        valid? (:valid? options)
+        initial-rejection (request-publication-rejection)]
+    (cond
+      initial-rejection
+      (reject-publication! store initial-rejection)
 
-       (not valid-value?)
-       (do
-         (record-metrics! store update :invalid-results inc)
-         (record-metrics! store update :publication-rejections inc)
-         {:published? false :reason :invalid-value})
+      (not (valid-value? valid? value))
+      (do
+        (record-metrics!
+         store #(-> %
+                    (update :invalid-results inc)
+                    (update :publication-rejections inc)))
+        {:published? false :reason :invalid-value})
 
-       (nil? weight)
-       (do
-         (record-metrics! store update :invalid-results inc)
-         (record-metrics! store update :publication-rejections inc)
-         {:published? false :reason :invalid-weight})
+      (not (retention-eligible? tier value))
+      (do
+        (record-metrics!
+         store #(-> %
+                    (update :retention-ineligible-pages inc)
+                    (update :publication-rejections inc)))
+        {:published? false :reason :page-too-large})
 
-       (> (or weight 0) ceiling)
-       (do
-         (record-metrics! store update :oversized-rejections inc)
-         (record-metrics! store update :publication-rejections inc)
-         {:published? false :reason :oversized})
+      :else
+      (if-let [final-rejection (request-publication-rejection)]
+        (reject-publication! store final-rejection)
+        (try
+          (let [published?
+                (lru/put-if-absent! (get (:tiers store) tier)
+                                    storage-key value)]
+            (if published?
+              (do
+                (record-metrics! store update :puts inc)
+                (record-content-change! store)
+                {:published? true :reason :published})
+              (do
+                (record-metrics! store update :publication-races inc)
+                {:published? false :reason :compatible-winner})))
+          (catch #?(:clj Throwable :cljs :default) _
+            (record-metrics!
+             store #(-> %
+                        (update :store-errors inc)
+                        (update :publication-rejections inc)))
+            {:published? false :reason :store-error}))))))
 
-       :else
-       (let [token (lifecycle-token)]
-         (loop [attempt 1]
-           (let [state @(:state store)]
-             (cond
-               (not (identical? lifecycle (get state lifecycle-key)))
-               (do
-                 (record-metrics! store update :detached-publications inc)
-                 {:published? false :reason :detached})
+(defn- exact-denotation-storage-key
+  [semantic-key]
+  (when *exact-denotation-key-fn*
+    (let [candidate (*exact-denotation-key-fn* semantic-key)]
+      (when (complete-storage-key? :denotation candidate)
+        candidate))))
 
-               (get-in state [tier :entries key])
-               (do
-                 (record-metrics! store update :publication-races inc)
-                 {:published? false :reason :compatible-winner})
+(defn lookup-denotation!
+  "Looks up a denotation key in the dynamically selected exact store."
+  [semantic-key]
+  (when *store*
+    (when-let [storage-key (exact-denotation-storage-key semantic-key)]
+      (lookup! *store* :denotation storage-key))))
 
-               :else
-               (let [maximum-weight (get (:budgets store) tier)
-                     tick (inc (get-in state [tier :clock]))
-                     candidate {:token token
-                                :value value
-                                :weight weight
-                                :validated? true
-                                :access tick
-                                :access-state (atom 0)
-                                :promoted-access 0}
-                     updated-tier
-                     (-> (get state tier)
-                         (assoc-in [:entries key] candidate)
-                         (update :weight + weight)
-                         (assoc :clock tick)
-                         (update :lru conj [tick key]))
-                     [trimmed evictions probes]
-                     (trim-tier updated-tier maximum-weight key)]
-                 (cond
-                   (> (:weight trimmed) maximum-weight)
-                   (do
-                     (record-metrics! store update :publication-rejections inc)
-                     {:published? false :reason :capacity})
+(defn publish-denotation!
+  "Publishes a denotation key into the dynamically selected exact store."
+  [semantic-key options value]
+  (if-not *store*
+    {:published? false :reason :disabled}
+    (if-let [storage-key (exact-denotation-storage-key semantic-key)]
+      (publish! *store* :denotation storage-key options value)
+      {:published? false :reason :incomplete-key})))
 
-                   (compare-and-set!
-                    (:state store) state (assoc state tier trimmed))
-                   (do
-                     (record-metrics! store update :puts inc)
-                     (when (pos? evictions)
-                       (record-metrics! store update :evictions + evictions))
-                     (when (pos? probes)
-                       (record-metrics! store update :eviction-probes + probes))
-                     (record-content-change! store)
-                     {:published? true :reason :published})
+(defn- canonical-entry-sort-key
+  [{:keys [tier key]}]
+  (secure-format/encode-canonical
+   [tier key]
+   ;; These are already-admitted in-process keys. Snapshot byte limits belong
+   ;; to the host's authenticated encoding boundary, not semantic cache keys.
+   {:maximum-size secure-format/maximum-safe-integer
+    :maximum-depth 64
+    :maximum-entries 131072}))
 
-                   (< attempt maximum-attempts)
-                   (recur (inc attempt))
+(defn ^:no-doc resident-tier-entries
+  "Returns unsorted resident entry records without serializing their keys.
 
-                   :else
-                   (do
-                     (record-metrics!
-                      store update :publication-contention inc)
-                     {:published? false :reason :contention})))))))))))
-
-(defn snapshot-tier-entries
-  "Returns one tier's process-neutral entries in most-recently-used order.
-
-  This is the immutable selection surface used by the basis-cache exporter.
-  Runtime tokens, validation flags, and access ticks are deliberately omitted."
+  Iteration order is deliberately neither an LRU nor snapshot contract."
   [store tier]
   (validate-tier! store tier)
-  (let [entries (get-in @(:state store) [tier :entries])]
-    (->> entries
-         (sort-by (fn [[key entry]]
-                    [(- (:access entry)) (pr-str key)]))
-         (mapv (fn [[key {:keys [value weight]}]]
-                 {:key key :value value :weight weight})))))
+  (mapv (fn [[key value]] {:tier tier :key key :value value})
+        (lru/entries (get (:tiers store) tier))))
+
+(defn snapshot-tier-entries
+  "Returns canonical flat entry records for one tier.
+
+  Standard-cache recency and priority internals are intentionally omitted."
+  [store tier]
+  (->> (resident-tier-entries store tier)
+       (sort-by canonical-entry-sort-key)
+       vec))
 
 (defn snapshot-value
-  "Builds one versioned subproblem snapshot from already bounded tier entries."
+  "Builds the flat v2 value from already selected tier entries."
   [store tier->entries]
-  (when-not (store? store)
-    (throw (ex-info "Expected an EACL subproblem store."
-                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                     :store store})))
-  (let [tiers (into {}
-                    (map (fn [tier]
-                           [tier (vec (get tier->entries tier []))]))
-                    snapshot-tier-priority)
-        entries (mapcat val tiers)]
+  (validate-store! store)
+  (let [entries
+        (->> snapshot-tier-priority
+             (mapcat #(get tier->entries % []))
+             (sort-by canonical-entry-sort-key)
+             vec)]
     {:format snapshot-format
-     :budgets (:budgets store)
-     :managed-proof-max-atoms (:managed-proof-max-atoms store)
-     :tiers tiers
-     :entry-count (count entries)
-     :retained-weight (reduce + 0 (map :weight entries))}))
+     :entries entries
+     :entry-count (count entries)}))
 
-(defn ^:no-doc positive-snapshot-bound!
+(defn- positive-snapshot-bound!
   [option value]
-  (when-not (and (integer? value) (pos? value))
+  (when-not (and (proof-frame/generation? value) (pos? value))
     (throw
      (ex-info "Cache snapshot bounds must be positive integers."
-              {:type :eacl/invalid-bound :eacl/error :eacl/invalid-bound
+              {:type :eacl/invalid-bound
+               :eacl/error :eacl/invalid-bound
                :option option :value value})))
   value)
 
 (defn export-snapshot
-  "Exports one store under caller-supplied represented-weight and entry bounds.
+  "Exports a deterministic flat mapping sequence under an entry bound."
+  ([store]
+   (export-snapshot store
+                    {:max-entries (reduce + 0 (vals (:capacities store)))}))
+  ([store {:keys [max-entries] :as options}]
+   (validate-store! store)
+   (when-not (= #{:max-entries} (set (keys options)))
+     (invalid-config! "Snapshot export accepts only :max-entries."
+                      {:options options}))
+   (positive-snapshot-bound! :max-entries max-entries)
+   (let [selected
+         (loop [tiers snapshot-tier-priority
+                remaining max-entries
+                result {}]
+           (if (or (zero? remaining) (empty? tiers))
+             result
+             (let [tier (first tiers)
+                   entries (snapshot-tier-entries store tier)
+                   retained (vec (take remaining entries))]
+               (recur (rest tiers)
+                      (- remaining (count retained))
+                      (assoc result tier retained)))))]
+     (snapshot-value store selected))))
 
-  Entries are considered in answer, projection, and denotation priority and in
-  most-recently-used order within each tier. An entry that does not fit is
-  skipped so later smaller entries can still use the remaining capacity."
-  [store {:keys [max-weight max-entries]}]
-  (positive-snapshot-bound! :max-weight max-weight)
-  (positive-snapshot-bound! :max-entries max-entries)
-  (let [{:keys [selected]}
-        (reduce
-         (fn [acc tier]
-           (reduce
-            (fn [inner entry]
-              (if (and (< (:count inner) max-entries)
-                       (<= (+ (:weight inner) (:weight entry)) max-weight))
-                (-> inner
-                    (update-in [:selected tier] (fnil conj []) entry)
-                    (update :weight + (:weight entry))
-                    (update :count inc))
-                inner))
-            acc
-            (snapshot-tier-entries store tier)))
-         {:selected {} :weight 0 :count 0}
-         snapshot-tier-priority)]
-    (snapshot-value store selected)))
-
-(defn ^:no-doc incompatible-snapshot!
+(defn- incompatible-snapshot!
   [message data]
   (throw
    (ex-info message
@@ -604,321 +567,110 @@
                     :eacl/error :eacl/cache-snapshot-incompatible}
                    data))))
 
-(defn ^:no-doc closed-map?
+(defn- closed-map?
   [value expected-keys]
   (and (map? value) (= expected-keys (set (keys value)))))
 
-(defn- validate-snapshot-entry!
-  [store tier entry]
-  (when-not (closed-map? entry #{:key :value :weight})
-    (incompatible-snapshot! "Malformed cache snapshot entry."
-                            {:tier tier :entry entry}))
-  (when-not (and (integer? (:weight entry))
-                 (pos? (:weight entry))
-                 (<= (:weight entry)
-                     (publication-weight-ceiling store tier)))
-    (incompatible-snapshot! "Cache snapshot entry exceeds its tier contract."
-                            {:tier tier :weight (:weight entry)}))
-  entry)
+(defn- complete-storage-key?
+  [tier key]
+  (and (vector? key)
+       (= 3 (count key))
+       (= cache-key/key-format (first key))
+       (= (if (= :answer tier)
+            :authorization-answer
+            :authorization-subproblem)
+          (second key))
+       (let [identity (nth key 2)]
+         (and (vector? identity)
+              (= 6 (count identity))
+              (= tier (nth identity 0))
+              (contains? (if (= :answer tier)
+                           #{:exact :managed}
+                           #{:exact})
+                         (nth identity 1))
+              (every? some? (subvec identity 2 6))))))
 
 (defn restore-store
-  "Constructs a fresh store from one already authenticated snapshot value.
+  "Constructs fresh bounded stores from an already trusted decoded v2 value.
 
-  The caller MUST authenticate and encoded-size-bound external bytes before
-  deserializing them. This function validates the decoded closed data model,
-  then creates fresh lifecycle and entry identity tokens."
+  `:entry-valid?` is the outer cache's operation-specific closed key/value
+  validator. It is invoked exactly once per entry after structural and
+  capacity validation and before any cache insertion."
   ([snapshot options]
-   (restore-store snapshot options nil))
+   (invalid-config!
+    "Cache snapshot restore requires an :entry-valid? callback."
+    {:option :entry-valid?}))
   ([snapshot options content-revision]
-   (let [destination (store options content-revision)
-         top-keys #{:format :budgets :managed-proof-max-atoms :tiers
-                    :entry-count :retained-weight}]
-     (when-not (closed-map? snapshot top-keys)
-       (incompatible-snapshot! "Malformed subproblem cache snapshot."
-                               {:snapshot-keys (some-> snapshot keys set)}))
-     (when-not (= snapshot-format (:format snapshot))
-       (incompatible-snapshot! "Unsupported subproblem cache snapshot format."
-                               {:format (:format snapshot)}))
-     (when-not (closed-map? (:tiers snapshot) known-tiers)
-       (incompatible-snapshot! "Malformed subproblem cache snapshot tiers."
-                               {:tiers (some-> snapshot :tiers keys set)}))
-     (when-not (= (:managed-proof-max-atoms destination)
-                  (:managed-proof-max-atoms snapshot))
-       (incompatible-snapshot! "Incompatible managed proof cache contract."
-                               {:snapshot (:managed-proof-max-atoms snapshot)
-                                :destination
-                                (:managed-proof-max-atoms destination)}))
-     (when-not (and (closed-map? (:budgets snapshot) known-tiers)
-                    (every? (fn [tier]
-                              (let [source (get-in snapshot [:budgets tier])
-                                    destination-budget
-                                    (get (:budgets destination) tier)]
-                                (and (integer? source) (pos? source)
-                                     (<= source destination-budget))))
-                            known-tiers))
-       (incompatible-snapshot! "Destination cache budgets are incompatible."
-                               {:snapshot-budgets (:budgets snapshot)
-                                :destination-budgets (:budgets destination)}))
-     (let [validated
-           (into {}
-                 (map
-                  (fn [tier]
-                    (let [entries (get-in snapshot [:tiers tier])]
-                      (when-not (vector? entries)
-                        (incompatible-snapshot!
-                         "Cache snapshot tier entries must be vectors."
-                         {:tier tier}))
-                      (doseq [entry entries]
-                        (validate-snapshot-entry! destination tier entry))
-                      (when-not (= (count entries)
-                                   (count (set (map :key entries))))
-                        (incompatible-snapshot!
-                         "Cache snapshot contains duplicate entry keys."
-                         {:tier tier}))
-                      (let [weight (reduce + 0 (map :weight entries))]
-                        (when (> weight (get (:budgets destination) tier))
-                          (incompatible-snapshot!
-                           "Cache snapshot tier exceeds destination capacity."
-                           {:tier tier :weight weight
-                            :max-weight (get (:budgets destination) tier)})))
-                      [tier entries])))
-                 snapshot-tier-priority)
-           all-entries (mapcat val validated)
-           entry-count (count all-entries)
-           retained-weight (reduce + 0 (map :weight all-entries))]
-       (when-not (and (= entry-count (:entry-count snapshot))
-                      (= retained-weight (:retained-weight snapshot)))
-         (incompatible-snapshot! "Cache snapshot totals do not match entries."
-                                 {:declared-entry-count (:entry-count snapshot)
-                                  :actual-entry-count entry-count
-                                  :declared-retained-weight
-                                  (:retained-weight snapshot)
-                                  :actual-retained-weight retained-weight}))
-       (reset!
-        (:state destination)
-        (assoc
-         (into {}
-               (map
-                (fn [tier]
-                  (let [mru-entries (get validated tier)
-                        chronological (vec (reverse mru-entries))
-                        entries
-                        (into {}
-                              (map-indexed
-                               (fn [index {:keys [key value weight]}]
-                                 [key {:token (lifecycle-token)
-                                       :value value
-                                       :weight weight
-                                       :validated? false
-                                       :restored? true
-                                       :access (inc index)
-                                       :access-state (atom 0)
-                                       :promoted-access 0}]))
-                              chronological)]
-                    [tier {:entries entries
-                           :lru (mapv (fn [index {:keys [key]}]
-                                        [(inc index) key])
-                                      (range)
-                                      chronological)
-                           :lru-head 0
-                           :weight (reduce + 0 (map :weight chronological))
-                           :clock (count chronological)}])))
-               snapshot-tier-priority)
-         lifecycle-key (lifecycle-token)))
-       destination))))
-
-(defn resolve-independent!
-  "Looks up a completed value or computes independently and races publication.
-
-  A miss never joins an in-flight request and never acquires a computation
-  slot. A request that loses publication still returns its own value and
-  remains a miss in telemetry."
-  [store tier key options compute]
-  (let [lifecycle (get @(:state store) lifecycle-key)]
-    (if-let [hit (lookup! store tier key options)]
-      hit
-      (let [value (compute)
-            populate? (get options :populate? *populate?*)
-            publication
-            (if populate?
-              (publish!
-               store tier key options value *publication-attempt-limit*
-               lifecycle)
-              {:published? false :reason :suppressed})]
-        (record-metrics! store update :misses inc)
-        {:value value
-         :cached? false
-         :cache-tier nil
-         :publication publication}))))
-
-(defn resolve!
-  "Compatibility alias for independent miss computation and publication."
-  [store tier key options compute]
-  (resolve-independent! store tier key options compute))
-
-(defn resolve-bound!
-  "Uses the dynamically bound exact-generation store, or computes without any
-  cache interaction when no store is bound."
-  [tier key options compute]
-  (if *store*
-    (resolve-independent! *store* tier key options compute)
-    {:value (compute)
-     :cached? false
-     :cache-tier nil}))
-
-(defn proof-stamp?
-  "True for a portable non-negative scalar transaction generation."
-  [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value) (js/Number.isSafeInteger value)))
-   (not (neg? value))))
-
-(defn- valid-managed-descriptor?
-  [descriptor]
-  (and (map? descriptor)
-       (proof-stamp? (:schema-generation descriptor))
-       (proof-stamp? (:dependency-stamp descriptor))))
-
-(defn- dependency-atom-count
-  [dependency]
-  (if (vector? dependency)
-    (count dependency)
-    1))
-
-(defn- managed-descriptor
-  [dependency]
-  (when (and *store* *managed-store* *managed-key-fn* *managed-scope*
-             (some? dependency))
-    (if (> (dependency-atom-count dependency)
-           (:managed-proof-max-atoms *store*))
-      (do
-        (record-metrics! *store* update :managed-proof-overflows inc)
-        nil)
-      (try
-        (let [resolved
-              (resolve-independent!
-               *store*
-               :projection
-               [:managed-projection-proof 1 *managed-scope* dependency]
-               {:valid? valid-managed-descriptor?
-                :weight-fn
-                (constantly
-                 (+ 128 (* 24 (dependency-atom-count dependency))))}
-               #(do
-                  (record-metrics!
-                   *store* update :managed-proof-reads inc)
-                  (*managed-key-fn* dependency)))]
-          (when (:cached? resolved)
-            (record-metrics! *store* update :managed-proof-hits inc))
-          (when (valid-managed-descriptor? (:value resolved))
-            (:value resolved)))
-        (catch #?(:clj Throwable :cljs :default) _
-          (record-metrics! *store* update :managed-proof-failures inc)
-          nil)))))
-
-(declare lookup!)
-
-(defn resolve-layered-bound!
-  "Resolves an exact-generation value and, on its miss, optionally consults a
-  dependency-stamped store shared by forward exact generations.
-
-  The bounded managed descriptor is read from the same immutable snapshot and
-  cached once per dependency set in the exact store. Missing, malformed,
-  over-bound, or failing proof providers fall back to exact recomputation;
-  compute failures still propagate. Managed entries are keyed by source,
-  schema stamp, complete dependency identity/stamp, tier, and the complete
-  semantic key."
-  [tier key options dependency compute]
-  (resolve-bound!
-   tier
-   key
-   options
-   (fn []
-     (if-let [{:keys [schema-generation dependency-stamp]}
-              (managed-descriptor dependency)]
-       (let [managed
-             (resolve-independent!
-              *managed-store*
-              tier
-              [:managed-subproblem
-               2
-               *managed-scope*
-               schema-generation
-               dependency
-               dependency-stamp
-               tier
-               key]
-              options
-              compute)]
-         (when (:cached? managed)
-           (record-metrics!
-            *store* update (managed-tier-hit-metric tier) inc)
-           (record-avoided-backend-operation! *store*))
-         (:value managed))
-       (compute)))))
-
-(defn lookup!
-  "Returns a complete existing value without starting a computation.
-
-  Independently computed values are visible only after atomic publication."
-  [store tier key {:keys [valid? weight-fn]
-                   :or {valid? (constantly true)
-                        weight-fn (constantly 1)}}]
-  (validate-tier! store tier)
-  (when-not (and (fn? valid?) (fn? weight-fn))
-    (throw (ex-info "Subproblem lookup callbacks must be functions."
-                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                     :tier tier})))
-  (let [state @(:state store)
-        entry (get-in state [tier :entries key])
-        validated?
-        (and entry
-             (or (true? (:validated? entry))
-                 (and (:restored? entry)
-                      (try
-                        (boolean (valid? (:value entry)))
-                        (catch #?(:clj Throwable :cljs :default) _ false)))))]
-    (cond
-      (nil? entry)
-      (do
-        (record-metrics!
-         store
-         #(-> %
-              (update :lookup-probes inc)
-              (update :lookup-misses inc)))
-        nil)
-
-      (not validated?)
-      (do
-        (remove-entry-if-token! store tier key (:token entry))
-        (record-metrics!
-         store
-         #(-> %
-              (update :lookup-probes inc)
-              (update :lookup-misses inc)
-              (update :invalid-results inc)))
-        nil)
-
-      :else
-      (do
-        ;; Restored entries start unvalidated. A successful first reader makes
-        ;; one bounded best-effort publication of the operation-specific
-        ;; validation state, but may use its own held immutable value even if
-        ;; a peer or eviction wins the race.
-        (when-not (true? (:validated? entry))
-          (compare-and-set!
-           (:state store) state
-           (-> state
-               (assoc-in [tier :entries key :validated?] true)
-               (update-in [tier :entries key] dissoc :restored?))))
-        (touch-entry! entry)
-        (record-metrics!
-         store
-         #(-> %
-              (update :lookup-probes inc)
-              (update :hits inc)
-              (update (tier-hit-metric tier) inc)))
-        {:value (:value entry)
-         :cached? true
-         :cache-tier (exact-cache-tier tier)}))))
+   (invalid-config!
+    "Cache snapshot restore requires an :entry-valid? callback."
+    {:option :entry-valid?}))
+  ([snapshot options content-revision
+    {:keys [entry-valid?] :as restore-options}]
+   (when-not (and (= #{:entry-valid?} (set (keys restore-options)))
+                  (fn? entry-valid?))
+     (invalid-config!
+      "Cache snapshot restore requires exactly one :entry-valid? callback."
+      {:restore-options restore-options}))
+   (when-not (closed-map? snapshot #{:format :entries :entry-count})
+     (incompatible-snapshot!
+      "Malformed subproblem cache snapshot."
+      {:snapshot-keys (some-> snapshot keys set)}))
+   (when-not (= snapshot-format (:format snapshot))
+     (incompatible-snapshot!
+      "Unsupported subproblem cache snapshot format."
+      {:format (:format snapshot)}))
+   (when-not (vector? (:entries snapshot))
+     (incompatible-snapshot! "Cache snapshot entries must be a vector." {}))
+   (when-not (and (proof-frame/generation? (:entry-count snapshot))
+                  (= (:entry-count snapshot) (count (:entries snapshot))))
+     (incompatible-snapshot!
+      "Cache snapshot entry count does not match entries."
+      {:entry-count (:entry-count snapshot)
+       :actual (count (:entries snapshot))}))
+   (doseq [entry (:entries snapshot)]
+     (when-not (closed-map? entry #{:tier :key :value})
+       (incompatible-snapshot! "Malformed cache snapshot entry."
+                               {:entry entry}))
+     (when-not (contains? known-tiers (:tier entry))
+       (incompatible-snapshot! "Unknown cache snapshot tier."
+                               {:tier (:tier entry)}))
+     (when-not (complete-storage-key? (:tier entry) (:key entry))
+       (incompatible-snapshot! "Cache snapshot key is incomplete."
+                               {:tier (:tier entry) :key (:key entry)})))
+   (let [identities (mapv (juxt :tier :key) (:entries snapshot))]
+     (when-not (= (count identities) (count (set identities)))
+       (incompatible-snapshot!
+        "Cache snapshot contains duplicate tier/key mappings." {})))
+   (let [ordered-entries
+         (try
+           (vec (sort-by canonical-entry-sort-key (:entries snapshot)))
+           (catch #?(:clj Throwable :cljs :default) _
+             (incompatible-snapshot!
+              "Cache snapshot key is not canonical portable data." {})))
+         destination (store options content-revision)
+         counts (frequencies (map :tier (:entries snapshot)))]
+     (doseq [tier known-tiers]
+       (when (> (get counts tier 0) (get (:capacities destination) tier))
+         (incompatible-snapshot!
+          "Cache snapshot tier exceeds destination capacity."
+          {:tier tier
+           :entries (get counts tier 0)
+           :max-entries (get (:capacities destination) tier)})))
+     (doseq [{:keys [tier] :as entry} ordered-entries]
+       (let [valid?
+             (try
+               (boolean (entry-valid? entry))
+               (catch #?(:clj Throwable :cljs :default) _ false))]
+         (when-not (and valid?
+                        (retention-eligible? tier (:value entry)))
+           (incompatible-snapshot!
+            "Cache snapshot entry violates its key/value contract."
+            {:tier tier :key (:key entry)}))))
+     ;; Canonical input order is not trusted; normalize before reconstructing
+     ;; deterministic initial policy state in fresh empty stores.
+     (doseq [{:keys [tier key value]} ordered-entries]
+       (when-not (lru/put-if-absent! (get (:tiers destination) tier) key value)
+         (incompatible-snapshot!
+          "Cache snapshot entry could not be restored."
+          {:tier tier :key key})))
+     destination)))

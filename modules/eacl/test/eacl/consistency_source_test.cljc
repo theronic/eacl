@@ -183,11 +183,13 @@
           token-mode?
           (contains? #{:acquire-at-least! :acquire-exact!}
                      acquisition-operation)]
-      (is (= {:consistency-plan 1 :consistency-validation 1}
+      (is (= (cond-> {:consistency-plan 1}
+               token-mode?
+               (assoc :consistency-validation 1))
              @kernel-crossings))
       (is (= {acquisition-operation 1
-              :source-scope 2
-              :source-lifecycle 2}
+              :source-scope (if token-mode? 2 1)
+              :source-lifecycle (if token-mode? 2 1)}
              @source-operations))
       (is (= (if token-mode? 1 0)
              (if (:request-token selection) 1 0)))

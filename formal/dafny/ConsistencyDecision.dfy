@@ -114,9 +114,9 @@ module ConsistencyDecision {
   ): SelectionWork {
     match path
     case SelectedCurrentPath =>
-      SelectionWork(1, 1, 0, 1, 1, 2, 0, 1, 1, 1, 2, 1, 1)
+      SelectionWork(1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1)
     case AuthoritativePath =>
-      SelectionWork(1, 1, 0, 1, 1, 2, 0, 1, 1, 1, 2, 1, 1)
+      SelectionWork(1, 1, 0, 1, 0, 1, 0, 1, 1, 1, 1, 1, 1)
     case AtLeastPath =>
       SelectionWork(1, 1, 1, 1, 1, 2, 1, 1, 1, 1, 2, 1, 1)
     case ExactPath =>
@@ -134,14 +134,18 @@ module ConsistencyDecision {
     ensures SuccessfulSelectionWork(path, issueResponseToken).capabilityObservations == 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).planDecisions == 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).authenticationAttempts <= 1
-    ensures SuccessfulSelectionWork(path, issueResponseToken).backendSelectionCalls <= 1
-    ensures SuccessfulSelectionWork(path, issueResponseToken).validationDecisions <= 1
-    ensures SuccessfulSelectionWork(path, issueResponseToken).sourceScopeReads == 2
-    ensures SuccessfulSelectionWork(path, issueResponseToken).revisionValidationCalls <= 1
+    ensures SuccessfulSelectionWork(path, issueResponseToken).backendSelectionCalls == 1
+    ensures SuccessfulSelectionWork(path, issueResponseToken).validationDecisions ==
+            SuccessfulSelectionWork(path, issueResponseToken).authenticationAttempts
+    ensures SuccessfulSelectionWork(path, issueResponseToken).sourceScopeReads ==
+            1 + SuccessfulSelectionWork(path, issueResponseToken).authenticationAttempts
+    ensures SuccessfulSelectionWork(path, issueResponseToken).revisionValidationCalls ==
+            SuccessfulSelectionWork(path, issueResponseToken).authenticationAttempts
     ensures SuccessfulSelectionWork(path, issueResponseToken).nativeRevisionReads == 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).orderHintReads == 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).exactLocatorReads == 1
-    ensures SuccessfulSelectionWork(path, issueResponseToken).sourceLifecycleReads == 2
+    ensures SuccessfulSelectionWork(path, issueResponseToken).sourceLifecycleReads ==
+            1 + SuccessfulSelectionWork(path, issueResponseToken).authenticationAttempts
     ensures SuccessfulSelectionWork(path, issueResponseToken).snapshotIdReads == 1
     ensures SuccessfulSelectionWork(path, issueResponseToken).basisKindReads == 1
   {
@@ -172,7 +176,7 @@ module ConsistencyDecision {
   {
   }
 
-  lemma SelectedCurrentHasOneSelectionAndValidation(
+  lemma SelectedCurrentHasOneSelectionWithoutDuplicateValidation(
     issueResponseToken: bool
   )
     ensures SuccessfulSelectionWork(
@@ -182,11 +186,11 @@ module ConsistencyDecision {
     ensures SuccessfulSelectionWork(
               SelectedCurrentPath,
               issueResponseToken
-            ).validationDecisions == 1
+            ).validationDecisions == 0
     ensures SuccessfulSelectionWork(
               SelectedCurrentPath,
               issueResponseToken
-            ).sourceScopeReads <= 3
+            ).sourceScopeReads == 1
     ensures SuccessfulSelectionWork(
               SelectedCurrentPath,
               issueResponseToken
@@ -199,6 +203,10 @@ module ConsistencyDecision {
               SelectedCurrentPath,
               issueResponseToken
             ).exactLocatorReads == 1
+    ensures SuccessfulSelectionWork(
+              SelectedCurrentPath,
+              issueResponseToken
+            ).sourceLifecycleReads == 1
   {
   }
 

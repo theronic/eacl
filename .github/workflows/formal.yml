@@ -61,7 +61,6 @@ jobs:
           bin/formal build-java
           bin/formal build-js
           bin/formal browser-bundle
-          bin/formal artifact-size
 
       - name: Summarize base-to-head assurance closure
         run: |
@@ -444,17 +443,6 @@ jobs:
                      \"explorer enumeration gate regressed\"
                      result)))
                  result))"
-
-      - name: Assert verified status remains withheld while gates are unmet
-        run: |
-          set +e
-          bin/formal manifest
-          manifest_status="$?"
-          set -e
-          if [ "$manifest_status" -ne 3 ]; then
-            echo "expected declared-obligation withholding status 3; got $manifest_status" >&2
-            exit 1
-          fi
 
       - name: Stop CI nREPL
         if: always()

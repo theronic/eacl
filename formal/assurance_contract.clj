@@ -275,7 +275,7 @@
      :present-malformed-selection-is-not-snapshot-absence
      :selection-plan-needs-no-acquisition-or-validation
      :response-token-uses-closed-selected-identity
-     :selected-current-has-one-selection-and-validation
+     :selected-current-has-one-selection-without-duplicate-validation
      :successful-selection-logical-work-is-constant-bounded]
     :dafny
     ["formal/dafny/ConsistencyDecision.dfy"
@@ -628,10 +628,9 @@
       indexed-plan-decision indexed-seed-decision indexed-limits
       indexed-projection-value indexed-command-value indexed-counters-value
       compile-indexed-plan indexed-init indexed-drive indexed-continue-page
-      indexed-resume]
+     indexed-resume]
      :cache-and-cursors
-     [exact-selection continuation-decision candidate-state
-      subproblem-cache-decision current-cache-stage current-cache-decision]
+     [exact-selection continuation-decision]
      :results
      [work-counters sequence-outcome boolean-outcome count-outcome
       authorization-outcome page-decision keyset-page-decision

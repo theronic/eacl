@@ -1,6 +1,7 @@
 (ns eacl.formal.production-kernel
   "Released generated-Java implementation of EACL's strict decision SPI."
-  (:require [eacl.formal.generated-runtime]
+  (:require [eacl.cache.standard-lru :as lru]
+            [eacl.formal.generated-runtime]
             [eacl.verified-kernel :as verified])
   (:import
    (ConsistencyDecision
@@ -9,7 +10,6 @@
    SelectionWork
    SnapshotConsistencyMode
     SuccessfulSelectionPath)
-   (CurrentCache CurrentCacheStage)
    (dafny DafnySequence Tuple2 TypeDescriptor)
    (IndexedCertification PlanCertificationError)
    (IndexedBatching
@@ -66,7 +66,6 @@
     RoutingDerivationDecision
     RoutingCertificateError
     RoutingProof)
-   (SubproblemCache CandidateState)
    (AcyclicEngine
     AcyclicContinuationAction
     AcyclicCountDecision
@@ -120,23 +119,28 @@
         built))))
 
 (def ^:private unicode-memo
-  "Bounded intern table for type-name decodes keyed by the raw
+  "Bounded runtime cache for type-name decodes keyed by the raw
   DafnySequence (the patched runtime implements equals/hashCode).
   Scan commands carry a handful of distinct type names but previously
   decoded UTF-32 strings per command."
-  (atom {}))
+  (lru/store 64))
 
 (defn- dafny-unicode-interned
   [^DafnySequence value]
-  (or (get @unicode-memo value)
-      (let [decoded (.verbatimString value)]
-        (swap! unicode-memo
-               (fn [memo]
-                 (if (or (contains? memo value)
-                         (>= (count memo) 64))
-                   memo
-                   (assoc memo value decoded))))
-        decoded)))
+  (try
+    (let [resident (lru/lookup! unicode-memo value)]
+      (if (:found? resident)
+        (:value resident)
+        (let [decoded (.verbatimString value)]
+          ;; Decoding belongs to the requesting thread, outside cache mutation
+          ;; transition. A publication race or private-store failure is only
+          ;; an optimization miss and cannot affect the decoded result.
+          (try
+            (lru/put-if-absent! unicode-memo value decoded)
+            (catch Throwable _ nil))
+          decoded)))
+    (catch Throwable _
+      (.verbatimString value))))
 
 (def ^:private empty-values-sequence
   "Interned empty scan-response payload: ~98% of populated-recursion
@@ -814,81 +818,6 @@
          issue-response-token?)]
     (consistency-work-map work)))
 
-(defn- candidate-state
-  [candidate]
-  (case candidate
-    :missing (CandidateState/create_CandidateMissing)
-    :computing (CandidateState/create_CandidateComputing)
-    :complete (CandidateState/create_CandidateComplete)
-    :failed (CandidateState/create_CandidateFailed)))
-
-(defn- subproblem-cache-decision
-  [{:keys [decision] :as input}]
-  (case decision
-    :lookup
-    (let [action
-          (SubproblemCache.__default/DecideLookup
-           (candidate-state (:candidate input)))]
-      (cond
-        (.is_StartIndependentComputation action)
-        :start-independent-computation
-        :else :use-completed-value))
-
-    :admission
-    (let [action
-          (SubproblemCache.__default/DecideAdmission
-           (:candidate-present? input)
-           (dafny-nat (:attempted-publications input))
-           (dafny-nat (:maximum-attempts input)))]
-      (if (.is_AttemptPublication action)
-        :attempt-publication
-        :skip-publication))
-
-    :publication
-    (let [action
-          (SubproblemCache.__default/DecidePublication
-           (:ticket-current? input)
-           (:complete? input)
-           (:valid? input)
-           (dafny-nat (:weight input))
-           (dafny-nat (:budget input)))]
-      (if (.is_RetainPublication action)
-        :retain-publication
-        :drop-publication))))
-
-(defn- current-cache-stage
-  [stage]
-  (case stage
-    :eligibility
-    (CurrentCacheStage/create_EligibilityStage)
-
-    :generation
-    (CurrentCacheStage/create_GenerationStage)
-
-    :exact-entry
-    (CurrentCacheStage/create_ExactEntryStage)
-
-    :exact-only-entry
-    (CurrentCacheStage/create_ExactOnlyEntryStage)
-
-    :managed-entry
-    (CurrentCacheStage/create_ManagedEntryStage)))
-
-(defn- current-cache-decision
-  [{:keys [stage available?]}]
-  (let [action
-        (CurrentCache.__default/DecideCurrentCache
-         (current-cache-stage stage)
-         available?)]
-    (cond
-      (.is_BypassCurrentCache action) :bypass-current-cache
-      (.is_ProbeExactEntry action) :probe-exact-entry
-      (.is_UseExactEntry action) :use-exact-entry
-      (.is_ProbeManagedEntry action) :probe-managed-entry
-      (.is_UseManagedEntry action) :use-managed-entry
-      (.is_ComputeExactValue action) :compute-exact-value
-      :else :compute-selected-value)))
-
 (defn- ordered-merge-head
   [value]
   (if (some? value)
@@ -1561,9 +1490,6 @@
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)
-      :current-cache-decision (current-cache-decision input)
-      :subproblem-cache-decision
-      (subproblem-cache-decision input)
       :ordered-merge-step (ordered-merge-decision input)
       :ordered-merge-chunk (ordered-merge-chunk input)
       :recursive-routing-certificate

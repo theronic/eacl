@@ -22,22 +22,26 @@
 (deftest deleted-trusted-surfaces-stay-deleted-test
   (testing "the watermark namespace is gone"
     (is (nil? (io/resource "eacl/datomic/watermark.clj"))))
-  (testing "the authenticated-envelope completed-cache path is gone"
+  (testing "the Datomic provider-cache path is gone; the core sentinel survives"
+    (is (nil? (io/resource "eacl/datomic/cache.clj")))
+    (is (nil? (io/resource "eacl/datomic/cache_store_contract.clj")))
     (is (var-absent? 'eacl.cache/resolve!))
     (is (var-absent? 'eacl.cache/local-store))
     (is (var-absent? 'eacl.cache/cache-store))
     (is (var-absent? 'eacl.datomic.cache/authenticated-store))
+    (is (var-absent? 'eacl.datomic.cache/CacheStore))
+    (is (var-absent? 'eacl.datomic.cache/LocalStore))
+    (is (var-absent? 'eacl.datomic.cache/local-store))
     (is (var-present? 'eacl.cache/no-cache))
-    (is (var-present? 'eacl.cache/resolve-basis!))
-    (is (var-present? 'eacl.datomic.cache/local-continuation-store)))
-  (testing "the v2 zed-token constructors are gone; key derivation survives"
+    (is (var-present? 'eacl.cache/resolve-basis!)))
+  (testing "dead observed-revision checkpoints are gone; key derivation survives"
     (is (var-absent? 'eacl.datomic.consistency/zed-token))
     (is (var-absent? 'eacl.datomic.consistency/token-data))
     (is (var-absent? 'eacl.datomic.consistency/token-revision))
     (is (var-present? 'eacl.datomic.consistency/derive-signing-key))
-    (is (var-present? 'eacl.datomic.consistency/revision-checkpoints))
-    (is (var-present? 'eacl.datomic.consistency/observe!))
-    (is (var-present?
+    (is (var-absent? 'eacl.datomic.consistency/revision-checkpoints))
+    (is (var-absent? 'eacl.datomic.consistency/observe!))
+    (is (var-absent?
          'eacl.datomic.consistency/revision-at-least-seconds-ago)))
   (testing "cursor edges carry no path frontiers"
     (let [relay-source (slurp (io/resource "eacl/relay.cljc"))]
@@ -53,7 +57,6 @@
           (str resource " must fail closed instead of rebasing or restarting cursors"))))
   (testing "EACL authorization owns no blocking coordinator"
     (doseq [resource ["eacl/datomic/core.clj"
-                      "eacl/datomic/cache.clj"
                       "eacl/cache.cljc"
                       "eacl/subproblem_cache.cljc"]
             :let [source (slurp (io/resource resource))]]

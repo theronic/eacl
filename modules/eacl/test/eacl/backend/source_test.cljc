@@ -225,6 +225,16 @@
         (is (not= baseline (identity overrides)))))))
 
 (deftest acquisition-validates-source-boundaries-test
+  (testing "source lifecycle must be bounded portable canonical data"
+    (doseq [lifecycle [nil (apply str (repeat 4097 "x"))]]
+      (let [release-calls (atom [])
+            source
+            (test-source
+             {:lifecycle lifecycle
+              :release-calls release-calls})
+            error (error-data #(source/acquire! source :current))]
+        (is (= :invalid-source-lifecycle (:reason error)))
+        (is (= [::reader] @release-calls)))))
   (testing "backend identity cannot change during acquisition"
     (let [release-calls (atom [])
           source

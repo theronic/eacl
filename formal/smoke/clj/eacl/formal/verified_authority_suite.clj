@@ -30,7 +30,6 @@
     eacl.datomic.cache-differential-test
     eacl.datomic.cache-model-test
     eacl.datomic.cache-review-regressions-test
-    eacl.datomic.cache-test
     eacl.datomic.codec-test
     eacl.datomic.config-test
     eacl.datomic.consistency-cache-test
@@ -80,12 +79,11 @@
 
 (def required-generated-authority-operations
   "The generated decision authority the stable-discovery design still
-  routes through on every backend: consistency selection, answer-cache
-  admission and coherence, cursor continuation, and relationship paging.
+  routes through on every backend: consistency selection, cursor continuation,
+  and relationship paging.
   The retired traversal authorities (:enumeration-route, :acyclic-*,
   :indexed-traversal-*) left with the engines they governed."
   #{:consistency-plan
-    :current-cache-decision
     :cursor-continuation
     :relationship-page})
 

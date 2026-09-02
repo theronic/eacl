@@ -12,7 +12,6 @@
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as spiceomic]
             [eacl.datomic.db :as ddb]
             [eacl.datomic.impl :as impl :refer [Relationship]]
@@ -297,7 +296,7 @@
             client-opts
             {:security-key "recursive-cost-breakdown00000000"
              ;; Managed caching is required to exercise both the cold
-             ;; continuation-store path and the completed-page read path.
+             ;; continuation-store path and the completed-answer read path.
              :cache {}}
             query {:subject (->user "user-1")
                    :permission :read
@@ -316,7 +315,7 @@
               #'cursor/cursor->token]
              [:boundary-entity
               #'d/entity]
-             [:boundary-render
+             [:page-render
               #'relay/externalize-page]]
             continuation-breakdown
             (into {}
@@ -330,7 +329,7 @@
                          1
                          #(recursive-walk client query))])))
                   targets)
-            hot-breakdown
+            completed-answer-breakdown
             (into {}
                   (map
                    (fn [[label target-var]]
@@ -344,19 +343,19 @@
                          #(recursive-walk client query))])))
                   targets)]
         (println "Recursive continuation breakdown:" continuation-breakdown)
-        (println "Recursive completed-page breakdown:" hot-breakdown)
+        (println "Recursive completed-answer breakdown:"
+                 completed-answer-breakdown)
         (is (every? (comp pos? :calls val) continuation-breakdown))
-        (is (pos? (get-in hot-breakdown [:token-decode :calls]))
-            "completed-page reads still authenticate every incoming cursor")
         (is (every?
-             #(zero? (get-in hot-breakdown [% :calls]))
+             #(zero? (get-in completed-answer-breakdown [% :calls]))
              [:recursive-engine
               :checkpoint-lookup
               :checkpoint-store
+              :token-decode
               :token-encrypt
               :boundary-entity
-              :boundary-render])
-            "completed pages bypass traversal, checkpoint I/O, and rendering")))))
+              :page-render])
+            "exact transport hits bypass traversal, cursor, identity, and rendering work")))))
 (def ^:private cache-proof-benchmark-schema
   "definition user {}
    definition account {

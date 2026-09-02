@@ -79,14 +79,21 @@ sealed reducer may scan, so an equal frame in one lineage excludes the
 changed-slice hazard and makes the history-free state reusable across an
 unrelated write. The entry contains complete history-free reducer state, the
 undelivered lookahead segment, and the authenticated boundary identity. It is
-replaced only by strictly greater transition progress and remains bounded by
-entry count and weight. A miss always replays and validates the boundary before
-publishing a page.
+replaced only by strictly greater transition progress and remains bounded by a
+standard-cache entry count. Only a checkpoint whose ordinal and boundary match
+the authenticated cursor records an ordinary cache hit; a rejected candidate
+does not become hot. A miss always replays and validates the boundary before publishing a
+page.
 
 `:populate-cache? false` permits checkpoint lookup but suppresses publication;
-the next page replays correctly. Visited public pages remain exact-basis-keyed
-because external identifier rendering is outside the frame. The standalone
-`eacl_sd1.` token and its private checkpoint key also remain exact-basis-bound.
+the next page replays correctly. Relay has no visited-page routes, boundary
+index, or aliases. With non-expiring cursors, one complete exact-basis
+transport page may be retained under the complete raw request and cursor-key
+policy. A hit returns before cursor decode, identity conversion, proof work, or
+token construction. TTL-enabled cursors keep using the authenticated semantic
+path. Cursor query and edge identities must be metadata-free portable data.
+The standalone `eacl_sd1.` token and its private checkpoint key remain
+exact-basis-bound.
 
 Rejection classes (all typed, never silent). Public clients surface them
 under the `:eacl.pagination/*` and `:eacl.recursive-traversal/*` keys;
@@ -99,6 +106,10 @@ the standalone token uses the `:eacl.page/*` keys in parentheses:
   `:stable-edge` or names the other traversal direction;
 - `:eacl.pagination/expired-cursor` (`:eacl.page/expired-cursor`) — past
   the token's expiry;
+- `:eacl.pagination/unsupported-cursor-identity` — a cursor-bearing query
+  scope or emitted public edge contains metadata-bearing identity data or a
+  record, list, subvector, map entry, alternate integer/collection
+  representation, or signed zero that canonical transport would erase;
 - `:eacl.pagination/stale-cursor` (`:eacl.page/stale-cursor`) — the
   authenticated boundary is no longer reproducible at the selected basis
   (a replay boundary mismatch), or, for the standalone token, the exact
@@ -184,22 +195,23 @@ omitted option installs no bulkhead.
 
 ## Cache artifacts and metrics
 
-The engine keeps exactly two cache artifacts: the latest-only progress
-checkpoint per execution identity, and completed answers (the existing
-answer cache; its key gains the composite fingerprint at the public
-routing step). Byte and node caching belongs to the storage layer.
-Partial traversals and flat subproblem denotations are never reused.
+The stable engine keeps three cross-request artifacts: the latest progress
+checkpoint per execution identity, completed semantic answers whose flat
+composite key includes the plan fingerprint, and one exact-basis transport
+page per complete raw page request when cursor expiry is disabled. All use the
+client's standard cache boundary. The transport value is process-local and
+contains no request object. Fetched relationship chunks and incomplete
+traversals remain request-local and are never published.
 
 Per-layer telemetry (`eacl.engine.physical/telemetry`) reports reducer
 transitions, logical scan commands, values fetched, logical admissions,
 results discovered, maximum stack, and retained-buffer high-water marks —
 plus adapter attempts when the counting retry wrapper is installed.
-Storage-layer counters (node-cache hits/misses, remote GETs/PUTs) are
-observed at the storage layer and never inferred. Checkpoint stores report
-hits, publications, replacements, entry count, live weight, and classified
-misses (`:absent`, `:evicted`, `:boundary-mismatch`, `:overweight`,
-`:plan-mismatch`, `:population-disabled`). Overweight publication affects only
-acceleration; the request and subsequent deterministic replay remain correct.
+Storage-layer counters are observed at the storage layer and never inferred.
+The continuation store reports hits, publications, replacements, approximate
+evictions, errors, actual entry count/capacity, and classified misses such as
+`:absent` and `:boundary-mismatch`. Eviction affects only acceleration; the
+request and subsequent deterministic replay remain correct.
 
 ## Topology qualification
 

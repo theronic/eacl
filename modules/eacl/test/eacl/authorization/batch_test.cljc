@@ -30,6 +30,7 @@
                       [:aggregate-limits :max-allocation-proxy]))))
   (doseq [limits [false
                   {:unknown 1}
+                  {:max-publication-attempts 1}
                   {:max-batch-size 0}
                   {:max-commands 1.5}]]
     (is (= :eacl/invalid-config
@@ -96,8 +97,7 @@
          :candidates-examined 0
          :probes 0
          :output-units 1
-         :allocation-proxy 7
-         :publication-attempts 0}
+         :allocation-proxy 7}
         data
         (caught-data
          #(batch/check-aggregate-limits! limits counters 4))]

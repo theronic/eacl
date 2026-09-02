@@ -26,8 +26,6 @@
     :cursor-continuation
     :consistency-plan
     :consistency-validation
-    :current-cache-decision
-    :subproblem-cache-decision
     :ordered-merge-step
     :ordered-merge-chunk
     :recursive-routing-certificate
@@ -62,29 +60,9 @@
   (-read-indexed-result [kernel direction state]
     "Reads the completed public render result and dimensional counters."))
 
-#?(:clj
-   (defonce ^:private kernel-classes
-     ;; Classes already known to satisfy DecisionKernel. `satisfies?` on the
-     ;; JVM walks the class hierarchy against the protocol's extension map on
-     ;; every call (the generated kernels are `extend`ed Java classes, not
-     ;; direct interface implementations), which measured ~10 µs per call and
-     ;; runs several times per request. Only positive answers are memoized:
-     ;; a class cannot stop satisfying a protocol, but a negative answer could
-     ;; become stale if the protocol were extended later.
-     (java.util.concurrent.ConcurrentHashMap.)))
-
 (defn kernel?
   [candidate]
-  #?(:clj
-     (if (nil? candidate)
-       false
-       (let [^java.util.concurrent.ConcurrentHashMap known kernel-classes
-             c (class candidate)]
-         (or (.containsKey known c)
-             (and (satisfies? DecisionKernel candidate)
-                  (do (.put known c Boolean/TRUE) true)))))
-     :cljs
-     (satisfies? DecisionKernel candidate)))
+  (satisfies? DecisionKernel candidate))
 
 (defn indexed-traversal-kernel?
   [candidate]
@@ -112,6 +90,20 @@
       :actual-keys (when (map? value) (set (keys value)))}))
   value)
 
+(defn- safe-integer?
+  [value]
+  (and
+   #?(:clj (integer? value)
+      :cljs (and (number? value)
+                 (js/Number.isSafeInteger value)))
+   (<= exact-integer/minimum
+       value
+       exact-integer/maximum)))
+
+(defn- safe-natural?
+  [value]
+  (and (safe-integer? value) (not (neg? value))))
+
 (defn- nonempty-string?
   [value]
   (and (string? value)
@@ -136,7 +128,7 @@
 (defn- page-presence?
   [value]
   (or (contains? #{:absent :nil} value)
-      (exact-integer/natural? value)))
+      (safe-natural? value)))
 
 (defn- validate-page-input!
   [input]
@@ -147,9 +139,9 @@
          :input
          input
          #{:length :request :default-size :maximum-size})]
-    (require-value! operation :length exact-integer/natural? length)
-    (require-value! operation :default-size exact-integer/natural? default-size)
-    (require-value! operation :maximum-size exact-integer/natural? maximum-size)
+    (require-value! operation :length safe-natural? length)
+    (require-value! operation :default-size safe-natural? default-size)
+    (require-value! operation :maximum-size safe-natural? maximum-size)
     (exact-keys!
      operation
      :request
@@ -173,7 +165,7 @@
      #{:direction :size :bound? :realized-count})
     (require-value!
      operation :direction #{:asc :desc} (:direction input))
-    (require-value! operation :size exact-integer/natural? (:size input))
+    (require-value! operation :size safe-natural? (:size input))
     (when (zero? (:size input))
       (boundary-error!
        "Generated keyset page size must be positive."
@@ -183,7 +175,7 @@
     (require-value!
      operation
      :realized-count
-     exact-integer/natural?
+     safe-natural?
      (:realized-count input))
     (when (> (:realized-count input) (inc (:size input)))
       (boundary-error!
@@ -198,7 +190,7 @@
   (when exact
     (exact-keys!
      operation :exact exact #{:graph :source :proof})
-    (require-value! operation :exact-graph exact-integer/natural? (:graph exact))
+    (require-value! operation :exact-graph safe-natural? (:graph exact))
     (require-value! operation :exact-source bounded-string? (:source exact))
     (require-value! operation :exact-proof bounded-string? (:proof exact)))
   exact)
@@ -216,7 +208,7 @@
     (doseq [field [:source :cursor-source :current-proof :cursor-proof]]
       (require-value! operation field bounded-string? (get input field)))
     (require-value!
-     operation :cursor-graph exact-integer/natural? (:cursor-graph input))
+     operation :cursor-graph safe-natural? (:cursor-graph input))
     (validate-exact-input! operation (:exact input))
     input))
 
@@ -265,84 +257,6 @@
         :field :selected-adapter?}))
     input))
 
-(defn- validate-subproblem-cache-input!
-  [input]
-  (let [operation :subproblem-cache-decision]
-    (require-value!
-     operation
-     :decision
-     #{:lookup :admission :publication}
-     (:decision input))
-    (case (:decision input)
-      :lookup
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :candidate})
-        (require-value!
-         operation
-         :candidate
-         #{:missing :computing :complete :failed}
-         (:candidate input)))
-
-      :admission
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :candidate-present?
-           :attempted-publications :maximum-attempts})
-        (require-value!
-         operation
-         :candidate-present?
-         boolean?
-         (:candidate-present? input))
-        (doseq [field [:attempted-publications :maximum-attempts]]
-          (require-value!
-           operation field exact-integer/natural? (get input field))))
-
-      :publication
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :ticket-current? :complete? :valid?
-           :weight :budget})
-        (doseq [field [:ticket-current? :complete? :valid?]]
-          (require-value! operation field boolean? (get input field)))
-        (doseq [field [:weight :budget]]
-          (require-value!
-           operation field exact-integer/natural? (get input field)))))
-    input))
-
-(def ^:private current-cache-stages
-  #{:eligibility :generation :exact-entry :exact-only-entry
-    :managed-entry})
-
-(def ^:private current-cache-actions
-  #{:bypass-current-cache
-    :probe-exact-entry
-    :use-exact-entry
-    :probe-managed-entry
-    :use-managed-entry
-    :compute-selected-value
-    :compute-exact-value})
-
-(defn- validate-current-cache-input!
-  [input]
-  (let [operation :current-cache-decision]
-    (exact-keys!
-     operation :input input #{:stage :available?})
-    (require-value!
-     operation :stage current-cache-stages (:stage input))
-    (require-value!
-     operation :available? boolean? (:available? input))
-    input))
-
 (def ^:private ordered-merge-steps
   #{:left-exhausted
     :right-exhausted
@@ -359,7 +273,7 @@
      operation :direction #{:asc :desc} (:direction input))
     (doseq [field [:left-head :right-head]]
       (require-value!
-       operation field #(or (nil? %) (exact-integer/natural? %)) (get input field)))
+       operation field #(or (nil? %) (safe-natural? %)) (get input field)))
     input))
 
 (declare bounded-vector!)
@@ -394,7 +308,7 @@
          :input
          input
          #{:node-count :path-descriptors :edges :certificate})]
-    (require-value! operation :node-count exact-integer/natural? node-count)
+    (require-value! operation :node-count safe-natural? node-count)
     (when (> node-count maximum-boundary-items)
       (boundary-error!
        "Generated routing certificate exceeds the boundary node limit."
@@ -428,7 +342,7 @@
           (require-value!
            operation
            [field key]
-           exact-integer/natural?
+           safe-natural?
            (get path key)))))
     (doseq [[index edge]
             (map-indexed
@@ -440,7 +354,7 @@
           (require-value!
            operation
            [field key]
-           exact-integer/natural?
+           safe-natural?
            (get edge key)))))
     (exact-keys!
      operation
@@ -458,7 +372,7 @@
       (require-value!
        operation
        [:certificate field index]
-       exact-integer/natural?
+       safe-natural?
        value))
     (doseq [field routing-certificate-signed-fields
             [index value]
@@ -471,7 +385,7 @@
       (require-value!
        operation
        [:certificate field index]
-       exact-integer/exact?
+       safe-integer?
        value))
     (doseq [[index value]
             (map-indexed
@@ -519,7 +433,7 @@
         (bounded-vector!
          operation :realized-eids (:realized-eids input))
         size
-        (require-value! operation :size exact-integer/natural? (:size input))]
+        (require-value! operation :size safe-natural? (:size input))]
     (when (zero? size)
       (boundary-error!
        "Generated acyclic page size must be positive."
@@ -532,7 +446,7 @@
         :realized-count (count values)}))
     (doseq [[index value] (map-indexed vector values)]
       (require-value!
-       operation [:realized-eids index] exact-integer/natural? value))
+       operation [:realized-eids index] safe-natural? value))
     (when-not (strictly-ordered-values? direction values)
       (boundary-error!
        "Generated acyclic page input must be strictly ordered."
@@ -558,12 +472,12 @@
      operation :input input
      #{:unique-count :more? :limit})
     (require-value!
-     operation :unique-count exact-integer/natural? (:unique-count input))
+     operation :unique-count safe-natural? (:unique-count input))
     (require-value! operation :more? boolean? (:more? input))
     (require-value!
      operation
      :limit
-     #(or (nil? %) (exact-integer/natural? %))
+     #(or (nil? %) (safe-natural? %))
      (:limit input))
     input))
 
@@ -578,7 +492,7 @@
             [:requested-window :merge-advances
              :emitted-results :recursive-work]]
       (require-value!
-       operation field exact-integer/natural? (get input field)))
+       operation field safe-natural? (get input field)))
     input))
 
 (defn- strictly-ordered-values?
@@ -604,7 +518,7 @@
       (let [values (bounded-vector! operation field (get input field))]
         (doseq [[index value] (map-indexed vector values)]
           (require-value!
-           operation [field index] exact-integer/natural? value))
+           operation [field index] safe-natural? value))
         (when-not (strictly-ordered-values? direction values)
           (boundary-error!
            "Generated merge input must be strictly ordered."
@@ -652,12 +566,12 @@
          (require-value!
           operation
           (conj path component)
-          exact-integer/natural?
+          safe-natural?
           (get projection component))))
      (require-value!
       operation
       (conj path :bound-eid)
-      #(or (nil? %) (exact-integer/natural? %))
+      #(or (nil? %) (safe-natural? %))
       (:bound-eid projection))
      projection)))
 
@@ -669,15 +583,15 @@
    command
    #{:request-scope :request-id :projection :chunk-size})
   (require-value!
-   operation [field :request-scope] exact-integer/natural?
+   operation [field :request-scope] safe-natural?
    (:request-scope command))
   (require-value!
-   operation [field :request-id] exact-integer/natural?
+   operation [field :request-id] safe-natural?
    (:request-id command))
   (require-value!
    operation
    [field :chunk-size]
-   #(and (exact-integer/natural? %) (pos? %))
+   #(and (safe-natural? %) (pos? %))
    (:chunk-size command))
   (validate-indexed-projection!
    operation (:projection command))
@@ -696,10 +610,10 @@
      response
      #{:request-scope :request-id :values :terminal? :fetched-values})
     (require-value!
-     operation [:response :request-scope] exact-integer/natural?
+     operation [:response :request-scope] safe-natural?
      (:request-scope response))
     (require-value!
-     operation [:response :request-id] exact-integer/natural?
+     operation [:response :request-id] safe-natural?
      (:request-id response))
     (bounded-vector!
      operation
@@ -707,11 +621,11 @@
      (:values response))
     (doseq [[index value] (map-indexed vector (:values response))]
       (require-value!
-       operation [:response :values index] exact-integer/exact? value))
+       operation [:response :values index] safe-integer? value))
     (require-value!
      operation [:response :terminal?] boolean? (:terminal? response))
     (require-value!
-     operation [:response :fetched-values] exact-integer/natural?
+     operation [:response :fetched-values] safe-natural?
      (:fetched-values response))
     input))
 
@@ -773,7 +687,7 @@
          (require-value!
           operation
           [field key]
-          exact-integer/natural?
+          safe-natural?
           (get rule key))))
      (doseq [key [:subject-type :intermediate-type
                   :target-subject-type]]
@@ -865,7 +779,7 @@
         (exact-keys!
          operation field binding #{:eid :relation})
         (require-value!
-         operation [field :eid] exact-integer/natural? (:eid binding))
+         operation [field :eid] safe-natural? (:eid binding))
         (validate-plan-relation!
          [field :relation]
          (:relation binding))))
@@ -947,7 +861,7 @@
     (require-value!
      operation
      [:limits field]
-     exact-integer/natural?
+     safe-natural?
      (get limits field)))
   limits)
 
@@ -956,9 +870,9 @@
   (when (some? bound)
     (exact-keys! operation field bound #{:ordinal :eid})
     (require-value!
-     operation [field :ordinal] exact-integer/natural? (:ordinal bound))
+     operation [field :ordinal] safe-natural? (:ordinal bound))
     (require-value!
-     operation [field :eid] exact-integer/natural? (:eid bound)))
+     operation [field :eid] safe-natural? (:eid bound)))
   bound)
 
 (defn- validate-indexed-render!
@@ -983,7 +897,7 @@
       (do
         (require-value!
          operation [:render :size]
-         #(and (exact-integer/natural? %) (pos? %))
+         #(and (safe-natural? %) (pos? %))
          (:size render))
         (validate-indexed-bound!
          operation [:render :bound] (:bound render))
@@ -995,7 +909,7 @@
 
       :count
       (require-value!
-       operation [:render :limit] exact-integer/natural? (:limit render))
+       operation [:render :limit] safe-natural? (:limit render))
 
       :all-count
       nil
@@ -1003,7 +917,7 @@
       :boolean
       (require-value!
        operation [:render :target-eid]
-       exact-integer/natural?
+       safe-natural?
        (:target-eid render)))
     render))
 
@@ -1067,7 +981,7 @@
     (validate-indexed-state!
      operation (:compiled-plan input))
     (require-value!
-     operation :request-scope exact-integer/natural? (:request-scope input))
+     operation :request-scope safe-natural? (:request-scope input))
     (doseq [field [:subject-type :result-type]]
       (require-value!
        operation field nonempty-string? (get input field)))
@@ -1075,17 +989,17 @@
      operation :root-node (:root-node input))
     (when (= :forward direction)
       (require-value!
-       operation :subject-eid exact-integer/natural? (:subject-eid input)))
+       operation :subject-eid safe-natural? (:subject-eid input)))
     (when (= :reverse direction)
       (require-value!
        operation
        :root-resource-eid
-       exact-integer/natural?
+       safe-natural?
        (:root-resource-eid input)))
     (require-value!
      operation
      :chunk-size
-     #(and (exact-integer/natural? %) (pos? %))
+     #(and (safe-natural? %) (pos? %))
      (:chunk-size input))
     (validate-indexed-render! operation (:render input))
     (validate-indexed-limits! operation (:limits input))
@@ -1100,11 +1014,11 @@
      response
      #{:request-scope :request-id :values :terminal? :fetched-values})
     (require-value!
-     operation :request-scope exact-integer/natural? (:request-scope response))
+     operation :request-scope safe-natural? (:request-scope response))
     (require-value!
-     operation :request-id exact-integer/natural? (:request-id response))
+     operation :request-id safe-natural? (:request-id response))
     ;; Deliberate boundary-contract change (eacl-v8-root-fixes 4.3): the
-    ;; per-value exact-integer/natural? walk duplicated the certified kernel
+    ;; per-value safe-natural? walk duplicated the certified kernel
     ;; validator — ValidateScanResponse walks every value inside the
     ;; generated runtime and fails closed with :scan-rejected on any
     ;; malformed element. The host keeps O(1) shape checks per response
@@ -1114,7 +1028,7 @@
      operation :terminal? boolean? (:terminal? response))
     (require-value!
      operation
-     :fetched-values exact-integer/natural? (:fetched-values response))
+     :fetched-values safe-natural? (:fetched-values response))
     response))
 
 (defn- validate-indexed-page-continuation-input!
@@ -1123,7 +1037,7 @@
     (exact-keys! operation :input input #{:size :bound})
     (require-value!
      operation :size
-     #(and (exact-integer/natural? %) (pos? %))
+     #(and (safe-natural? %) (pos? %))
      (:size input))
     (when-not (some? (:bound input))
       (boundary-error!
@@ -1232,7 +1146,7 @@
                 (require-value!
                  operation
                  [:error field]
-                 exact-integer/natural?
+                 safe-natural?
                  (get error field))))
 
             :cursor-result-mismatch
@@ -1244,7 +1158,7 @@
                 (require-value!
                  operation
                  [:error field]
-                 exact-integer/natural?
+                 safe-natural?
                  (get error field))))
 
             (boundary-error!
@@ -1329,7 +1243,7 @@
      operation :counters counters indexed-counter-keys)
     (doseq [[field value] counters]
       (require-value!
-       operation [:counters field] exact-integer/natural? value))
+       operation [:counters field] safe-natural? value))
     (when (> (:current-queue-depth counters)
              (:maximum-queue-depth counters))
       (boundary-error!
@@ -1360,7 +1274,7 @@
     (require-value!
      operation
      :retained-logical-units
-     exact-integer/natural?
+     safe-natural?
      (:retained-logical-units result))
     (case (:status result)
       :page
@@ -1371,11 +1285,11 @@
                  (bounded-vector!
                   operation :items (:items result)))]
           (require-value!
-           operation [:items index] exact-integer/natural? eid))
+           operation [:items index] safe-natural? eid))
         (require-value!
          operation
          :start-ordinal
-         exact-integer/natural?
+         safe-natural?
          (:start-ordinal result))
         (doseq [field [:has-next? :has-previous?]]
           (require-value!
@@ -1384,7 +1298,7 @@
       :count
       (do
         (require-value!
-         operation :count exact-integer/natural? (:count result))
+         operation :count safe-natural? (:count result))
         (require-value!
          operation :truncated? boolean? (:truncated? result)))
 
@@ -1571,7 +1485,7 @@
       (require-value!
        :authorization-evaluation
        [:request :count-limit]
-       exact-integer/natural?
+       safe-natural?
        (:count-limit request)))
     request))
 
@@ -1588,7 +1502,7 @@
     (require-value!
      :authorization-evaluation
      [:limits field]
-     #(and (exact-integer/natural? %) (pos? %))
+     #(and (safe-natural? %) (pos? %))
      (get limits field)))
   limits)
 
@@ -1622,9 +1536,6 @@
     :consistency-plan (validate-consistency-plan-input! input)
     :consistency-validation
     (validate-consistency-selection-input! input)
-    :current-cache-decision (validate-current-cache-input! input)
-    :subproblem-cache-decision
-    (validate-subproblem-cache-input! input)
     :ordered-merge-step (validate-ordered-merge-input! input)
     :ordered-merge-chunk (validate-ordered-merge-chunk-input! input)
     :recursive-routing-certificate
@@ -1672,7 +1583,7 @@
          operation :direction #{:asc :desc} (:direction result))
         (doseq [field [:size :start :end]]
           (require-value!
-           operation field exact-integer/natural? (get result field)))
+           operation field safe-natural? (get result field)))
         (doseq [field [:has-next? :has-previous?]]
           (require-value!
            operation field boolean? (get result field)))
@@ -1695,7 +1606,7 @@
      result
      #{:take-count :reverse? :has-next? :has-previous?})
     (require-value!
-     operation :take-count exact-integer/natural? (:take-count result))
+     operation :take-count safe-natural? (:take-count result))
     (doseq [field [:reverse? :has-next? :has-previous?]]
       (require-value! operation field boolean? (get result field)))
     result))
@@ -1784,54 +1695,6 @@
     :else
     :accept))
 
-(def subproblem-cache-actions
-  #{:start-independent-computation
-    :use-completed-value
-    :attempt-publication
-    :skip-publication
-    :retain-publication
-    :drop-publication})
-
-(defn- validate-subproblem-cache-result!
-  [result]
-  (require-value!
-   :subproblem-cache-decision
-   :result
-   subproblem-cache-actions
-   result))
-
-(defn- expected-subproblem-cache-action
-  [{:keys [decision] :as input}]
-  (case decision
-    :lookup
-    (if (= :complete (:candidate input))
-      :use-completed-value
-      :start-independent-computation)
-
-    :admission
-    (if (and (not (:candidate-present? input))
-             (< (:attempted-publications input)
-                (:maximum-attempts input)))
-      :attempt-publication
-      :skip-publication)
-
-    :publication
-    (if (and (:ticket-current? input)
-             (:complete? input)
-             (:valid? input)
-             (pos? (:weight input))
-             (<= (:weight input) (:budget input)))
-      :retain-publication
-      :drop-publication)))
-
-(defn- validate-current-cache-result!
-  [result]
-  (require-value!
-   :current-cache-decision
-   :result
-   current-cache-actions
-   result))
-
 (defn- validate-ordered-merge-result!
   [result]
   (require-value!
@@ -1852,34 +1715,11 @@
           (bounded-vector! operation [:result :values] (:values result))]
       (doseq [[index value] (map-indexed vector values)]
         (require-value!
-         operation [:result :values index] exact-integer/natural? value)))
+         operation [:result :values index] safe-natural? value)))
     (doseq [field [:left-consumed :right-consumed]]
       (require-value!
-       operation [:result field] exact-integer/natural? (get result field)))
+       operation [:result field] safe-natural? (get result field)))
     result))
-
-(defn- expected-current-cache-action
-  [{:keys [stage available?]}]
-  (case stage
-    (:eligibility :generation)
-    (if available?
-      :probe-exact-entry
-      :bypass-current-cache)
-
-    :exact-entry
-    (if available?
-      :use-exact-entry
-      :probe-managed-entry)
-
-    :exact-only-entry
-    (if available?
-      :use-exact-entry
-      :compute-exact-value)
-
-    :managed-entry
-    (if available?
-      :use-managed-entry
-      :compute-selected-value)))
 
 (defn- expected-enumeration-route
   [{:keys [schema-identity certificate-schema-identity
@@ -1984,11 +1824,11 @@
          (:values result))
         (doseq [[index value] (map-indexed vector (:values result))]
           (require-value!
-           operation [:values index] exact-integer/natural? value))
+           operation [:values index] safe-natural? value))
         (require-value!
          operation :terminal? boolean? (:terminal? result))
         (require-value!
-         operation :fetched-values exact-integer/natural?
+         operation :fetched-values safe-natural?
          (:fetched-values result))
         result)
 
@@ -2073,7 +1913,7 @@
       (require-value!
        operation
        field
-       exact-integer/natural?
+       safe-natural?
        (get result field)))
     result))
 
@@ -2123,7 +1963,7 @@
             [:take-count :merge-advances
              :emitted-results :recursive-work]]
       (require-value!
-       operation field exact-integer/natural? (get result field)))
+       operation field safe-natural? (get result field)))
     (doseq [field [:reverse? :has-next? :has-previous?]]
       (require-value! operation field boolean? (get result field)))
     result))
@@ -2144,7 +1984,7 @@
      #{:count :truncated? :recursive-work})
     (doseq [field [:count :recursive-work]]
       (require-value!
-       operation field exact-integer/natural? (get result field)))
+       operation field safe-natural? (get result field)))
     (require-value!
      operation :truncated? boolean? (:truncated? result))
     result))
@@ -2193,7 +2033,7 @@
     (require-value!
      :authorization-evaluation
      [:counters field]
-     exact-integer/natural?
+     safe-natural?
      (get counters field)))
   counters)
 
@@ -2262,7 +2102,7 @@
              operation :result result
              #{:status :operation :count :truncated? :counters})
             (require-value!
-             operation :count exact-integer/natural? (:count result))
+             operation :count safe-natural? (:count result))
             (require-value!
              operation :truncated? boolean? (:truncated? result)))
 
@@ -2287,10 +2127,6 @@
     :consistency-plan (validate-consistency-plan-result! result)
     :consistency-validation
     (validate-consistency-selection-result! result)
-    :current-cache-decision
-    (validate-current-cache-result! result)
-    :subproblem-cache-decision
-    (validate-subproblem-cache-result! result)
     :ordered-merge-step (validate-ordered-merge-result! result)
     :ordered-merge-chunk (validate-ordered-merge-chunk-result! result)
     :recursive-routing-certificate
@@ -2353,61 +2189,41 @@
   (try
     (let [result
           (validate-result! operation (-decide kernel operation input))]
-      (case operation
-        :relationship-page
-        (when (and (= :valid (:status result))
-                   (or (> (:end result) (:length input))
-                       (> (:size result) (:maximum-size input))
-                       (zero? (:size result))))
-          (boundary-error!
-           "Generated page result exceeds its validated input bounds."
-           {:operation operation
-            :length (:length input)
-            :maximum-size (:maximum-size input)
-            :result result}))
+      (when (and (= :relationship-page operation)
+                 (= :valid (:status result))
+                 (or (> (:end result) (:length input))
+                     (> (:size result) (:maximum-size input))
+                     (zero? (:size result))))
+        (boundary-error!
+         "Generated page result exceeds its validated input bounds."
+         {:operation operation
+          :length (:length input)
+          :maximum-size (:maximum-size input)
+          :result result}))
+      (when (and (= :relationship-keyset-page operation)
+                 (> (:take-count result) (:size input)))
+        (boundary-error!
+         "Generated keyset page exceeds its requested size."
+         {:operation operation
+          :size (:size input)
+          :take-count (:take-count result)}))
 
-        :relationship-keyset-page
-        (when (> (:take-count result) (:size input))
-          (boundary-error!
-           "Generated keyset page exceeds its requested size."
-           {:operation operation
-            :size (:size input)
-            :take-count (:take-count result)}))
-
-        :consistency-plan
-        (when-not (= result (expected-consistency-plan input))
-          (boundary-error!
-           "Generated consistency plan contradicts its validated input."
-           {:operation operation
-            :mode (:mode input)
-            :result result}))
-
-        :consistency-validation
-        (when-not (= result (expected-consistency-selection input))
-          (boundary-error!
-           "Generated snapshot validation contradicts its validated input."
-           {:operation operation
-            :kind (:kind input)
-            :result result}))
-
-        :current-cache-decision
-        (when-not (= result (expected-current-cache-action input))
-          (boundary-error!
-           "Generated current-cache action contradicts its validated stage."
-           {:operation operation
-            :stage (:stage input)
-            :available? (:available? input)
-            :result result}))
-
-        :subproblem-cache-decision
-        (when-not (= result (expected-subproblem-cache-action input))
-          (boundary-error!
-           "Generated subproblem-cache action contradicts its validated state."
-           {:operation operation
-            :decision (:decision input)
-            :result result}))
-
-        :recursive-routing-certificate
+      (when (and (= :consistency-plan operation)
+                 (not= result (expected-consistency-plan input)))
+        (boundary-error!
+         "Generated consistency plan contradicts its validated input."
+         {:operation operation
+          :mode (:mode input)
+          :result result}))
+      (when (and (= :consistency-validation operation)
+                 (not= result
+                       (expected-consistency-selection input)))
+        (boundary-error!
+         "Generated snapshot validation contradicts its validated input."
+         {:operation operation
+          :kind (:kind input)
+          :result result}))
+      (when (= :recursive-routing-certificate operation)
         (let [node-count (:node-count input)
               path-count (count (:path-descriptors input))
               edge-count (count (:edges input))
@@ -2437,39 +2253,34 @@
                 (count (:traversal result)))
               :result-path-checks (:path-checks result)
               :result-node-checks (:node-checks result)
-              :result-edge-checks (:edge-checks result)})))
-
-        :enumeration-route
-        (when-not (= result (expected-enumeration-route input))
-          (boundary-error!
-           "Generated enumeration route contradicts its schema binding."
-           {:operation operation :input input :result result}))
-
-        :acyclic-page
-        (when-not (= result (expected-acyclic-page input))
-          (boundary-error!
-           "Generated acyclic page contradicts its ordered input."
-           {:operation operation :input input :result result}))
-
-        :acyclic-continuation
-        (when-not (= result (expected-acyclic-continuation input))
-          (boundary-error!
-           "Generated acyclic continuation contradicts its authenticated context."
-           {:operation operation :input input :result result}))
-
-        :acyclic-count
-        (when-not (= result (expected-acyclic-count input))
-          (boundary-error!
-           "Generated acyclic count contradicts its unique input cardinality."
-           {:operation operation :input input :result result}))
-
-        :acyclic-work
-        (when-not (= result (expected-acyclic-work input))
-          (boundary-error!
-           "Generated acyclic work decision contradicts its bounded counters."
-           {:operation operation :input input :result result}))
-
-        :ordered-merge-chunk
+              :result-edge-checks (:edge-checks result)}))))
+      (when (and (= :enumeration-route operation)
+                 (not= result (expected-enumeration-route input)))
+        (boundary-error!
+         "Generated enumeration route contradicts its schema binding."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-page operation)
+                 (not= result (expected-acyclic-page input)))
+        (boundary-error!
+         "Generated acyclic page contradicts its ordered input."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-continuation operation)
+                 (not= result
+                       (expected-acyclic-continuation input)))
+        (boundary-error!
+         "Generated acyclic continuation contradicts its authenticated context."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-count operation)
+                 (not= result (expected-acyclic-count input)))
+        (boundary-error!
+         "Generated acyclic count contradicts its unique input cardinality."
+         {:operation operation :input input :result result}))
+      (when (and (= :acyclic-work operation)
+                 (not= result (expected-acyclic-work input)))
+        (boundary-error!
+         "Generated acyclic work decision contradicts its bounded counters."
+         {:operation operation :input input :result result}))
+      (when (= :ordered-merge-chunk operation)
         (let [left-consumed (:left-consumed result)
               right-consumed (:right-consumed result)
               left (:left input)
@@ -2503,9 +2314,7 @@
               :right-count (count right)
               :left-consumed left-consumed
               :right-consumed right-consumed
-              :result-count (count (:values result))})))
-
-        nil)
+              :result-count (count (:values result))}))))
       result)
     (catch #?(:clj Exception :cljs :default) error
       (if (= :eacl.verification/invalid-boundary
@@ -2582,7 +2391,7 @@
     (validate-indexed-limits! operation limits)
     (require-value!
      operation :fuel
-     #(and (exact-integer/natural? %) (pos? %))
+     #(and (safe-natural? %) (pos? %))
      fuel)
     (let [kernel (indexed-kernel selection operation)]
       (invoke-indexed-kernel

@@ -14,8 +14,7 @@
 (deftest execution-contract-normalization-test
   (let [clock (atom 1000000000)
         options {:execution-timeout-ms 250
-                 :recursive-traversal-limits {:max-derived-grants 99}
-                 :cache-attempt execution/default-cache-attempt}
+                 :recursive-traversal-limits {:max-derived-grants 99}}
         contract
         (binding [execution/*monotonic-nanos* #(deref clock)]
           (execution/normalize
@@ -28,7 +27,7 @@
            (:demand contract)))
     (is (= 1250000000 (:deadline-nanos contract)))
     (is (= (:recursive-traversal-limits options) (:limits contract)))
-    (is (= execution/default-cache-attempt (:cache-attempt contract)))))
+    (is (not (contains? contract :cache-attempt)))))
 
 (deftest complete-denotation-contract-test
   (let [contract
@@ -138,6 +137,8 @@
     (is (identical? token (:cancellation-token contract)))
     (binding [execution/*monotonic-nanos* #(deref clock)]
       (is (= contract (execution/check! contract :generated-quantum)))
+      (is (true? (binding [execution/*contract* contract]
+                   (execution/cache-stage-available?))))
       (is (true? (execution/cancel! token)))
       (is (true? (execution/cancel! token)) "cancellation is idempotent")
       (is (execution/cancelled? token))
@@ -151,7 +152,12 @@
         (is (= :adapter-response (:stage data)))
         (is (= {:backend-commands 3} (:consumed-work data)))
         (is (not (contains? data :cancellation-token))))
-      (is (false? (execution/cache-stage-available? contract))))))
+      (is (false? (execution/cache-stage-available? contract)))
+      (is (false? (binding [execution/*contract* contract]
+                    (execution/cache-stage-available?))))))
+  (is (true? (binding [execution/*contract* nil]
+               (execution/cache-stage-available?)))
+      "standalone internal storage has no request eligibility to reject"))
 
 (deftest deadline-remains-authoritative-when-both-controls-fire-test
   (let [clock (atom 0)
@@ -170,20 +176,19 @@
               (caught-data
                #(execution/check! contract :generated-quantum))))))))
 
-(deftest cache-stage-preserves-evaluation-reserve-test
+(deftest cache-stage-is-available-until-the-authoritative-deadline-test
   (let [clock (atom 0)
         contract
         (binding [execution/*monotonic-nanos* #(deref clock)]
           (execution/normalize
-           {:execution-timeout-ms 20
-            :cache-attempt
-            (assoc execution/default-cache-attempt
-                   :evaluation-reserve-ms 10)}
+           {:execution-timeout-ms 20}
            :can?
            {}))]
     (binding [execution/*monotonic-nanos* #(deref clock)]
       (is (true? (execution/cache-stage-available? contract)))
-      (reset! clock 10000000)
+      (reset! clock 19999999)
+      (is (true? (execution/cache-stage-available? contract)))
+      (reset! clock 20000000)
       (is (false? (execution/cache-stage-available? contract))))))
 
 (deftest public-operation-timeout-default-and-override-test
@@ -212,24 +217,7 @@
       (is (= 321 (:configured-timeout-ms defaulted)) (name operation))
       (is (= 123 (:configured-timeout-ms overridden)) (name operation)))))
 
-(deftest cache-attempt-validation-test
-  (is (= (assoc execution/default-cache-attempt :maximum-atomic-attempts 2)
-         (execution/normalize-cache-attempt {:maximum-atomic-attempts 2})))
-  (doseq [invalid [{:maximum-atomic-attempts 0}
-                   {:unknown 1}
-                   :not-a-map]]
-    (is (= :eacl/invalid-config
-           (:type (caught-data
-                   #(execution/normalize-cache-attempt invalid))))))
-  (doseq [decorative-key [:stage-timeout-ms
-                          :maximum-encoded-bytes
-                          :maximum-decoded-weight
-                          :maximum-candidates]]
-    (let [data
-          (caught-data
-           #(execution/normalize-cache-attempt {decorative-key 1}))]
-      (is (= :eacl/invalid-config (:type data)))
-      (is (= [decorative-key] (:unknown-keys data)))))
+(deftest removed-cache-attempt-is-not-request-contract-state-test
   (doseq [forbidden [{:cache-attempt {:maximum-atomic-attempts 100}}
                      {:recursive-traversal-limits
                       {:max-derived-grants 1000000}}]]
@@ -240,4 +228,12 @@
              :can?
              forbidden))]
       (is (= :eacl.execution/invalid-contract (:eacl/error data)))
-      (is (seq (:forbidden-keys data))))))
+      (is (seq (:forbidden-keys data)))))
+  (is (not
+       (contains?
+        (execution/normalize
+         {:execution-timeout-ms 100
+          :cache-attempt {:evaluation-reserve-ms 10}}
+         :can?
+         {})
+        :cache-attempt))))

@@ -490,8 +490,7 @@
            :identity-contract :identity-v1})
         identity-100 (identity :lifecycle-a 100 :ordinary-exact)
         exact-cache
-        {:current-generation identity-100
-         :entries {[identity-100 [:can? :q]] true}}
+        {:entries {[identity-100 [:can? :q]] true}}
         completed-cache-lookup
         (fn [cache request]
           (let [request-identity (:snapshot-identity request)]

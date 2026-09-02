@@ -1,5 +1,5 @@
 (ns eacl.execution
-  "Normalized demand, deadline, cancellation, and cache-attempt contracts.
+  "Normalized demand, deadline, and cancellation contracts.
 
   Public orchestration creates exactly one contract before consistency or cache
   work. Runtime layers may observe the contract and cooperatively check its
@@ -10,13 +10,6 @@
 
 (def default-execution-timeout-ms 30000)
 (def maximum-execution-timeout-ms 3600000)
-
-(def default-cache-attempt
-  {:evaluation-reserve-ms 10
-   :maximum-atomic-attempts 4})
-
-(def ^:private positive-cache-attempt-keys
-  (set (keys default-cache-attempt)))
 
 (def ^:dynamic *monotonic-nanos*
   #?(:clj (fn [] (System/nanoTime))
@@ -111,36 +104,6 @@
         :supported #{:demand :complete-denotation}}))
     value))
 
-(defn normalize-cache-attempt
-  [overrides]
-  (let [overrides (or overrides {})]
-    (when-not (map? overrides)
-      (throw
-       (ex-info
-        ":cache-attempt must be a map."
-        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-         :key :cache-attempt
-         :value overrides})))
-    (when-let [unknown (seq (remove positive-cache-attempt-keys
-                                    (keys overrides)))]
-      (throw
-       (ex-info
-        "Unknown cache-attempt option."
-        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-         :key :cache-attempt
-         :unknown-keys (vec unknown)
-         :known-keys positive-cache-attempt-keys})))
-    (when-not (every? (fn [[_ value]]
-                        (and (integer? value) (pos? value)))
-                      overrides)
-      (throw
-       (ex-info
-        "Cache-attempt limits must be positive integers."
-        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-         :key :cache-attempt
-         :value overrides})))
-    (merge default-cache-attempt overrides)))
-
 (defn- page-demand
   [request]
   (cond
@@ -214,7 +177,7 @@
                                :recursive-traversal-limits
                                :permission-tree-limits]))]
             (invalid-request!
-             "Cache-attempt and structural safety envelopes are client configuration, not per-request demand controls."
+             "Structural safety envelopes are client configuration, not per-request demand controls."
              {:forbidden-keys (vec forbidden)}))
         evaluation (normalize-evaluation (:evaluation request))
         cancellation-token (:cancellation-token request)
@@ -244,9 +207,7 @@
      :deadline-nanos deadline-nanos
      :cancellation-token cancellation-token
      :limits (:recursive-traversal-limits client-options)
-     :aggregate-limits aggregate-limits
-     :cache-attempt (or (:cache-attempt client-options)
-                        default-cache-attempt)}))
+     :aggregate-limits aggregate-limits}))
 
 (defn refine
   "Builds a nested semantic-operation contract without renewing request time.
@@ -264,7 +225,7 @@
                                :recursive-traversal-limits
                                :permission-tree-limits]))]
             (invalid-request!
-             "Cache-attempt and structural safety envelopes are client configuration, not per-request demand controls."
+             "Structural safety envelopes are client configuration, not per-request demand controls."
              {:forbidden-keys (vec forbidden)}))
         evaluation
         (if (contains? request :evaluation)
@@ -358,10 +319,9 @@
    contract))
 
 (defn cache-stage-available?
-  [contract]
-  (let [{:keys [evaluation-reserve-ms]}
-        (:cache-attempt contract)
-        remaining-ms (remaining-millis contract)]
-    (and (not (cancelled? (:cancellation-token contract)))
-         (pos? remaining-ms)
-         (> remaining-ms evaluation-reserve-ms))))
+  ([contract]
+   (or (nil? contract)
+       (and (not (cancelled? (:cancellation-token contract)))
+            (pos? (remaining-nanos contract)))))
+  ([]
+   (cache-stage-available? *contract*)))

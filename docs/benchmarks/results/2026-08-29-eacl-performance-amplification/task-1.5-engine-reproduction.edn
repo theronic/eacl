@@ -1,4 +1,10 @@
 {:evidence/version 1
+ :authority-status :historical-captured-reproduction
+ :superseded-by
+ ["formal/verification/performance-gates.edn"
+  "docs/benchmarks/results/2026-08-29-eacl-performance-amplification/mechanism-ledger.edn"]
+ :interpretation
+ "Captured pre-standard-LRU measurements retain their original weight-shaped fields as historical data; they are not current cache-policy authority."
  :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
  :classpath-sha256 "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"
  :command

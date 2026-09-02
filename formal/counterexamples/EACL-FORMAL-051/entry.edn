@@ -15,5 +15,4 @@
  :closing-evidence
  ["AcyclicEngine.PublicCanRootClassificationHoistPreservesResult"
   "AcyclicEngine.PublicCanRootClassificationHoistReducesWork"
-  "eacl.formal.state-trace-differential-test/generated-can-reuses-the-public-root-classification"
-  "eacl.bench.pagination-test/permission-check-benchmark"]}
+  "eacl.formal.state-trace-differential-test/generated-can-reuses-the-public-root-classification"]}

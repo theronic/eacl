@@ -1,91 +1,105 @@
-# EACL answer cache and subproblem store
+# EACL answer and subproblem cache
 
-Each EACL client owns one bounded, client-private subproblem store per cache
-generation. Since the stable-discovery engine was routed
-(`adopt-stable-discovery-enumeration`), the store's live tiers are:
+Each EACL client owns three flat, independently bounded retention tiers:
 
-- the **`:answer` tier** — completed answers (`can?`, lookup pages, counts)
-  keyed by the complete semantic request, first under the exact immutable
-  snapshot and then under the proof-backed schema/dependency frontier;
-- the **`:projection` tier**, used only for `internal-id->object` identity
-  renderings while a page is externalized (`eacl.relay`).
+- `:answer` stores completed point decisions, internal pages, counts, and
+  permission trees;
+- `:rendered-page` stores complete exact-basis transport pages for complete raw
+  requests when cursor expiry is disabled;
+- `:denotation` stores completed Boolean denotations.
 
-The `:denotation` tier and the relationship-projection use of the
-`:projection` tier belonged to the retired merge/indexed engines. Their
-weight budgets are still accepted by the store configuration so existing
-client options keep loading, but no engine path publishes into them; the
-stable engine keeps exactly two cache artifacts of its own — the latest
-per-query checkpoint (`eacl.engine.stable-page`) and the completed answer —
-and treats fetched relationship chunks as disposable request-local buffers.
-See [docs/stable-discovery-engine.md](stable-discovery-engine.md).
-
-The selected database value and the cache-free evaluator remain
-authoritative; every tier is a performance artifact.
+Clojure uses Caffeine's concurrent Window TinyLFU policy; ClojureScript uses
+the pinned theronic `cljs-cache` LRU fork. EACL supplies only a small storage
+adapter. Hits update frequency/recency policy, so a frequently used old entry
+is not evicted merely because it arrived first.
 
 ## Resolution
 
-A completed answer resolves in this order:
+Storage sees opaque complete keys and immutable completed values. For an
+ordinary current request, completed-answer resolution is exact key, then one
+proof-managed key, then independent computation. A managed answer hit may be
+promoted under the exact key. Denotations are exact-basis only. Historical
+bases use identical exact keys only. Speculative requests may read one
+disjoint committed managed answer but publish nothing.
 
-1. exact-generation state for the selected immutable snapshot;
-2. proof-backed state under the request's complete ordered-generation frame
-   (schema generation plus the scalar dependency frontier of the
-   permission's relationship closure);
-3. evaluation against the selected snapshot.
+Managed envelopes record the revision at which the value was computed. Reuse
+requires both equal complete proof identity and
+`computed-revision <= selected-revision`; equal proof never authorizes backward
+reuse of a future value.
 
-A proof-backed hit is promoted into the exact store, so later operations on
-that snapshot avoid both the proof lookup and the evaluation. Proof-backed
-reuse is automatic for deterministic completed requests; cache policy never
-widens an adapter command or continues traversal beyond the caller's demand.
-Cursor-bearing pages are answers too, but their continuation state lives in
-the checkpoint store, never in the answer tier.
+Missing, malformed, partial, oversized, or unavailable proof makes the managed
+key absent. It does not alter authorization availability. Malformed or
+operation-invalid values are rejected by publication or restore before they
+can become resident.
 
-## Proof and invalidation
+Validated publication and validated off-side restore are the only supported
+entry-installing transitions. An exact hit is consequently an ordinary
+complete-key membership read plus the runtime library's access update, with no
+repeated artifact, ABI, or operation validator. A managed hit adds only
+`computed-revision <= selected-revision`. Exact denotation hits have no managed
+subproblem path. Every live publisher must supply an
+explicit callable artifact validator; no low-level publisher defaults to
+trusting its value. Direct application mutation of the private runtime records
+or backing atoms is outside the supported contract.
 
-The request proof frame validates one schema generation and the complete
-canonical relation-generation closure, then derives a scalar frontier.
-Missing, malformed, partial, oversized, or unavailable proof uses the exact
-store or the backend and does not alter authorization availability.
+## Bounds
 
-A supported relevant relationship mutation atomically advances its relation
-generation. That invalidates every proof-backed answer depending on the
-relation; unrelated relation writes leave it reusable. The relation-wide
-granularity is intentionally conservative and avoids endpoint-local storage
-and write amplification.
-
-## Bounds and concurrency
-
-Tiers have isolated weighted least-recently-used budgets. Oversized values
-are rejected instead of displacing an entire tier. Identical misses compute
-independently and race bounded best-effort publication; one request never
-waits for another cache computation.
+The public configuration uses positive safe-integer entry counts:
 
 ```clojure
 {:cache
- {:max-entries 4096
-  :subproblem-cache
-  {:enabled? true
-   :projection-max-weight (* 8 1024 1024)   ; identity renderings
-   :denotation-max-weight (* 8 1024 1024)   ; accepted, unused by the stable engine
-   :answer-max-weight (* 16 1024 1024)
-   :managed-proof-max-atoms 256}}}
+ {:max-entries 2048
+  :denotation-max-entries 4096
+  :telemetry? true}}
 ```
 
-Weights are deterministic admission units approximating retained size, not
-portable heap-byte measurements. `cache-stats` exposes exact and proof-backed
-answer hits, projection hits, proof reads/failures/overflows, publication
-races, admission and oversize rejection, eviction, and avoided backend
-operations.
+The semantic answer and denotation tiers have independent capacities. The
+outer `:max-entries` sizes answers, exact rendered pages, and the adjacent
+continuation/cursor caches; all use 1,024 when it is omitted.
+`:denotation-max-entries` is the only additional cache-capacity setting.
+Logical weight estimators and byte
+budget claims were removed. Physical operator chunks, direct Boolean probes,
+and Relay identity conversion are request work rather than retained shared
+artifacts. Engine traversal, chunk, service-admission, and expression limits
+remain separate semantic or work bounds outside storage.
+
+The common answer publication boundary retains completed pages only when they
+contain at most 1,000 result items. Larger valid pages are returned unchanged
+and not cached. Scalars, counts, and trees do not inherit that page rule.
+
+## Concurrency and failure
+
+Misses have no cache owner. Concurrent callers compute independently and race
+an atomic absent-key insertion; a losing publisher still returns its own
+answer. Validators and computations execute outside storage atomic scopes and
+are never repeated by cache retries. A local cache exception is a miss or
+failed publication, not an authorization error.
+
+## Snapshot v2
+
+Portable export is a deterministic flat entry sequence. It excludes
+Caffeine/`cljs-cache` admission, priority, and recency state. Restore validates
+complete keys, managed-answer proof keys, revisions, operation-specific completed value
+contracts, duplicate keys, and count capacity before constructing fresh cache tiers
+off-side and installing them atomically. Process-local exact promotions are
+not exported without their live validating transition; the corresponding
+managed mapping remains portable.
+
+The decoded value is a trusted API input. Hosts must authenticate and
+encoded-size-bound external bytes before decoding. Snapshot v1 and malformed
+v2 values are rejected without changing the live lifecycle.
 
 ## Evidence
 
-`formal/dafny/SubproblemCache.dfy` proves key separation, exact-hit refinement,
-proof framing, completed-only publication, weighted retention, bounded
-publication attempts, and lifecycle rejection. The scalar cross-snapshot
-argument is proved in `formal/dafny/ScalarFrontierCoherence.dfy`. CLJ/CLJS
-differential suites compare cached and bypassed results across all bundled
-backends. See the [recorded measurements](benchmarks/results/2026-08-11-scalar-frontier-coherence.md).
+`formal/dafny/SubproblemCache.dfy` models storage as a bounded partial map with
+arbitrary eviction, independent computation, completed-only publication, page
+retention eligibility, and lifecycle detachment. Causal and ordinary-only
+managed eligibility are proved in `CurrentCache.dfy` and
+`ScalarFrontierCoherence.dfy`. The TLA model treats keys and validated values as
+opaque mappings and checks publication, eviction, expiry, and orphaned
+lifecycle interleavings.
 
-The theorem is conditional on deterministic complete dependencies, truthful
-adapter proof evidence, globally ordered atomic relation stamps, and the
-database engines. Those are certified and adversarially tested, not
-mechanically verified implementations.
+The proof remains conditional on truthful adapter evidence, complete dependency
+extraction, globally ordered atomic relation stamps, correct composite keys,
+and the database engines. Cross-runtime and cross-backend differential tests
+cover the implementation boundary.

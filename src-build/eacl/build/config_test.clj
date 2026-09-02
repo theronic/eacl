@@ -1,5 +1,6 @@
 (ns eacl.build.config-test
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [clojure.edn :as edn]
+            [clojure.test :refer [deftest is testing]]
             [eacl.build.config :as config]
             [eacl.build.module :as module]))
 
@@ -78,6 +79,49 @@
       (is (re-find #"Petrus Theron" pom-data))))
   (is (= "scm:git:https://github.com/theronic/eacl.git"
          (:connection config/scm))))
+
+(deftest standard-cache-release-dependencies-are-explicit
+  (let [core-dependencies (config/dependencies :eacl "8.1.0")
+        datahike-dependencies
+        (config/dependencies :eacl-datahike "8.1.0")]
+    (is (= {:mvn/version "3.2.4"}
+           (get core-dependencies
+                'com.github.ben-manes.caffeine/caffeine)))
+    (is (not (contains? core-dependencies 'org.clojure/core.cache)))
+    (is (not (contains? core-dependencies
+                        'com.github.theronic/cljs-cache))
+        "the temporary Git dependency is source-build-only")
+    (is (= ['com.github.pkpkpk/cljs-cache]
+           (get-in datahike-dependencies
+                   ['org.replikativ/datahike :exclusions])))))
+
+(deftest standard-cache-source-dependencies-are-pinned
+  (let [root-dependencies (:deps (edn/read-string (slurp "deps.edn")))
+        core-dependencies
+        (:deps (edn/read-string (slurp "modules/eacl/deps.edn")))
+        datahike-dependencies
+        (:deps (edn/read-string
+                (slurp "modules/eacl-datahike/deps.edn")))
+        backend-probe-dependencies
+        (:deps
+         (edn/read-string
+          (slurp "exploration/stable-discovery/backend-probes/deps.edn")))
+        cljs-cache
+        {:git/url "https://github.com/theronic/cljs-cache.git"
+         :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}]
+    (doseq [dependencies [root-dependencies core-dependencies]]
+      (is (= {:mvn/version "3.2.4"}
+             (get dependencies
+                  'com.github.ben-manes.caffeine/caffeine)))
+      (is (not (contains? dependencies 'org.clojure/core.cache)))
+      (is (= cljs-cache
+             (get dependencies 'com.github.theronic/cljs-cache))))
+    (doseq [dependencies [root-dependencies
+                          datahike-dependencies
+                          backend-probe-dependencies]]
+      (is (= ['com.github.pkpkpk/cljs-cache]
+             (get-in dependencies
+                     ['org.replikativ/datahike :exclusions]))))))
 
 (deftest production-module-files-use-dev-eacl-coordinates
   (is (true? (module/assert-module-coordinates!))))

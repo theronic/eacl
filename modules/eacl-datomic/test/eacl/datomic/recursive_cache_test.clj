@@ -10,9 +10,10 @@
             [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
+            [eacl.cache.standard-lru :as lru]
             [eacl.backend.v8 :as backend]
+            [eacl.continuation :as continuation]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.impl.indexed :as idx]
@@ -666,13 +667,13 @@
       (let [page1 (eacl/lookup-subjects client query)
             page2 (eacl/lookup-subjects
                    client (assoc query :after (page-end-cursor page1)))
-            kinds (->> (vals (:entries @(:state store)))
-                       (map :kind)
-                       set)]
+            stats (continuation/stats store)]
         (is (= 1 (count (:data page1))))
         (is (= 1 (count (:data page2))))
-        (is (contains? kinds :recursive-continuation))
-        (is (<= (:weight @(:state store)) (:max-weight store)))))))
+        (is (pos? (get-in stats
+                          [:by-kind :recursive-continuation :publications]
+                          0)))
+        (is (<= (:entries stats) (:max-entries stats)))))))
 
 (deftest recursive-cursor-remains-on-exact-snapshot-when-live-objects-disappear-test
   (with-mem-conn [conn schema/v7-schema]
@@ -756,13 +757,13 @@
                          :reader
                          (spice-object :account (account-id n)))))
       (eacl/lookup-resources client query)
-      (let [entries (vals (:entries @(:state store)))
+      (let [entries (lru/entries (:storage store))
             ;; The stable engine retains latest-only checkpoints under the
             ;; continuation kind; the whole stored value must be pure data.
             continuations
-            (keep (fn [entry]
-                    (when (= :recursive-continuation (:kind entry))
-                      (:value entry)))
+            (keep (fn [[key value]]
+                    (when (= :recursive-continuation (get-in key [2 0]))
+                      value))
                   entries)
             db-class (class (d/db conn))
             retained-values (mapcat #(tree-seq coll? seq %) continuations)]

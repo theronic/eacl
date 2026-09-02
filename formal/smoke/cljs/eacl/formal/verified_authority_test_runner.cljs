@@ -34,13 +34,12 @@
 
 (def required-portable-authority-operations
   "The portable decision authority the stable-discovery design still
-  routes through: consistency selection, answer-cache admission and
-  coherence, cursor continuation, and relationship paging. The retired
+  routes through: consistency selection, cursor continuation, and relationship
+  paging. The retired
   traversal authorities (:enumeration-route, :acyclic-*,
   :indexed-traversal-*, :recursive-routing-certificate) left with the
   engines they governed. Mirrors the JVM cutover suite's roster."
   #{:consistency-plan
-    :current-cache-decision
     :cursor-continuation
     :relationship-page})
 

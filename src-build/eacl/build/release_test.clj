@@ -30,6 +30,21 @@
       (is (every? #(= {:version "8.1.0" :java-release 17} (second %))
                   @builds)))))
 
+(deftest clean-consumer-smoke-reads-live-kernel-bytecode
+  (let [source (#'release/smoke-source :eacl 'eacl.core 70)]
+    (is (string/includes? source "EaclKernel/__default.class"))
+    (is (not (string/includes? source "CurrentCache/__default.class"))))
+  (doseq [[module-id entry-point]
+          (select-keys release/consumer-entry-points
+                       [:eacl-datomic :eacl-datahike :eacl-datascript])
+          function-name
+          ["export-cache-snapshot"
+           "restore-cache-snapshot!"
+           "cache-content-revision"]]
+    (is (string/includes?
+         (#'release/smoke-source module-id entry-point 70)
+         (str entry-point "/" function-name)))))
+
 (deftest clojars-preflight-requires-the-exact-group-and-user
   (is (true? (release/assert-clojars-group! ["dev.eacl"])))
   (is (thrown-with-msg?

@@ -169,10 +169,7 @@
     :cache-free
     shared-cache/no-cache
 
-    :completed-answer-only
-    {:subproblem-cache {:enabled? false}}
-
-    :layered-current
+    :cache-enabled
     {}))
 
 (defn- make-clients
@@ -190,7 +187,7 @@
            {:security-key "cross-backend-workload-page00000"}
            {:security-key
             "01234567890123456789012345678901"})))])
-    [:cache-free :completed-answer-only :layered-current])))
+    [:cache-free :cache-enabled])))
 
 (defn- seed!
   [{:keys [writer transact-objects!]}]
@@ -368,7 +365,7 @@
         _ @(d/transact connection datomic-schema/v7-schema)
         clients (make-clients datomic/make-client connection true)
         fixture
-        {:writer (:layered-current clients)
+        {:writer (:cache-enabled clients)
          :transact-objects!
          (fn [objects]
            @(d/transact
@@ -387,7 +384,7 @@
   (let [connection (datahike/create-conn)
         clients (make-clients datahike/make-client connection false)
         fixture
-        {:writer (:layered-current clients)
+        {:writer (:cache-enabled clients)
          :transact-objects!
          (fn [objects]
            (dh/transact
@@ -406,7 +403,7 @@
   (let [connection (datascript/create-conn)
         clients (make-clients datascript/make-client connection false)
         fixture
-        {:writer (:layered-current clients)
+        {:writer (:cache-enabled clients)
          :transact-objects!
          (fn [objects]
            (ds/transact!
@@ -434,9 +431,7 @@
     (is (= [:datomic :datahike :datascript]
            (mapv :backend results)))
     (doseq [result results]
-      (is (= #{:cache-free
-               :completed-answer-only
-               :layered-current}
+      (is (= #{:cache-free :cache-enabled}
              (set (keys (:modes result)))))
       (doseq [[_ scenarios] (:modes result)]
         (is (= #{:direct-can
@@ -467,9 +462,7 @@
        (apply
         =
         (for [result results
-              mode [:cache-free
-                    :completed-answer-only
-                    :layered-current]]
+              mode [:cache-free :cache-enabled]]
           (get-in result [:modes mode scenario :checksum])))
        (str (name scenario)
             " returned different values between a backend or cache mode")))))

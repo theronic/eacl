@@ -2,6 +2,12 @@
          "target/generated/java/classes"
          "target/generated/browser"]
  :deps {org.clojure/clojure {:mvn/version "1.11.4"}
+        com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
+        ;; CLJS/DataScript demos use the tested fork directly. JVM Maven
+        ;; metadata deliberately does not encode Git dependencies.
+        com.github.theronic/cljs-cache
+        {:git/url "https://github.com/theronic/cljs-cache.git"
+         :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}
         instaparse/instaparse {:mvn/version "1.5.0"}}
  :aliases {:build {:extra-paths ["."]
                    :ns-default build

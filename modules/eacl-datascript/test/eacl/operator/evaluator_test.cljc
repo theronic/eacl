@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
+            [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -12,6 +13,15 @@
             [eacl.operator.evaluator :as evaluator]
             [eacl.operator.plan :as plan]
             [eacl.subproblem-cache :as subproblem]))
+
+(defn- test-exact-key
+  [semantic]
+  (let [identity {:tier :denotation
+                  :source-lifecycle {:source :test :lifecycle :operator}
+                  :abi :test-authorization-v2
+                  :semantic semantic
+                  :reuse [:basis 1]}]
+    (cache-key/exact-denotation-key identity)))
 
 (def direct-schema
   "definition user {}
@@ -148,7 +158,7 @@
     (is (true? (check env relation-plan u1 d2)))
     (is (false? (check env relation-plan u2 d1)))))
 
-(deftest acyclic-arrow-chunks-reuse-the-existing-exact-scan-cache-test
+(deftest acyclic-arrow-scans-remain-physical-request-work-test
   (let [u1 (object :user "u1")
         g1 (object :group "g1")
         d1 (object :document "d1")
@@ -162,18 +172,21 @@
         first-stats (atom {})
         first-result
         (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key
                   evaluator/*evaluation-stats* first-stats]
           (check env operator-plan u1 d1))
         second-stats (atom {})
         second-result
         (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key
                   evaluator/*evaluation-stats* second-stats]
           (check env operator-plan u1 d1))]
     (is (= true first-result second-result))
     (is (pos? (:adapter-commands @first-stats)))
-    (is (zero? (:adapter-commands @second-stats 0)))
-    (is (pos? (:shared-scan-cache-hits @second-stats)))
-    (is (pos? (:projection-hits (subproblem/stats store))))))
+    (is (= (:adapter-commands @first-stats)
+           (:adapter-commands @second-stats)))
+    (is (not (contains? (subproblem/stats store) :projection-hits)))
+    (is (not (contains? (:tiers (subproblem/stats store)) :projection)))))
 
 (deftest shared-dag-is-memoized-and-short-circuited-test
   (let [user (object :user "u")

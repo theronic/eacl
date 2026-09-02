@@ -3,6 +3,7 @@
             [clojure.test :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.cache :as cache]
+            [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.engine.v8 :as engine]
@@ -186,91 +187,96 @@
     {:left @left-samples
      :right @right-samples}))
 (deftest ^:benchmark hot-hit-and-cache-free-regression-benchmark
-  (testing "layered storage does not penalize existing hot or bypass paths"
+  (testing "hot answer lookup and explicit bypass retain bounded overhead"
     (let [conn (datascript/create-conn)
-          permissions
-          [:completed_hot :layered_hot
-           :completed_bypass :layered_bypass]
+          permissions [:hot :cached_bypass :disabled_bypass]
           writer
           (datascript/make-client
            conn
            (assoc benchmark-client-options :cache cache/no-cache))
           _ (seed-shared-arrow! conn writer permissions 16 1)
-          completed-only
+          disabled
           (datascript/make-client
            conn
-           (assoc benchmark-client-options
-                  :cache
-                  {:subproblem-cache {:enabled? false}}))
-          layered
+           (assoc benchmark-client-options :cache cache/no-cache))
+          cached
           (datascript/make-client conn benchmark-client-options)
-          hot-completed #(eacl/can?
-                          completed-only
-                          (can-query :completed_hot true))
-          hot-layered #(eacl/can?
-                        layered
-                        (can-query :layered_hot true))
-          bypass-completed #(eacl/can?
-                             completed-only
-                             (can-query :completed_bypass false))
-          bypass-layered #(eacl/can?
-                           layered
-                           (can-query :layered_bypass false))
-          ;; Compile both roots, then populate the completed-answer entries.
-          _ (doseq [query [bypass-completed bypass-layered]]
-              (query))
-          _ (hot-completed)
-          _ (hot-layered)
-          hot (paired-samples hot-completed hot-layered 400 40)
-          bypass (paired-samples
-                  bypass-completed bypass-layered 200 20)
-          hot-left (percentile (:left hot) 0.50)
-          hot-right (percentile (:right hot) 0.50)
+          hot-hit #(eacl/can? cached (can-query :hot true))
+          cached-bypass #(eacl/can?
+                          cached (can-query :cached_bypass false))
+          disabled-bypass #(eacl/can?
+                            disabled (can-query :disabled_bypass true))
+          ;; Compile both bypass roots and populate the completed hot answer.
+          _ (cached-bypass)
+          _ (disabled-bypass)
+          _ (hot-hit)
+          hot-vs-bypass (paired-samples hot-hit cached-bypass 400 40)
+          bypass (paired-samples disabled-bypass cached-bypass 200 20)
+          hot-left (percentile (:left hot-vs-bypass) 0.50)
+          hot-right (percentile (:right hot-vs-bypass) 0.50)
           bypass-left (percentile (:left bypass) 0.50)
           bypass-right (percentile (:right bypass) 0.50)
           report
-          {:completed-answer-hot-p50-ms hot-left
-           :layered-hot-p50-ms hot-right
-           :hot-ratio (/ hot-right hot-left)
-           :completed-answer-bypass-p50-ms bypass-left
-           :layered-bypass-p50-ms bypass-right
+          {:hot-hit-p50-ms hot-left
+           :cached-client-bypass-p50-ms hot-right
+           :hot-vs-bypass-ratio (/ hot-left hot-right)
+           :disabled-client-p50-ms bypass-left
+           :cached-client-cache-false-p50-ms bypass-right
            :bypass-ratio (/ bypass-right bypass-left)}]
-      (println "EACL layered-cache regression benchmark" (pr-str report))
-      (is (<= (:hot-ratio report) 1.05)
-          (str "completed-answer hot hits regressed by more than 5%: "
+      (println "EACL cache-path regression benchmark" (pr-str report))
+      (is (<= (:hot-vs-bypass-ratio report) 1.05)
+          (str "completed-answer hit is slower than direct bypass: "
                report))
       (is (<= (:bypass-ratio report) 1.05)
-          (str ":cache? false regressed by more than 5%: " report)))))
+          (str "cache-enabled-client :cache? false overhead exceeded 5%: "
+               report)))))
 
-(defn- populated-projection-store
+(defn- benchmark-denotation-key
+  [semantic]
+  (cache-key/exact-denotation-key
+   {:tier :denotation
+    :source-lifecycle :subproblem-cache-benchmark
+    :abi :subproblem-cache-benchmark-v1
+    :semantic semantic
+    :reuse :benchmark-basis}))
+
+(defn- populated-denotation-store
   [entry-count]
   (let [store
         (subproblem/store
-         {:projection-max-weight (inc entry-count)})]
-    (dotimes [key entry-count]
-      (subproblem/resolve!
-       store :projection key {} (constantly key)))
+         {:denotation-max-entries (inc entry-count)})]
+    (dotimes [semantic entry-count]
+      (let [key (benchmark-denotation-key semantic)]
+        (subproblem/publish!
+         store :denotation key {:valid? integer?} semantic)))
     store))
 
 (defn- repeated-hit-batch
-  [store key repetitions]
+  [store key expected repetitions]
   (dotimes [_ repetitions]
-    (when-not (= key
+    (when-not (= expected
                  (:value
                   (subproblem/lookup!
-                   store :projection key {})))
-      (throw (ex-info "Unexpected cache hit value." {:key key}))))
+                   store :denotation key)))
+      (throw
+       (ex-info
+        "Unexpected cache hit value."
+        {:key key :expected expected}))))
   nil)
 (deftest ^:benchmark hit-maintenance-does-not-regress-linearly-with-entry-count
   (testing "hit recency is O(1) state maintenance, not a full LRU-vector walk"
     (let [small-count 64
           large-count 4096
-          small (populated-projection-store small-count)
-          large (populated-projection-store large-count)
+          small (populated-denotation-store small-count)
+          large (populated-denotation-store large-count)
+          small-hot (dec small-count)
+          large-hot (dec large-count)
+          small-hot-key (benchmark-denotation-key small-hot)
+          large-hot-key (benchmark-denotation-key large-hot)
           batches
           (paired-samples
-           #(repeated-hit-batch small (dec small-count) 100)
-           #(repeated-hit-batch large (dec large-count) 100)
+           #(repeated-hit-batch small small-hot-key small-hot 100)
+           #(repeated-hit-batch large large-hot-key large-hot 100)
            80
            10)
           small-p50 (percentile (:left batches) 0.50)

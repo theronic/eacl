@@ -13,5 +13,5 @@
  :fix
  "The final v8 cache removes registered flights and the selection lock. Completion only attempts bounded compare-and-set publication against its captured lifecycle; a cleared lifecycle rejects the detached publication without blocking."
  :closing-evidence
- ["eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test"
+ ["eacl.cache-test/lifecycle-rotation-detaches-data-and-content-revision-test"
   "eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test"]}

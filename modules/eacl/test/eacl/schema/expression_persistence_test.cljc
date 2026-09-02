@@ -1,8 +1,22 @@
 (ns eacl.schema.expression-persistence-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is]]
+            [eacl.cache.derived-schema :as derived-schema]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]))
+
+(defn- derived-identity
+  []
+  {:abi {:engine 8 :derived :v1}
+   :source {:backend :test
+            :source-id :expression-test
+            :branch nil
+            :source-lifecycle "expression-test/initial"}
+   :adapter {:backend :test
+             :fingerprint :expression-test-v1
+             :identity-contract :immutable-v1
+             :operator-capability {:mode :scalar}}
+   :schema-generation 1})
 
 (def schema
   "definition user {}
@@ -119,6 +133,26 @@
          7 (persistence/decode-entity permission))]
     (is (= 1 (count definitions)))
     (is (= :reader (:target-name (first definitions))))))
+
+(deftest cross-request-expression-decodes-use-flat-derived-lru-test
+  (let [entity
+        (first
+         (:permissions
+          (persistence/candidate-schema
+           (resolver/validate-schema schema))))
+        store (derived-schema/store 4)
+        partition
+        (derived-schema/artifact-partition
+         store (derived-identity) :expression-decodes)
+        first-value
+        (binding [persistence/*structural-cache* partition]
+          (persistence/decode-entity-with-metadata entity))
+        second-value
+        (binding [persistence/*structural-cache* partition]
+          (persistence/decode-entity-with-metadata entity))]
+    (is (= first-value second-value))
+    (is (= {:entry-count 1 :max-entries 4}
+           (derived-schema/stats store)))))
 
 #?(:clj
    (deftest concurrent-structural-decode-misses-build-independently-test

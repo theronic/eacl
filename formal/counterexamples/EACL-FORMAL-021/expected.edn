@@ -1,14 +1,12 @@
 {:outcome :client-created
  :forwarded-subproblem-cache
  {:enabled? false
-  :projection-max-weight 17
-  :denotation-max-weight 19
-  :max-inflight 2
-  :managed-proof-max-atoms 3}
+  :denotation-max-entries 19
+  :answer-max-entries 17}
  :invalid-boundary-cases
  [{:enabled? :yes}
-  {:projection-max-weight 0}
-  {:denotation-max-weight 0}
-  {:max-inflight 0}
-  {:managed-proof-max-atoms 0}]
+  {:denotation-max-entries 0}
+  {:answer-max-entries 0}
+  {:projection-max-entries 17}
+  {:managed-proof-max-atoms 3}]
  :invalid-outcome :eacl/invalid-config}
