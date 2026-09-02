@@ -260,6 +260,29 @@ a boundary computed elsewhere; DataScript continuation tests cover a derived
 window on a recursive plan continuing from the checkpoint and a page-size
 change resuming the frontier. Gate results are in the certification table.
 
+## Demo deployment (eacl-demo, 2026-09-02)
+
+The live demos were repinned twice with `npm run upgrade:eacl`: to
+`4139bb0d` (eacl-demo PR #71, production run 33657419165, five of five
+profiles deployed and smoked) and to `340b3559` (PR #72, run 33663690461,
+five of five). Before each merge the four server profiles' handler,
+boundary, operations, profile, and reader suites and the node policy and
+contract suites passed locally against the pin. Fifteen sequential POSTs
+per endpoint from one client, median / p90 in milliseconds:
+
+| Endpoint | Before (9e0105f2 pin) | After 4139bb0d | After 340b3559 |
+|---|---|---|---|
+| datomic.demo.eacl.dev lookup | 567.8 / 616.2 | 561.1 / 576.3 | 577.1 / 635.0 |
+| datomic.demo.eacl.dev count | 541.4 / 589.4 | 669.6 / 784.5 | 567.4 / 690.2 |
+| datalevin.demo.eacl.dev lookup | 569.5 / 608.9 | 573.1 / 707.6 | 571.4 / 644.0 |
+| datalevin.demo.eacl.dev count | 804.5 / 1081.9 | 570.5 / 656.7 | 549.9 / 573.3 |
+
+The live figures are dominated by network and Lambda invocation (about
+half a second per call from this client) and do not resolve the
+sub-millisecond engine gains; they show no regression. The demos keep the
+default client options; wiring the I/O observer and the storage statistics
+into the explorer is a demo-side follow-up.
+
 ## Certification (fresh JVMs, final tree)
 
 | Gate | Result |
@@ -270,7 +293,7 @@ change resuming the frontier. Gate results are in the certification table.
 | Generators + adversarial + mutation controls (strict-replay JVM) | 13 tests, 901 assertions, 0 failures (ten new controls killed) |
 | Counterexample replay, strict (smoke-alias JVM) | 71 tests, 18,228 assertions, 0 failures |
 | Eight generated-differential suites | 52 tests, 18,280 assertions, 0 failures |
-| Consistency-boundary gate | passed (ceiling 15,000 ns) |
+| Consistency-boundary gate | passed (median p95 1,113 ns on the smoke-alias JVM; ceiling 15,000 ns) |
 | Routing-certificate gate | passed |
 | Stable-discovery fast verifier | 673 Dafny obligations, 0 errors (pin updated from 651: `ScanResponseCache.dfy` 12, `RangeAnswerReuse.dfy` 10); scan-response-cache bridge 4,000 serve and 4,000 extend cases, 4 controls killed |
 | `clj-kondo` over the five source roots | 0 errors |
