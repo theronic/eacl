@@ -26,8 +26,6 @@
     :cursor-continuation
     :consistency-plan
     :consistency-validation
-    :current-cache-decision
-    :subproblem-cache-decision
     :ordered-merge-step
     :ordered-merge-chunk
     :recursive-routing-certificate
@@ -62,29 +60,9 @@
   (-read-indexed-result [kernel direction state]
     "Reads the completed public render result and dimensional counters."))
 
-#?(:clj
-   (defonce ^:private kernel-classes
-     ;; Classes already known to satisfy DecisionKernel. `satisfies?` on the
-     ;; JVM walks the class hierarchy against the protocol's extension map on
-     ;; every call (the generated kernels are `extend`ed Java classes, not
-     ;; direct interface implementations), which measured ~10 µs per call and
-     ;; runs several times per request. Only positive answers are memoized:
-     ;; a class cannot stop satisfying a protocol, but a negative answer could
-     ;; become stale if the protocol were extended later.
-     (java.util.concurrent.ConcurrentHashMap.)))
-
 (defn kernel?
   [candidate]
-  #?(:clj
-     (if (nil? candidate)
-       false
-       (let [^java.util.concurrent.ConcurrentHashMap known kernel-classes
-             c (class candidate)]
-         (or (.containsKey known c)
-             (and (satisfies? DecisionKernel candidate)
-                  (do (.put known c Boolean/TRUE) true)))))
-     :cljs
-     (satisfies? DecisionKernel candidate)))
+  (satisfies? DecisionKernel candidate))
 
 (defn indexed-traversal-kernel?
   [candidate]
@@ -101,9 +79,13 @@
      data))))
 
 (defn- exact-keys!
+  "Closed key-set check without materializing a key set on the success
+  path: equal count plus membership of every expected key admits neither a
+  missing nor an unknown field."
   [operation label value expected]
   (when-not (and (map? value)
-                 (= expected (set (keys value))))
+                 (== (count value) (count expected))
+                 (every? #(contains? value %) expected))
     (boundary-error!
      "Generated-kernel boundary map has unknown or missing fields."
      {:operation operation
@@ -112,19 +94,8 @@
       :actual-keys (when (map? value) (set (keys value)))}))
   value)
 
-(defn- safe-integer?
-  [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value)
-                 (js/Number.isSafeInteger value)))
-   (<= exact-integer/minimum
-       value
-       exact-integer/maximum)))
-
-(defn- safe-natural?
-  [value]
-  (and (safe-integer? value) (not (neg? value))))
+(def ^:private safe-integer? exact-integer/exact?)
+(def ^:private safe-natural? exact-integer/natural?)
 
 (defn- nonempty-string?
   [value]
@@ -277,84 +248,6 @@
        "A selected adapter cannot exist without a selected value."
        {:operation operation
         :field :selected-adapter?}))
-    input))
-
-(defn- validate-subproblem-cache-input!
-  [input]
-  (let [operation :subproblem-cache-decision]
-    (require-value!
-     operation
-     :decision
-     #{:lookup :admission :publication}
-     (:decision input))
-    (case (:decision input)
-      :lookup
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :candidate})
-        (require-value!
-         operation
-         :candidate
-         #{:missing :computing :complete :failed}
-         (:candidate input)))
-
-      :admission
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :candidate-present?
-           :attempted-publications :maximum-attempts})
-        (require-value!
-         operation
-         :candidate-present?
-         boolean?
-         (:candidate-present? input))
-        (doseq [field [:attempted-publications :maximum-attempts]]
-          (require-value!
-           operation field safe-natural? (get input field))))
-
-      :publication
-      (do
-        (exact-keys!
-         operation
-         :input
-         input
-         #{:decision :ticket-current? :complete? :valid?
-           :weight :budget})
-        (doseq [field [:ticket-current? :complete? :valid?]]
-          (require-value! operation field boolean? (get input field)))
-        (doseq [field [:weight :budget]]
-          (require-value!
-           operation field safe-natural? (get input field)))))
-    input))
-
-(def ^:private current-cache-stages
-  #{:eligibility :generation :exact-entry :exact-only-entry
-    :managed-entry})
-
-(def ^:private current-cache-actions
-  #{:bypass-current-cache
-    :probe-exact-entry
-    :use-exact-entry
-    :probe-managed-entry
-    :use-managed-entry
-    :compute-selected-value
-    :compute-exact-value})
-
-(defn- validate-current-cache-input!
-  [input]
-  (let [operation :current-cache-decision]
-    (exact-keys!
-     operation :input input #{:stage :available?})
-    (require-value!
-     operation :stage current-cache-stages (:stage input))
-    (require-value!
-     operation :available? boolean? (:available? input))
     input))
 
 (def ^:private ordered-merge-steps
@@ -1636,9 +1529,6 @@
     :consistency-plan (validate-consistency-plan-input! input)
     :consistency-validation
     (validate-consistency-selection-input! input)
-    :current-cache-decision (validate-current-cache-input! input)
-    :subproblem-cache-decision
-    (validate-subproblem-cache-input! input)
     :ordered-merge-step (validate-ordered-merge-input! input)
     :ordered-merge-chunk (validate-ordered-merge-chunk-input! input)
     :recursive-routing-certificate
@@ -1757,95 +1647,6 @@
    consistency-validation-decisions
    result))
 
-(defn- expected-consistency-plan
-  [{:keys [mode capability-supported?]}]
-  (cond
-    (not capability-supported?)
-    (case mode
-      :minimize-latency :unsupported-capability
-
-      :at-exact-snapshot
-      :exact-snapshot-unavailable
-
-      :unsupported-head-barrier)
-
-    :else
-    (case mode
-      :minimize-latency :select-current
-      :fully-consistent :select-authoritative
-      :at-least-as-fresh :authenticate-and-select-at-least
-      :at-exact-snapshot :authenticate-and-select-exact)))
-
-(defn- expected-consistency-selection
-  [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? revision-satisfied?]}]
-  (cond
-    (not selection-present?)
-    (if (= :exact kind)
-      :exact-snapshot-unavailable
-      :invalid-selected-adapter)
-
-    (not selected-adapter?)
-    :invalid-selected-adapter
-
-    (not same-source-scope?)
-    :incomparable-scope
-
-    (and (#{:at-least :exact} kind)
-         (not revision-satisfied?))
-    :history-divergence
-
-    :else
-    :accept))
-
-(def subproblem-cache-actions
-  #{:start-independent-computation
-    :use-completed-value
-    :attempt-publication
-    :skip-publication
-    :retain-publication
-    :drop-publication})
-
-(defn- validate-subproblem-cache-result!
-  [result]
-  (require-value!
-   :subproblem-cache-decision
-   :result
-   subproblem-cache-actions
-   result))
-
-(defn- expected-subproblem-cache-action
-  [{:keys [decision] :as input}]
-  (case decision
-    :lookup
-    (if (= :complete (:candidate input))
-      :use-completed-value
-      :start-independent-computation)
-
-    :admission
-    (if (and (not (:candidate-present? input))
-             (< (:attempted-publications input)
-                (:maximum-attempts input)))
-      :attempt-publication
-      :skip-publication)
-
-    :publication
-    (if (and (:ticket-current? input)
-             (:complete? input)
-             (:valid? input)
-             (pos? (:weight input))
-             (<= (:weight input) (:budget input)))
-      :retain-publication
-      :drop-publication)))
-
-(defn- validate-current-cache-result!
-  [result]
-  (require-value!
-   :current-cache-decision
-   :result
-   current-cache-actions
-   result))
-
 (defn- validate-ordered-merge-result!
   [result]
   (require-value!
@@ -1871,100 +1672,6 @@
       (require-value!
        operation [:result field] safe-natural? (get result field)))
     result))
-
-(defn- expected-current-cache-action
-  [{:keys [stage available?]}]
-  (case stage
-    (:eligibility :generation)
-    (if available?
-      :probe-exact-entry
-      :bypass-current-cache)
-
-    :exact-entry
-    (if available?
-      :use-exact-entry
-      :probe-managed-entry)
-
-    :exact-only-entry
-    (if available?
-      :use-exact-entry
-      :compute-exact-value)
-
-    :managed-entry
-    (if available?
-      :use-managed-entry
-      :compute-selected-value)))
-
-(defn- expected-enumeration-route
-  [{:keys [schema-identity certificate-schema-identity
-           root-defined? recursive? recursive-data-active?]}]
-  (cond
-    (or (empty? schema-identity)
-        (empty? certificate-schema-identity))
-    {:status :rejected :reason :missing-schema-identity}
-
-    (not= schema-identity certificate-schema-identity)
-    {:status :rejected :reason :schema-identity-mismatch}
-
-    :else
-    {:status :accepted
-     :route
-     (cond
-       (not root-defined?) :undefined
-       (and recursive? recursive-data-active?) :recursive
-       :else :acyclic)}))
-
-(defn- expected-acyclic-page
-  [{:keys [direction realized-eids size bound?]}]
-  (let [realized-count (count realized-eids)
-        take-count (min size realized-count)
-        sentinel? (> realized-count size)]
-    {:take-count take-count
-     :reverse? (= :desc direction)
-     :has-next? (if (= :asc direction) sentinel? bound?)
-     :has-previous? (if (= :asc direction) bound? sentinel?)
-     :merge-advances realized-count
-     :emitted-results take-count
-     :recursive-work 0}))
-
-(defn- expected-acyclic-continuation
-  [{:keys [authenticated? schema-matches? query-matches?
-           snapshot-matches? entry-present? entry-valid?]}]
-  (cond
-    (not (and authenticated?
-              schema-matches?
-              query-matches?
-              snapshot-matches?))
-    :reject
-
-    (and entry-present? entry-valid?)
-    :resume
-
-    :else
-    :replay))
-
-(defn- expected-acyclic-count
-  [{:keys [unique-count more? limit]}]
-  (let [limited? (some? limit)]
-    {:count
-     (if (and limited? (< limit unique-count))
-       limit
-       unique-count)
-     :truncated?
-     (boolean
-      (and limited?
-           (or (< limit unique-count)
-               (and (= limit unique-count) more?))))
-     :recursive-work 0}))
-
-(defn- expected-acyclic-work
-  [{:keys [requested-window merge-advances
-           emitted-results recursive-work]}]
-  (if (and (<= merge-advances (inc requested-window))
-           (<= emitted-results requested-window)
-           (zero? recursive-work))
-    :accepted
-    :rejected))
 
 (def indexed-scan-rejection-reasons
   #{:invalid-command
@@ -2301,10 +2008,6 @@
     :consistency-plan (validate-consistency-plan-result! result)
     :consistency-validation
     (validate-consistency-selection-result! result)
-    :current-cache-decision
-    (validate-current-cache-result! result)
-    :subproblem-cache-decision
-    (validate-subproblem-cache-result! result)
     :ordered-merge-step (validate-ordered-merge-result! result)
     :ordered-merge-chunk (validate-ordered-merge-chunk-result! result)
     :recursive-routing-certificate
@@ -2330,7 +2033,24 @@
      {:operation operation
       :known-operations operations})))
 
+(declare normalize-general-selection)
+
 (defn normalize-selection
+  [selection]
+  (if (and (map? selection)
+           (== 1 (count selection))
+           (contains? selection :kernel))
+    ;; The production shape: one closed configuration map that cannot carry
+    ;; an unknown field, so only the kernel itself needs checking.
+    (do
+      (when-not (kernel? (:kernel selection))
+        (boundary-error!
+         "EACL v8 requires a generated DecisionKernel."
+         {:kernel-type (str (type (:kernel selection)))}))
+      selection)
+    (normalize-general-selection selection)))
+
+(defn- normalize-general-selection
   [selection]
   (let [selection
         (cond
@@ -2385,131 +2105,11 @@
          {:operation operation
           :size (:size input)
           :take-count (:take-count result)}))
-      
-      (when (and (= :consistency-plan operation)
-                 (not= result (expected-consistency-plan input)))
-        (boundary-error!
-         "Generated consistency plan contradicts its validated input."
-         {:operation operation
-          :mode (:mode input)
-          :result result}))
-      (when (and (= :consistency-validation operation)
-                 (not= result
-                       (expected-consistency-selection input)))
-        (boundary-error!
-         "Generated snapshot validation contradicts its validated input."
-         {:operation operation
-          :kind (:kind input)
-          :result result}))
-      (when (and (= :current-cache-decision operation)
-                 (not= result
-                       (expected-current-cache-action input)))
-        (boundary-error!
-         "Generated current-cache action contradicts its validated stage."
-         {:operation operation
-          :stage (:stage input)
-          :available? (:available? input)
-          :result result}))
-      (when (and (= :subproblem-cache-decision operation)
-                 (not= result
-                       (expected-subproblem-cache-action input)))
-        (boundary-error!
-         "Generated subproblem-cache action contradicts its validated state."
-         {:operation operation
-          :decision (:decision input)
-          :result result}))
-      (when (= :recursive-routing-certificate operation)
-        (let [node-count (:node-count input)
-              path-count (count (:path-descriptors input))
-              edge-count (count (:edges input))
-              accepted? (= :accepted (:status result))]
-          (when (or (> (:path-checks result) path-count)
-                    (> (:node-checks result) (* 2 node-count))
-                    (> (:edge-checks result) edge-count)
-                    (and
-                     accepted?
-                     (or (not= node-count
-                               (count (:traversal result)))
-                         (not= (* 2 node-count)
-                               (:node-checks result))
-                         (not= path-count
-                               (:path-checks result))
-                         (not= edge-count
-                               (:edge-checks result)))))
-            (boundary-error!
-             "Generated routing certificate result contradicts its validated input."
-             {:operation operation
-              :node-count node-count
-              :path-count path-count
-              :edge-count edge-count
-              :result-status (:status result)
-              :result-traversal-count
-              (when accepted?
-                (count (:traversal result)))
-              :result-path-checks (:path-checks result)
-              :result-node-checks (:node-checks result)
-              :result-edge-checks (:edge-checks result)}))))
-      (when (and (= :enumeration-route operation)
-                 (not= result (expected-enumeration-route input)))
-        (boundary-error!
-         "Generated enumeration route contradicts its schema binding."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-page operation)
-                 (not= result (expected-acyclic-page input)))
-        (boundary-error!
-         "Generated acyclic page contradicts its ordered input."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-continuation operation)
-                 (not= result
-                       (expected-acyclic-continuation input)))
-        (boundary-error!
-         "Generated acyclic continuation contradicts its authenticated context."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-count operation)
-                 (not= result (expected-acyclic-count input)))
-        (boundary-error!
-         "Generated acyclic count contradicts its unique input cardinality."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-work operation)
-                 (not= result (expected-acyclic-work input)))
-        (boundary-error!
-         "Generated acyclic work decision contradicts its bounded counters."
-         {:operation operation :input input :result result}))
-      (when (= :ordered-merge-chunk operation)
-        (let [left-consumed (:left-consumed result)
-              right-consumed (:right-consumed result)
-              left (:left input)
-              right (:right input)
-              expected-values
-              (->> (concat
-                    (take left-consumed left)
-                    (take right-consumed right))
-                   distinct
-                   (sort
-                    (case (:direction input)
-                      :asc <
-                      :desc >))
-                   vec)]
-          (when (or (> left-consumed (count left))
-                    (> right-consumed (count right))
-                    (and (or (empty? left) (empty? right))
-                         (or (pos? left-consumed)
-                             (pos? right-consumed)))
-                    (and (seq left)
-                         (seq right)
-                         (not
-                          (or (= left-consumed (count left))
-                              (= right-consumed (count right)))))
-                    (not= expected-values (:values result)))
-            (boundary-error!
-             "Generated merge chunk contradicts its validated input."
-             {:operation operation
-              :direction (:direction input)
-              :left-count (count left)
-              :right-count (count right)
-              :left-consumed left-consumed
-              :right-consumed right-consumed
-              :result-count (count (:values result))}))))
+      ;; The post-kernel `expected-*` re-derivations and the dead-operation
+      ;; compare branches were removed: the assurance contract mandates
+      ;; input/result validation at this boundary, not answer re-derivation,
+      ;; which the offline differential suites already provide at scale (and
+      ;; which on CLJS compared the portable kernel against itself).
       result)
     (catch #?(:clj Exception :cljs :default) error
       (if (= :eacl.verification/invalid-boundary

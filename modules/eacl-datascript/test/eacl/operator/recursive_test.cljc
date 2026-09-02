@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [clojure.string :as str]
             [datascript.core :as ds]
+            [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -14,6 +15,15 @@
             [eacl.operator.recursive :as recursive]
             [eacl.operator-engine.oracle :as oracle]
             [eacl.subproblem-cache :as subproblem]))
+
+(defn- test-exact-key
+  [semantic]
+  (let [identity {:tier :denotation
+                  :source-lifecycle {:source :test :lifecycle :operator}
+                  :abi :test-authorization-v2
+                  :semantic semantic
+                  :reuse [:basis 1]}]
+    (cache-key/exact-denotation-key identity)))
 
 (def recursive-schema
   "definition user {}
@@ -529,15 +539,17 @@
                       :scope-identity {:proof :generation-b}
                       :checkpoint checkpoint))))))))
 
-(deftest completed-direct-decisions-reuse-proof-compatible-cache-test
+(deftest physical-operator-work-is-not-shared-through-subproblem-cache-test
   (let [{:keys [adapter plan] :as fixture} (chain-fixture)
         options {:adapter adapter :plan plan
                  :candidates (candidates fixture)
                  :scope-identity :cached-direct-decisions}
         store (subproblem/store)
-        first-run (binding [subproblem/*store* store]
+        first-run (binding [subproblem/*store* store
+                            subproblem/*exact-denotation-key-fn* test-exact-key]
                     (recursive/evaluate-many options))
-        second-run (binding [subproblem/*store* store]
+        second-run (binding [subproblem/*store* store
+                             subproblem/*exact-denotation-key-fn* test-exact-key]
                      (recursive/evaluate-many options))
         before-disabled (subproblem/stats store)
         disabled-run (binding [subproblem/*store* nil]
@@ -546,24 +558,28 @@
         read-only-store (subproblem/store)
         read-only-run
         (binding [subproblem/*store* read-only-store
+                  subproblem/*exact-denotation-key-fn* test-exact-key
                   subproblem/*populate?* false]
           (recursive/evaluate-many options))]
     (is (= (:decisions first-run) (:decisions second-run)
            (:decisions disabled-run) (:decisions read-only-run)))
     (is (pos? (get-in first-run [:counters :direct-adapter-commands])))
-    (is (zero? (get-in second-run [:counters :direct-adapter-commands])))
-    (is (pos? (get-in second-run [:counters :direct-cache-hits])))
+    (is (= (get-in first-run [:counters :direct-adapter-commands])
+           (get-in second-run [:counters :direct-adapter-commands])
+           (get-in disabled-run [:counters :direct-adapter-commands])
+           (get-in read-only-run [:counters :direct-adapter-commands])))
     (is (pos? (get-in first-run [:counters :commands])))
-    (is (zero? (get-in second-run [:counters :commands])))
-    (is (pos? (get-in second-run [:counters :shared-scan-cache-hits])))
+    (is (= (get-in first-run [:counters :commands])
+           (get-in second-run [:counters :commands])
+           (get-in disabled-run [:counters :commands])
+           (get-in read-only-run [:counters :commands])))
     (is (= (get-in first-run [:counters :values])
            (get-in second-run [:counters :values]))
-        "cached scan responses retain the same logical value charge")
+        "physical scan responses retain the same logical value charge")
     (is (= before-disabled after-disabled)
         "cache-disabled execution performs no operator cache work")
-    (is (pos? (get-in read-only-run [:counters :direct-adapter-commands])))
-    (is (zero? (get-in (subproblem/stats read-only-store)
-                       [:tiers :projection :entries])))))
+    (is (not (contains? (:tiers (subproblem/stats read-only-store))
+                        :projection)))))
 
 (deftest completed-recursive-points-are-reused-only-in-their-proof-scope-test
   (let [{:keys [adapter plan] :as fixture} (chain-fixture)
@@ -571,15 +587,18 @@
         base {:adapter adapter :plan plan
               :candidates (candidates fixture)}
         first-run
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (recursive/evaluate-cached-many
            (assoc base :scope-identity :proof-a)))
         second-run
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (recursive/evaluate-cached-many
            (assoc base :scope-identity :proof-a)))
         changed-proof-run
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (recursive/evaluate-cached-many
            (assoc base :scope-identity :proof-b)))]
     (is (= (:decisions first-run) (:decisions second-run)
@@ -593,7 +612,7 @@
     (is (= 6 (get-in changed-proof-run
                      [:counters :point-cache-misses])))
     (is (pos? (get-in changed-proof-run
-                      [:counters :direct-cache-hits])))))
+                      [:counters :direct-adapter-commands])))))
 
 (deftest fact-arrival-order-does-not-change-results-or-retained-state-test
   (let [alice (object :user "alice")
@@ -653,7 +672,8 @@
            (throw (ex-info "Injected direct-membership failure."
                            {:type :eacl.test/injected-provider-failure}))))
         error
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (error-data
            #(recursive/evaluate-cached-many
              {:adapter failing-adapter :plan plan
@@ -661,7 +681,8 @@
               :scope-identity :provider-failure})))
         stats (subproblem/stats store)
         recovery
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (recursive/evaluate-many
            {:adapter adapter :plan plan
             :candidates (candidates fixture)
@@ -694,7 +715,8 @@
          :scope-identity :late-provider-failure}
         store (subproblem/store)
         error
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (error-data
            #(recursive/evaluate-many
              (assoc options :adapter failing-adapter))))
@@ -702,15 +724,17 @@
         (binding [subproblem/*store* nil]
           (recursive/evaluate-many (assoc options :adapter adapter)))
         recovery
-        (binding [subproblem/*store* store]
+        (binding [subproblem/*store* store
+                  subproblem/*exact-denotation-key-fn* test-exact-key]
           (recursive/evaluate-many (assoc options :adapter adapter)))]
     (is (= :eacl.test/injected-late-provider-failure (:type error)))
     (is (= (:decisions cache-free) (:decisions recovery)))
     (is (= (get-in cache-free [:counters :direct-adapter-commands])
            (get-in recovery [:counters :direct-adapter-commands]))
         "successful direct decisions preceding the late failure stayed private")
-    (is (pos? (get-in recovery [:counters :shared-scan-cache-hits]))
-        "a complete exact arrow chunk remains independently reusable")))
+    (is (= (get-in cache-free [:counters :commands])
+           (get-in recovery [:counters :commands]))
+        "a failed request leaves no shared physical arrow artifact")))
 
 (defn- public-object [type id]
   (eacl/spice-object type id))
@@ -790,7 +814,7 @@
         (is (true? (:allowed? cold)))
         (is (false? (:cached? cold)))
         (is (true? (:cached? warm)))
-        (is (pos? (:managed-generations before)))
+        (is (pos? (:managed-entries before)))
         (is (zero? (:stamp-failures before)))
 
         (eacl/create-relationship!
@@ -822,10 +846,8 @@
               after-bypass (datascript/cache-stats client)]
           (is (true? (:allowed? bypass)))
           (is (false? (:cached? bypass)))
-          (is (= (dissoc before-bypass :bypasses
-                         :relationship-observations)
-                 (dissoc after-bypass :bypasses
-                         :relationship-observations))
+          (is (= (dissoc before-bypass :bypasses)
+                 (dissoc after-bypass :bypasses))
               "operator bypass performs no lookup, lifting, or publication")
           (is (= (inc (:bypasses before-bypass))
                  (:bypasses after-bypass))))))))

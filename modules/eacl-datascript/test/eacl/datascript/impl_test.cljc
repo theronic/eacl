@@ -117,6 +117,8 @@
     (testing "forward scans match the bounded AVET range semantics"
       (is (= [server-1-id server-2-id]
              (vec (impl/subject->resources db :account account-id account-relation :server nil))))
+      (is (= [server-1-id server-2-id]
+             (vec (impl/subject->resources db :account account-id account-relation :server {}))))
       (is (= (forward-reference db :account account-id account-relation :server nil)
              (vec (impl/subject->resources db :account account-id account-relation :server nil)))))
 
@@ -153,9 +155,16 @@
       (is (not-any? #{(object-id->entid db "network-1")}
                     (impl/subject->resources db :account account-id account-relation :server nil))))
 
+    (testing "empty forward probes return a reusable bounded vector"
+      (is (vector?
+           (impl/subject->resources
+            db :account account-id (inc account-relation) :server nil))))
+
     (testing "reverse scans match the bounded AVET range semantics"
       (is (= [account-id]
              (vec (impl/resource->subjects db :server server-1-id account-relation :account nil))))
+      (is (= [account-id]
+             (vec (impl/resource->subjects db :server server-1-id account-relation :account {}))))
       (is (= (reverse-reference db :server server-1-id account-relation :account nil)
              (vec (impl/resource->subjects db :server server-1-id account-relation :account nil)))))
 
@@ -176,7 +185,12 @@
       (is (= [account-id]
              (vec (impl/resource->subjects db :server server-1-id account-relation :account nil))))
       (is (not-any? #{(object-id->entid db "user-1")}
-                    (impl/resource->subjects db :server server-1-id account-relation :account nil))))))
+                    (impl/resource->subjects db :server server-1-id account-relation :account nil))))
+
+    (testing "empty reverse probes return a reusable bounded vector"
+      (is (vector?
+           (impl/resource->subjects
+            db :server server-1-id (inc account-relation) :account nil))))))
 
 (defn- seed-permission-db
   []
@@ -251,9 +265,12 @@
                     (swap! calc-calls inc)
                     (apply orig-calc args))]
       (let [subject (spice-object :user "user-1")
-            resource (spice-object :server "server-1")]
-        (is (not= (:derived-schema-caches (:runtime client-1))
-                  (:derived-schema-caches (:runtime client-2))))
+            resource (spice-object :server "server-1")
+            store-1 (:derived-schema-caches
+                     @(get-in client-1 [:runtime :runtime-lifecycle-state]))
+            store-2 (:derived-schema-caches
+                     @(get-in client-2 [:runtime :runtime-lifecycle-state]))]
+        (is (not (identical? store-1 store-2)))
         (eacl/can? client-1 subject :view resource)
         (eacl/can? client-2 subject :view resource)
         (is (= 2 @calc-calls))

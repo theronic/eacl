@@ -1,0 +1,32 @@
+{:schema-version 1
+ :measurement :uncompressed-byte-length
+ :maximum-growth-over-reviewed-full-kernel 1.25
+ :reviewed-baseline-change
+ [:ordinal-rebase-and-backward-render-cleanup
+  :bounded-wave-batched-scan-protocol
+  :exclude-proof-only-execution-contract-from-generated-runtime
+  :remove-generated-cache-stage-and-availability-policy
+  :exclude-proof-only-cache-refinement-modules-from-generated-runtime]
+ :artifacts
+ {:java-source
+   {:path "target/formal/java/EaclKernel-java"
+    :kind :tree-suffix
+    :suffix ".java"
+   :baseline-bytes 2018401
+   :maximum-bytes 2523002}
+  :java-classes-with-runtime
+   {:path "target/formal/java/classes"
+    :kind :tree-suffix
+    :suffix ".class"
+   :baseline-bytes 1764554
+   :maximum-bytes 2205693}
+  :javascript-with-runtime
+   {:path "target/formal/js/EaclKernel.js"
+    :kind :file
+   :baseline-bytes 912491
+   :maximum-bytes 1140614}
+  :browser-iife
+   {:path "target/formal/browser/EaclKernel.browser.js"
+    :kind :file
+   :baseline-bytes 566536
+   :maximum-bytes 708170}}}

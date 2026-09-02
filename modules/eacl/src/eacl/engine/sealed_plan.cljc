@@ -30,6 +30,16 @@
 
 (def fingerprint-domain "eacl.sealed-plan.v1")
 
+(def rank-contract
+  "The one production rank-cost contract. Planning reads it to rank rules;
+  sealed order metadata and fingerprints carry the same costs. Formal
+  refinement derives its oracle independently rather than importing this
+  value."
+  {:version 1
+   :local-read-costs
+   {:relation 1 :self-permission 0
+    :arrow-relation 2 :arrow-permission 1}})
+
 (def order-contract
   "The complete order-ABI contract sealed into every fingerprint. Any change
   to rule ordering, rank costs, admission-key granularity, scan order,
@@ -47,8 +57,7 @@
   {:abi-version 2
    :rule-order :canonical-encoding-ordinal
    :alternative-order :rank-then-ordinal
-   :rank-costs {:relation 1 :self-permission 0
-                :arrow-relation 2 :arrow-permission 1}
+   :rank-costs (:local-read-costs rank-contract)
    :admission-keys {:merge-points :target-node-and-entity
                     :scans :rule-ordinal-and-binding-excluding-bound}
    :logical-release-width 1
@@ -87,7 +96,7 @@
 (defn- node-rules
   "Compiles the four-kind rules for one permission node from its
   definition rows."
-  [adapter [resource-type permission-name :as node]]
+  [adapter [resource-type permission-name :as node] permission-rows]
   (vec
    (mapcat
     (fn [{:keys [source-relation-name source-subject-type
@@ -149,25 +158,31 @@
                          :source-relation source-relation-name
                          :target-type target-type
                          :target-name target-name})))
-    (permission-defs adapter resource-type permission-name))))
+    permission-rows)))
 
-(defn- reachable-rules
+(defn- reachable-program
   "Breadth-first closure over permission nodes reachable from the root via
   self-permission and arrow-permission targets. Returns the complete rule
-  vector for the program."
+  vector plus the already-read normalized permission bodies. Keeping the
+  bodies avoids crossing the adapter boundary again when an acyclic plan
+  derives its execution-only alias frontier."
   [adapter root-node]
   (loop [frontier [root-node]
          visited #{}
-         rules []]
+         rules []
+         permission-bodies {}]
     (if-let [node (first frontier)]
       (if (visited node)
-        (recur (subvec frontier 1) visited rules)
-        (let [compiled (node-rules adapter node)
+        (recur (subvec frontier 1) visited rules permission-bodies)
+        (let [[resource-type permission-name] node
+              body (permission-defs adapter resource-type permission-name)
+              compiled (node-rules adapter node body)
               targets (keep :target-node compiled)]
           (recur (into (subvec frontier 1) targets)
                  (conj visited node)
-                 (into rules compiled))))
-      rules)))
+                 (into rules compiled)
+                 (assoc permission-bodies node body))))
+      {:rules rules :permission-bodies permission-bodies})))
 
 ;; ---------------------------------------------------------------------------
 ;; Canonical ordinals
@@ -327,10 +342,11 @@
                                         (inc (hops to)))))))))
                  (range node-count)))))
 
-(def local-read-cost
-  "Static storage-read boundaries the rule itself must cross before its
-  head derivation continues."
-  {:relation 1 :self-permission 0 :arrow-relation 2 :arrow-permission 1})
+(defn- current-order-contract
+  "The order contract as derived from `rank-contract` at seal time, so a
+  rebound rank contract drives execution metadata and the fingerprint."
+  []
+  (assoc order-contract :rank-costs (:local-read-costs rank-contract)))
 
 (defn- rank-rules
   [rules node->index distance]
@@ -340,7 +356,8 @@
               (compile-error!
                "Rule node cannot reach the root; the program is malformed."
                {:node (:node rule)}))
-            (assoc rule :rank (+ (local-read-cost (:rule rule))
+            (assoc rule :rank (+ (get-in rank-contract
+                                         [:local-read-costs (:rule rule)])
                                  node-distance))))
         rules))
 
@@ -400,7 +417,7 @@
   "Complete canonical record sequence for the composite fingerprint. Record
   order is contractual."
   [{:keys [version root root-index nodes rules edges certificate
-           order-mode recursive?]}]
+           order-contract order-mode recursive? execution-frontier]}]
   (concat
    [[:header version root root-index (count nodes) (count rules)]
     [:order-contract order-contract]
@@ -416,7 +433,27 @@
            (nth (:distance certificate) i)
            (nth (:witness-edge certificate) i)
            (nth (:hops certificate) i)])
-        (range (count nodes)))))
+        (range (count nodes)))
+   ;; Preserve existing fingerprints for plans whose execution frontier is
+   ;; unchanged. Only a plan that actually normalizes or removes an alias
+   ;; receives the additional compatibility input.
+   (when execution-frontier
+     (concat
+      [[:execution-frontier
+        (:version execution-frontier)
+        (:normalization execution-frontier)
+        (:order-certificate execution-frontier)]]
+      (map (fn [rule] [:execution-rule (:ordinal rule) rule])
+           (:rules execution-frontier))))))
+
+(defn plan-fingerprint
+  "Returns the sealed compatibility fingerprint for PLAN's semantic graph,
+  rank/order contract, and any changed least-path execution frontier. The
+  function is exposed for cursor-compatibility and independent refinement
+  tests; callers must not use it as an adapter/cache ABI."
+  [plan]
+  (secure-format/canonical-records-digest
+   fingerprint-domain (vec (plan-records plan))))
 
 (defn- cyclic-nodes?
   "True when the permission-dependency graph contains a cycle, i.e. the
@@ -442,12 +479,92 @@
           (recur degrees stack (inc sorted)))
         (< sorted node-count)))))
 
+;; ---------------------------------------------------------------------------
+;; Acyclic least-path execution frontier
+;; ---------------------------------------------------------------------------
+
+(defn resolve-pure-alias
+  "Resolves TARGET-NODE through a chain whose every traversed body is exactly
+  one same-resource self-permission.
+
+  PERMISSION-BODIES is the normalized, complete map captured while compiling
+  the semantic graph. Missing definitions and cycles return the original
+  target, so incomplete evidence never authorizes a rewrite. A composite or
+  relation-dependent body is the conservative terminal node: any exact alias
+  prefix leading to it remains valid, but the terminal body is not inspected
+  or rewritten further. The result includes the stop reason for portable
+  property and formal-refinement tests."
+  [permission-bodies target-node]
+  (loop [node target-node
+         visited #{}]
+    (cond
+      (contains? visited node)
+      {:target target-node :changed? false :stop :cycle}
+
+      (not (contains? permission-bodies node))
+      {:target target-node :changed? false :stop :missing}
+
+      :else
+      (let [body (get permission-bodies node)
+            [resource-type permission-name] node
+            definition (when (= 1 (count body)) (first body))
+            pure-target
+            (when (and definition
+                       (= resource-type (:resource-type definition))
+                       (= permission-name (:permission-name definition))
+                       (= :self (:source-relation-name definition))
+                       (nil? (:source-subject-type definition))
+                       (= :permission (:target-type definition))
+                       (keyword? (:target-name definition)))
+              [resource-type (:target-name definition)])]
+        (if pure-target
+          (recur pure-target (conj visited node))
+          {:target node
+           :changed? (not= target-node node)
+           :stop (if (> (count body) 1)
+                   :composite
+                   :relation-dependent)})))))
+
+(defn- normalize-arrow-target
+  [permission-bodies rule]
+  (if (= :arrow-permission (:rule rule))
+    (assoc rule :target-node
+           (:target (resolve-pure-alias permission-bodies
+                                        (:target-node rule))))
+    rule))
+
+(defn derive-execution-frontier
+  "Builds the least-path-only rule frontier. Semantic rules and graph nodes
+  remain untouched. Complete normalized rule identity excludes only the
+  original ordinal; equal rules retain the earliest canonical ordinal."
+  [rules permission-bodies]
+  (let [normalized (mapv #(normalize-arrow-target permission-bodies %) rules)
+        execution-rules
+        (:rules
+         (reduce
+          (fn [{:keys [seen] :as state} rule]
+            (let [identity (dissoc rule :ordinal)]
+              (if (contains? seen identity)
+                state
+                (-> state
+                    (update :seen conj identity)
+                    (update :rules conj rule)))))
+          {:seen #{} :rules []}
+          normalized))]
+    (when-not (= rules execution-rules)
+      {:version 1
+       :normalization :exact-same-resource-single-body-alias
+       :rules execution-rules
+       :order-certificate (mapv :ordinal execution-rules)})))
+
 (defn seal-plan
   "Compiles and seals the direction-specific plan for one root permission
   node against one adapter's schema definitions. Pure with respect to
   relationship data; fail-closed on malformed schemas."
   [adapter root-node]
-  (let [rules (assign-ordinals (reachable-rules adapter root-node))
+  (let [{raw-rules :rules permission-bodies :permission-bodies}
+        (reachable-program adapter root-node)
+        rules (assign-ordinals raw-rules)
         nodes (plan-nodes root-node rules)
         node->index (into {} (map-indexed (fn [i node] [node i]) nodes))
         root-index (node->index root-node)
@@ -462,6 +579,10 @@
                             {:root root-node}))
         ranked (rank-rules rules node->index distance)
         recursive? (cyclic-nodes? (count nodes) edges)
+        execution-frontier (when-not recursive?
+                             (derive-execution-frontier ranked
+                                                        permission-bodies))
+        execution-rules (or (:rules execution-frontier) ranked)
         plan {:version plan-version
               :root root-node
               :root-index root-index
@@ -469,14 +590,16 @@
               :rules ranked
               :edges edges
               :certificate certificate
-              :order-contract order-contract
+              :order-contract (current-order-contract)
               ;; ABI v2: order mode is selected statically per plan and
               ;; participates in the digest (an acyclic root's whole
               ;; reachable program is acyclic, so regimes never compose).
               :recursive? recursive?
               :order-mode (if recursive? :first-discovery :least-path)
-              :indexes (indexes ranked)}]
+              :indexes (indexes execution-rules)}
+        plan (cond-> plan
+               execution-frontier
+               (assoc :execution-frontier execution-frontier))]
     (assoc plan
            :fingerprint
-           (secure-format/canonical-records-digest
-            fingerprint-domain (vec (plan-records plan))))))
+           (plan-fingerprint plan))))

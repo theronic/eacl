@@ -19,6 +19,7 @@
     :required-entry "eacl/core.cljc"
     :dependencies
     {'org.clojure/clojure {:mvn/version "1.11.4"}
+     'com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
      'instaparse/instaparse {:mvn/version "1.5.0"}}
     :generated-runtime? true}
 
@@ -42,7 +43,9 @@
     {'org.clojure/clojure {:mvn/version "1.11.4"}
      'dev.eacl/eacl ::eacl-version
      'com.rpl/specter {:mvn/version "1.1.4"}
-     'org.replikativ/datahike {:mvn/version "0.8.1759"}}}
+     'org.replikativ/datahike
+     {:mvn/version "0.8.1759"
+      :exclusions ['com.github.pkpkpk/cljs-cache]}}}
 
    :eacl-datascript
    {:lib 'dev.eacl/eacl-datascript

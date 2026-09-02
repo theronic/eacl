@@ -137,6 +137,14 @@ The verification artifacts SHALL enumerate every unproved language, compiler, ru
 ### Requirement: Cross-runtime verified behavior
 The same verified source semantics SHALL govern the authoritative Clojure/JVM and supported ClojureScript decision paths. Boundary code SHALL reject values that cannot be represented exactly and SHALL preserve result, ordering, cursor, cache, and typed-error behavior across runtimes for portable inputs.
 
+A finite host specialization MAY replace repeated execution of one generated
+decision only when complete mechanically checked equivalence covers the entire
+validated input domain and binds the generated source/artifact, host source,
+domain, mapping, and evidence identities. The generated decision remains the
+semantic authority. Missing, stale, incomplete, or mismatched refinement
+evidence SHALL disable the specialization rather than permit a handwritten
+fallback.
+
 #### Scenario: Portable cross-runtime case
 - **WHEN** the same portable schema, graph, request, cache state, and cursor history run on supported CLJ and CLJS targets
 - **THEN** both targets produce semantically equivalent results and errors
@@ -144,6 +152,12 @@ The same verified source semantics SHALL govern the authoritative Clojure/JVM an
 #### Scenario: Out-of-range internal identity
 - **WHEN** an internal identifier cannot be represented exactly by a target runtime
 - **THEN** the boundary returns a typed validation error rather than rounding, truncating, or authorizing with a different identity
+
+#### Scenario: Finite specialization evidence becomes stale
+- **WHEN** the generated current-cache decision, its finite domain, mapping, or
+  host implementation changes without matching refinement evidence
+- **THEN** production does not execute the specialization
+- **AND** qualification fails until complete equivalence is re-established
 
 ### Requirement: Counterexample-driven bug discovery
 The repository SHALL provide coherent generators and temporal models that search direct, recursive, forward, reverse, cursor, cache, restore, reset, branch, retention, tampering, and provider-failure behavior. Every discovered mismatch or invariant violation SHALL be minimized, reproducible, classified, and retained as a regression before it is considered resolved.
@@ -211,4 +225,3 @@ The repository SHALL pin verification tools and solvers, verify downloaded tool 
 #### Scenario: Release artifact
 - **WHEN** an EACL release is prepared
 - **THEN** its verification manifest identifies the exact proved source and generated artifacts shipped by that release
-

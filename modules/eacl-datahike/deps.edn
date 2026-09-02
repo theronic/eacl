@@ -5,7 +5,9 @@
         ;; 0.8.1759 is the first release carrying replikativ/datahike#921. Below it
         ;; relation and permission composite tuples silently fail to derive under
         ;; :attribute-refs?, making the authorization schema invisible.
-        org.replikativ/datahike {:mvn/version "0.8.1759"}}
+        org.replikativ/datahike
+        {:mvn/version "0.8.1759"
+         :exclusions [com.github.pkpkpk/cljs-cache]}}
  :aliases {:build {:extra-paths ["."]
                    :ns-default build
                    :extra-deps {eacl/build-tools {:local/root "../../src-build"}}}

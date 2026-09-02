@@ -1,0 +1,151 @@
+{:evidence/version 1
+ :authority-status :historical-captured-reproduction
+ :superseded-by
+ ["formal/verification/performance-gates.edn"
+  "docs/benchmarks/results/2026-08-29-eacl-performance-amplification/mechanism-ledger.edn"]
+ :interpretation
+ "Captured pre-standard-LRU measurements retain their original weight-shaped fields as historical data; they are not current cache-policy authority."
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :classpath-sha256 "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"
+ :command
+ "clj-nrepl-eval -p 7788 \"(require '[eacl.performance.amplification-reproduction :as reproduction] :reload) (reproduction/engine-report)\""
+ :operation-boundary :internal-engine-and-adapter-seams
+ :estimator :deterministic-counters-and-structural-proxies
+ :least-path-limit
+ [{:route :least-path
+   :descriptor-limit 1
+   :adapter-options {:direction :asc}
+   :adapter-received-limit nil
+   :backend-eager-values-realized 64
+   :logical-values-returned 1
+   :logical-counters {:commands 1 :fetched-values 1
+                      :stream-opens 1 :emissions 0}
+   :stable-reducer-counters :not-applicable}
+  {:route :least-path
+   :descriptor-limit 1
+   :adapter-options {:direction :asc}
+   :adapter-received-limit nil
+   :backend-eager-values-realized 1024
+   :logical-values-returned 1
+   :logical-counters {:commands 1 :fetched-values 1
+                      :stream-opens 1 :emissions 0}
+   :stable-reducer-counters :not-applicable}
+  {:route :least-path
+   :descriptor-limit 1
+   :adapter-options {:direction :asc}
+   :adapter-received-limit nil
+   :backend-eager-values-realized 16384
+   :logical-values-returned 1
+   :logical-counters {:commands 1 :fetched-values 1
+                      :stream-opens 1 :emissions 0}
+   :stable-reducer-counters :not-applicable}]
+ :stable-retention
+ [{:route :stable-first-discovery
+   :discovered 64
+   :retained-results 64
+   :completion-distinct-input-width 64
+   :completion-distinct-call-widths [64 0]
+   :suffix-view-calls 64
+   :suffix-view-source-elements 2080
+   :raw-counters {:admissions 65 :transitions 128 :commands 1
+                  :fetched-values 64 :maximum-stack 2
+                  :maximum-sidecar-buffers 1
+                  :maximum-sidecar-values 63 :discovered 64}}
+  {:route :stable-first-discovery
+   :discovered 1024
+   :retained-results 1024
+   :completion-distinct-input-width 1024
+   :completion-distinct-call-widths [1024 0]
+   :suffix-view-calls 1024
+   :suffix-view-source-elements 33280
+   :raw-counters {:admissions 1025 :transitions 2048 :commands 16
+                  :fetched-values 1024 :maximum-stack 2
+                  :maximum-sidecar-buffers 1
+                  :maximum-sidecar-values 63 :discovered 1024}}
+  {:route :stable-first-discovery
+   :discovered 16384
+   :retained-results 16384
+   :completion-distinct-input-width 16384
+   :completion-distinct-call-widths [16384 0]
+   :suffix-view-calls 16384
+   :suffix-view-source-elements 532480
+   :raw-counters {:admissions 16385 :transitions 32768 :commands 256
+                  :fetched-values 16384 :maximum-stack 2
+                  :maximum-sidecar-buffers 1
+                  :maximum-sidecar-values 63 :discovered 16384}}]
+ :routed-vector-recopy
+ {:physical-boundary-value-type "class clojure.lang.PersistentVector"
+  :stable-reused-identically? false
+  :least-path-reused-identically? false
+  :equivalent-vector-width 3}
+ :stable-sidecar-churn
+ [{:touches 1000 :capacity 16
+   :maximum-rescan-calls 1000
+   :maximum-rescan-entry-visits 16000
+   :recency-filter-calls 1000
+   :recency-filter-entry-visits 16000
+   :final-retained-buffers 16
+   :final-maximum-retained-values 128}
+  {:touches 10000 :capacity 16
+   :maximum-rescan-calls 10000
+   :maximum-rescan-entry-visits 160000
+   :recency-filter-calls 10000
+   :recency-filter-entry-visits 160000
+   :final-retained-buffers 16
+   :final-maximum-retained-values 128}
+  {:touches 100000 :capacity 16
+   :maximum-rescan-calls 100000
+   :maximum-rescan-entry-visits 1600000
+   :recency-filter-calls 100000
+   :recency-filter-entry-visits 1600000
+   :final-retained-buffers 16
+   :final-maximum-retained-values 128}]
+ :continuation-churn
+ [{:publications 1000 :capacity 16
+   :whole-vector-filter-calls 1984
+   :whole-vector-filter-entry-visits 31216
+   :final-stats {:entries 16 :weight 16 :max-entries 16 :max-weight 64
+                 :max-entry-weight 1 :puts 1000 :publications 1000
+                 :evictions 984 :replacements 0 :hits 0 :misses 0
+                 :rejections 0 :errors 0 :miss-reasons {}
+                 :by-kind {:checkpoint {:puts 1000 :publications 1000
+                                        :evictions 984}}}}
+  {:publications 10000 :capacity 16
+   :whole-vector-filter-calls 19984
+   :whole-vector-filter-entry-visits 319216
+   :final-stats {:entries 16 :weight 16 :max-entries 16 :max-weight 64
+                 :max-entry-weight 1 :puts 10000 :publications 10000
+                 :evictions 9984 :replacements 0 :hits 0 :misses 0
+                 :rejections 0 :errors 0 :miss-reasons {}
+                 :by-kind {:checkpoint {:puts 10000 :publications 10000
+                                        :evictions 9984}}}}
+  {:publications 100000 :capacity 16
+   :whole-vector-filter-calls 199984
+   :whole-vector-filter-entry-visits 3199216
+   :final-stats {:entries 16 :weight 16 :max-entries 16 :max-weight 64
+                 :max-entry-weight 1 :puts 100000 :publications 100000
+                 :evictions 99984 :replacements 0 :hits 0 :misses 0
+                 :rejections 0 :errors 0 :miss-reasons {}
+                 :by-kind {:checkpoint {:puts 100000 :publications 100000
+                                        :evictions 99984}}}}]
+ :scheduler
+ {:zero-successor {:transitions 10000 :successors 0
+                   :batch-local-transient-allocations 20000}
+  :one-successor {:transitions 10000 :successors 1
+                  :batch-local-transient-allocations 20000}}
+ :route-attribution
+ {:least-path :eacl.engine.least-path
+  :stable-first-discovery :eacl.engine.stable-reducer
+  :point-probe :separate-route-not-measured-as-stable
+  :cross-route-counter-inference :forbidden}
+ :observations
+ {:least-path-limit :reproduced
+  :stable-full-result-retention :reproduced
+  :stable-completion-distinct :reproduced
+  :routed-vector-recopy :reproduced
+  :stable-buffer-suffix-view :reproduced
+  :stable-retained-maximum-rescan :reproduced
+  :stable-sidecar-recency-filter :reproduced
+  :continuation-recency-filter :reproduced
+  :zero-successor-scheduling :reproduced-structurally
+  :one-successor-scheduling :reproduced-structurally}}

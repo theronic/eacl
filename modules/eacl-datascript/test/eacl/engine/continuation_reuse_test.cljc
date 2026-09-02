@@ -12,6 +12,9 @@
              :refer [deftest is testing]]
             #?(:clj [eacl.baseline.capture :as capture])
             [eacl.backend.v8 :as backend]
+            [eacl.cache :as cache]
+            [eacl.cache.derived-schema :as derived-schema]
+            [eacl.cache.standard-lru :as lru]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
@@ -21,6 +24,7 @@
             [eacl.engine.stable-page :as page]
             [eacl.engine.v8 :as v8]
             [eacl.proof-frame :as proof-frame]
+            [eacl.request.counters :as request-counters]
             [datascript.core :as ds]))
 
 (defn- fixture-for
@@ -101,14 +105,20 @@
   ;; acyclic-keyset-pagination gives acyclic roots self-contained keyset
   ;; cursors that never touch the continuation store — see
   ;; acyclic-pagination-needs-no-checkpoints-test below).
-  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+  (let [{:keys [fixture client]} ;; Range reuse would serve page 2 from the retained segment; this
+        ;; test exercises the checkpoint mechanism itself.
+        (seeded-caching-client :folder-chain {:range-reuse false})
         store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)
                :first 5}
+        ;; Checkpoints are keyed by walk and boundary, not page size, and
+        ;; the store keeps the furthest boundary per walk; the oracle must
+        ;; not occupy that slot.
         one-shot (mapv :id (:data (eacl/lookup-resources
-                                   client (assoc query :first 1000))))]
+                                   client (assoc query :first 1000
+                                                 :populate-cache? false))))]
     (is (continuation/store? store)
         "the default client construction must provide a continuation store")
     (let [page-1 (eacl/lookup-resources client query)
@@ -132,10 +142,64 @@
               (recur (assoc q :after (:end-cursor page-info)) acc)
               (is (= one-shot acc)))))))))
 
+(deftest derived-window-on-a-recursive-plan-continues-from-the-checkpoint-test
+  ;; A shorter window served from a recursive-plan page hands out a cursor
+  ;; inside the retained segment; continuing from it is served from the
+  ;; segment, and the first window that leaves the segment resumes the
+  ;; checkpoint at the segment's end whatever page size produced it.
+  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+        store (get-in client [:runtime :continuation-cache-store])
+        query {:subject (get-in fixture [:principals :alice])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)}
+        ;; The oracle bypasses the cache so it seeds no segment.
+        one-shot (mapv :id (:data (eacl/lookup-resources
+                                   client (assoc query :first 1000 :cache? false))))
+        page-5 (eacl/lookup-resources client (assoc query :first 5))
+        derived (eacl/lookup-resources client (assoc query :first 3))
+        inside (eacl/lookup-resources
+                client (assoc query :first 1
+                              :after (get-in derived [:page-info :end-cursor])))
+        hits-before (:hits (continuation/stats store))
+        ;; Results five to seven: the segment holds result five, the
+        ;; remainder continues from the checkpoint at result five.
+        leaving (eacl/lookup-resources
+                 client (assoc query :first 3
+                               :after (get-in inside [:page-info :end-cursor])))
+        hits-after (:hits (continuation/stats store))]
+    (is (> (count one-shot) 8) "the fixture must reach past the eighth result")
+    (is (false? (:cached? page-5)))
+    (is (true? (:cached? derived)))
+    (is (= (take 3 one-shot) (mapv :id (:data derived))))
+    (is (true? (:cached? inside)) "a window inside the segment is served from it")
+    (is (= (take 1 (drop 3 one-shot)) (mapv :id (:data inside))))
+    (is (pos? (:partial-hits (:range-reuse (datascript/cache-stats client))))
+        "the window past the segment composes its tail with one continuation")
+    (is (= (take 3 (drop 4 one-shot)) (mapv :id (:data leaving))))
+    (is (> hits-after hits-before)
+        "the continuation resumed the checkpoint at the segment's end, not a replay")))
+
+(deftest page-size-change-continues-from-the-checkpoint-test
+  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+        store (get-in client [:runtime :continuation-cache-store])
+        query {:subject (get-in fixture [:principals :alice])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)}
+        one-shot (mapv :id (:data (eacl/lookup-resources
+                                   client (assoc query :first 1000 :cache? false))))
+        page-5 (eacl/lookup-resources client (assoc query :first 5))
+        hits-before (:hits (continuation/stats store))
+        page-7 (eacl/lookup-resources
+                client (assoc query :first 7
+                              :after (get-in page-5 [:page-info :end-cursor])))
+        hits-after (:hits (continuation/stats store))]
+    (is (= (take 7 (drop 5 one-shot)) (mapv :id (:data page-7))))
+    (is (> hits-after hits-before)
+        "a different page size resumes the same frontier")))
+
 (deftest repeated-page-request-is-served-from-cache-test
-  ;; Operator-reported: repeating the identical page request must not
-  ;; recompute. The relay page-navigation cache serves the exact page back
-  ;; and marks it :cached? under the same immutable snapshot.
+  ;; Repeating the identical page request resolves the completed internal
+  ;; answer and externalizes it against the same immutable snapshot.
   (let [{:keys [fixture client]} (seeded-caching-client :explorer-acyclic)
         query {:subject (get-in fixture [:principals :super-user])
                :permission (:permission fixture)
@@ -153,17 +217,19 @@
         "the identical cursor-page request must be served from cache")
     (is (= (:data page-2) (:data page-2-again)))))
 
-(deftest navigation-alias-never-serves-a-wrong-size-page-test
-  ;; Review finding F7: the page-navigation cache learns an
-  ;; opposite-direction alias for an adjacent page, but the boundary index
-  ;; carries no page size, so a {:last N :before start} request could be
-  ;; served a stored page of a different size. The alias may only answer
-  ;; when the stored adjacent page holds exactly N items. Self-seeded so
-  ;; both runtimes have the depth for three distinct pages.
-  (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {})
-        alice (eacl/spice-object :user "alias-alice")
-        docs (mapv #(eacl/spice-object :document (str "alias-doc-" %))
+(defn- measured-request
+  [f]
+  (let [ledger (request-counters/make-ledger)
+        value (request-counters/call-with-ledger ledger f)]
+    {:value value
+     :work (request-counters/snapshot ledger)}))
+
+(deftest next-previous-oscillation-uses-completed-answers-not-page-aliases-test
+  (let [security-key "oscillation-cache-free-parity-0000"
+        conn (datascript/create-conn)
+        client (datascript/make-client conn {:security-key security-key})
+        alice (eacl/spice-object :user "oscillation-alice")
+        docs (mapv #(eacl/spice-object :document (str "oscillation-doc-" %))
                    (range 9))]
     (eacl/write-schema!
      client
@@ -176,34 +242,80 @@
                              (into [alice] docs)))
     (eacl/create-relationships!
      client (mapv #(eacl/->Relationship alice :reader %) docs))
-    (let [base {:subject alice
-                :permission :view
-                :resource/type :document}
+    (let [oracle (datascript/make-client
+                  conn {:security-key security-key
+                        :cache cache/no-cache})
+          query {:subject alice
+                 :permission :view
+                 :resource/type :document
+                 :first 2}
           one-shot (mapv :id (:data (eacl/lookup-resources
-                                     client (assoc base :first 1000))))
-          page-0 (eacl/lookup-resources client (assoc base :first 2))
-          page-a (eacl/lookup-resources
-                  client (assoc base :first 2
-                                :after (get-in page-0
-                                               [:page-info :end-cursor])))
-          ;; This request records the backward alias for page-a under
-          ;; {:last 3 :before start-of-b} - page-a holds 2 items, not 3.
-          page-b (eacl/lookup-resources
-                  client (assoc base :first 3
-                                :after (get-in page-a
-                                               [:page-info :end-cursor])))
-          backwards (eacl/lookup-resources
-                     client (assoc base :last 3
-                                   :before (get-in page-b
-                                                   [:page-info
-                                                    :start-cursor])))]
+                                     client (assoc query :first 1000))))
+          page-1 (eacl/lookup-resources client query)
+          next-query (assoc query :after
+                            (get-in page-1 [:page-info :end-cursor]))
+          page-2 (eacl/lookup-resources client next-query)
+          previous-query (-> query
+                             (dissoc :first)
+                             (assoc :last 2
+                                    :before
+                                    (get-in page-2
+                                            [:page-info :start-cursor])))
+          previous-first (measured-request
+                          #(eacl/lookup-resources client previous-query))
+          previous-page (:value previous-first)
+          oracle-previous (eacl/lookup-resources oracle previous-query)
+          previous-hit (measured-request
+                        #(eacl/lookup-resources client previous-query))
+          next-again-query
+          (assoc query :after
+                 (get-in previous-page [:page-info :end-cursor]))
+          next-again (measured-request
+                      #(eacl/lookup-resources client next-again-query))
+          previous-page-hit (:value previous-hit)
+          page-2-hit (:value next-again)]
       (is (= 9 (count one-shot)))
-      (is (= (take 2 (drop 2 one-shot)) (mapv :id (:data page-a))))
-      (is (= (take 3 (drop 4 one-shot)) (mapv :id (:data page-b))))
-      (is (= 3 (count (:data backwards)))
-          "a :last 3 request must return exactly the three preceding items")
-      (is (= (take 3 (drop 1 one-shot)) (mapv :id (:data backwards)))
-          "the answer is the true window, not the smaller adjacent page"))))
+      (is (= (take 2 one-shot) (mapv :id (:data page-1))
+             (mapv :id (:data previous-page))
+             (mapv :id (:data previous-page-hit))
+             (mapv :id (:data oracle-previous))))
+      (is (= (take 2 (drop 2 one-shot))
+             (mapv :id (:data page-2))
+             (mapv :id (:data page-2-hit))))
+      (is (false? (:cached? previous-page))
+          "the first reverse request is permitted one independent miss")
+      (is (true? (:cached? previous-page-hit)))
+      (is (true? (:cached? page-2-hit)))
+      (is (= (:cache-basis page-1)
+             (:cache-basis page-2)
+             (:cache-basis previous-page)
+             (:cache-basis previous-page-hit)
+             (:cache-basis page-2-hit))
+          "every oscillation stays on the exact selected snapshot")
+      (is (= (select-keys (:page-info page-1)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info previous-page)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info previous-page-hit)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info oracle-previous)
+                          [:has-next-page? :has-previous-page?])))
+      (is (= (select-keys (:page-info page-2)
+                          [:has-next-page? :has-previous-page?])
+             (select-keys (:page-info page-2-hit)
+                          [:has-next-page? :has-previous-page?])))
+      (is (every? some?
+                  (for [page [page-1 page-2 previous-page
+                              previous-page-hit page-2-hit]
+                        field [:start-cursor :end-cursor]]
+                    (get-in page [:page-info field])))
+          "every returned boundary remains a usable opaque cursor")
+      (is (pos? (get-in previous-first [:work :commands]))
+          "the permitted first reverse miss performs bounded page work")
+      (is (zero? (get-in previous-hit [:work :commands]))
+          "a repeated reverse request does not re-enter page evaluation")
+      (is (zero? (get-in next-again [:work :commands]))
+          "returning Next reuses its earlier completed internal answer"))))
 
 (deftest repeated-count-is-served-from-cache-test
   (let [{:keys [fixture client]} (seeded-caching-client :explorer-acyclic)
@@ -355,14 +467,14 @@
     (is (not= key-2 key-3)
         "a closure-relation write changes the checkpoint frame")))
 
-(deftest generation-plan-registry-survives-snapshot-rewraps-test
+(deftest flat-plan-lru-survives-snapshot-rewraps-test
   ;; Two adapter wraps of distinct bases in one certified schema generation
-  ;; are distinct JVM objects; the runtime registry must return one plan.
+  ;; are distinct JVM objects; the flat derived-artifact LRU must return one plan.
   (let [{:keys [conn]} (seed-fixture-client!
                         (fixture-for :explorer-acyclic))
         opts (adapter-opts conn {:source-lifecycle "plan-rewrap-test"})
         stable-plan v8/stable-plan
-        registry (atom {})
+        registry (derived-schema/store)
         adapter-1 (datascript-backend/basis-adapter (ds/db conn) opts)
         identity-for
         (fn [adapter]
@@ -387,8 +499,8 @@
         plan-2 (binding [v8/*schema-cache* cache-2]
                  (stable-plan adapter-2 [:server :view]))]
     (is (= (:schema-version cache-1) (:schema-version cache-2)))
-    (is (identical? cache-1 cache-2)
-        "two bases of one generation select the same derived cache")
+    (is (not (identical? cache-1 cache-2))
+        "requests retain only stateless handles, not generation containers")
     (is (identical? plan-1 plan-2)
         "re-wrapping the source at another basis must hit the plan registry")))
 
@@ -433,7 +545,113 @@
       (page/checkpoint-put!
        context [:k] (assoc-in checkpoint [:state :transitions] 5))
       (is (= 10 (get-in (checkpoint-hit context [:k] 2 42)
-                        [:state :transitions]))))))
+                        [:state :transitions]))))
+    (testing "a later boundary wins even when reducer transitions are equal"
+      (let [later (assoc checkpoint :ordinal 3 :boundary 43)]
+        (page/checkpoint-put! context [:k] later)
+        (is (= later (checkpoint-hit context [:k] 3 43)))))))
+
+(deftest client-checkpoint-context-enforces-admission-count-cap-test
+  (let [{:keys [conn]} (seed-fixture-client!
+                        (fixture-for :explorer-acyclic))
+        adapter (datascript-backend/basis-adapter
+                 (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {})
+        context
+        (assoc
+         (continuation/private-context
+          store adapter :lookup-resources {:query {:q 1}}
+          {:request-lineage test-lineage})
+         :max-entry-admissions 1)
+        retained {:ordinal 2 :boundary 42 :pending []
+                  :state {:transitions 10 :admitted #{1} :stack []}}
+        oversized {:ordinal 3 :boundary 43 :pending []
+                   :state {:transitions 11 :admitted #{1 2} :stack []}}]
+    (page/checkpoint-put! context :retained retained)
+    (is (= retained (page/checkpoint-hit context :retained 2 42))
+        "the configured boundary remains retainable")
+    (let [stats-before (continuation/stats store)]
+      (is (nil? (page/checkpoint-put! context :oversized oversized)))
+      (page/checkpoint-put! context :retained oversized)
+      (is (= stats-before (continuation/stats store))
+          "rejection performs no continuation LRU or telemetry mutation")
+      (is (nil? (page/checkpoint-hit context :oversized 3 43)))
+      (is (= retained (page/checkpoint-hit context :retained 2 42))
+          "an oversized replacement cannot displace the resident checkpoint"))))
+
+(deftest continuation-storage-keeps-the-full-semantic-scope-test
+  (let [{:keys [conn]} (seed-fixture-client!
+                        (fixture-for :explorer-acyclic))
+        adapter (datascript-backend/basis-adapter
+                 (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {})
+        query-a {:query {:q 1}}
+        query-b {:query {:q 2}}
+        context-a (continuation/private-context
+                   store adapter :lookup-resources query-a
+                   {:request-lineage test-lineage})
+        context-b (continuation/private-context
+                   store adapter :lookup-resources query-b
+                   {:request-lineage test-lineage})
+        checkpoint-a {:ordinal 2 :boundary 42 :pending [7]
+                      :state {:transitions 5 :admitted #{1} :stack []}}
+        checkpoint-b {:ordinal 3 :boundary 43 :pending [8]
+                      :state {:transitions 6 :admitted #{2} :stack []}}]
+    (page/checkpoint-put! context-a [:same-edge] checkpoint-a)
+    (page/checkpoint-put! context-b [:same-edge] checkpoint-b)
+    (is (= checkpoint-a (page/checkpoint-hit context-a [:same-edge] 2 42)))
+    (is (= checkpoint-b (page/checkpoint-hit context-b [:same-edge] 3 43)))
+    (is (= #{query-a query-b}
+           (into #{}
+                 (map (fn [[storage-key _]]
+                        (get-in storage-key [2 1 0 6])))
+                 (lru/entries (:storage store))))
+        "ordinary keys retain the collision-checked scope, not only a digest")))
+
+#?(:clj
+   (deftest concurrent-checkpoint-publication-retains-newest-progress-test
+     (let [{:keys [conn]} (seed-fixture-client!
+                           (fixture-for :explorer-acyclic))
+           adapter (datascript-backend/basis-adapter
+                    (ds/db conn) (adapter-opts conn {}))
+           store (continuation/make-store {})
+           context (continuation/private-context
+                    store adapter :lookup-resources {:query {:q 1}}
+                    {:request-lineage test-lineage})
+           base {:ordinal 2 :boundary 42 :pending [7]
+                 :state {:transitions 5 :admitted #{1 2} :stack []}}
+           older (assoc-in base [:state :transitions] 6)
+           newer (assoc-in base [:state :transitions] 7)
+           original-replace lru/replace-if!
+           older-entered (promise)
+           release-older (promise)
+           older-publication (atom nil)]
+       (page/checkpoint-put! context [:k] base)
+       (with-redefs
+        [lru/replace-if!
+         (fn [storage key expected replacement]
+           (when (= 6 (get-in replacement [:state :transitions]))
+             (deliver older-entered true)
+             @release-older)
+           (original-replace storage key expected replacement))]
+         (try
+           (reset! older-publication
+                   (future (page/checkpoint-put! context [:k] older)))
+           (is (= true (deref older-entered 5000 ::timeout)))
+           ;; Both candidates observed transition 5. The newer expected-value
+           ;; replacement wins before the older CAS is released.
+           (page/checkpoint-put! context [:k] newer)
+           (deliver release-older true)
+           (is (nil? (deref @older-publication 5000 ::timeout)))
+           (is (= 7
+                  (get-in (page/checkpoint-hit context [:k] 2 42)
+                          [:state :transitions])))
+           (let [stats (continuation/stats store)]
+             (is (= 2 (:publications stats)))
+             (is (= 1 (:replacements stats))))
+           (finally
+             (deliver release-older true)
+             (some-> @older-publication future-cancel)))))))
 
 (deftest read-without-publication-can-read-but-not-write-checkpoints-test
   (let [{:keys [conn]} (seed-fixture-client!
@@ -449,28 +667,76 @@
         (continuation/private-context
          store adapter :lookup-resources {:query {:q 1}}
          {:request-lineage test-lineage
-          :populate-cache? false})]
-    (is (= #{:required? :opaque-values? :peek :get :hit! :miss! :put!}
+          :populate-cache? false})
+        checkpoint {:ordinal 2 :boundary 42 :pending [7]
+                    :state {:transitions 10}}]
+    (is (= #{:required? :opaque-values? :get :hit! :miss! :put!}
            (set (keys writable)))
         "the private context exposes only checkpoint operations")
-    (is (true? ((:put! writable) :edge :stored 1)))
-    (let [state-before @(:state store)]
-      (is (false? ((:put! read-only) :edge :suppressed 1)))
-      (is (= state-before @(:state store))
+    (is (true? ((:put! writable) :edge checkpoint)))
+    (let [stats-before (continuation/stats store)]
+      (is (false? ((:put! read-only)
+                   :edge
+                   (assoc-in checkpoint [:state :transitions] 11))))
+      (is (= stats-before (continuation/stats store))
           "suppressed publication must not delete or replace retained state"))
-    (is (= :stored ((:get read-only) :edge)))
+    (is (= checkpoint ((:get read-only) :edge)))
     (is (= 1 (:puts (continuation/stats store)))
         "only the writable context publishes")))
 
+(deftest continuation-store-failure-degrades-to-replay-test
+  (let [{:keys [conn]} (seed-fixture-client!
+                        (fixture-for :explorer-acyclic))
+        adapter (datascript-backend/basis-adapter
+                 (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {})
+        context (continuation/private-context
+                 store adapter :lookup-resources {:query {:q 1}}
+                 {:request-lineage test-lineage})
+        checkpoint {:ordinal 2 :boundary 42 :pending []
+                    :state {:transitions 10}}]
+    (with-redefs [lru/lookup!
+                  (fn [_ _]
+                    (throw (ex-info "lookup failed" {})))
+                  lru/peek-entry
+                  (fn [_ _]
+                    (throw (ex-info "publication inspection failed" {})))
+                  lru/put-if-absent!
+                  (fn [_ _ _]
+                    (throw (ex-info "publication failed" {})))]
+      (is (nil? ((:get context) :edge)))
+      (is (false? ((:put! context) :edge checkpoint))))
+    (is (= 2 (:errors (continuation/stats store))))))
+
+(deftest continuation-touch-failure-keeps-held-checkpoint-test
+  (let [{:keys [conn]} (seed-fixture-client!
+                        (fixture-for :explorer-acyclic))
+        adapter (datascript-backend/basis-adapter
+                 (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {})
+        context (continuation/private-context
+                 store adapter :lookup-resources {:query {:q 1}}
+                 {:request-lineage test-lineage})
+        checkpoint {:ordinal 2 :boundary 42 :pending []
+                    :state {:transitions 10}}]
+    (page/checkpoint-put! context :edge checkpoint)
+    (with-redefs [lru/hit-if-value!
+                  (fn [_ _ _]
+                    (throw (ex-info "touch failed" {})))]
+      (is (= checkpoint (page/checkpoint-hit context :edge 2 42))
+          "the authenticated held value remains usable when recency fails"))
+    (is (= 1 (:errors (continuation/stats store))))))
+
 (deftest population-disabled-leaves-no-tombstone-and-next-page-replays-test
-  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain {:range-reuse false})
         store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)
                :first 3}
         oracle (mapv :id (:data (eacl/lookup-resources
-                                 client (assoc query :first 1000))))
+                                 client (assoc query :first 1000
+                                               :populate-cache? false))))
         before (continuation/stats store)
         page-1 (eacl/lookup-resources
                 client (assoc query :populate-cache? false))
@@ -492,7 +758,7 @@
            (get-in before [:miss-reasons :absent] 0))
         "the uncached next page observes an ordinary absence")))
 
-(deftest checkpoint-miss-reason-telemetry-test
+(deftest checkpoint-miss-and-lru-telemetry-test
   (let [{:keys [conn]} (seed-fixture-client!
                         (fixture-for :explorer-acyclic))
         adapter (datascript-backend/basis-adapter
@@ -517,57 +783,93 @@
         (let [stats (continuation/stats store)]
           (is (= 1 (get-in stats [:miss-reasons :absent])))
           (is (= 1 (get-in stats [:miss-reasons :boundary-mismatch]))))))
-    (testing "plan mismatch"
+    (testing "a different plan is an ordinary absent key"
       (let [store (continuation/make-store {})
             context (make-context store)]
         (page/checkpoint-put! context key-a checkpoint)
         (is (nil? (page/checkpoint-hit context key-b 2 42)))
         (is (= 1 (get-in (continuation/stats store)
-                         [:miss-reasons :plan-mismatch])))))
+                         [:miss-reasons :absent])))))
     (testing "evicted"
       (let [store (continuation/make-store {:max-entries 1})
             context (make-context store)
             other-key (assoc key-a 5 99)]
         (page/checkpoint-put! context key-a checkpoint)
         (page/checkpoint-put! context other-key checkpoint)
-        (is (nil? (page/checkpoint-hit context key-a 2 42)))
-        (is (= 1 (get-in (continuation/stats store)
-                         [:miss-reasons :evicted])))
+        (let [settled (continuation/stats store)
+              resident-results
+              [(page/checkpoint-hit context key-a 2 42)
+               (page/checkpoint-hit context other-key 2 42)]]
+          (is (= 1 (:entries settled)))
+          (is (= 1 (:evictions settled)))
+          (is (= 1 (count (filter some? resident-results)))
+              "bounded storage retains one candidate without promising which cold victim")
+          (is (= 1 (:hits (continuation/stats store)))))
         (is (nil? (page/checkpoint-hit context key-b 2 42)))
-        (is (= 1 (get-in (continuation/stats store)
+        (is (= 2 (get-in (continuation/stats store)
                          [:miss-reasons :absent]))
-            "eviction removes the constant-time plan-family index")))
-    (testing "overweight"
-      (let [store (continuation/make-store
-                   {:max-weight 8192 :max-entry-weight 3000})
-            context (make-context store)
-            heavy (-> checkpoint
-                      (assoc-in [:state :transitions] 11)
-                      (assoc-in [:state :admitted]
-                                (set (range 20))))]
+            "retention policy does not keep per-key tombstones")))
+    (testing "an accepted hot checkpoint survives cold churn"
+      (let [store (continuation/make-store {:max-entries 16})
+            context (make-context store)]
+        (doseq [seed (range 15)]
+          (page/checkpoint-put!
+           context (assoc key-a 2 (str "plan-seed-" seed)) checkpoint))
         (page/checkpoint-put! context key-a checkpoint)
-        (let [state-before @(:state store)]
-          (page/checkpoint-put! context key-a heavy)
-          (is (= state-before @(:state store))
-              "an overweight replacement preserves older valid progress"))
+        ;; Caffeine's Window TinyLFU policy combines frequency and recency and
+        ;; need not select the strict-LRU cold victim. The CLJS implementation
+        ;; is true LRU, but both policies must retain a repeatedly accepted hot
+        ;; checkpoint while one-hit candidates churn through bounded storage.
+        (dotimes [candidate 100]
+          (dotimes [_ 10]
+            (page/checkpoint-hit context key-a 2 42))
+          (page/checkpoint-put!
+           context (assoc key-a 2 (str "plan-c-" candidate)) checkpoint))
         (is (= checkpoint (page/checkpoint-hit context key-a 2 42)))
-        (page/checkpoint-put! context key-b heavy)
-        (is (nil? (page/checkpoint-hit context key-b 2 42)))
         (let [stats (continuation/stats store)]
-          (is (= 1 (get-in stats [:miss-reasons :overweight])))
-          (is (= 2 (:rejections stats)))
-          (is (= 1 (:publications stats)))
-          (is (zero? (:replacements stats)))
-          (is (= 1 (:entries stats))))))
+          (is (= 16 (:entries stats)))
+          (is (= 1001 (:hits stats)))
+          (is (= 116 (:puts stats)))
+          (is (= 116 (:publications stats)))
+          (is (= 100 (:evictions stats))))))
+    (testing "a rejected checkpoint boundary does not record a cache hit"
+      (let [store (continuation/make-store {:max-entries 2})
+            context (make-context store)
+            key-c (assoc key-a 2 "plan-c")]
+        (page/checkpoint-put! context key-a checkpoint)
+        (page/checkpoint-put! context key-b checkpoint)
+        (is (nil? (page/checkpoint-hit context key-a 3 42)))
+        (is (= 1 (get-in (continuation/stats store)
+                         [:miss-reasons :boundary-mismatch])))
+        (page/checkpoint-put! context key-c checkpoint)
+        ;; Window TinyLFU chooses by frequency and recency rather than exposing
+        ;; a strict-LRU victim. The miss metric proves no accepted cache hit.
+        (is (= 2 (:entries (continuation/stats store))))))
+    (testing "a stale publication offer is not retention-policy usage"
+      (let [store (continuation/make-store {:max-entries 2})
+            context (make-context store)
+            key-c (assoc key-a 2 "plan-c")]
+        (page/checkpoint-put! context key-a checkpoint)
+        (page/checkpoint-put! context key-b checkpoint)
+        (let [before (continuation/stats store)]
+          (page/checkpoint-put!
+           context key-a (assoc-in checkpoint [:state :transitions] 9))
+          (let [after (continuation/stats store)]
+            (is (= (:publications before) (:publications after)))
+            (is (= (:replacements before) (:replacements after)))
+            (is (= (inc (:puts before)) (:puts after)))))
+        (page/checkpoint-put! context key-c checkpoint)
+        (is (= 2 (:entries (continuation/stats store))))
+        (is (= 1 (:evictions (continuation/stats store))))))
     (testing "population disabled"
       (let [store (continuation/make-store {})
             writable (make-context store)
             disabled (make-context store {:populate-cache? false})]
         (page/checkpoint-put! writable key-a checkpoint)
-        (let [state-before @(:state store)]
+        (let [stats-before (continuation/stats store)]
           (page/checkpoint-put!
            disabled key-a (assoc-in checkpoint [:state :transitions] 11))
-          (is (= state-before @(:state store))
+          (is (= stats-before (continuation/stats store))
               "a suppressed replacement performs no cache mutation"))
         (is (= checkpoint (page/checkpoint-hit disabled key-a 2 42))
             "a read-only request can still reuse retained progress")
@@ -580,23 +882,68 @@
       (let [store (continuation/make-store {})
             context (make-context store)]
         (page/checkpoint-put! context key-a checkpoint)
-        (let [order (:order @(:state store))]
-          (is (= checkpoint
-                 (page/checkpoint-hit context key-a 2 42)))
-          (is (= order (:order @(:state store)))
-              "a hot checkpoint hit performs no linear order maintenance"))
+        (is (= checkpoint
+               (page/checkpoint-hit context key-a 2 42)))
         (page/checkpoint-put!
          context key-a (assoc-in checkpoint [:state :transitions] 11))
         (let [stats (continuation/stats store)]
           (is (= 2 (:publications stats)))
           (is (= 1 (:replacements stats)))
-          (is (= 1 (:entries stats)))
-          (is (pos? (:weight stats))))))))
+          (is (= 1 (:entries stats))))))))
+
+(deftest continuation-telemetry-disablement-retains-storage-only-test
+  (let [{:keys [conn]} (seed-fixture-client!
+                        (fixture-for :explorer-acyclic))
+        adapter (datascript-backend/basis-adapter
+                 (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {:max-entries 2 :telemetry? false})
+        context (continuation/private-context
+                 store adapter :lookup-resources {:query {:q 1}}
+                 {:request-lineage test-lineage})
+        checkpoint {:ordinal 2 :boundary 42 :pending []
+                    :state {:transitions 10 :admitted #{}}}
+        counters [:hits :misses :puts :publications
+                  :replacements :evictions :errors]]
+    (page/checkpoint-put! context :edge checkpoint)
+    (is (= checkpoint (page/checkpoint-hit context :edge 2 42)))
+    (is (nil? (page/checkpoint-hit context :edge 3 42)))
+    (is (nil? (page/checkpoint-hit context :absent 2 42)))
+    (let [stats (continuation/stats store)]
+      (is (false? (:telemetry-enabled? stats)))
+      (is (= 1 (:entries stats)) "LRU retention remains enabled")
+      (is (every? zero? (map stats counters))
+          "disabled telemetry performs no counter mutations")
+      (is (empty? (:miss-reasons stats)))
+      (is (empty? (:by-kind stats))))))
+
+(deftest outer-cache-telemetry-switch-reaches-continuation-store-test
+  (let [{:keys [client]}
+        (seeded-caching-client
+         :explorer-acyclic
+         {:cache {:telemetry? false}})
+        store (get-in client [:runtime :continuation-cache-store])]
+    (is (continuation/store? store))
+    (is (false? (:telemetry-enabled? (continuation/stats store))))))
+
+(deftest retired-continuation-weight-options-are-rejected-test
+  (is (= 1024 (:max-entries (continuation/stats (continuation/make-store))))
+      "the standalone continuation constructor shares the public cache default")
+  (doseq [options [{:max-weight 4096}
+                   {:max-entry-weight 1024}]]
+    (let [error
+          (try
+            (continuation/make-store options)
+            nil
+            (catch #?(:clj clojure.lang.ExceptionInfo
+                      :cljs cljs.core.ExceptionInfo) exception
+              (ex-data exception)))]
+      (is (= :eacl/invalid-config (:type error)))
+      (is (= (set (keys options)) (:unknown-options error))))))
 
 (deftest cursor-rejection-precedes-checkpoint-access-and-absence-replays-test
   (let [security-key "checkpoint-pipeline-test-key-0123456789"
         {:keys [fixture client]}
-        (seeded-caching-client :folder-chain {:security-key security-key})
+        (seeded-caching-client :folder-chain {:security-key security-key :range-reuse false})
         store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
@@ -623,7 +970,7 @@
     (testing "a wrong-lineage cursor never consults the other client store"
       (let [{other :client}
             (seeded-caching-client
-             :folder-chain {:security-key security-key})
+             :folder-chain {:security-key security-key :range-reuse false})
             other-store (get-in other [:runtime :continuation-cache-store])
             before (traffic (continuation/stats other-store))
             error (error-data
@@ -633,7 +980,7 @@
         (is (= :source-scope (:reason error)))
         (is (= before (traffic (continuation/stats other-store))))))
     (testing "a missing accepted checkpoint replays without restarting"
-      (continuation/clear! store)
+      (lru/clear! (:storage store))
       (let [before (continuation/stats store)
             page-2 (eacl/lookup-resources client (assoc query :after cursor))
             after (continuation/stats store)]

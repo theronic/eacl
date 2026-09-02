@@ -110,9 +110,10 @@ schema is authoritative.
 
 Derived expression metrics are not part of the migrated data. Node counts,
 depth, fan-in, encoded size, normalized DAG dimensions, word counts, and
-checkpoint weights are recomputed from canonical payloads and cached by EACL.
-Relationship observations are populated organically at immutable
-high-watermarks. Neither category adds metric datoms to the Datomic tx-log.
+checkpoint weights are recomputed from canonical payloads and retained only
+with their structural schema artifacts. EACL no longer maintains a
+relationship-observation cache. No derived cache metric adds datoms to the
+Datomic tx-log.
 
 The v8 permission row contains only `:eacl/id`, resource type, permission name,
 and the canonical versioned expression payload. The payload carries its codec

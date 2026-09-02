@@ -17,8 +17,10 @@
     stale-cursor — when they make a page unreachable."
   (:require [clojure.string :as string]
             [eacl.backend.v8 :as backend]
+            [eacl.cache.standard-lru :as lru]
             [eacl.engine.physical :as physical]
             [eacl.engine.stable-reducer :as reducer]
+            [eacl.execution :as execution]
             [eacl.secure-format :as secure-format]))
 
 (def token-version 1)
@@ -149,117 +151,132 @@
 ;; Latest-only checkpoint store (task 6.4)
 ;; ---------------------------------------------------------------------------
 
+(defrecord CheckpointStore [storage max-entry-admissions])
+
+(def ^:private default-max-entry-admissions 1000000)
+
+(defn ^:no-doc checkpoint-store?
+  [value]
+  (instance? CheckpointStore value))
+
 (defn make-checkpoint-store
-  "Bounded in-process latest-only checkpoint store. `:max-entries` bounds
-  the identity count; `:max-entry-admissions` is the per-checkpoint weight
-  cap (an overweight checkpoint is dropped without failing the request)."
+  "Standard-LRU-backed latest-only checkpoint store. `:max-entries` bounds
+  the identity count; `:max-entry-admissions` is a semantic per-checkpoint
+  retention cap (an overweight checkpoint is dropped without failing the
+  request)."
   ([] (make-checkpoint-store {}))
   ([{:keys [max-entries max-entry-admissions]
-     :or {max-entries 64 max-entry-admissions 1000000}}]
-   (atom {:entries {} :order [] :max-entries max-entries
-          :max-entry-admissions max-entry-admissions})))
+     :or {max-entries 64
+          max-entry-admissions default-max-entry-admissions}}]
+   (->CheckpointStore
+    (lru/store max-entries)
+    max-entry-admissions)))
 
 (defn context-store?
   "A client-scoped continuation context (`eacl.continuation/private-context`):
-  fn-map storage whose own bounds and eviction replace the atom store's."
+  fn-map storage with its own bounds and eviction, distinct from the
+  standalone checkpoint store."
   [store]
   (and (map? store)
-       (fn? (:peek store))
        (fn? (:get store))
        (fn? (:hit! store))
        (fn? (:miss! store))
        (fn? (:put! store))))
 
-(defn- checkpoint-weight
-  "Conservative retained-heap estimate for a client-store entry; the store's
-  weight budget treats these as approximate bytes, not exact JVM layout."
+(defn- checkpoint-progress
   [checkpoint]
-  (+ 2048
-     (* 96 (count (:admitted (:state checkpoint))))
-     (* 256 (count (:stack (:state checkpoint))))
-     (* 96 (count (:pending checkpoint)))))
+  [(:ordinal checkpoint) (get-in checkpoint [:state :transitions])])
+
+(defn- progress-newer?
+  [[candidate-ordinal candidate-transitions]
+   [resident-ordinal resident-transitions]]
+  (or (> candidate-ordinal resident-ordinal)
+      (and (= candidate-ordinal resident-ordinal)
+           (> candidate-transitions resident-transitions))))
+
+(defn- retention-eligible-checkpoint?
+  [store checkpoint]
+  (try
+    (let [maximum (if (checkpoint-store? store)
+                    (:max-entry-admissions store)
+                    (get store :max-entry-admissions
+                         default-max-entry-admissions))]
+      (<= (count (get-in checkpoint [:state :admitted])) maximum))
+    (catch #?(:clj Exception :cljs :default) _ false)))
 
 (defn checkpoint-put!
-  "Publishes synchronously; for one key only a strictly greater scalar
-  transition ordinal replaces the retained checkpoint (nonregressing)."
+  "Publishes synchronously; for one key only a later delivered boundary, or
+  greater traversal progress at the same boundary, replaces the retained
+  checkpoint (nonregressing)."
   [store key checkpoint]
   (cond
+    (not (execution/cache-stage-available?))
+    nil
+
+    (not (retention-eligible-checkpoint? store checkpoint))
+    nil
+
     (context-store? store)
-    ;; The read-compare-put pair is not atomic across requests; losing that
-    ;; race retains an older checkpoint, which only costs a later replay.
-    (let [existing ((:peek store) key)]
-      (when-not (and existing
-                     (>= (:transitions (:state existing))
-                         (:transitions (:state checkpoint))))
-        ((:put! store) key checkpoint (checkpoint-weight checkpoint)))
-      nil)
+    ;; The client context compares progress outside storage and closes the
+    ;; concurrent older/newer race with expected-value LRU replacement.
+    (try
+      ((:put! store) key checkpoint)
+      nil
+      (catch #?(:clj Exception :cljs :default) _ nil))
 
-    store
-    (do
-      (swap! store
-             (fn [{:keys [entries order max-entries max-entry-admissions]
-                   :as state}]
-               (let [existing (get entries key)]
-                 (cond
-                   (> (count (:admitted (:state checkpoint)))
-                      max-entry-admissions)
-                   state ;; overweight: dropped, request unaffected
-
-                   (and existing
-                        (>= (:transitions (:state existing))
-                            (:transitions (:state checkpoint))))
-                   state ;; nonregressing: never replace with older progress
-
-                   :else
-                   (let [order (conj (vec (remove #{key} order)) key)
-                         entries (assoc entries key checkpoint)
-                         evict (when (> (count order) max-entries)
-                                 (first order))]
-                     (cond-> (assoc state
-                                    :entries entries
-                                    :order order)
-                       evict (-> (update :entries dissoc evict)
-                                 (update :order subvec 1))))))))
-      nil)))
+    (checkpoint-store? store)
+    (try
+      (let [storage (:storage store)
+            candidate-progress (checkpoint-progress checkpoint)]
+        (loop []
+          (let [{:keys [found? value]} (lru/peek-entry storage key)]
+            (if found?
+              (when (progress-newer?
+                     candidate-progress (checkpoint-progress value))
+                (when-not (lru/replace-if! storage key value checkpoint)
+                  (recur)))
+              (when-not (lru/put-if-absent! storage key checkpoint)
+                (recur))))))
+      nil
+      (catch #?(:clj Exception :cljs :default) _ nil))))
 
 (defn ^:no-doc checkpoint-hit
   "A checkpoint serves a continuation only when its delivered boundary
   ordinal and constant-size boundary identity both match the token."
   [store key ordinal boundary]
-  (when-let [entry (cond
-                     (context-store? store) ((:get store) key)
-                     store (get (:entries @store) key))]
-    (if (and (= ordinal (:ordinal entry))
-             (= boundary (:boundary entry)))
-      (do
-        (when (context-store? store)
-          ((:hit! store)))
-        entry)
-      (do
-        (when (context-store? store)
-          ((:miss! store) :boundary-mismatch))
-        nil))))
+  (when (execution/cache-stage-available?)
+    (try
+      (when-let [entry
+                 (cond
+                   (context-store? store) ((:get store) key)
+                   (checkpoint-store? store)
+                   (let [{:keys [found? value]}
+                         (lru/peek-entry (:storage store) key)]
+                     (when found? value)))]
+        (if (and (= ordinal (:ordinal entry))
+                 (= boundary (:boundary entry)))
+          (do
+            ;; The caller already holds an authenticated immutable checkpoint.
+            ;; A lost touch race or store failure affects only future retention.
+            (try
+              (if (context-store? store)
+                ((:hit! store) key entry)
+                (lru/hit-if-value! (:storage store) key entry))
+              (catch #?(:clj Exception :cljs :default) _ nil))
+            entry)
+          (do
+            (when (context-store? store)
+              ((:miss! store) :boundary-mismatch))
+            nil)))
+      (catch #?(:clj Exception :cljs :default) _ nil))))
 
 ;; ---------------------------------------------------------------------------
 ;; Page execution
 ;; ---------------------------------------------------------------------------
 
-(defn- resolve-anchor-eid
-  [{:keys [adapter anchor]}]
-  (backend/invoke adapter :object-id->internal (second anchor)))
-
-(defn- external-id
-  [{:keys [adapter]} internal-id]
-  (backend/invoke adapter :internal-id->object internal-id))
-
 (defn- run-fresh
   [{:keys [direction] :as options} anchor-eid target]
-  (let [run-options (merge (select-keys options
-                                        [:adapter :fetch-fn :plan
-                                         :subject-type :cut-point!
-                                         :physical-chunk-size :sidecar-cap
-                                         :max-admissions :max-commands
-                                         :max-transitions :max-values :max-stack])
+  (let [run-options (merge (select-keys options reducer/run-option-keys)
                            {:target target})]
     (case direction
       :forward (reducer/run-forward
@@ -269,12 +286,7 @@
 
 (defn- run-resume
   [options checkpoint-state target]
-  (reducer/resume (merge (select-keys options
-                                      [:adapter :fetch-fn :plan
-                                       :subject-type :cut-point!
-                                       :physical-chunk-size :sidecar-cap
-                                       :max-admissions :max-commands
-                                       :max-transitions :max-values :max-stack])
+  (reducer/resume (merge (select-keys options reducer/run-option-keys)
                          {:target target})
                   checkpoint-state))
 
@@ -298,9 +310,9 @@
   under the exhaustion guard."
   [{:keys [service-admission checkpoint-key]} thunk]
   (physical/with-replay-admission
-   service-admission
-   (or checkpoint-key ::anonymous-replay)
-   #(guard-exhaustion thunk)))
+    service-admission
+    (or checkpoint-key ::anonymous-replay)
+    #(guard-exhaustion thunk)))
 
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:
@@ -315,9 +327,12 @@
       {:state (:state hit) :pending (:pending hit)})
     (let [replayed (governed-replay
                     options
-                    #(run-fresh options anchor-eid ordinal))
+                    #(run-fresh (assoc options
+                                       :result-sink :window
+                                       :result-window-size 1)
+                                anchor-eid ordinal))
           results (:results replayed)]
-      (when (or (< (count results) ordinal)
+      (when (or (< (:discovered replayed) ordinal)
                 (not= boundary-eid (peek results)))
         (page-error! :eacl.page/invalid-cursor
                      "Replay could not validate the cursor boundary."
@@ -335,13 +350,9 @@
   window of the exhausted sequence. When `:service-admission` names a
   service-edge admission, replays (checkpoint misses, backward runs and last
   windows) run under its replay ledger keyed by `:checkpoint-key`."
-  [{:keys [plan direction anchor-eid subject-type page-size
-           after before last-window? checkpoints checkpoint-key
-           raw-candidates?]
+  [{:keys [anchor-eid page-size after before last-window? checkpoints
+           checkpoint-key raw-candidates?]
     :as options}]
-  {:pre [(some? plan) (contains? #{:forward :reverse} direction)
-         (keyword? subject-type) (pos-int? page-size)
-         (not (and after before))]}
   (cond
     (nil? anchor-eid)
     {:eids [] :start-ordinal 0 :has-next? false :has-previous? false}
@@ -351,14 +362,17 @@
           start (max 0 (- ordinal 1 page-size))
           replayed (governed-replay
                     options
-                    #(run-fresh options anchor-eid ordinal))
+                    #(run-fresh (assoc options
+                                       :result-sink :window
+                                       :result-window-size (inc page-size))
+                                anchor-eid ordinal))
           results (:results replayed)]
-      (when (or (< (count results) ordinal)
+      (when (or (< (:discovered replayed) ordinal)
                 (not= eid (peek results)))
         (page-error! :eacl.page/invalid-cursor
                      "Backward run could not validate the supplied edge."
                      {:ordinal ordinal}))
-      {:eids (subvec results start (dec ordinal))
+      {:eids (pop results)
        :start-ordinal start
        :has-next? true
        :has-previous? (pos? start)})
@@ -366,14 +380,16 @@
     last-window?
     (let [run (governed-replay
                options
-               #(run-fresh options anchor-eid
+               #(run-fresh (assoc options
+                                  :result-sink :window
+                                  :result-window-size page-size)
+                           anchor-eid
                            reducer/exhaustion-target))
-          results (:results run)
-          start (max 0 (- (count results) page-size))]
-      {:eids (subvec results start)
-       :start-ordinal start
+          results (:results run)]
+      {:eids results
+       :start-ordinal (max 0 (- (:discovered run) (count results)))
        :has-next? false
-       :has-previous? (pos? start)})
+       :has-previous? (> (:discovered run) (count results))})
 
     :else
     (let [ordinal (:ordinal after 0)
@@ -391,10 +407,14 @@
                        #(run-fresh
                          options anchor-eid
                          (if raw-candidates? page-size (inc page-size))))]
-              {:page-ids (vec (take page-size (:results run)))
-               :lookahead (if raw-candidates?
+              {:page-ids (let [results (:results run)]
+                           (subvec results 0 (min page-size (count results))))
+               ;; A fresh vector, never a suffix view retained by the
+               ;; checkpoint store.
+               :lookahead (if (or raw-candidates?
+                                  (<= (count (:results run)) page-size))
                             []
-                            (vec (drop page-size (:results run))))
+                            (into [] (subvec (:results run) page-size)))
                :end-state (reducer/history-free run)}))
           delivered (+ ordinal (count page-ids))]
       (when (and (seq page-ids) checkpoints checkpoint-key)
@@ -436,8 +456,9 @@
                                   (+ (:discovered state) needed-fresh))))
         available (into (vec pending)
                         (when continued (:results continued)))
-        page-ids (vec (take page-size available))
-        lookahead (vec (take 1 (drop page-size available)))]
+        n (count available)
+        page-ids (subvec available 0 (min page-size n))
+        lookahead (if (< page-size n) [(nth available page-size)] [])]
     {:page-ids page-ids
      :lookahead lookahead
      :end-state (if continued (reducer/history-free continued) state)}))
@@ -449,15 +470,11 @@
 
   Returns {:data [external-ids] :page-info {...}} in canonical forward
   order for both navigation modes."
-  [{:keys [plan direction anchor subject-type page-size after before
-           checkpoints]
-    :as options}]
-  {:pre [(some? plan) (contains? #{:forward :reverse} direction)
-         (vector? anchor) (keyword? subject-type)
-         (pos-int? page-size) (not (and after before))]}
+  [{:keys [adapter anchor after before checkpoints] :as options}]
   (let [binding (execution-binding options)
         key (checkpoint-key binding)
-        anchor-eid (resolve-anchor-eid options)
+        anchor-eid (backend/invoke adapter :object-id->internal
+                                   (second anchor))
         payload (when-let [token (or after before)]
                   (decode-token options binding token))
         boundary-eid (when payload
@@ -475,7 +492,8 @@
                                  :before (when before edge)
                                  :checkpoints checkpoints
                                  :checkpoint-key key))
-        externals (mapv #(external-id options %) (:eids result))
+        externals (mapv #(backend/invoke adapter :internal-id->object %)
+                        (:eids result))
         start-ordinal (:start-ordinal result)]
     {:data externals
      :page-info

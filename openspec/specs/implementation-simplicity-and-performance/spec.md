@@ -132,23 +132,43 @@ and measured results MUST carry the exact production artifact digest they test.
 
 ### Requirement: Exact semantic aliases do not duplicate traversal
 
-Before constructing an acyclic merge frontier, EACL SHALL canonicalize only a
-permission whose complete body is exactly one same-resource self-permission.
-It SHALL follow that alias chain with a cycle guard, normalize arrow target
-permission identities, and preserve first-occurrence traversal order while
-removing duplicate canonical frontier identities. It MUST NOT generalize a
-composite permission, inspect relationship data to infer an alias, widen a
-backend scan, or change the permission denotation.
+After sealing and certifying the complete semantic graph as acyclic, EACL SHALL
+derive its least-path execution frontier and canonicalize an arrow target only
+when the target permission's complete normalized body is exactly one
+same-resource self-permission. Resolution SHALL stop conservatively at a
+missing definition, composite body, relation-dependent body, or cycle. Before
+normalization, each path SHALL receive a provider-order-independent canonical
+position. Canonicalization SHALL remove only frontier entries equal in every
+semantic and work field other than that position, including source identity,
+direction, relation/path, target type and permission, physical order and
+capability, admission-key granularity, and static limit/cursor ABI or
+coordinate interpretation. Equal entries SHALL retain the earliest
+pre-normalization canonical position. EACL SHALL rebuild only the affected
+acyclic frontier indexes, order certificate, and fingerprint input. It MUST
+NOT collapse the requested root, remove semantic nodes or reachability, rewrite
+a recursive/cyclic stable plan, inspect relationship data to infer an alias,
+widen a backend scan, or change denotation or public sequence.
 
 #### Scenario: Two arrow targets differ only by a pure alias
 
-- **WHEN** two acyclic arrow paths have the same relation/type identity and one target permission is a pure alias of the other
-- **THEN** EACL constructs one canonical traversal stream at the first path's position
+- **WHEN** two acyclic arrow paths have complete equal semantic/work identities after their target permissions resolve through exact pure aliases
+- **THEN** EACL constructs one canonical traversal stream at the earliest deterministic pre-normalization path position
 - **AND** exact count, page order, point decisions, and stopping conditions are unchanged
 
 #### Scenario: Composite or cyclic permission body
 
-- **WHEN** a permission has multiple components or a pure-alias chain cycles
+- **WHEN** a target definition is missing, composite, relation-dependent, or revisited by a pure-alias chain
 - **THEN** EACL does not erase a component or recurse indefinitely
 - **AND** cycle handling remains conservative and denotationally correct
 
+#### Scenario: Alias appears in a recursive plan
+
+- **WHEN** the sealed semantic graph is recursive or cyclic
+- **THEN** alias canonicalization does not rewrite the root, semantic nodes,
+  reachability, or recursive scheduling
+
+#### Scenario: Provider encounter order changes
+
+- **WHEN** equivalent normalized schema rows arrive in different provider order
+- **THEN** the canonical frontier identities, retained first positions, public
+  sequence, and fingerprint are identical

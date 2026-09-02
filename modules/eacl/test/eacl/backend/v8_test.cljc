@@ -1,10 +1,13 @@
 (ns eacl.backend.v8-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
-             :refer [deftest is testing]]
+            :refer [deftest is testing]]
             [eacl.backend.v8 :as backend]
+            [eacl.cache.derived-schema :as derived-schema]
+            [eacl.cache.key :as cache-key]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.v8 :as engine]
             [eacl.lazy-merge-sort :as lazy-sort]
+            [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -77,6 +80,61 @@
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
+
+#?(:clj
+   (deftest default-schema-warning-dedupe-is-concurrent-and-bounded-test
+     (let [warning-var
+           (ns-resolve 'eacl.engine.v8 'warned-schema-conditions)]
+       (testing "one concurrent first-sighting invocation owns reporting"
+         (let [claimed (atom #{})
+               original-cas compare-and-set!
+               ready (java.util.concurrent.CountDownLatch. 2)
+               release (java.util.concurrent.CountDownLatch. 1)
+               writer (java.io.StringWriter.)
+               guarded-cas
+               (fn [target expected replacement]
+                 (when (identical? target claimed)
+                   (.countDown ready)
+                   (.await release))
+                 (original-cas target expected replacement))]
+           (with-redefs-fn
+             {warning-var claimed
+              #'backend/invoke (fn [& _] [])
+              #'compare-and-set! guarded-cas}
+             (fn []
+               (let [calls
+                     (mapv
+                      (fn [_]
+                        (future
+                          (binding [*err* writer]
+                            (engine/resolve-self-relation
+                             nil :document :missing))))
+                      (range 2))]
+                 (is (.await ready 5 java.util.concurrent.TimeUnit/SECONDS))
+                 (.countDown release)
+                 (doseq [call calls]
+                   (is (not= ::timeout (deref call 5000 ::timeout)))))))
+           (is (= 1 (count @claimed)))
+           (is (= 1
+                  (count
+                   (re-seq #"Missing Relation definition"
+                           (str writer)))))))
+       (testing "the default diagnostic set retains at most 256 conditions"
+         (let [claimed (atom #{})
+               writer (java.io.StringWriter.)]
+           (with-redefs-fn
+             {warning-var claimed
+              #'backend/invoke (fn [& _] [])}
+             (fn []
+               (binding [*err* writer]
+                 (dotimes [index 257]
+                   (engine/resolve-self-relation
+                    nil :document (keyword (str "missing-" index)))))))
+           (is (= 256 (count @claimed)))
+           (is (= 256
+                  (count
+                   (re-seq #"Missing Relation definition"
+                           (str writer))))))))))
 
 (deftest basis-adapter-configuration-is-closed-test
   (is (= {:converter identity}
@@ -162,12 +220,12 @@
                #(backend/invoke adapter :delete-object-tx 1))
               [:type :capability :requested]))))))
 
-(deftest schema-generation-registry-is-bounded-test
-  (let [registry (atom {})]
+(deftest derived-schema-entries-use-one-bounded-lru-test
+  (let [store (derived-schema/store 64)]
     (doseq [generation (range 100)]
       (let [cache
             (engine/schema-cache-for!
-             registry
+             store
              (generation-adapter generation)
              {:backend :test
               :source-id :one
@@ -176,15 +234,34 @@
               :basis-kind :ordinary
               :revision generation
               :exact-locator generation
-              :backend-snapshot-id {:generation generation}}
+             :backend-snapshot-id {:generation generation}}
              generation)]
-        (is (= generation (:schema-version cache)))))
-    (is (= 64 (count @registry)))
-    (is (every? #(= :one (get-in % [3 :source-id]))
-                (keys @registry)))))
+        (is (= generation (:schema-version cache)))
+        (is (= {:generation generation}
+               (engine/memoized-derived!
+                (:parsed-schema cache)
+                #(hash-map :generation generation))))))
+    (is (= {:entry-count 64 :max-entries 64}
+           (derived-schema/stats store)))
+    (let [warm
+          (engine/schema-cache-for!
+           store (generation-adapter 99)
+           {:backend :test
+            :source-id :one
+            :branch nil
+            :source-lifecycle "test/initial"
+            :basis-kind :ordinary
+            :revision 99
+            :exact-locator 99
+            :backend-snapshot-id {:generation 99}}
+           99)]
+      (is (= {:generation 99}
+             (engine/memoized-derived!
+              (:parsed-schema warm)
+              #(throw (ex-info "warm entry rebuilt" {}))))))))
 
 (deftest unavailable-proof-uses-a-fresh-request-local-schema-cache-test
-  (let [registry (atom {})
+  (let [store (derived-schema/store)
         adapter
         (backend/make-adapter
          {:id :test
@@ -196,13 +273,13 @@
            :cache-proofs #{:snapshot-bound}
            :runtime #{#?(:clj :clj :cljs :cljs)}}
           :operations (operation-map)})
-        first-cache (engine/schema-cache-for! registry adapter)
-        second-cache (engine/schema-cache-for! registry adapter)]
+        first-cache (engine/schema-cache-for! store adapter)
+        second-cache (engine/schema-cache-for! store adapter)]
     (is (true? (:request-local? first-cache)))
     (is (nil? (:schema-version first-cache)))
     (is (some? (:parsed-schema first-cache)))
     (is (not (identical? first-cache second-cache)))
-    (is (empty? @registry))))
+    (is (= 0 (:entry-count (derived-schema/stats store))))))
 
 (deftest schema-generation-resolution-does-not-read-proof-frame-test
   (let [stats (atom {})
@@ -423,7 +500,135 @@
           (is (= obligation
                  (:obligation
                   (violation operation implementation args)))
-              (str "guard " operation)))))))
+            (str "guard " operation)))))))
+
+(deftest captured-scan-invoker-preserves-the-complete-boundary-test
+  (let [calls (atom [])
+        phases (atom [])
+        adapter
+        (backend/make-adapter
+         {:id :captured-scan
+          :capabilities {}
+          :runtime-guards? true
+          :operations
+          (assoc (operation-map)
+                 :subject->resources
+                 (fn [& args]
+                   (swap! calls conj args)
+                   [3 5 8]))})
+        scan! (backend/scan-invoker adapter :subject->resources)
+        ledger (request-counters/make-ledger)
+        stats (atom {})
+        result
+        (request-counters/call-with-ledger
+         ledger
+         #(binding [backend/*backend-op-stats* stats
+                    backend/*invoke-observer* (fn [event]
+                                                (swap! phases conj event))]
+            (scan! :user 1 2 :document
+                   {:direction :asc :bound-eid 2
+                    :inclusive-bound? false :limit 3})))]
+    (is (= [3 5 8] result))
+    (is (= [[:user 1 2 :document
+             {:direction :asc :bound-eid 2
+              :inclusive-bound? false :limit 3}]]
+           @calls))
+    (is (= 1 (:adapter-reads
+              (request-counters/snapshot ledger))))
+    (is (= {:subject->resources 1} @stats))
+    (is (= [[:before :subject->resources]
+            [:after :subject->resources]]
+           (mapv (juxt :phase :operation) @phases))))
+  (testing "runtime-guard failures retain after-then-failed observation"
+    (let [phases (atom [])
+          adapter
+          (backend/make-adapter
+           {:id :captured-scan-violator
+            :capabilities {}
+            :runtime-guards? true
+            :operations
+            (assoc (operation-map)
+                   :resource->subjects (fn [& _] [2 3]))})
+          scan! (backend/scan-invoker adapter :resource->subjects)
+          failure
+          (binding [backend/*invoke-observer* (fn [{:keys [phase]}]
+                                                (swap! phases conj phase))]
+            (error-data
+             #(scan! :document 4 2 :user
+                     {:direction :asc :bound-eid 2
+                      :inclusive-bound? false})))]
+      (is (= :inclusive-exclusive-bound (:obligation failure)))
+      (is (= [:before :after :failed] @phases))))
+  (testing "adapter exceptions retain before-then-failed observation"
+    (let [phases (atom [])
+          adapter
+          (backend/make-adapter
+           {:id :captured-scan-failure
+            :capabilities {}
+            :operations
+            (assoc (operation-map)
+                   :subject->resources
+                   (fn [& _] (throw (ex-info "scan failed" {:cause :test}))))})
+          scan! (backend/scan-invoker adapter :subject->resources)
+          failure
+          (binding [backend/*invoke-observer* (fn [{:keys [phase]}]
+                                                (swap! phases conj phase))]
+            (error-data
+             #(scan! :user 1 2 :document {:direction :asc})))]
+      (is (= :test (:cause failure)))
+      (is (= [:before :failed] @phases))))
+  (testing "diagnostic stand-ins retain generic call-time dispatch"
+    (let [calls (atom [])
+          scan! (backend/scan-invoker ::stand-in :subject->resources)]
+      (with-redefs [backend/invoke
+                    (fn [adapter operation & args]
+                      (swap! calls conj [adapter operation args])
+                      [7])]
+        (is (= [7] (scan! :user 1 2 :document {:direction :asc}))))
+      (is (= [[::stand-in :subject->resources
+               [:user 1 2 :document {:direction :asc}]]]
+             @calls)))))
+
+(deftest captured-direct-match-invoker-preserves-the-complete-boundary-test
+  (let [calls (atom [])
+        phases (atom [])
+        adapter
+        (backend/make-adapter
+         {:id :captured-direct-match
+          :capabilities {}
+          :runtime-guards? true
+          :operations
+          (assoc (operation-map)
+                 :direct-match?
+                 (fn [& args]
+                   (swap! calls conj args)
+                   true))})
+        direct-match! (backend/direct-match-invoker adapter)
+        ledger (request-counters/make-ledger)
+        stats (atom {})
+        result
+        (request-counters/call-with-ledger
+         ledger
+         #(binding [backend/*backend-op-stats* stats
+                    backend/*invoke-observer* (fn [{:keys [phase]}]
+                                                (swap! phases conj phase))]
+            (direct-match! :user 1 2 :document 3)))]
+    (is (true? result))
+    (is (= [[:user 1 2 :document 3]] @calls))
+    (is (= 1 (:adapter-reads
+              (request-counters/snapshot ledger))))
+    (is (= {:direct-match? 1} @stats))
+    (is (= [:before :after] @phases)))
+  (testing "diagnostic stand-ins retain generic call-time dispatch"
+    (let [calls (atom [])
+          direct-match! (backend/direct-match-invoker ::stand-in)]
+      (with-redefs [backend/invoke
+                    (fn [adapter operation & args]
+                      (swap! calls conj [adapter operation args])
+                      true)]
+        (is (true? (direct-match! :user 1 2 :document 3))))
+      (is (= [[::stand-in :direct-match? [:user 1 2 :document 3]]]
+             @calls)))))
 
 (deftest runtime-guards-reject-negative-internal-eids-test
   (letfn [(violation [operation implementation args]
@@ -547,7 +752,7 @@
            :cache-proofs #{:ordered-generations :snapshot-bound}
            :runtime #{#?(:clj :clj :cljs :cljs)}}
           :operations operations})
-        schema-cache (engine/make-schema-cache adapter 1)]
+        schema-cache (engine/request-schema-cache adapter)]
     (binding [engine/*schema-cache* schema-cache]
       ;; The retired routing analysis (traversal-permission?, SCC
       ;; component plans) is gone; recursion classification now lives on
@@ -595,7 +800,7 @@
             (is (= []
                    (:data
                     (binding [engine/*schema-cache*
-                              (engine/make-schema-cache other 1)]
+                              (engine/request-schema-cache other)]
                       (engine/lookup-resources
                        other (query 1003))))))
             (is (= 2 @seals)
@@ -638,11 +843,21 @@
       (fn [_subject-type _subject-eid _relation-eid _resource-type resource-eid]
         (even? resource-eid))})}))
 
+(defn- projection-test-exact-key
+  [semantic]
+  (cache-key/exact-denotation-key
+   {:tier :denotation
+    :source-lifecycle {:source :projection-test :lifecycle :one}
+    :abi :projection-test-v2
+    :semantic semantic
+    :reuse [:projection-test-basis 1]}))
+
 (deftest direct-projections-never-use-cache-owned-chunking-test
   (let [adapter (projection-test-adapter)
         store (subproblem/store)
         work (atom {})]
     (binding [subproblem/*store* store
+              subproblem/*exact-denotation-key-fn* projection-test-exact-key
               engine/*backend-work-stats* work]
       (testing "a small ascending request realizes one bounded prefix"
         (is (= (vec (range 1 21))
@@ -651,8 +866,8 @@
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
         (is (= 1 (:subject->resources-scans @work)))
-        (is (= 0 (:fetched-projection-values
-                  (subproblem/stats store)))))
+        (is (not (contains? (subproblem/stats store)
+                            :fetched-projection-values))))
       (testing "a distinct consumer issues the same exact adapter request"
         (is (= (vec (range 1 21))
                (vec
@@ -660,7 +875,7 @@
                       (engine/subject->resources
                        adapter :user 1 10 :document nil)))))
         (is (= 2 (:subject->resources-scans @work)))
-        (is (= 0 (:projection-hits (subproblem/stats store))))
+        (is (not (contains? (subproblem/stats store) :projection-hits)))
         (is (= 0 (:avoided-backend-operations
                   (subproblem/stats store)))))
       (testing "host demand does not create or widen cache chunks"
@@ -730,7 +945,7 @@
                    {:direction :asc
                     :bound-eid 100}))))
           (is (= (inc before) (:subject->resources-scans @work)))))
-      (testing "completed exact Boolean probes are reusable"
+      (testing "direct Boolean probes remain ordinary backend work"
         (is (= [true]
                (engine/direct-match-datoms-in-relationship-index
                 adapter :user 1 10 :document 2)))
@@ -744,7 +959,7 @@
           (is (= []
                  (engine/direct-match-datoms-in-relationship-index
                   adapter :user 1 10 :document 3)))
-          (is (= before (:direct-match-probes @work))))))))
+          (is (= (+ 2 before) (:direct-match-probes @work))))))))
 
 (deftest projection-cache-free-path-has-no-cache-effects-test
   (let [adapter (projection-test-adapter)

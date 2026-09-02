@@ -5,6 +5,7 @@
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
             [eacl.operator.cover-plan :as cover-plan]
+            [eacl.operator.plan :as operator-plan]
             [eacl.operator.seekable :as seekable]
             [eacl.operator.vector-evaluator :as vector-evaluator]
             [eacl.request.counters :as request-counters]))
@@ -42,9 +43,6 @@
     (invalid! :invalid-limit "Operator lookup limits must be positive integers."
               {:field field :value value}))
   value)
-
-(defn- expression-roots [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
 
 (defn- semantic-candidate
   [permission direction subject-type subject-eid resource-eid true-nodes]
@@ -113,7 +111,7 @@
      (raw-options options))))
 
 (defn- specialization-node [plan permission]
-  (let [root-id (get (expression-roots plan) permission)
+  (let [root-id (get (operator-plan/expression-roots plan) permission)
         source-id (get-in plan [:generators permission root-id :source-node])]
     (some #(when (contains? #{:direct-k-way-intersection
                               :direct-monotone-exclusion}
@@ -121,28 +119,39 @@
              %)
           (distinct [root-id source-id]))))
 
-(defn- emission-witness
-  [plan cover-plan permission node-id specialization-node emission]
+(defn- emission-witness-fn
+  "Returns the witness function for one generator node: the plan nodes an
+  emission has already proven true. A union root's child is read from its
+  root-rule ordinal; that index is built once per batch instead of scanning
+  the cover rules for every emission."
+  [plan cover-plan permission node-id specialization-node]
   (let [{:keys [source-node source-nodes]}
         (get-in plan [:generators permission node-id])]
     (cond
       (= specialization-node node-id)
-      #{[permission node-id]}
+      (constantly #{[permission node-id]})
 
       (some? source-node)
-      #{[permission source-node]}
+      (constantly #{[permission source-node]})
 
       (seq source-nodes)
-      (let [ordinal (first (:coords emission))
-            root (:root cover-plan)
-            rule (some #(when (and (= root (:node %))
-                                   (= ordinal (:ordinal %))) %)
-                       (:rules cover-plan))
-            child (get (:operator-synthetic->semantic cover-plan)
-                       (:target-node rule))]
-        (if child #{child} #{}))
+      (let [root (:root cover-plan)
+            synthetic->semantic (:operator-synthetic->semantic cover-plan)
+            ordinal->child
+            (reduce (fn [index rule]
+                      (if (and (= root (:node rule))
+                               (not (contains? index (:ordinal rule))))
+                        (assoc index (:ordinal rule)
+                               (get synthetic->semantic (:target-node rule)))
+                        index))
+                    {}
+                    (:rules cover-plan))]
+        (fn [emission]
+          (if-let [child (get ordinal->child (first (:coords emission)))]
+            #{child}
+            #{})))
 
-      :else #{})))
+      :else (constantly #{}))))
 
 (defn- candidate
   [permission traversal subject-type anchor-eid witness {:keys [value]}]
@@ -158,9 +167,9 @@
            accept-result? scope-identity]}
    cover-plan emissions]
   (let [permission (or permission (:root plan))
-        node-id (get (expression-roots plan) permission)
-        witnesses (mapv #(emission-witness plan cover-plan permission
-                                           node-id specialization-node %)
+        node-id (get (operator-plan/expression-roots plan) permission)
+        witnesses (mapv (emission-witness-fn plan cover-plan permission
+                                             node-id specialization-node)
                         emissions)
         candidates (mapv #(candidate permission traversal subject-type
                                      anchor-eid %1 %2)
@@ -182,10 +191,8 @@
           emissions witnesses decisions)))
 
 (defn- add-counters [total delta]
-  (merge-with + total
-              (select-keys delta
-                           [:commands :fetched-values :stream-opens
-                            :emissions])))
+  ;; Both raw producers emit exactly the four counter keys.
+  (merge-with + total delta))
 
 (defn resume-coordinate
   "Returns the logical continuation coordinate. A physically evaluated
@@ -242,10 +249,10 @@
            last-examined nil
            counters {:commands 0 :fetched-values 0
                      :stream-opens 0 :emissions 0}
-           widths []]
+           widths (when *lookup-stats* [])]
       (execution/check! execution/*contract*
                         :operator-lookup/batch-boundary
-                        {:candidates (:examined schedule)})
+                        #(hash-map :candidates (:examined schedule)))
       (if (batch-schedule/done? schedule)
         (let [sentinel? (> (count accepted) page-size)
               selected (vec (take page-size accepted))
@@ -297,12 +304,12 @@
                   sentinel? (= (count accepted) result-demand)
                   exhausted? (and (:exhausted? raw)
                                   (= consumed-count (count emissions)))]
-              (request-counters/add! :candidates-examined consumed-count)
+              (request-counters/add-candidates-examined! consumed-count)
               (if sentinel?
                 (let [selected (vec (take page-size accepted))]
                   (observe-page! (+ (:examined schedule) consumed-count)
-                                 (count selected) (conj widths width)
-                                 overread)
+                                 (count selected)
+                                 (some-> widths (conj width)) overread)
                   {:emissions selected
                    :has-more? true :bounded? false :exhausted? false
                    ;; Resume after the last PUBLIC result, so a sentinel and
@@ -315,8 +322,8 @@
                 (if exhausted?
                   (do
                     (observe-page! (+ (:examined schedule) consumed-count)
-                                   (count accepted) (conj widths width)
-                                   overread)
+                                   (count accepted)
+                                   (some-> widths (conj width)) overread)
                     {:emissions (vec accepted)
                      :has-more? false :bounded? false :exhausted? true
                      :resume-coords last-consumed
@@ -329,14 +336,13 @@
                          accepted
                          last-consumed
                          counters
-                         (conj widths width)))))))))))
+                         (some-> widths (conj width))))))))))))
 
 (defn count-results
   "Exact count when :count-limit is absent; otherwise stops after the
   lookahead result needed to report truncation. Exact and bounded work remain
   separately observable through :exhaustive?."
-  [{:keys [adapter plan traversal subject-type anchor-eid count-limit
-           permission]
+  [{:keys [adapter plan count-limit permission]
     :as options}]
   (when-not (or (nil? count-limit)
                 (and (integer? count-limit) (not (neg? count-limit))))
@@ -364,7 +370,7 @@
                      :stream-opens 0 :emissions 0}]
       (execution/check! execution/*contract*
                         :operator-count/batch-boundary
-                        {:count accumulated})
+                        #(hash-map :count accumulated))
       (let [raw (raw-page
                  (assoc options :cover-plan cover-plan
                         :width width
@@ -375,7 +381,9 @@
           {:count accumulated :limit (or count-limit -1) :truncated? false
            :exhaustive? (nil? count-limit) :counters counters}
           (let [evaluated (evaluate-emissions options cover-plan emissions)
-                grants (count (filter :accepted? evaluated))
+                grants (reduce (fn [n entry]
+                                 (if (:accepted? entry) (inc n) n))
+                               0 evaluated)
                 next-count (+ accumulated grants)]
             (if (and target (>= next-count target))
               {:count count-limit :limit count-limit :truncated? true

@@ -12,9 +12,6 @@
 (defn- permission-id [permission node-id]
   (str "operator-cover:" (pr-str permission) ":" node-id))
 
-(defn- expression-roots [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
-
 (defn- synthetic-name [permission node-id]
   [synthetic-tag permission node-id])
 
@@ -41,7 +38,7 @@
    :permission-name permission-name})
 
 (defn- target-root-node [plan semantic->synthetic permission]
-  (let [root (get (expression-roots plan) permission)]
+  (let [root (get (operator-plan/expression-roots plan) permission)]
     (or (get semantic->synthetic [permission root])
         (throw
          (ex-info "Operator cover target permission is outside the plan."
@@ -120,8 +117,15 @@
                         synthetic))))
 
 (defn- forwarding-operation [adapter operation]
-  (fn [& arguments]
-    (apply backend/invoke adapter operation arguments)))
+  (case operation
+    (:subject->resources :resource->subjects)
+    (backend/scan-invoker adapter operation)
+
+    :direct-match?
+    (backend/direct-match-invoker adapter)
+
+    (fn [& arguments]
+      (apply backend/invoke adapter operation arguments))))
 
 (defn- wrapper-adapter
   [adapter operator-plan {:keys [semantic->synthetic synthetic->semantic]}]
@@ -166,7 +170,12 @@
                      :operator-cover (:fingerprint operator-plan)}
        :deterministic? (backend/deterministic? adapter)
        :identity-contract (backend/identity-contract adapter)
-       :runtime-guards? (backend/runtime-guards? adapter)
+       ;; The forwarding operations already run the base adapter's runtime
+       ;; guards (scan-invoker/direct-match-invoker capture them), and the
+       ;; synthetic node-definition operations serve trusted plan data.
+       ;; Re-enabling guards here re-validated every scanned value a second
+       ;; time on the operator cover path.
+       :runtime-guards? false
        :state (backend/state adapter)
        :operations operations}
        (backend/supports?
@@ -187,7 +196,7 @@
                 :eacl/error :eacl.operator/invalid-cover})))
    (let [{:keys [semantic->synthetic synthetic->semantic] :as maps}
          (node-maps plan)
-         root-id (get (expression-roots plan) permission)
+         root-id (get (operator-plan/expression-roots plan) permission)
          root (get semantic->synthetic [permission root-id])]
      (when-not root
        (throw

@@ -137,12 +137,20 @@ process-local lifecycle rotation. Persist the replacement lifecycle and
 watermark first, close the old client/connection, and construct a new client.
 
 For operational testing or capacity management, `clear-answer-cache!` evicts
-completed answers and resumable page state while retaining the certified
-schema-generation registry, sealed plans, signing configuration, and source
-lifecycle. It is not a recovery operation and must not be used after restore,
-rollback, or an unsupported authorization mutation.
+completed answers, exact denotations, and resumable page state while retaining
+flat derived-schema cache artifacts, sealed plans, signing configuration, and
+source lifecycle. Sticky managed-proof distrust also remains in force. This is
+not a recovery operation and must not be used after restore, rollback, or an
+unsupported authorization mutation.
 
 See [PORTING.md](PORTING.md) for the adapter boundary and unsupported
 configurations. The trusted boundary requires this maintained fork for every
 Datalog writer. Raw KV writes to Datalevin's datom/meta DBIs, direct file
 mutation, or opening the directory with upstream Datalevin are outside it.
+
+## Removed (2026-09-02)
+
+- `eacl.datalevin.impl/{find-one-relationship-id,orphaned-relationship-halves,Relation,Permission,Relationship}`,
+  `eacl.datalevin.db/entity-exists?` and the
+  `eacl.datalevin.schema/validate-schema-references` alias — unreferenced
+  since the module's integrity namespace was retired.

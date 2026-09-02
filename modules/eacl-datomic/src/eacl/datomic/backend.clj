@@ -28,24 +28,6 @@
   [^datomic.Database db]
   (or (.asOfT db) (d/basis-t db)))
 
-(defn ordinary-view?
-  "True when `db` is an ordinary current or as-of database value.
-
-  `d/filter`, `d/since` and `d/history` views report the same database id and
-  basis as the plain value they wrap, so nothing downstream can tell them apart
-  by revision: they would mint the identical snapshot identity while answering
-  different questions. Exact-snapshot consistency is therefore refused for
-  them, which is also what keeps them out of the exact-basis cache tier. An
-  as-of value is ordinary — it is precisely the exact view this backend
-  selects. Public: the raw facade uses the same discrimination to keep
-  filtered/since/history views out of runtime-owned sealed-plan reuse (they
-  report the plain value's database id, basis, and schema stamp, so a stable
-  plan key cannot tell them apart)."
-  [^datomic.Database db]
-  (and (not (.isFiltered db))
-       (not (.isHistory db))
-       (nil? (.sinceT db))))
-
 (defn basis-kind
   "Classifies one Datomic database value without touching an EACL runtime.
 
@@ -106,90 +88,136 @@
   only when that value is behind, bounds the wait, verifies Datomic's promised
   postcondition, and owns cancellation of the returned future on timeout or
   interruption. Provider failures retain their cause and selection phase."
-  [conn local-db requested-t timeout-ms phase]
-  (let [timeout-ms (or timeout-ms 30000)
-        local-t
-        (try
-          (d/basis-t local-db)
-          (catch Exception failure
-            (selection-failure!
-             "Failed reading the local Datomic basis."
-             :retryable phase
-             {:requested-t requested-t
-              :requested-order-hint requested-t
-              :timeout-ms timeout-ms}
-             failure)))]
-    (if (<= requested-t local-t)
-      local-db
-      (let [waiter
-            (try
-              (d/sync conn requested-t)
-              (catch Exception failure
-                (selection-failure!
-                 "Failed starting targeted Datomic synchronization."
-                 :retryable phase
-                 {:requested-t requested-t
-                  :observed-t local-t
-                  :requested-order-hint requested-t
-                  :observed-order-hint local-t
-                  :timeout-ms timeout-ms}
-                 failure)))]
-        (try
-          (let [selected (deref waiter timeout-ms sync-timeout-marker)]
-            (when (identical? sync-timeout-marker selected)
-              (cancel-waiter! waiter)
-              (freshness-unavailable!
-               "Timed out waiting for the requested Datomic basis."
-               {:reason :freshness-timeout
-                :phase phase
-                :requested-t requested-t
-                :observed-t local-t
-                :requested-order-hint requested-t
-                :observed-order-hint local-t
-                :timeout-ms timeout-ms}))
-            (let [selected-t (d/basis-t selected)]
-              (when (< selected-t requested-t)
-                (freshness-unavailable!
-                 "Targeted Datomic synchronization returned below the requested basis."
-                 {:reason :head-behind
-                  :phase phase
-                  :requested-t requested-t
-                  :observed-t selected-t
-                  :requested-order-hint requested-t
-                  :observed-order-hint selected-t
-                  :timeout-ms timeout-ms}))
-              selected))
-          (catch InterruptedException interrupt
-            (cancel-waiter! waiter)
-            (let [classified
-                  (ex-info
-                   "Targeted Datomic synchronization was interrupted."
-                   {:type :eacl.basis/selection-failure
-                    :eacl/error :eacl.basis/selection-failure
-                    :classification :cancelled
-                    :phase phase
-                    :requested-t requested-t
-                    :observed-t local-t
-                    :requested-order-hint requested-t
-                    :observed-order-hint local-t
-                    :timeout-ms timeout-ms}
-                   interrupt)]
-              ;; Set the flag after constructing the classified error so no
-              ;; intervening provider/runtime work can consume it.
-              (.interrupt (Thread/currentThread))
-              (throw classified)))
-          (catch clojure.lang.ExceptionInfo error
-            (throw error))
-          (catch Exception failure
-            (selection-failure!
-             "Targeted Datomic synchronization failed."
-             :retryable phase
-             {:requested-t requested-t
-              :observed-t local-t
-              :requested-order-hint requested-t
-              :observed-order-hint local-t
-              :timeout-ms timeout-ms}
-             failure)))))))
+  ([conn local-db requested-t timeout-ms phase]
+   (await-basis-db
+    conn local-db requested-t timeout-ms phase :selection))
+  ([conn local-db requested-t timeout-ms phase failure-kind]
+   (let [timeout-ms (or timeout-ms 30000)
+         local-t
+         (try
+           (d/basis-t local-db)
+           (catch Exception failure
+             (selection-failure!
+              "Failed reading the local Datomic basis."
+              :retryable phase
+              {:requested-t requested-t
+               :requested-order-hint requested-t
+               :timeout-ms timeout-ms}
+              failure)))]
+     (if (<= requested-t local-t)
+       local-db
+       (let [waiter
+             (try
+               (d/sync conn requested-t)
+               (catch InterruptedException interrupt
+                 (let [classified
+                       (ex-info
+                        "Starting targeted Datomic synchronization was interrupted."
+                        {:type :eacl.basis/selection-failure
+                         :eacl/error :eacl.basis/selection-failure
+                         :classification :cancelled
+                         :phase phase
+                         :requested-t requested-t
+                         :observed-t local-t
+                         :requested-order-hint requested-t
+                         :observed-order-hint local-t
+                         :timeout-ms timeout-ms}
+                        interrupt)]
+                   (.interrupt (Thread/currentThread))
+                   (throw classified)))
+               (catch Exception failure
+                 (case failure-kind
+                   :freshness
+                   (freshness-unavailable!
+                    "Failed starting targeted Datomic synchronization."
+                    {:reason :sync-failed
+                     :phase phase
+                     :requested-t requested-t
+                     :observed-t local-t
+                     :requested-order-hint requested-t
+                     :observed-order-hint local-t
+                     :timeout-ms timeout-ms
+                     :cause failure})
+
+                   :selection
+                   (selection-failure!
+                    "Failed starting targeted Datomic synchronization."
+                    :retryable phase
+                    {:requested-t requested-t
+                     :observed-t local-t
+                     :requested-order-hint requested-t
+                     :observed-order-hint local-t
+                     :timeout-ms timeout-ms}
+                    failure))))]
+         (try
+           (let [selected (deref waiter timeout-ms sync-timeout-marker)]
+             (when (identical? sync-timeout-marker selected)
+               (cancel-waiter! waiter)
+               (freshness-unavailable!
+                "Timed out waiting for the requested Datomic basis."
+                {:reason :freshness-timeout
+                 :phase phase
+                 :requested-t requested-t
+                 :observed-t local-t
+                 :requested-order-hint requested-t
+                 :observed-order-hint local-t
+                 :timeout-ms timeout-ms}))
+             (let [selected-t (d/basis-t selected)]
+               (when (< selected-t requested-t)
+                 (freshness-unavailable!
+                  "Targeted Datomic synchronization returned below the requested basis."
+                  {:reason :head-behind
+                   :phase phase
+                   :requested-t requested-t
+                   :observed-t selected-t
+                   :requested-order-hint requested-t
+                   :observed-order-hint selected-t
+                   :timeout-ms timeout-ms}))
+               selected))
+           (catch InterruptedException interrupt
+             (cancel-waiter! waiter)
+             (let [classified
+                   (ex-info
+                    "Targeted Datomic synchronization was interrupted."
+                    {:type :eacl.basis/selection-failure
+                     :eacl/error :eacl.basis/selection-failure
+                     :classification :cancelled
+                     :phase phase
+                     :requested-t requested-t
+                     :observed-t local-t
+                     :requested-order-hint requested-t
+                     :observed-order-hint local-t
+                     :timeout-ms timeout-ms}
+                    interrupt)]
+               ;; Set the flag after constructing the classified error so no
+               ;; intervening provider/runtime work can consume it.
+               (.interrupt (Thread/currentThread))
+               (throw classified)))
+           (catch clojure.lang.ExceptionInfo error
+             (throw error))
+           (catch Exception failure
+             (selection-failure!
+              "Targeted Datomic synchronization failed."
+              :retryable phase
+              {:requested-t requested-t
+               :observed-t local-t
+               :requested-order-hint requested-t
+               :observed-order-hint local-t
+               :timeout-ms timeout-ms}
+              failure))))))))
+
+(defn- capture-local-db
+  [conn requested-t timeout-ms phase]
+  (try
+    (d/db conn)
+    (catch Exception failure
+      (selection-failure!
+       "Failed capturing the local Datomic basis."
+       :retryable phase
+       {:requested-t requested-t
+        :requested-order-hint requested-t
+        :timeout-ms timeout-ms}
+       failure))))
 
 (defn- validate-exact-token!
   [{:keys [revision exact-locator] :as token-data}]
@@ -259,18 +287,8 @@
   [db resource-type permission-name]
   (->> (ddb/find-permission-defs
         db resource-type permission-name)
-       (mapcat
-        (fn [permission]
-          (expression-persistence/union-compatible-definitions
-           (:db/id permission)
-           (expression-persistence/decode-entity permission))))
+       (mapcat expression-persistence/union-compatible-entity-definitions)
        vec))
-
-(defn- permission-expression [db resource-type permission-name]
-  (some-> (expression-persistence/validate-entities
-           (ddb/find-permission-defs db resource-type permission-name))
-          first
-          :entity))
 
 (defn- ordered-generation-frame
   [db relation-ids]
@@ -291,15 +309,12 @@
             d/tx->t)))
 
 (def adapter-config-keys
-  #{:entid->object-id :object-id->entid :object-eid-fn
-    :subject->resources-fn :resource->subjects-fn
+  #{:entid->object-id :object-id->entid
     :adapter-fingerprint :adapter-deterministic? :identity-contract})
 
 (defn basis-adapter
   "Creates the connection-free basis adapter used by the shared pipeline."
-  [db {:keys [entid->object-id object-id->entid object-eid-fn
-              subject->resources-fn
-              resource->subjects-fn adapter-fingerprint
+  [db {:keys [entid->object-id object-id->entid adapter-fingerprint
               adapter-deterministic? identity-contract]
        :as config}]
   (backend/validate-adapter-config! :datomic adapter-config-keys config)
@@ -341,8 +356,7 @@
          ;; becomes a false negative.
          (if (number? object-id)
            (d/entid db object-id)
-           ((or object-id->entid object-eid-fn ddb/object-eid)
-            db object-id)))
+           ((or object-id->entid ddb/object-eid) db object-id)))
        :internal-id->object (fn [internal-id] (external-id db internal-id))
        :relation-defs
        (fn [resource-type relation-name]
@@ -352,14 +366,15 @@
          (permission-defs db resource-type permission-name))
        :permission-expression
        (fn [resource-type permission-name]
-         (permission-expression db resource-type permission-name))
+         (expression-persistence/validated-expression-entity
+          (ddb/find-permission-defs db resource-type permission-name)))
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type scan-options]
-         ((or subject->resources-fn ddb/subject->resources)
+         (ddb/subject->resources
           db subject-type subject-id relation-id resource-type scan-options))
        :resource->subjects
        (fn [resource-type resource-id relation-id subject-type scan-options]
-         ((or resource->subjects-fn ddb/resource->subjects)
+         (ddb/resource->subjects
           db resource-type resource-id relation-id subject-type scan-options))
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]
@@ -441,15 +456,18 @@
 (defn source
   "Builds a static borrowed Datomic basis source.
 
-  Construction reads only the connection's durable database id. Exact
-  selection starts a targeted `d/sync` and never qualifies the request by
-  acquiring current first."
+  Construction reads only the connection's durable database id. At-least and
+  exact selection capture one local Peer DB and start one targeted `d/sync T`
+  only when that immutable observation is below the authenticated floor."
   [conn opts]
   (let [source-scope
         {:source-id (connection-source-id conn) :branch nil}
         source-lifecycle
         (fn []
-          (or (some-> (:source-lifecycle-state opts) deref)
+          (or (some-> (:runtime-lifecycle-state opts)
+                      deref
+                      :source-lifecycle)
+              (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))
         adapter-options (select-keys opts adapter-config-keys)
         borrowed
@@ -484,23 +502,36 @@
        :acquire-at-least!
        (fn [token-data timeout-ms]
          (let [requested (:revision token-data)
-               timeout-ms (timeout timeout-ms)]
+               timeout-ms (timeout timeout-ms)
+               local-db
+               (capture-local-db
+                conn requested timeout-ms :at-least-sync)]
            (borrowed
-            (await-sync! (start-sync! #(d/sync conn requested)
-                                      :at-least-sync requested :freshness)
-                         timeout-ms
-                         :at-least-sync requested))))
+            (await-basis-db
+             conn local-db requested timeout-ms :at-least-sync :freshness))))
        :acquire-exact!
        (fn [token-data timeout-ms]
          (validate-exact-token! token-data)
          (let [locator (:exact-locator token-data)
                timeout-ms (timeout timeout-ms)
+               local-db
+               (capture-local-db conn locator timeout-ms :exact-sync)
                caught-up
-               (await-sync! (start-sync! #(d/sync conn locator)
-                                         :exact-sync locator :selection)
-                            timeout-ms
-                            :exact-sync locator)
-               exact-db (d/as-of caught-up locator)]
+               (await-basis-db
+                conn local-db locator timeout-ms :exact-sync)
+               exact-db
+               (try
+                 (d/as-of caught-up locator)
+                 (catch Exception failure
+                   (selection-failure!
+                    "Failed reconstructing the exact Datomic basis."
+                    :retryable :exact-as-of
+                    {:requested-t locator
+                     :observed-t (d/basis-t caught-up)
+                     :requested-order-hint locator
+                     :observed-order-hint (d/basis-t caught-up)
+                     :timeout-ms timeout-ms}
+                    failure)))]
            ;; `db-revision` of the as-of view returns the requested locator
            ;; verbatim, so it cannot witness anything. The reachable
            ;; divergence is a synchronized head that still sits below the

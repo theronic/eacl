@@ -31,17 +31,16 @@
   ([db entity attr value]
    (ds/datoms db :eavt entity attr value)))
 
-(defn- valid-prefix?
-  [prefix]
-  (and (vector? prefix)
-       (= 3 (count prefix))
-       (keyword? (nth prefix 0))
-       (nat-int? (nth prefix 1))
-       (keyword? (nth prefix 2))))
+(defn- matching-eavt-prefix?
+  [entity attr prefix {:keys [e a] :as datom}]
+  (and (= entity e)
+       (= attr a)
+       (endpoint-pair/value-prefix? (:v datom) prefix)))
 
-(defn- matches-prefix?
-  [prefix {:keys [v]}]
-  (endpoint-pair/value-prefix? v prefix))
+(defn- matching-avet-prefix?
+  [attr prefix {:keys [a] :as datom}]
+  (and (= attr a)
+       (endpoint-pair/value-prefix? (:v datom) prefix)))
 
 (defn eavt-endpoint-prefix
   "Endpoint datoms for an exact three-component value prefix.
@@ -52,7 +51,7 @@
    (eavt-endpoint-prefix db entity attr prefix nil :asc))
   ([db entity attr prefix cursor-eid direction]
    (if-not (and (nat-int? entity)
-                (valid-prefix? prefix)
+                (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
      []
      (let [tail  (or cursor-eid
@@ -60,13 +59,15 @@
            bound (conj prefix tail)
            scan  (if (= :desc direction)
                    (ds/rseek-datoms db :eavt entity attr bound)
-                   (ds/seek-datoms db :eavt entity attr bound))]
-       (take-while
-        (fn [{:keys [e a] :as datom}]
-          (and (= entity e)
-               (= attr a)
-               (matches-prefix? prefix datom)))
-        scan)))))
+                   (ds/seek-datoms db :eavt entity attr bound))
+           first-datom (first scan)]
+       ;; Most recursive probes are empty. Reject a non-matching seek head
+       ;; before constructing the predicate closure and lazy take-while chain;
+       ;; a matching head retains the same monotone prefix termination.
+       (if (and first-datom
+                (matching-eavt-prefix? entity attr prefix first-datom))
+         (take-while #(matching-eavt-prefix? entity attr prefix %) scan)
+         [])))))
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
@@ -74,7 +75,7 @@
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc))
   ([db attr prefix cursor-eid direction]
-   (if-not (and (valid-prefix? prefix)
+   (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
      []
      (let [tail  (or cursor-eid
@@ -82,9 +83,9 @@
            bound (conj prefix tail)
            scan  (if (= :desc direction)
                    (ds/rseek-datoms db :avet attr bound)
-                   (ds/seek-datoms db :avet attr bound))]
-       (take-while
-        (fn [{:keys [a] :as datom}]
-          (and (= attr a)
-               (matches-prefix? prefix datom)))
-        scan)))))
+                   (ds/seek-datoms db :avet attr bound))
+           first-datom (first scan)]
+       (if (and first-datom
+                (matching-avet-prefix? attr prefix first-datom))
+         (take-while #(matching-avet-prefix? attr prefix %) scan)
+         [])))))

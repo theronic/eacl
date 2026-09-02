@@ -10,6 +10,7 @@
    [eacl.engine.v8 :as engine]
    [eacl.relationships.endpoint-pair :as endpoint-pair]
    [eacl.relationships.filters :as relationship-filters]
+   [eacl.relationships.mutations :as relationship-mutations]
    [eacl.relationships.storage :as relationship-storage]
    [eacl.schema.expression-persistence :as expression-persistence]))
 
@@ -24,27 +25,21 @@
 
 (defmacro ^:private with-request-engine
   "Builds ONE snapshot adapter for the call and binds the shared engine
-  context: a caller-supplied impl.indexed schema cache wins; otherwise a
-  request-local derived context scoped to this adapter's immutable
-  snapshot (eliminating duplicate proof reads, path walks, and plan
-  compiles inside one raw request without cross-request publication).
+  context: a request-local derived context scoped to this adapter's immutable
+  snapshot eliminates duplicate proof reads, path walks, and plan compiles
+  inside one raw request without cross-request publication.
 
   The request-local generation also owns the structural expression cache, so
   the root-existence probe and subsequent plan compilation share one decode
   per immutable permission entity.
 
-  A caller-supplied schema cache (the public client, or a v7-compat caller
-  binding impl.indexed/*schema-cache*) keeps the pre-existing contract: no
-  stamp read here because the bound generation already carries the plan
-  identity. The raw facade otherwise prepares derived state per call and
+  The managed public client owns the only cross-request derived-schema LRU.
+  This raw compatibility facade always prepares derived state per call and
   publishes nothing across database values."
   [[adapter-sym db] & body]
   `(let [db# ~db
-         bound-cache# impl.indexed/*schema-cache*
          ~adapter-sym (backend/basis-adapter db# {})
-         schema-cache#
-         (or bound-cache#
-             (engine/request-schema-cache ~adapter-sym))]
+         schema-cache# (engine/request-schema-cache ~adapter-sym)]
      (binding [engine/*schema-cache* schema-cache#
                expression-persistence/*structural-cache*
                (:expression-metrics schema-cache#)
@@ -325,33 +320,19 @@
     (when (and resolved (relationship-exists? db resolved))
       resolved)))
 
-(defn- find-relations
-  [db filters]
-  (let [resource-type     (:resource/type filters)
-        resource-relation (:resource/relation filters)
-        subject-type      (:subject/type filters)]
-    (->> (d/q '[:find [(pull ?relation [:db/id
-                                        :eacl.relation/resource-type
-                                        :eacl.relation/relation-name
-                                        :eacl.relation/subject-type]) ...]
-                :where
-                [?relation :eacl.relation/relation-name ?relation-name]]
-              db)
-         (filter (fn [relation]
-                   (and (or (nil? resource-type)
-                            (= resource-type (:eacl.relation/resource-type relation)))
-                        (or (nil? resource-relation)
-                            (= resource-relation (:eacl.relation/relation-name relation)))
-                        (or (nil? subject-type)
-                            (= subject-type (:eacl.relation/subject-type relation)))))))))
-
-(defn relationship-relation-ids
-  "The complete schema relation-id scope that can match a relationship read."
-  [db filters]
-  (->> (find-relations db filters)
-       (map :db/id)
-       sort
-       vec))
+(defn- all-relation-defs
+  "Every relation definition in the shape the shared scan planner consumes.
+  The planner applies the request's type filters itself, so one AEVT walk of
+  the composite tuple replaces a Datalog query plus a pull per relation."
+  [db]
+  (mapv (fn [datom]
+          (let [v (:v datom)]
+            {:relation-id (:e datom)
+             :resource-type (nth v 0)
+             :relation-name (nth v 1)
+             :subject-type (nth v 2)}))
+        (d/datoms db :aevt
+                  :eacl.relation/resource-type+relation-name+subject-type)))
 
 (defn relationship-relation-id
   "Returns the schema relation eid named by one resolved relationship."
@@ -361,28 +342,8 @@
 (defn affected-relation-ids
   "Returns every relation eid named by relationship endpoint mutations."
   [tx-data]
-  (->> tx-data
-       (keep
-        (fn [op]
-          (when (and (vector? op)
-                     (contains? #{:db/add :db/retract} (first op))
-                     (contains?
-                      #{relationship-storage/forward-attribute
-                        relationship-storage/reverse-attribute}
-                      (nth op 2 nil))
-                     (vector? (nth op 3 nil)))
-            (nth (nth op 3) 1 nil))))
-       (remove nil?)
-       distinct
-       sort
-       vec))
-
-(defn- relation-def
-  [relation]
-  {:relation-id (:db/id relation)
-   :resource-type (:eacl.relation/resource-type relation)
-   :relation-name (:eacl.relation/relation-name relation)
-   :subject-type (:eacl.relation/subject-type relation)})
+  (relationship-mutations/affected-relation-ids
+   tx-data #{:db/add :db/retract}))
 
 (defn- endpoint-datoms
   [db endpoint attr prefix cursor-eid direction]
@@ -432,8 +393,9 @@
    ;; The unified filter contract shared by every backend
    ;; (backend-unification 9.1). Value-presence anchor semantics: a
    ;; present-but-nil anchor throws instead of widening the read.
-   (relationship-filters/validate! filters)
-   (let [relations (find-relations db filters)
+   (when-not relationship-filters/*validated-request?*
+     (relationship-filters/validate! filters))
+   (let [relation-defs (all-relation-defs db)
          subject-id (:subject/id filters)
          resource-id (:resource/id filters)
          ;; object-eid, not d/entid: a raw-impl caller passing a string id got a
@@ -570,8 +532,7 @@
                    (scan-reverse-partial spec cursor direction)))]
          (let [scan-specs
                (relationship-engine/plan-scans
-                (mapv relation-def relations)
-                normalized-filters)]
+                relation-defs normalized-filters)]
            (if window-options
              (relationship-engine/execute-filtered-window
               scan-specs normalized-filters decision-kernel scan-spec
@@ -608,23 +569,6 @@
 ;; helpers for that workflow. A bare retractEntity remains valid Datomic, but
 ;; callers should run the explicit integrity audit if it might have left a
 ;; surviving peer half.
-
-(defn- relation-triples
-  "[resource-type relation-eid subject-type] for every Relation in the schema.
-  Bounded by schema size, never by relationship count."
-  [db]
-  (mapv (fn [datom]
-          (let [[resource-type _relation-name subject-type] (:v datom)]
-            [resource-type (:e datom) subject-type]))
-        (d/datoms db :aevt :eacl.relation/resource-type+relation-name+subject-type)))
-
-(defn- relationship-pair-retractions
-  "Both halves of one relationship, as retraction ops."
-  [subject-type subject-eid relation-eid resource-type resource-eid]
-  [[:db/retract subject-eid relationship-storage/forward-attribute
-    [subject-type relation-eid resource-type resource-eid]]
-   [:db/retract resource-eid relationship-storage/reverse-attribute
-    [resource-type relation-eid subject-type subject-eid]]])
 
 (defn- op-attr
   "The attribute of a list-form tx op, or nil for a map form or anything else.
@@ -739,7 +683,10 @@
   what makes discovery and heap use bounded by the batch size."
   [db object-id]
   (if-let [eid (impl.indexed/object-eid db object-id)]
-    (let [triples (relation-triples db)]
+    (let [triples (relationship-storage/relation-triples
+                   (d/datoms
+                    db :aevt
+                    :eacl.relation/resource-type+relation-name+subject-type))]
       (concat
        ;; Orphaned forward halves, plus the canonical copy of a self-edge.
        (mapcat
@@ -750,7 +697,7 @@
                       (empty? (d/datoms db :eavt resource-eid
                                         relationship-storage/reverse-attribute
                                         reverse-value)))
-              (relationship-pair-retractions subject-type eid relation-eid
+              (endpoint-pair/retractions subject-type eid relation-eid
                                              resource-type resource-eid))))
         (d/datoms db :eavt eid relationship-storage/forward-attribute))
 
@@ -762,7 +709,7 @@
             (when (empty? (d/datoms db :eavt subject-eid
                                     relationship-storage/forward-attribute
                                     forward-value))
-              (relationship-pair-retractions subject-type subject-eid
+              (endpoint-pair/retractions subject-type subject-eid
                                              relation-eid resource-type eid))))
         (d/datoms db :eavt eid relationship-storage/reverse-attribute))
 
@@ -773,7 +720,7 @@
            (fn [datom]
              ;; Self-edges are canonicalized to the own-forward scan above.
              (when (not= eid (:e datom))
-               (relationship-pair-retractions subject-type eid relation-eid
+               (endpoint-pair/retractions subject-type eid relation-eid
                                               resource-type (:e datom))))
            (d/datoms db :avet relationship-storage/reverse-attribute
                      [resource-type relation-eid subject-type eid])))
@@ -785,7 +732,7 @@
           (mapcat
            (fn [datom]
              (when (not= eid (:e datom))
-               (relationship-pair-retractions subject-type (:e datom)
+               (endpoint-pair/retractions subject-type (:e datom)
                                               relation-eid resource-type eid)))
            (d/datoms db :avet relationship-storage/forward-attribute
                      [subject-type relation-eid resource-type eid])))
@@ -876,24 +823,10 @@
     db
     (add-relationship-txes (resolve-relationship db relationship opts)))))
 
-(def ^:private supported-relationship-operations
-  #{:create :touch :delete})
-
-(defn- unsupported-relationship-operation!
-  [operation]
-  (throw
-   (ex-info
-    (str (pr-str operation)
-         " relationship update is not supported. Use :create, :touch or :delete.")
-    {:type :eacl/unsupported-operation :eacl/error :eacl/unsupported-operation
-     :operation operation})))
-
 (defn validate-relationship-operation!
   "Validates an update operation before any relationship endpoint work."
   [operation]
-  (when-not (contains? supported-relationship-operations operation)
-    (unsupported-relationship-operation! operation))
-  true)
+  (relationship-mutations/validate-operation! operation))
 
 (defn tx-update-relationship
   "Relationship writes are implemented against v7 forward/reverse tuple indexes.
@@ -910,10 +843,7 @@
 
           :create
           (if exists?
-            (throw (ex-info ":create conflicts with an existing relationship. Use :touch for idempotent writes."
-                            {:type :eacl/relationship-conflict
-                             :eacl/error :eacl/relationship-conflict
-                             :relationship relationship}))
+            (relationship-mutations/conflict! relationship)
             (add-relationship-txes resolved))
 
           ;; Unconditional: Datomic ignores retraction of an absent datom, and

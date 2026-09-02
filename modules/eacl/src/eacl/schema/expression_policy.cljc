@@ -2,8 +2,7 @@
   "Calibrated client-local admission limits and code compatibility formats."
   (:require [eacl.exact-integer :as exact-integer]
             [eacl.schema.expression :as expression]
-            [eacl.schema.expression-limits :as limits]
-            [eacl.secure-format :as secure]))
+            [eacl.schema.expression-limits :as limits]))
 
 (def policy-format :eacl.permission-expression-policy/v1)
 (def operator-plan-format :eacl.operator-plan/v1)
@@ -62,6 +61,8 @@
    :maximum-aggregate-checkpoint-weight 8388608
    :maximum-aggregate-expression-bytes 16777216})
 
+(def ^:private known-limit-keys (set (keys hard-limit-ceilings)))
+
 (defn normalize-client-limits
   "Returns a complete immutable expression-limit profile.
 
@@ -76,8 +77,7 @@
                :key :expression-limits
                :value overrides})))
   (let [overrides (or overrides {})
-        unknown (vec (sort (remove (set (keys hard-limit-ceilings))
-                                   (keys overrides))))]
+        unknown (vec (sort (remove known-limit-keys (keys overrides))))]
     (when (seq unknown)
       (throw
        (ex-info "EACL Config Error: :expression-limits contains unknown keys."
@@ -85,7 +85,7 @@
                  :eacl/error :eacl/invalid-config
                  :key :expression-limits
                  :unknown-keys unknown
-                 :known-keys (set (keys hard-limit-ceilings))})))
+                 :known-keys known-limit-keys})))
     (doseq [[key value] overrides
             :let [maximum (get hard-limit-ceilings key)]]
       (when-not (and #?(:clj (integer? value)
@@ -112,7 +112,3 @@
    :normalized-dag-format limits/normalized-dag-format
    :codec-limits expression/codec-limits})
 
-(def compatibility-digest
-  (secure/canonical-digest
-   "eacl/permission-expression-policy/v1"
-   compatibility-value))

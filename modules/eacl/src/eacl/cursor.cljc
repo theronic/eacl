@@ -1,11 +1,13 @@
 (ns eacl.cursor
   "Authenticated-encryption portable cursor envelopes for CLJ and CLJS."
   (:require [clojure.string :as str]
+            [eacl.cache.key :as cache-key]
+            [eacl.cache.standard-lru :as lru]
             [eacl.secure-format :as secure]
             #?@(:cljs [[goog.crypt.Aes]]))
   #?(:clj
      (:import [java.nio.charset StandardCharsets]
-              [java.util.concurrent ConcurrentLinkedQueue]
+              [java.util.concurrent ArrayBlockingQueue]
               [javax.crypto Cipher]
               [javax.crypto Mac]
               [javax.crypto.spec IvParameterSpec SecretKeySpec])))
@@ -20,6 +22,7 @@
 (def ^:private encryption-key-domain "eacl/cursor/aead/encryption/v1")
 (def ^:private authentication-key-domain
   "eacl/cursor/aead/authentication/v1")
+#?(:clj (def ^:private maximum-idle-authenticators 8))
 
 (def ^:dynamic *codec-work*
   "Optional atom populated with deterministic cursor-codec work counters.
@@ -34,7 +37,49 @@
   (when *codec-work*
     (swap! *codec-work* update field (fnil + 0) amount)))
 
-(defrecord CursorCodecCache [state max-entries])
+(defrecord CursorCodecCache
+    [token-store reverse-token-store context-store key-context-store
+     max-entries])
+
+(defn- require-codec-cache!
+  [cache]
+  (when-not (and (instance? CursorCodecCache cache)
+                 (every?
+                  lru/store?
+                  ((juxt :token-store
+                         :reverse-token-store
+                         :context-store
+                         :key-context-store)
+                   cache)))
+    (throw (ex-info "Expected an EACL cursor codec cache."
+                    {:type :eacl/invalid-config
+                     :eacl/error :eacl/invalid-config})))
+  cache)
+
+(defn- storage-key
+  [domain identity]
+  (cache-key/domain-key domain [cursor-version identity]))
+
+(defn- safe-lookup
+  [store key]
+  (try
+    (lru/lookup! store key)
+    (catch #?(:clj Throwable :cljs :default) _
+      {:found? false :value nil})))
+
+(defn- safe-put-if-absent!
+  [store key value]
+  (try
+    (lru/put-if-absent! store key value)
+    (catch #?(:clj Throwable :cljs :default) _
+      false)))
+
+(defn- safe-evict!
+  [store key]
+  (try
+    (lru/evict! store key)
+    (catch #?(:clj Throwable :cljs :default) _
+      false)))
 
 (defn codec-cache
   "Creates a bounded, client-private cache for cursor codecs.
@@ -45,36 +90,71 @@
   ([]
    (codec-cache {}))
   ([{:keys [max-entries]
-     :or {max-entries 2048}}]
-   (when-not (and (integer? max-entries) (pos? max-entries))
-     (throw (ex-info "Cursor codec cache :max-entries must be positive."
-                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-                      :max-entries max-entries})))
+     :or {max-entries 1024}}]
    (->CursorCodecCache
-    (atom {:order []
-           :by-token {}
-           :by-cursor {}
-           :context-order []
-           :by-context {}
-           :key-context-order []
-           :by-key-context {}})
+    (lru/store max-entries)
+    (lru/store max-entries)
+    (lru/store max-entries)
+    (lru/store max-entries)
     max-entries)))
 
-(defn clear-codec-cache!
-  [cache]
-  (when cache
-    (when-not (instance? CursorCodecCache cache)
-      (throw (ex-info "Expected an EACL cursor codec cache."
-                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-    (reset! (:state cache)
-            {:order []
-             :by-token {}
-             :by-cursor {}
-             :context-order []
-             :by-context {}
-             :key-context-order []
-             :by-key-context {}}))
-  nil)
+(defn- memoized-value!
+  [store domain key build hit-counter build-counter]
+  (let [key' (storage-key domain key)
+        hit (safe-lookup store key')]
+    (if (:found? hit)
+      (do
+        (record-work! hit-counter 1)
+        (:value hit))
+      (let [_ (record-work! build-counter 1)
+            ;; Builders run exactly once per caller and outside every atom
+            ;; retry. Concurrent callers may compute the same value; an
+            ;; already-published winner is preferred when it remains resident.
+            candidate (build)]
+        (if (safe-put-if-absent! store key' candidate)
+          candidate
+          (let [winner (safe-lookup store key')]
+            (if (:found? winner)
+              (:value winner)
+              candidate)))))))
+
+(defn- portable-retained-copy
+  [value]
+  (try
+    {:supported? true
+     :value (secure/canonicalize value)}
+    (catch #?(:clj Throwable :cljs :default) _
+      {:supported? false})))
+
+(defn- memoized-portable-value!
+  "Memoizes a portable context without retaining caller collection metadata.
+
+  The original key remains the common hit lookup. Canonical copying occurs
+  only after a miss and unsupported artifacts remain ordinary uncached values."
+  [store domain key build hit-counter build-counter]
+  (let [key' (storage-key domain key)
+        hit (safe-lookup store key')]
+    (if (:found? hit)
+      (do
+        (record-work! hit-counter 1)
+        (:value hit))
+      (let [_ (record-work! build-counter 1)
+            candidate (build)
+            retained-key (portable-retained-copy key)
+            retained-value (portable-retained-copy candidate)]
+        (if-not (and (:supported? retained-key)
+                     (:supported? retained-value))
+          candidate
+          (let [retained-key'
+                (storage-key domain (:value retained-key))
+                retained-value (:value retained-value)]
+            (if (safe-put-if-absent!
+                 store retained-key' retained-value)
+              candidate
+              (let [winner (safe-lookup store retained-key')]
+                (if (:found? winner)
+                  (:value winner)
+                  candidate)))))))))
 
 (defn memoized-context!
   "Returns one bounded client-private cursor construction artifact.
@@ -89,71 +169,28 @@
   (if-not cache
     (build)
     (do
-      (when-not (instance? CursorCodecCache cache)
-        (throw (ex-info "Expected an EACL cursor codec cache."
-                        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-      (let [state (:state cache)]
-        (if (contains? (:by-context @state) key)
-          (do
-            (record-work! :context-cache-hits 1)
-            (get-in @state [:by-context key]))
-          (let [_ (record-work! :context-builds 1)
-                candidate (build)]
-            (swap!
-             state
-             (fn [{:keys [context-order by-context] :as current}]
-               (if (contains? by-context key)
-                 current
-                 (let [order' (conj context-order key)
-                       by-context' (assoc by-context key candidate)
-                       overflow (- (count order') (:max-entries cache))
-                       evicted (when (pos? overflow)
-                                 (take overflow order'))]
-                   (assoc current
-                          :context-order
-                          (if (seq evicted)
-                            (vec (drop overflow order'))
-                            order')
-                          :by-context
-                          (if (seq evicted)
-                            (apply dissoc by-context' evicted)
-                            by-context'))))))
-            (get-in @state [:by-context key])))))))
+      (require-codec-cache! cache)
+      (memoized-portable-value!
+       (:context-store cache)
+       :cursor-construction-context
+       key
+       build
+       :context-cache-hits
+       :context-builds))))
 
 (defn- memoized-key-context!
   [cache key build]
   (if-not cache
     (build)
     (do
-      (when-not (instance? CursorCodecCache cache)
-        (throw (ex-info "Expected an EACL cursor codec cache."
-                        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-      (let [state (:state cache)]
-        (if (contains? (:by-key-context @state) key)
-          (do
-            (record-work! :key-context-cache-hits 1)
-            (get-in @state [:by-key-context key]))
-          (let [_ (record-work! :key-context-builds 1)
-                candidate (build)]
-            (swap!
-             state
-             (fn [{:keys [key-context-order by-key-context] :as current}]
-               (if (contains? by-key-context key)
-                 current
-                 (let [order' (conj key-context-order key)
-                       by-key-context' (assoc by-key-context key candidate)
-                       overflow (- (count order') (:max-entries cache))]
-                   (assoc current
-                          :key-context-order
-                          (if (pos? overflow)
-                            (vec (drop overflow order'))
-                            order')
-                          :by-key-context
-                          (if (pos? overflow)
-                            (apply dissoc by-key-context'
-                                   (take overflow order'))
-                            by-key-context'))))))
-            (get-in @state [:by-key-context key])))))))
+      (require-codec-cache! cache)
+      (memoized-value!
+       (:key-context-store cache)
+       :cursor-key-context
+       key
+       build
+       :key-context-cache-hits
+       :key-context-builds))))
 
 (defn- now-seconds
   [options]
@@ -184,6 +221,20 @@
   [options]
   (merge (select-keys options format-option-keys)
          (:format-options options)))
+
+(defn ^:no-doc plausible-token?
+  "Cheap admission check before a raw token may enter any cache key.
+
+  Authentication and complete structural validation still happen in the
+  decoder. This guard only keeps attacker-sized or obviously foreign strings
+  out of the exact transport-page lookup path."
+  [options token]
+  (let [maximum-size
+        (or (:maximum-size (format-options options))
+            secure/default-maximum-size)]
+    (and (string? token)
+         (<= (count token) maximum-size)
+         (str/starts-with? token cursor-prefix))))
 
 (defn- aead-error!
   [reason data]
@@ -288,13 +339,15 @@
 (defn- pooled-authenticator
   "Builds a thread-safe HMAC function for one already-derived cursor key.
 
-  JCA `Mac` resets to its initialized state after `doFinal`. A small concurrent
-  pool therefore avoids provider lookup, key conversion, and initialization on
-  every cursor while still preventing one mutable `Mac` from being shared by
-  simultaneous requests. The pool is owned by the bounded key-context cache."
+  JCA `Mac` resets to its initialized state after `doFinal`. A fixed-capacity,
+  nonblocking idle pool therefore avoids provider lookup, key conversion, and
+  initialization on ordinary cursor traffic without retaining a peak
+  concurrency burst. Excess instances are transient and discarded. The pool
+  is an object pool owned by one bounded key-context LRU value, not a second
+  cache policy."
   [authentication-key]
   #?(:clj
-     (let [pool (ConcurrentLinkedQueue.)
+     (let [pool (ArrayBlockingQueue. maximum-idle-authenticators)
            key-spec
            (SecretKeySpec.
             (byte-array (map unchecked-byte authentication-key))
@@ -306,8 +359,13 @@
                      (.init key-spec)))
                result
                (.doFinal mac (.getBytes message StandardCharsets/UTF_8))]
-           ;; Return only a successfully reset instance to the pool.
-           (.offer pool mac)
+           ;; Pool retention is best effort and must not invalidate a tag that
+           ;; was already computed successfully. `offer` never blocks; a full
+           ;; pool discards this burst-only instance.
+           (try
+             (.reset mac)
+             (.offer pool mac)
+             (catch Throwable _ nil))
            (mapv #(bit-and (int %) 255) result))))
      :cljs
      (fn [message]
@@ -392,13 +450,8 @@
 
 (defn- decode-aead
   [options token]
-  (let [format-options (format-options options)
-        maximum-size
-        (or (:maximum-size format-options)
-            secure/default-maximum-size)]
-    (when-not (and (string? token)
-                   (<= (count token) maximum-size)
-                   (str/starts-with? token cursor-prefix))
+  (let [format-options (format-options options)]
+    (when-not (plausible-token? options token)
       (throw (ex-info "Invalid encrypted cursor."
                       {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
                        :reason :malformed-token})))
@@ -480,76 +533,113 @@
     ;; with retained keys and reads expiry from the protected payload.
     [kid (get keyring kid) (:cursor-ttl-seconds options)]))
 
+(defn ^:no-doc cache-policy-identity
+  "Compact identity of every cursor-codec setting that can accept or mint a
+  token. Exact transport-page caching includes this digest so key rotation or
+  key removal cannot reuse a page authenticated under another client policy."
+  [options]
+  (let [configured (format-options options)
+        current-kid (or (:current-kid configured) :default)
+        keyring (or (:keyring configured)
+                    {:default secure/default-root-key})]
+    (secure/canonical-digest
+     "eacl/cursor/cache-policy/v1"
+     [cursor-version
+      (assoc configured
+             :current-kid current-kid
+             :keyring keyring)
+      (:cursor-ttl-seconds options)])))
+
 (defn- memoizable-cache
   [{:keys [cursor-codec-cache]}]
   (when cursor-codec-cache
-    (when-not (instance? CursorCodecCache cursor-codec-cache)
-      (throw (ex-info "Expected an EACL cursor codec cache."
-                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config})))
-    cursor-codec-cache))
+    (require-codec-cache! cursor-codec-cache)))
+
+(defn- token-storage-key
+  [identity token]
+  (storage-key :cursor-token [identity token]))
+
+(defn- reverse-token-storage-key
+  [identity cursor]
+  (storage-key :cursor-reverse-token [identity cursor]))
+
+(defn- evict-token-entry!
+  [cache identity token entry]
+  (safe-evict!
+   (:token-store cache)
+   (token-storage-key identity token))
+  (when (map? (:cursor entry))
+    (let [reverse-key
+          (reverse-token-storage-key identity (:cursor entry))
+          reverse-hit
+          (safe-lookup (:reverse-token-store cache) reverse-key)]
+      (when (and (:found? reverse-hit)
+                 (= token (:value reverse-hit)))
+        ;; A reverse entry is only an optimization. If a concurrent remint
+        ;; races this conditional eviction, losing that newer mapping can
+        ;; cause one extra mint but can never authorize or expose a cursor.
+        (safe-evict! (:reverse-token-store cache) reverse-key))))
+  nil)
+
+(defn- live-token-entry?
+  [entry identity cursor now]
+  (and (map? entry)
+       (= identity (:identity entry))
+       (map? cursor)
+       (= cursor (:cursor entry))
+       (integer? (:issued-at entry))
+       (or (nil? (:expires-at entry))
+           (and (integer? (:expires-at entry))
+                (number? now)
+                (< now (:expires-at entry))))))
 
 (defn- cached-token
   [cache identity cursor now]
-  (let [state @(:state cache)
-        token (get-in state [:by-cursor [identity cursor]])
-        entry (get-in state [:by-token token])]
-    (when (and token
-               (= identity (:identity entry))
-               (or (nil? (:expires-at entry))
-                   (< now (:expires-at entry))))
-      token)))
+  (let [reverse-key (reverse-token-storage-key identity cursor)
+        reverse-hit (safe-lookup (:reverse-token-store cache) reverse-key)]
+    (when (:found? reverse-hit)
+      (let [token (:value reverse-hit)
+            token-key (token-storage-key identity token)
+            token-hit (safe-lookup (:token-store cache) token-key)]
+        (if (and (:found? token-hit)
+                 (live-token-entry?
+                  (:value token-hit) identity cursor now))
+          token
+          (do
+            ;; Independent bounded stores can evict in different orders. A
+            ;; dangling reverse entry is merely a miss, never authority to
+            ;; reuse a token. Expired entries are removed after their one
+            ;; validation and must be authenticated again if decoded.
+            (safe-evict! (:reverse-token-store cache) reverse-key)
+            (when (:found? token-hit)
+              (safe-evict! (:token-store cache) token-key))
+            nil))))))
 
 (defn- cached-cursor
-  [cache identity token]
-  (let [entry (get-in @(:state cache) [:by-token token])]
-    (when (= identity (:identity entry))
-      entry)))
+  [cache identity token now]
+  (let [token-key (token-storage-key identity token)
+        token-hit (safe-lookup (:token-store cache) token-key)]
+    (when (:found? token-hit)
+      (let [entry (:value token-hit)]
+        (if (live-token-entry? entry identity (:cursor entry) now)
+          entry
+          (do
+            (evict-token-entry! cache identity token entry)
+            nil))))))
 
 (defn- remember-token!
   [cache identity cursor token issued-at expires-at]
-  (swap!
-   (:state cache)
-   (fn [{:keys [order by-token by-cursor] :as state}]
-     (if (contains? by-token token)
-       state
-       (let [cursor-key [identity cursor]
-             order' (conj order token)
-             by-token'
-             (assoc by-token token
-                    {:identity identity
-                     :cursor cursor
-                     :issued-at issued-at
-                     :expires-at expires-at})
-             by-cursor' (assoc by-cursor cursor-key token)
-             overflow (- (count order') (:max-entries cache))
-             evicted (when (pos? overflow)
-                       (take overflow order'))]
-         (if-not (seq evicted)
-           (assoc state
-                  :order order'
-                  :by-token by-token'
-                  :by-cursor by-cursor')
-           (reduce
-            (fn [current evicted-token]
-              (let [{evicted-identity :identity
-                     evicted-cursor :cursor}
-                    (get-in current [:by-token evicted-token])]
-                (cond-> (update current :by-token dissoc evicted-token)
-                  ;; A later token for the same cursor may have replaced this
-                  ;; reverse entry before the older token reached FIFO
-                  ;; eviction. Never evict the newer mapping with the old one.
-                  (= evicted-token
-                     (get-in current
-                             [:by-cursor
-                              [evicted-identity evicted-cursor]]))
-                  (update :by-cursor
-                          dissoc
-                          [evicted-identity evicted-cursor]))))
-            (assoc state
-                   :order (vec (drop overflow order'))
-                   :by-token by-token'
-                   :by-cursor by-cursor')
-            evicted))))))
+  (safe-put-if-absent!
+   (:token-store cache)
+   (token-storage-key identity token)
+   {:identity identity
+    :cursor cursor
+    :issued-at issued-at
+    :expires-at expires-at})
+  (safe-put-if-absent!
+   (:reverse-token-store cache)
+   (reverse-token-storage-key identity cursor)
+   token)
   token)
 
 (defn cursor->token
@@ -579,8 +669,14 @@
                    :issued-at issued-at
                    :expires-at expires-at})]
              (if cache
-               (remember-token!
-                cache identity cursor token issued-at expires-at)
+               ;; Encoding already validated this portable cursor under the
+               ;; configured bounds. Retain a canonical copy so metadata (which
+               ;; does not affect token bytes or value equality) cannot hide a
+               ;; request-owned mutable object in either codec-cache store.
+               (let [retained-cursor
+                     (secure/canonicalize cursor (format-options options))]
+                 (remember-token!
+                  cache identity retained-cursor token issued-at expires-at))
                token)))))))
 
 (defn expired-cursor-error
@@ -616,7 +712,12 @@
              ;; Expiry is protected by the token payload and retained in the
              ;; entry, so a hit skips crypto without skipping the TTL decision.
              (when-let [{:keys [cursor expires-at]}
-                        (cached-cursor cache identity token)]
+                        (cached-cursor
+                         cache
+                         identity
+                         token
+                         (when (:cursor-ttl-seconds options)
+                           (now-seconds options)))]
                {:cursor cursor
                 :authenticated? true
                 :expired? (boolean

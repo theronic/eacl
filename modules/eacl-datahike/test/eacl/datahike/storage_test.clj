@@ -442,6 +442,10 @@
                          (vec
                           (impl/subject->resources
                            db :node node-b-eid relation-eid :node nil))))
+                  (is (= [node-a-eid]
+                         (vec
+                          (impl/subject->resources
+                           db :node node-b-eid relation-eid :node {}))))
                   (is (empty?
                        (impl/subject->resources
                         db :node node-a-eid relation-eid :node nil))
@@ -450,6 +454,10 @@
                          (vec
                           (impl/resource->subjects
                            db :node node-a-eid relation-eid :node nil))))
+                  (is (= [node-b-eid]
+                         (vec
+                          (impl/resource->subjects
+                           db :node node-a-eid relation-eid :node {}))))
                   (is (empty?
                        (impl/resource->subjects
                         db :node node-b-eid relation-eid :node nil))

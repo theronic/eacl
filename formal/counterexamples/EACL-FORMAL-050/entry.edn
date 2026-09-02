@@ -14,5 +14,7 @@
  "Warm the exact permission-check path for 15,000 calls and gate the median of three independent 5,000-call batch medians. Keep the 1,000 microsecond warm ceiling unchanged. The corrected harness subsequently established the sustained EACL-FORMAL-051 engine regression instead of dismissing it as one transient sample."
  :closing-evidence
  ["eacl.bench.pagination-test/permission-check-benchmark"
-  "eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"
-  "formal/verification/performance-gates.edn"]}
+  ;; Historical: the quantitative-gate fixture test and
+  ;; formal/verification/performance-gates.edn were superseded by the
+  ;; executable assurance contract; the recursion gates below remain live.
+  "eacl.bench.recursive-performance-gate-test"]}

@@ -32,10 +32,6 @@
   [db eid-or-ref]
   (ds/entid db eid-or-ref))
 
-(defn entity-exists?
-  [db eid]
-  (boolean (seq (ds/datoms db :eav eid))))
-
 (defn avet-datoms
   ([db attr]
    (ds/datoms db :ave attr))
@@ -47,18 +43,6 @@
    (ds/datoms db :eav entity attr))
   ([db entity attr value]
    (ds/datoms db :eav entity attr value)))
-
-(defn- valid-prefix?
-  [prefix]
-  (and (vector? prefix)
-       (= 3 (count prefix))
-       (keyword? (nth prefix 0))
-       (nat-int? (nth prefix 1))
-       (keyword? (nth prefix 2))))
-
-(defn- matches-prefix?
-  [prefix {:keys [v]}]
-  (endpoint-pair/value-prefix? v prefix))
 
 (defn- within-inclusive-cursor?
   [direction cursor-eid {:keys [v]}]
@@ -81,7 +65,7 @@
     (when (<= (count sample) small-endpoint-scan-threshold)
       (let [matching
             (into []
-                  (filter #(and (matches-prefix? prefix %)
+                  (filter #(and (endpoint-pair/value-prefix? (:v %) prefix)
                                 (within-inclusive-cursor?
                                  direction cursor-eid %)))
                   sample)
@@ -103,7 +87,7 @@
                          maximum-unpaged-scan-results))
   ([db entity attr prefix cursor-eid direction native-limit]
    (if-not (and (nat-int? entity)
-                (valid-prefix? prefix)
+                (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
                 (pos-int? native-limit))
      []
@@ -121,7 +105,7 @@
                (fn [{:keys [e a] :as datom}]
                  (and (= entity e)
                       (= attr a)
-                      (matches-prefix? prefix datom))))
+                      (endpoint-pair/value-prefix? (:v datom) prefix))))
               scan))))))
 
 (defn avet-endpoint-prefix
@@ -136,7 +120,7 @@
   ([db attr prefix cursor-eid direction native-limit]
    (avet-endpoint-prefix db attr prefix cursor-eid nil direction native-limit))
   ([db attr prefix cursor-eid cursor-entity direction native-limit]
-   (if-not (and (valid-prefix? prefix)
+   (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
                 (or (nil? cursor-entity) (nat-int? cursor-entity))
                 (pos-int? native-limit))
@@ -153,5 +137,5 @@
              (take-while
               (fn [{:keys [a] :as datom}]
                 (and (= attr a)
-                     (matches-prefix? prefix datom))))
+                     (endpoint-pair/value-prefix? (:v datom) prefix))))
              scan)))))

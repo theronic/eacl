@@ -199,7 +199,9 @@ If you need cache provenance, use `check-permission` instead of `can?`, otherwis
     ...}
 ```
 
-The `:consistency` argument is optional. The default is `minimize-latency`, which means _locally-consistent_ to the Peer. Presently, `at-least-as-fresh` semantics require config `{:cache {:checkpoints true}}`, but this will soon be the default.
+The `:consistency` argument is optional. The default is `minimize-latency`,
+which means _locally-consistent_ to the Peer. `at-least-as-fresh` selects an
+appropriate backend basis directly and requires no cache-checkpoint option.
 
 
 ```clojure
@@ -286,7 +288,10 @@ different database value. `minimize-latency` evaluates immediately;
 `at-least-as-fresh` evaluates only when the snapshot satisfies the authenticated
 floor; `at-exact-snapshot` evaluates only when the token names that basis; and
 `fully-consistent` fails with `:eacl.consistency/selection-required`. Select a
-new snapshot through the `acl` when an assertion fails.
+new snapshot through the `acl` when an assertion fails. Every read authenticates
+its own descriptor and refines cursor/cache consistency with that read's exact
+token or freshness floor; it does not inherit only the descriptor that happened
+to create the retained snapshot.
 
 Caller-owned native database values are deliberately outside the public
 authorization boundary. Datomic cannot distinguish a committed database from
@@ -594,7 +599,10 @@ inside the client.
 - EACL makes no strong performance claims at this time, but EACL should be as fast as, or faster than, SpiceDB, for small-to-medium workloads.
 - As load increases, you can scale Datomic Peers horizontally and even dedicate Peers to EACL as-needed.
 - EACL does not support all SpiceDB features (yet). Please refer to the [limitations section](#limitations-deficiencies--gotchas) to decide if EACL is right for you.
-- The EACL [cache](#caching) is stored in-memory per-client with LRU eviction. You can extend it with a shared cache _ see `eacl/CacheProvider`.
+- The EACL [cache](#caching) is stored in memory per client. JVM clients use
+  Caffeine 3.2.4; CLJS/DataScript uses the theronic `cljs-cache` LRU. Custom
+  cache providers are intentionally unsupported because they
+  cannot participate in EACL's private lifecycle and proof contracts.
 
 ## Formal Verification
 
@@ -682,10 +690,12 @@ clojure -T:build prep :java-release 17
 clojure -T:build jar :java-release 17
 ```
 
-Pass the same `:java-release` to `prep` and `jar` or `install`. The default is
-Java 26; source builds may target Java 8 through Java 26, subject to their
-backend and application dependencies. See [formal/README.md](formal/README.md)
-for tool versions and the full verification commands.
+Pass the same `:java-release` to `prep` and `jar` or `install`. The generated
+kernel defaults to Java 26 bytecode and may be compiled for Java 8 through 26,
+but the complete JVM EACL module requires Java 11 or newer because its Caffeine
+cache dependency does. Java 17 is EACL's supported production runtime floor.
+See [formal/README.md](formal/README.md) for tool versions and the full
+verification commands.
 
 For permission operators, precedence, stratification, limits, ordering, cursors,
 cache behavior, and measured performance, see the [permission set-algebra
@@ -1372,15 +1382,13 @@ pagination age; cache TTL and capacity remain independent of cursor age.
 
 ## Caching
 
-EACL Relations are stamped with `:eacl.relation/version`. This version gets bumped to the latest basis _B_ (`txId` or `"datomic.tx"`) when a Relationship is added or removed that affects that Relation or any of its dependent Permissions.
+EACL relationship generations and canonical dependency proofs determine whether
+a completed value remains valid after an unrelated write. Storage itself is
+ordinary keyed retention: exact snapshot identity or a complete forward-valid
+proof is part of the key, rather than hidden in a custom generation-aware backend.
 
-EACL computes dependencies between Permissions & Relations and stamps cache segments with the current schema & dependencies so that EACL can only reuses cache segments that are still valid for snapshot _S_ at basis _B_, given your consistency semantics.
-
-This design allows EACL to retain large portions of the cache while ignoring unrelated mutations. EACL benefits heavily from monotonic `T` in single-writer environments.
-
-This strategy is not perfectly optimal, but it keeps storage light while keeping Peers synchronized.
-
-I was loath to implement a cache because EACL was already fast, but cyclic schema demanded it. Recursive traversal can yield eids lower than seen, so we need to track a set of *seen* eids to deduplicate results. This means that cyclic cursor continuations grow the deeper you paginate, and cannot live on cursors passed to the client. Benefits of the cache:
+Recursive traversal must retain deduplication and continuation state that is
+too large and too private to place in a public cursor. The shared caches provide:
 
 1. Faster traversal of cyclic paths with continuation checkpoints (they are memory-intensive), and
 2. Reuse exact valid answers on hot queries, which lowers compute, memory and latency.
@@ -1388,8 +1396,9 @@ I was loath to implement a cache because EACL was already fast, but cyclic schem
 How the EACL cache works:
 
 1. Select snapshot _S_, with basis `B >= T`.
-2. Look for an answer computed on exactly `B`.
-3. On an exact-basis cache miss, look for a proof-equivalent managed answer computed at another ordinary basis.
+2. Look up one flat composite key for exactly `B`.
+3. For an ordinary current basis only, look for a proof-equivalent managed
+   answer computed at an earlier or equal revision.
 4. Otherwise, compute against `S`.
 
 Suppose:
@@ -1398,15 +1407,53 @@ Suppose:
 token floor T = 100
 selected basis B = 120
 ```
-The first lookup checks the exact generation for basis `B=120`. This is the
-cheap path: same semantic query, same complete selected-basis identity. The
-runtime retains a bounded LRU of basis generations (four by default), and each
-generation owns its exact answers and subproblem state; selecting a newer basis
-does not immediately destroy retained-snapshot locality.
+The first lookup checks the exact composite key for basis `B=120`. Exact and
+managed mode are fields in complete keys stored in flat, count-bounded caches;
+EACL has no nested retained-generation registry. Clojure uses Caffeine 3.2.4's
+manual cache with `maximumSize` and W-TinyLFU frequency/recency; ClojureScript
+uses the pinned theronic `cljs-cache` LRU fork. Caffeine is not strict LRU and
+its eviction maintenance is an eventual concurrent bound.
+
+For the default non-expiring cursor policy, page responses also have one
+exact-basis transport-page store in the same lifecycle for
+`lookup-resources`, `lookup-subjects`, and `read-relationships`. Its key
+includes the complete raw request (including the exact cursor token), the full
+authenticated consistency descriptor (including an exact token or freshness
+floor), operation, and cursor-key policy. Once that request has been
+authenticated and published, a hit returns the complete immutable public page
+before cursor decode, identity conversion, proof work, row rendering, or token
+reconstruction. Configuring `:cursor-ttl-seconds` bypasses this tier so current
+expiry is checked on every request. A cursor that carries an authenticated
+expiry also bypasses transport publication when received by a non-TTL client,
+so its raw request can never become a post-expiry hit. The deleted
+page-navigation cache's routes, boundary indexes, opposite-direction aliases,
+and access queue do not return.
+
+Lookup transport entries are operation-validated EACL `SpiceObject` values;
+relationship-read entries are EACL `Relationship` values composed from valid
+SpiceObjects. Custom records are rejected. Object IDs in cursor-bearing
+queries and edges must be bounded canonical scalars or ordinary vectors.
+Metadata, records, lists, subvectors, map entries, all map/set IDs, alternate
+integer representations, and JavaScript negative zero are rejected with
+`:eacl.pagination/unsupported-cursor-identity` rather than being allowed to
+alias an equal cache key or cursor scope. Ordinary query maps, vectors, and
+sets are recursively copied into plain persistent containers, so caller-owned
+comparators or collection implementations are not retained. Oversized or
+obviously foreign raw cursor strings bypass transport lookup before key
+construction and continue to the bounded decoder.
+
+On deterministic backends whose identity contract promises immutable,
+injective external IDs, `can?`, both count operations, and permission-tree
+expansion likewise probe a canonical public exact key before backend identity
+internalization. Other identity contracts and noncanonical or oversized IDs
+use the ordinary internal path; permission-tree answer caching is disabled
+when a safe public key cannot be formed.
 
 I suspect SpiceDB does not support counting for the same reason. EACL currently supports unbounded counts because queries run on the Peer, but typically you want to pass a `:count-limit`.
 
-`at-exact-snapshot` semantics always call `(d/as-of conn T)`, but EACL can still reuse cache segments that are valid for snapshot _S_ with basis _B_ at time `T`.
+`at-exact-snapshot` semantics always call `(d/as-of conn T)`. Historical bases
+reuse only an identical exact composite key; managed proof reuse is
+ordinary-current and forward-only.
 
 Unlike SpiceDB, EACL cursors do not expire by default. History-capable
 backends can reconstruct exact continuations; current-only DataScript and
@@ -1440,6 +1487,58 @@ Most applications need no cache configuration. You can disable caching for one c
 
 (def acl (eacl.datomic.core/make-client conn {:cache eacl-cache/no-cache}))
 ```
+
+Cache capacities are entry counts, not byte estimates:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:cache
+    {:max-entries 2048
+     :denotation-max-entries 4096}}))
+```
+
+Completed pages above 1,000 result items are returned normally but are not
+retained. The public page-size maximum remains 10,000.
+
+Four further client options tune reuse below the answer cache and cost
+nothing when unset:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:scan-cache {:max-entries 2048 :max-prefix 512} ; or false to disable
+    :range-reuse {:max-entries 512                  ; or false to disable
+                  :max-results-per-walk 4096
+                  :max-segments-per-walk 8}
+    :lookahead {:pages 1 :max-inflight 2}           ; off when absent
+    :io-observer (fn [event] (log/info event))}))   ; nil when absent
+```
+
+`:scan-cache` bounds the client-private tier of exact adapter scan prefixes
+that later requests reuse instead of re-reading the same relationship edges;
+it is on by default while the cache is enabled and follows `:cache? false`.
+Every request also memoizes its own scan replies regardless of caching.
+`:range-reuse` bounds the client-private tier of completed page segments:
+every plain page (acyclic or recursive plan, no relationship filter) keeps
+one cursor edge per result, so any later window of the same walk on the same
+snapshot that lies inside retained segments (a shorter page, a continuation
+inside a longer page, any cursor the segment holds) is served without a
+traversal, a window that runs past a segment traverses only the remainder,
+and pages that continue one another merge into one segment; a recursive
+plan's continuation past a segment resumes the checkpoint of the series that
+produced the segment whatever page size it requests. It is on by default
+while the cache is enabled and follows `:cache? false`.
+`:lookahead` runs a served page's continuation in the background on a bounded
+daemon pool after the response, so the caller's next page is an exact hit; it
+spends reads ahead of demand and is therefore off by default and a no-op on
+ClojureScript. `:io-observer` receives each request's operation, provenance
+(`:request` or `:lookahead`), outcome, elapsed nanoseconds, and exact meters
+(adapter commands, fetched values, identity conversions, scan hits and
+misses, range derivations and compositions); an observer that throws never
+changes a result.
 
 Pass `:cache? false` to bypass the cache on a request:
 
@@ -1486,7 +1585,7 @@ Datomic and Datahike can export the reusable authorization cache for a durable
 host such as a Lambda deployment:
 
 ```clojure
-(def bounds {:max-weight (* 16 1024 1024) :max-entries 5000})
+(def bounds {:max-entries 5000})
 (def revision (eacl.datahike.core/cache-content-revision acl))
 (def snapshot (eacl.datahike.core/export-cache-snapshot acl bounds))
 
@@ -1494,24 +1593,29 @@ host such as a Lambda deployment:
 (eacl.datahike.core/restore-cache-snapshot! acl snapshot bounds)
 ```
 
-The snapshot is versioned process-neutral data. It excludes database values,
-cursors, continuations, metrics, and process-local identity tokens. `max-weight`
-is EACL's cache-capacity unit, not an encoded byte limit. A host that persists
-the value must authenticate the envelope and enforce an encoded-byte limit
-before deserializing it. Restore validates the snapshot shape, capacity, and
-cache contracts, then atomically replaces the visible cache lifecycle;
-malformed or incompatible snapshots leave the current cache intact.
-`cache-content-revision` advances on
-reusable-content changes but not on hits or LRU touches, so hosts can avoid
-redundant uploads. The equivalent Datomic functions live in
+Snapshot v2 is deterministic flat process-neutral data. It excludes database
+values, exact rendered pages, library-private admission/eviction/frequency/
+recency state, cursors, continuations, metrics, and
+process-local identity tokens. The restore API accepts trusted, already decoded
+immutable data: a host that persists bytes must authenticate the envelope and
+enforce an encoded-byte limit before decoding it. Restore validates complete
+keys, operation-specific values, proof envelopes, revisions, and entry capacity
+while building fresh cache tiers off-side, then atomically replaces the visible cache
+lifecycle. Malformed, incompatible, or v1 snapshots leave the current cache
+intact.
+`cache-content-revision` is a conservative dirty hint that advances on
+answer/denotation mapping changes but not on continuation, cursor, or
+derived-schema retention, hits, or library access-policy updates. It never misses a portable
+change, but may also advance for a process-local managed-to-exact promotion
+that export omits; compare the deterministic export when suppressing every
+redundant upload matters. The equivalent Datomic functions live in
 `eacl.datomic.core`.
 
-Metric refresh is cache-only. By default it clears structural and relationship
-observations and performs no relationship scan. Pass
-`{:scope :structural :eager? true}` to reread the bounded permission schema.
-An explicit `:read-through` runs the named public operation with completed
-answer caching bypassed; a count without `:count-limit` is therefore an
-explicit exhaustive read subject to the normal work limits.
+`refresh-metrics!` drops currently resident derived structural artifacts and
+performs no relationship scan. The reset is point-in-time under concurrent
+requests; a validated in-flight derivation may repopulate the cache immediately.
+Pass `{:eager? true}` to reread the bounded permission schema and repopulate
+those artifacts deliberately.
 
 After a database restore, reset, branch replacement, or other operation that
 can replace history, expire or replace every affected client before serving

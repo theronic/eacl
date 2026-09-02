@@ -19,10 +19,12 @@ This module must not depend on Datomic or a logging backend.
 ```
 
 The published JAR includes all generated JVM kernel/Dafny runtime classes,
-`deps.cljs`, and `EaclKernel.browser.js`. EACL targets Java 26 by default, while
-an explicit source/custom build can target Java 8 through 26. The same
-platform-neutral class files run on the selected Java release and newer JVMs
-without per-JVM artifacts.
+`deps.cljs`, and `EaclKernel.browser.js`. Generated kernel classes target Java
+26 by default and an explicit source/custom build may compile those classes for
+Java 8 through 26. The complete JVM module requires Java 11 or newer because
+Caffeine 3.2.4 is its manual cache implementation; Java 17 is the supported
+production runtime floor. CLJS/DataScript uses the separate theronic
+`cljs-cache` LRU adapter.
 
 Build this module in isolation with `clojure -T:build jar`. Git and
 `:local/root` consumers must first follow the explicitly opt-in
@@ -98,5 +100,30 @@ is best-effort: it cannot preempt a synchronous adapter call already in
 progress, and a completed result may win a race with a late signal. The token
 is excluded from semantic cache, continuation, and cursor identity.
 
+On deterministic adapters with immutable/injective external identity, exact
+public cache probes for point, count, tree, lookup-page, and relationship-page
+requests occur before backend ID internalization. Object IDs used by that path
+must be bounded canonical scalars/vectors; map/set IDs and custom records fail
+closed or use the internal path as appropriate. Query collections are copied
+into plain persistent containers. Exact rendered lookup pages contain validated
+`SpiceObject` values and relationship pages contain validated `Relationship`
+values, and their keys include the complete authenticated consistency
+descriptor as well as the exact basis and raw cursor request.
+
+For retained `Snapshot` reads, consistency is asserted per call. The
+authenticated exact token or freshness floor for that call refines cursor/cache
+context while the Snapshot's backend selection facts remain fixed.
+
 Application-facing module selection lives in the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
+
+## Removed (2026-09-02)
+
+Unreferenced vars removed from the core module: `eacl.client.orchestration/can?`
+(use `eacl.core/can?`), `eacl.engine.physical/telemetry` (the finished reducer
+state carries every counter), `eacl.engine.sealed-plan/local-read-cost` (read
+`rank-contract`), `eacl.operator.recursive/check-eids` (use
+`check-cached-eids`), `eacl.relationships.endpoint-pair/half-identity`,
+`eacl.authorization.batch/root-key`,
+`eacl.schema.expression-policy/compatibility-digest` and
+`eacl.schema.expression-resolver/resolve-definitions`.

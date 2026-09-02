@@ -4,6 +4,7 @@
             [eacl.consistency :as consistency]
             [eacl.core :as eacl]
             [eacl.execution :as execution]
+            [eacl.exact-integer :as exact-integer]
             [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def default-limits
@@ -16,14 +17,6 @@
 (def ^:private query-keys
   #{:resource :permission :consistency :timeout-ms
     :cancellation-token :cache? :populate-cache?})
-
-(defn- portable-positive-integer?
-  [value]
-  (and #?(:clj (integer? value)
-          :cljs (and (number? value)
-                     (js/Number.isSafeInteger value)))
-       (pos? value)
-       (<= value backend/maximum-exact-integer)))
 
 (defn normalize-limits
   [overrides]
@@ -44,7 +37,7 @@
          :key :permission-tree-limits
          :unknown-keys (vec unknown)
          :known-keys known})))
-    (when-not (every? portable-positive-integer? (vals overrides))
+    (when-not (every? exact-integer/positive? (vals overrides))
       (throw
        (ex-info
         "EACL Config Error: permission-tree limits must be positive portable exact integers."
@@ -145,13 +138,6 @@
           ;; of the guarded kernel callbacks can cross this boundary.
           (adapter-contract! :adapter-operation-failed))))))
 
-(defn- portable-natural?
-  [value]
-  (and #?(:clj (integer? value)
-          :cljs (and (number? value)
-                     (js/Number.isSafeInteger value)))
-       (<= 0 value backend/maximum-exact-integer)))
-
 (defn selected-basis-token
   "Issues a token from the selected basis through the redacting boundary."
   [opts]
@@ -189,7 +175,7 @@
         ;; Counters report only work actually accepted by the envelope. This
         ;; avoids constructing max-exact-integer + 1 in ClojureScript.
         :consumed-work (safe-counters @counters)})
-      (swap! counters update dimension + amount))))
+      (vswap! counters update dimension + amount))))
 
 (defn- check-depth!
   [limits counters depth]
@@ -212,7 +198,7 @@
         (when-not
          (every?
           (fn [definition]
-            (and (portable-natural? (:relation-id definition))
+            (and (exact-integer/natural? (:relation-id definition))
                  (= resource-type (:resource-type definition))
                  (= name (:relation-name definition))
                  (unqualified-keyword? (:subject-type definition))))
@@ -223,27 +209,32 @@
           (adapter-contract! :duplicate-relation-subject-type)))
 
       :permission
-      (do
-        (when-not
-         (every?
-          (fn [definition]
-            (and (portable-natural? (:permission-id definition))
-                 (= resource-type (:resource-type definition))
-                 (= name (:permission-name definition))
-                 (unqualified-keyword?
-                  (:source-relation-name definition))
-                 (contains? #{:relation :permission}
-                            (:target-type definition))
-                 (unqualified-keyword? (:target-name definition))))
-          definitions)
-          (adapter-contract! :malformed-permission-definition)))
+      (when-not
+       (every?
+        (fn [definition]
+          (and (exact-integer/natural? (:permission-id definition))
+               (= resource-type (:resource-type definition))
+               (= name (:permission-name definition))
+               (unqualified-keyword?
+                (:source-relation-name definition))
+               (contains? #{:relation :permission}
+                          (:target-type definition))
+               (unqualified-keyword? (:target-name definition))))
+        definitions)
+        (adapter-contract! :malformed-permission-definition))
 
       (adapter-contract! :unknown-definition-kind))
     definitions))
 
+(def ^:private memo-miss
+  ;; Identity-safe miss sentinel (CLJS does not intern keyword literals).
+  #?(:clj (Object.) :cljs (js/Object.)))
+
 (defn- schedule
   [work assembler child-frames]
-  (into (conj work assembler) (reverse child-frames)))
+  ;; rseq is O(1) on the vectors every caller passes; (vec v) on a vector
+  ;; is identity, so non-vector inputs pay one materialization at most.
+  (into (conj work assembler) (rseq (vec child-frames))))
 
 (defn- assemble-children
   [values child-count]
@@ -268,21 +259,23 @@
   returned; no lazy sequence or internal backend identity escapes."
   [adapter {:keys [limits execution-contract]} resource permission]
   (let [limits (normalize-limits limits)
-        counters (atom {:schema-components 0
-                        :relationship-values 0
-                        :tree-nodes 0
-                        :leaf-subjects 0})
-        schema-cache (atom {})
-        expression-cache (atom {})
-        codec-cache (atom {})
+        ;; Request-local single-threaded state: volatiles, not atoms.
+        counters (volatile! {:schema-components 0
+                             :relationship-values 0
+                             :tree-nodes 0
+                             :leaf-subjects 0})
+        schema-cache (volatile! {})
+        expression-cache (volatile! {})
+        codec-cache (volatile! {})
         check! (fn [stage]
                  (execution/check!
-                  execution-contract stage (safe-counters @counters)))
+                  execution-contract stage #(safe-counters @counters)))
         definitions!
         (fn [kind resource-type name]
-          (let [cache-key [kind resource-type name]]
-            (if (contains? @schema-cache cache-key)
-              (get @schema-cache cache-key)
+          (let [cache-key [kind resource-type name]
+                hit (get @schema-cache cache-key memo-miss)]
+            (if-not (identical? memo-miss hit)
+              hit
               (let [operation (if (= :relation kind)
                                 :relation-defs
                                 :permission-defs)
@@ -310,13 +303,14 @@
                     (definition-sequence!
                       kind resource-type name raw)
                     _ (check! :permission-tree-definition-read)]
-                (swap! schema-cache assoc cache-key definitions)
+                (vswap! schema-cache assoc cache-key definitions)
                 definitions))))
         expression!
         (fn [resource-type permission-name]
-          (let [cache-key [resource-type permission-name]]
-            (if (contains? @expression-cache cache-key)
-              (get @expression-cache cache-key)
+          (let [cache-key [resource-type permission-name]
+                hit (get @expression-cache cache-key memo-miss)]
+            (if-not (identical? memo-miss hit)
+              hit
               (let [entity
                     (adapter-call!
                      (fn [_]
@@ -330,15 +324,16 @@
                                  [(:resource-type resolved)
                                   (:permission-name resolved)]))
                   (adapter-contract! :expression-identity-mismatch))
-                (swap! expression-cache assoc cache-key resolved)
+                (vswap! expression-cache assoc cache-key resolved)
                 resolved))))
         render-internal!
         (fn [type internal-id]
-          (when-not (portable-natural? internal-id)
+          (when-not (exact-integer/natural? internal-id)
             (adapter-contract! :invalid-internal-identity))
-          (let [cache-key [type internal-id]]
-            (if (contains? @codec-cache cache-key)
-              (get @codec-cache cache-key)
+          (let [cache-key [type internal-id]
+                hit (get @codec-cache cache-key memo-miss)]
+            (if-not (identical? memo-miss hit)
+              hit
               (do
                 (check! :permission-tree-render)
                 (let [external-id
@@ -353,7 +348,7 @@
                      "The selected backend could not externalize a scanned object."
                      {:reason :missing-external-identity}))
                   (let [rendered (eacl/spice-object type external-id)]
-                    (swap! codec-cache assoc cache-key rendered)
+                    (vswap! codec-cache assoc cache-key rendered)
                     rendered))))))
         scan-relation!
         (fn [resource-descriptor relation-definitions leaf?]
@@ -390,12 +385,17 @@
                                    :relationship-values 1)
                          (when leaf?
                            (consume! limits counters :leaf-subjects 1))
+                         ;; A leaf renders straight to its public object;
+                         ;; intermediates keep the typed descriptor.
                          (conj acc
-                               {:type subject-type
-                                :internal-id internal-id
-                                :identity [:internal subject-type internal-id]
-                                :public (render-internal!
-                                         subject-type internal-id)}))))}))))
+                               (if leaf?
+                                 (render-internal! subject-type internal-id)
+                                 {:type subject-type
+                                  :internal-id internal-id
+                                  :identity
+                                  [:internal subject-type internal-id]
+                                  :public (render-internal!
+                                           subject-type internal-id)})))))}))))
              []
              relation-definitions)))
         root-type (:type resource)
@@ -407,7 +407,7 @@
            (backend/invoke adapter :object-id->internal root-id)))
         _ (check! :permission-tree-root-resolution)
         _ (when (and (some? internal-root-id)
-                     (not (portable-natural? internal-root-id)))
+                     (not (exact-integer/natural? internal-root-id)))
             (adapter-contract! :invalid-root-internal-identity))
         root-descriptor
         {:type root-type
@@ -437,12 +437,6 @@
                 (let [{:keys [resource name expected depth active]} frame
                       _ (check-depth! limits counters depth)
                       expansion-key [(:identity resource) name]
-                      _ (when (and (= :permission expected)
-                                   (contains? active expansion-key))
-                          (permission-tree-error!
-                           :eacl.permission-tree/cycle-detected
-                           "Permission-tree expansion encountered an active-path cycle."
-                           {:path-node [(:type resource) name]}))
                       relations (definitions! :relation (:type resource) name)
                       expression (expression! (:type resource) name)
                       operator-expression
@@ -480,8 +474,7 @@
                          (conj values
                                {:expanded-object (:public resource)
                                 :expanded-relation name
-                                :leaf
-                                {:subjects (mapv :public subjects)}})]))
+                                :leaf {:subjects subjects}})]))
                     (do
                       (when (contains? active expansion-key)
                         (permission-tree-error!
@@ -715,5 +708,7 @@
                            :children (vec children)}})])
 
                 (adapter-contract! :unknown-work-frame))]
-          (check! :permission-tree-work-transition)
+          ;; The loop-top check! covers the recur boundary; a second check
+          ;; here doubled the per-transition deadline cost for the same
+          ;; observable cut points.
           (recur next-work next-values))))))

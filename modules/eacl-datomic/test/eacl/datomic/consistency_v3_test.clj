@@ -92,7 +92,7 @@
             (is (= 1 (:acquire-current! @calls 0)))
             (is (= 1 (:release! @calls 0)))))))))
 
-(deftest minimize-authoritative-and-targeted-sync-arities-test
+(deftest minimize-authoritative-and-locally-covered-at-least-arities-test
   (with-mem-conn [conn schema/v7-schema]
     (let [authorization (client conn)
           _ (seed! conn authorization)
@@ -123,8 +123,8 @@
              (eacl/can?
               authorization user :view document
               (consistency/at-least-as-fresh token))))
-        (is (= 1 (count @calls)))
-        (is (= :at-least (ffirst @calls)))))))
+        (is (empty? @calls)
+            "at-least-as-fresh must not synchronize when the local DB covers the token")))))
 
 (deftest cross-connection-anchor-and-exact-identity-test
   (with-mem-conns [writer-conn reader-conn schema/v7-schema]
@@ -244,9 +244,15 @@
           before-write (d/db conn)
           token
           (:zed/token
-           (eacl/create-relationship! authorization relationship))]
+           (eacl/create-relationship! authorization relationship))
+          original-db d/db]
       (testing "a source that remains numerically behind cannot satisfy freshness"
-        (with-redefs [d/sync
+        (with-redefs [d/db
+                      (fn [connection]
+                        (if (identical? connection conn)
+                          before-write
+                          (original-db connection)))
+                      d/sync
                       (fn
                         ([_] (future before-write))
                         ([_ _] (future before-write)))]
@@ -255,9 +261,14 @@
                   (error-data
                    #(eacl/can?
                      authorization user :view document
-                     (consistency/at-least-as-fresh token))))))))
+                   (consistency/at-least-as-fresh token))))))))
       (testing "a lagging Peer wait is bounded"
-        (with-redefs [d/sync
+        (with-redefs [d/db
+                      (fn [connection]
+                        (if (identical? connection conn)
+                          before-write
+                          (original-db connection)))
+                      d/sync
                       (fn
                         ([_] (promise))
                         ([_ _] (promise)))]

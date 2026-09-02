@@ -16,6 +16,8 @@
  ["SchemaPlanCost.CanonicalPermissionAliasPreservesDenotation"
   "SchemaPlanCost.CanonicalFrontierDeduplicationCannotAddTraversalStreams"
   "SchemaPlanCost.CanonicalFrontierSequenceIsUniqueAndKeepsFirstPath"
-  "eacl.engine.stable-reducer-test/interior-admission-keys-are-node-qualified-test"
+  "SchemaPlanCost.EqualCanonicalFrontiersKeepEarlierPosition"
+  "eacl.engine.sealed-plan-test/exact-alias-deduplicates-only-the-acyclic-execution-frontier-test"
+  "eacl.engine.alias-frontier-test/acyclic-alias-frontier-is-a-work-only-refinement-test"
   "eacl.bench.explorer-enumeration-test/explorer-100000-super-user-count-builds-one-merged-traversal"
   "cross-runtime authorization oracle suites"]}

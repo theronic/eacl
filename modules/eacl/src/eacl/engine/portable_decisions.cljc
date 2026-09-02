@@ -97,41 +97,6 @@
     :history-divergence
     :else :accept))
 
-(defn- subproblem-cache-decision
-  [{:keys [decision] :as input}]
-  (case decision
-    :lookup
-    (if (= :complete (:candidate input))
-      :use-completed-value
-      :start-independent-computation)
-    :admission
-    (if (and (not (:candidate-present? input))
-             (< (:attempted-publications input) (:maximum-attempts input)))
-      :attempt-publication
-      :skip-publication)
-    :publication
-    (if (and (:ticket-current? input)
-             (:complete? input)
-             (:valid? input)
-             (pos? (:weight input))
-             (<= (:weight input) (:budget input)))
-      :retain-publication
-      :drop-publication)))
-
-(defn- current-cache-decision
-  [{:keys [stage available?]}]
-  (case stage
-    (:eligibility :generation)
-    (if available? :probe-exact-entry :bypass-current-cache)
-    :exact-entry
-    (if available? :use-exact-entry :probe-managed-entry)
-    :exact-only-entry
-    (if available?
-      :use-exact-entry
-      :compute-exact-value)
-    :managed-entry
-    (if available? :use-managed-entry :compute-selected-value)))
-
 (defn- merge-step
   [{:keys [direction left-head right-head]}]
   (cond
@@ -404,13 +369,9 @@
        :node-checks (* 2 node-count)
        :edge-checks (count edges)})))
 
-(defn- relation-index
-  [bindings]
-  (group-by :relation bindings))
-
 (defn- compiled-rules
   [{:keys [definitions relation-bindings]}]
-  (let [by-relation (relation-index relation-bindings)]
+  (let [by-relation (group-by :relation relation-bindings)]
     (vec
      (mapcat
       (fn [{:keys [kind resource-type permission relation subject-type
@@ -575,16 +536,16 @@
                   (:can? :lookup-resources :count-resources)
                   (filter
                    (fn [[rt _ perm st sid]]
-                     (and (= [rt perm st sid]
-                             [(or resource-type (:type resource)) permission
-                              (:type subject) (:id subject)])))
+                     (= [rt perm st sid]
+                        [(or resource-type (:type resource)) permission
+                         (:type subject) (:id subject)]))
                    grants)
                   (:lookup-subjects :count-subjects)
                   (filter
                    (fn [[rt rid perm st _]]
-                     (and (= [rt rid perm st]
-                             [(:type resource) (:id resource)
-                              permission subject-type])))
+                     (= [rt rid perm st]
+                        [(:type resource) (:id resource)
+                         permission subject-type]))
                    grants))
                 items
                 (case operation
@@ -627,8 +588,6 @@
     :cursor-continuation (continuation-decision input)
     :consistency-plan (consistency-plan input)
     :consistency-validation (consistency-validation input)
-    :current-cache-decision (current-cache-decision input)
-    :subproblem-cache-decision (subproblem-cache-decision input)
     :ordered-merge-step (merge-step input)
     :ordered-merge-chunk (merge-chunk input)
     :recursive-routing-certificate (routing-certificate input)

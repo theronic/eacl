@@ -14,6 +14,8 @@
   (into page-control-keys
         #{:resource :permission :subject/type :subject/relationship}))
 
+(def ^:dynamic ^:no-doc *validated-request?* false)
+
 (defn- invalid!
   [message data]
   (throw

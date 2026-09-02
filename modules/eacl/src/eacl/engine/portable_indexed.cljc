@@ -23,7 +23,7 @@
    :consumer-grant-joins
    :render-advances])
 
-(defn- empty-counters []
+(def ^:private empty-counters
   (zipmap counter-keys (repeat 0)))
 
 (defn- add-counter
@@ -80,14 +80,10 @@
    :more? true
    :continuation continuation})
 
-(defn- rule-head
-  [rule]
-  (:head rule))
-
 (defn- rules-by-head
   [rules]
   (->> rules
-       (group-by rule-head)
+       (group-by :head)
        (into {}
              (map (fn [[head head-rules]]
                     [head (vec head-rules)])))))
@@ -177,7 +173,7 @@
    :render-state (initial-render-state (:render input))
    :complete? false
    :continuation-state nil
-   :counters (empty-counters)
+   :counters empty-counters
    :seen-grants #{}
    :emitted #{}
    :rules-by-head (:rules-by-head plan)
@@ -323,8 +319,7 @@
 
 (defn- record-emission
   [state eid]
-  (let [ordinal (dec (get-in state [:counters :emitted-results]))
-        render (:render state)
+  (let [render (:render state)
         kind (:kind render)
         render-state (:render-state state)]
     (case kind

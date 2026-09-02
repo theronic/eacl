@@ -301,6 +301,40 @@
                                  :resource-id resource-id}))
                 (str fixture-key " " principal-key " " sample-key))))))))
 
+(deftest exhaustive-counts-honour-the-request-cut-point-test
+  ;; Regression: the count routes once dropped `:cut-point!` while sharing
+  ;; their reducer option keys, so a cancellation signalled during an
+  ;; exhaustive count ran the whole traversal. Both directions must stop at
+  ;; the next bounded reducer transition with the typed error.
+  (let [env (seeded :explorer-acyclic)
+        principal (val (first (:principals (:fixture env))))
+        cancelling-count
+        (fn [count-fn anchor-key anchor-id]
+          (let [token (execution/cancellation-token)
+                contract (execution/normalize {:execution-timeout-ms 1000}
+                                              :count-resources
+                                              {:cancellation-token token})]
+            (binding [backend/*invoke-observer*
+                      (fn [{:keys [phase]}]
+                        (when (= :after phase)
+                          (execution/cancel! token)))]
+              (try (count-fn {:adapter (:adapter env) :plan (:plan env)
+                              :subject-type :user
+                              anchor-key anchor-id
+                              :cut-point! (physical/execution-cut-point
+                                           contract)})
+                   nil
+                   (catch clojure.lang.ExceptionInfo e (ex-data e))))))]
+    (doseq [[label count-fn anchor-key anchor-id]
+            [["count-resources" route/count-resources :subject-id
+              (:id principal)]
+             ["count-subjects" route/count-subjects :resource-id
+              (:id (:server-1-1 (:reverse-resources (:fixture env))))]]]
+      (testing label
+        (let [data (cancelling-count count-fn anchor-key anchor-id)]
+          (is (= :eacl.execution/cancelled (:eacl/error data)))
+          (is (= :reducer-transition (:stage data))))))))
+
 (deftest exhaustion-count-test
   (doseq [fixture-key [:explorer-acyclic :group-star :broad-union]]
     (testing (str fixture-key)

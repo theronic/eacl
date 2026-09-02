@@ -99,8 +99,6 @@
          max-values reducer/default-max-values
          max-stack reducer/default-max-stack}
     :as options}]
-  {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
-         (keyword? subject-type) (some? subject-eid) (some? resource-eid)]}
   (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
         reverse-rules (get-in plan [:indexes :reverse-rules])
         counters (volatile! {:admissions 0 :transitions 0 :commands 0
@@ -115,8 +113,8 @@
                  (when (>= (:commands @counters) max-commands)
                    (limit-failure! :max-commands @counters
                                    {:max-commands max-commands}))
-                 (let [values (into [] (take (:limit descriptor))
-                                    (fetch-fn descriptor))]
+                 (let [values (reducer/bounded-vector
+                               (fetch-fn descriptor) (:limit descriptor))]
                    (when (> (+ (:fetched-values @counters) (count values))
                             max-values)
                      (limit-failure! :max-values @counters
@@ -226,27 +224,23 @@
                        (every? #(= :relation (:rule %)) rules))
               rules)))
         report! (fn []
-                  (request-counters/add! :commands (:commands @counters))
-                  (request-counters/add! :fetched-values
-                                         (:fetched-values @counters))
-                  (doseq [stats
-                          (distinct
-                           (remove nil?
-                                   [reducer/*observer-stats*
-                                    reducer/*aggregate-work-stats*]))]
+                  (request-counters/add-commands! (:commands @counters))
+                  (request-counters/add-fetched-values!
+                   (:fetched-values @counters))
+                  (when (or reducer/*observer-stats*
+                            reducer/*reducer-work-stats*)
                     (let [{:keys [admissions commands transitions
                                   fetched-values]} @counters]
-                      (swap! stats
-                             (fn [c]
-                               (-> (or c {})
-                                   (update :derived-grants (fnil + 0) admissions)
-                                   (update :advanced-datoms (fnil + 0) commands)
-                                   (update :queued-work (fnil + 0) transitions)
-                                   (update :fetched-values (fnil + 0)
-                                           fetched-values)))))))]
+                      (reducer/report-work-stats!
+                       [reducer/*observer-stats*
+                        reducer/*reducer-work-stats*]
+                       {:derived-grants admissions
+                        :advanced-datoms commands
+                        :queued-work transitions
+                        :fetched-values fetched-values}))))]
     (loop [stack [[(or (:start-node options) (:root plan)) resource-eid]]
            visited (transient #{})]
-      (if (empty? stack)
+      (if (zero? (count stack))
         (do (report!) false)
         (let [[node eid :as state] (peek stack)
               stack (pop stack)]
@@ -356,12 +350,10 @@
   Same machinery, budgets, and typed failures as `check-eids`; used by
   the least-path evaluator's witness clauses (acyclic-keyset-pagination),
   where a smaller-witness test asks derivability of one specific rule
-  target rather than the sealed root."
-  [{:keys [subject-eid resource-eid start-node] :as options}]
-  {:pre [(some? start-node)]}
-  (if (or (nil? subject-eid) (nil? resource-eid))
-    false
-    (probe-check-eids options)))
+  target rather than the sealed root. The evaluator supplies scanned,
+  never nil, endpoint ids."
+  [options]
+  (probe-check-eids options))
 
 (defn- found! []
   (throw (ex-info "found" {::found true})))
@@ -386,13 +378,7 @@
                         (found!)))))]
       (try
         (let [finished (reducer/run-reverse
-                        (merge (select-keys options
-                                            [:adapter :fetch-fn :plan
-                                             :subject-type
-                                             :physical-chunk-size
-                                             :sidecar-cap :max-admissions
-                                             :max-commands
-                                             :max-transitions :max-values :max-stack])
+                        (merge (select-keys options reducer/run-option-keys)
                                {:resource-eid resource-eid
                                 :target exhaustion-target
                                 :cut-point! watch}))]
@@ -413,23 +399,18 @@
           :resource-eid (backend/invoke adapter :object-id->internal
                                         resource-id))))
 
-(defn count-resources
-  "Exact count by exhausting the reducer; :count-limit truncates with an
-  explicit marker exactly like the current public contract."
-  [{:keys [adapter subject-id count-limit] :as options}]
-  (let [subject-eid (backend/invoke adapter :object-id->internal subject-id)
-        target (if count-limit (inc count-limit) exhaustion-target)]
-    (if (nil? subject-eid)
+(defn- exhaustive-count
+  "Exact count by exhausting the reducer through `run` from `anchor-eid`;
+  :count-limit truncates with an explicit marker exactly like the public
+  contract."
+  [run anchor-key anchor-eid {:keys [count-limit] :as options}]
+  (let [target (if count-limit (inc count-limit) exhaustion-target)]
+    (if (nil? anchor-eid)
       {:count 0 :limit (or count-limit -1) :truncated? false}
-      (let [finished (reducer/run-forward
-                      (merge (select-keys options
-                                          [:adapter :fetch-fn :plan
-                                           :subject-type :cut-point!
-                                           :physical-chunk-size :sidecar-cap
-                                           :max-admissions :max-commands
-                                           :max-transitions :max-values :max-stack])
-                             {:subject-eid subject-eid
-                              :target target}))
+      (let [finished (run (merge (select-keys options reducer/run-option-keys)
+                                 {anchor-key anchor-eid
+                                  :result-sink :count
+                                  :target target}))
             discovered (:discovered finished)
             truncated? (boolean (and count-limit
                                      (> discovered count-limit)))]
@@ -437,25 +418,17 @@
          :limit (or count-limit -1)
          :truncated? truncated?}))))
 
+(defn count-resources
+  "Exact count by exhausting the reducer; :count-limit truncates with an
+  explicit marker exactly like the current public contract."
+  [{:keys [adapter subject-id] :as options}]
+  (exhaustive-count reducer/run-forward :subject-eid
+                    (backend/invoke adapter :object-id->internal subject-id)
+                    options))
+
 (defn count-subjects
   "Exact reverse count by exhaustion, mirroring count-resources."
-  [{:keys [adapter resource-id count-limit] :as options}]
-  (let [resource-eid (backend/invoke adapter :object-id->internal resource-id)
-        target (if count-limit (inc count-limit) exhaustion-target)]
-    (if (nil? resource-eid)
-      {:count 0 :limit (or count-limit -1) :truncated? false}
-      (let [finished (reducer/run-reverse
-                      (merge (select-keys options
-                                          [:adapter :fetch-fn :plan
-                                           :subject-type :cut-point!
-                                           :physical-chunk-size :sidecar-cap
-                                           :max-admissions :max-commands
-                                           :max-transitions :max-values :max-stack])
-                             {:resource-eid resource-eid
-                              :target target}))
-            discovered (:discovered finished)
-            truncated? (boolean (and count-limit
-                                     (> discovered count-limit)))]
-        {:count (if truncated? count-limit discovered)
-         :limit (or count-limit -1)
-         :truncated? truncated?}))))
+  [{:keys [adapter resource-id] :as options}]
+  (exhaustive-count reducer/run-reverse :resource-eid
+                    (backend/invoke adapter :object-id->internal resource-id)
+                    options))

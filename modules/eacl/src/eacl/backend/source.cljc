@@ -6,6 +6,8 @@
   borrow, exactly one adapter and carry an idempotent release boundary. Native
   handles and release tokens remain private to this namespace."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.causal-token :as causal-token]
+            [eacl.exact-integer :as exact-integer]
             [eacl.request.counters :as request-counters]))
 
 (def source-version 1)
@@ -26,10 +28,6 @@
     :acquire-exact!
     :release!})
 
-(def optional-source-operations
-  "Operations a source MAY provide beyond committed basis selection."
-  #{})
-
 (def source-obligations
   "Runtime-facing assumptions for basis selection and native lifecycle. These
   are distinct from the immutable basis-adapter assumptions modeled by
@@ -45,7 +43,9 @@
    :acquire-at-least!
    #{:one-selected-basis :requested-floor-satisfied-or-typed-failure}
    :acquire-exact!
-   #{:one-selected-basis :exact-locator-selection :no-current-head-acquisition}
+   #{:one-selected-basis :exact-locator-selection
+     :at-most-one-local-observation
+     :conditional-targeted-synchronization}
    :release!
    #{:owned-native-release :idempotent-shared-boundary
      :declared-thread-constraint}})
@@ -94,6 +94,23 @@
     :revision
     :exact-locator
     :backend-snapshot-id})
+
+(defn- retain-semantic-field
+  [known-fields field _]
+  (when (and known-fields (contains? known-fields field))
+    known-fields))
+
+(defn- closed-semantic-identity?
+  [identity]
+  ;; `assert-open!` crosses this boundary on every retained Snapshot read.
+  ;; Count plus required-key membership is equivalent to materializing and
+  ;; comparing `(set (keys identity))`, because map keys are unique, without
+  ;; allocating a key sequence and set for an already closed identity.
+  (and (map? identity)
+       (= (count semantic-identity-keys) (count identity))
+       (identical?
+        semantic-identity-keys
+        (reduce-kv retain-semantic-field semantic-identity-keys identity))))
 
 (def ^:dynamic *source-op-stats*
   "Optional atom counting basis-source operation invocations by keyword."
@@ -295,16 +312,24 @@
     (swap! *source-op-stats* update operation-key (fnil inc 0)))
   (apply (operation source operation-key) args))
 
+#?(:clj
+   (def ^:private is-virtual-method
+     ;; Resolved once: Java runtimes before virtual threads have no
+     ;; `Thread.isVirtual`, and a by-name reflective lookup per snapshot
+     ;; acquisition scanned the Thread method table every time.
+     (delay
+       (try
+         (.getMethod ^Class Thread "isVirtual" (make-array Class 0))
+         (catch Throwable _ nil)))))
+
 (defn- virtual-thread?
   []
   #?(:clj
-     (try
-       (boolean
-        (clojure.lang.Reflector/invokeInstanceMethod
-         (Thread/currentThread) "isVirtual" (object-array 0)))
-       ;; Java runtimes before virtual threads have no `Thread.isVirtual`.
-       (catch Throwable _
-         false))
+     (if-let [^java.lang.reflect.Method method @is-virtual-method]
+       (try
+         (boolean (.invoke method (Thread/currentThread) (object-array 0)))
+         (catch Throwable _ false))
+       false)
      :cljs false))
 
 (defn- require-acquisition-runtime!
@@ -322,9 +347,9 @@
          :phase :snapshot-acquisition}))))
   nil)
 
-(defn- require-owner-thread!
-  [selected constraint phase]
-  #?(:clj
+#?(:clj
+   (defn- require-owner-thread!
+     [selected constraint phase]
      (when (and (= :acquiring-thread constraint)
                 (not (identical? (::owner-thread selected)
                                  (Thread/currentThread))))
@@ -335,9 +360,11 @@
           :eacl/error :eacl/snapshot-thread-violation
           :backend (::backend-id selected)
           :phase phase
-          :constraint constraint})))
-     :cljs nil)
-  nil)
+          :constraint constraint}))))
+   :cljs
+   (defn- require-owner-thread!
+     [_selected _constraint _phase]
+     nil))
 
 (defn source-scope
   "Returns source-static source and branch identity without acquiring a DB."
@@ -366,9 +393,7 @@
        (map? (::execution-constraints candidate))
        (fn? (::release-fn candidate))
        (backend/adapter? (::adapter candidate))
-       (map? (::semantic-identity candidate))
-       (= semantic-identity-keys
-          (set (keys (::semantic-identity candidate))))
+       (closed-semantic-identity? (::semantic-identity candidate))
        (contains? basis-ownerships (::ownership candidate))
        #?(:clj (instance? clojure.lang.Atom (::release-state candidate))
           :cljs (satisfies? IDeref (::release-state candidate)))
@@ -379,12 +404,6 @@
   [policy ownership]
   (or (= :mixed policy)
       (= policy ownership)))
-
-(defn- exact-natural?
-  [value]
-  (and (integer? value)
-       (not (neg? value))
-       (<= value backend/maximum-exact-integer)))
 
 (defn- adapter-semantic-identity
   [source adapter]
@@ -397,6 +416,11 @@
         revision (:revision native-revision)
         order-hint (backend/invoke adapter :order-hint)
         exact-locator (backend/invoke adapter :exact-locator)]
+    ;; Acquisition is the single boundary that turns provider values into a
+    ;; closed selected basis. Validate lifecycle portability here so every
+    ;; selection mode receives the same guarantee without a second source
+    ;; read in the consistency layer.
+    (causal-token/validate-source-lifecycle! lifecycle)
     (when-not (and (map? scope)
                    (contains? scope :source-id)
                    (contains? scope :branch))
@@ -405,7 +429,7 @@
        {:backend backend-id :source-scope scope}))
     (when-not (and (map? native-revision)
                    (contains? native-revision :exact-locator)
-                   (exact-natural? revision)
+                   (exact-integer/natural? revision)
                    (= revision order-hint)
                    (= (:exact-locator native-revision) exact-locator))
       (invalid-selected-basis!

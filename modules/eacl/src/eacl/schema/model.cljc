@@ -125,28 +125,27 @@
                                        " references non-existent relation: " (name source-rel))}))
             (when (contains? (get relation-names-by-type res-type) source-rel)
               (doseq [target-res-type (get relation-subject-types [res-type source-rel])]
-                (do
-                  (if (= target-type :relation)
-                    (when-not (contains? (get relation-names-by-type target-res-type) target-name)
-                      (swap! errors conj
-                             {:type        :invalid-arrow-target-relation
-                              :permission  (str (name res-type) "/" (name perm-name))
-                              :arrow-via   source-rel
-                              :target-type target-res-type
-                              :target      target-name
-                              :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                                " arrow via " (name source-rel) "->" (name target-name)
-                                                " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
-                    (when-not (contains? (get permission-names-by-type target-res-type) target-name)
-                      (swap! errors conj
-                             {:type        :invalid-arrow-target-permission
-                              :permission  (str (name res-type) "/" (name perm-name))
-                              :arrow-via   source-rel
-                              :target-type target-res-type
-                              :target      target-name
-                              :message     (str "Permission " (name res-type) "/" (name perm-name)
-                                                " arrow via " (name source-rel) "->" (name target-name)
-                                                " - permission '" (name target-name) "' does not exist on " (name target-res-type))}))))))))))
+                (if (= target-type :relation)
+                  (when-not (contains? (get relation-names-by-type target-res-type) target-name)
+                    (swap! errors conj
+                           {:type        :invalid-arrow-target-relation
+                            :permission  (str (name res-type) "/" (name perm-name))
+                            :arrow-via   source-rel
+                            :target-type target-res-type
+                            :target      target-name
+                            :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                              " arrow via " (name source-rel) "->" (name target-name)
+                                              " - relation '" (name target-name) "' does not exist on " (name target-res-type))}))
+                  (when-not (contains? (get permission-names-by-type target-res-type) target-name)
+                    (swap! errors conj
+                           {:type        :invalid-arrow-target-permission
+                            :permission  (str (name res-type) "/" (name perm-name))
+                            :arrow-via   source-rel
+                            :target-type target-res-type
+                            :target      target-name
+                            :message     (str "Permission " (name res-type) "/" (name perm-name)
+                                              " arrow via " (name source-rel) "->" (name target-name)
+                                              " - permission '" (name target-name) "' does not exist on " (name target-res-type))})))))))))
     ;; Relation subject types must be defined definitions (SpiceDB rejects
     ;; `relation reader: nobody`). Only enforceable when the schema carries
     ;; its definition list; data-installed schemas that pass relations and

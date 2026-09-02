@@ -5,7 +5,6 @@
             [eacl.backend.v8 :as backend]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.datomic-helpers
              :refer [with-mem-conn with-mem-conns]]
@@ -158,6 +157,7 @@
       (seed-objects! conn)
       (eacl/create-relationships! client contract/smoke-relationships)
       (contract/assert-v8-seeded-contracts! client)
+      (contract/assert-v8-cache-differential! client)
       (contract/assert-v8-permission-tree-contract! client)
       (contract/assert-authorization-target-matrix!
        {:writable client
@@ -269,5 +269,5 @@
           conn
           {:security-key
            (str "datomic-recursive-safety-" (name limit-key))
-           :cache shared-cache/no-cache
+           :cache {}
            :recursive-traversal-limits {limit-key 1}}))))))

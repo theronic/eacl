@@ -67,59 +67,55 @@
         (conj (vec prefix) (:ordinal relation-rule))))))
 
 (defn- scan-values
-  [{:keys [adapter traversal subject-type anchor-eid order-direction
+  [{:keys [scan-invoker traversal subject-type anchor-eid order-direction
            resource-type cut-point! physical-chunk-size max-commands
            max-values counters]}
    relation-id bound inclusive?]
-  (execution/check! execution/*contract*
-                    :operator-seekable/scan
-                    {:commands (:commands @counters)})
-  (when cut-point! (cut-point! @counters))
-  (let [next-command (inc (:commands @counters))]
-    (when (> next-command max-commands)
-      (limit! :commands max-commands next-command))
-    (let [scan-options
-          (cond-> {:direction order-direction}
-            (some? bound)
-            (assoc :bound-eid bound :inclusive-bound? inclusive?))
-          values
-          (into [] (take physical-chunk-size)
-                (if (= :forward traversal)
-                  (backend/invoke adapter :subject->resources
-                                  subject-type anchor-eid relation-id
-                                  resource-type
-                                  scan-options)
-                  (backend/invoke adapter :resource->subjects
-                                  resource-type
-                                  anchor-eid relation-id subject-type
-                                  scan-options)))
-          next-values (+ (:fetched-values @counters) (count values))]
-      (when (> next-values max-values)
-        (limit! :fetched-values max-values next-values))
-      (vswap! counters assoc :commands next-command
-              :fetched-values next-values)
-      (when (nil? bound)
-        (vswap! counters update :stream-opens inc))
-      (request-counters/add! :commands)
-      (request-counters/add! :fetched-values (count values))
-      (add-stat! :adapter-commands 1)
-      (add-stat! :fetched-values (count values))
-      values)))
+  (let [current @counters]
+    ;; The routed cut point is the same deadline/cancellation check as the
+    ;; direct one; run whichever the caller installed, never both.
+    (if cut-point!
+      (cut-point! current)
+      (execution/check! execution/*contract* :operator-seekable/scan
+                        #(hash-map :commands (:commands current))))
+    (let [next-command (inc (:commands current))]
+      (when (> next-command max-commands)
+        (limit! :commands max-commands next-command))
+      (let [scan-options
+            ;; `:limit` lets natively paging adapters stop at the chunk.
+            (cond-> {:direction order-direction :limit physical-chunk-size}
+              (some? bound)
+              (assoc :bound-eid bound :inclusive-bound? inclusive?))
+            values
+            (into [] (take physical-chunk-size)
+                  (if (= :forward traversal)
+                    (scan-invoker subject-type anchor-eid relation-id
+                                  resource-type scan-options)
+                    (scan-invoker resource-type anchor-eid relation-id
+                                  subject-type scan-options)))
+            fetched (count values)
+            next-values (+ (:fetched-values current) fetched)]
+        (when (> next-values max-values)
+          (limit! :fetched-values max-values next-values))
+        (vswap! counters #(cond-> (assoc % :commands next-command
+                                         :fetched-values next-values)
+                            (nil? bound) (update :stream-opens inc)))
+        (request-counters/add-commands!)
+        (request-counters/add-fetched-values! fetched)
+        (add-stat! :adapter-commands 1)
+        (add-stat! :fetched-values fetched)
+        values))))
 
 (defn- cursor
   [relation-id boundary]
-  {:relation-id relation-id :buffer [] :index 0 :bound boundary
-   :inclusive? false :done? false :opened? false})
+  {:relation-id relation-id :buffer [] :index 0 :bound boundary :done? false})
 
 (defn- refill [options cursor bound inclusive?]
   (let [values (scan-values options (:relation-id cursor) bound inclusive?)
         chunk (:physical-chunk-size options)]
     (assoc cursor :buffer values :index 0
            :bound (peek values)
-           :done? (< (count values) chunk)
-           :opened? true)))
-
-(declare head)
+           :done? (< (count values) chunk))))
 
 (defn- head [options cursor]
   (cond
@@ -145,16 +141,17 @@
 
 (defn- seek
   [options cursor target]
-  (let [[value cursor] (head options cursor)]
+  (let [[value cursor] (head options cursor)
+        order-direction (:order-direction options)]
     (cond
       (nil? value) [nil cursor]
-      (at-or-beyond? (:order-direction options) value target)
+      (at-or-beyond? order-direction value target)
       [value cursor]
       :else
       (loop [index (inc (:index cursor))]
         (if (< index (count (:buffer cursor)))
           (let [value (nth (:buffer cursor) index)]
-            (if (at-or-beyond? (:order-direction options) value target)
+            (if (at-or-beyond? order-direction value target)
               [value (assoc cursor :index index)]
               (recur (inc index))))
           (let [cursor (refill options cursor target true)]
@@ -163,12 +160,9 @@
               [(first (:buffer cursor)) cursor]
               [nil cursor])))))))
 
-(defn- same-position? [values]
-  (or (empty? values) (apply = values)))
-
 (defn- furthest
   [order-direction values]
-  (apply (if (= :asc order-direction) max min) values))
+  (reduce (if (= :asc order-direction) max min) values))
 
 (defn- intersection-emissions
   [options relation-ids width coords-prefix]
@@ -188,7 +182,8 @@
                       (if-let [operand (first remaining)]
                         (let [[value operand] (seek options operand driver-head)]
                           (if (nil? value)
-                            [heads (into positioned (cons operand (rest remaining)))
+                            [heads (into (conj positioned operand)
+                                         (subvec remaining 1))
                              true]
                             (recur (subvec remaining 1)
                                    (conj heads value)
@@ -196,7 +191,7 @@
                         [heads positioned false]))]
                 (if exhausted?
                   {:emissions emissions :exhausted? true}
-                  (if (same-position? (conj heads driver-head))
+                  (if (every? #(= driver-head %) heads)
                     (let [emissions
                           (conj emissions
                                 {:value driver-head
@@ -243,9 +238,7 @@
   "Returns a raw exact generator page for one certified direct
   specialization. Its coordinates are exactly the generic cover path."
   [{:keys [adapter plan cover-plan specialization-node traversal
-           subject-type anchor-eid width order-direction boundary
-           traversal-limits cut-point!]
-    :or {order-direction :asc}
+           subject-type width boundary traversal-limits cut-point!]
     :as request}]
   (when-not (and (integer? width) (not (neg? width)))
     (invalid! :invalid-width "Seekable page width must be a natural integer."
@@ -273,20 +266,25 @@
                          (first relation-ids))
           boundary-eid
           (when boundary
-            (do
-              (when-not (and (= coords-prefix (pop (vec boundary)))
-                             (integer? (peek boundary)))
-                (invalid! :invalid-boundary
-                          "Seekable boundary is outside the generic cover path."
-                          {:boundary boundary
-                           :expected-prefix coords-prefix}))
-              (peek boundary)))
+            (when-not (and (= coords-prefix (pop (vec boundary)))
+                           (integer? (peek boundary)))
+              (invalid! :invalid-boundary
+                        "Seekable boundary is outside the generic cover path."
+                        {:boundary boundary
+                         :expected-prefix coords-prefix}))
+            (peek boundary))
           limits (or traversal-limits {})
           counters (volatile!
                     {:commands 0 :fetched-values 0 :stream-opens 0
                      :emissions 0})
           options (assoc request
                          :resource-type (first permission)
+                         :scan-invoker
+                         (backend/scan-invoker
+                          adapter
+                          (if (= :forward traversal)
+                            :subject->resources
+                            :resource->subjects))
                          :boundary-eid boundary-eid
                          :physical-chunk-size
                          (or (:physical-chunk-size limits)

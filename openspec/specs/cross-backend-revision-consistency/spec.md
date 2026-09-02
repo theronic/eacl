@@ -50,6 +50,15 @@ The Datomic adapter SHALL use native database identity for source scope and
 basis `t` as its causal order and exact locator. EACL-managed writes SHALL mint
 tokens from the committed transaction report without graph-journal metadata.
 
+Exact selection SHALL authenticate and validate the token before storage
+access, capture one current local database value from the selected connection,
+skip synchronization when its basis already covers `T`, and otherwise perform
+at most one bounded targeted synchronization to `T`. It SHALL verify coverage
+before selecting exactly `d/as-of T` and SHALL retain distinct timeout,
+cancellation, below-target freshness, and provider-failure classifications.
+No cross-request observed-head watermark or database-value
+connection-generation field is required.
+
 #### Scenario: Datomic catches up to an at-least write
 - **WHEN** the local Peer basis is below an authenticated same-source token `T`
 - **THEN** EACL uses bounded `(d/sync conn T)` and verifies the selected basis is at least `T`

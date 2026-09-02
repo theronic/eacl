@@ -1,0 +1,43 @@
+{:evidence/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :candidate-production-manifest-sha256
+ "9a2e05402636c1558870b53778cd914e41f1a1d8186c1e5cc771e3927b40b989"
+ :database
+ {:uri "datomic:dev://localhost:4334/eacl-solidjs"
+  :database-id "eacl-solidjs-442c3a9c-b81d-4d42-8df5-d5450ff19bcd"
+  :basis-t 1008733
+  :seeded-database-modified? false
+  :forward-datoms 3007047
+  :reverse-datoms 3007047
+  :public-id-datoms 1007069
+  :distinct-servers 1000000}
+ :public-count-lanes
+ {:count-30000
+  {:result {:count 30000 :limit 30000 :truncated? true}
+   :elapsed-nanos 280246583}
+  :count-100000
+  {:result {:count 100000 :limit 100000 :truncated? true}
+   :elapsed-nanos 909573709}
+  :count-1000000
+  {:result {:count 1000000 :limit -1}
+   :elapsed-nanos 10979387750}}
+ :exact-acquisition-effects
+ {:disposable-database-created-and-deleted? true
+  :local-equal
+  {:local-t 1000 :target 1000 :caught-up-t 1000
+   :operations {:d-db 1 :d-sync 0 :d-as-of 1}
+   :selected-revision 1000}
+  :local-above
+  {:local-t 1002 :target 1000 :caught-up-t 1002
+   :operations {:d-db 1 :d-sync 0 :d-as-of 1}
+   :selected-revision 1000}
+  :local-behind
+  {:local-t 72 :target 1000 :caught-up-t 1000
+   :operations {:d-db 1 :d-sync 1 :d-as-of 1}
+   :selected-revision 1000}}
+ :decision
+ {:covered-bases-skip-sync? true
+  :behind-basis-syncs-once? true
+  :all-selected-revisions-exact? true
+  :million-result-public-count-correct? true
+  :passed? true}}

@@ -143,8 +143,30 @@
   (require-datascript-client! client "cache-stats")
   (orchestration/cache-stats client))
 
+(defn export-cache-snapshot
+  "Exports reusable authorization-cache entries as a bounded immutable value.
+
+  Hosts persisting external bytes must authenticate and encoded-size-bound the
+  envelope before deserialization. The value contains neither a DataScript DB
+  nor process-local cache identity."
+  [client bounds]
+  (require-datascript-client! client "export-cache-snapshot")
+  (orchestration/export-cache-snapshot client bounds))
+
+(defn restore-cache-snapshot!
+  "Atomically restores one trusted, authenticated cache snapshot value."
+  [client snapshot bounds]
+  (require-datascript-client! client "restore-cache-snapshot!")
+  (orchestration/restore-cache-snapshot! client snapshot bounds))
+
+(defn cache-content-revision
+  "Returns this client's process-local reusable-cache content revision."
+  [client]
+  (require-datascript-client! client "cache-content-revision")
+  (orchestration/cache-content-revision client))
+
 (defn refresh-metrics!
-  "Evicts cache-only metrics; optionally recomputes structural metrics now."
+  "Drops derived cache artifacts; optionally recomputes them immediately."
   ([client]
    (require-datascript-client! client "refresh-metrics!")
    (orchestration/refresh-metrics! client))
@@ -162,8 +184,8 @@
   - :cache - omitted creates a bounded client-private basis
     cache; eacl.cache/no-cache disables it; a config map bounds it.
     Exact hits require complete basis identity; complete native generation
-    proofs may lift unchanged answers between ordinary bases in the same
-    lifecycle in either revision direction. Authorization
+    proofs may lift unchanged answers into causally later ordinary bases in
+    the same lifecycle. Authorization
     mutations must use EACL APIs or intact EACL-produced transaction data.
   - :cursor-ttl-seconds - optional cursor token expiry; default nil (tokens never expire).
   - :identity-immutable? - whether one internal object's public identity is

@@ -10,7 +10,6 @@
             [eacl.cache :as shared-cache]
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]

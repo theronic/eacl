@@ -8,11 +8,11 @@ change `design-demand-driven-set-algebra-engine`, tasks 2.1 through 2.15.
 Production implementation is deliberately out of scope and must remain
 disabled.
 
-The machine-readable evidence bundle is
-`formal/verification/operator-phase-a.edn`. It records the 525 new proof-leaf
-obligations, six generated-boundary obligations, the 9,325-obligation
-whole-tree result, source digests, temporal mutations, generated-runtime
-vectors, artifact sizes, and the explicitly closed Phase B gate.
+This is a historical review request. The former machine-readable evidence
+bundle was removed after the project stopped committing generated pass/fail
+ledgers. The authored boundary now lives in `formal/assurance_contract.clj`;
+current proof counts and digests are generated under
+`target/formal/verification/`.
 
 ## Required adversarial checks
 

@@ -14,16 +14,13 @@
   (io/file
    repo-root
    (or (first *command-line-args*)
-       "formal/verification/generated-artifact-size.edn")))
+       "formal/policy/generated-artifact-size.edn")))
 
 (def output-file
   (io/file
    repo-root
    (or (System/getenv "EACL_GENERATED_ARTIFACT_SIZE_OUTPUT")
        "target/formal/generated-artifact-size.edn")))
-
-(def runtime-version
-  (System/getProperty "babashka.version"))
 
 (defn positive-integer!
   [label value]
@@ -73,10 +70,6 @@
 (let [config (edn/read-string (slurp config-file))]
   (when-not (and (= 1 (:schema-version config))
                  (= :uncompressed-byte-length (:measurement config))
-                 (= :babashka
-                    (get-in config [:gate-runtime :tool]))
-                 (= runtime-version
-                    (get-in config [:gate-runtime :version]))
                  (map? (:artifacts config)))
     (throw
      (ex-info
@@ -124,9 +117,6 @@
            (.toPath repo-root)
            (.toPath (.getCanonicalFile config-file))))
          :status (if passed? :passed :failed)
-         :gate-runtime
-         {:tool :babashka
-          :version runtime-version}
          :measurements measurements}]
     (io/make-parents output-file)
     (spit output-file (str (pr-str report) "\n"))

@@ -39,7 +39,7 @@
     :leaf-descriptors :costs :covers :generators :anchors
     :witness-programs :predicate-programs :specializations
     :capability-identity :compatibility-formats :versions :order-contract
-    :fingerprint})
+    :fingerprint :expression-roots :certificate-acyclic?})
 
 (defn- compile-error! [reason message data]
   (throw
@@ -54,6 +54,25 @@
        (= expression-policy/operator-plan-format (:format value))
        (= plan-version (:version value))
        (= :operator (:domain value))))
+
+(defn ^:no-doc expression-roots
+  "Permission → root-node index. Sealed into the plan at compile time;
+  the fallback recompute keeps hand-built test plans working."
+  [plan]
+  (or (:expression-roots plan)
+      (into {} (map (juxt :permission :root)) (:expressions plan))))
+
+(defn ^:no-doc certificate-acyclic?
+  "True when the dependency certificate has no cycle: every strongly
+  connected component is a singleton and no edge is a self-loop. Sealed
+  into the plan at compile time; the fallback keeps hand-built plans
+  working."
+  [plan]
+  (if (contains? plan :certificate-acyclic?)
+    (:certificate-acyclic? plan)
+    (let [certificate (:dependency-certificate plan)]
+      (and (every? #(= 1 (count %)) (:components certificate))
+           (not-any? #(= (:from %) (:to %)) (:edges certificate))))))
 
 (defn- expression-entity [adapter [resource-type permission-name :as node]]
   (let [entity (backend/invoke adapter :permission-expression
@@ -96,12 +115,6 @@
   (boolean
    (some (comp operator-node? :root :expression val) collected)))
 
-(defn- exact-natural? [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value) (js/Number.isSafeInteger value)))
-   (<= 0 value exact-integer/maximum)))
-
 (defn- relation-descriptor [adapter cache resource-type relation-name]
   (let [key [resource-type relation-name]]
     (if-some [cached (get @cache key)]
@@ -120,7 +133,7 @@
                          (= resource-type (:resource-type row))
                          (= relation-name (:relation-name row))
                          (keyword? (:subject-type row))
-                         (exact-natural? (:relation-id row)))
+                         (exact-integer/natural? (:relation-id row)))
             (compile-error! :malformed-relation-definition
                             "Backend returned a malformed relation definition."
                             {:resource-type resource-type
@@ -153,9 +166,9 @@
             (swap! cache assoc key descriptor)
             descriptor))))))
 
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
+(defn ^:no-doc relation-partition [descriptor subject-type]
+  (some #(when (= subject-type (:subject-type %)) %)
+        (:partitions descriptor)))
 
 (defn- validate-relation-subjects! [node descriptor declared]
   (let [actual (mapv :subject-type (:partitions descriptor))]
@@ -200,14 +213,8 @@
              :reverse :least-path
              :direct-sequence-compatible? false}}))
 
-(defn- record-children [record]
-  (case (first record)
-    (:union :intersection) (second record)
-    :exclusion [(second record) (nth record 2)]
-    []))
-
 (defn- enrich-expression
-  [adapter relation-cache [resource-type permission-name :as permission]
+  [adapter relation-cache [resource-type _ :as permission]
    resolved]
   (let [{:keys [dag metrics]}
         (expression-limits/check-normalized!
@@ -254,7 +261,7 @@
    (fn [result {:keys [id record]}]
      (reduce #(update %1 %2 (fnil conj []) id)
              result
-             (record-children record)))
+             (expression-limits/record-children record)))
    (sorted-map)
    nodes))
 
@@ -269,7 +276,7 @@
 (defn- node-costs [nodes]
   (reduce
    (fn [costs {:keys [id op record descriptor]}]
-     (let [children (record-children record)
+     (let [children (expression-limits/record-children record)
            depth (if (seq children)
                    (inc (reduce max (map #(get-in costs [% :depth]) children)))
                    (if (= :arrow op) 1 0))
@@ -309,7 +316,7 @@
 (defn- compile-node-programs [nodes costs]
   (reduce
    (fn [result {:keys [id op record descriptor target-node]}]
-     (let [children (record-children record)
+     (let [children (expression-limits/record-children record)
            anchor (when (= :intersection op)
                     (select-intersection-anchor children costs))
            left (when (= :exclusion op) (second record))
@@ -399,7 +406,7 @@
      (sorted-map)
      (keep
       (fn [{:keys [id op record]}]
-        (let [children (record-children record)]
+        (let [children (expression-limits/record-children record)]
           (when (and (contains? #{:intersection :exclusion} op)
                      (every? #(= :relation (get-in nodes-by-id [% :op]))
                              children))
@@ -512,7 +519,14 @@
                                  (:negative result))))})]))))
 
 (defn- fingerprint-records [plan]
-  (let [without-fingerprint (dissoc plan :fingerprint)]
+  ;; Derived projections (:expression-roots, :certificate-acyclic?) stay
+  ;; outside the authenticated identity: they are pure recomputations of
+  ;; fingerprinted fields, and validate-plan's fresh-compile equality
+  ;; still covers them. Including them would break every outstanding
+  ;; cursor fingerprint for zero integrity gain.
+  (let [without-fingerprint (dissoc plan :fingerprint
+                                    :expression-roots
+                                    :certificate-acyclic?)]
     (into [[:header (:format plan) (:version plan) (:root plan)]]
           (for [key (sort-by str (keys without-fingerprint))]
             [:field key (get without-fingerprint key)]))))
@@ -616,8 +630,13 @@
          :order-contract order-contract}
         fingerprint
         (secure/canonical-records-digest fingerprint-domain
-                                         (fingerprint-records plan))]
-    (assoc plan :fingerprint fingerprint)))
+                                         (fingerprint-records plan))
+        ;; Derived fields ride outside the fingerprint and outside the
+        ;; cursor-scope digest key list: plan identity is unchanged.
+        plan (assoc plan :fingerprint fingerprint)]
+    (assoc plan
+           :expression-roots (expression-roots plan)
+           :certificate-acyclic? (certificate-acyclic? plan))))
 
 (defn seal-plan
   "Returns the existing union-only sealed plan unchanged, or compiles an

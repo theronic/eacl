@@ -9,8 +9,7 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.operator.plan :as operator-plan]
-            [eacl.request.counters :as request-counters]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.request.counters :as request-counters]))
 
 (def default-limits
   {:maximum-transitions 100000
@@ -63,31 +62,34 @@
                    :type :eacl.operator/active-recursion
                    :eacl/error :eacl.operator/active-recursion))))
 
+(def ^:private known-limit-keys (set (keys default-limits)))
+
 (defn- normalize-limits [overrides]
-  (let [overrides (or overrides {})]
-    (when-not (map? overrides)
-      (invalid! :invalid-limits "Operator limits must be a map."
-                {:value overrides}))
-    (when-let [unknown (seq (remove (set (keys default-limits))
-                                    (keys overrides)))]
-      (invalid! :unknown-limit "Operator limits contain unknown keys."
-                {:unknown-keys (vec unknown)
-                 :known-keys (set (keys default-limits))}))
-    (when-not (every? (fn [[_ value]] (and (integer? value) (pos? value)))
-                      overrides)
-      (invalid! :invalid-limit "Operator limits must be positive integers."
-                {:limits overrides}))
-    (merge default-limits overrides)))
+  ;; The common caller passes no overrides; the closed defaults are already a
+  ;; complete normalized map, so no merge or key scan is needed for them.
+  (cond
+    (nil? overrides)
+    default-limits
 
-(defn- acyclic-plan? [plan]
-  (let [certificate (:dependency-certificate plan)]
-    (and (every? #(= 1 (count %)) (:components certificate))
-         (not-any? #(= (:from %) (:to %)) (:edges certificate)))))
+    (not (map? overrides))
+    (invalid! :invalid-limits "Operator limits must be a map."
+              {:value overrides})
 
-(defn- plan-index [plan]
-  (into {}
-        (map (fn [{:keys [permission root]}] [permission root]))
-        (:expressions plan)))
+    :else
+    (do
+      (when-let [unknown (seq (remove known-limit-keys (keys overrides)))]
+        (invalid! :unknown-limit "Operator limits contain unknown keys."
+                  {:unknown-keys (vec unknown)
+                   :known-keys known-limit-keys}))
+      (when-not (every? (fn [[_ value]] (and (integer? value) (pos? value)))
+                        overrides)
+        (invalid! :invalid-limit "Operator limits must be positive integers."
+                  {:limits overrides}))
+      (merge default-limits overrides))))
+
+(def ^:private acyclic-plan? operator-plan/certificate-acyclic?)
+
+(def ^:private plan-index operator-plan/expression-roots)
 
 (defn- complete-value [memo active key value maximum]
   (when (and (not (contains? memo key))
@@ -95,24 +97,19 @@
     (limit! :memo-entries maximum (inc (count memo))))
   [(assoc memo key (boolean value)) (disj active key) (boolean value)])
 
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
-
 (defn- direct-match?
-  [adapter subject-type subject-eid resource-type resource-eid descriptor]
+  [direct-match! subject-type subject-eid resource-type resource-eid
+   descriptor]
   (if-let [{:keys [relation-id]}
-           (relation-partition descriptor subject-type)]
+           (operator-plan/relation-partition descriptor subject-type)]
     (do
-      (execution/check! execution/*contract*
-                        :operator-point/direct-before
-                        {:probes 0})
-      (request-counters/add! :probes)
+      ;; The transition check that dispatched this frame ran with no work in
+      ;; between; only the post-probe check observes new elapsed time.
+      (request-counters/add-probes!)
       (add-stat! :scalar-equivalent-predicates 1)
       (let [decision
-            (backend/invoke adapter :direct-match?
-                            subject-type subject-eid relation-id
-                            resource-type resource-eid)]
+            (direct-match! subject-type subject-eid relation-id
+                           resource-type resource-eid)]
         (execution/check! execution/*contract*
                           :operator-point/direct-after
                           {:probes 1})
@@ -125,70 +122,48 @@
       (assoc :values [] :value-index 0 :bound nil :exhausted? false)))
 
 (defn- arrow-values!
-  [adapter {:keys [key partition-index descriptor bound] :as frame}
+  [resource->subjects! {:keys [key partition-index descriptor bound] :as frame}
    limits counters]
   (let [[permission _ _ _ resource-eid] key
         resource-type (first permission)
-        partition (nth (:partitions descriptor) partition-index)]
-    (execution/check! execution/*contract*
-                      :operator-point/arrow-scan-before
-                      {:commands (:arrow-commands @counters)
-                       :fetched-values (:arrow-values @counters)})
-    (let [options (cond-> {:direction :asc}
+        partition (nth (:partitions descriptor) partition-index)
+        chunk-size (:physical-chunk-size limits)
+        next-command (inc (:arrow-commands @counters))]
+    ;; The transition check that dispatched this frame ran with no work in
+    ;; between; only the post-scan check observes new elapsed time.
+    (when (> next-command (:maximum-arrow-commands limits))
+      (limit! :arrow-commands (:maximum-arrow-commands limits) next-command))
+    (let [options (cond-> {:direction :asc :limit chunk-size}
                     bound (assoc :bound-eid bound :inclusive-bound? false))
-          cache-key
-          [:operator-acyclic-arrow-scan 1
-           {:resource-type resource-type
-            :resource-eid resource-eid
-            :relation-eid (:via-relation-eid partition)
-            :intermediate-type (:intermediate-type partition)
-            :options options
-            :physical-chunk-size (:physical-chunk-size limits)}]
-          resolved
-          (subproblem/resolve-layered-bound!
-           :projection cache-key
-           {:valid? vector?
-            :weight-fn #(max 128 (+ 128 (* 16 (count %))))}
-           (:via-relation-eid partition)
-           (fn []
-             (let [next-command (inc (:arrow-commands @counters))]
-               (when (> next-command (:maximum-arrow-commands limits))
-                 (limit! :arrow-commands
-                         (:maximum-arrow-commands limits) next-command))
-               (let [values
-                     (into []
-                           (take (:physical-chunk-size limits))
-                           (backend/invoke
-                            adapter :resource->subjects
-                            resource-type resource-eid
-                            (:via-relation-eid partition)
-                            (:intermediate-type partition)
-                            options))]
-                 (vswap! counters assoc :arrow-commands next-command)
-                 (request-counters/add! :commands)
-                 (request-counters/add! :fetched-values (count values))
-                 (add-stat! :adapter-commands 1)
-                 (add-stat! :adapter-fetched-values (count values))
-                 values))))
-          values (:value resolved)
-          next-values (+ (:arrow-values @counters) (count values))]
+          values
+          (into []
+                (take chunk-size)
+                (resource->subjects!
+                 resource-type resource-eid
+                 (:via-relation-eid partition)
+                 (:intermediate-type partition)
+                 options))
+          fetched (count values)
+          next-values (+ (:arrow-values @counters) fetched)]
       (when (> next-values (:maximum-arrow-values limits))
         (limit! :arrow-values (:maximum-arrow-values limits) next-values))
-      (vswap! counters assoc :arrow-values next-values)
-      (when (:cached? resolved)
-        (add-stat! :shared-scan-cache-hits 1)
-        (subproblem/record-avoided-backend-operation!))
+      (vswap! counters assoc
+              :arrow-commands next-command
+              :arrow-values next-values)
+      (request-counters/add-commands!)
+      (request-counters/add-fetched-values! fetched)
+      (add-stat! :adapter-commands 1)
+      (add-stat! :adapter-fetched-values fetched)
       (execution/check! execution/*contract*
                         :operator-point/arrow-scan-after
-                        {:commands (:arrow-commands @counters)
+                        {:commands next-command
                          :fetched-values next-values})
-      (if (seq values)
+      (if (pos? fetched)
         (assoc frame
                :values values
                :value-index 0
                :bound (peek values)
-               :exhausted? (< (count values)
-                              (:physical-chunk-size limits)))
+               :exhausted? (< fetched chunk-size))
         (next-partition frame)))))
 
 (defn- target-key [roots subject-type subject-eid intermediate-eid partition]
@@ -227,6 +202,8 @@
                    :eacl/error :eacl.operator/recursive-plan-required
                    :root (:root plan)})))
       (let [limits (normalize-limits limits)
+            maximum-memo-entries (:maximum-memo-entries limits)
+            predicate-programs (:predicate-programs plan)
             roots (plan-index plan)
             root-permission (or permission (:root plan))
             root-id (or node-id (get roots root-permission))
@@ -234,7 +211,10 @@
                       subject-eid resource-eid]
             counters (volatile! {:transitions 0
                                  :arrow-commands 0
-                                 :arrow-values 0})]
+                                 :arrow-values 0})
+            direct-match! (backend/direct-match-invoker adapter)
+            resource->subjects!
+            (backend/scan-invoker adapter :resource->subjects)]
         (when-not (some? root-id)
           (invalid! :missing-root "Operator plan root expression is missing."
                     {:root root-permission}))
@@ -255,17 +235,17 @@
                   :alias
                   (let [[memo active value]
                         (complete-value memo active key returned
-                                        (:maximum-memo-entries limits))]
+                                        maximum-memo-entries)]
                     (recur stack memo active value))
 
                   :nary
                   (let [op (:op continuation)
                         decisive? (if (= :union op) returned (not returned))
-                        decision (if (= :union op) true false)]
+                        decision (= :union op)]
                     (if decisive?
                       (let [[memo active value]
                             (complete-value memo active key decision
-                                            (:maximum-memo-entries limits))]
+                                            maximum-memo-entries)]
                         (recur stack memo active value))
                       (if-let [child (first remaining)]
                         (recur (conj stack
@@ -278,15 +258,15 @@
                                memo active no-value)
                         (let [[memo active value]
                               (complete-value memo active key
-                                              (if (= :union op) false true)
-                                              (:maximum-memo-entries limits))]
+                                              (not= :union op)
+                                              maximum-memo-entries)]
                           (recur stack memo active value)))))
 
                   :exclusion-left
                   (if-not returned
                     (let [[memo active value]
                           (complete-value memo active key false
-                                          (:maximum-memo-entries limits))]
+                                          maximum-memo-entries)]
                       (recur stack memo active value))
                     (recur (conj stack
                                  {:kind :exclusion-right :key key}
@@ -298,14 +278,14 @@
                   :exclusion-right
                   (let [[memo active value]
                         (complete-value memo active key (not returned)
-                                        (:maximum-memo-entries limits))]
+                                        maximum-memo-entries)]
                     (recur stack memo active value))
 
                   :arrow-child
                   (if returned
                     (let [[memo active value]
                           (complete-value memo active key true
-                                          (:maximum-memo-entries limits))]
+                                          maximum-memo-entries)]
                       (recur stack memo active value))
                     (recur (conj stack next-frame)
                            memo active no-value))
@@ -334,12 +314,12 @@
                             (complete-value memo active key
                                             (active-recursion-outcome
                                              {:key key})
-                                            (:maximum-memo-entries limits))]
+                                            maximum-memo-entries)]
                         (recur stack memo active value))
                       (let [[permission node-id current-subject-type
                              current-subject-eid current-resource-eid] key
                             predicate
-                            (get-in plan [:predicate-programs permission node-id])
+                            (get-in predicate-programs [permission node-id])
                             instruction (:instruction predicate)
                             active (conj active key)]
                         (add-stat! :node-evaluations 1)
@@ -347,13 +327,13 @@
                           :direct-membership
                           (let [decision
                                 (direct-match?
-                                 adapter current-subject-type
+                                 direct-match! current-subject-type
                                  current-subject-eid (first permission)
                                  current-resource-eid
                                  (:descriptor predicate))
                                 [memo active value]
                                 (complete-value memo active key decision
-                                                (:maximum-memo-entries limits))]
+                                                maximum-memo-entries)]
                             (recur stack memo active value))
 
                           :permission-membership
@@ -432,7 +412,7 @@
                           (let [[memo active value]
                                 (complete-value
                                  memo active key false
-                                 (:maximum-memo-entries limits))]
+                                 maximum-memo-entries)]
                             [stack memo active value])
 
                           (< value-index (count values))
@@ -442,7 +422,7 @@
                             (if (= :relation (:target-kind partition))
                               (let [decision
                                     (direct-match?
-                                     adapter (nth key 2) (nth key 3)
+                                     direct-match! (nth key 2) (nth key 3)
                                      (:intermediate-type partition)
                                      intermediate-eid
                                      (:target-relation partition))]
@@ -450,7 +430,7 @@
                                   (let [[memo active value]
                                         (complete-value
                                          memo active key true
-                                         (:maximum-memo-entries limits))]
+                                         maximum-memo-entries)]
                                     [stack memo active value])
                                   [(conj stack next-frame)
                                    memo active no-value]))
@@ -470,7 +450,8 @@
 
                           :else
                           [(conj stack
-                                 (arrow-values! adapter frame limits counters))
+                                 (arrow-values! resource->subjects!
+                                                frame limits counters))
                            memo active no-value])]
                     (recur stack memo active returned))
 

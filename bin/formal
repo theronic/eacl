@@ -48,6 +48,7 @@ usage() {
     "  gate-selftest         prove the nREPL gates fail on failing suites" \
     "  manifest              validate the release assurance gate" \
     "  tla-typecheck         parse and typecheck TLA+ models" \
+    "  tla-check             exhaustively check the cache-storage TLA+ model" \
     "  apalache-check        run bounded temporal safety checks" \
     "  apalache-scheduled    run the larger scheduled temporal bound" \
     "  apalache-invariant    check inductive-invariant obligations" \
@@ -147,14 +148,12 @@ apalache_expect_counterexample() {
 
 nrepl_eval() {
   eval_port=$1
-  eval_timeout_ms=$2
-  eval_form=$3
-  if command -v clj-nrepl-eval >/dev/null 2>&1; then
-    exec clj-nrepl-eval \
-      -p "$eval_port" \
-      --timeout "$eval_timeout_ms" \
-      "$eval_form"
-  fi
+  # The CI bridge inspects nREPL response status and exits nonzero on an
+  # evaluation error. The developer convenience executable prints remote
+  # exceptions but currently exits zero, which would make a red replay or
+  # mutation suite look green when run locally. The bridge owns the
+  # evaluation timeout.
+  eval_form=$2
   exec sh "$repo_root/bin/ci-nrepl-eval" "$eval_port" "$eval_form"
 }
 
@@ -174,15 +173,23 @@ case "$command" in
     resource_summary="$output_root/dafny-verification.json"
     rm -rf "$resource_output_dir"
     mkdir -p "$resource_output_dir"
-    for source in $(dafny_sources); do
-      source_name=$(basename "$source" .dfy)
-      "$dafny" verify \
-        --verification-time-limit "$dafny_time_limit" \
-        --resource-limit "$dafny_resource_limit" \
-        --log-format \
-        "csv;LogFileName=$resource_output_dir/$source_name.csv" \
-        "$source"
-    done
+    # Parallel per-file verification: wall-clock drops to the slowest
+    # file while the one-CSV-per-file layout (and the per-basename
+    # minimum-proof-effort mapping built on it) is unchanged. Any child
+    # failure fails the pipeline (xargs exits non-zero under set -e).
+    export EACL_DAFNY_BIN="$dafny" \
+           EACL_DAFNY_TIME="$dafny_time_limit" \
+           EACL_DAFNY_RES="$dafny_resource_limit" \
+           EACL_DAFNY_OUT="$resource_output_dir"
+    printf '%s\n' $(dafny_sources) | \
+      xargs -P "${EACL_DAFNY_JOBS:-4}" -n 1 sh -c '
+        source="$0"
+        source_name=$(basename "$source" .dfy)
+        exec "$EACL_DAFNY_BIN" verify \
+          --verification-time-limit "$EACL_DAFNY_TIME" \
+          --resource-limit "$EACL_DAFNY_RES" \
+          --log-format "csv;LogFileName=$EACL_DAFNY_OUT/$source_name.csv" \
+          "$source"'
     exec node "$repo_root/bin/summarize-dafny-verification.mjs" \
       "$resource_output_dir" \
       "$dafny_resource_limit" \
@@ -222,8 +229,24 @@ case "$command" in
     ;;
   browser-bundle)
     need_tools
-    "$repo_root/bin/formal" compile-js
-    npm ci --ignore-scripts --prefix "$repo_root/formal/smoke/js"
+    # Reuse a fresh compile-js output and installed smoke dependencies:
+    # build-js immediately before this ran both, and re-running them
+    # doubled the heaviest steps of every formal job for identical bytes.
+    # compile-js output depends on every model and on the JavaScript runtime
+    # patches applied after translation, so freshness is checked against the
+    # newest of all of them.
+    newest_input=$(ls -t "$repo_root"/formal/dafny/*.dfy \
+                         "$repo_root"/formal/runtime/js/*.js \
+                         "$repo_root"/bin/patch-generated-collections.mjs | head -1)
+    if [ ! -f "$output_root/js/EaclKernel.js" ] || \
+       [ "$newest_input" -nt "$output_root/js/EaclKernel.js" ]; then
+      "$repo_root/bin/formal" compile-js
+    else
+      echo "browser-bundle: reusing fresh compile-js output"
+    fi
+    if [ ! -d "$repo_root/formal/smoke/js/node_modules" ]; then
+      npm ci --ignore-scripts --prefix "$repo_root/formal/smoke/js"
+    fi
     node "$repo_root/formal/smoke/js/build_browser_bundle.mjs"
     cp "$repo_root/formal/smoke/js/browser_smoke.html" \
       "$output_root/browser/index.html"
@@ -232,7 +255,10 @@ case "$command" in
     exec "$repo_root/bin/check-generated-artifact-size"
     ;;
   source-closure)
-    exec "$repo_root/bin/public-source-closure.mjs" check
+    "$repo_root/bin/public-source-closure.mjs" selftest
+    EACL_REPO_ROOT="$repo_root" \
+      EACL_PUBLIC_SOURCE_CLOSURE_OUTPUT="$output_root/verification/public-source-closure.json" \
+      exec "$repo_root/bin/public-source-closure.mjs" check
     ;;
   mutation-control)
     if [ -z "${EACL_NREPL_PORT:-}" ]; then
@@ -240,7 +266,7 @@ case "$command" in
         "EACL_NREPL_PORT must name a running dev nREPL." >&2
       exit 2
     fi
-    nrepl_eval "$EACL_NREPL_PORT" 60000 \
+    nrepl_eval "$EACL_NREPL_PORT" \
       "(do
          (require 'eacl.formal.generators :reload)
          (require 'eacl.formal.mutation-control-test :reload)
@@ -256,18 +282,15 @@ case "$command" in
         "EACL_NREPL_PORT must name a running dev nREPL." >&2
       exit 2
     fi
-    nrepl_eval "$EACL_NREPL_PORT" 180000 \
+    nrepl_eval "$EACL_NREPL_PORT" \
       "(do
-         ;; Persistent nREPLs may have reloaded the shared CacheStore protocol.
-         ;; Reload its Datomic implementation before constructing replay
+         ;; Reload the shared cache implementation before constructing replay
          ;; fixtures, then reload every lazily resolved regression namespace.
          (require 'eacl.cache :reload)
          (require 'eacl.subproblem-cache :reload)
-         (require 'eacl.datomic.cache :reload)
          (doseq [test-ns
                  '[eacl.bench.pagination-test
                    eacl.datomic.lookup-cache-test
-                   eacl.datomic.cache-test
                    eacl.datomic.cache-review-regressions-test
                    eacl.secure-format-test
                    eacl.cache-test]]
@@ -344,9 +367,7 @@ case "$command" in
     for model in \
       "$repo_root/formal/tla/EaclTemporal.tla" \
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
-      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla" \
       "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
       "$repo_root/formal/tla/EaclOperatorSafety.tla"
     do
@@ -356,6 +377,13 @@ case "$command" in
         typecheck \
         "$model"
     done
+    ;;
+  tla-check)
+    need_tools
+    exec java -XX:+UseParallelGC -cp "$tla_jar" tlc2.TLC \
+      -deadlock \
+      -config "$repo_root/formal/tla/EaclCacheStorageTlc.cfg" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla"
     ;;
   apalache-check)
     need_tools
@@ -371,20 +399,10 @@ case "$command" in
       "$repo_root/formal/tla/EaclTemporalDetailed.cfg" \
       6
     apalache_check \
-      "subproblem-bounded" \
-      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclSubproblemCache.cfg" \
-      8
-    apalache_check \
-      "tiered-subproblem-bounded" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.cfg" \
+      "cache-storage-bounded" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla" \
+      "$repo_root/formal/tla/EaclCacheStorage.cfg" \
       5
-    apalache_check \
-      "managed-projection-bounded" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.cfg" \
-      8
     apalache_check \
       "speculative-cache-bounded" \
       "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
@@ -417,17 +435,9 @@ case "$command" in
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
       "$repo_root/formal/tla/EaclTemporalDetailed.cfg"
     apalache_induction \
-      "subproblem" \
-      "$repo_root/formal/tla/EaclSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclSubproblemCache.cfg"
-    apalache_induction \
-      "tiered-subproblem" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.tla" \
-      "$repo_root/formal/tla/EaclTieredSubproblemCache.cfg"
-    apalache_induction \
-      "managed-projection" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.tla" \
-      "$repo_root/formal/tla/EaclManagedProjectionCache.cfg"
+      "cache-storage" \
+      "$repo_root/formal/tla/EaclCacheStorage.tla" \
+      "$repo_root/formal/tla/EaclCacheStorage.cfg"
     apalache_induction \
       "speculative-cache" \
       "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
@@ -457,6 +467,15 @@ case "$command" in
              (:config control)
              (:length control)]))))' \
       "$repo_root/formal/mutations/registry.edn" >"$controls_file"
+    control_count=$(grep -c . "$controls_file" || true)
+    if [ "$control_count" -eq 0 ]; then
+      # A gate that iterates an empty control set exits green having
+      # proven nothing; fail closed instead.
+      echo "apalache-mutation-control: registry yielded zero controls" >&2
+      rm -f "$controls_file"
+      exit 1
+    fi
+    echo "apalache-mutation-control: executing $control_count registered mutants"
     tab=$(printf '\t')
     while IFS="$tab" read -r mutant_id model_path config_path length
     do
@@ -475,8 +494,6 @@ case "$command" in
     "$repo_root/bin/formal" build-java
     "$repo_root/bin/formal" build-js
     "$repo_root/bin/formal" browser-bundle
-    "$repo_root/bin/formal" artifact-size
-    "$repo_root/bin/formal" manifest
     "$repo_root/bin/formal" tla-typecheck
     "$repo_root/bin/formal" apalache-check
     "$repo_root/bin/formal" apalache-invariant

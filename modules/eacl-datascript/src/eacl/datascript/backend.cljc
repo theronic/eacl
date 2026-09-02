@@ -99,18 +99,6 @@
            (freshness-timeout!
             token-data timeout-ms candidate))))))
 
-(defn- normalized-permissions
-  [permission]
-  (expression-persistence/union-compatible-definitions
-    (:db/id permission)
-    (expression-persistence/decode-entity permission)))
-
-(defn- permission-expression [db resource-type permission-name]
-  (some-> (expression-persistence/validate-entities
-           (impl/find-permission-defs db resource-type permission-name))
-          first
-          :entity))
-
 (defn- ordered-generation-frame
   [db relation-ids]
   (mapv
@@ -190,13 +178,14 @@
 
        :permission-defs
        (fn [resource-type permission-name]
-         (vec (mapcat normalized-permissions
+         (vec (mapcat expression-persistence/union-compatible-entity-definitions
                       (impl/find-permission-defs
                        db resource-type permission-name))))
 
        :permission-expression
        (fn [resource-type permission-name]
-         (permission-expression db resource-type permission-name))
+         (expression-persistence/validated-expression-entity
+          (impl/find-permission-defs db resource-type permission-name)))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
@@ -232,7 +221,10 @@
          :branch nil}
         source-lifecycle
         (fn []
-          (or (some-> (:source-lifecycle-state opts) deref)
+          (or (some-> (:runtime-lifecycle-state opts)
+                      deref
+                      :source-lifecycle)
+              (some-> (:source-lifecycle-state opts) deref)
               (:source-lifecycle opts)))
         adapter-options (select-keys opts adapter-config-keys)
         adapter-cache (volatile! nil)

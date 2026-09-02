@@ -7,6 +7,8 @@
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.client.range-reuse :as range-reuse]
+            [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
@@ -16,11 +18,13 @@
             [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as request-context]
+            [eacl.request.counters :as request-counters]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.spicedb.parser :as parser]
+            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (defn- production-decision
@@ -28,23 +32,34 @@
   (verified/decide portable/portable-decision-kernel operation input))
 
 (defn- portable-mutation-killed?
+  "Genuine differential kill: the unmutated kernel must first reproduce
+  `expected` (the baseline gate), the mutant must actually execute on the
+  claimed operation (the `invoked?` witness - a dispatch drift that skips
+  the mutant fails the control instead of passing vacuously), and the
+  mutated run must then differ or be rejected by the boundary."
   [original operation input expected mutant]
-  (let [gate #(= expected (production-decision operation input))]
+  (let [invoked? (volatile! false)
+        gate #(= expected (production-decision operation input))]
     (and
      (gate)
-     (try
-       (false?
-        (with-redefs [portable/decide
-                      (fn [candidate-operation candidate-input]
-                        (if (= operation candidate-operation)
-                          (if (fn? mutant)
-                            (mutant candidate-input)
-                            mutant)
-                          (original candidate-operation candidate-input)))]
-          (gate)))
-       (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
-              _
-         true)))))
+     (let [killed?
+           (try
+             (false?
+              (with-redefs [portable/decide
+                            (fn [candidate-operation candidate-input]
+                              (if (= operation candidate-operation)
+                                (do (vreset! invoked? true)
+                                    (if (fn? mutant)
+                                      (mutant candidate-input)
+                                      mutant))
+                                (original candidate-operation
+                                          candidate-input)))]
+                (gate)))
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo)
+                    _
+               true))]
+       (and @invoked? killed?)))))
 
 (def arrow-authorization-input
   {:objects [{:type "user" :id "u1"}
@@ -180,33 +195,10 @@
    {:status :rejected :reason :compiled-rule-mismatch}
    {:status :certified}))
 
-(defn continuation-race-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :subproblem-cache-decision
-   {:decision :publication
-    :ticket-current? false
-    :complete? true
-    :valid? true
-    :weight 1
-    :budget 10}
-   :drop-publication
-   :retain-publication))
-
-(defn- audit-snapshot-object
-  []
-  #?(:clj (Object.)
-     :cljs (js-obj)))
-
 (def audit-source-scope
   {:backend :mutation-control
    :source-id :source
    :branch nil})
-
-(def audit-lineage
-  {:source-scope audit-source-scope
-   :source-lifecycle :lifecycle})
 
 (defn- audit-basis-key
   [revision]
@@ -218,23 +210,21 @@
           :basis-kind :ordinary
           :revision revision
           :exact-locator revision
-          :backend-snapshot-id revision)
+          :backend-snapshot-id {:basis revision})
    :adapter-fingerprint :mutation-control
    :identity-contract :mutation-control/v1})
 
 (defn- audit-basis-context
   [revision]
-  {:snapshot (audit-snapshot-object)
-   :snapshot-order revision
-   :exact-basis-key (audit-basis-key revision)
-   :cache-basis revision
-   :managed-subproblem-scope audit-lineage
+  {:exact-basis-key (audit-basis-key revision)
    :managed-key-fn
-   (constantly {:schema-generation 10 :dependency-stamp 20})})
+   (constantly {:schema-generation 1
+                :dependency-identity [[1 1]]
+                :dependency-stamp 1})})
 
 (defn numeric-ancestry-killed?
-  "Kills the obsolete order-as-ancestry rule against the replacement contract:
-  equal complete frames permit reuse in either revision direction."
+  "Kills backward managed reuse: equal proof never makes a future computation
+  admissible for an older selected snapshot."
   []
   (let [run
         (fn []
@@ -244,7 +234,7 @@
                 (fn [revision value]
                   (cache/resolve-basis!
                    store (audit-basis-context revision)
-                   :same-query :decision boolean?
+                   {:operation :can? :id :same-query}
                    (fn []
                      (swap! computations inc)
                      value)))
@@ -253,22 +243,19 @@
             {:older-value (:value older)
              :older-tier (:cache-tier older)
              :computations @computations}))
-        expected {:older-value true
-                  :older-tier :managed-current
-                  :computations 1}
-        original cache/resolve-basis!]
+        expected {:older-value false
+                  :older-tier nil
+                  :computations 2}]
     (and
      (= expected (run))
      (not=
       expected
-      (with-redefs [cache/resolve-basis!
-                    (fn [store context semantic-key kind valid-value? compute]
-                      (original
-                       store
-                       (if (= 1 (:snapshot-order context))
-                         (dissoc context :managed-key-fn)
-                         context)
-                       semantic-key kind valid-value? compute))]
+      (with-redefs [subproblem/lookup-eligible!
+                    (fn [store tier storage-key _eligible?]
+                      ;; Mutate only the request-relative managed guard.
+                      ;; Resident shape/ABI validity is an ingress invariant;
+                      ;; ordinary lookup deliberately has no callback.
+                      (subproblem/lookup! store tier storage-key))]
         (run))))))
 
 (defn wrong-frontier-killed?
@@ -304,24 +291,6 @@
     :exact nil}
    :scope-mismatch
    :current))
-
-(defn cache-fail-open-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :subproblem-cache-decision
-   {:decision :lookup :candidate :failed}
-   :start-independent-computation
-   :use-completed-value))
-
-(defn current-cache-missing-entry-hit-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :current-cache-decision
-   {:stage :exact-entry :available? false}
-   :probe-managed-entry
-   :use-exact-entry))
 
 (defn mismatched-indexed-request-scope-response-killed?
   []
@@ -392,20 +361,6 @@
                 :fetched-values 1}]
     (portable-mutation-killed?
      portable/decide :indexed-scan-response input expected mutant)))
-
-(defn over-budget-publication-killed?
-  []
-  (portable-mutation-killed?
-   portable/decide
-   :subproblem-cache-decision
-   {:decision :publication
-    :ticket-current? true
-    :complete? true
-    :valid? true
-    :weight 11
-    :budget 10}
-   :drop-publication
-   :retain-publication))
 
 (defn enumeration-route-forces-recursive-killed?
   []
@@ -490,7 +445,7 @@
               :basis-kind :ordinary
               :revision 7
               :exact-locator 7
-              :backend-snapshot-id 7}
+              :backend-snapshot-id {:basis 7}}
         separated?
         (fn []
           (not=
@@ -1060,7 +1015,7 @@ definition doc {
         (fn [candidate-expressions]
           (mapv #(assoc % :sign :positive)
                 (original candidate-expressions)))]
-       (negative?))))))
+        (negative?))))))
 
 (defn operator-missing-join-slot-killed?
   []
@@ -1082,7 +1037,7 @@ definition doc {
        [operator-recursive/update-join
         (fn [state candidate-rule slot]
           (if (= 1 slot) state (original state candidate-rule slot)))]
-       (complete?))))))
+        (complete?))))))
 
 (def ^:private operator-recursive-schema
   "definition user {}
@@ -1250,16 +1205,16 @@ definition doc {
                        :relation-eid 2 :resource-type :document}
           :candidate [:document 10]}]
         evaluate #(direct/dispatch adapter probes)
-        original direct/direct-match-many?]
+        original direct/direct-match-many-checked?]
     (and
      (= [false true] (evaluate))
      (not=
       [false true]
       (with-redefs
-       [direct/direct-match-many?
+       [direct/direct-match-many-checked?
         (fn [candidate-adapter request]
           (vec (reverse (original candidate-adapter request))))]
-       (evaluate))))))
+        (evaluate))))))
 
 (def ^:private operator-lookup-schema
   "definition user {}
@@ -1436,24 +1391,544 @@ definition doc {
                          (fn [data] false)]
              (probe))))))
 
+;;; ---------------------------------------------------------------------------
+;;; Acyclic pure-alias frontier controls
+
+(def ^:private alias-frontier-schema
+  "definition user {}
+definition organization {
+  relation member: user
+  permission base = member
+  permission alias = base
+}
+definition document {
+  relation organization: organization
+  permission view = organization->base + organization->alias
+}")
+
+(def ^:private distinct-alias-path-schema
+  "definition user {}
+definition organization {
+  relation member: user
+  permission base = member
+  permission alias = base
+}
+definition document {
+  relation organization: organization
+  relation backup: organization
+  permission view = organization->base + backup->alias
+}")
+
+(defn- alias-frontier-plan
+  [schema]
+  (sealed-plan/seal-plan (operator-probe-adapter schema #{})
+                         [:document :view]))
+
+(defn- alias-root-rules
+  [plan]
+  (get-in plan [:indexes :reverse-rules [:document :view]]))
+
+(defn alias-resolution-predicate-killed?
+  []
+  (let [expected [:organization :base]
+        gate #(= expected
+                 (:target
+                  (sealed-plan/resolve-pure-alias
+                   {[:organization :base]
+                    [{:resource-type :organization
+                      :permission-name :base
+                      :source-relation-name :self
+                      :source-subject-type nil
+                      :target-type :relation
+                      :target-name :member}]}
+                   [:organization :base])))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/resolve-pure-alias
+                    (fn [_ target]
+                      {:target [(first target)
+                                (keyword (str (name (second target))
+                                              "-invented"))]
+                       :changed? true :stop :mutant})]
+        (gate))))))
+
+(defn alias-cycle-stopping-killed?
+  []
+  (let [row (fn [permission target]
+              [{:resource-type :organization
+                :permission-name permission
+                :source-relation-name :self
+                :source-subject-type nil
+                :target-type :permission
+                :target-name target}])
+        bodies {[:organization :a] (row :a :b)
+                [:organization :b] (row :b :a)}
+        gate #(= {:target [:organization :a]
+                  :changed? false :stop :cycle}
+                 (sealed-plan/resolve-pure-alias
+                  bodies [:organization :a]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/resolve-pure-alias
+                    (fn [_ target]
+                      {:target [(first target) :b]
+                       :changed? true :stop :cycle-mutant})]
+        (gate))))))
+
+(defn alias-complete-frontier-identity-killed?
+  []
+  (let [gate #(= 2 (count (alias-root-rules
+                           (alias-frontier-plan
+                            distinct-alias-path-schema))))
+        original sealed-plan/derive-execution-frontier
+        collapse-physical-paths
+        (fn [rules bodies]
+          (when-let [frontier (original rules bodies)]
+            (update
+             frontier :rules
+             (fn [frontier-rules]
+               (:rules
+                (reduce
+                 (fn [{:keys [seen] :as state} rule]
+                   (let [identity [(:node rule) (:target-node rule)]]
+                     (if (contains? seen identity)
+                       state
+                       (-> state
+                           (update :seen conj identity)
+                           (update :rules conj rule)))))
+                 {:seen #{} :rules []}
+                 frontier-rules))))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/derive-execution-frontier
+                    collapse-physical-paths]
+        (gate))))))
+
+(defn alias-first-position-retention-killed?
+  []
+  (let [plan (alias-frontier-plan alias-frontier-schema)
+        expected (->> (:rules plan)
+                      (filter #(= [:document :view] (:node %)))
+                      (map :ordinal)
+                      (apply min))
+        gate #(= expected
+                 (:ordinal (first (alias-root-rules
+                                   (alias-frontier-plan
+                                    alias-frontier-schema)))))
+        original sealed-plan/derive-execution-frontier
+        keep-later-position
+        (fn [rules bodies]
+          (when-let [frontier (original rules bodies)]
+            (let [later (->> rules
+                             (filter #(= [:document :view] (:node %)))
+                             (map :ordinal)
+                             (apply max))]
+              (update frontier :rules
+                      (fn [frontier-rules]
+                        (mapv #(if (= [:document :view] (:node %))
+                                 (assoc % :ordinal later)
+                                 %)
+                              frontier-rules))))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/derive-execution-frontier
+                    keep-later-position]
+        (gate))))))
+
+(defn alias-frontier-deduplication-killed?
+  []
+  (let [gate #(= 1 (count (alias-root-rules
+                           (alias-frontier-plan
+                            alias-frontier-schema))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/derive-execution-frontier
+                    (fn [_ _] nil)]
+        (gate))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Stable execution retention and staged-admission controls
+
+(def ^:private stable-probe-rule
+  {:rule :relation
+   :node [:document :view]
+   :resource-type :document
+   :permission :view
+   :relation-eid 101
+   :subject-type :user
+   :ordinal 0
+   :rank 1})
+
+(def ^:private stable-probe-plan
+  {:root [:document :view]
+   :indexes {:forward-seeds {:user [stable-probe-rule]}
+             :forward-consumers {}}})
+
+(defn- stable-probe-run
+  [result-sink]
+  (stable-reducer/run-forward
+   {:fetch-fn
+    (fn [{:keys [bound-eid limit]}]
+      (let [start (inc (or bound-eid -1))]
+        (vec (range start (min 32 (+ start limit))))))
+    :plan stable-probe-plan
+    :subject-type :user
+    :subject-eid 1
+    :target stable-reducer/exhaustion-target
+    :physical-chunk-size 7
+    :result-sink result-sink}))
+
+(defn stable-count-history-retention-killed?
+  []
+  (let [gate #(let [result (stable-probe-run :count)]
+                (and (= 32 (:discovered result))
+                     (empty? (:results result))))
+        original stable-reducer/finish]
+    (and
+     (gate)
+     (false?
+      (with-redefs [stable-reducer/finish
+                    (fn [state]
+                      (let [finished (original state)]
+                        (if (= :count (:result-sink finished))
+                          (assoc finished :results
+                                 (vec (range (:discovered finished))))
+                          finished)))]
+        (gate))))))
+
+(defn stable-completion-distinct-killed?
+  []
+  (let [rebuilt-width (atom 0)
+        run-with-width
+        (fn []
+          (reset! rebuilt-width 0)
+          (stable-probe-run :collect)
+          @rebuilt-width)
+        gate #(zero? (run-with-width))
+        original stable-reducer/finish]
+    (and
+     (gate)
+     (false?
+      (with-redefs [stable-reducer/finish
+                    (fn [state]
+                      (let [finished (original state)]
+                        (reset! rebuilt-width (count (:results finished)))
+                        (update finished :results
+                                #(vec (distinct %)))))]
+        (gate))))))
+
+(defn stable-admission-deduplication-killed?
+  []
+  (let [item {:kind :grant :rule {:node [:document :view]}
+              :resource-eid 7}
+        gate
+        #(= 1
+            (:admissions
+             (stable-reducer/schedule
+              {:stack [] :admitted (transient #{}) :admissions 0
+               :max-admissions 10 :max-stack 10 :maximum-stack 0}
+              nil [item item])))]
+    (and
+     (gate)
+     (false?
+      (let [serial (atom 0)]
+        (with-redefs [stable-reducer/work-id
+                      (fn [_] [:mutant (swap! serial inc)])]
+          (gate)))))))
+
+(defn stable-staged-limit-atomicity-killed?
+  []
+  (let [item {:kind :grant :rule {:node [:document :view]}
+              :resource-eid 7}
+        gate
+        (fn []
+          (let [state {:stack [] :admitted (transient #{})
+                       :admissions 9 :max-admissions 9
+                       :max-stack 10 :maximum-stack 0}]
+            (try
+              (stable-reducer/schedule state nil [item])
+              false
+              (catch #?(:clj clojure.lang.ExceptionInfo
+                        :cljs cljs.core.ExceptionInfo) error
+                (and (= :max-admissions (:limit (ex-data error)))
+                     (empty? (persistent! (:admitted state))))))))
+        original stable-reducer/schedule]
+    (and
+     (gate)
+     (false?
+      (with-redefs [stable-reducer/schedule
+                    (fn [state residual new-work]
+                      (conj! (:admitted state) [:mutant :partial-commit])
+                      (original state residual new-work))]
+        (gate))))))
+
+;; ---------------------------------------------------------------------------
+;; Exact scan-response cache (eacl.engine.scan-cache)
+;; ---------------------------------------------------------------------------
+
+(defn- scan-cache-adapter
+  "A fixed ascending scan per subject id, honoring bound and limit exactly and
+  recording every command it receives."
+  [sequences commands]
+  (fn [{:keys [bound-eid limit] :as descriptor}]
+    (swap! commands conj (select-keys descriptor [:subject-eid :bound-eid :limit]))
+    (let [values (get sequences (:subject-eid descriptor) [])
+          beyond (if (nil? bound-eid) values (filterv #(> % bound-eid) values))]
+      (vec (take limit beyond)))))
+
+(def ^:private scan-cache-descriptor
+  {:operation :subject->resources :subject-type :user :subject-eid 1
+   :relation-eid 9 :resource-type :doc})
+
+(defn- scan-cache-run
+  "Runs `fetches` (vectors of [bound limit]) through one caching fetch
+  function over the adapter and returns [replies commands]."
+  [fetches {:keys [tier scope]}]
+  (let [commands (atom [])
+        inner (scan-cache-adapter {1 [1 2 3 4 5 6 7 8]} commands)
+        fetch (scan-cache/caching-fetch-fn
+               inner
+               (cond-> {:memo (scan-cache/memo)}
+                 tier (assoc :tier tier
+                             ;; Like production, the scope is a flat vector
+                             ;; whose last component is the generation.
+                             :scope-fn (fn [relation-eid]
+                                         [:scope relation-eid scope]))))]
+    (request-counters/call-with-ledger
+     (request-counters/make-ledger)
+     (fn []
+       [(mapv (fn [[bound limit]]
+                (fetch (assoc scan-cache-descriptor :bound-eid bound :limit limit)))
+              fetches)
+        @commands]))))
+
+(defn scan-cache-serves-short-prefix-killed?
+  "A prefix shorter than the request that is not exhausted must miss; serving
+  its remainder would hand the reducer a short chunk that means exhaustion."
+  []
+  (let [fetches [[nil 3] [2 3]]
+        expected [[[1 2 3] [3 4 5]] [{:subject-eid 1 :bound-eid nil :limit 3}
+                                     {:subject-eid 1 :bound-eid 2 :limit 3}]]
+        original scan-cache/serve
+        mutant (fn [{:keys [prefix] :as entry} bound limit direction]
+                 (or (original entry bound limit direction)
+                     (let [start (count (take-while #(<= (compare % bound) 0)
+                                                    prefix))]
+                       (when (and (some? bound) (< start (count prefix)))
+                         (subvec prefix start)))))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/serve mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-serves-values-at-bound-killed?
+  "A served reply must contain only values strictly beyond the exclusive
+  bound; an off-by-one that includes the bound duplicates a released value."
+  []
+  (let [fetches [[nil 4] [2 2]]
+        expected [[[1 2 3 4] [3 4]] [{:subject-eid 1 :bound-eid nil :limit 4}]]
+        mutant (fn [{:keys [prefix exhausted?]} bound limit _direction]
+                 (let [start (if (nil? bound)
+                               0
+                               (count (take-while #(neg? (compare % bound)) prefix)))
+                       available (- (count prefix) start)]
+                   (cond
+                     (>= available limit) (subvec prefix start (+ start limit))
+                     exhausted? (subvec prefix start)
+                     :else nil)))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/serve mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-reuses-stale-generation-killed?
+  "The shared key must carry the complete validity scope; dropping its last
+  component (the scanned relation's generation) serves a prefix across a
+  write that changed the relation."
+  []
+  (let [run (fn [tier scope] (second (scan-cache-run [[nil 3]] {:tier tier :scope scope})))
+        commands-under (fn []
+                         (let [tier (scan-cache/tier {:max-entries 8 :max-prefix 8})]
+                           [(count (run tier 1))
+                            (count (run tier 2))]))
+        expected [1 1]
+        mutant (fn [scope key] [(vec (butlast scope)) key])]
+    (and (= expected (commands-under))
+         (not= expected (with-redefs [scan-cache/shared-key mutant]
+                          (commands-under))))))
+
+(defn scan-cache-widens-command-killed?
+  "A miss must forward the evaluator's command unchanged; widening its limit
+  reads values the evaluator did not demand."
+  []
+  (let [fetches [[nil 2] [2 2]]
+        expected [[[1 2] [3 4]] [{:subject-eid 1 :bound-eid nil :limit 2}
+                                 {:subject-eid 1 :bound-eid 2 :limit 2}]]
+        mutant (fn [inner descriptor] (inner (update descriptor :limit inc)))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/forward-command mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-deposits-fragment-killed?
+  "A reply that does not start at a known position of the scan must not
+  become a prefix; retaining it serves the wrong first values later."
+  []
+  (let [fetches [[5 2] [nil 2]]
+        expected [[[6 7] [1 2]] [{:subject-eid 1 :bound-eid 5 :limit 2}
+                                 {:subject-eid 1 :bound-eid nil :limit 2}]]
+        original scan-cache/extend-entry
+        mutant (fn [entry bound values limit direction max-prefix]
+                 (or (original entry bound values limit direction max-prefix)
+                     {:prefix (vec values) :exhausted? (< (count values) limit)}))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/extend-entry mutant]
+                          (scan-cache-run fetches {}))))))
+
+;; ---------------------------------------------------------------------------
+;; Range answer reuse (eacl.client.range-reuse)
+;; ---------------------------------------------------------------------------
+
+(defn- range-edge [i] {:ordinal i :eid (* 10 i)})
+
+(defn- range-resident
+  [n next?]
+  {:data (vec (range n))
+   :edges (mapv range-edge (range n))
+   :range-reusable? true
+   :page-info {:start-cursor (range-edge 0)
+               :end-cursor (range-edge (dec n))
+               :has-next-page? next?
+               :has-previous-page? false}})
+
+(defn range-derivation-end-edge-off-by-one-killed?
+  "A derived page's end cursor must be the edge of its last result; the edge
+  after it would resume past a result the caller never received."
+  []
+  (let [resident (range-resident 20 true)
+        expected {:data (vec (range 10)) :end (range-edge 9) :next? true}
+        observe (fn []
+                  (let [page (range-reuse/derive-page [:first 10] resident)]
+                    {:data (:data page)
+                     :end (get-in page [:page-info :end-cursor])
+                     :next? (get-in page [:page-info :has-next-page?])}))
+        original range-reuse/derive-page
+        mutant (fn [request resident]
+                 (let [page (original request resident)
+                       [_ requested] request]
+                   (if (and page (< requested (count (:edges resident))))
+                     (assoc-in page [:page-info :end-cursor]
+                               (nth (:edges resident) requested))
+                     page)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/derive-page mutant]
+                          (observe))))))
+
+(defn range-derivation-ignores-next-page-killed?
+  "A shorter request than a complete resident page is the resident page; a
+  shorter request than an incomplete one must not be answered from it."
+  []
+  (let [complete (range-resident 7 false)
+        incomplete (range-resident 7 true)
+        observe (fn []
+                  [(some? (range-reuse/derive-page [:first 30] complete))
+                   (some? (range-reuse/derive-page [:first 30] incomplete))])
+        expected [true false]
+        original range-reuse/derive-page
+        mutant (fn [request resident]
+                 (or (original request resident)
+                     resident))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/derive-page mutant]
+                          (observe))))))
+
+(defn- range-segment-tier
+  "A tier holding one twenty-result forward segment with a next page."
+  []
+  (let [tier (range-reuse/tier {})
+        page {:data (vec (range 20))
+              :edges (mapv range-edge (range 20))
+              :range-reusable? true
+              :page-info {:start-cursor (range-edge 0)
+                          :end-cursor (range-edge 19)
+                          :has-next-page? true
+                          :has-previous-page? false}}]
+    (range-reuse/publish! tier :walk {:kind :first :size 20 :boundary nil} page)
+    tier))
+
+(defn range-window-position-off-by-one-killed?
+  "A window after a retained edge starts at the result after that edge; a
+  position at the edge's own result would repeat the boundary result."
+  []
+  (let [tier (range-segment-tier)
+        window {:kind :first :size 5 :boundary (range-edge 9)}
+        observe (fn [] (:data (:page (range-reuse/lookup! tier :walk window))))
+        expected [10 11 12 13 14]
+        original range-reuse/forward-position
+        mutant (fn [segment boundary]
+                 (let [position (original segment boundary)]
+                   (if (and position (pos? position)) (dec position) position)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/forward-position mutant]
+                          (observe))))))
+
+(defn range-window-past-segment-served-as-complete-killed?
+  "A window that runs past a segment with a next page is a partial answer
+  for composition, never a complete page: serving the tail as the whole
+  answer would drop the results that follow the segment."
+  []
+  (let [tier (range-segment-tier)
+        window {:kind :first :size 8 :boundary (range-edge 15)}
+        observe (fn [] (let [hit (range-reuse/lookup! tier :walk window)]
+                         [(some? (:page hit)) (some? (:partial hit))]))
+        expected [false true]
+        original range-reuse/serve-from-segment
+        mutant (fn [window segment]
+                 (let [answer (original window segment)]
+                   (if (:partial answer) {:page (:partial answer)} answer)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/serve-from-segment mutant]
+                          (observe))))))
+
+(defn range-composition-order-killed?
+  "A reverse window composes the continuation before the segment's head; a
+  forward window composes the segment's tail before the continuation."
+  []
+  (let [page (fn [from to]
+               {:data (vec (range from to))
+                :edges (mapv range-edge (range from to))
+                :range-reusable? true
+                :page-info {:start-cursor (range-edge from)
+                            :end-cursor (range-edge (dec to))
+                            :has-next-page? true
+                            :has-previous-page? true}})
+        observe (fn []
+                  [(:data (range-reuse/compose (page 16 20) {:kind :first :size 4 :boundary (range-edge 19)} (page 20 24)))
+                   (:data (range-reuse/compose (page 30 34) {:kind :last :size 4 :boundary (range-edge 30)} (page 26 30)))])
+        expected [(vec (range 16 24)) (vec (range 26 34))]
+        original range-reuse/compose
+        mutant (fn [partial continuation remainder]
+                 (original partial (update continuation :kind {:first :last :last :first}) remainder))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/compose mutant]
+                          (observe))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
    :missing-de-duplication missing-de-duplication-killed?
    :incomplete-dependency incomplete-dependency-killed?
    :numeric-ancestry numeric-ancestry-killed?
-   :continuation-race continuation-race-killed?
    :wrong-frontier wrong-frontier-killed?
    :cursor-scope cursor-scope-killed?
-   :cache-fail-open cache-fail-open-killed?
-   :current-cache-missing-entry-hit current-cache-missing-entry-hit-killed?
    :mismatched-indexed-request-scope-response
    mismatched-indexed-request-scope-response-killed?
    :ordered-merge-wrong-comparator ordered-merge-wrong-comparator-killed?
    :acyclic-merge-emits-overlap-twice
    acyclic-merge-emits-overlap-twice-killed?
    :adapter-negative-eid-admitted adapter-negative-eid-admitted-killed?
-   :over-budget-publication over-budget-publication-killed?
    :enumeration-route-forces-recursive enumeration-route-forces-recursive-killed?
    :acyclic-work-allows-recursive-budget acyclic-work-allows-recursive-budget-killed?
    :consistency-malformed-exact-treated-absent
@@ -1487,7 +1962,32 @@ definition doc {
    :operator-cache-selected-generator
    operator-cache-selected-generator-killed?
    :operator-active-recursion-as-false
-   operator-active-recursion-as-false-killed?})
+   operator-active-recursion-as-false-killed?
+   :alias-resolution-predicate alias-resolution-predicate-killed?
+   :alias-cycle-stopping alias-cycle-stopping-killed?
+   :alias-complete-frontier-identity
+   alias-complete-frontier-identity-killed?
+   :alias-first-position-retention alias-first-position-retention-killed?
+   :alias-frontier-deduplication alias-frontier-deduplication-killed?
+   :stable-count-history-retention stable-count-history-retention-killed?
+   :stable-completion-distinct stable-completion-distinct-killed?
+   :stable-admission-deduplication stable-admission-deduplication-killed?
+   :stable-staged-limit-atomicity stable-staged-limit-atomicity-killed?
+   :scan-cache-serves-short-prefix scan-cache-serves-short-prefix-killed?
+   :scan-cache-serves-values-at-bound scan-cache-serves-values-at-bound-killed?
+   :scan-cache-reuses-stale-generation scan-cache-reuses-stale-generation-killed?
+   :scan-cache-widens-command scan-cache-widens-command-killed?
+   :scan-cache-deposits-fragment scan-cache-deposits-fragment-killed?
+   :range-derivation-end-edge-off-by-one
+   range-derivation-end-edge-off-by-one-killed?
+   :range-derivation-ignores-next-page
+   range-derivation-ignores-next-page-killed?
+   :range-window-position-off-by-one
+   range-window-position-off-by-one-killed?
+   :range-window-past-segment-served-as-complete
+   range-window-past-segment-served-as-complete-killed?
+   :range-composition-order
+   range-composition-order-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

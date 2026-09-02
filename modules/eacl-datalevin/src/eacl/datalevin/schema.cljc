@@ -124,7 +124,7 @@
   [db]
   (let [schema-eid (ds/entid db [:eacl/id "schema-string"])
         relations
-        (into [] (map :e)
+        (mapv :e
               (ddb/avet-datoms
                db :eacl.relation/resource-type+relation-name+subject-type))]
     (cond-> []
@@ -282,13 +282,15 @@
    :eacl.permission/expression-payload])
 
 (defn- eager-entity
+  "The named attributes of one entity as a plain map; the pull vectors above
+  name attributes only, never `:db/id`."
   [db eid attributes]
   (let [entity (ds/entity db eid)]
-    (into (if (some #{:db/id} attributes) {:db/id eid} {})
+    (into {}
           (keep (fn [attribute]
                   (when-some [value (get entity attribute)]
                     [attribute value])))
-          (remove #{:db/id} attributes))))
+          attributes)))
 
 (defn read-relations
   [db]
@@ -331,7 +333,7 @@
                :backend :datalevin})))
         schema-eid (ds/entid db [:eacl/id "schema-string"])
         relation-eids
-        (into [] (map :e)
+        (mapv :e
               (ddb/avet-datoms
                db :eacl.relation/resource-type+relation-name+subject-type))
         missing-schema?
@@ -394,7 +396,6 @@
        schema-fence-missing-after? (conj :eacl.datalevin/schema-write-fence))
      :db-after db-after})))
 
-(def validate-schema-references model/validate-schema-references)
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation
@@ -431,30 +432,6 @@
     (some-> (ds/datoms db :eav schema-eid :eacl.datalevin/schema-write-fence)
             first
             :v)))
-
-(defn- ensure-schema-coherence!
-  "Bootstraps an unprotected store, but never repairs missing evidence after
-  write-policy installation. Protected stores fail closed."
-  [conn]
-  (loop []
-    (let [db (ds/db conn)]
-      (if (and (current-schema-generation db)
-               (current-schema-write-fence db))
-        db
-        (throw
-         (ex-info
-          "Datalevin schema writes require prepared generation evidence."
-          {:type :eacl.cache/generation-unprepared
-           :eacl/error :eacl.cache/generation-unprepared
-           :backend :datalevin
-           :policy-installed? (boolean (fork/write-policy conn))
-           :missing
-           (cond-> []
-             (nil? (current-schema-generation db))
-             (conj :eacl.datalevin/schema-generation)
-
-             (nil? (current-schema-write-fence db))
-             (conj :eacl.datalevin/schema-write-fence))}))))))
 
 (defn- cas-failure-data
   [throwable]
@@ -540,20 +517,25 @@
          new-schema-map  (expression-persistence/candidate-schema
                            (expression-resolver/validate-schema
                             schema-string expression-limits))
-         initial-db      (ds/db conn)
-         initial-schema  (binding [expression-persistence/*expression-limits*
-                                   expression-limits]
-                           (read-schema initial-db))
-         _               (when (and (empty? (:definitions new-schema-map))
-                                    (not allow-empty-schema?)
-                                    (or (seq (:relations initial-schema))
-                                        (seq (:permissions initial-schema))))
-                           (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
-                                                " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
-                                           {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
-                                            :existing {:relations (count (:relations initial-schema))
-                                                       :permissions (count (:permissions initial-schema))}})))
-         db              (ensure-schema-coherence! conn)
+         db              (ds/db conn)
+         current-generation (current-schema-generation db)
+         schema-write-fence (current-schema-write-fence db)
+         _               (when-not (and current-generation
+                                        schema-write-fence)
+                           (throw
+                            (ex-info
+                             "Datalevin schema writes require prepared generation evidence."
+                             {:type :eacl.cache/generation-unprepared
+                              :eacl/error :eacl.cache/generation-unprepared
+                              :backend :datalevin
+                              :policy-installed? (boolean (fork/write-policy conn))
+                              :missing
+                              (cond-> []
+                                (nil? current-generation)
+                                (conj :eacl.datalevin/schema-generation)
+
+                                (nil? schema-write-fence)
+                                (conj :eacl.datalevin/schema-write-fence))})))
          existing-schema (binding [expression-persistence/*expression-limits*
                                    expression-limits]
                            (read-schema db))
@@ -586,9 +568,8 @@
            schema-eid (ds/entid db [:eacl/id "schema-string"])
            schema-generation
            (if (= ::read-current-generation known-schema-generation)
-             (current-schema-generation db)
+             current-generation
              known-schema-generation)
-           schema-write-fence (current-schema-write-fence db)
            relation-commit-guards
            (mapv
             (fn [relation]

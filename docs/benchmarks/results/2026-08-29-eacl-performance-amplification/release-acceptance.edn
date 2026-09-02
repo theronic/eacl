@@ -1,0 +1,72 @@
+{:format :eacl.performance/release-acceptance-v1
+ :frozen? true
+ :frozen-after-baseline-only-pilot? true
+ :candidate-data-observed-before-freeze? false
+ :baseline-identity
+ {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+  :tree "324445d66d55446c4d6a5395608749fb832fec8f"
+  :classpath-sha256
+  "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"}
+ :release-win
+ {:id :recursive-star-exact-count
+  :public-api :count-resources
+  :backend :datascript
+  :fixture {:shape {:shape :star :accounts 4096}
+            :digest
+            "f0ef94a458d1fbb5f84b60cd239f8fe78677ec9788473b043357808f523ccae2"
+            :expected-count 4096}
+  :query {:subject :user/user-1
+          :permission :view
+          :resource-type :account
+          :count-limit :exact}
+  :cache-regime :completed-disabled-derived-warm
+  :operation-boundary :fully-realized-public-result
+  :retained-mechanisms
+  #{:stable-full-result-retention :stable-completion-distinct}
+  :effect {:metric :elapsed-nanos
+           :formula :one-minus-candidate-over-baseline
+           :direction :higher-is-better
+           :minimum-practical-reduction 0.20}}
+ :sampling
+ {:unit :one-complete-public-request
+  :warmups-per-artifact 10
+  :paired-blocks 40
+  :block-order :seeded-counterbalanced
+  :block-order-seed 290829
+  :outlier-policy :none-all-finite-samples-retained
+  :stopping-rule :exactly-40-complete-paired-blocks}
+ :confidence
+ {:method :paired-bootstrap-median-direction-normalized-effect
+  :side :lower
+  :level 0.95
+  :resamples 10000
+  :seed 87231
+  :pass-rule :lower-bound-strictly-exceeds-practical-margin}
+ :safety-lanes
+ [{:id :semantic-parity
+   :formula :exact-result-and-typed-outcome-equality
+   :maximum-degradation 0}
+  {:id :mandatory-logical-work
+   :formula :candidate-minus-baseline
+   :maximum-degradation 0}
+  {:id :point-check-latency
+   :formula :candidate-over-baseline-minus-one
+   :confidence-side :upper
+   :maximum-degradation 0.05}
+  {:id :bounded-page-latency
+   :formula :candidate-over-baseline-minus-one
+   :confidence-side :upper
+   :maximum-degradation 0.05}
+  {:id :completed-hit-latency
+   :formula :candidate-over-baseline-minus-one
+   :confidence-side :upper
+   :maximum-degradation 0.05}
+  {:id :cljs-portable-wall-time
+   :formula :candidate-over-baseline-minus-one
+   :confidence-side :upper
+   :maximum-degradation 0.10}]
+ :pilot-justification
+ {:baseline-arm-relative-median-gap 0.01774769555535184
+  :practical-margin-to-pilot-gap-ratio 11.269068113310452
+  :candidate-independent? true}
+ :record-digest "8eba9de7d062bc39f1c89bd462f18b003422994fe5b5ce80f3582a011552a695"}

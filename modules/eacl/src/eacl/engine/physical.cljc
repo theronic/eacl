@@ -13,12 +13,15 @@
   (:require [clojure.string]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
-            [eacl.execution :as execution]
-            [eacl.metrics :as metrics]))
+            [eacl.execution :as execution]))
 
 ;; ---------------------------------------------------------------------------
 ;; Three-outcome classification (task 7.1)
 ;; ---------------------------------------------------------------------------
+
+(def ^:private retry-outcome
+  #?(:clj (Object.)
+     :cljs (js-obj)))
 
 (defn scan-failure?
   [error]
@@ -61,14 +64,22 @@
   single released value. A descriptor without a positive integer `:limit`
   realizes the complete scan, which keeps raw callers unchanged."
   [descriptor values]
-  (let [limit (:limit descriptor)
-        result
-        (if (and (int? limit) (pos? limit))
-          (into [] (take limit) values)
-          (vec values))]
-    (when metrics/*store*
-      (metrics/record-scan! descriptor result))
-    result))
+  (let [limit (:limit descriptor)]
+    (cond
+      (and (int? limit) (pos? limit))
+      (cond
+        (and (vector? values) (<= (count values) limit)) values
+        (seq values) (into [] (take limit) values)
+        :else [])
+
+      (vector? values)
+      values
+
+      (seq values)
+      (vec values)
+
+      :else
+      [])))
 
 (defn classified-fetch-fn
   "Wraps a read-demand fetch so every outcome is one of the three classes.
@@ -102,7 +113,7 @@
         (when attempts (swap! attempts inc))
         (let [outcome
               (try
-                {:values (classified descriptor)}
+                (classified descriptor)
                 (catch #?(:clj clojure.lang.ExceptionInfo
                           :cljs cljs.core/ExceptionInfo) failure
                   (if (and (scan-failure? failure)
@@ -111,11 +122,11 @@
                            (< attempt max-attempts)
                            (or (nil? deadline-nanos)
                                (< (execution/now-nanos) deadline-nanos)))
-                    {:retry failure}
+                    retry-outcome
                     (throw failure))))]
-          (if (contains? outcome :values)
-            (:values outcome)
-            (recur (inc attempt))))))))
+          (if (identical? retry-outcome outcome)
+            (recur (inc attempt))
+            outcome))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Service-edge admission and the replay ledger (task 7.5)
@@ -343,10 +354,11 @@
 
 (defn require-qualified-topology!
   "Fails closed with `:eacl.topology/unqualified` when the adapter's derived
-  capability record does not certify stable discovery. Clients call this
-  once at construction against their source adapter, so an adapter whose
+  capability record does not certify stable discovery, so an adapter whose
   declared execution profile is the conservative default (no strict scan
-  contract) cannot be routed through the stable engine. Returns the record."
+  contract) cannot be routed through the stable engine. Clients validate
+  the source-static counterpart at construction
+  (`require-qualified-source-topology!`). Returns the record."
   [adapter]
   (let [capabilities (adapter-topology-capabilities adapter)]
     (when-not (stable-discovery-qualified? capabilities)
@@ -373,24 +385,3 @@
          :backend (source/backend-id basis-source)
          :capabilities capabilities})))
     capabilities))
-
-;; ---------------------------------------------------------------------------
-;; Per-layer telemetry (task 7.8)
-;; ---------------------------------------------------------------------------
-
-(defn telemetry
-  "Separates every observable cost layer of one finished run: canonical
-  reducer transitions, logical scan commands, values fetched versus
-  admitted logical work, and adapter attempts when a counting retry
-  wrapper was installed. Node-cache and remote-operation counters remain
-  storage-layer observations and are never inferred here."
-  [finished-state & [{:keys [attempts]}]]
-  (cond-> {:reducer-transitions (:transitions finished-state)
-           :logical-scan-commands (:commands finished-state)
-           :values-fetched (:fetched-values finished-state)
-           :logical-admissions (:admissions finished-state)
-           :results-discovered (:discovered finished-state)
-           :maximum-stack (:maximum-stack finished-state)
-           :maximum-retained-buffers (:maximum-sidecar-buffers finished-state)
-           :maximum-retained-values (:maximum-sidecar-values finished-state)}
-    attempts (assoc :adapter-attempts @attempts)))

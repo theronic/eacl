@@ -1,7 +1,7 @@
 (ns eacl.bench.recursive-performance-gate-test
   "Matched-v7 latency acceptance gate over populated recursion.
 
-  Reads formal/verification/explorer-v8-recursive-performance.edn and,
+  Reads formal/baselines/explorer-v8-recursive-performance.edn and,
   per scenario/op:
   - :enforced          — warmed v8 median must be within
                          :maximum-ratio-to-v7 of the recorded v7 median;
@@ -25,7 +25,7 @@
             [eacl.datomic.schema :as dschema]))
 
 (def ^:private manifest
-  (-> (io/file "formal/verification/explorer-v8-recursive-performance.edn")
+  (-> (io/file "formal/baselines/explorer-v8-recursive-performance.edn")
       slurp
       edn/read-string))
 

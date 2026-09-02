@@ -7,6 +7,7 @@
   supports a compatible API."
   (:require [#?(:clj clojure.edn :cljs cljs.reader) :as edn]
             [clojure.string :as str]
+            [eacl.exact-integer :as exact-integer]
             #?@(:cljs [[goog.crypt :as gcrypt]
                        [goog.crypt.Hmac]
                        [goog.crypt.Sha256]]))
@@ -21,8 +22,8 @@
 (def default-maximum-size 65536)
 (def default-maximum-depth 32)
 (def default-maximum-entries 16384)
-(def maximum-safe-integer 9007199254740991)
-(def minimum-safe-integer (- maximum-safe-integer))
+(def maximum-safe-integer exact-integer/maximum)
+(def minimum-safe-integer exact-integer/minimum)
 (def ^:private hmac-domain "eacl/secure-format/key/v1")
 
 (defn- format-error!
@@ -32,11 +33,6 @@
                           :eacl/error :eacl.format/invalid
                           :reason reason}
                          data))))
-
-(defn- portable-integer?
-  [value]
-  (and (integer? value)
-       (<= minimum-safe-integer value maximum-safe-integer)))
 
 (defn- string-code-unit
   [character]
@@ -205,8 +201,19 @@
         false)))))
 
 (defn- canonical-comparator
+  "Orders values by their canonical rendering.
+
+  Two keywords compare by the runtime's keyword string, which is
+  byte-identical to their rendering `:namespace/name` and needs no
+  allocation (the JVM caches it on the keyword; ClojureScript stores the
+  fully qualified name). Every other operand pair renders. Canonical maps
+  and sets carry this comparator, so every later lookup or equality check on
+  them runs it once per key comparison."
   [left right]
-  (compare (portable-render left) (portable-render right)))
+  (if (and (keyword? left) (keyword? right))
+    #?(:clj (compare (str left) (str right))
+       :cljs (compare (.-fqn ^Keyword left) (.-fqn ^Keyword right)))
+    (compare (portable-render left) (portable-render right))))
 
 (declare validate-value)
 
@@ -221,7 +228,7 @@
    value))
 
 (defn- validate-value
-  [value depth {:keys [maximum-depth maximum-entries]}]
+  [value depth {:keys [maximum-depth maximum-entries] :as limits}]
   (when (> depth maximum-depth)
     (format-error! :too-deep {:maximum-depth maximum-depth}))
   (let [entries
@@ -242,7 +249,7 @@
                            {:value (portable-render value)}))
 
           (integer? value)
-          (if (portable-integer? value)
+          (if (exact-integer/exact? value)
             1
             (format-error! :integer-out-of-range
                            {:value value
@@ -251,23 +258,20 @@
 
           (map? value)
           (validate-map value depth
-                        {:maximum-depth maximum-depth
-                         :maximum-entries maximum-entries})
+                        limits)
 
           (set? value)
           (reduce
            (fn [n item]
              (+ n (validate-value item (inc depth)
-                                  {:maximum-depth maximum-depth
-                                   :maximum-entries maximum-entries})))
+                                  limits)))
            1 value)
 
           (or (vector? value) (sequential? value))
           (reduce
            (fn [n item]
              (+ n (validate-value item (inc depth)
-                                  {:maximum-depth maximum-depth
-                                   :maximum-entries maximum-entries})))
+                                  limits)))
            1 value)
 
           :else
@@ -311,7 +315,7 @@
   "Returns the canonical portable EDN representation after enforcing bounds."
   ([value]
    (encode-canonical value {}))
-  ([value {:keys [maximum-size maximum-depth maximum-entries] :as limits
+  ([value {:keys [maximum-size maximum-depth maximum-entries]
            :or {maximum-size default-maximum-size}}]
    ;; `portable-render` already imposes the canonical map/set order and renders
    ;; every sequential value as a vector. Building a second recursively sorted

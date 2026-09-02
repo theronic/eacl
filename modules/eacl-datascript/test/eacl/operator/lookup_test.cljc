@@ -530,10 +530,8 @@
               after-bypass (datascript/cache-stats client)]
           (is (false? (:allowed? bypass)))
           (is (false? (:cached? bypass)))
-          (is (= (dissoc before-bypass :bypasses
-                         :relationship-observations)
-                 (dissoc after-bypass :bypasses
-                         :relationship-observations)))
+          (is (= (dissoc before-bypass :bypasses)
+                 (dissoc after-bypass :bypasses)))
           (is (= (inc (:bypasses before-bypass))
                  (:bypasses after-bypass))))))))
 
@@ -657,3 +655,59 @@
               (recur (assoc base :after cursor)
                      (inc steps)
                      (or saw-empty-progress? empty-progress?)))))))))
+
+(deftest recursive-count-pays-no-page-presentation-work-test
+  ;; kernel-boundary-efficiency delta: a multi-page recursive operator
+  ;; count computes zero outer semantic-scope digests (the paged lookup
+  ;; path still computes one per page, asserted for contrast).
+  (let [conn (datascript/create-conn)
+        n 400
+        users [(object :user "u0")]
+        documents (mapv #(object :document (str "d" %)) (range n))]
+    (datascript-schema/write-schema! conn
+      "definition user {}\ndefinition document {\n  relation viewer: user\n  relation banned: user\n  relation parent: document\n  permission allowed = viewer - banned\n  permission view = allowed + parent->view\n}")
+    (ds/transact! conn
+                  (map-indexed (fn [i v] {:db/id (- (inc i))
+                                          :eacl/id (second (:id v))})
+                               (into users documents)))
+    (ds/transact! conn
+                  (datascript-impl/tx-update-relationship
+                   (ds/db conn)
+                   {:operation :touch
+                    :relationship (eacl/->Relationship
+                                   (first users) :viewer (first documents))}))
+    (doseq [i (range 1 n)]
+      (ds/transact! conn
+                    (datascript-impl/tx-update-relationship
+                     (ds/db conn)
+                     {:operation :touch
+                      :relationship (eacl/->Relationship
+                                     (nth documents 0) :parent
+                                     (nth documents i))})))
+    (let [adapter (datascript-backend/basis-adapter
+                   (ds/db conn)
+                   {:object-id->entid
+                    (fn [snapshot object-id]
+                      (ds/entid snapshot [:eacl/id object-id]))
+                    :entid->object-id
+                    (fn [snapshot internal-id]
+                      (:eacl/id (ds/entity snapshot internal-id)))})
+          digests (atom 0)
+          original-digest cursor-scope/digest
+          query {:subject (public-id :user 0)
+                 :permission :view
+                 :resource/type :document}]
+      (binding [engine/*operator-routing-enabled?* true]
+        (with-redefs [cursor-scope/digest
+                      (fn [& arguments]
+                        (swap! digests inc)
+                        (apply original-digest arguments))]
+          (let [result (engine/count-resources adapter query)]
+            (is (= n (:count result)))
+            (is (not (:truncated? result)))
+            (is (zero? @digests)
+                "counting must not build per-page semantic-scope digests"))
+          (reset! digests 0)
+          (engine/lookup-resources adapter (assoc query :first 1))
+          (is (pos? @digests)
+              "the paged lookup path still digests (contrast control"))))))

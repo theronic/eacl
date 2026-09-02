@@ -19,6 +19,8 @@ jobs:
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Temurin JDK 26
         uses: actions/setup-java@v4
@@ -59,7 +61,29 @@ jobs:
           bin/formal build-java
           bin/formal build-js
           bin/formal browser-bundle
-          bin/formal artifact-size
+
+      - name: Summarize base-to-head assurance closure
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            node bin/formal-assurance-summary.mjs \
+              "${{ github.event.pull_request.base.sha }}" \
+              >> "$GITHUB_STEP_SUMMARY"
+          else
+            node bin/formal-assurance-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Validate the release assurance manifest
+        # The manifest ratchets proof efforts, operation coverage, source
+        # digests, generated artifacts and the counterexample corpus against
+        # the authored contract. Exit 3 is the contract's permanent
+        # "conditionally verified" status (documented residual obligations);
+        # any other non-zero exit is a ratchet or drift failure.
+        run: |
+          status=0
+          bin/formal manifest || status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+            exit "$status"
+          fi
 
       - name: Start heap-bounded generated-boundary nREPL
         run: |
@@ -182,6 +206,9 @@ jobs:
                  result))"
 
       - name: Gate portable CLJS indexed traversal scaling and ceiling
+        # The portable indexed traversal has no production caller; like the
+        # routing-certificate benchmark, its scaling gate runs on the schedule.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
@@ -307,6 +334,10 @@ jobs:
           exit 1
 
       - name: Gate routing-certificate logical work and JVM allocation
+        # The gated operation is production-dormant (retired traversal
+        # authority); its scaling benchmark runs on the weekly cadence
+        # instead of every push.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
@@ -433,17 +464,6 @@ jobs:
                      result)))
                  result))"
 
-      - name: Assert verified status remains withheld while gates are unmet
-        run: |
-          set +e
-          bin/formal manifest
-          manifest_status="$?"
-          set -e
-          if [ "$manifest_status" -ne 3 ]; then
-            echo "expected declared-obligation withholding status 3; got $manifest_status" >&2
-            exit 1
-          fi
-
       - name: Stop CI nREPL
         if: always()
         run: |
@@ -469,6 +489,7 @@ jobs:
             target/formal/campaign*.edn
             target/formal/dafny-verification.json
             target/formal/dafny-resources/*.csv
+            target/formal/verification/
 
   temporal-models:
     runs-on: ubuntu-22.04
@@ -561,7 +582,10 @@ jobs:
       - name: Start parity nREPL
         run: |
           mkdir -p target/formal
-          clojure -M:dev:test:cljs-test:nrepl --port 7788 \
+          # JVM options must precede -M: a -J flag after the alias is handed to
+          # nrepl.cmdline, which then ignores --port and picks a random one.
+          clojure -J-Deacl.replay.strict=true \
+            -M:dev:test:cljs-test:formal-smoke:nrepl --port 7788 \
             > target/formal/parity-nrepl.log 2>&1 &
           for attempt in {1..180}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
@@ -652,6 +676,14 @@ jobs:
         run: |
           bin/formal bootstrap
           bin/formal build-java
+
+      - name: Verify stable-discovery shipped-engine obligations
+        # The shipped enumeration engine's own proof gate (651 Dafny
+        # obligations, TLC families, refinement bridges) previously ran
+        # nowhere in CI while retired engines' proofs gated every push.
+        env:
+          EACL_VERIFY_FAST_LIMIT_SECONDS: '1800'
+        run: formal/stable-discovery/verify-fast.sh
 
       - name: Start campaign nREPL
         run: |

@@ -140,15 +140,19 @@ and deadline failures MUST remain request errors.
 - **THEN** EACL returns the typed consistency/deadline error
 - **AND** does not hide it behind current cache or cache-free evaluation
 
-### Requirement: Request admission is cache-neutral
-Any concurrency or overload admission limit SHALL apply before cache selection
-with the same policy for cache-enabled and cache-disabled requests. Admission
-MUST NOT be described as cache single-flight or alter evaluator demand.
+### Requirement: Optional service admission remains separate from cache coordination
+Any configured concurrency or overload policy SHALL remain the existing
+optional service-edge control at its routed-execution boundary. It MUST NOT be
+described as cache coordination, alter evaluator demand, create cache ownership
+or waits, or be moved ahead of compatible completed-cache hits without a
+separately reproduced and specified reason. Cache-enabled and cache-disabled
+requests that reach routed semantic execution SHALL encounter the same policy.
 
 #### Scenario: Saturated admission
-- **WHEN** a request cannot obtain uniform execution admission within its documented policy
-- **THEN** EACL returns the typed overload or deadline error before cache access
-- **AND** the outcome is the same for `:cache? true` and false
+- **WHEN** a request reaches routed semantic execution but cannot obtain the
+  configured service admission within its documented policy
+- **THEN** EACL returns the typed overload or deadline outcome at that boundary
+- **AND** cache-enabled and cache-disabled execution use the same policy there
 
 ### Requirement: Cache telemetry is honest
 Metrics SHALL distinguish completed hits, misses, bypasses, local failures,
@@ -161,4 +165,3 @@ MUST NOT be reported as if the initiating request began with a completed hit.
 - **WHEN** a request misses and computes while another request publishes first
 - **THEN** telemetry records the initiating request's miss and publication race
 - **AND** does not count a completed cache hit
-

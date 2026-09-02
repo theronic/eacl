@@ -4,13 +4,23 @@
             [eacl.backend.v8-test]
             [eacl.backend.direct-membership-test]
             [eacl.authorization.batch-test]
+            [eacl.cache.derived-schema-test]
+            [eacl.cache.key-test]
+            [eacl.cache.standard-lru-test]
             [eacl.cache-test]
             [eacl.core-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
+            [eacl.engine.scan-cache-test]
+            [eacl.client.lookahead-test]
+            [eacl.client.range-reuse-test]
+            [eacl.datascript.scan-cache-integration-test]
+            [eacl.datascript.scan-cache-neutrality-test]
+            [eacl.engine.alias-frontier-test]
+            [eacl.engine.least-path-portable-test]
+            [eacl.engine.sealed-plan-test]
             [eacl.execution-test]
-            [eacl.metrics-test]
             [eacl.proof-frame-test]
             [eacl.permission-tree-test]
             [eacl.permission-tree-operator-test]
@@ -69,13 +79,23 @@
   (t/run-tests 'eacl.backend.v8-test
                'eacl.backend.direct-membership-test
                'eacl.authorization.batch-test
+               'eacl.cache.derived-schema-test
+               'eacl.cache.key-test
+               'eacl.cache.standard-lru-test
                'eacl.cache-test
                'eacl.core-test
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test
+               'eacl.engine.scan-cache-test
+               'eacl.client.lookahead-test
+               'eacl.client.range-reuse-test
+               'eacl.datascript.scan-cache-integration-test
+               'eacl.datascript.scan-cache-neutrality-test
+               'eacl.engine.alias-frontier-test
+               'eacl.engine.least-path-portable-test
+               'eacl.engine.sealed-plan-test
                'eacl.execution-test
-               'eacl.metrics-test
                'eacl.proof-frame-test
                'eacl.permission-tree-test
                'eacl.permission-tree-operator-test

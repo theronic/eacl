@@ -2,6 +2,7 @@
   "Public provenance and same-basis cache-poisoning regressions for eacl/with."
   (:require [clojure.test :refer [deftest is]]
             [datomic.api :as d]
+            [eacl.causal-token :as causal-token]
             [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
@@ -340,24 +341,29 @@
     (let [client (datomic/make-client conn {})]
       (seed! client conn)
       (eacl/with-snapshot [base (eacl/snapshot client)]
-        (let [root-token (eacl/basis-token base)
-              delete-ban
-              (eacl/tx-relationship base :delete alice :banned doc)
-              prospective (eacl/with client delete-ban)]
-          (try
-            (is (= :speculative (:kind (eacl/basis prospective))))
-            (is (= root-token (eacl/basis-token prospective))
-                "speculation preserves its authenticated committed root")
-            (doseq [invoke
-                    [#(eacl/write-relationships! prospective [])
-                     #(eacl/write-schema! prospective schema)]]
-              (let [data (error-data invoke)]
-                (is (= :eacl/unsupported-capability (:type data)))
-                (is (= :write (:capability data)))))
-            (is (false? (eacl/released? prospective)))
-            (finally
-              (eacl/release! prospective)))
-          (is (true? (eacl/released? prospective))))))))
+        ;; Tokens are minted per call from the wall clock. Pin it so the
+        ;; comparison exercises the committed root identity rather than the
+        ;; second boundary between the two mints.
+        (with-redefs [causal-token/now-seconds
+                      (constantly (causal-token/now-seconds))]
+          (let [root-token (eacl/basis-token base)
+                delete-ban
+                (eacl/tx-relationship base :delete alice :banned doc)
+                prospective (eacl/with client delete-ban)]
+            (try
+              (is (= :speculative (:kind (eacl/basis prospective))))
+              (is (= root-token (eacl/basis-token prospective))
+                  "speculation preserves its authenticated committed root")
+              (doseq [invoke
+                      [#(eacl/write-relationships! prospective [])
+                       #(eacl/write-schema! prospective schema)]]
+                (let [data (error-data invoke)]
+                  (is (= :eacl/unsupported-capability (:type data)))
+                  (is (= :write (:capability data)))))
+              (is (false? (eacl/released? prospective)))
+              (finally
+                (eacl/release! prospective)))
+            (is (true? (eacl/released? prospective)))))))))
 
 (deftest sibling-speculation-never-shares-computed-answers-test
   (with-mem-conn [conn datomic-schema/v7-schema]

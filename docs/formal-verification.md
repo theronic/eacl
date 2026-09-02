@@ -10,16 +10,18 @@ remains an explicit unmet release obligation. Two verified bodies now coexist.
 Enumeration, point checks, and counts run on the hand-written CLJC
 stable-discovery engine (`eacl.engine.sealed-plan`, `stable-reducer`,
 `stable-page`, `stable-route`) on both targets; its evidence is the
-release-assurance tree under `formal/stable-discovery/` (47 Dafny leaves, two
+release-assurance tree under `formal/stable-discovery/` (the Dafny leaves, two
 TLC families, executable refinement bridges, mutation controls; see
 [docs/stable-discovery-engine.md](stable-discovery-engine.md)). The generated
-Dafny kernel remains the production authority for the pure decisions that
-surround the engine — consistency planning, current-cache decisions, cursor
-continuation, and page-request normalization — through `eacl.verified-kernel`
+Dafny kernel remains the production authority for the remaining pure decisions
+that surround the engine — consistency planning, cursor continuation, and
+page-request normalization — through `eacl.verified-kernel`
 on the JVM and its portable CLJC decision twin on ClojureScript, differentially
 certified against the generated JavaScript oracle. The generated JavaScript
 adapter is formal-smoke-only and no runtime option can select an alternate
-engine. Browser answers are advisory and deployments must re-check
+engine. The former generated current-cache availability decision has been
+deleted; cache storage is modeled as an ordinary partial map and cannot define
+an authorization result. Browser answers are advisory and deployments must re-check
 authorization on the server.
 
 The measured performance consequences and recommended cache-free reference,
@@ -71,23 +73,19 @@ bin/formal apalache-invariant
 `artifact-size` must run after all generated forms are rebuilt. It measures
 uncompressed Java source bytes, Java class bytes, JavaScript-with-runtime
 bytes, and browser-bundle bytes separately against the reviewed full-kernel
-ledger in `formal/verification/generated-artifact-size.edn`; it does not
+policy in `formal/policy/generated-artifact-size.edn`; it does not
 substitute one representation, solver effort, allocation, heap, or latency
 for another.
 
-`source-closure` checks the committed
-`formal/verification/public-source-closure.json` ledger with the exact
-clj-kondo version in the toolchain lock. The ledger closes the named shared,
-proof-provider, and backend roots declared in `bin/public-source-closure.mjs` over the reachable definitions it lists
-(the committed ledger is the authority for the exact counts; regenerate it
-with `node bin/public-source-closure.mjs write` after any public-source
-edit), including unattributed usages assigned to their exact containing
-`defrecord` spans. It is static completeness evidence only: it does not prove
-Clojure source or adapter semantics. `backend-dispatch.edn` additionally
-closes every CLJ/CLJS
-`backend/invoke` site to the exact literal operation keys the ledger pins
-(the required snapshot operations plus `:proof-frame`); the meaning of each
-adapter implementation remains a named obligation.
+`source-closure` derives
+`target/formal/verification/public-source-closure.json` with the exact
+clj-kondo version in the toolchain lock. It closes the named shared,
+proof-provider, and backend roots declared in `bin/public-source-closure.mjs`,
+including unattributed usages assigned to their exact containing `defrecord`
+spans. It is static completeness evidence only: it does not prove Clojure
+source or adapter semantics. A source test independently derives every
+CLJ/CLJS `backend/invoke` site and compares its literal operation keys with
+the executable backend contract.
 
 Generated Java classes must be tested in a fresh JVM after every regeneration:
 
@@ -103,7 +101,7 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 
 | Source | Main responsibility |
 | --- | --- |
-| `formal/stable-discovery/*.dfy` (47 leaves) | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check, and the adaptive reducer read-scope bridge; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 651 obligations) |
+| `formal/stable-discovery/*.dfy` | the shipped enumeration engine: grounding of the four rule forms, sealed vector order and read-rank certificate, the width-one reducer (soundness, completeness, exact uniqueness, history-free erasure, atomic admission), one-value scan normalization, bounded buffers, edge pagination, checkpoints, count composition, the membership-probe point check, and the adaptive reducer read-scope bridge; `AtomicAttempt.tla`/`ProgressCheckpoint.tla` bound the attempt/checkpoint histories (`formal/stable-discovery/verify-fast.sh`, 651 obligations), the exact scan-response cache (a served chunk equals the adapter's chunk for the same bound and limit; contiguous extension keeps a prefix of the scan), and range answer reuse (any window inside a retained page segment is the page from that boundary; a window past a segment is the segment's tail plus its continuation) |
 | `Semantics.dfy` | typed rules, normalization, monotone consequence, finite least fixed point |
 | `SnapshotOracle.dfy` | abstract immutable adapter contract |
 | `AcyclicEngine.dfy` | **retired engine model** (path compilation, direct checks, acyclic projections and counts); kept as a regression model until task 9.2's formal cut |
@@ -112,19 +110,20 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `PageWindow.dfy` | total page normalization, windows, keyset page decisions, cursor continuation decisions (live decisions) |
 | `IndexedBatching.dfy` | **retired** bounded ordered scan waves and crossing law of the generated indexed traversal; same disposition |
 | `IndexedBatchCompleteness.dfy` | **retired** proof-only pending-scan ghost views; same disposition |
-| `CurrentCache.dfy` | exact-basis/managed admission, complete exact identity and lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-basis rendering |
+| `CurrentCache.dfy` | exact-basis/managed admission, complete exact identity including backend snapshot/cache-basis equality, lifecycle isolation, scalar stamps, least-fixed-point dependency frame, selected-basis rendering |
 | `NativeGenerationCoherence.dfy` | forward native-generation frame, empty dependencies, stale endpoint exclusion, component cleanup/stamping, and lifecycle isolation |
-| `ScalarFrontierCoherence.dfy` | globally ordered native generations, scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication |
+| `ScalarFrontierCoherence.dfy` | globally ordered native generations, full canonical dependency-generation identity, derived scalar-frontier soundness, complete proof frames, demand identity, and completed-only publication, and the singleton dependency frontier (one relation's generation) that scopes the shared scan-response cache |
 | `SchemaPlanCost.dfy` | one recursive-plan compilation per permission root/schema generation and bounded page-sensitive stream batches |
 | `TemporalSafety.dfy` | unbounded cache/cursor transition predicates |
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |
 | `PermissionTree.dfy` | typed shallow expansion topology, denotation, active-path cycles, structural budgets, and all-or-error outcomes |
 
-`formal/verification/assurance-matrix.edn` maps public operations to theorems,
-adapter assumptions, runtime targets, and CI evidence. A passing proof file is
-not by itself a public assurance claim. `formal/verification/manifest.edn` is
-the release gate and must continue to refuse verified status while any required
-obligation is incomplete.
+`formal/assurance_contract.clj` maps public operations to theorem sources,
+adapter assumptions, runtime targets, proof-count ratchets, and remaining
+obligations. A passing proof file is not by itself a public assurance claim.
+`bin/formal manifest` derives `target/formal/verification/manifest.edn` from
+that contract and live reports, and continues to refuse verified status while
+any required obligation is incomplete.
 
 ### Operator set-algebra boundary
 
@@ -139,14 +138,16 @@ repeated binary filtering.
 Phase B adds the generated recursive command decision and digest-closes the
 handwritten parser, canonical expression codec/storage, signed graph, plan,
 evaluators, cursor/cache boundary, Datahike density-bounded batch, scalar
-fallbacks, and four backend adapters. The clean whole-tree run verifies 48
-modules and 9,361 obligations; generated Java and advanced JavaScript boundary
+fallbacks, and four backend adapters. The module and obligation counts of the
+clean whole-tree run are reported by CI (`bin/formal verify` writes
+`target/formal/dafny-verification.json`) and are not recorded in this
+document; generated Java and advanced JavaScript boundary
 suites, fixed/random differentials, counterexample replay, formal and temporal
 mutation controls, cross-backend conformance, storage, and matched-host
 performance gates pass. Public expression writes and public operator routing
-are enabled by default. Exact evidence and source digests are in
-`formal/verification/operator-phase-b.edn`; operational semantics and measured
-limits are in [Permission set algebra](permission-set-algebra.md).
+are enabled by default. CI executes the exact evidence and writes current
+source digests to the ignored generated manifest; operational semantics and
+measured limits are in [Permission set algebra](permission-set-algebra.md).
 
 ### Permission-tree assurance boundary
 
@@ -192,11 +193,12 @@ nREPL:
 - `eacl.datascript.adapter-certification-test` in CLJ and CLJS
 - `eacl.datahike.adapter-certification-test`
 
-The machine-readable result is
-`formal/verification/adapter-certification.edn`. Optional runtime guards check
-locally representable shape, order, uniqueness, bounds, booleans, adapters,
-and nonnegative exact-integer internal EIDs. Global completeness, ancestry,
-and generation-proof truthfulness remain certification obligations.
+These suites are the machine-readable result: CI fails on any failing
+assertion and may upload the current test output as a run artifact. Optional
+runtime guards check locally representable shape, order, uniqueness, bounds,
+booleans, adapters, and nonnegative exact-integer internal EIDs. Global
+completeness, ancestry, and generation-proof truthfulness remain certification
+obligations.
 
 ## Counterexamples and mutation controls
 

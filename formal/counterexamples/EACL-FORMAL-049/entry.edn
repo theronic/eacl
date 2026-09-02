@@ -13,7 +13,5 @@
  :fix
  "The intermediate harness was corrected to compare one multi-chunk operation shape. The final v8 contract subsequently removed cursor rebase/restart from production and the active release gates; the observation is retained as explicitly historical evidence and cannot support a current implementation or certification claim."
  :closing-evidence
- ["eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test"
-  "formal/verification/performance-gates.edn/historical-retired-cursor-rebase"
-  "formal/dafny/PageWindow.dfy/ChangedProofNeverContinuesOnCurrent"
+ ["formal/dafny/PageWindow.dfy/ChangedProofNeverContinuesOnCurrent"
   "eacl.datomic.recursive-cache-test/recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test"]}

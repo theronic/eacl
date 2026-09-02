@@ -46,11 +46,11 @@
 (deftest portable-cache-api-round-trip-test
   (let [conn (datahike/create-conn)
         client (datahike/make-client conn {})
-        bounds {:max-weight 8192 :max-entries 64}
+        bounds {:max-entries 64}
         before (datahike/cache-content-revision client)
         snapshot (datahike/export-cache-snapshot client bounds)
         restored (datahike/restore-cache-snapshot! client snapshot bounds)]
-    (is (= :eacl.cache/basis-snapshot-v1 (:format snapshot)))
+    (is (= :eacl.cache/basis-snapshot-v2 (:format snapshot)))
     (is (zero? (:entry-count snapshot)))
     (is (true? (:restored? restored)))
     (is (> (datahike/cache-content-revision client) before))))
@@ -214,6 +214,7 @@
     (seed-objects! conn)
     (eacl/create-relationships! client contract/smoke-relationships)
     (contract/assert-v8-seeded-contracts! client)
+    (contract/assert-v8-cache-differential! client)
     (contract/assert-v8-permission-tree-contract! client)
     (contract/assert-authorization-target-matrix!
      {:writable client
@@ -247,7 +248,7 @@
       (contract/assert-v8-recursive-safety-limit!
        (datahike/make-client
         conn
-        {:cache cache/no-cache
+        {:cache {}
          :recursive-traversal-limits {limit-key 1}})))))
 
 (deftest datahike-contract-test

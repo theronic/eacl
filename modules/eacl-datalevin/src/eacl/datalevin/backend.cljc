@@ -112,12 +112,6 @@
      permission-id
      (expression-persistence/decode-entity permission))))
 
-(defn- permission-expression [db resource-type permission-name]
-  (some-> (expression-persistence/validate-entities
-           (impl/find-permission-defs db resource-type permission-name))
-          first
-          :entity))
-
 (defn- scalar-generation
   [db entity-id attribute]
   (some-> (first (d/datoms db :eav entity-id attribute)) :v))
@@ -199,14 +193,12 @@
 
        :object-id->internal
        (fn [object-id]
-         (ddb/with-db
-           snapshot
-           (fn [db]
-             (let [internal-id
-                   (if (number? object-id)
-                     object-id
-                     (object-id->entid db object-id))]
-               (when (some? internal-id)
+         (if (number? object-id)
+           (exact-natural! :entity-id object-id)
+           (ddb/with-db
+             snapshot
+             (fn [db]
+               (when-some [internal-id (object-id->entid db object-id)]
                  (exact-natural! :entity-id internal-id))))))
 
        :internal-id->object
@@ -240,8 +232,16 @@
        (fn [resource-type permission-name]
          (ddb/with-db
           snapshot
-          #(permission-expression % resource-type permission-name)))
+          #(expression-persistence/validated-expression-entity
+            (impl/find-permission-defs
+             % resource-type permission-name))))
 
+       ;; Argument-domain guards stay: the adapter contract test and the
+       ;; EACL-FORMAL-027 ledger pin fail-closed rejection of non-natural
+       ;; inputs, and they are three scalar checks per call. Scan results
+       ;; are vectors realized inside the LMDB snapshot scope by
+       ;; `impl/subject->resources`; the engine's guard-scan!
+       ;; (:runtime-guards? is true here) validates every value once.
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
          (exact-natural! :subject-id subject-id)
@@ -250,11 +250,8 @@
            (exact-natural! :cursor-bound bound-eid))
          (ddb/with-db
            snapshot
-           #(mapv (fn [resource-id]
-                    (exact-natural! :resource-id resource-id))
-                  (impl/subject->resources
-                   % subject-type subject-id relation-id resource-type
-                   options))))
+           #(impl/subject->resources
+             % subject-type subject-id relation-id resource-type options)))
 
        :resource->subjects
        (fn [resource-type resource-id relation-id subject-type options]
@@ -264,11 +261,8 @@
            (exact-natural! :cursor-bound bound-eid))
          (ddb/with-db
            snapshot
-           #(mapv (fn [subject-id]
-                    (exact-natural! :subject-id subject-id))
-                  (impl/resource->subjects
-                   % resource-type resource-id relation-id subject-type
-                   options))))
+           #(impl/resource->subjects
+             % resource-type resource-id relation-id subject-type options)))
 
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]
@@ -277,10 +271,9 @@
          (exact-natural! :resource-id resource-id)
          (ddb/with-db
            snapshot
-           #(boolean
-             (impl/direct-match?
-              % subject-type subject-id relation-id
-              resource-type resource-id))))
+           #(impl/direct-match?
+             % subject-type subject-id relation-id
+             resource-type resource-id)))
 
        :all-permission-nodes
        (fn []
@@ -365,7 +358,6 @@
   [conn opts]
   (let [_ (validate-topology! conn opts)
         source-scope {:source-id (:native-source-id opts) :branch nil}
-        opts (assoc opts :source-scope source-scope)
         adapter-options (select-keys opts adapter-config-keys)
         source-lifecycle
         (fn []

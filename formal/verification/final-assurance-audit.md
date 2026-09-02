@@ -10,8 +10,8 @@ contract. Final production behavior is equal-proof continuation on current,
 verified exact-snapshot fallback on immutable history-capable backends, or a
 typed stale/conflict error. DataScript is current-basis-only. No current model,
 production branch, or active performance gate authorizes cursor rebase or
-restart. The current release claim is governed by the generated-boundary,
-pagination-kernel, execution-contract, and assurance-matrix ledgers.
+restart. The current release claim is governed by
+`formal/assurance_contract.clj` and live CI gates.
 
 ## Executive decision
 
@@ -113,10 +113,12 @@ abstract snapshot-oracle contract:
 10. cursor decisions reject cross-query, cross-operation, cross-result, scope,
    tampering, expiry, and incompatible-history use before the cursor can
    influence authorization;
-11. exact-basis cache admission, complete managed dependency frames,
-    subproblem projection/denotation reuse, lifecycle isolation, and
-    validation telemetry cannot turn a rejected or stale candidate into an
-    authorization result;
+11. exact denotation plus exact/managed completed-answer admission, complete
+    managed dependency frames, validated-ingress resident invariants,
+    request-wide answer/denotation cache-disabled isolation (without disabling
+    request-independent derived-schema or cursor LRUs), and fresh private-store lifecycle
+    detachment cannot turn a rejected or stale candidate into an authorization
+    result;
 12. public consistency normalization and finite selection decisions implement
     exactly `minimize-latency`, `fully-consistent`,
     `at-least-as-fresh`, and `at-exact-snapshot`;
@@ -197,7 +199,7 @@ highest-value findings.
 | Finding | Class | What failed | Fix and value |
 | --- | --- | --- | --- |
 | 001–013 | cache/cursor/temporal correctness | Early proof/cache and cursor designs admitted incomplete dependency, ancestry, scope, publication, or continuation assumptions. | Minimized traces drove current-cache, authenticated cursor, temporal-safety, and fail-closed designs. |
-| 014–018 | superseded cache coordination | Recursive single-flight could join itself, cross cache lifecycles, and couple callers to another request's latency or failure. | v8 deletes flight state and cache semaphores: misses compute independently, lifecycle replacement detaches generations atomically, and bounded CAS publication either retains a compatible winner or discards the candidate. |
+| 014–018 | superseded cache coordination | Recursive single-flight could join itself, cross cache lifecycles, and couple callers to another request's latency or failure. | v8 deletes flight state and cache semaphores: misses compute independently, lifecycle replacement detaches stores atomically, and one absent-key LRU transformation may retain a completed candidate without changing the value returned by any racing request. |
 | 019–020 | result correctness | Descending merge dropped the maximum EID; generic merge dropped a legal first `nil` key. | Explicit presence bits plus exhaustive CLJ/CLJS source-control fixtures and mutants. |
 | 021 | cross-backend configuration | Datomic rejected/failed to forward shared subproblem-cache configuration. | One validated shared cache configuration path. |
 | 022–027 | error/limit/boundary correctness | Generated errors lost fields, stale-cursor shapes diverged, materialized resource counters were substituted for query-local limits, and signed EIDs crossed a natural-number model. | Exact public typed errors, dimensionally correct counters, generated indexed resource authority, and nonnegative exact-integer adapter guards. |
@@ -265,11 +267,13 @@ performance mistakes conspicuous:
 - Schema work should be compiled once per schema generation. Routing
   certificates, SCCs, dependency closures, and denotation identities are
   generation-scoped; request paths consume the compiled result.
-- Cache usefulness comes from reusable subproblems and denotations, not merely
-  completed answers. Equal rule bodies can share fixed-point results across
-  different permission names without weakening semantic identity.
-- Cache-disabled calls branch before cache-key, proof, token, local lookup, and
-  envelope work. “Disabled” therefore means no hidden proof tax.
+- Cache usefulness comes from completed answers and exact denotation points,
+  not physical operator-read fragments. Equal rule bodies can share semantic
+  denotations across different permission names without weakening identity.
+- Cache-disabled calls bypass authorization answer/denotation key, proof,
+  lookup, and envelope work, and do not use continuation retention. This claim
+  does not disable request-independent derived-schema or cursor-codec LRUs;
+  cursor authentication still runs when a request supplies a cursor.
 - Generated target artifacts require their own complexity audit. A Dafny
   theorem over sequences or sets does not establish the complexity of the
   generated runtime representation.
@@ -332,7 +336,7 @@ Do not say:
 
 The external reviewer should:
 
-1. check every public assurance-matrix row against the exact theorem
+1. check every public assurance-contract operation against the exact theorem
    preconditions and production call path;
 2. challenge snapshot-oracle, adapter, identity, cryptographic, and limit
    assumptions;

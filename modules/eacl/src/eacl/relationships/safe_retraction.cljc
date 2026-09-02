@@ -15,6 +15,8 @@
 
 (def relation-version-attribute :eacl/relation-version)
 (def current-transaction-value :db/current-tx)
+(def ^:no-doc empty-plan
+  {:peer-retractions [] :relation-ids [] :local-half-count 0})
 
 (defn- fail!
   [reason data]
@@ -68,6 +70,39 @@
       (some? schema-string)
       (and (keyword? db-ident)
            (contains? #{"eacl" "eacl.fn"} (namespace db-ident)))))
+
+(defn ensure-unprotected!
+  "Rejects the first schema/control entity in a native component closure."
+  [target-eid closure entity]
+  (when-let [protected-eid
+             (some (fn [eid]
+                     (let [native (entity eid)]
+                       (when
+                        (protected-control-entity?
+                         {:db-ident (:db/ident native)
+                          :eacl-id (:eacl/id native)
+                          :schema-string (:eacl/schema-string native)
+                          :relation-name (:eacl.relation/relation-name native)
+                          :permission-name
+                          (:eacl.permission/permission-name native)})
+                         eid)))
+                   closure)]
+    (throw
+     (ex-info
+      "EACL safe retraction cannot delete schema/control entities."
+      {:type :eacl.safe-retraction/invalid
+       :eacl/error :eacl.safe-retraction/invalid
+       :reason :protected-control-entity
+       :target-eid target-eid
+       :protected-eid protected-eid}))))
+
+(defn component-attributes
+  "Returns component attributes from a DataScript-shaped schema map."
+  [schema]
+  (into #{}
+        (keep (fn [[attribute options]]
+                (when (true? (:db/isComponent options)) attribute)))
+        schema))
 
 (defn component-closure
   "Returns a breadth-first, cycle-safe native component deletion closure.
@@ -159,6 +194,33 @@
    :relation-ids
    (into [] (comp (mapcat :relation-ids) (distinct)) plans)
    :local-half-count (reduce + 0 (map :local-half-count plans))})
+
+(defn known-ghost-plan
+  "Plans peer-half cleanup when a numeric target eid has no local datoms.
+
+  `peer-eids` performs the backend's exact AVET read for an attribute/value."
+  [relation-triples target-eid peer-eids]
+  (combine-plans
+   (mapcat
+    (fn [[resource-type relation-eid subject-type]]
+      (let [reverse-value
+            (endpoint-pair/reverse-value
+             resource-type relation-eid subject-type target-eid)
+            forward-value
+            (endpoint-pair/forward-value
+             subject-type relation-eid resource-type target-eid)]
+        (concat
+         (for [peer-eid (peer-eids storage/reverse-attribute reverse-value)]
+           {:peer-retractions
+            [[:db/retract peer-eid storage/reverse-attribute reverse-value]]
+            :relation-ids [relation-eid]
+            :local-half-count 0})
+         (for [peer-eid (peer-eids storage/forward-attribute forward-value)]
+           {:peer-retractions
+            [[:db/retract peer-eid storage/forward-attribute forward-value]]
+            :relation-ids [relation-eid]
+            :local-half-count 0}))))
+    relation-triples)))
 
 (defn relation-stamps
   "One idempotent current-transaction stamp per distinct affected relation."

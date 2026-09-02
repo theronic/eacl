@@ -5,9 +5,12 @@
 > `stable-reducer`, `stable-page`, `stable-route`) on both targets; its
 > assumptions and evidence are recorded by the release-assurance tree
 > `formal/stable-discovery/` and by `adopt-stable-discovery-enumeration`.
-> The generated JVM kernel and its portable CLJS twin remain authoritative
-> only for the pure decisions around the engine (consistency plan, current
-> cache, cursor continuation, page-request normalization). Sections below
+> The generated JVM kernel and its portable CLJS twin now remain formal-smoke
+> oracles for the explicitly exported pure operator decisions and wire
+> round-trip boundary; production does not invoke those operator functions.
+> The former generated current-cache stage/availability decision is deleted;
+> cache storage is the proof-only semantic boundary described below. Sections
+> below
 > that describe the generated indexed traversal, the recursive-routing
 > certificate, the ordered merge or the acyclic evaluator as production
 > authority describe the retired engines; they are retained until the formal
@@ -58,6 +61,90 @@ Handwritten CLJ/CLJS conversion code must:
 
 These obligations are tested and runtime-guarded, not proved as Clojure facts.
 
+### Cache resident-validity boundary
+
+The semantic cache store is client-private. Supported public configuration
+cannot inject a provider store, and the supported state transitions admit a
+resident mapping only through operation-validated live publication or
+off-side restore of an already authenticated EACL export. Restore's local
+validator enforces the closed key/value/provenance shape and configured
+capacity; semantic-payload equality is inherited from the authenticated valid
+store that produced the export, not rediscovered by evaluating every answer
+during restore. A host that accepts unauthenticated external bytes violates
+the public restore precondition and is outside this cache theorem. The formal invariant separates
+the validator-established key/provenance contract for the immutable resident
+envelope from equality of its semantic payload to independent evaluation. That
+distinction permits a causally validated managed answer to populate the current
+exact key without rewriting its older computation anchor; the live exact value
+is correct for the selected snapshot even when that process-local envelope is
+not portable. Completed resident values are assumed immutable after admission.
+Exact answer and denotation lookup may
+therefore use ordinary complete-key membership without repeating structural,
+artifact, or ABI validation; managed lookup additionally checks the one fact
+that varies by request, `computed-revision <= selected-revision`.
+
+The supported exact-locator representation is locally closed at every cache
+ingress: `nil`, a natural number no greater than `9007199254740991`, or a
+nonempty string whose host `count` is at most 4,096. This prevents unsupported
+host objects, negative or cross-runtime-lossy integers, and unbounded locator
+strings from becoming resident key or provenance authority. The adapter must
+still truthfully report which admitted locator denotes the selected immutable
+snapshot; local type and size validation cannot establish that backend fact.
+
+Cache disablement is request-wide for authorization answer and denotation
+reuse rather than an outer answer-cache hint. Request-independent
+derived-schema and cursor LRUs remain active.
+`CacheDisabledRequestIsStorageIsolated` models the disabled request as
+preserving both answer and denotation stores with zero lookup probes and zero
+publication attempts while returning the independent computation. The
+corresponding host-refinement obligation is that the bypass path clear both
+dynamic store bindings before any reentrant or nested evaluator work; result
+equality alone would not establish that isolation.
+
+`SubproblemCache.dfy` proves this resident invariant by induction over empty
+construction, validated restore, validated put-if-absent publication,
+map-preserving LRU touches, arbitrary eviction, and fresh private-store-instance
+replacement. The model represents production's fresh store reference by a
+strictly increasing ghost ID so a detached computation can never regain
+publication authority through identity reuse. Validated publication carries
+the computation-captured store ID into the induction step and requires it to
+equal the currently installed private store; this is not inferred from the
+semantic cache key. Semantic source lifecycle is a complete-key field, not the
+store-detachment token; equal semantic keys may exist in different private
+store instances without becoming mutually visible. The
+proof is conditional on live publication validators truthfully enforcing the
+complete key/provenance contract and semantic-payload equality; on restore
+receiving an authenticated supported export whose local structural validator
+succeeds; and
+on the private backing store changing only
+through those transitions. Clojure records and vars are not a language-level
+security boundary: same-process code can deliberately require internal
+namespaces, traverse record fields, mutate backing atoms, or invoke a low-level
+publisher with a dishonest validator. Such reflective/internal mutation is
+outside the supported EACL API and remains in the trusted host boundary; it is
+not made safe by repeating validation on every hit.
+
+Live answer/denotation and request-local checkpoint publication are also
+conditional on cache-stage availability at the publication boundary. The
+formal premise defines availability as neither deadline-expired nor cancelled;
+production rechecks the bound execution contract and drops a racing candidate
+without touching storage. Truthful monotonic-clock and cancellation-token
+observations remain host obligations rather than facts proved about the JVM or
+JavaScript runtimes.
+
+Availability also guards the read side before any standard-LRU probe or touch.
+For completed answers the high-level guard additionally precedes managed-proof
+descriptor construction, so an expired or cancelled request cannot perform
+proof I/O and then enter a managed lookup. Request-local checkpoint lookup
+returns a miss with no store probe or recency mutation under the same premise.
+
+Semantic source-lifecycle, snapshot, and proof identifiers may recur in the
+finite formal abstraction. Equality is usable only when the adapter truthfully
+means complete semantic equivalence; dishonest identifier reuse is a key/source
+refinement failure. This premise is separate from private store-instance
+identity, whose fresh production reference is modeled with explicit retired-ID
+history and an ABA mutation control.
+
 ### Abstract operator Phase A boundary
 
 The Phase A set-algebra models prove properties of finite typed expressions,
@@ -96,12 +183,11 @@ the abstract per-stratum theorem does not prove that production holds a stable,
 complete lower-stratum fact context at each concrete evaluator node; that is a
 section-10 source-refinement obligation.
 
-`formal/verification/operator-phase-a.edn` records the exact proof counts,
-source digests, temporal bounds, mutations, and cross-runtime vectors. Its
-status is `:passed-operator-authorized`: the project operator explicitly
-authorized Phase B after the abstract gates passed. No independent proof
-review has been performed, and the evidence records that absence as an
-assurance qualification rather than claiming external certification.
+`formal/assurance_contract.clj` records the proof-count ratchets and remaining
+obligations. Current proof counts, source digests, temporal checks, mutations,
+and cross-runtime vectors are derived or executed by CI. No independent proof
+review has been performed, and the release policy records that absence rather
+than claiming external certification.
 
 ### Concrete operator Phase B boundary
 
@@ -113,13 +199,14 @@ and refined in `OperatorRecursiveGeneratedPolicyRefinement.dfy` to the Phase A
 anchor-gated conjunction and strict-exclusion models. Like the two Phase A
 entry points, production does not call this generated function directly.
 
-`formal/verification/operator-phase-b.edn` binds the digest-closed production
+The executable Phase B gates bind the production
 parser, codec, signed graph, plan, scalar/vector evaluator, adaptive batching,
 seekable specializations, cursor progress, recursive state, cache boundary,
 and four backend implementations to those decisions through fixed and random
 differentials, CLJ/CLJS parity, counterexample replay, adapter certification,
 and ten executed production mutants. This is executable source-refinement
-evidence, not a formal semantics of Clojure or the storage engines. The
+evidence, not a formal semantics of Clojure or the storage engines. Their
+current digests and results are generated under `target/formal/verification/`. The
 measured production performance and the explicit route/write enablement gates
 have passed. Public expression writes and public routing are enabled by
 default; explicit dynamic bindings exercise both disabled paths, and the four
@@ -307,9 +394,9 @@ inside a trusted canonicalization or cryptographic primitive.
 
 Lore's historical resource analyser is not in the TCB and contributes no
 correctness or resource theorem. EACL adopts only its useful accounting
-discipline: admission weight, represented completed candidates, request-owned
-computations, bounded publication attempts, backend operations, logical work,
-retained heap, and elapsed time are different dimensions and cannot
+discipline: retained entry capacity, represented completed candidates,
+request-owned computations, backend operations, logical work, retained heap,
+and elapsed time are different dimensions and cannot
 substitute for one another. Dafny proves bounds only for explicitly modeled
 logical counters. Source instrumentation checks the corresponding Clojure
 calls for named paths. JVM/JavaScript wall time and allocation are measured by

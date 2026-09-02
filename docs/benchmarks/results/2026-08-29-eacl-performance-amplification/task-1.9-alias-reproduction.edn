@@ -1,0 +1,32 @@
+{:evidence/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :operation :lookup-resources
+ :fixture :one-exact-same-resource-arrow-alias
+ :public-result-ids ["document"]
+ :physical-scan-count 9
+ :duplicate-identical-scan-group-widths [3 2 2]
+ :observation
+ {:denotation-correct? true
+  :duplicate-traversal-work-reproduced? true
+  :confidence :high}
+ :raw-scans
+ [{:operation :subject->resources
+   :args (:user 8 3 :organization {:direction :asc})}
+  {:operation :subject->resources
+   :args (:organization 9 4 :document {:direction :asc})}
+  {:operation :resource->subjects
+   :args (:document 10 4 :organization {:direction :asc})}
+  {:operation :subject->resources
+   :args (:user 8 3 :organization
+          {:direction :asc :bound-eid 8 :inclusive-bound? false})}
+  {:operation :subject->resources
+   :args (:user 8 3 :organization {:direction :asc})}
+  {:operation :subject->resources
+   :args (:user 8 3 :organization {:direction :asc})}
+  {:operation :subject->resources
+   :args (:organization 9 4 :document {:direction :asc})}
+  {:operation :resource->subjects
+   :args (:document 10 4 :organization {:direction :asc})}
+  {:operation :resource->subjects
+   :args (:organization 9 3 :user
+          {:direction :asc :bound-eid 7 :inclusive-bound? false})}]}

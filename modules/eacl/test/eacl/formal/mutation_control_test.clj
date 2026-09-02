@@ -59,19 +59,26 @@
 
 (defn- argument-ignoring-constant-fn?
   "True for a mutant expression that ignores every argument and returns a
-  literal: `(constantly x)`, or `(fn [& _] x)` and its underscore-parameter
-  variants. Such a mutant cannot be killed through production execution -
-  the kill assertion is decidable from the two literals alone."
+  literal: `(constantly x)`, or any `fn` whose single body form is a
+  constant (regardless of parameter naming - `(fn [a b] :rejected)` is as
+  undetectable through production execution as `(fn [& _] :rejected)`).
+  A body that is one of the parameters (an identity mutant) or any call
+  form still executes and is allowed."
   [form]
   (and (seq? form)
        (or (= 'constantly (first form))
            (and (contains? '#{fn fn*} (first form))
                 (vector? (second form))
-                (let [parameters (remove #{'&} (second form))
-                      body (drop 2 form)]
-                  (and (every? #(str/starts-with? (str %) "_") parameters)
-                       (= 1 (count body))
-                       (not (seq? (first body)))))))))
+                (let [parameters (set (remove #{'&} (second form)))
+                      body (drop 2 form)
+                      body-form (first body)
+                      references-parameter?
+                      (some parameters
+                            (filter symbol?
+                                    (tree-seq coll? seq [body-form])))]
+                  (and (= 1 (count body))
+                       (not (seq? body-form))
+                       (not references-parameter?)))))))
 
 (defn- with-redefs-bindings
   "Every `[symbol expression]` pair bound by any `with-redefs` inside `form`."
@@ -381,70 +388,3 @@
                {:id :positive-model-kill
                 :mechanism :executed-model
                 :killed-by {:gate :apalache-mutation-control}})))))
-
-(deftest manifest-validator-rejects-corrupted-mutation-count-test
-  (let [candidate
-        (-> (edn/read-string
-             (slurp (repo/file "formal" "verification" "manifest.edn")))
-            (update-in [:mutation-control :registered] inc))
-        temp-file
-        (java.nio.file.Files/createTempFile
-         "eacl-corrupt-manifest-"
-         ".edn"
-         (make-array java.nio.file.attribute.FileAttribute 0))
-        dafny-report-file
-        (java.nio.file.Files/createTempFile
-         "eacl-test-dafny-verification-"
-         ".json"
-         (make-array java.nio.file.attribute.FileAttribute 0))]
-    (try
-      (spit (.toFile temp-file) (pr-str candidate))
-      ;; Count-drift rejection does not depend on a completed Dafny build.
-      ;; Give the validator a parseable, hermetic report so this negative test
-      ;; executes identically in the ordinary, parity, and formal jobs.
-      (spit (.toFile dafny-report-file) "{}")
-      (let [builder
-            (ProcessBuilder.
-             [(.getCanonicalPath
-               (repo/file "bin" "validate-verification-manifest"))])
-            environment (.environment builder)
-            _ (.put environment
-                    "EACL_REPO_ROOT"
-                    (.getCanonicalPath (repo/file ".")))
-            _ (.put environment
-                    "EACL_VERIFICATION_MANIFEST"
-                    (str temp-file))
-            _ (.put environment
-                    "EACL_DAFNY_VERIFICATION_REPORT"
-                    (str dafny-report-file))
-            _ (.redirectErrorStream builder true)
-            process (.start builder)
-            output (slurp (.getInputStream process))
-            exit (.waitFor process)]
-        (is (= 2 exit)
-            "invalid evidence must not masquerade as expected assurance withholding")
-        (is (str/includes? output ":mutation-control/registered") output))
-      (finally
-        (java.nio.file.Files/deleteIfExists temp-file)
-        (java.nio.file.Files/deleteIfExists dafny-report-file)))))
-
-(deftest ledger-matches-registry-test
-  (let [{:keys [mutants retired-mutant-groups]} (registry)
-        clojure-mutants
-        (filterv #(= :clojure (get-in % [:control :kind])) mutants)
-        apalache-mutants
-        (filterv #(= :apalache (get-in % [:control :kind])) mutants)
-        retired (mapcat :ids retired-mutant-groups)
-        ledger (edn/read-string
-                (slurp (repo/file "formal" "verification"
-                                  "mutation-control.edn")))]
-    (testing "totals"
-      (is (= (count mutants) (:mutants ledger)))
-      (is (= (:mutants ledger) (:killed ledger)))
-      (is (zero? (:survived ledger)))
-      (is (= (count retired) (:retired-invalid-controls ledger))))
-    (testing "per-control-kind counts"
-      (is (= (count clojure-mutants)
-             (get-in ledger [:controls :clojure :mutants])))
-      (is (= (count apalache-mutants)
-             (get-in ledger [:controls :apalache :mutants]))))))

@@ -30,27 +30,26 @@
                     :reason reason}
                    data))))
 
-(defn- exact-natural? [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value) (js/Number.isSafeInteger value)))
-   (<= 0 value exact-integer/maximum)))
+(defn- semantic-candidate-key [candidate]
+  (select-keys candidate required-candidate-keys))
 
 (defn- normalize-candidate [index candidate]
   (when-not (map? candidate)
     (invalid! :invalid-candidate "Vector candidate must be a map."
               {:index index :candidate candidate}))
-  (let [keys (set (keys candidate))]
-    (when-not (and (every? keys required-candidate-keys)
-                   (every? #(or (contains? required-candidate-keys %)
-                                (contains? optional-candidate-keys %))
-                           keys))
-      (invalid! :invalid-candidate-fields
-                "Vector candidate has unknown or missing fields."
-                {:index index
-                 :required-keys required-candidate-keys
-                 :optional-keys optional-candidate-keys
-                 :actual-keys keys})))
+  ;; Closed key set without allocating one: every required key present and
+  ;; the map holds nothing beyond the required keys plus the one optional key.
+  (when-not (and (every? #(contains? candidate %) required-candidate-keys)
+                 (case (count candidate)
+                   5 true
+                   6 (contains? candidate :true-nodes)
+                   false))
+    (invalid! :invalid-candidate-fields
+              "Vector candidate has unknown or missing fields."
+              {:index index
+               :required-keys required-candidate-keys
+               :optional-keys optional-candidate-keys
+               :actual-keys (set (keys candidate))}))
   (when-not (contains? #{:forward :reverse} (:direction candidate))
     (invalid! :invalid-direction "Vector candidate direction is invalid."
               {:index index :direction (:direction candidate)}))
@@ -60,7 +59,7 @@
                 "Vector candidate entity types must be keywords."
                 {:index index :field field :value (get candidate field)})))
   (doseq [field [:subject-eid :resource-eid]]
-    (when-not (exact-natural? (get candidate field))
+    (when-not (exact-integer/natural? (get candidate field))
       (invalid! :invalid-typed-identity
                 "Vector candidate identifiers must be portable natural integers."
                 {:index index :field field :value (get candidate field)})))
@@ -73,7 +72,9 @@
       (invalid! :invalid-witness
                 "Vector candidate witness nodes must be a set of plan-node keys."
                 {:index index :true-nodes true-nodes})))
-  (update candidate :true-nodes #(or % #{})))
+  (if (:true-nodes candidate)
+    candidate
+    (assoc candidate :true-nodes #{})))
 
 (defn- normalize-candidates [candidates]
   (when-not (vector? candidates)
@@ -84,24 +85,20 @@
               "Vector candidate width exceeds the physical maximum."
               {:width (count candidates)
                :maximum-width backend/maximum-direct-membership-batch-width}))
-  (let [normalized (mapv normalize-candidate (range) candidates)
-        identities (mapv #(select-keys % required-candidate-keys) normalized)]
-    (when-not (= (count identities) (count (distinct identities)))
-      (invalid! :duplicate-candidate
-                "Vector candidates must have distinct typed identities."
-                {:width (count identities)}))
+  (let [normalized (mapv normalize-candidate (range) candidates)]
+    ;; A single candidate (the point-check shape) cannot collide with itself.
+    (when (> (count normalized) 1)
+      (let [identities (mapv semantic-candidate-key normalized)]
+        (when-not (= (count identities) (count (distinct identities)))
+          (invalid! :duplicate-candidate
+                    "Vector candidates must have distinct typed identities."
+                    {:width (count identities)}))))
     normalized))
-
-(defn- roots [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
-
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
 
 (defn- direct-probe [candidate descriptor]
   (when-let [{:keys [relation-id]}
-             (relation-partition descriptor (:subject-type candidate))]
+             (operator-plan/relation-partition
+              descriptor (:subject-type candidate))]
     (if (= :forward (:direction candidate))
       {:direction :forward
        :descriptor {:subject-type (:subject-type candidate)
@@ -116,48 +113,55 @@
                     :subject-type (:subject-type candidate)}
        :candidate [(:subject-type candidate) (:subject-eid candidate)]})))
 
-(defn- empty-node-masks [width]
-  {:known-true (bitmask/native width)
-   :known-false (bitmask/native width)
-   :unresolved (bitmask/from-indexes width (range width))
-   :failed (bitmask/native width)})
+(defn- root-masks
+  "Observation-only aligned masks for one resolved row, derived from the memo
+  when a `*vector-stats*` observer asks for them. The production path keeps
+  no mask state: the memo row is the single source of every decision, so the
+  masks are a projection of it rather than a second bookkeeping structure
+  mutated on every resolution."
+  [width row]
+  (let [indexes-where (fn [pred]
+                        (bitmask/from-indexes
+                         width (filter #(pred (nth row %)) (range width))))]
+    {:known-true (bitmask/portable (indexes-where true?))
+     :known-false (bitmask/portable (indexes-where false?))
+     :unresolved (bitmask/portable (indexes-where #(= unresolved %)))
+     :failed (bitmask/portable (bitmask/native width))}))
 
-(defn- resolve-mask! [mask-state width node-key index value]
-  (let [masks (or (get @mask-state node-key)
-                  (empty-node-masks width))]
-    (bitmask/clear-bit! (:unresolved masks) index)
-    (bitmask/set-bit! (if value (:known-true masks) (:known-false masks))
-                      index)
-    (swap! mask-state assoc node-key masks)))
-
-(defn- portable-masks [masks]
-  (into {}
-        (map (fn [[key mask]] [key (bitmask/portable mask)]))
-        masks))
+(declare check-many-normalized)
 
 (defn check-many-eids
   "Evaluates a distinct vector of complete typed candidate contexts and
   returns one aligned Boolean per candidate, or throws without returning a
   partial vector. Direct leaves are regrouped through the bounded backend
   dispatcher; arrow leaves retain exact scalar semantics."
-  [{:keys [adapter plan candidates cache-lookup cache-publish-many!
-           limits permission node-id]}]
+  [{:keys [plan candidates] :as options}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Vector evaluation requires a sealed operator plan."
               {:plan-domain (:domain plan)}))
-  (let [candidates (normalize-candidates candidates)
-        width (count candidates)]
+  (check-many-normalized
+   (assoc options :candidates (normalize-candidates candidates))))
+
+(defn- check-many-normalized
+  "Trusted core of `check-many-eids`: the candidate vector is already
+  normalized (each caller normalizes exactly once at its boundary)."
+  [{:keys [adapter plan candidates cache-lookup cache-publish-many!
+           limits permission node-id]}]
+  (let [width (count candidates)]
     (if (zero? width)
       []
       (let [root-permission (or permission (:root plan))
-            root-id (or node-id (get (roots plan) root-permission))
-            memo (atom {})
-            active (atom #{})
-            mask-state (atom {})
-            node-roots (roots plan)
+            root-id (or node-id
+                        (get (operator-plan/expression-roots plan)
+                             root-permission))
+            memo (volatile! {})
+            active (volatile! #{})
+            unresolved-row (vec (repeat width unresolved))
+            node-roots (operator-plan/expression-roots plan)
+            predicate-programs (:predicate-programs plan)
             cache-lookup (or cache-lookup (constantly direct/cache-miss))
-            completed-leaves (atom [])]
+            completed-leaves (volatile! [])]
         (when-not (or (nil? cache-publish-many!)
                       (fn? cache-publish-many!))
           (invalid! :invalid-cache-publication
@@ -168,44 +172,39 @@
                     "Vector predicate root is outside the sealed plan."
                     {:permission root-permission :node-id node-id}))
         (letfn [(commit! [node-key values indexes]
-                  (let [current (get @memo node-key
-                                     (vec (repeat width unresolved)))
-                        next (reduce (fn [result index]
-                                       (let [value (boolean (nth values index))]
-                                         (resolve-mask! mask-state width node-key
-                                                        index value)
-                                         (assoc result index value)))
-                                     current indexes)]
-                    (swap! memo assoc node-key next)
-                    next))
+                  (let [current (get @memo node-key unresolved-row)
+                        resolved (reduce (fn [result index]
+                                           (assoc result index
+                                                  (boolean (nth values index))))
+                                         current indexes)]
+                    (vswap! memo assoc node-key resolved)
+                    resolved))
                 (evaluate! [[permission node-id :as node-key] indexes]
-                  (let [initial (get @memo node-key
-                                    (vec (repeat width unresolved)))
+                  (let [initial (get @memo node-key unresolved-row)
                         witnessed
                         (reduce
                          (fn [values index]
                            (if (contains? (:true-nodes (nth candidates index))
                                           node-key)
-                             (do
-                               (resolve-mask! mask-state width node-key index true)
-                               (assoc values index true))
+                             (assoc values index true)
                              values))
                          initial indexes)
-                        _ (swap! memo assoc node-key witnessed)
+                        _ (vswap! memo assoc node-key witnessed)
                         pending (filterv #(= unresolved (nth witnessed %))
                                          indexes)]
                     (if (empty? pending)
                       witnessed
                       (do
-                        (doseq [index pending]
-                          (when (contains? @active [node-key index])
-                            (scalar/active-recursion-outcome
-                             {:node node-key :candidate-index index})))
-                        (swap! active into (map #(vector node-key %) pending))
+                        (let [active-now @active]
+                          (doseq [index pending]
+                            (when (contains? active-now [node-key index])
+                              (scalar/active-recursion-outcome
+                               {:node node-key :candidate-index index}))))
+                        (vswap! active into (map #(vector node-key %) pending))
                         (add-stat! :node-candidate-evaluations (count pending))
                         (let [predicate
-                              (get-in plan
-                                      [:predicate-programs permission node-id])
+                              (get-in predicate-programs
+                                      [permission node-id])
                               instruction (:instruction predicate)
                               values
                               (case instruction
@@ -229,7 +228,7 @@
                                   ;; every demanded subgroup in the vector has
                                   ;; completed. A later failure therefore cannot
                                   ;; publish a successful prefix.
-                                  (swap! completed-leaves into
+                                  (vswap! completed-leaves into
                                          (mapv vector probes decisions))
                                   (reduce (fn [result index]
                                             (assoc result index false))
@@ -333,20 +332,21 @@
                                           "Vector plan contains an unknown predicate instruction."
                                           {:node node-key
                                            :instruction instruction}))]
-                          (swap! active #(reduce disj %
+                          (vswap! active #(reduce disj %
                                                  (map (fn [index]
                                                         [node-key index])
                                                       pending)))
                           (commit! node-key values pending))))))]
           (try
             (let [decisions (evaluate! [root-permission root-id]
-                                       (vec (range width)))
-                  masks (get @mask-state [root-permission root-id])]
-              (add-stat! :candidate-count width)
-              (add-stat! :mask-word-count (* 4 (bitmask/word-count width)))
+                                       (vec (range width)))]
               (when *vector-stats*
+                (add-stat! :candidate-count width)
+                (add-stat! :mask-word-count (* 4 (bitmask/word-count width)))
                 (swap! *vector-stats* assoc
-                       :root-masks (portable-masks masks)))
+                       :root-masks
+                       (root-masks width
+                                   (get @memo [root-permission root-id]))))
               (when cache-publish-many!
                 (cache-publish-many! @completed-leaves))
               (mapv boolean decisions))
@@ -355,15 +355,7 @@
               (throw error))))))))
 
 (def ^:private point-cache-options
-  {:valid? boolean?
-   :weight-fn (constantly 160)})
-
-(def ^:private leaf-cache-options
-  {:valid? boolean?
-   :weight-fn (constantly 128)})
-
-(defn- semantic-candidate-key [candidate]
-  (select-keys candidate required-candidate-keys))
+  {:valid? boolean?})
 
 (defn- point-cache-key
   [plan permission node-id scope-identity candidate]
@@ -371,15 +363,11 @@
    (:fingerprint plan) permission node-id scope-identity
    (semantic-candidate-key candidate)])
 
-(defn- leaf-cache-key [probe]
-  [:operator-acyclic-direct-membership 1
-   (:direction probe) (:descriptor probe) (:candidate probe)])
-
 (defn check-cached-many-eids
   "Evaluates an aligned acyclic vector with proof-compatible completed point
-  and direct-leaf reuse. Cache hits only fill already demanded decisions. All
-  point and leaf misses remain private until the entire demanded vector
-  succeeds; cache-disabled execution performs no cache work."
+  reuse. Cache hits only fill already demanded decisions. Point misses remain
+  private until the entire demanded vector succeeds; cache-disabled execution
+  performs no cache work."
   [{:keys [plan candidates permission node-id scope-identity] :as options}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
@@ -387,77 +375,53 @@
               {:plan-domain (:domain plan)}))
   (let [candidates (normalize-candidates candidates)
         permission (or permission (:root plan))
-        node-id (or node-id (get (roots plan) permission))
+        node-id (or node-id
+                    (get (operator-plan/expression-roots plan) permission))
         options (assoc options :candidates candidates
                        :permission permission :node-id node-id)
         store subproblem/*store*]
     (if (or (nil? store) (empty? candidates))
-      (check-many-eids options)
+      (check-many-normalized options)
       (let [looked-up
             (mapv
              (fn [candidate]
                (let [key (point-cache-key
                           plan permission node-id scope-identity candidate)]
                  (if-let [resolved
-                          (subproblem/lookup!
-                           store :denotation key point-cache-options)]
+                          (subproblem/lookup-denotation! key)]
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
                       :decision (:value resolved) :cached? true})
                    {:candidate candidate :key key :cached? false})))
              candidates)
-            misses (mapv :candidate (remove :cached? looked-up))
-            leaf-hits (atom #{})
-            leaf-lookup
-            (fn [probe]
-              (let [key (leaf-cache-key probe)]
-                (if-let [resolved
-                         (subproblem/lookup!
-                          store :projection key leaf-cache-options)]
-                  (do
-                    (swap! leaf-hits conj key)
-                    (subproblem/record-avoided-backend-operation! store)
-                    (:value resolved))
-                  direct/cache-miss)))
-            leaf-publication
-            (fn [entries]
-              (when subproblem/*populate?*
-                (let [published (atom @leaf-hits)]
-                  (doseq [[probe decision] entries
-                          :let [key (leaf-cache-key probe)]
-                          :when (not (contains? @published key))]
-                    (swap! published conj key)
-                    (subproblem/publish!
-                     store :projection key leaf-cache-options decision)))))
+            miss-records (filterv (complement :cached?) looked-up)
+            misses (mapv :candidate miss-records)
+            ;; Miss decisions align positionally with `miss-records`, so the
+            ;; scatter back into candidate order walks one miss index rather
+            ;; than hashing each candidate's semantic identity twice.
             miss-decisions
             (if (seq misses)
-              (check-many-eids
-               (assoc options
-                      :candidates misses
-                      :cache-lookup leaf-lookup
-                      :cache-publish-many! leaf-publication))
+              (check-many-normalized (assoc options :candidates misses))
               [])
-            decisions-by-key
-            (into {}
-                  (map (fn [candidate decision]
-                         [(semantic-candidate-key candidate) decision])
-                       misses miss-decisions))
             decisions
-            (mapv (fn [{:keys [candidate decision cached?]}]
-                    (if cached?
-                      decision
-                      (get decisions-by-key
-                           (semantic-candidate-key candidate))))
-                  looked-up)]
+            (loop [index 0 miss-index 0 decisions (transient [])]
+              (if (= index (count looked-up))
+                (persistent! decisions)
+                (let [{:keys [decision cached?]} (nth looked-up index)]
+                  (if cached?
+                    (recur (inc index) miss-index (conj! decisions decision))
+                    (recur (inc index) (inc miss-index)
+                           (conj! decisions
+                                  (nth miss-decisions miss-index)))))))]
         ;; The full miss vector and its leaf subgroups have succeeded before
         ;; any completed point becomes externally reusable.
         (when subproblem/*populate?*
-          (doseq [{:keys [candidate key cached?]} looked-up
-                  :when (not cached?)]
-            (subproblem/publish!
-             store :denotation key point-cache-options
-             (get decisions-by-key (semantic-candidate-key candidate)))))
-        (add-stat! :point-cache-hits (count (filter :cached? looked-up)))
+          (dotimes [miss-index (count miss-records)]
+            (subproblem/publish-denotation!
+             (:key (nth miss-records miss-index))
+             point-cache-options
+             (nth miss-decisions miss-index))))
+        (add-stat! :point-cache-hits (- (count looked-up) (count misses)))
         (add-stat! :point-cache-misses (count misses))
         decisions))))

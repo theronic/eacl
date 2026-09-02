@@ -1,6 +1,5 @@
 (ns eacl.datomic.schema
-  (:require [clojure.set]
-            [clojure.walk :as walk]
+  (:require [clojure.walk :as walk]
             [datomic.api :as d]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.relationships.storage :as relationship-storage]
@@ -481,8 +480,7 @@
          :backend :datomic})))
     (let [relation-eids
           (if (d/entid db :eacl.relation/relation-name)
-            (into [] (map :e)
-                  (d/datoms db :aevt :eacl.relation/relation-name))
+            (mapv :e (d/datoms db :aevt :eacl.relation/relation-name))
             [])
           missing-relations
           (filterv #(empty? (d/datoms db :eavt %
@@ -518,25 +516,8 @@
 ; but when deleting Relations, we need to check if there are any relationships
 ; can we use the existing read-relationships internals for this?
 
-(defn calc-set-deltas [before after]
-  {:additions   (clojure.set/difference after before)
-   :unchanged   (clojure.set/intersection before after)
-   :retractions (clojure.set/difference before after)})
-
-(defn compare-schema
-  "Compares before & after schema (without DB IDs) and returns a diff via clojure.set/difference."
-  [{before-relations   :relations
-    before-permissions :permissions}
-   {after-relations   :relations
-    after-permissions :permissions}]
-  ; how to get a nice left vs. right diff?
-  ; when can we ditch the setval :db/id?
-  (let [before-relations-set   (set before-relations)
-        after-relations-set    (set after-relations)
-        before-permissions-set (set before-permissions)
-        after-permissions-set  (set after-permissions)]
-    {:relations   (calc-set-deltas before-relations-set after-relations-set)
-     :permissions (calc-set-deltas before-permissions-set after-permissions-set)}))
+(def calc-set-deltas model/calc-set-deltas)
+(def compare-schema model/compare-schema)
 
 (defn- cas-failure-data
   [throwable]
@@ -775,20 +756,20 @@
                           [(:additions relations)
                            (:retractions relations)
                            (:additions permissions)
-                           (:retractions permissions)]))]
-    (let [tx-data (if no-op? [] tx-data)]
-      (assoc semantic
-             :tx-data tx-data
-             :speculative-tx-data
-             (if no-op?
-               []
-               (conj tx-data
-                     [:db/add schema-entity :eacl/schema-version (d/squuid)]))
-             :relation-commit-guards relation-commit-guards
-             :schema-entity schema-entity
-             :schema-stamp-entity schema-stamp-entity
-             :no-op? no-op?
-             :schema-string schema-string))))
+                           (:retractions permissions)]))
+        effective-tx-data (if no-op? [] tx-data)]
+    (assoc semantic
+           :tx-data effective-tx-data
+           :speculative-tx-data
+           (if no-op?
+             []
+             (conj effective-tx-data
+                   [:db/add schema-entity :eacl/schema-version (d/squuid)]))
+           :relation-commit-guards relation-commit-guards
+           :schema-entity schema-entity
+           :schema-stamp-entity schema-stamp-entity
+           :no-op? no-op?
+           :schema-string schema-string)))
 
 (defn plan-schema-replacement
   "Pure prospective schema replacement plan for one immutable Datomic db.

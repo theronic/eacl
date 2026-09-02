@@ -3,7 +3,7 @@
 
   The raw impl API is the 0tx consumer surface: bare immutable db values,
   no client caches. Envelopes are the ratcheted numbers recorded in
-  formal/verification/recursive-op-count-envelopes.edn (V1/V2 current
+  formal/baselines/recursive-op-count-envelopes.edn (V1/V2 current
   truth: two schema proofs and two plan compiles per raw list request;
   zero proofs per raw point check). Per-push, no wall-clock assertions."
   (:require [clojure.edn :as edn]
@@ -21,7 +21,7 @@
             [eacl.verified-kernel :as verified]))
 
 (def ^:private envelopes
-  (-> (repo/file "formal" "verification" "recursive-op-count-envelopes.edn")
+  (-> (repo/file "formal" "baselines" "recursive-op-count-envelopes.edn")
       slurp
       edn/read-string
       :work-envelopes))

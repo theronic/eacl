@@ -1,10 +1,10 @@
 (ns eacl.formal.retained-heap-benchmark
   "Generated-engine post-full-GC retained-live-heap regression gate.
 
-  Logical cache weights, caller-thread allocation, and heap use are distinct
-  dimensions. This gate measures JVM heap bytes directly and retains the seed,
-  clients, and query across both snapshots. It is a host-runtime regression
-  gate, not a portable peak-heap theorem or SLA."
+  Logical retained-entry capacities, caller-thread allocation, and heap use are
+  distinct dimensions. This gate measures JVM heap bytes directly and retains
+  the seed, clients, and query across both snapshots. It is a host-runtime
+  regression gate, not a portable peak-heap theorem or SLA."
   (:refer-clojure :exclude [run!])
   (:require
    [datascript.core :as ds]

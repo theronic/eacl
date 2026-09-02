@@ -22,7 +22,10 @@
          :evaluation :timeout-ms
          :cancellation-token :aggregate-limits :authorization]))
 
+(def ^:dynamic ^:no-doc *validated-request?* false)
+
 (defn validate!
+  "Every production caller consults `*validated-request?*` before calling."
   [filters]
   (when-not (map? filters)
     (throw

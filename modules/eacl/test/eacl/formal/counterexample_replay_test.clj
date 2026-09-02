@@ -30,23 +30,23 @@
     :EACL-FORMAL-012
     eacl.formal.production-kernel-test/generated-java-indexed-scan-response-boundary
     :EACL-FORMAL-013
-    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
+    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
     :EACL-FORMAL-014
     eacl.datomic.trusted-surface-audit-test/deleted-trusted-surfaces-stay-deleted-test
     :EACL-FORMAL-015
-    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
+    eacl.datascript.snapshot-lifecycle-test/full-rotation-detaches-every-runtime-cache-child-test
     :EACL-FORMAL-016
-    eacl.subproblem-cache-test/lookup-never-starts-work-test
+    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
     :EACL-FORMAL-017
-    eacl.subproblem-cache-test/independent-identical-misses-never-wait-test
+    eacl.formal.cache-strategy-adversarial-test/publication-and-independent-computation-traces-exhaustive-test
     :EACL-FORMAL-018
-    eacl.subproblem-cache-test/lifecycle-detachment-prevents-late-publication-test
+    eacl.datascript.snapshot-lifecycle-test/full-rotation-detaches-every-runtime-cache-child-test
     :EACL-FORMAL-019
     eacl.backend.v8-test/descending-merge-retains-maximum-eid-test
     :EACL-FORMAL-020
     eacl.backend.v8-test/generic-merge-retains-nil-key-test
     :EACL-FORMAL-021
-    eacl.datomic.config-test/shared-subproblem-cache-config-is-forwarded-and-validated-test
+    eacl.datomic.config-test/flat-denotation-cache-config-is-forwarded-and-validated-test
     :EACL-FORMAL-022
     eacl.formal.state-trace-differential-test/recursive-generated-authority-covers-complete-public-results
     :EACL-FORMAL-023
@@ -60,13 +60,13 @@
     :EACL-FORMAL-027
     eacl.backend.v8-test/runtime-guards-reject-negative-internal-eids-test
     :EACL-FORMAL-028
-    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
     :EACL-FORMAL-029
     eacl.formal.counterexample-replay-test/counterexample-corpus-is-complete-and-closed-test
     :EACL-FORMAL-030
     eacl.formal.production-kernel-test/generated-java-checks-linear-routing-certificates
     :EACL-FORMAL-031
-    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    eacl.formal.counterexample-replay-test/clean-generated-javascript-contract-expectations-test
     :EACL-FORMAL-032
     eacl.datascript.contract-test/one-authority-is-the-only-production-engine-test
     :EACL-FORMAL-033
@@ -78,7 +78,7 @@
     :EACL-FORMAL-036
     eacl.formal.production-kernel-test/generated-java-continues-pages-from-verified-lookahead
     :EACL-FORMAL-037
-    eacl.datomic.impl.indexed-test/schema-cache-carries-shared-engine-analysis-test
+    eacl.datomic.impl.indexed-test/indexed-facade-has-no-shared-schema-cache-surface-test
     :EACL-FORMAL-038
     eacl.verified-kernel-test/routing-certificate-result-is-bound-to-its-input
     :EACL-FORMAL-039
@@ -102,11 +102,11 @@
     :EACL-FORMAL-048
     eacl.characterization-fixture-test/formal-ci-isolates-and-stops-performance-nrepls-test
     :EACL-FORMAL-049
-    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    eacl.datomic.recursive-cache-test/recursive-cursor-falls-back-to-exact-snapshot-after-relevant-write-test
     :EACL-FORMAL-050
     eacl.formal.state-trace-differential-test/generated-can-reuses-the-public-root-classification
     :EACL-FORMAL-051
-    eacl.characterization-fixture-test/quantitative-performance-gates-are-well-formed-test
+    eacl.formal.state-trace-differential-test/generated-can-reuses-the-public-root-classification
     :EACL-FORMAL-052
     eacl.datascript.consistency-v3-test/map-can-rejects-malformed-consistency-test
     :EACL-FORMAL-053
@@ -134,7 +134,7 @@
     :EACL-FORMAL-064
     eacl.engine.stable-page-test/page-composition-test
     :EACL-FORMAL-065
-    eacl.engine.stable-reducer-test/interior-admission-keys-are-node-qualified-test
+    eacl.engine.sealed-plan-test/exact-alias-deduplicates-only-the-acyclic-execution-frontier-test
     :EACL-FORMAL-066
     eacl.engine.stable-reducer-test/frozen-baseline-denotation-differential-test
     :EACL-FORMAL-067
@@ -260,15 +260,9 @@
                     (io/file (.getParentFile file) artifact))
                    (str directory "/" artifact)))
              entry))
-         (entry-files))
-        manifest (read-edn
-                  (repo/file "formal" "verification" "manifest.edn"))
-        revision (:counterexample-corpus-revision manifest)]
+         (entry-files))]
     (is (= (set (keys regression-vars))
-           (set (map :id entries))
-           (set (:fixed revision))))
-    (is (= :EACL-FORMAL-067 (:latest revision)))
-    (is (= 67 (count entries)))))
+           (set (map :id entries))))))
 
 (deftest replay-every-minimized-regression-test
   (let [available
@@ -279,6 +273,16 @@
          regression-vars)]
     (is (seq available)
         "each isolated classpath must expose some closing regressions")
+    ;; Module-isolated nREPLs legitimately skip entries outside their
+    ;; classpath; the one job meant to be the complete replay gate sets
+    ;; this property so silent skips fail it instead of shrinking it.
+    (when (= "true" (System/getProperty "eacl.replay.strict"))
+      (is (= (count regression-vars) (count available))
+          (str "strict replay requires every recorded regression to "
+               "resolve; missing: "
+               (vec
+                (remove (set (map second available))
+                        (map second regression-vars))))))
     (doseq [[bug-id test-symbol test-var] available]
       (testing (name bug-id)
         (is (var? test-var) (str "missing replay " test-symbol))

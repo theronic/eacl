@@ -1,0 +1,16 @@
+{:format :eacl.performance/acceptance-v1
+ :frozen? true
+ :evidence-format :eacl.performance/evidence-v1
+ :required-identity-fields
+ #{:source :dependencies :runtime :environment :backend :fixture :basis
+   :command :cache-regime :operation-boundary :estimator}
+ :required-mandatory-metrics
+ #{:commands :fetched-values :candidates-examined :probes}
+ :identity-constraints
+ {:source {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"}
+  :backend {:id :datascript}
+  :fixture {:id :golden-fixture}
+  :operation-boundary :fully-realized-public-result
+  :estimator {:id :deterministic-golden :version 1}}
+ :canonical-decision-fields
+ [:format :phase :identity :raw-digest :elapsed :mandatory :optional]}

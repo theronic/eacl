@@ -1,30 +1,56 @@
 # single-flight-coordination Specification
 
 ## Purpose
-TBD - created by archiving change eacl-v8-root-fixes. Update Purpose after archive.
+
+Record the replacement of shared cache-computation coordination with
+independent request-owned computation and bounded nonblocking publication.
+
 ## Requirements
-### Requirement: Wedge-free coordination
-The subproblem single-flight coordinator SHALL never enter a state in which no participating thread can make progress. Specifically, no thread SHALL block on the computation-slot semaphore while holding any flight result lock, and no thread SHALL wait unboundedly on a flight whose owner cannot obtain a computation slot.
 
-#### Scenario: Convergent burst beyond the inflight bound
-- **WHEN** `max-inflight` is configured to N and more than N threads concurrently miss on overlapping subproblem keys, including a thread that becomes flight owner of a key other permit-holding threads subsequently join
-- **THEN** every request completes (value or typed error) within a bounded deadline; no permanent wedge occurs; the deterministic regression test (N=2, three threads, shared nested key — the schedule that wedges the current implementation) passes
+### Requirement: Cache misses retain independent request contracts
 
-#### Scenario: Read-only joiners under contention
-- **WHEN** `lookup!` joins an in-flight computation while the executing side is saturated at `max-inflight`
-- **THEN** the lookup completes when the flight completes or fails; it SHALL NOT hang indefinitely on a flight whose owner is queued for a slot
+Every authorization cache miss SHALL compute under its own request deadline,
+cancellation, counters, and failure contract. A request MUST NOT acquire
+ownership of a shared computation, join another request's result, inherit its
+failure, or wait for cache computation. Identical successful values MAY race a
+bounded atomic publication attempt.
 
-### Requirement: Bounded concurrent execution
-At most `max-inflight` top-level subproblem computations SHALL execute concurrently per client. Any documented fallback that executes outside a slot (for example a timed-acquire inline fallback, if that mechanism is chosen) SHALL be counted in a dedicated metric so the effective bound is observable.
+#### Scenario: Concurrent identical misses
+- **WHEN** several requests miss the same lifecycle-qualified key concurrently
+- **THEN** each may compute and return its own valid value without waiting for
+  another request
+- **AND** at most one compatible bounded publication wins
 
-#### Scenario: Saturation accounting
-- **WHEN** the coordinator is saturated and additional misses arrive
-- **THEN** executing computations never exceed `max-inflight` plus the documented fallback allowance, and `cache-stats` reports slot waits and any out-of-slot executions distinctly
+#### Scenario: One request fails
+- **WHEN** one concurrent miss is cancelled, expires, or fails
+- **THEN** no peer inherits that outcome and later requests remain able to
+  compute and publish
 
-### Requirement: Honest hit metrics
-Single-flight joins SHALL NOT be reported as cache hits. Hit counters SHALL count only lookups served from completed cached state; join waits SHALL be counted separately.
+### Requirement: Cache bounds govern retained state and publication attempts
 
-#### Scenario: Join is not a hit
-- **WHEN** a caller joins an in-flight computation and waits for its completion
-- **THEN** `:single-flight-waits` increments and tier hit counters do not
+Cache configuration SHALL bound retained tier weight, per-entry weight,
+admission metadata, and local atomic publication attempts. It SHALL NOT claim
+to bound application callback concurrency. Any optional service-edge overload
+policy is a separate routed-execution control and MUST NOT be represented as
+cache state or change cache-hit eligibility.
 
+#### Scenario: Cache capacity is saturated
+- **WHEN** a valid computed value cannot fit its cache tier
+- **THEN** the request returns its own value without shared admission or wait
+
+#### Scenario: Optional service admission is saturated
+- **WHEN** the separate routed-execution policy rejects new semantic execution
+- **THEN** it returns its documented typed outcome at that boundary
+- **AND** cache metrics do not report a cache wait, hit, or publication
+
+### Requirement: Metrics describe completed state and bounded attempts
+
+Hit counters SHALL count only values read from completed compatible entries.
+Metrics MAY report misses, bypasses, publication attempts, wins, races,
+rejections, contention, eviction, and detached publications. They MUST NOT
+expose nonexistent computation-owner, join, slot-wait, or waiter metrics.
+
+#### Scenario: Miss loses publication race
+- **WHEN** a request misses, computes, and another request publishes first
+- **THEN** the initiating request remains a miss and the bounded publication
+  race is reported separately from completed hits

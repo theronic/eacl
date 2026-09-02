@@ -1,0 +1,31 @@
+{:format :eacl.performance/evidence-v1
+ :phase :golden
+ :identity
+ {:source {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+           :tree "golden-tree"
+           :artifact "golden-artifact"
+           :worktree-path "/volatile/golden"}
+  :dependencies {:classpath-sha256 "golden-classpath"}
+  :runtime {:language :clj :version "1.12.2" :jvm "golden-jvm"}
+  :environment {:host-class ["test" "portable" "0"]
+                :captured-at "volatile"
+                :pid 123}
+  :backend {:id :datascript :adapter-fingerprint :golden-adapter}
+  :fixture {:id :golden-fixture :digest "golden-fixture-digest"}
+  :basis {:kind :ordinary :revision 7 :identity "golden-basis"}
+  :command {:operation :lookup-resources :demand {:first 2}}
+  :cache-regime :disabled
+  :operation-boundary :fully-realized-public-result
+  :estimator {:id :deterministic-golden :version 1}}
+ :metrics
+ {:elapsed {:unit :nanoseconds :samples [30 10 20]}
+  :mandatory
+  {:commands {:unit :count :samples [3 3 3]}
+   :fetched-values {:unit :count :samples [4 4 4]}
+   :candidates-examined {:unit :count :samples [5 5 5]}
+   :probes {:unit :count :samples [1 1 1]}}
+  :optional
+  {:allocated-bytes {:unit :bytes :samples [300 100 200]}
+   :cpu-nanos {:status :unsupported :reason :runtime-unavailable}}}
+ :raw [{:sample 1} {:sample 2} {:sample 3}]
+ :raw-digest "1ba828dce2e586b38b46d4e12c62ca2e24fb94cac265aa71b01340542e5f5703"}

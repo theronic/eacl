@@ -20,111 +20,19 @@ module CurrentCache {
     | HistoricalBasis
     | InadmissibleBasis
 
-  datatype EngineAuthority =
-    | LegacyAuthority
-    | VerifiedShadow
-    | VerifiedAuthority
-
-  function EvaluationAuthority(
-    configured: EngineAuthority,
-    basisClass: BasisClass,
-    completedAnswerCacheEnabled: bool
-  ): EngineAuthority
-  {
-    configured
-  }
-
-  lemma CacheEligibilityDoesNotSelectEngineAuthority(
-    configured: EngineAuthority,
-    basisClass: BasisClass,
-    completedAnswerCacheEnabled: bool
-  )
-    ensures
-      EvaluationAuthority(
-        configured,
-        basisClass,
-        completedAnswerCacheEnabled
-      ) == configured
-  {
-  }
-
-  datatype CurrentCacheStage =
-    | EligibilityStage
-    | GenerationStage
-    | ExactEntryStage
-    | ExactOnlyEntryStage
-    | ManagedEntryStage
-
-  datatype CurrentCacheAction =
-    | BypassCurrentCache
-    | ProbeExactEntry
-    | UseExactEntry
-    | ProbeManagedEntry
-    | UseManagedEntry
-    | ComputeSelectedValue
-    | ComputeExactValue
-
-  function DecideCurrentCache(
-    stage: CurrentCacheStage,
-    available: bool
-  ): CurrentCacheAction {
-    match stage
-    case EligibilityStage =>
-      if available then ProbeExactEntry else BypassCurrentCache
-    case GenerationStage =>
-      if available then ProbeExactEntry else BypassCurrentCache
-    case ExactEntryStage =>
-      if available then UseExactEntry else ProbeManagedEntry
-    case ExactOnlyEntryStage =>
-      if available then UseExactEntry else ComputeExactValue
-    case ManagedEntryStage =>
-      if available then UseManagedEntry else ComputeSelectedValue
-  }
-
-  lemma CurrentCacheHitRequiresAvailableEntry(
-    stage: CurrentCacheStage,
-    available: bool
-  )
-    ensures DecideCurrentCache(stage, available).UseExactEntry? ==>
-              (stage.ExactEntryStage? || stage.ExactOnlyEntryStage?) &&
-              available
-    ensures DecideCurrentCache(stage, available).UseManagedEntry? ==>
-              stage.ManagedEntryStage? && available
-  {
-  }
-
-  lemma CurrentCacheBypassRequiresIneligibleOrInactive(
-    stage: CurrentCacheStage,
-    available: bool
-  )
-    ensures DecideCurrentCache(stage, available).BypassCurrentCache? ==>
-              !available &&
-              (stage.EligibilityStage? || stage.GenerationStage?)
-  {
-  }
-
-  lemma CacheComputationRequiresASelectedBasisMiss(
-    stage: CurrentCacheStage,
-    available: bool
-  )
-    ensures DecideCurrentCache(stage, available).ComputeSelectedValue? ==>
-              stage.ManagedEntryStage? && !available
-    ensures DecideCurrentCache(stage, available).ComputeExactValue? ==>
-              stage.ExactOnlyEntryStage? && !available
-  {
-  }
-
-  datatype CurrentCacheDecision<T> =
-    | SelectedBasisMiss
-    | ExactBasisHit(value: T)
-    | ManagedLiftedHit(value: T)
-
   predicate ExactTierEligible(
     basisClass: BasisClass,
     completeBasisIdentity: bool
   ) {
     completeBasisIdentity &&
     (basisClass.OrdinaryBasis? || basisClass.HistoricalBasis?)
+  }
+
+  predicate ManagedTierEligible(
+    basisClass: BasisClass,
+    completeBasisIdentity: bool
+  ) {
+    completeBasisIdentity && basisClass.OrdinaryBasis?
   }
 
   lemma InadmissibleValuesBypassCompletedAnswers(
@@ -144,143 +52,365 @@ module CurrentCache {
   {
   }
 
-  datatype LookupPageDirection =
-    | ForwardLookupPage
-    | BackwardLookupPage
-
-  datatype AuthenticatedLookupPageIdentity =
-    | AuthenticatedLookupPageIdentity(
-        normalizedNonPageQuery: string,
-        direction: LookupPageDirection,
-        pageSize: nat,
-        internalBound: string
-      )
-
-  function LookupPageSemanticIdentity(
-    normalizedNonPageQuery: string,
-    direction: LookupPageDirection,
-    pageSize: nat,
-    internalBound: string
-  ): AuthenticatedLookupPageIdentity
-  {
-    AuthenticatedLookupPageIdentity(
-      normalizedNonPageQuery,
-      direction,
-      pageSize,
-      internalBound
-    )
-  }
-
-  lemma CursorTransportAndRecoveryDoNotChangeLookupPageIdentity(
-    normalizedNonPageQuery: string,
-    direction: LookupPageDirection,
-    pageSize: nat,
-    internalBound: string,
-    firstSignedTransport: string,
-    secondSignedTransport: string,
-    firstRequiresRebase: bool,
-    secondRequiresRebase: bool
+  lemma HistoricalBasisCannotUseManagedTier(
+    completeBasisIdentity: bool
   )
-    ensures
-      LookupPageSemanticIdentity(
-        normalizedNonPageQuery,
-        direction,
-        pageSize,
-        internalBound
-      ) ==
-      LookupPageSemanticIdentity(
-        normalizedNonPageQuery,
-        direction,
-        pageSize,
-        internalBound
-      )
+    ensures !ManagedTierEligible(
+              HistoricalBasis,
+              completeBasisIdentity
+            )
   {
   }
 
-  lemma DifferentInternalBoundsSeparateLookupPageIdentities(
-    normalizedNonPageQuery: string,
-    direction: LookupPageDirection,
-    pageSize: nat,
-    firstInternalBound: string,
-    secondInternalBound: string
+  lemma InadmissibleBasisCannotUseManagedTier(
+    completeBasisIdentity: bool
   )
-    requires firstInternalBound != secondInternalBound
-    ensures
-      LookupPageSemanticIdentity(
-        normalizedNonPageQuery,
-        direction,
-        pageSize,
-        firstInternalBound
-      ) !=
-      LookupPageSemanticIdentity(
-        normalizedNonPageQuery,
-        direction,
-        pageSize,
-        secondInternalBound
-      )
+    ensures !ManagedTierEligible(
+              InadmissibleBasis,
+              completeBasisIdentity
+            )
   {
+  }
+
+  // Runtime exact locators are opaque adapter tokens, but the portable cache
+  // boundary admits only nil, a cross-runtime safe natural, or a bounded
+  // nonempty string. Keeping that closed token domain here prevents a proof
+  // over strings alone from silently omitting supported numeric/nil locators.
+  const MaximumExactLocatorNatural: nat := 9007199254740991
+  const MaximumExactLocatorStringUnits: nat := 4096
+
+  datatype ExactLocator =
+    | NilExactLocator
+    | NaturalExactLocator(naturalValue: nat)
+    | StringExactLocator(stringValue: string)
+
+  predicate ValidExactLocator(locator: ExactLocator) {
+    match locator
+    case NilExactLocator => true
+    case NaturalExactLocator(value) =>
+      value <= MaximumExactLocatorNatural
+    case StringExactLocator(value) =>
+      0 < |value| <= MaximumExactLocatorStringUnits
   }
 
   datatype ExactBasisIdentity =
     | ExactBasisIdentity(
         sourceScope: string,
         sourceLifecycle: string,
-        nativeRevision: string,
-        exactLocator: string,
+        revision: nat,
+        exactLocator: ExactLocator,
+        backendSnapshotIdentity: string,
         viewKind: string,
         adapterFingerprint: string,
         identityContract: string
       )
 
-  predicate ExactGenerationMatches(
-    selectedBasis: ExactBasisIdentity,
-    generationBasis: ExactBasisIdentity
+  predicate ExactKeySelectsSnapshot(
+    snapshotOrder: nat,
+    keyBasis: ExactBasisIdentity
   ) {
-    selectedBasis == generationBasis
+    keyBasis.revision == snapshotOrder &&
+    ValidExactLocator(keyBasis.exactLocator)
   }
 
-  lemma ExactGenerationHitIsSameBasis(
-    selectedBasis: ExactBasisIdentity,
-    generationBasis: ExactBasisIdentity
+  lemma EveryAdmittedExactKeyUsesPortableLocatorDomain(
+    snapshotOrder: nat,
+    keyBasis: ExactBasisIdentity
   )
-    requires ExactGenerationMatches(
+    requires ExactKeySelectsSnapshot(snapshotOrder, keyBasis)
+    ensures ValidExactLocator(keyBasis.exactLocator)
+  {
+  }
+
+  predicate ExactCompositeKeyMatches(
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity
+  ) {
+    selectedBasis == keyBasis
+  }
+
+  lemma ExactCompositeKeyHitIsSameBasis(
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity
+  )
+    requires ExactCompositeKeyMatches(
                selectedBasis,
-               generationBasis
+               keyBasis
              )
-    ensures selectedBasis == generationBasis
+    ensures selectedBasis == keyBasis
   {
   }
 
   lemma NumericRevisionAloneCannotEstablishExactIdentity(
     selectedBasis: ExactBasisIdentity,
-    generationBasis: ExactBasisIdentity
+    keyBasis: ExactBasisIdentity
   )
-    requires selectedBasis.nativeRevision ==
-             generationBasis.nativeRevision
-    requires selectedBasis != generationBasis
-    ensures !ExactGenerationMatches(
+    requires selectedBasis.revision ==
+             keyBasis.revision
+    requires selectedBasis != keyBasis
+    ensures !ExactCompositeKeyMatches(
               selectedBasis,
-              generationBasis
+              keyBasis
             )
   {
   }
 
-  predicate PublicationReachable(
-    capturedLifecycle: nat,
-    activeLifecycle: nat
-  ) {
-    capturedLifecycle == activeLifecycle
+  datatype CompletedAnswerV2<T> = CompletedAnswerV2(
+    value: T,
+    cacheBasis: string,
+    computedRevision: nat,
+    computedExactLocator: ExactLocator
+  )
+
+  function DirectCompletedAnswer<T>(
+    value: T,
+    snapshotOrder: nat,
+    keyBasis: ExactBasisIdentity
+  ): CompletedAnswerV2<T> {
+    CompletedAnswerV2(
+      value,
+      keyBasis.backendSnapshotIdentity,
+      snapshotOrder,
+      keyBasis.exactLocator
+    )
   }
 
-  lemma LatePublicationCannotRepopulateExpiredLifecycle(
-    capturedLifecycle: nat,
-    activeLifecycle: nat
+  datatype ExactAnswerOrigin =
+    | DirectExactComputation
+    | ManagedProofPromotion
+
+  ghost predicate AnswerRefinesSelectedSnapshot<T>(
+    answer: CompletedAnswerV2<T>,
+    recomputed: T
+  ) {
+    answer.value == recomputed
+  }
+
+  ghost predicate ExactAnswerValidForSelectedSnapshot<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>,
+    origin: ExactAnswerOrigin,
+    recomputed: T
+  ) {
+    selectedBasis.revision == snapshotOrder &&
+    ExactCompositeKeyMatches(selectedBasis, keyBasis) &&
+    ExactKeySelectsSnapshot(snapshotOrder, keyBasis) &&
+    ValidExactLocator(answer.computedExactLocator) &&
+    AnswerRefinesSelectedSnapshot(answer, recomputed) &&
+    match origin
+    case DirectExactComputation =>
+      ExactTierEligible(basisClass, true) &&
+      answer == DirectCompletedAnswer(recomputed, snapshotOrder, keyBasis)
+    case ManagedProofPromotion =>
+      ManagedTierEligible(basisClass, true) &&
+      answer.computedRevision <= snapshotOrder
+  }
+
+  lemma ExactAnswerKeyRevisionEqualsSelectedSnapshotOrder<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>,
+    origin: ExactAnswerOrigin,
+    recomputed: T
   )
-    requires capturedLifecycle < activeLifecycle
-    ensures !PublicationReachable(
-              capturedLifecycle,
-              activeLifecycle
+    requires ExactAnswerValidForSelectedSnapshot(
+               basisClass,
+               snapshotOrder,
+               selectedBasis,
+               keyBasis,
+               answer,
+               origin,
+               recomputed
+             )
+    ensures keyBasis.revision == snapshotOrder
+    ensures keyBasis == selectedBasis
+    ensures ValidExactLocator(keyBasis.exactLocator)
+  {
+  }
+
+  lemma DirectExactAnswerUsesSelectedComputationAnchor<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>,
+    recomputed: T
+  )
+    requires ExactAnswerValidForSelectedSnapshot(
+               basisClass,
+               snapshotOrder,
+               selectedBasis,
+               keyBasis,
+               answer,
+               DirectExactComputation,
+               recomputed
+             )
+    ensures answer.computedRevision == snapshotOrder
+    ensures answer.computedExactLocator == keyBasis.exactLocator
+    ensures ValidExactLocator(answer.computedExactLocator)
+    ensures answer.cacheBasis == keyBasis.backendSnapshotIdentity
+    ensures answer == DirectCompletedAnswer(
+                        recomputed,
+                        snapshotOrder,
+                        keyBasis
+                      )
+  {
+  }
+
+  lemma EveryValidatedExactAnswerUsesPortableLocatorDomain<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>,
+    origin: ExactAnswerOrigin,
+    recomputed: T
+  )
+    requires ExactAnswerValidForSelectedSnapshot(
+               basisClass,
+               snapshotOrder,
+               selectedBasis,
+               keyBasis,
+               answer,
+               origin,
+               recomputed
+             )
+    ensures ValidExactLocator(answer.computedExactLocator)
+  {
+  }
+
+  predicate PortableExactAnswerEnvelope<T>(
+    snapshotOrder: nat,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>
+  ) {
+    ExactKeySelectsSnapshot(snapshotOrder, keyBasis) &&
+    answer.cacheBasis == keyBasis.backendSnapshotIdentity &&
+    answer.computedRevision == snapshotOrder &&
+    answer.computedExactLocator == keyBasis.exactLocator
+  }
+
+  lemma DirectExactAnswerHasPortableAnchor<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>,
+    recomputed: T
+  )
+    requires ExactAnswerValidForSelectedSnapshot(
+               basisClass,
+               snapshotOrder,
+               selectedBasis,
+               keyBasis,
+               answer,
+               DirectExactComputation,
+               recomputed
+             )
+    ensures PortableExactAnswerEnvelope(
+              snapshotOrder,
+              keyBasis,
+              answer
             )
+  {
+  }
+
+  function PromoteManagedAnswer<T>(
+    managed: CompletedAnswerV2<T>
+  ): CompletedAnswerV2<T> {
+    managed
+  }
+
+  lemma ManagedPromotionPreservesImmutableComputationAnchor<T>(
+    managed: CompletedAnswerV2<T>
+  )
+    ensures PromoteManagedAnswer(managed).cacheBasis ==
+            managed.cacheBasis
+    ensures PromoteManagedAnswer(managed).computedRevision ==
+            managed.computedRevision
+    ensures PromoteManagedAnswer(managed).computedExactLocator ==
+            managed.computedExactLocator
+  {
+  }
+
+  lemma ValidatedManagedAnswerMayPopulateLaterExactKey<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    managed: CompletedAnswerV2<T>,
+    recomputed: T
+  )
+    requires ManagedTierEligible(basisClass, true)
+    requires selectedBasis.revision == snapshotOrder
+    requires ExactCompositeKeyMatches(selectedBasis, keyBasis)
+    requires ExactKeySelectsSnapshot(snapshotOrder, keyBasis)
+    requires managed.computedRevision <= snapshotOrder
+    requires ValidExactLocator(managed.computedExactLocator)
+    requires AnswerRefinesSelectedSnapshot(managed, recomputed)
+    ensures ExactAnswerValidForSelectedSnapshot(
+              basisClass,
+              snapshotOrder,
+              selectedBasis,
+              keyBasis,
+              PromoteManagedAnswer(managed),
+              ManagedProofPromotion,
+              recomputed
+            )
+  {
+  }
+
+  lemma ManagedPromotionWithDifferentAnchorIsNotPortable<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>,
+    recomputed: T
+  )
+    requires ExactAnswerValidForSelectedSnapshot(
+               basisClass,
+               snapshotOrder,
+               selectedBasis,
+               keyBasis,
+               answer,
+               ManagedProofPromotion,
+               recomputed
+             )
+    requires answer.cacheBasis != keyBasis.backendSnapshotIdentity ||
+             answer.computedRevision != snapshotOrder ||
+             answer.computedExactLocator != keyBasis.exactLocator
+    ensures !PortableExactAnswerEnvelope(
+              snapshotOrder,
+              keyBasis,
+              answer
+            )
+  {
+  }
+
+  lemma ManagedPromotedExactAnswerRequiresOrdinaryBasis<T>(
+    basisClass: BasisClass,
+    snapshotOrder: nat,
+    selectedBasis: ExactBasisIdentity,
+    keyBasis: ExactBasisIdentity,
+    answer: CompletedAnswerV2<T>,
+    recomputed: T
+  )
+    requires ExactAnswerValidForSelectedSnapshot(
+               basisClass,
+               snapshotOrder,
+               selectedBasis,
+               keyBasis,
+               answer,
+               ManagedProofPromotion,
+               recomputed
+             )
+    ensures basisClass.OrdinaryBasis?
   {
   }
 

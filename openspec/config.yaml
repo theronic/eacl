@@ -1,5 +1,10 @@
 schema: spec-driven
 
+context: |
+  Change folder naming: every new change name MUST be prefixed with its
+  creation date as YYYY-mm-dd (e.g. 2026-09-01-add-user-auth). Derive the
+  kebab-case name from the request, then prepend today's date.
+
 # Project context (optional)
 # This is shown to AI when creating artifacts.
 # Add your tech stack, conventions, style guides, domain knowledge, etc.

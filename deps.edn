@@ -7,6 +7,16 @@
          "target/formal/browser"]
  :deps {org.clojure/clojure {:mvn/version "1.11.4"}
 
+        ;; Concurrent JVM cache implementation used by EACL's private CLJC
+        ;; storage boundary. ClojureScript uses the fork below instead.
+        com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
+
+        ;; CLJS/DataScript demos use the tested fork directly. JVM Maven
+        ;; metadata intentionally does not encode this Git-only dependency.
+        com.github.theronic/cljs-cache
+        {:git/url "https://github.com/theronic/cljs-cache.git"
+         :git/sha "4143cc036446a47f0c6dfd9f8dde90363835051c"}
+
            ; Specter for coercing objects in deep structures
         com.rpl/specter {:mvn/version "1.1.4"}
 
@@ -15,7 +25,9 @@
         datascript/datascript {:mvn/version "1.7.8"}
         ;; 0.8.1759 is the first release carrying replikativ/datahike#921
         ;; (composite tuples derived + validated under :attribute-refs?)
-        org.replikativ/datahike {:mvn/version "0.8.1759"}
+        org.replikativ/datahike
+        {:mvn/version "0.8.1759"
+         :exclusions [com.github.pkpkpk/cljs-cache]}
 
         ;; Parsing
         instaparse/instaparse {:mvn/version "1.5.0"}}

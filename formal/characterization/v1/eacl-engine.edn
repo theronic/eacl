@@ -171,11 +171,11 @@
    :expected {:first-read-cached? false
               :second-read-cached? true
               :uncached-read-cached? false
-              :provider-failure :recompute
+              :provider-configuration :rejected
               :proof-mismatch :recompute}
    :covered-by
    [eacl.datomic.v8-characterization-test/extraction-preserves-public-v8-behavior-test
-    eacl.datomic.cache-test/provider-and-observability-failures-are-contained-test]}
+    eacl.cache-test/cache-configuration-is-count-only-and-client-private-test]}
 
   {:id :typed-errors
    :expected {:unsupported-filter :eacl.pagination/unsupported-filter

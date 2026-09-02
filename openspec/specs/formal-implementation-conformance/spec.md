@@ -77,11 +77,22 @@ MUST NOT be presented as certification of production behavior.
 - **AND** proves that current-only DataScript rejects a changed exact basis because no historical selection is available
 
 #### Scenario: Pure permission alias frontier optimization matches production
-- **WHEN** production canonicalizes an arrow target whose permission body is exactly one same-resource self-permission
-- **THEN** the formal model follows the same cycle-guarded alias chain
-- **AND** proves the target permission denotation is unchanged and canonical frontier deduplication cannot add traversal streams
-- **AND** models the production left-to-right seen-set fold, proving canonical streams are unique and the first canonical path remains first
-- **AND** composite permission bodies are not treated as aliases
+- **WHEN** production canonicalizes an acyclic arrow target whose complete normalized permission body is exactly one same-resource self-permission
+- **THEN** the formal model follows the same conservative cycle-guarded chain and stops on missing, composite, relation-dependent, or cyclic definitions
+- **AND** proves target denotation is unchanged and complete-frontier-identity deduplication cannot add traversal streams
+- **AND** models the provider-order-independent pre-normalization position and first-position fold, proving canonical streams are unique and the first canonical position remains first
+- **AND** the assurance mapping resolves to the live acyclic least-path frontier consumer in `eacl.engine.sealed-plan`, not a retired evaluator symbol
+- **AND** source-closure validation fails until that live mapping and its executable refinement evidence are present
+
+#### Scenario: Finite current-cache specialization matches generated authority
+- **WHEN** production replaces repeated calls to the generated current-cache
+  decision with a host specialization
+- **THEN** the generated decision remains the semantic authority
+- **AND** a mechanically checked refinement exhausts every validated
+  stage/availability partition and binds the generated source, generated
+  artifact, host source, domain, mapping, and refinement evidence by digest
+- **AND** stale, incomplete, missing, or identity-mismatched evidence disables
+  the specialization instead of authorizing an unchecked handwritten path
 
 ### Requirement: Assurance traceability is bidirectional and complete
 EACL SHALL assign stable claim identifiers and maintain a machine-validated
@@ -175,4 +186,3 @@ results, negative controls, assumptions, exclusions, and the bundle digest.
 #### Scenario: External certification status
 - **WHEN** all technical gates pass but independent review evidence is absent
 - **THEN** the manifest remains conditionally verified and cannot claim external certification
-

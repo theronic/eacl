@@ -1,6 +1,7 @@
 (ns eacl.schema.expression-persistence
   "Canonical expression-only storage values and strict read validation."
-  (:require [eacl.schema.expression :as expression]
+  (:require [eacl.cache.derived-schema :as derived-schema]
+            [eacl.schema.expression :as expression]
             [eacl.schema.expression-limits :as limits]
             [eacl.schema.expression-policy :as policy]))
 
@@ -45,27 +46,42 @@
     :eacl.permission/resource-type+source-relation-name+target-type+target-name+permission-name})
 
 (def ^:dynamic *structural-cache*
-  "Optional schema-generation-owned atom of completed expression decodes.
-   The containing generation supplies the schema high-watermark; keys include
-   every authoritative expression field. Retired metric datoms are excluded."
+  "Optional request-local atom or cross-request derived-schema partition.
+
+   The containing context supplies complete source/schema identity; entry keys
+   include every authoritative expression field and the effective limits.
+   Retired metric datoms are excluded."
   nil)
 
 (def ^:dynamic *expression-limits*
   "The immutable client-local admission profile bound around schema work."
   policy/default-client-limits)
 
+(def ^:private normalized-limits-memo
+  ;; [bound-profile normalized-profile] for the last non-default binding.
+  ;; Clients bind one immutable profile object for their whole lifetime, so
+  ;; identity is the memo key; a different object is normalized afresh.
+  (atom nil))
+
 (defn effective-expression-limits []
   ;; Reuse the complete immutable default profile. Non-default bindings still
-  ;; cross the public normalizer so bound overrides remain validated.
-  (if (identical? *expression-limits* policy/default-client-limits)
-    policy/default-client-limits
-    (policy/normalize-client-limits *expression-limits*)))
+  ;; cross the public normalizer so bound overrides remain validated, but the
+  ;; same bound object is normalized once, not on every derived-key build.
+  (let [bound *expression-limits*]
+    (if (identical? bound policy/default-client-limits)
+      policy/default-client-limits
+      (let [memo @normalized-limits-memo]
+        (if (and memo (identical? (nth memo 0) bound))
+          (nth memo 1)
+          (let [normalized (policy/normalize-client-limits bound)]
+            (reset! normalized-limits-memo [bound normalized])
+            normalized))))))
 
 (defn ->expression-id [resource-type permission-name]
   (str "eacl.permission-expression:" resource-type ":" permission-name))
 
 (defn expression-entity
-  [resolved-expression _metadata]
+  [resolved-expression]
   (let [resolved-expression (expression/canonicalize resolved-expression)
         {:keys [resource-type permission-name]} resolved-expression]
     {:eacl/id (->expression-id resource-type permission-name)
@@ -75,17 +91,12 @@
 
 (defn candidate-schema
   "Converts a fully validated resolver result to backend transaction values."
-  [{:keys [definitions relations expressions expression-metadata]
-    :as validated}]
+  [{:keys [expressions expression-metadata] :as validated}]
   (when-not (= (count expressions) (count expression-metadata))
     (throw (ex-info "Expression metadata is not aligned."
-             {:type :eacl.schema/invalid-expression-metadata
-              :eacl/error :eacl.schema/invalid-expression-metadata})))
-  (assoc validated
-         :definitions definitions
-         :relations relations
-         :permissions (mapv expression-entity expressions
-                            expression-metadata)))
+                    {:type :eacl.schema/invalid-expression-metadata
+                     :eacl/error :eacl.schema/invalid-expression-metadata})))
+  (assoc validated :permissions (mapv expression-entity expressions)))
 
 (defn entity-deletions
   "Returns only retracted entities whose logical identity is absent from the
@@ -100,10 +111,10 @@
 
 (defn- corrupt! [reason data]
   (throw (ex-info "Stored permission expression is corrupt or unsupported."
-           (merge {:type :eacl.schema/corrupt-expression-storage
-                   :eacl/error :eacl.schema/corrupt-expression-storage
-                   :reason reason}
-                  data))))
+                  (merge {:type :eacl.schema/corrupt-expression-storage
+                          :eacl/error :eacl.schema/corrupt-expression-storage
+                          :reason reason}
+                         data))))
 
 (defn- decode-entity-with-metadata-uncached
   "Validates authoritative stored fields and derives exact bounded metrics.
@@ -141,9 +152,9 @@
          :eacl.permission/expression-payload (expression/encode resolved)}
         mismatch
         (first
-          (for [[field value] expected
-                :when (not= value (get entity field))]
-            {:field field :expected value :actual (get entity field)}))]
+         (for [[field value] expected
+               :when (not= value (get entity field))]
+           {:field field :expected value :actual (get entity field)}))]
     (when mismatch
       (corrupt! :field-mismatch mismatch))
     {:expression resolved
@@ -152,32 +163,45 @@
                 :normalized-dag dag
                 :normalized-metrics metrics}}))
 
+(defn- structural-decode?
+  [value]
+  (and (map? value)
+       (= #{:expression :metadata} (set (keys value)))
+       (map? (:expression value))
+       (map? (:metadata value))))
+
 (defn decode-entity-with-metadata
   "Returns one validated expression and its exact derived metadata.
 
-   When a schema-generation cache is bound, concurrent readers share one
-   completed delay. A failed decode remains scoped to that immutable schema
-   generation and is discarded when the generation cache is refreshed."
+   When a schema-generation cache is bound, a completed immutable decode is
+   read first. Concurrent misses decode independently and race one bounded
+   installation; failures are never installed or inherited by a peer."
   [entity]
   (if-not *structural-cache*
     (decode-entity-with-metadata-uncached entity)
     (let [key [(select-keys
                 entity
                 (into expression-attributes legacy-flat-attributes))
-               (effective-expression-limits)]
-          candidate (delay (decode-entity-with-metadata-uncached entity))
-          selected
-          (get (swap! *structural-cache*
-                      #(if (contains? % key) % (assoc % key candidate)))
-               key)]
-      @selected)))
-
-(defn clear-structural-cache!
-  "Evicts a bound or explicitly supplied structural metric cache."
-  ([] (clear-structural-cache! *structural-cache*))
-  ([cache]
-   (when cache (reset! cache {}))
-   nil))
+               (effective-expression-limits)]]
+      (if (derived-schema/partition? *structural-cache*)
+        (let [found
+              (derived-schema/lookup! *structural-cache* key)]
+          (if (:found? found)
+            (:value found)
+            (let [value (decode-entity-with-metadata-uncached entity)]
+              (derived-schema/publish!
+               *structural-cache* key value structural-decode?)
+              value)))
+        (let [snapshot @*structural-cache*]
+          (if (contains? snapshot key)
+            (get snapshot key)
+            (let [value (decode-entity-with-metadata-uncached entity)
+                  state @*structural-cache*]
+              (when-not (contains? state key)
+                (compare-and-set!
+                 *structural-cache* state
+                 (assoc state key value)))
+              value)))))))
 
 (defn decode-entity
   "Validates one stored expression and returns its canonical expression.
@@ -192,7 +216,7 @@
   (let [entities (vec entities)
         flat-only
         (first (filter #(not (contains? %
-                              :eacl.permission/expression-payload))
+                                        :eacl.permission/expression-payload))
                        entities))]
     (when flat-only
       (corrupt! :flat-only-representation
@@ -203,8 +227,8 @@
                            :eacl.permission/permission-name)
                      entities)
           duplicate (first (sort-by pr-str
-                             (for [[key n] (frequencies keys) :when (> n 1)]
-                               key)))]
+                                    (for [[key n] (frequencies keys) :when (> n 1)]
+                                      key)))]
       (when duplicate
         (corrupt! :duplicate-expression {:permission duplicate})))
     (let [decoded
@@ -261,11 +285,21 @@
 
                 (:intersection :exclusion)
                 (throw (ex-info "Operator expression requires an operator plan."
-                         {:type :eacl.schema/operator-plan-required
-                          :eacl/error :eacl.schema/operator-plan-required
-                          :permission [resource-type permission-name]}))))]
+                                {:type :eacl.schema/operator-plan-required
+                                 :eacl/error :eacl.schema/operator-plan-required
+                                 :permission [resource-type permission-name]}))))]
       ;; Flat v8 permission rows were compared as sets before sealing, so
       ;; repeated union operands never reached the sealed-plan compiler as
       ;; duplicate rules. Preserve that union-only ABI while expression
       ;; storage retains the canonical source expression.
       (vec (distinct (walk root))))))
+
+(defn ^:no-doc union-compatible-entity-definitions
+  [permission]
+  (union-compatible-definitions
+   (:db/id permission)
+   (decode-entity permission)))
+
+(defn ^:no-doc validated-expression-entity
+  [entities]
+  (some-> (validate-entities entities) first :entity))

@@ -2,9 +2,10 @@
   "Pins the v8.0 immutable-snapshot schema-cache contract.
 
   Each request derives schema semantics from its selected Datomic value and a
-  bounded proof-keyed generation registry. Unrelated DB values reuse the same
-  schema generation; schema changes install another immutable generation
-  without an EACL lock or mutable current-schema latch."
+  flat standard-LRU key containing the complete certified schema identity.
+  Unrelated DB values reuse the same schema artifacts; schema changes select
+  different immutable keys without an EACL lock or mutable current-schema
+  latch."
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.core :as eacl :refer [spice-object]]

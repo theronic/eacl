@@ -21,9 +21,9 @@
    :group-star "Bu7pixkVOkMCqoy8TXeCxf1r8CHc3Ewu3x9-QYCkMvY"
    :mutual-mixed "gvCIqErd91ewV6M7cT22IxsST3nEnfu10k-ZSjSI0ms"}}
  :decoded-cursor-payloads
- {:path "exploration/operator-engine/union-only-cursor-payloads.edn"
+  {:path "exploration/operator-engine/union-only-cursor-payloads.edn"
   :sha256
-  "a904abfc7e96c346a53ad7a6b82c66270fb91ed1f2aa369f0a2a6f93906affc4"
+  "132d2f3301b6b4ce3dd0fa7eea1befe8dc1ad82468bc2ecc2a39762b4b1a9d7f"
   :coverage [:acyclic-forward :acyclic-reverse
              :recursive-forward :recursive-reverse]
   :ciphertext-excluded-because :fresh-encryption-nonce}

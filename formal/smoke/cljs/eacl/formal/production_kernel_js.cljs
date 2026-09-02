@@ -818,98 +818,6 @@
          issue-response-token?)]
     (consistency-work-map work)))
 
-(defn- candidate-state
-  [subproblem candidate]
-  (case candidate
-    :missing
-    (js-invoke (.-CandidateState subproblem) "create_CandidateMissing")
-
-    :computing
-    (js-invoke (.-CandidateState subproblem) "create_CandidateComputing")
-
-    :complete
-    (js-invoke (.-CandidateState subproblem) "create_CandidateComplete")
-
-    :failed
-    (js-invoke (.-CandidateState subproblem) "create_CandidateFailed")))
-
-(defn- subproblem-cache-decision
-  [{:keys [decision] :as input}]
-  (let [subproblem (.-SubproblemCache generated)]
-    (case decision
-      :lookup
-      (let [action
-            (js-invoke
-             (.-__default subproblem)
-             "DecideLookup"
-             (candidate-state subproblem (:candidate input)))]
-        (if (.-is_StartIndependentComputation action)
-          :start-independent-computation
-          :use-completed-value))
-
-      :admission
-      (let [action
-            (js-invoke
-             (.-__default subproblem)
-             "DecideAdmission"
-             (:candidate-present? input)
-             (big-number (:attempted-publications input))
-             (big-number (:maximum-attempts input)))]
-        (if (.-is_AttemptPublication action)
-          :attempt-publication
-          :skip-publication))
-
-      :publication
-      (let [action
-            (js-invoke
-             (.-__default subproblem)
-             "DecidePublication"
-             (:ticket-current? input)
-             (:complete? input)
-             (:valid? input)
-             (big-number (:weight input))
-             (big-number (:budget input)))]
-        (if (.-is_RetainPublication action)
-          :retain-publication
-          :drop-publication)))))
-
-(defn- current-cache-stage
-  [current stage]
-  (let [stages (.-CurrentCacheStage current)]
-    (case stage
-      :eligibility
-      (js-invoke stages "create_EligibilityStage")
-
-      :generation
-      (js-invoke stages "create_GenerationStage")
-
-      :exact-entry
-      (js-invoke stages "create_ExactEntryStage")
-
-      :exact-only-entry
-      (js-invoke stages "create_ExactOnlyEntryStage")
-
-      :managed-entry
-      (js-invoke stages "create_ManagedEntryStage"))))
-
-(defn- current-cache-decision
-  [{:keys [stage available?]}]
-  (let [current (.-CurrentCache generated)
-        action
-        (js-invoke
-         (.-__default current)
-         "DecideCurrentCache"
-         (current-cache-stage current stage)
-         available?)]
-    (cond
-      (.-is_BypassCurrentCache action) :bypass-current-cache
-      (.-is_ProbeExactEntry action) :probe-exact-entry
-      (.-is_UseExactEntry action) :use-exact-entry
-      (.-is_ProbeManagedEntry action) :probe-managed-entry
-      (.-is_UseManagedEntry action) :use-managed-entry
-      (.-is_ComputeExactValue action) :compute-exact-value
-      :else :compute-selected-value)))
-
 (defn- ordered-merge-head
   [value]
   (let [ordered-merge (.-OrderedMerge generated)]
@@ -1757,9 +1665,6 @@
       :consistency-plan (consistency-plan-decision input)
       :consistency-validation
       (consistency-selection-decision input)
-      :current-cache-decision (current-cache-decision input)
-      :subproblem-cache-decision
-      (subproblem-cache-decision input)
       :ordered-merge-step (ordered-merge-decision input)
       :ordered-merge-chunk (ordered-merge-chunk input)
       :recursive-routing-certificate

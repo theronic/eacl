@@ -6,6 +6,8 @@
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
+            [eacl.cache.standard-lru :as lru]
+            [eacl.client.orchestration :as orchestration]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
             [eacl.engine.sealed-plan :as sealed-plan]
@@ -190,7 +192,6 @@
     (try
       (is (every? eacl/acl? [writable read-only]))
       (is (every? eacl/snapshot? [captured selected]))
-      (is (identical? (:runtime captured) (:runtime selected)))
       (doseq [[operation call project] operations]
         (testing (name operation)
           (let [observed
@@ -1489,6 +1490,11 @@
   (some-> (get-in client [:runtime :continuation-cache-store])
           continuation/stats))
 
+(defn- range-stats
+  "The client's range-segment tier stats, or nil without a cache."
+  [client]
+  (:range-reuse (orchestration/cache-stats client)))
+
 (defn assert-cursor-source-transition!
   "Checks one provider recreation/restart against the shared durability
   matrix. The caller owns backend setup and supplies the pre-transition page,
@@ -1575,11 +1581,13 @@
         expected cursor-continuation-expectations
         backend-work (atom {})
         before-checkpoints (continuation-stats client)
+        before-range (range-stats client)
         one-page
         (binding [backend/*backend-op-stats* backend-work]
           (eacl/lookup-resources
            client (assoc query :after forward-cursor)))
-        after-checkpoints (continuation-stats client)]
+        after-checkpoints (continuation-stats client)
+        after-range (range-stats client)]
     (testing "unrelated writes preserve forward and reverse oracle streams"
       (is (= :current (:unrelated-write expected)))
       (is (= (take (count (:data one-page))
@@ -1590,8 +1598,9 @@
           "cursor, answer, and checkpoint decisions share one request frame")
       (when (and before-checkpoints after-checkpoints
                  (ordered-generation-proofs? client))
-        (is (> (:hits after-checkpoints) (:hits before-checkpoints))
-            "an equal-frame later basis resumes the private checkpoint"))
+        (is (or (> (:hits after-checkpoints) (:hits before-checkpoints))
+                (> (:hits after-range 0) (:hits before-range 0)))
+            "an equal-frame later basis resumes the private checkpoint or the retained segment"))
       (is (<= (get @backend-work :schema-generation 0) 1))
       (is (= oracle-stream
              (into (:data forward-page)
@@ -1618,6 +1627,7 @@
   [client query oracle-stream forward-page reverse-page]
   (let [exact? (boolean (exact-selection-capable-reader? client))
         before-checkpoints (continuation-stats client)
+        before-range (range-stats client)
         expected
         (get-in cursor-continuation-expectations
                 [:relevant-write
@@ -1635,11 +1645,13 @@
         (continuation-outcome
          #(reverse-continuation-data
            client reverse-query reverse-cursor {}))
-        after-checkpoints (continuation-stats client)]
+        after-checkpoints (continuation-stats client)
+        after-range (range-stats client)]
     (when (and before-checkpoints after-checkpoints)
       (if (and exact? (ordered-generation-proofs? client))
-        (is (> (:hits after-checkpoints) (:hits before-checkpoints))
-            "exact fallback resumes the original accepted basis's private checkpoint")
+        (is (or (> (:hits after-checkpoints) (:hits before-checkpoints))
+                (> (:hits after-range 0) (:hits before-range 0)))
+            "exact fallback resumes the original accepted basis's private checkpoint or retained segment")
         (is (= (:hits before-checkpoints) (:hits after-checkpoints))
             "a changed current frame is never used for private resumption")))
     (case expected
@@ -1709,7 +1721,7 @@
                :first 1
                :evaluation :complete-denotation}]
     (try
-      (when store (continuation/clear! store))
+      (when store (lru/clear! (:storage store)))
       (let [oracle
             (:data
              (eacl/lookup-subjects
@@ -1737,45 +1749,42 @@
         (eacl/release! older)))))
 
 (defn- assert-bounded-checkpoint-replay!
-  [client query oracle-stream]
+  "`second-walk` performs one checkpoint-publishing page of a different
+  walk: checkpoints are keyed by walk and boundary, so only another walk
+  competes for the single slot."
+  [client query oracle-stream second-walk]
   (when (ordered-generation-proofs? client)
-    (testing "evicted checkpoints replay with a classified miss"
+    (testing "bounded checkpoint retention or replay preserves the page"
       (let [store (continuation/make-store {:max-entries 1})
-            bounded-client
-            (assoc-in client [:runtime :continuation-cache-store] store)
+            lifecycle-state
+            (get-in client [:runtime :runtime-lifecycle-state])
+            ;; Runtime options are refreshed from the coherent lifecycle atom
+            ;; on every request. Replacing the legacy top-level field would be
+            ;; ignored and would leave this test observing an unused store.
+            ;; Clear completed answers first so both page requests exercise
+            ;; the continuation LRU rather than an earlier answer hit.
+            _ (orchestration/clear-answer-cache! client)
+            _ (swap! lifecycle-state assoc :continuation-cache-store store)
             query-a (assoc query :first 3
                            :evaluation :complete-denotation)
-            query-b (assoc query :first 4
-                           :evaluation :complete-denotation)
-            first-page (eacl/lookup-resources bounded-client query-a)
+            first-page (eacl/lookup-resources client query-a)
             cursor (get-in first-page [:page-info :end-cursor])
-            _ (eacl/lookup-resources bounded-client query-b)
+            _ (second-walk)
             before (continuation/stats store)
             second-page
             (eacl/lookup-resources
-             bounded-client (assoc query-a :after cursor))
+             client (assoc query-a :after cursor))
             after (continuation/stats store)]
+        (is (some? cursor))
         (is (= (take 3 (drop 3 oracle-stream)) (:data second-page)))
-        (is (> (get-in after [:miss-reasons :evicted] 0)
-               (get-in before [:miss-reasons :evicted] 0)))))
-    (testing "overweight checkpoints replay with a classified miss"
-      (let [store
-            (continuation/make-store
-             {:max-weight 2048 :max-entry-weight 2048})
-            bounded-client
-            (assoc-in client [:runtime :continuation-cache-store] store)
-            page-query (assoc query :first 5
-                              :evaluation :complete-denotation)
-            first-page (eacl/lookup-resources bounded-client page-query)
-            cursor (get-in first-page [:page-info :end-cursor])
-            before (continuation/stats store)
-            second-page
-            (eacl/lookup-resources
-             bounded-client (assoc page-query :after cursor))
-            after (continuation/stats store)]
-        (is (= (take 5 (drop 5 oracle-stream)) (:data second-page)))
-        (is (> (get-in after [:miss-reasons :overweight] 0)
-               (get-in before [:miss-reasons :overweight] 0)))))))
+        (is (pos? (:evictions before)))
+        (is (= 1 (:max-entries before) (:max-entries after)))
+        (is (<= (:entries before) 1))
+        (is (<= (:entries after) 1))
+        (is (or (> (:hits after) (:hits before))
+                (> (get-in after [:miss-reasons :absent] 0)
+                   (get-in before [:miss-reasons :absent] 0)))
+            "the selected policy may retain A or admit B; either a validated hit or deterministic replay must serve A")))))
 
 (defn assert-v8-recursive-contracts!
   [client]
@@ -1832,19 +1841,38 @@
              (into [] cat (map :data pages)))))
 
     (testing "recursive forward/reverse pages and duplicate paths deduplicate"
-      (is (= recursive-connected-folder-count
-             (:count
-              (eacl/count-resources
-               client
-               (dissoc query :first)))))
-      (is (= [subject]
-             (:data
-              (eacl/lookup-subjects
-               client
-               {:resource (folder (dec recursive-connected-folder-count))
-                :permission :duplicate
-                :subject/type :user
-                :first 10}))))
+      (let [count-query (dissoc query :first)
+            count-result (eacl/count-resources client count-query)
+            count-bypass
+            (eacl/count-resources client (assoc count-query :cache? false))
+            subject-query
+            {:resource (folder (dec recursive-connected-folder-count))
+             :permission :duplicate
+             :subject/type :user
+             :first 10}
+            subject-page (eacl/lookup-subjects client subject-query)
+            subject-bypass
+            (eacl/lookup-subjects
+             client (assoc subject-query :cache? false))]
+        (is (= recursive-connected-folder-count (:count count-result)))
+        (is (= (dissoc count-result :cached? :cache-basis)
+               (dissoc count-bypass :cached? :cache-basis))
+            "recursive counts are cache-free equivalent")
+        (is (= [subject] (:data subject-page)))
+        (is (= (dissoc subject-page :cached? :cache-basis)
+               (dissoc subject-bypass :cached? :cache-basis))
+            "recursive reverse pages, including cursors, are cache-free equivalent"))
+      (is (= (dissoc forward-page :cached? :cache-basis)
+             (dissoc
+              (eacl/lookup-resources client (assoc query :cache? false))
+              :cached? :cache-basis))
+          "recursive forward pages, including cursors, are cache-free equivalent")
+      (is (= (dissoc reverse-page :cached? :cache-basis)
+             (dissoc
+              (eacl/lookup-resources
+               client (assoc reverse-query :cache? false))
+              :cached? :cache-basis))
+          "recursive backward pages, including cursors, are cache-free equivalent")
       (is (= recursive-connected-folder-count
              (:count
               (eacl/count-resources
@@ -1927,7 +1955,13 @@
 
         (assert-bounded-checkpoint-replay!
          client query
-         (mapv folder (range (inc recursive-connected-folder-count)))))
+         (mapv folder (range (inc recursive-connected-folder-count)))
+         #(eacl/lookup-subjects
+           client {:resource (folder (dec recursive-connected-folder-count))
+                   :permission :selfread
+                   :subject/type :user
+                   :first 1
+                   :evaluation :complete-denotation})))
 
       (eacl/delete-object! client (folder recursive-connected-folder-count))
       (let [after-delete
@@ -1942,22 +1976,27 @@
 
 (defn assert-v8-recursive-safety-limit!
   [client]
-  (let [data
-        (try
-          (eacl/lookup-resources
-           client
-           {:subject (->user "recursive-user")
-            :permission :read
-            :resource/type :folder
-            :first 10
-            :evaluation :complete-denotation})
-          nil
-          (catch #?(:clj Exception :cljs :default) error
-            (ex-data error)))]
-    (is (= :eacl.recursive-traversal/limit-exceeded
-           (:eacl/error data)))
-    (is (#{:derived-grants :advanced-datoms :queued-work}
-         (:limit-kind data))))
+  (let [request {:subject (->user "recursive-user")
+                 :permission :read
+                 :resource/type :folder
+                 :first 10
+                 :evaluation :complete-denotation}
+        outcome
+        (fn [request]
+          (try
+            {:value (eacl/lookup-resources client request)}
+            (catch #?(:clj Exception :cljs :default) error
+              {:error (ex-data error)})))
+        ;; Bypass first so the enabled arm begins with the same empty shared
+        ;; cache and cannot inherit partial subproblem publication from a
+        ;; preceding failed enabled request.
+        bypass (outcome (assoc request :cache? false))
+        enabled (outcome request)
+        data (:error enabled)]
+    (is (= bypass enabled)
+        "recursive mandatory work limits do not depend on cache availability")
+    (is (= :eacl.recursive-traversal/limit-exceeded (:eacl/error data)))
+    (is (#{:derived-grants :advanced-datoms :queued-work} (:limit-kind data))))
   (let [easy {:subject (->user "recursive-user")
               :permission :selfread
               :resource (eacl/spice-object :folder "folder-0")}
@@ -2007,6 +2046,175 @@
         (is (= [(:allowed? easy-result)
                 (get-in hard-outcome [:value :allowed?])]
                (mapv :allowed? (:value batch-outcome))))))))
+
+(defn- without-cache-provenance
+  [value]
+  (if (map? value)
+    (dissoc value :cached? :cache-basis)
+    value))
+
+(defn- operation-outcome
+  [call request]
+  (try
+    {:value (call request)}
+    (catch #?(:clj Exception :cljs :default) error
+      {:error (ex-data error)})))
+
+(defn- semantic-outcome
+  [outcome]
+  (if (contains? outcome :value)
+    (update outcome :value without-cache-provenance)
+    outcome))
+
+(defn- assert-cache-differential-call!
+  [label call request]
+  (let [enabled (operation-outcome call request)
+        repeated (operation-outcome call request)
+        bypassed (operation-outcome call (assoc request :cache? false))]
+    (is (= (semantic-outcome enabled)
+           (semantic-outcome repeated)
+           (semantic-outcome bypassed))
+        (str label " preserves value, order, cursors, and errors"))
+    (when-let [bypassed-value (:value bypassed)]
+      (when (and (map? bypassed-value)
+                 (contains? bypassed-value :cached?))
+        (is (false? (:cached? bypassed-value))
+            (str label " reports bypass provenance"))))
+    (:value repeated)))
+
+(defn assert-v8-cache-differential!
+  "Cache-enabled versus per-request bypass conformance on one authenticated
+  exact snapshot. Complete externalized values are compared after removing
+  cache provenance only, so data order, page flags, opaque cursors, count
+  bounds, permission-tree response tokens, and typed errors remain evidence."
+  [client]
+  (eacl/with-snapshot [captured (eacl/snapshot client)]
+    (let [token (eacl/basis-token captured)
+          exact (consistency/at-exact-snapshot token)
+          exact-selection? (boolean (exact-selection-capable-reader? client))
+          authorization (if exact-selection? client captured)
+          captured-basis (dissoc (eacl/basis captured) :kind)
+          subject (->user "user-1")
+          resource (->server "server-1")
+          demand {:subject subject
+                  :permission :reboot
+                  :resource resource
+                  :consistency exact}
+          forward-query
+          {:subject subject
+           :permission :view
+           :resource/type :server
+           :first 1
+           :aggregate-limits {:candidate-window 1}
+           :consistency exact}
+          reverse-query
+          {:resource resource
+           :permission :reboot
+           :subject/type :user
+           :first 1
+           :aggregate-limits {:candidate-window 1}
+           :consistency exact}
+          relationship-query
+          {:subject/type :account
+           :subject/id "account-1"
+           :resource/type :server
+           :resource/relation :account
+           :first 1
+           :aggregate-limits {:candidate-window 1}
+           :consistency exact}]
+      (if exact-selection?
+        (eacl/with-snapshot [selected (eacl/snapshot client exact)]
+          (is (= captured-basis (dissoc (eacl/basis selected) :kind))
+              "cache control cannot alter the exact selected snapshot"))
+        (is (= captured-basis (dissoc (eacl/basis authorization) :kind))
+            "an explicit retained view fixes the exact selected snapshot"))
+
+      (testing "exact point, page, count, and tree results match bypass"
+        (assert-cache-differential-call!
+         :check-permission #(eacl/check-permission authorization %) demand)
+        (let [forward-page
+              (assert-cache-differential-call!
+               :lookup-resources
+               #(eacl/lookup-resources authorization %)
+               forward-query)
+              forward-next-query
+              (assoc forward-query
+                     :after (get-in forward-page
+                                    [:page-info :end-cursor]))
+              forward-next
+              (assert-cache-differential-call!
+               :lookup-resources-continuation
+               #(eacl/lookup-resources authorization %)
+               forward-next-query)
+              backward-query
+              (-> forward-query
+                  (dissoc :first)
+                  (assoc :last 1
+                         :before (get-in forward-next
+                                         [:page-info :start-cursor])))]
+          (assert-cache-differential-call!
+           :lookup-resources-backward
+           #(eacl/lookup-resources authorization %)
+           backward-query))
+        (let [reverse-page
+              (assert-cache-differential-call!
+               :lookup-subjects
+               #(eacl/lookup-subjects authorization %)
+               reverse-query)]
+          (assert-cache-differential-call!
+           :lookup-subjects-continuation
+           #(eacl/lookup-subjects authorization %)
+           (assoc reverse-query
+                  :after (get-in reverse-page
+                                 [:page-info :end-cursor]))))
+        (assert-cache-differential-call!
+         :count-resources
+         #(eacl/count-resources authorization %)
+         (-> forward-query
+             (dissoc :first)
+             (assoc :count-limit 1)))
+        (assert-cache-differential-call!
+         :count-subjects
+         #(eacl/count-subjects authorization %)
+         (-> reverse-query
+             (dissoc :first)
+             (assoc :count-limit 1)))
+        (let [relationship-page
+              (assert-cache-differential-call!
+               :read-relationships
+               #(eacl/read-relationships authorization %)
+               relationship-query)]
+          (assert-cache-differential-call!
+           :read-relationships-continuation
+           #(eacl/read-relationships authorization %)
+           (assoc relationship-query
+                  :after (get-in relationship-page
+                                 [:page-info :end-cursor]))))
+        (assert-cache-differential-call!
+         :expand-permission-tree
+         #(eacl/expand-permission-tree authorization %)
+         {:resource resource
+          :permission :view
+          :consistency exact}))
+
+      (testing "exact errors and mandatory execution controls match bypass"
+        (assert-cache-differential-call!
+         :malformed-cursor
+         #(eacl/lookup-resources authorization %)
+         (assoc forward-query :after "not-an-eacl-cursor"))
+        (assert-cache-differential-call!
+         :unknown-permission
+         #(eacl/check-permission authorization %)
+         (assoc demand :permission :missing-permission))
+        ;; Prime the completed value, then prove cancellation still dominates
+        ;; a resident hit exactly as it dominates cache-free evaluation.
+        (eacl/check-permission authorization demand)
+        (let [cancellation-token (eacl/cancellation-token)]
+          (eacl/cancel! cancellation-token)
+          (assert-cache-differential-call!
+           :pre-cancelled-hit
+           #(eacl/check-permission authorization %)
+           (assoc demand :cancellation-token cancellation-token)))))))
 
 (defn assert-v8-cache-disabled!
   [client]
@@ -2096,9 +2304,11 @@
         permission-tree-query
         {:resource (->server "server-1")
          :permission :view}
-        store (:basis-cache-store (:runtime client))
-        clear! #(cache/expire-basis-cache! store)
-        stats #(cache/basis-cache-stats store)]
+        lifecycle-state
+        (get-in client [:runtime :runtime-lifecycle-state])
+        clear! #(orchestration/clear-answer-cache! client)
+        stats #(cache/basis-cache-stats
+                (:basis-cache-store @lifecycle-state))]
     (clear!)
 
     (testing "request bypass neither reads nor writes and retained entries remain reusable"

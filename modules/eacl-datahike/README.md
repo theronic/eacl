@@ -40,8 +40,8 @@ IDs never change for an entity; configure `false` if reassignment is allowed.
 Serverless hosts may persist completed authorization entries with
 `export-cache-snapshot`, `restore-cache-snapshot!`, and
 `cache-content-revision`. The host owns authentication and the encoded-byte
-bound before decoding; the EACL bounds describe retained cache weight and
-entry count. Snapshots exclude Datahike database values and process-local
+bound before decoding; EACL validates the trusted decoded snapshot and its
+count bound. Snapshots exclude Datahike database values and process-local
 identity. Restore validates before atomically replacing the visible cache.
 
 ### Released-v7 permission migration
@@ -169,3 +169,16 @@ requirements. Git and `:local/root` development must first follow the explicitly
 Maven consumers install no formal tools.
 
 Build this module in isolation with `clojure -T:build jar`.
+
+### Storage I/O statistics
+
+`eacl.datahike.io/with-storage-io-stats` wraps a body and returns
+`{:value .. :storage-io ..}`, where `:storage-io` maps each S3 storage
+operation (`:get`, `:put`, `:head`, `:list`, `:delete`) to its count and
+latency percentiles as recorded by the S3 konserve backend's built-in
+statistics, or `:unavailable` when that backend is not on the classpath. The
+functions are resolved at call time, so the module carries no dependency on
+the backend. The accumulator is process-global and not reentrant: use it for
+one probe at a time in demos and diagnostics, never on a production request
+path. `eacl.datahike.io/storage-io-stats-available?` reports whether the
+statistics can be captured.

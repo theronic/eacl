@@ -204,16 +204,17 @@
       (map (fn [[_ perm-name-node expr]]
              {:name       (extract-identifier perm-name-node)
               :expression expr}))
-      (reduce (fn [acc {perm-name :name :as permission}]
-                (if (some #(= perm-name (:name %)) acc)
+      (reduce (fn [[acc seen] {perm-name :name :as permission}]
+                (if (contains? seen perm-name)
                   (throw (ex-info (str "Duplicate permission declaration: '" perm-name "'."
                                        " Combine the branches into one union,"
                                        " e.g. `permission " perm-name " = a + b`.")
                            {:type :eacl.schema/duplicate-permission
                             :eacl/error :eacl.schema/duplicate-permission
                             :permission perm-name}))
-                  (conj acc permission)))
-              []))
+                  [(conj acc permission) (conj seen perm-name)]))
+              [[] #{}])
+      first)
     []))
 
 (defn extract-definitions

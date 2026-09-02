@@ -26,8 +26,8 @@ proof data falls back to exact evaluation.
 Serverless hosts may persist completed authorization entries with
 `export-cache-snapshot`, `restore-cache-snapshot!`, and
 `cache-content-revision`. The host owns authentication and the encoded-byte
-bound before decoding; the EACL bounds describe retained cache weight and
-entry count. Snapshots exclude Datomic database values and process-local
+bound before decoding; EACL validates the trusted decoded snapshot and its
+count bound. Snapshots exclude Datomic database values and process-local
 identity. Restore validates before atomically replacing the visible cache.
 
 ## Prospective snapshots
@@ -134,3 +134,22 @@ Maven consumers install no formal tools.
 For the cross-backend capability matrix, recursive controls, and cache
 mutation rules, see the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
+
+## Removed (2026-09-01)
+
+- `eacl.datomic.codec` — page-token payload codec superseded by the portable
+  `eacl.secure-format` (used by `eacl.cursor` and `eacl.causal-token`).
+- `eacl.datomic.consistency` — the last remnant (`derive-signing-key`);
+  live Zed tokens are issued and authenticated by the shared
+  `eacl.causal-token` codec.
+
+## Removed (2026-09-02)
+
+- `eacl.datomic.impl.indexed/{subject->resources,resource->subjects,normalize-page-request,permission-relationship-eids,permission-schema-nodes}`
+  — unreferenced facade wrappers; call `eacl.datomic.db` and `eacl.engine.v8`
+  directly.
+- Basis-adapter configuration keys `:object-eid-fn`, `:subject->resources-fn`
+  and `:resource->subjects-fn` — an override seam whose only client was an
+  identity facade; the adapter reads `eacl.datomic.db` directly.
+- `eacl.datomic.schema/{calc-set-deltas,compare-schema}` are now aliases of
+  `eacl.schema.model` (same values).

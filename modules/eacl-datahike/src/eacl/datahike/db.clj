@@ -71,6 +71,19 @@
   [db]
   (some? (:config db)))
 
+(defn- tuple-prefix-matcher
+  "A per-scan predicate: does a datom's `arity`-tuple value start with
+   `prefix`? Component-wise, so it allocates nothing per datom."
+  [arity prefix]
+  (let [n (count prefix)]
+    (fn [{:keys [v]}]
+      (and (vector? v)
+           (= arity (count v))
+           (loop [i 0]
+             (or (== i n)
+                 (and (= (nth prefix i) (nth v i))
+                      (recur (inc i)))))))))
+
 (defn seek-tuple-prefix
   "Datoms of composite-tuple attribute `attr` (of `arity` components) whose
    value begins with `prefix`.
@@ -88,11 +101,7 @@
         n      (count prefix)]
     (if (> n arity)
       []
-      (let [matches-prefix?
-            (fn [{:keys [v]}]
-              (and (vector? v)
-                   (= arity (count v))
-                   (= prefix (subvec v 0 n))))]
+      (let [matches-prefix? (tuple-prefix-matcher arity prefix)]
         (if (direct-db? db)
           (let [padded (into prefix (repeat (- arity n) nil))
                 a-repr (attr-repr db attr)]
@@ -153,11 +162,7 @@
                                      Long/MAX_VALUE
                                      nil))))
                (into prefix (repeat missing nil)))
-             matches-prefix?
-             (fn [{:keys [v]}]
-               (and (vector? v)
-                    (= arity (count v))
-                    (= prefix (subvec v 0 prefix-size))))]
+             matches-prefix? (tuple-prefix-matcher arity prefix)]
          (if (direct-db? db)
            (let [a-repr (attr-repr db attr)]
              (->> ((if (= :desc direction)
@@ -202,11 +207,7 @@
                                      Long/MAX_VALUE
                                      nil))))
                (into prefix (repeat missing nil)))
-             matches-prefix?
-             (fn [{:keys [v]}]
-               (and (vector? v)
-                    (= arity (count v))
-                    (= prefix (subvec v 0 prefix-size))))]
+             matches-prefix? (tuple-prefix-matcher arity prefix)]
          (if (direct-db? db)
            (let [a-repr (attr-repr db attr)]
              (->> ((if (= :desc direction)

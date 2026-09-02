@@ -1,12 +1,12 @@
 (ns eacl.datomic.v8-characterization-test
   "Public behavior that must remain stable while the v8 engine is extracted
   from the Datomic adapter."
-  (:require [clojure.test :refer [deftest is testing]]
+  (:require [eacl.client.range-reuse :as range-reuse]
+            [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
             [eacl.core :as eacl]
             [eacl.contract-support :as contract]
-            [eacl.datomic.cache :as cache]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.schema :as schema]
@@ -104,7 +104,10 @@
 
       (testing "cache provenance and uncached parity"
         (let [cache-query (assoc query :first 3)
-              miss (eacl/lookup-resources client cache-query)
+              ;; Earlier pages retained a segment that covers this window;
+              ;; the provenance check wants a computed miss first.
+              miss (binding [range-reuse/*disabled?* true]
+                     (eacl/lookup-resources client cache-query))
               hit (eacl/lookup-resources client cache-query)
               uncached (eacl/lookup-resources uncached-client cache-query)]
           (is (= (page-ids miss) (page-ids hit) (page-ids uncached)))

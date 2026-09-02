@@ -19,11 +19,11 @@
 (deftest portable-cache-api-round-trip-test
   (with-mem-conn [conn schema/v7-schema]
     (let [client (core/make-client conn {})
-          bounds {:max-weight 8192 :max-entries 64}
+          bounds {:max-entries 64}
           before (core/cache-content-revision client)
           snapshot (core/export-cache-snapshot client bounds)
           restored (core/restore-cache-snapshot! client snapshot bounds)]
-      (is (= :eacl.cache/basis-snapshot-v1 (:format snapshot)))
+      (is (= :eacl.cache/basis-snapshot-v2 (:format snapshot)))
       (is (zero? (:entry-count snapshot)))
       (is (true? (:restored? restored)))
       (is (> (core/cache-content-revision client) before)))))
@@ -152,45 +152,43 @@
         (is (contains? (:known-keys data) :security-key))
         (is (contains? (:known-keys data) :cursor-ttl-seconds))))))
 
-(deftest shared-subproblem-cache-config-is-forwarded-and-validated-test
+(deftest flat-denotation-cache-config-is-forwarded-and-validated-test
   (with-mem-conn [conn schema/v7-schema]
-    (let [subproblem-config
-          {:enabled? false
-           :projection-max-weight 17
-           :denotation-max-weight 19
-           :managed-proof-max-atoms 3}
-          client
+    (let [client
           (eacl.datomic.core/make-client
            conn
-           {:cache
-            {:subproblem-cache subproblem-config}})
+           {:cache {:max-entries 11
+                    :denotation-max-entries 19}})
           basis-store
           (:basis-cache-store (runtime-options client))]
-      (is (= subproblem-config
-             (:subproblem-options basis-store))))
-    (doseq [subproblem-config
-            [{:enabled? :yes}
-             {:projection-max-weight 0}
-             {:denotation-max-weight 0}
+      (is (= 19 (get-in basis-store
+                        [:subproblem-options :denotation-max-entries])))
+      (is (= 11 (get-in basis-store
+                        [:subproblem-options :answer-max-entries]))))
+    (doseq [cache-config
+            [{:subproblem-cache {}}
+             {:enabled? false}
+             {:projection-max-entries 17}
+             {:denotation-max-entries 0}
+             {:projection-max-weight 17}
+             {:denotation-max-weight 19}
+             {:answer-max-entries 11}
              {:max-inflight 1}
-             {:managed-proof-max-atoms 0}]]
+             {:managed-proof-max-atoms 3}]]
       (is (= :eacl/invalid-config
              (try
                (eacl.datomic.core/make-client
                 conn
-                {:cache {:subproblem-cache subproblem-config}})
+                {:cache cache-config})
                nil
                (catch clojure.lang.ExceptionInfo error
                  (:type (ex-data error)))))
-          (pr-str subproblem-config)))))
+          (pr-str cache-config)))))
 
-(deftest execution-and-cache-attempt-config-is-strict-test
+(deftest execution-config-is-strict-and-cache-attempt-is-removed-test
   (with-mem-conn [conn schema/v7-schema]
-    (doseq [[options key]
-            [[{:execution-timeout-ms 0} :execution-timeout-ms]
-             [{:execution-timeout-ms "30"} :execution-timeout-ms]
-             [{:cache-attempt {:evaluation-reserve-ms 0}} :cache-attempt]
-             [{:cache-attempt {:unknown-limit 1}} :cache-attempt]]]
+    (doseq [options [{:execution-timeout-ms 0}
+                     {:execution-timeout-ms "30"}]]
       (let [data
             (try
               (core/make-client conn options)
@@ -198,15 +196,21 @@
               (catch clojure.lang.ExceptionInfo error
                 (ex-data error)))]
         (is (= :eacl/invalid-config (:type data)) (pr-str options))
-        (is (= key (:key data)) (pr-str options))))
+        (is (= :execution-timeout-ms (:key data)) (pr-str options))))
+    (doseq [value [{:evaluation-reserve-ms 0} {:unknown-limit 1}]]
+      (let [data
+            (try
+              (core/make-client conn {:cache-attempt value})
+              nil
+              (catch clojure.lang.ExceptionInfo error
+                (ex-data error)))]
+        (is (= :eacl/invalid-config (:type data)) (pr-str value))
+        (is (= [:cache-attempt] (:unknown-keys data)) (pr-str value))))
     (let [client
           (core/make-client
            conn
-           {:execution-timeout-ms 1234
-            :cache-attempt {:evaluation-reserve-ms 7}})]
-      (is (= 1234 (:execution-timeout-ms (runtime-options client))))
-      (is (= 7 (get-in (runtime-options client)
-                       [:cache-attempt :evaluation-reserve-ms]))))))
+           {:execution-timeout-ms 1234})]
+      (is (= 1234 (:execution-timeout-ms (runtime-options client)))))))
 
 (deftest expand-permission-tree-uses-the-client-id-codec-test
   ;; The adapter's :object-id->internal must resolve external ids through the
