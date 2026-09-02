@@ -70,18 +70,49 @@ lineage comparison; one from the causal-token bound check per acquisition.
 - The three CI-only flakes of the previous pass were understood before this
   work: they are not cache-semantic and stay fixed.
 
-## Paired measurements (shared scan tier, sparse fixture, fresh page sizes per sweep so the answer tiers miss)
+## Two defects the certification battery found before the PR
 
-| Backend | Tier disabled p50 page | Tier enabled p50 page | Commands per 300-page sweep | Elision |
+- **Cursor recovery poisoned the shared tier.** A continuation whose cursor
+  predates a relevant write is recovered on the older basis: the request's
+  proofs carry the current generations while the recovery scans a detached
+  adapter over the older slice. The first version of the scan-cache context
+  was bound per request and applied to every routed fetch, so those replies
+  were deposited under post-write scopes and a later fresh enumeration on
+  the new basis missed the new tuple (Datomic and Datahike recursive
+  contract tests, the recursive cursor-fallback test, and two counterexample
+  replay entries). The context now names the adapter it was built for and
+  the engine applies it only to scans against that adapter; a regression
+  test drives the same sequence on the sparse fixture.
+- **Range derivation defeated checkpoint reuse on recursive plans.** A page
+  derived from a longer resident page hands out a cursor at an ordinal with
+  no stored checkpoint, so the continuation replayed from scratch (the
+  checkpoint-reuse test). Only least-path pages now carry the reuse marker;
+  first-discovery pages keep their checkpoints.
+- A third, found by inspection: the observer's operation name was first put
+  under `:request-operation`, which batch endpoints use to key scalar
+  decisions; it moved to a private key.
+
+## Paired measurements (shared scan tier, sparse fixture, final tree)
+
+Three interleaved trials per mode after one warm-up sweep, fresh page sizes
+per sweep so the answer tiers miss, range reuse disabled through its seam so
+only scan reuse is measured.
+
+| Backend | Tier disabled p50 page | Tier enabled p50 page | Change | Commands per 300-page sweep |
 |---|---|---|---|---|
-| Datomic in-memory | 249.5 µs | 210.3 µs | 7,816 → 0 | 100 percent |
-| DataScript | 201.3 µs | 177.1 µs | 7,816 → 0 | 100 percent |
+| Datomic in-memory | 270.0 µs | 220.4 µs | −18 % | 7,816 → 0 |
+| DataScript | 228.9 µs | 193.7 µs | −15 % | 7,816 → 0 |
+| Datahike `:memory` | 237.9 µs | 208.2 µs | −12 % | 7,816 → 0 |
+| Datahike `:file` | 279.1 µs | 230.5 µs | −17 % | 7,816 → 0 |
+| Datalevin | 585.7 µs | 379.2 µs | −35 % | 7,816 → 0 |
 
-Datomic first sweep with an empty tier versus disabled (four alternating
-pairs, fresh clients): disabled 426/396/393/436 µs, enabled 376/374/366/362
-µs; the tier fills within the sweep and there is no measurable regression.
-Datahike and Datalevin paired numbers are recorded below once measured on
-the final tree.
+Every backend passes the adoption gate (oracle equality by the integration
+and neutrality tests, 100 percent of commands elided after warm-up, at least
+5 percent lower p50), so the tier ships enabled by default on all five
+stores. Datomic first sweep with an empty tier versus disabled (four
+alternating pairs, fresh clients): disabled 426/396/393/436 µs, enabled
+376/374/366/362 µs; the tier fills within the sweep and there is no
+measurable regression.
 
 ## Deviations from the task list
 

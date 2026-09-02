@@ -86,6 +86,7 @@
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test
+               'eacl.datascript.scan-cache-neutrality-test
                'eacl.engine.alias-frontier-test
                'eacl.engine.least-path-portable-test
                'eacl.engine.sealed-plan-test

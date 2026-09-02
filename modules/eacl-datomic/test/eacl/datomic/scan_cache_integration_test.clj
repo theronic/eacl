@@ -145,3 +145,28 @@
       (is (= (:data oracle) (:data fresh))
           "a fresh enumeration after the recovery equals its uncached computation")
       (is (some #(= new-doc %) (:data fresh)) "the new grant is visible"))))
+
+(deftest limits-fail-identically-with-every-scan-served-from-cache-test
+  ;; Served values pass through the same limit accounting as fetched values:
+  ;; a traversal that exceeds a ceiling fails with the same typed error and
+  ;; the same reported ceiling whether its scans come from the adapter, the
+  ;; request memo, or the shared tier.
+  (with-mem-conn [conn datomic-schema/v7-schema]
+    (let [seeded (seed-client! conn {})
+          tight (datomic/make-client conn {:recursive-traversal-limits
+                                           {:max-advanced-datoms 8}})
+          u (sharing-user seeded)
+          failure (fn [f] (try (f) nil
+                               (catch clojure.lang.ExceptionInfo error
+                                 (select-keys (ex-data error)
+                                              [:eacl/error :limit-kind :limit]))))
+          cold (failure #(fixture/page tight u 200))
+          warm (failure #(fixture/page tight u 200))
+          memo-free (binding [scan-cache/*memo-disabled?* true]
+                      (failure #(fixture/page tight u 200 :cache? false)))
+          shared-free (binding [scan-cache/*shared-disabled?* true]
+                        (failure #(fixture/page tight u 200)))]
+      (is (= :eacl.recursive-traversal/limit-exceeded (:eacl/error cold)))
+      (is (= cold warm) "the second run, served from the tier, fails identically")
+      (is (= cold memo-free))
+      (is (= cold shared-free)))))
