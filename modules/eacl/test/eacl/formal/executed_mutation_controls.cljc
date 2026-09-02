@@ -7,6 +7,8 @@
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.client.range-reuse :as range-reuse]
+            [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
@@ -16,6 +18,7 @@
             [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as request-context]
+            [eacl.request.counters :as request-counters]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-persistence :as persistence]
@@ -1664,6 +1667,254 @@ definition document {
                       (original state residual new-work))]
         (gate))))))
 
+;; ---------------------------------------------------------------------------
+;; Exact scan-response cache (eacl.engine.scan-cache)
+;; ---------------------------------------------------------------------------
+
+(defn- scan-cache-adapter
+  "A fixed ascending scan per subject id, honoring bound and limit exactly and
+  recording every command it receives."
+  [sequences commands]
+  (fn [{:keys [bound-eid limit] :as descriptor}]
+    (swap! commands conj (select-keys descriptor [:subject-eid :bound-eid :limit]))
+    (let [values (get sequences (:subject-eid descriptor) [])
+          beyond (if (nil? bound-eid) values (filterv #(> % bound-eid) values))]
+      (vec (take limit beyond)))))
+
+(def ^:private scan-cache-descriptor
+  {:operation :subject->resources :subject-type :user :subject-eid 1
+   :relation-eid 9 :resource-type :doc})
+
+(defn- scan-cache-run
+  "Runs `fetches` (vectors of [bound limit]) through one caching fetch
+  function over the adapter and returns [replies commands]."
+  [fetches {:keys [tier scope]}]
+  (let [commands (atom [])
+        inner (scan-cache-adapter {1 [1 2 3 4 5 6 7 8]} commands)
+        fetch (scan-cache/caching-fetch-fn
+               inner
+               (cond-> {:memo (scan-cache/memo)}
+                 tier (assoc :tier tier
+                             ;; Like production, the scope is a flat vector
+                             ;; whose last component is the generation.
+                             :scope-fn (fn [relation-eid]
+                                         [:scope relation-eid scope]))))]
+    (request-counters/call-with-ledger
+     (request-counters/make-ledger)
+     (fn []
+       [(mapv (fn [[bound limit]]
+                (fetch (assoc scan-cache-descriptor :bound-eid bound :limit limit)))
+              fetches)
+        @commands]))))
+
+(defn scan-cache-serves-short-prefix-killed?
+  "A prefix shorter than the request that is not exhausted must miss; serving
+  its remainder would hand the reducer a short chunk that means exhaustion."
+  []
+  (let [fetches [[nil 3] [2 3]]
+        expected [[[1 2 3] [3 4 5]] [{:subject-eid 1 :bound-eid nil :limit 3}
+                                     {:subject-eid 1 :bound-eid 2 :limit 3}]]
+        original scan-cache/serve
+        mutant (fn [{:keys [prefix] :as entry} bound limit direction]
+                 (or (original entry bound limit direction)
+                     (let [start (count (take-while #(<= (compare % bound) 0)
+                                                    prefix))]
+                       (when (and (some? bound) (< start (count prefix)))
+                         (subvec prefix start)))))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/serve mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-serves-values-at-bound-killed?
+  "A served reply must contain only values strictly beyond the exclusive
+  bound; an off-by-one that includes the bound duplicates a released value."
+  []
+  (let [fetches [[nil 4] [2 2]]
+        expected [[[1 2 3 4] [3 4]] [{:subject-eid 1 :bound-eid nil :limit 4}]]
+        mutant (fn [{:keys [prefix exhausted?]} bound limit _direction]
+                 (let [start (if (nil? bound)
+                               0
+                               (count (take-while #(neg? (compare % bound)) prefix)))
+                       available (- (count prefix) start)]
+                   (cond
+                     (>= available limit) (subvec prefix start (+ start limit))
+                     exhausted? (subvec prefix start)
+                     :else nil)))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/serve mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-reuses-stale-generation-killed?
+  "The shared key must carry the complete validity scope; dropping its last
+  component (the scanned relation's generation) serves a prefix across a
+  write that changed the relation."
+  []
+  (let [run (fn [tier scope] (second (scan-cache-run [[nil 3]] {:tier tier :scope scope})))
+        commands-under (fn []
+                         (let [tier (scan-cache/tier {:max-entries 8 :max-prefix 8})]
+                           [(count (run tier 1))
+                            (count (run tier 2))]))
+        expected [1 1]
+        mutant (fn [scope key] [(vec (butlast scope)) key])]
+    (and (= expected (commands-under))
+         (not= expected (with-redefs [scan-cache/shared-key mutant]
+                          (commands-under))))))
+
+(defn scan-cache-widens-command-killed?
+  "A miss must forward the evaluator's command unchanged; widening its limit
+  reads values the evaluator did not demand."
+  []
+  (let [fetches [[nil 2] [2 2]]
+        expected [[[1 2] [3 4]] [{:subject-eid 1 :bound-eid nil :limit 2}
+                                 {:subject-eid 1 :bound-eid 2 :limit 2}]]
+        mutant (fn [inner descriptor] (inner (update descriptor :limit inc)))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/forward-command mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-deposits-fragment-killed?
+  "A reply that does not start at a known position of the scan must not
+  become a prefix; retaining it serves the wrong first values later."
+  []
+  (let [fetches [[5 2] [nil 2]]
+        expected [[[6 7] [1 2]] [{:subject-eid 1 :bound-eid 5 :limit 2}
+                                 {:subject-eid 1 :bound-eid nil :limit 2}]]
+        original scan-cache/extend-entry
+        mutant (fn [entry bound values limit direction max-prefix]
+                 (or (original entry bound values limit direction max-prefix)
+                     {:prefix (vec values) :exhausted? (< (count values) limit)}))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/extend-entry mutant]
+                          (scan-cache-run fetches {}))))))
+
+;; ---------------------------------------------------------------------------
+;; Range answer reuse (eacl.client.range-reuse)
+;; ---------------------------------------------------------------------------
+
+(defn- range-edge [i] {:ordinal i :eid (* 10 i)})
+
+(defn- range-resident
+  [n next?]
+  {:data (vec (range n))
+   :edges (mapv range-edge (range n))
+   :range-reusable? true
+   :page-info {:start-cursor (range-edge 0)
+               :end-cursor (range-edge (dec n))
+               :has-next-page? next?
+               :has-previous-page? false}})
+
+(defn range-derivation-end-edge-off-by-one-killed?
+  "A derived page's end cursor must be the edge of its last result; the edge
+  after it would resume past a result the caller never received."
+  []
+  (let [resident (range-resident 20 true)
+        expected {:data (vec (range 10)) :end (range-edge 9) :next? true}
+        observe (fn []
+                  (let [page (range-reuse/derive-page [:first 10] resident)]
+                    {:data (:data page)
+                     :end (get-in page [:page-info :end-cursor])
+                     :next? (get-in page [:page-info :has-next-page?])}))
+        original range-reuse/derive-page
+        mutant (fn [request resident]
+                 (let [page (original request resident)
+                       [_ requested] request]
+                   (if (and page (< requested (count (:edges resident))))
+                     (assoc-in page [:page-info :end-cursor]
+                               (nth (:edges resident) requested))
+                     page)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/derive-page mutant]
+                          (observe))))))
+
+(defn range-derivation-ignores-next-page-killed?
+  "A shorter request than a complete resident page is the resident page; a
+  shorter request than an incomplete one must not be answered from it."
+  []
+  (let [complete (range-resident 7 false)
+        incomplete (range-resident 7 true)
+        observe (fn []
+                  [(some? (range-reuse/derive-page [:first 30] complete))
+                   (some? (range-reuse/derive-page [:first 30] incomplete))])
+        expected [true false]
+        original range-reuse/derive-page
+        mutant (fn [request resident]
+                 (or (original request resident)
+                     resident))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/derive-page mutant]
+                          (observe))))))
+
+(defn- range-segment-tier
+  "A tier holding one twenty-result forward segment with a next page."
+  []
+  (let [tier (range-reuse/tier {})
+        page {:data (vec (range 20))
+              :edges (mapv range-edge (range 20))
+              :range-reusable? true
+              :page-info {:start-cursor (range-edge 0)
+                          :end-cursor (range-edge 19)
+                          :has-next-page? true
+                          :has-previous-page? false}}]
+    (range-reuse/publish! tier :walk {:kind :first :size 20 :boundary nil} page)
+    tier))
+
+(defn range-window-position-off-by-one-killed?
+  "A window after a retained edge starts at the result after that edge; a
+  position at the edge's own result would repeat the boundary result."
+  []
+  (let [tier (range-segment-tier)
+        window {:kind :first :size 5 :boundary (range-edge 9)}
+        observe (fn [] (:data (:page (range-reuse/lookup! tier :walk window))))
+        expected [10 11 12 13 14]
+        original range-reuse/forward-position
+        mutant (fn [segment boundary]
+                 (let [position (original segment boundary)]
+                   (if (and position (pos? position)) (dec position) position)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/forward-position mutant]
+                          (observe))))))
+
+(defn range-window-past-segment-served-as-complete-killed?
+  "A window that runs past a segment with a next page is a partial answer
+  for composition, never a complete page: serving the tail as the whole
+  answer would drop the results that follow the segment."
+  []
+  (let [tier (range-segment-tier)
+        window {:kind :first :size 8 :boundary (range-edge 15)}
+        observe (fn [] (let [hit (range-reuse/lookup! tier :walk window)]
+                         [(some? (:page hit)) (some? (:partial hit))]))
+        expected [false true]
+        original range-reuse/serve-from-segment
+        mutant (fn [window segment]
+                 (let [answer (original window segment)]
+                   (if (:partial answer) {:page (:partial answer)} answer)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/serve-from-segment mutant]
+                          (observe))))))
+
+(defn range-composition-order-killed?
+  "A reverse window composes the continuation before the segment's head; a
+  forward window composes the segment's tail before the continuation."
+  []
+  (let [page (fn [from to]
+               {:data (vec (range from to))
+                :edges (mapv range-edge (range from to))
+                :range-reusable? true
+                :page-info {:start-cursor (range-edge from)
+                            :end-cursor (range-edge (dec to))
+                            :has-next-page? true
+                            :has-previous-page? true}})
+        observe (fn []
+                  [(:data (range-reuse/compose (page 16 20) {:kind :first :size 4 :boundary (range-edge 19)} (page 20 24)))
+                   (:data (range-reuse/compose (page 30 34) {:kind :last :size 4 :boundary (range-edge 30)} (page 26 30)))])
+        expected [(vec (range 16 24)) (vec (range 26 34))]
+        original range-reuse/compose
+        mutant (fn [partial continuation remainder]
+                 (original partial (update continuation :kind {:first :last :last :first}) remainder))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/compose mutant]
+                          (observe))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1721,7 +1972,22 @@ definition document {
    :stable-count-history-retention stable-count-history-retention-killed?
    :stable-completion-distinct stable-completion-distinct-killed?
    :stable-admission-deduplication stable-admission-deduplication-killed?
-   :stable-staged-limit-atomicity stable-staged-limit-atomicity-killed?})
+   :stable-staged-limit-atomicity stable-staged-limit-atomicity-killed?
+   :scan-cache-serves-short-prefix scan-cache-serves-short-prefix-killed?
+   :scan-cache-serves-values-at-bound scan-cache-serves-values-at-bound-killed?
+   :scan-cache-reuses-stale-generation scan-cache-reuses-stale-generation-killed?
+   :scan-cache-widens-command scan-cache-widens-command-killed?
+   :scan-cache-deposits-fragment scan-cache-deposits-fragment-killed?
+   :range-derivation-end-edge-off-by-one
+   range-derivation-end-edge-off-by-one-killed?
+   :range-derivation-ignores-next-page
+   range-derivation-ignores-next-page-killed?
+   :range-window-position-off-by-one
+   range-window-position-off-by-one-killed?
+   :range-window-past-segment-served-as-complete
+   range-window-past-segment-served-as-complete-killed?
+   :range-composition-order
+   range-composition-order-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

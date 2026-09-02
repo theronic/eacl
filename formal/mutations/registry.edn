@@ -1,7 +1,7 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 142
- :historical-clojure-mutant-count 128
+ :historical-mutant-count 152
+ :historical-clojure-mutant-count 138
  :historical-model-mutant-count 14
  :mutants
  [{:id :wrong-arrow-direction
@@ -9,6 +9,96 @@
    :mutation :swap-arrow-resource-and-subject
    :target-symbol "portable/decide"
    :detector "wrong-arrow-direction-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-serves-short-prefix
+   :mechanism :executed-production
+   :mutation :serve-short-non-exhausted-prefix
+   :target-symbol "scan-cache/serve"
+   :detector "scan-cache-serves-short-prefix-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-serves-values-at-bound
+   :mechanism :executed-production
+   :mutation :include-exclusive-bound-in-reply
+   :target-symbol "scan-cache/serve"
+   :detector "scan-cache-serves-values-at-bound-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-reuses-stale-generation
+   :mechanism :executed-production
+   :mutation :drop-relation-generation-from-shared-key
+   :target-symbol "scan-cache/shared-key"
+   :detector "scan-cache-reuses-stale-generation-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-widens-command
+   :mechanism :executed-production
+   :mutation :widen-forwarded-limit
+   :target-symbol "scan-cache/forward-command"
+   :detector "scan-cache-widens-command-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-deposits-fragment
+   :mechanism :executed-production
+   :mutation :retain-fragment-as-prefix
+   :target-symbol "scan-cache/extend-entry"
+   :detector "scan-cache-deposits-fragment-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :range-derivation-end-edge-off-by-one
+   :mechanism :executed-production
+   :mutation :end-cursor-from-the-edge-after-the-last-result
+   :target-symbol "range-reuse/derive-page"
+   :detector "range-derivation-end-edge-off-by-one-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :range-derivation-ignores-next-page
+   :mechanism :executed-production
+   :mutation :answer-longer-request-from-incomplete-resident-page
+   :target-symbol "range-reuse/derive-page"
+   :detector "range-derivation-ignores-next-page-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :range-window-position-off-by-one
+   :mechanism :executed-production
+   :mutation :window-starts-at-the-boundary-result-instead-of-after-it
+   :target-symbol "range-reuse/forward-position"
+   :detector "range-window-position-off-by-one-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :range-window-past-segment-served-as-complete
+   :mechanism :executed-production
+   :mutation :serve-segment-tail-as-the-whole-answer-despite-a-next-page
+   :target-symbol "range-reuse/serve-from-segment"
+   :detector "range-window-past-segment-served-as-complete-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :range-composition-order
+   :mechanism :executed-production
+   :mutation :swap-the-segment-and-continuation-order-when-composing
+   :target-symbol "range-reuse/compose"
+   :detector "range-composition-order-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test

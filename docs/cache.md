@@ -99,6 +99,23 @@ current per-request decision.
 | Stable-page checkpoint | Request-local or standalone resumable reducer state | Standard cache |
 | Cursor codec/construction | Authenticated token and construction contexts | Independent standard caches |
 | Derived schema | Parsed schema, dependency closures, roots, and sealed plans | Flat standard cache |
+| Scan response | Exact adapter scan prefixes per read descriptor, scoped by the scanned relation's generation | Standard cache; `:scan-cache {:max-entries :max-prefix}`; nonportable |
+| Range segments | Completed plain pages of one walk as contiguous result segments with one internal edge per result, scoped like managed answers (equal proof frame over the walk's relations, else exact basis); any window inside a segment is served, a window past a segment composes its tail with one continuation, adjacent pages merge | Standard cache; `:range-reuse {:max-entries :max-results-per-walk :max-segments-per-walk}`; nonportable |
+
+The scan-response and range tiers are physical accelerators: a served scan
+reply equals the adapter's reply for the same bound and limit, a derived or
+composed page equals the page traversal would produce (both public orders
+are deterministic functions of plan, snapshot, and boundary, so every
+completed page is a slice of one fixed sequence), and results, order,
+cursors, limits, deadlines, and errors are identical with both disabled. A
+recursive plan's continuation past a retained segment resumes the stored
+checkpoint at the segment's end edge: the segment remembers the page series
+that produced it, and the continuation resumes that series' frontier
+whatever page size it requests. Every request also
+memoizes its own scan replies on its immutable basis; that memo is ordinary
+execution state and is not switched by `:cache?`, which governs only the
+shared store. `:cache? false` and a disabled client cache bypass both shared
+tiers. Neither tier is exported by cache snapshots.
 
 Request-local schema memos, evaluator worklists, and recursion sets remain
 ordinary request state. Stable-page checkpoints are semantic execution state,
@@ -353,6 +370,20 @@ work counters remain active.
 JVM hit/probe counters use contention-distributed `LongAdder` values rather
 than a global metrics atom; a stats read during concurrent traffic is therefore
 a weakly consistent diagnostic snapshot. CLJS keeps its single-threaded atom.
+`cache-stats` also carries `:scan-cache` (hits, misses, deposits, extensions,
+scope-unavailable, entry count) and `:range-reuse` (hits, misses, deposits,
+supersessions, entry count) when those tiers exist.
+
+Per-request I/O is observable through the `:io-observer` client option: a
+function that receives, after every public read and every lookahead
+operation, the operation, its provenance (`:request` or `:lookahead`), the
+outcome, elapsed nanoseconds, and the request's exact mandatory meters
+(commands, fetched values, identity conversions, scan memo and shared hits,
+scan misses, range derivations). Without an observer the request path
+performs one reference test. A client built with
+`:lookahead {:pages n :max-inflight m}` runs a served page's continuation on
+a bounded daemon pool after the response, so the caller's next page is an
+exact hit; the option is off by default and a no-op on ClojureScript.
 
 `refresh-metrics!` drops cached derived structural artifacts and clears their
 metrics. With `{:eager? true}` it rereads the bounded permission schema to

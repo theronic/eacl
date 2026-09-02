@@ -55,6 +55,10 @@
                                         ->RelationshipUpdate]]
             [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
+            [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.engine.scan-cache :as scan-cache]
+            [eacl.client.lookahead :as lookahead]
+            [eacl.client.range-reuse :as range-reuse]
             [eacl.execution :as execution]
             [eacl.permission-tree :as permission-tree]
             [eacl.proof-frame :as proof-frame]
@@ -125,7 +129,9 @@
 (defn- ensure-execution-contract
   [opts operation request]
   (let [opts
-        (cond-> opts
+        ;; The public operation name for observation only: `:request-operation`
+        ;; is reserved for batch endpoints and changes scalar decision keys.
+        (cond-> (assoc opts ::observed-operation operation)
           (nil? (:cache-lifecycle opts))
           (assoc :cache-lifecycle
                  (cache/capture-cache-lifecycle
@@ -335,6 +341,83 @@
         (when-let [selected (:selected-snapshot basis)]
           (source/release! selected))))))
 
+(defn- observe-request
+  "Runs `thunk` and delivers the request's exact mandatory meters to the
+  configured observer once, on success or failure; the observer can neither
+  change the outcome nor fail the request."
+  [observer opts ledger thunk]
+  (let [started (execution/now-nanos)
+        before (request-counters/snapshot ledger)
+        deliver! (fn [outcome error]
+                   (try
+                     (observer
+                      (cond-> {:operation (::observed-operation opts)
+                               :provenance (if (pos? lookahead/*depth*)
+                                             :lookahead
+                                             :request)
+                               :outcome outcome
+                               :elapsed-nanos (- (execution/now-nanos) started)
+                               :meters (request-counters/delta
+                                        before
+                                        (request-counters/snapshot ledger))}
+                        error (assoc :error (or (:type (ex-data error))
+                                                #?(:clj (class error)
+                                                   :cljs (type error))))))
+                     (catch #?(:clj Throwable :cljs :default) _ nil)))]
+    (try
+      (let [result (thunk)]
+        (deliver! :completed nil)
+        result)
+      (catch #?(:clj Throwable :cljs :default) error
+        (deliver! :failed error)
+        (throw error)))))
+
+(defn- scan-cache-context
+  "The request's scan-response cache context. The memo is unconditional;
+  the shared tier applies only to cache-enabled requests on an ordinary
+  current basis, under a scope pinned by the scanned relation's generation
+  from a proof this request already resolved (never acquired here)."
+  [opts request-context]
+  (let [state (request-context/active-state request-context)
+        runtime (:runtime state)
+        identity (:basis-identity state)
+        tier (:scan-tier opts)
+        ordinary? (and (not (::historical-basis? runtime))
+                       (not= :speculative (:basis-kind identity))
+                       (nil? (:speculative-id identity)))
+        scope-fn
+        (when (and tier
+                   ordinary?
+                   (:completed-cache-request? opts))
+          (let [adapter (request-context/adapter request-context)
+                base (delay
+                       [(backend/backend-id adapter)
+                        (:source-id identity)
+                        (:branch identity)
+                        (:source-lifecycle identity)
+                        (backend/fingerprint adapter)
+                        (backend/identity-contract adapter)
+                        sealed-plan/fingerprint-domain])
+                scopes (volatile! {})]
+            (fn [relation-eid]
+              (or (get @scopes relation-eid)
+                  (when-let [resolved
+                             (proof-frame/resolved-generation
+                              (force (:proof-frame-delay state))
+                              relation-eid)]
+                    (let [scope (conj @base
+                                      (:schema-generation resolved)
+                                      relation-eid
+                                      (:generation resolved))]
+                      (vswap! scopes assoc relation-eid scope)
+                      scope))))))]
+    {:memo (scan-cache/memo)
+     :tier (when scope-fn tier)
+     :scope-fn scope-fn
+     ;; The engine applies the context only to scans against this adapter;
+     ;; a cursor recovered on an older basis scans a different one.
+     :adapter (request-context/adapter request-context)}))
+
 (defn- with-selected-context
   [api source opts consistency-value f]
   (let [ledger (or (:request-counter-ledger opts)
@@ -381,7 +464,15 @@
                           diagnostic)))}))
                  (selected-context api source opts consistency-value))]
            (try
-             (request-context/call-with-context context f)
+             (request-context/call-with-context
+              context
+              (fn [request-context]
+                (binding [engine/*scan-cache*
+                          (scan-cache-context opts request-context)]
+                  (if-let [observer (:io-observer opts)]
+                    (observe-request observer opts ledger
+                                     #(f request-context))
+                    (f request-context)))))
              (finally
                (request-context/close! context))))))))
 
@@ -794,6 +885,21 @@
      :expression-limits (:expression-limits opts)
      :permission-tree-limits (:permission-tree-limits opts)}))
 
+(defn- continuation-compute-fn
+  "The engine call for a range-composition remainder or a segment-end
+  resume: the request's internal query with its window replaced by
+  `{:kind :size :boundary}` (an internal edge the segment retained) and,
+  when the segment names its series, `:checkpoint-size`, evaluated by
+  `compute-query` under the ordinary request bindings."
+  [compute-query internal-query]
+  (fn [{:keys [kind size boundary checkpoint-size]}]
+    (compute-query
+     (cond-> (-> internal-query
+                 (dissoc :first :last :after :before :checkpoint-size)
+                 (assoc kind size
+                        (case kind :first :after :last :before) boundary))
+       (pos-int? checkpoint-size) (assoc :checkpoint-size checkpoint-size)))))
+
 (defn- cached-engine-result
   [request-context adapter opts operation query resource-type permission
    compute]
@@ -848,8 +954,8 @@
                 (proof-frame/descriptor
                  (proof-frame/resolve!
                   @request-proof-frame-delay relation-ids)))))
-        evaluate
-        #(do
+        evaluate-with
+        (fn [thunk]
            (execution/check! contract :schema-plan)
            (let [value
                  (binding [engine/*schema-cache* @schema-cache
@@ -871,9 +977,10 @@
                            execution/*contract* contract
                            subproblem/*decision-kernel*
                            (:decision-kernel opts)]
-                   (compute))]
+                   (thunk))]
              (execution/check! contract :semantic-evaluation)
              value))
+        evaluate #(evaluate-with compute)
         cacheable?
         (and (:basis-cache-store opts)
              (:completed-cache? opts)
@@ -978,7 +1085,80 @@
                 (proof-frame/resolve!
                  frame (:relation-ids @dependencies))))
             semantic-key
-            (completed-answer-semantic-key opts operation query)]
+            (completed-answer-semantic-key opts operation query)
+            ;; Range reuse: on an exact and managed miss, any window of the
+            ;; same walk is served from the retained segments; a window that
+            ;; runs past a segment composes its tail with one continuation;
+            ;; computed and composed pages extend the segments.
+            range-tier
+            (when (and (contains? #{:lookup-resources :lookup-subjects}
+                                  operation)
+                       (not speculative)
+                       (not range-reuse/*disabled?*))
+              (:range-tier opts))
+            ;; Segments are scoped like managed answers: by the complete
+            ;; proof descriptor over the walk's relation closure when
+            ;; proof-managed reuse applies (so unrelated writes keep them
+            ;; valid), else by the exact basis.
+            range-scope
+            (when range-tier
+              (or (when (and managed-reuse? resource-type permission)
+                    (try
+                      (when-let [descriptor (proof-frame/descriptor @complete-proof)]
+                        [:frame descriptor])
+                      (catch #?(:clj Exception :cljs :default) _ nil)))
+                  exact-basis-key))
+            walk-key
+            (when range-scope
+              (range-reuse/walk-key range-scope semantic-key))
+            window
+            (when walk-key
+              (range-reuse/window semantic-key engine/max-page-size))
+            continuation-compute (::continuation-compute opts)
+            populate-range? (:populate-cache-request? opts true)
+            derived? (volatile! false)
+            composed? (volatile! false)
+            evaluate
+            (if-not (and walk-key window)
+              evaluate
+              (fn []
+                (let [hit (range-reuse/lookup! range-tier walk-key window)
+                      compute-and-publish
+                      (fn []
+                        (let [page (evaluate)]
+                          (when populate-range?
+                            (range-reuse/publish! range-tier walk-key window page))
+                          page))]
+                  (cond
+                    (:page hit)
+                    (do (vreset! derived? true)
+                        (request-counters/add! :range-derivations)
+                        (:page hit))
+
+                    (and (:partial hit) continuation-compute)
+                    (let [{:keys [partial continuation]} hit
+                          remainder (evaluate-with
+                                     #(continuation-compute continuation))
+                          page (range-reuse/compose partial continuation remainder)]
+                      (if page
+                        (do (vreset! composed? true)
+                            (request-counters/add! :range-compositions)
+                            (when populate-range?
+                              (range-reuse/publish! range-tier walk-key window page))
+                            page)
+                        (compute-and-publish)))
+
+                    ;; The window starts at a segment's end: compute it as
+                    ;; the continuation of the series that produced the
+                    ;; segment, so its checkpoint at that boundary resumes.
+                    (and (:continuation hit) continuation-compute)
+                    (let [page (evaluate-with
+                                #(continuation-compute (:continuation hit)))]
+                      (when populate-range?
+                        (range-reuse/publish! range-tier walk-key window page))
+                      page)
+
+                    :else (compute-and-publish)))))]
         (execution/check! contract :cache-lookup)
         (let [answer
               (if speculative
@@ -1011,7 +1191,10 @@
                     #(proof-frame/descriptor @complete-proof))}
                  semantic-key evaluate))]
           (execution/check! contract :cache-publication)
-          answer)))))
+          (cond
+            @derived? (assoc answer :cached? true :cache-tier :range)
+            @composed? (assoc answer :cache-tier :range-composition)
+            :else answer))))))
 
 (defn- with-cache-info
   [value {:keys [cached? cache-basis]}]
@@ -1767,7 +1950,9 @@
                     engine/*proof-frame* request-proof-frame
                     engine/*recursive-traversal-limits*
                     (:recursive-traversal-limits opts)
-                    engine/*service-admission* (:service-admission opts)
+                    engine/*service-admission*
+                    (when (zero? lookahead/*depth*)
+                      (:service-admission opts))
                     engine/*evaluation-mode* (:evaluation contract)
                     engine/*aggregate-work-stats* work-stats
                     execution/*contract* contract
@@ -1851,22 +2036,30 @@
                           (cond-> cursor-opts
                             rendered-cache
                             (assoc ::populate-exact-answer? false))
+                          compute-query
+                          (fn [internal-query]
+                            (validate!)
+                            (engine/lookup-resources
+                             adapter
+                             internal-query
+                             {:continuation-cache-fn
+                              (fn []
+                                (continuation-context
+                                 adapter cursor-opts
+                                 :lookup-resources query))}))
                           compute
                           (if (:resource/relationship query)
                             #(relationship-filtered-lookup-page
                               api opts request-context adapter selected-db
                               cursor-opts :lookup-resources query
                               internal-query validate!)
-                            #(do
-                               (validate!)
-                               (engine/lookup-resources
-                                adapter
-                                internal-query
-                                {:continuation-cache-fn
-                                 (fn []
-                                   (continuation-context
-                                    adapter cursor-opts
-                                    :lookup-resources query))})))
+                            #(compute-query internal-query))
+                          answer-opts
+                          (if (:resource/relationship query)
+                            answer-opts
+                            (assoc answer-opts ::continuation-compute
+                                   (continuation-compute-fn
+                                    compute-query internal-query)))
                           answer
                           (cached-engine-result
                            request-context adapter answer-opts
@@ -2029,22 +2222,30 @@
                           (cond-> cursor-opts
                             rendered-cache
                             (assoc ::populate-exact-answer? false))
+                          compute-query
+                          (fn [internal-query]
+                            (validate!)
+                            (engine/lookup-subjects
+                             adapter
+                             internal-query
+                             {:continuation-cache-fn
+                              (fn []
+                                (continuation-context
+                                 adapter cursor-opts
+                                 :lookup-subjects query))}))
                           compute
                           (if (:subject/relationship query)
                             #(relationship-filtered-lookup-page
                               api opts request-context adapter selected-db
                               cursor-opts :lookup-subjects query
                               internal-query validate!)
-                            #(do
-                               (validate!)
-                               (engine/lookup-subjects
-                                adapter
-                                internal-query
-                                {:continuation-cache-fn
-                                 (fn []
-                                   (continuation-context
-                                    adapter cursor-opts
-                                    :lookup-subjects query))})))
+                            #(compute-query internal-query))
+                          answer-opts
+                          (if (:subject/relationship query)
+                            answer-opts
+                            (assoc answer-opts ::continuation-compute
+                                   (continuation-compute-fn
+                                    compute-query internal-query)))
                           answer
                           (cached-engine-result
                            request-context adapter answer-opts
@@ -2207,8 +2408,8 @@
 (defrecord RuntimeCacheLifecycle
            [token source-incarnation source-lifecycle basis-cache-store
             continuation-cache-store cursor-codec-cache
-            cursor-construction-cache derived-schema-caches
-            content-revision])
+            cursor-construction-cache derived-schema-caches scan-tier
+            range-tier content-revision])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
@@ -2216,7 +2417,8 @@
 
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
-    :cursor-codec-cache :cursor-construction-cache :derived-schema-caches})
+    :cursor-codec-cache :cursor-construction-cache :derived-schema-caches
+    :scan-tier :range-tier})
 
 ;; A transient Acl read has already captured and attached one immutable
 ;; lifecycle options map before selecting its basis. Keep that map opaque
@@ -2263,6 +2465,20 @@
         {:max-entries (cache-entry-capacity cache-option)
          :telemetry? (:telemetry-enabled? basis-cache-store)}))}))
 
+(defn- scan-tier-for-config
+  "The client's shared scan-response tier: present only while the client
+  cache is enabled and `:scan-cache` is not `false`."
+  [{:keys [scan-cache-option]} basis-cache-store]
+  (when (and basis-cache-store (not (false? scan-cache-option)))
+    (scan-cache/tier (if (map? scan-cache-option) scan-cache-option {}))))
+
+(defn- range-tier-for
+  "The client's range-reuse tier: present only while the client cache is
+  enabled and `:range-reuse` is not `false`."
+  [{:keys [range-reuse-option]} basis-cache-store]
+  (when (and basis-cache-store (not (false? range-reuse-option)))
+    (range-reuse/tier (if (map? range-reuse-option) range-reuse-option {}))))
+
 (defn- fresh-runtime-cache-lifecycle
   [{:keys [cache-option derived-schema-store-factory]
     :as config}
@@ -2286,6 +2502,8 @@
      cursor-codec-cache
      cursor-construction-cache
      (derived-schema-store-factory)
+     (scan-tier-for-config config basis-cache-store)
+     (range-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- narrow-runtime-cache-lifecycle
@@ -2315,6 +2533,8 @@
      (:cursor-codec-cache current)
      (:cursor-construction-cache current)
      (:derived-schema-caches current)
+     (scan-tier-for-config config basis-cache-store)
+     (range-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- lifecycle-content-revision
@@ -2388,7 +2608,7 @@
     :recursive-traversal-limits :permission-tree-limits
     :execution-timeout-ms :consistency-sync-timeout-ms
     :service-admission :source-lifecycle :runtime-lifecycle-state
-    :maximum-snapshot-retention-ms})
+    :maximum-snapshot-retention-ms :io-observer :lookahead-state})
 
 (defn- reader-api
   [api]
@@ -3467,6 +3687,24 @@
         (vec (prepare db raw))
         []))))
 
+(defn- with-page-lookahead
+  "Runs the client-level page operation `thunk` and, when the client has
+  lookahead configured, submits the served page's continuation through the
+  same public operation on `client` after the response is complete."
+  [client runtime operation request thunk]
+  (let [page (thunk)
+        options (runtime-options runtime)]
+    (when-let [state (:lookahead-state options)]
+      (lookahead/submit!
+       state operation request page
+       (fn [continuation]
+         (case operation
+           :lookup-resources (eacl/lookup-resources client continuation)
+           :lookup-subjects (eacl/lookup-subjects client continuation)
+           :read-relationships (eacl/read-relationships client continuation)))
+       (:io-observer options)))
+    page))
+
 (defn- call-with-transient-snapshot
   "Selects one request basis, delegates to the ordinary Snapshot reader, and
   releases in `finally`. The transient runtime carries only the already
@@ -3508,26 +3746,32 @@
     (call-with-transient-snapshot
      runtime source api :read-schema request
      #(eacl/-read-schema % request)))
-  (-read-relationships [_ request]
+  (-read-relationships [this request]
     (relationship-filters/validate! request)
     (authorization-filters/validate-scan-authorization! request)
-    (binding [relationship-filters/*validated-request?* true
-              authorization-filters/*validated-request?* true]
-      (call-with-transient-snapshot
-       runtime source api :read-relationships request
-       #(eacl/-read-relationships % request))))
-  (-lookup-resources [_ request]
+    (with-page-lookahead
+      this runtime :read-relationships request
+      #(binding [relationship-filters/*validated-request?* true
+                 authorization-filters/*validated-request?* true]
+         (call-with-transient-snapshot
+          runtime source api :read-relationships request
+          (fn [snapshot] (eacl/-read-relationships snapshot request))))))
+  (-lookup-resources [this request]
     (authorization-filters/validate-lookup! :lookup-resources request)
-    (binding [authorization-filters/*validated-request?* true]
-      (call-with-transient-snapshot
-       runtime source api :lookup-resources request
-       #(eacl/-lookup-resources % request))))
-  (-lookup-subjects [_ request]
+    (with-page-lookahead
+      this runtime :lookup-resources request
+      #(binding [authorization-filters/*validated-request?* true]
+         (call-with-transient-snapshot
+          runtime source api :lookup-resources request
+          (fn [snapshot] (eacl/-lookup-resources snapshot request))))))
+  (-lookup-subjects [this request]
     (authorization-filters/validate-lookup! :lookup-subjects request)
-    (binding [authorization-filters/*validated-request?* true]
-      (call-with-transient-snapshot
-       runtime source api :lookup-subjects request
-       #(eacl/-lookup-subjects % request))))
+    (with-page-lookahead
+      this runtime :lookup-subjects request
+      #(binding [authorization-filters/*validated-request?* true]
+         (call-with-transient-snapshot
+          runtime source api :lookup-subjects request
+          (fn [snapshot] (eacl/-lookup-subjects snapshot request))))))
   (-count-resources [_ request]
     (call-with-transient-snapshot
      runtime source api :count-resources request
@@ -3761,7 +4005,11 @@
             (or structural-stats {:entry-count 0 :max-entries 0}))
       continuation-store
       (assoc :continuations
-             (continuation/stats continuation-store)))))
+             (continuation/stats continuation-store))
+      (:scan-tier opts)
+      (assoc :scan-cache (scan-cache/stats (:scan-tier opts)))
+      (:range-tier opts)
+      (assoc :range-reuse (range-reuse/stats (:range-tier opts))))))
 
 (defn- require-cache-client-options!
   [client operation]
@@ -3897,7 +4145,11 @@
     :execution-timeout-ms
     :aggregate-limits
     :service-admission
-    :read-only?})
+    :read-only?
+    :scan-cache
+    :range-reuse
+    :lookahead
+    :io-observer})
 
 (defn- valid-security-kid?
   [kid]
@@ -4019,6 +4271,43 @@
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :unknown-keys (vec unknown-keys)
                        :known-keys known-client-opt-keys}))))
+  (when (and (contains? config-opts :io-observer)
+             (some? (:io-observer config-opts))
+             (not (fn? (:io-observer config-opts))))
+    (throw (ex-info "EACL Config Error: :io-observer must be a function."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :key :io-observer
+                     :value (:io-observer config-opts)})))
+  (lookahead/validate-option! (:lookahead config-opts))
+  (when-let [scan-cache-option (:scan-cache config-opts)]
+    (when-not (or (false? scan-cache-option)
+                  (and (map? scan-cache-option)
+                       (every? #{:max-entries :max-prefix}
+                               (keys scan-cache-option))
+                       (every? (fn [[_ value]] (pos-int? value))
+                               scan-cache-option)))
+      (throw (ex-info (str "EACL Config Error: :scan-cache must be false or a "
+                           "map of positive integers under :max-entries and "
+                           ":max-prefix.")
+                      {:type :eacl/invalid-config
+                       :eacl/error :eacl/invalid-config
+                       :key :scan-cache
+                       :value scan-cache-option}))))
+  (when-let [range-option (:range-reuse config-opts)]
+    (when-not (or (false? range-option)
+                  (and (map? range-option)
+                       (every? #{:max-entries :max-results-per-walk
+                                 :max-segments-per-walk}
+                               (keys range-option))
+                       (every? (fn [[_ value]] (pos-int? value))
+                               range-option)))
+      (throw (ex-info (str "EACL Config Error: :range-reuse must be false or a "
+                           "map of positive integers under :max-entries, "
+                           ":max-results-per-walk, and :max-segments-per-walk.")
+                      {:type :eacl/invalid-config
+                       :eacl/error :eacl/invalid-config
+                       :key :range-reuse
+                       :value range-option}))))
   (when (and (contains? config-opts :adapter-deterministic?)
              (not (boolean? adapter-deterministic?)))
     (throw (ex-info "EACL Config Error: :adapter-deterministic? must be boolean."
@@ -4146,6 +4435,8 @@
         (atom nil)
         runtime-cache-lifecycle-config
         {:cache-option cache
+         :scan-cache-option (:scan-cache config-opts)
+         :range-reuse-option (:range-reuse config-opts)
          :proof-contract-reporter proof-contract-reporter
          :derived-schema-store-factory derived-schema/store
          :runtime-lifecycle-state runtime-lifecycle-state}
@@ -4167,6 +4458,9 @@
          (select-keys config-opts
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
+          :io-observer (:io-observer config-opts)
+          :lookahead-state
+          (lookahead/state (lookahead/validate-option! (:lookahead config-opts)))
           :derived-schema-caches
           (:derived-schema-caches initial-runtime-cache-lifecycle)
           :adapter-fingerprint

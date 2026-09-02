@@ -195,13 +195,25 @@ omitted option installs no bulkhead.
 
 ## Cache artifacts and metrics
 
-The stable engine keeps three cross-request artifacts: the latest progress
-checkpoint per execution identity, completed semantic answers whose flat
-composite key includes the plan fingerprint, and one exact-basis transport
-page per complete raw page request when cursor expiry is disabled. All use the
-client's standard cache boundary. The transport value is process-local and
-contains no request object. Fetched relationship chunks and incomplete
-traversals remain request-local and are never published.
+The stable engine keeps three cross-request semantic artifacts: the latest
+progress checkpoint per execution identity, completed semantic answers whose
+flat composite key includes the plan fingerprint, and one exact-basis
+transport page per complete raw page request when cursor expiry is disabled.
+All use the client's standard cache boundary. The transport value is
+process-local and contains no request object. Incomplete traversals remain
+request-local and are never published.
+
+Below those, the routed physical read seam carries an exact scan-response
+cache: every request memoizes its own scan replies for one immutable basis,
+and a client-private tier keeps scan prefixes across requests under a scope
+that pins the scanned relation's generation from an already resolved proof.
+A served reply equals the adapter's reply for the same bound and limit, a
+miss forwards the identical command, and the reducer's admission, order,
+limit accounting, checkpoints, and cursors never observe the difference
+(`ScanResponseCache.dfy`). Completed plain pages also retain one internal
+edge per result so a shorter page of the same walk is derived rather than
+traversed, and a client may run a served page's continuation in the
+background (`:lookahead`) so the caller's next request is an exact hit.
 
 The finished reducer state carries every observable cost layer of one run:
 `:transitions`, logical scan `:commands`, `:fetched-values`, logical

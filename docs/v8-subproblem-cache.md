@@ -8,6 +8,15 @@ Each EACL client owns three flat, independently bounded retention tiers:
   requests when cursor expiry is disabled;
 - `:denotation` stores completed Boolean denotations.
 
+Two further client-private tiers sit beside them and answer no request on
+their own: the scan-response tier keeps exact adapter scan prefixes per read
+descriptor under a scope pinned by the scanned relation's generation, so a
+later request that walks the same edges issues fewer adapter commands (see
+`docs/cache.md`), and the range tier keeps the longest completed page per
+query and start boundary so a shorter page of the same walk is derived from
+it instead of traversed. Both are physical accelerators: results, order,
+cursors, limits, and errors are identical with them disabled.
+
 Clojure uses Caffeine's concurrent Window TinyLFU policy; ClojureScript uses
 the pinned theronic `cljs-cache` LRU fork. EACL supplies only a small storage
 adapter. Hits update frequency/recency policy, so a frequently used old entry

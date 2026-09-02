@@ -839,6 +839,11 @@
 (def ^:private page-answer-fields
   #{:data :page-info})
 
+(def ^:private optional-page-answer-fields
+  "Internal page fields that range reuse retains alongside the public
+  shape: one internal edge per result and the route's reuse marker."
+  #{:edges :range-reusable?})
+
 (def ^:private required-page-info-fields
   #{:start-cursor :end-cursor
     :has-next-page? :has-previous-page?})
@@ -855,8 +860,15 @@
   (let [page-info (:page-info value)
         page-info-fields (when (map? page-info) (set (keys page-info)))]
     (and (map? value)
-         (= page-answer-fields (set (keys value)))
+         (= page-answer-fields
+            (set (remove optional-page-answer-fields (keys value))))
          (vector? (:data value))
+         (or (not (contains? value :edges))
+             (and (vector? (:edges value))
+                  (= (count (:edges value)) (count (:data value)))
+                  (every? map? (:edges value))))
+         (or (not (contains? value :range-reusable?))
+             (boolean? (:range-reusable? value)))
          (map? page-info)
          (every? page-info-fields required-page-info-fields)
          (every? allowed-page-info-fields page-info-fields)

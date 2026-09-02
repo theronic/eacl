@@ -26,7 +26,12 @@
    :fetched-values
    :candidates-examined
    :probes
-   :publications])
+   :publications
+   :scan-memo-hits
+   :scan-shared-hits
+   :scan-misses
+   :range-derivations
+   :range-compositions])
 
 (def ^:private known-counter-keys (set counter-keys))
 (def ^:private counter-index (zipmap counter-keys (range)))

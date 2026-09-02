@@ -225,6 +225,30 @@ module ScalarFrontierCoherence {
       DependencyProjection(snapshot, dependencies[1..])
   }
 
+  // The scan-response cache scopes one stored scan prefix by the scanned
+  // relation alone: its validity frontier is the singleton closure [relation],
+  // whose frontier is exactly that relation's generation. Every supported
+  // mutation of the relation advances the generation (StepRelationGeneration-
+  // Monotone and StampedDependencySetsTheNewFrontier below), so equal singleton
+  // frontiers mean an unchanged relation slice.
+  lemma SingletonFrontierIsRelationGeneration(
+    snapshot: Snapshot,
+    relation: Relation
+  )
+    ensures DependencyGenerations(snapshot, [relation]) ==
+            [RelationAt(snapshot, relation).generation]
+    ensures DependencyFrontier(snapshot, [relation]) ==
+            RelationAt(snapshot, relation).generation
+  {
+    var generation := RelationAt(snapshot, relation).generation;
+    assert DependencyGenerations(snapshot, [relation]) ==
+           [generation] + DependencyGenerations(snapshot, []);
+    assert DependencyGenerations(snapshot, [relation]) == [generation];
+    assert [generation][1..] == [];
+    assert MaxGeneration([generation]) == NatMax(generation, MaxGeneration([]));
+    assert MaxGeneration([]) == 0;
+  }
+
   lemma DependencyGenerationAtPosition(
     snapshot: Snapshot,
     dependencies: seq<Relation>,
