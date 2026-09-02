@@ -223,16 +223,23 @@
               selected-order-hint selected-exact-locator]
        :as opts}]
   (backend/validate-adapter-config! :datahike adapter-config-keys opts)
-  (let [kind (basis-kind db)]
-    (when-not (contains? #{:ordinary :as-of} kind)
-      (throw
-       (ex-info
-        "Datahike EACL adapters require an ordinary or as-of database value."
-        {:type :eacl/unsupported-topology
-         :eacl/error :eacl/unsupported-topology
-         :backend :datahike
-         :basis-kind kind}))))
-  (backend/make-adapter
+  (let [kind (basis-kind db)
+        _ (when-not (contains? #{:ordinary :as-of} kind)
+            (throw
+             (ex-info
+              "Datahike EACL adapters require an ordinary or as-of database value."
+              {:type :eacl/unsupported-topology
+               :eacl/error :eacl/unsupported-topology
+               :backend :datahike
+               :basis-kind kind})))
+        ;; Every identity below is a function of the immutable db value;
+        ;; resolve each once instead of on every adapter operation.
+        store (store-identity db)
+        revision (or (db-revision db) selected-order-hint)
+        locator (or (commit-locator db) selected-exact-locator)
+        attribute-refs? (boolean (:attribute-refs? (db-config db)))
+        v8-storage? (delay (impl/v8-permission-storage? db))]
+    (backend/make-adapter
      {:id :datahike
       :traversal-execution backend/strict-sequential-traversal-execution
       :fingerprint (:adapter-fingerprint opts)
@@ -248,28 +255,22 @@
       :operations
       {:snapshot-id
        (fn []
-         {:database-id {:store (store-identity db)}
-          :attribute-refs? (boolean
-                            (:attribute-refs? (db-config db)))
-          :basis-t (or (db-revision db) selected-order-hint)})
+         {:database-id {:store store}
+          :attribute-refs? attribute-refs?
+          :basis-t revision})
 
-       :basis-kind
-       (fn [] (basis-kind db))
+       :basis-kind (fn [] kind)
 
        :native-revision
-       (fn []
-         {:revision (or (db-revision db) selected-order-hint)
-          :exact-locator (or (commit-locator db)
-                             selected-exact-locator)})
+       (fn [] {:revision revision :exact-locator locator})
 
-       :order-hint (fn [] (or (db-revision db) selected-order-hint))
+       :order-hint (fn [] revision)
 
        :schema-generation
        (fn []
          (certified-schema-generation db))
 
-       :exact-locator
-       (fn [] (or (commit-locator db) selected-exact-locator))
+       :exact-locator (fn [] locator)
 
        :object-id->internal
        (fn [object-id]
@@ -294,12 +295,13 @@
        (fn [resource-type permission-name]
          (vec (mapcat expression-persistence/union-compatible-entity-definitions
                       (impl/find-permission-defs
-                       db resource-type permission-name))))
+                       db @v8-storage? resource-type permission-name))))
 
        :permission-expression
        (fn [resource-type permission-name]
          (expression-persistence/validated-expression-entity
-          (impl/find-permission-defs db resource-type permission-name)))
+          (impl/find-permission-defs
+           db @v8-storage? resource-type permission-name)))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
@@ -329,7 +331,7 @@
 
        :proof-frame
        (fn [relation-ids]
-         (ordered-generation-frame db relation-ids))}}))
+         (ordered-generation-frame db relation-ids))}})))
 
 (defn source
   "Builds the borrowed immutable-basis source for one Datahike conn."

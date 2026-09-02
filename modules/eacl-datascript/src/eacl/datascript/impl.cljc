@@ -398,14 +398,12 @@
                      (:resume-inclusive? cursor)
                      (assoc :resume-inclusive? true))))
                (drop-until-beyond-cursor [spec cursor direction rows]
-                 (drop-while
-                  #(not
-                    (relationship-engine/beyond-cursor?
-                     (:scan-kind spec)
-                     direction
-                     (normalized-cursor cursor)
-                     %))
-                  rows))
+                 (let [cursor (normalized-cursor cursor)
+                       scan-kind (:scan-kind spec)]
+                   (drop-while
+                    #(not (relationship-engine/beyond-cursor?
+                           scan-kind direction cursor %))
+                    rows)))
                (exact-match-row [spec cursor direction]
                  (let [row
                        (when (and (:subject-id spec) (:resource-id spec))

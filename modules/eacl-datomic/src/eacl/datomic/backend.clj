@@ -309,15 +309,12 @@
             d/tx->t)))
 
 (def adapter-config-keys
-  #{:entid->object-id :object-id->entid :object-eid-fn
-    :subject->resources-fn :resource->subjects-fn
+  #{:entid->object-id :object-id->entid
     :adapter-fingerprint :adapter-deterministic? :identity-contract})
 
 (defn basis-adapter
   "Creates the connection-free basis adapter used by the shared pipeline."
-  [db {:keys [entid->object-id object-id->entid object-eid-fn
-              subject->resources-fn
-              resource->subjects-fn adapter-fingerprint
+  [db {:keys [entid->object-id object-id->entid adapter-fingerprint
               adapter-deterministic? identity-contract]
        :as config}]
   (backend/validate-adapter-config! :datomic adapter-config-keys config)
@@ -359,8 +356,7 @@
          ;; becomes a false negative.
          (if (number? object-id)
            (d/entid db object-id)
-           ((or object-id->entid object-eid-fn ddb/object-eid)
-            db object-id)))
+           ((or object-id->entid ddb/object-eid) db object-id)))
        :internal-id->object (fn [internal-id] (external-id db internal-id))
        :relation-defs
        (fn [resource-type relation-name]
@@ -374,11 +370,11 @@
           (ddb/find-permission-defs db resource-type permission-name)))
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type scan-options]
-         ((or subject->resources-fn ddb/subject->resources)
+         (ddb/subject->resources
           db subject-type subject-id relation-id resource-type scan-options))
        :resource->subjects
        (fn [resource-type resource-id relation-id subject-type scan-options]
-         ((or resource->subjects-fn ddb/resource->subjects)
+         (ddb/resource->subjects
           db resource-type resource-id relation-id subject-type scan-options))
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]

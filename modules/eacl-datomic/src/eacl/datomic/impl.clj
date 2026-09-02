@@ -320,25 +320,19 @@
     (when (and resolved (relationship-exists? db resolved))
       resolved)))
 
-(defn- find-relations
-  [db filters]
-  (let [resource-type     (:resource/type filters)
-        resource-relation (:resource/relation filters)
-        subject-type      (:subject/type filters)]
-    (->> (d/q '[:find [(pull ?relation [:db/id
-                                        :eacl.relation/resource-type
-                                        :eacl.relation/relation-name
-                                        :eacl.relation/subject-type]) ...]
-                :where
-                [?relation :eacl.relation/relation-name ?relation-name]]
-              db)
-         (filter (fn [relation]
-                   (and (or (nil? resource-type)
-                            (= resource-type (:eacl.relation/resource-type relation)))
-                        (or (nil? resource-relation)
-                            (= resource-relation (:eacl.relation/relation-name relation)))
-                        (or (nil? subject-type)
-                            (= subject-type (:eacl.relation/subject-type relation)))))))))
+(defn- all-relation-defs
+  "Every relation definition in the shape the shared scan planner consumes.
+  The planner applies the request's type filters itself, so one AEVT walk of
+  the composite tuple replaces a Datalog query plus a pull per relation."
+  [db]
+  (mapv (fn [datom]
+          (let [v (:v datom)]
+            {:relation-id (:e datom)
+             :resource-type (nth v 0)
+             :relation-name (nth v 1)
+             :subject-type (nth v 2)}))
+        (d/datoms db :aevt
+                  :eacl.relation/resource-type+relation-name+subject-type)))
 
 (defn relationship-relation-id
   "Returns the schema relation eid named by one resolved relationship."
@@ -350,13 +344,6 @@
   [tx-data]
   (relationship-mutations/affected-relation-ids
    tx-data #{:db/add :db/retract}))
-
-(defn- relation-def
-  [relation]
-  {:relation-id (:db/id relation)
-   :resource-type (:eacl.relation/resource-type relation)
-   :relation-name (:eacl.relation/relation-name relation)
-   :subject-type (:eacl.relation/subject-type relation)})
 
 (defn- endpoint-datoms
   [db endpoint attr prefix cursor-eid direction]
@@ -408,7 +395,7 @@
    ;; present-but-nil anchor throws instead of widening the read.
    (when-not relationship-filters/*validated-request?*
      (relationship-filters/validate! filters))
-   (let [relations (find-relations db filters)
+   (let [relation-defs (all-relation-defs db)
          subject-id (:subject/id filters)
          resource-id (:resource/id filters)
          ;; object-eid, not d/entid: a raw-impl caller passing a string id got a
@@ -545,8 +532,7 @@
                    (scan-reverse-partial spec cursor direction)))]
          (let [scan-specs
                (relationship-engine/plan-scans
-                (mapv relation-def relations)
-                normalized-filters)]
+                relation-defs normalized-filters)]
            (if window-options
              (relationship-engine/execute-filtered-window
               scan-specs normalized-filters decision-kernel scan-spec
