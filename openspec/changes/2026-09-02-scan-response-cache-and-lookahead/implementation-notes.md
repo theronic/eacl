@@ -130,6 +130,37 @@ measurable regression.
   publication unreachable for a newer basis, and the Datomic lookahead test
   checks the basis-moved case executably.
 
+## Recorded follow-ups (not in this change)
+
+- **Range composition** (spec MAY clause): answering a longer page as a
+  resident shorter page plus its ordinary continuation needs the page
+  pipeline to re-enter with an internal boundary and concatenate; today
+  every entry point internalizes a public cursor. Worth doing once
+  continuation pages are common in the demos.
+- **Order-insensitive exact counts**: the exhaustive reducer keeps an
+  admitted set and one consumer scan per discovered grant; a merge or
+  bitmap count saves CPU and memory but not remote reads, because every
+  intermediate must still be scanned once. Needs a denotation-equivalence
+  proof the route docstring already demands.
+- **Compact reducer checkpoints**: recursive-plan checkpoints grow about 96
+  bytes per admitted result; a compressed bitmap would let them survive
+  eviction and avoid the quadratic replay measured on the demo.
+- **Endpoint-scoped dependency stamps**: proof-managed reuse and the scan
+  tier invalidate per relation; per-endpoint stamps would keep entries
+  valid across writes to other resources, at a write-path cost on every
+  backend.
+- **Materialized recursive closure**: only pays for deep hierarchies; needs
+  a maintenance invariant proof and stamps on the closure relation.
+- **Datalevin native scan cost**: 11.7 µs per scan against 1.1 to 2.5 µs
+  elsewhere; the scan tier hides it for repeat traffic, the cursor-level
+  cost remains.
+- **DynamoDB storage-backend statistics**: the S3 konserve backend carries
+  opt-in I/O counters; the DynamoDB backend does not, so demos on it cannot
+  attribute storage reads through the Datahike helper yet.
+- **Operator-engine scan seams**: seekable and recursive operator scans and
+  batched membership probes bypass the routed fetch seam and therefore the
+  scan tiers.
+
 ## Certification (fresh JVMs, final tree)
 
-Filled in below as each gate completes.
+CERTIFICATION_TABLE
