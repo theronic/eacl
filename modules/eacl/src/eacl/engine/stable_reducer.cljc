@@ -43,6 +43,14 @@
 (def default-max-values 4000000)
 (def default-max-stack 1000000)
 
+(def ^:no-doc run-option-keys
+  "Every reducer run option a traversal entry point forwards verbatim.
+  `select-keys` of an absent key is a no-op, so this one superset serves the
+  page, count, probe, and least-path routes alike."
+  [:adapter :fetch-fn :plan :subject-type :cut-point!
+   :physical-chunk-size :sidecar-cap :result-sink :result-window-size
+   :max-admissions :max-commands :max-transitions :max-values :max-stack])
+
 (defrecord ^:private ReducerState
   [stack admitted admissions transitions commands fetched-values fetch-fn
    sidecar sidecar-order sidecar-order-index sidecar-clock
@@ -310,10 +318,10 @@
     0))
 
 (defn- remove-buffer
-  [state identity]
-  (if-let [entry (get-in state [:sidecar identity])]
+  [state buffer-id]
+  (if-let [entry (get-in state [:sidecar buffer-id])]
     (-> state
-        (update :sidecar dissoc identity)
+        (update :sidecar dissoc buffer-id)
         (update :current-sidecar-values -
                 (remaining-buffer-values entry)))
     state))
@@ -327,8 +335,8 @@
       (assoc state
              :sidecar-order
              (->> sidecar
-                  (mapv (fn [[identity entry]]
-                          [identity (:generation entry)]))
+                  (mapv (fn [[buffer-id entry]]
+                          [buffer-id (:generation entry)]))
                   (sort-by second)
                   vec)
              :sidecar-order-index 0)
@@ -340,39 +348,64 @@
     (if (<= (count (:sidecar state)) sidecar-cap)
       (compact-sidecar-order state)
       (let [index (:sidecar-order-index state)
-            [identity generation] (nth (:sidecar-order state) index)
-            entry (get-in state [:sidecar identity])
+            [buffer-id generation] (nth (:sidecar-order state) index)
+            entry (get-in state [:sidecar buffer-id])
             state (assoc state :sidecar-order-index (inc index))]
         (if (= generation (:generation entry))
-          (recur (remove-buffer state identity))
+          (recur (remove-buffer state buffer-id))
           (recur state))))))
+
+(defn- sidecar-state
+  "One record revision of the retained-buffer fields."
+  [^ReducerState state sidecar sidecar-order sidecar-clock
+   current-sidecar-values maximum-sidecar-buffers maximum-sidecar-values]
+  (if (instance? ReducerState state)
+    (replace-state
+     state (.-stack state) (.-admitted state) (.-admissions state)
+     (.-transitions state) (.-commands state) (.-fetched_values state)
+     sidecar sidecar-order (.-sidecar_order_index state) sidecar-clock
+     current-sidecar-values maximum-sidecar-buffers maximum-sidecar-values
+     (.-maximum_stack state) (.-discovered state)
+     (.-result_index state) (.-results state))
+    (assoc state :sidecar sidecar :sidecar-order sidecar-order
+           :sidecar-clock sidecar-clock
+           :current-sidecar-values current-sidecar-values
+           :maximum-sidecar-buffers maximum-sidecar-buffers
+           :maximum-sidecar-values maximum-sidecar-values)))
 
 (defn- retain-buffer
   "Retains one fetched vector plus an index, never a suffix view. Recency is
   generation-stamped and compacted at a capacity-derived ceiling; a touch
-  appends one pair and performs no whole-order filter."
-  [state identity values index more-physical?]
-  (let [state (remove-buffer state identity)]
+  appends one pair and performs no whole-order filter. The retained fields
+  commit in one record revision and the maxima in one more, instead of one
+  revision per field."
+  [state buffer-id values index more-physical?]
+  (let [state (remove-buffer state buffer-id)]
     (if (and (pos? (:sidecar-cap state))
              (or (< index (count values)) more-physical?))
       (let [generation (inc (:sidecar-clock state))
             retained (- (count values) index)
-            state (-> state
-                      (assoc :sidecar-clock generation)
-                      (assoc-in [:sidecar identity]
-                                {:values values
-                                 :index index
-                                 :more-physical? more-physical?
-                                 :generation generation})
-                      (update :current-sidecar-values + retained)
-                      (update :sidecar-order conj [identity generation])
+            state (-> (sidecar-state
+                       state
+                       (assoc (:sidecar state) buffer-id
+                              {:values values
+                               :index index
+                               :more-physical? more-physical?
+                               :generation generation})
+                       (conj (:sidecar-order state) [buffer-id generation])
+                       generation
+                       (+ (:current-sidecar-values state) retained)
+                       (:maximum-sidecar-buffers state)
+                       (:maximum-sidecar-values state))
                       compact-sidecar-order
                       evict-to-cap)]
-        (-> state
-            (update :maximum-sidecar-buffers
-                    max (count (:sidecar state)))
-            (update :maximum-sidecar-values
-                    max (:current-sidecar-values state))))
+        (sidecar-state state
+                       (:sidecar state) (:sidecar-order state)
+                       (:sidecar-clock state) (:current-sidecar-values state)
+                       (max (:maximum-sidecar-buffers state)
+                            (count (:sidecar state)))
+                       (max (:maximum-sidecar-values state)
+                            (:current-sidecar-values state))))
       (compact-sidecar-order state))))
 
 (defn- advance-buffer
@@ -380,14 +413,14 @@
   buffer to the recency index. The index entry already represents this live
   scan; rebuilding its map entry and appending a generation record for every
   value made physical chunking more expensive than the traversal itself."
-  [state identity entry next-index]
+  [state buffer-id entry next-index]
   (if (and (= next-index (count (:values entry)))
            (not (:more-physical? entry)))
     ;; remove-buffer observes the old index, so it subtracts the one value
     ;; consumed by this transition.
-    (remove-buffer state identity)
+    (remove-buffer state buffer-id)
     (buffer-state state
-                  (assoc-in (:sidecar state) [identity :index] next-index)
+                  (assoc-in (:sidecar state) [buffer-id :index] next-index)
                   (dec (:current-sidecar-values state)))))
 
 (defn ^:no-doc bounded-vector
@@ -747,11 +780,6 @@
          max-values default-max-values
          max-stack default-max-stack
          result-sink :collect}}]
-  {:pre [(pos? physical-chunk-size) (int? sidecar-cap) (<= 0 sidecar-cap)
-         (contains? #{:collect :count :window} result-sink)
-         (or (not= :window result-sink) (pos-int? result-window-size))
-         (pos? max-admissions) (pos? max-commands) (pos? max-transitions)
-         (pos? max-values) (pos? max-stack)]}
   (map->ReducerState
    {:stack []
     :admitted (transient #{})
@@ -870,15 +898,25 @@
 (defn ^:no-doc report-work-stats!
   "Merges one run's public work counters into every distinct bound stats
   atom; only the keys present in `deltas` are touched. Shared by the
-  reducer, route, and engine reporters, which previously each carried this
-  merge verbatim."
+  reducer, route, and engine reporters. Unbound refs cost nothing: no
+  sequence is allocated to find the bound ones."
   [stats-refs deltas]
-  (doseq [stats (distinct (remove nil? stats-refs))]
-    (swap! stats
-           (fn [counters]
-             (reduce-kv (fn [c k v] (update c k (fnil + 0) v))
-                        (or counters {})
-                        deltas)))))
+  (let [n (count stats-refs)]
+    (loop [index 0]
+      (when (< index n)
+        (let [stats (nth stats-refs index)
+              seen? (loop [earlier 0]
+                      (cond
+                        (= earlier index) false
+                        (identical? stats (nth stats-refs earlier)) true
+                        :else (recur (inc earlier))))]
+          (when (and stats (not seen?))
+            (swap! stats
+                   (fn [counters]
+                     (reduce-kv (fn [c k v] (update c k (fnil + 0) v))
+                                (or counters {})
+                                deltas)))))
+        (recur (inc index))))))
 
 (defn- report-run!
   [before final-state]
@@ -899,11 +937,8 @@
   "Continues a history-free state to `target` absolute discovered results
   under fresh runtime options. Emissions from before the checkpoint are
   never re-delivered; :results holds only this run's suffix."
-  [{:keys [adapter fetch-fn plan subject-type target cut-point!]
-    :as options}
+  [{:keys [plan subject-type target cut-point!] :as options}
    checkpoint-state]
-  {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
-         (keyword? subject-type) (pos? target)]}
   (let [context {:plan plan :root (:root plan) :subject-type subject-type}
         state (-> (initial-state options)
                   (merge (select-keys checkpoint-state semantic-state-keys))
@@ -918,10 +953,7 @@
   "Enumerates root resources the subject reaches, in stable first-discovery
   order, until `target` results or exhaustion. Returns the final state;
   :results is the canonical sequence of internal resource ids."
-  [{:keys [adapter fetch-fn plan subject-type subject-eid target]
-    :as options}]
-  {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
-         (keyword? subject-type) (some? subject-eid) (pos? target)]}
+  [{:keys [plan subject-type subject-eid target] :as options}]
   (let [context {:plan plan :root (:root plan)
                  :subject-type subject-type}
         seeds (mapv (fn [rule]
@@ -943,10 +975,7 @@
   `resource-eid`, in stable first-discovery order, until `target` results
   or exhaustion. Returns the final state; :results is the canonical
   sequence of internal subject ids."
-  [{:keys [adapter fetch-fn plan subject-type resource-eid target]
-    :as options}]
-  {:pre [(or (some? adapter) (some? fetch-fn)) (some? plan)
-         (keyword? subject-type) (some? resource-eid) (pos? target)]}
+  [{:keys [plan subject-type resource-eid target] :as options}]
   (let [context {:plan plan :root (:root plan)
                  :subject-type subject-type}
         goal {:kind :reverse-goal :rule {:node (:root plan)}

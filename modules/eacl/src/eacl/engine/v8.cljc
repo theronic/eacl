@@ -150,86 +150,23 @@
   (let [category (or (:eacl/error data) :eacl.pagination/invalid-page-request)]
     (throw (ex-info message (assoc data :eacl/error category :type category)))))
 
-(defn- host-normalize-page-request
-  [query]
-  (let [has-first? (contains? query :first)
-        has-last? (contains? query :last)
-        has-after? (contains? query :after)
-        has-before? (contains? query :before)]
-    (cond
-      (contains? query :cursor)
-      (page-request-error! ":cursor is not supported; use :first/:after or :last/:before."
-                           {:key :cursor})
-
-      (contains? query :limit)
-      (page-request-error! ":limit is not supported for list pagination; use :first or :last."
-                           {:key :limit})
-
-      (and has-first? has-last?)
-      (page-request-error! "Use exactly one of :first or :last."
-                           {:first (:first query)
-                            :last (:last query)})
-
-      (and has-before? has-after?)
-      (page-request-error! "Use only one cursor boundary, :after or :before."
-                           {:after (:after query)
-                            :before (:before query)})
-
-      (and has-after? (not has-first?))
-      (page-request-error! ":after is valid only with :first." {:after (:after query)})
-
-      (and has-before? (not has-last?))
-      (page-request-error! ":before is valid only with :last." {:before (:before query)})
-
-      ;; A present-but-nil boundary used to mean "start over", so a client
-      ;; looping on a page-info that carried a nil cursor silently restarted at
-      ;; page 1 forever. Absent means first page; nil means the caller lost
-      ;; their cursor and must be told.
-      (and has-after? (nil? (:after query)))
-      (page-request-error! ":after was passed as nil. Omit it for the first page."
-                           {:eacl/error :eacl.pagination/invalid-cursor
-                            :key :after})
-
-      (and has-before? (nil? (:before query)))
-      (page-request-error! ":before was passed as nil. Omit it for the last page."
-                           {:eacl/error :eacl.pagination/invalid-cursor
-                            :key :before}))
-
-    (let [direction (if has-last? :desc :asc)
-          size (or (when has-first? (:first query))
-                   (when has-last? (:last query))
-                   default-page-size)
-          bound (case direction
-                  :asc (:after query)
-                  :desc (:before query))]
-      (when-not (and (integer? size) (pos? size))
-        (page-request-error! "Page size must be a positive integer."
-                             {:eacl/error :eacl.pagination/invalid-page-size :size size}))
-      (when (> size max-page-size)
-        (page-request-error! "Page size exceeds configured maximum."
-                             {:eacl/error :eacl.pagination/invalid-page-size
-                              :size size
-                              :max max-page-size}))
-      {:direction direction
-       :size size
-       :bound bound})))
-
-(defn- generated-page-request-encodable?
-  [query]
-  (every?
-   (fn [field]
-     (or (not (contains? query field))
-         (nil? (get query field))
-         (exact-integer/natural? (get query field))))
-   [:first :last]))
-
 (defn- generated-page-presence
+  "The kernel's presence encoding of one page field. A boundary is present
+  or not (its value never crosses). A size that is a portable natural
+  crosses as itself; any other host value maps to the sentinel the kernel
+  rejects for the same reason the host would — an oversized integer above
+  the portable range is oversized, anything else is non-positive — so the
+  generated decision is the single normalization authority."
   [query field boundary?]
   (cond
     (not (contains? query field)) :absent
     (nil? (get query field)) :nil
     boundary? 0
-    :else (get query field)))
+    :else (let [value (get query field)]
+            (cond
+              (exact-integer/natural? value) value
+              (and (integer? value) (pos? value)) (inc max-page-size)
+              :else 0))))
 
 (defn- generated-page-input
   [query]
@@ -299,23 +236,19 @@
     (page-request-error!
      "EACL v8 pagination accepts only :first/:after or :last/:before."
      {:key unsupported}))
-  (if-not (generated-page-request-encodable? query)
-    ;; Reject host values that cannot cross the strict portable integer
-    ;; boundary before invoking generated code.
-    (host-normalize-page-request query)
-    (let [decision
-          (verified/decide
-           subproblem/*decision-kernel*
-           :relationship-page
-           (generated-page-input query))]
-      (if (= :valid (:status decision))
-        {:direction (:direction decision)
-         :size (:size decision)
-         :bound
-         (case (:direction decision)
-           :asc (:after query)
-           :desc (:before query))}
-        (generated-page-error! query (:reason decision))))))
+  (let [decision
+        (verified/decide
+         subproblem/*decision-kernel*
+         :relationship-page
+         (generated-page-input query))]
+    (if (= :valid (:status decision))
+      {:direction (:direction decision)
+       :size (:size decision)
+       :bound
+       (case (:direction decision)
+         :asc (:after query)
+         :desc (:before query))}
+      (generated-page-error! query (:reason decision)))))
 
 (defn- scan-opts
   [cursor-or-opts]
@@ -1734,7 +1667,6 @@
     (merge
      (stable-limits)
      {:adapter db
-      :basis-identity (:basis-identity *proof-frame*)
       :fetch-fn fetch-fn
       :plan plan
       :direction traversal

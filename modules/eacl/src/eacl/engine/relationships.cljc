@@ -185,7 +185,9 @@
     (throw
      (ex-info
       "EACL v8 pagination accepts only :first/:after or :last/:before."
-      {:key unsupported})))
+      {:type :eacl.pagination/invalid-page-request
+       :eacl/error :eacl.pagination/invalid-page-request
+       :key unsupported})))
   (let [decision
         (verified/decide
          (or decision-kernel subproblem/*decision-kernel*)
@@ -238,7 +240,7 @@
       {:start-cursor
        (when any? (progress-edge (first selected)))
        :end-cursor
-       (when any? (progress-edge (last selected)))
+       (when any? (progress-edge (peek selected)))
        :has-next-page?
        (boolean (and any? (:has-next? page-decision)))
        :has-previous-page?
@@ -308,7 +310,7 @@
             (invalid-edge! bound))
         {:keys [specs]} (window-specs scan-specs direction bound)
         initial-position 0
-        initial-cursor (when bound bound)
+        initial-cursor bound
         result
         (loop [spec-position initial-position
                cursor initial-cursor
@@ -370,13 +372,13 @@
                          last-examined))))))
         selected-direction (vec (take size (:accepted result)))
         selected (if (= :desc direction)
-                   (vec (reverse selected-direction))
+                   (vec (rseq selected-direction))
                    selected-direction)
         progress
         (cond-> (some-> (:last-examined result) progress-edge)
           (:sentinel? result) (assoc :resume-inclusive? true))
         first-selected (some-> selected first progress-edge)
-        last-selected (some-> selected last progress-edge)
+        last-selected (some-> selected peek progress-edge)
         start-cursor (case direction
                        :asc (or first-selected progress)
                        :desc progress)
