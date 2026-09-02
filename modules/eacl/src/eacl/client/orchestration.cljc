@@ -55,6 +55,8 @@
                                         ->RelationshipUpdate]]
             [eacl.engine.physical :as physical]
             [eacl.engine.v8 :as engine]
+            [eacl.engine.sealed-plan :as sealed-plan]
+            [eacl.engine.scan-cache :as scan-cache]
             [eacl.execution :as execution]
             [eacl.permission-tree :as permission-tree]
             [eacl.proof-frame :as proof-frame]
@@ -335,6 +337,49 @@
         (when-let [selected (:selected-snapshot basis)]
           (source/release! selected))))))
 
+(defn- scan-cache-context
+  "The request's scan-response cache context. The memo is unconditional;
+  the shared tier applies only to cache-enabled requests on an ordinary
+  current basis, under a scope pinned by the scanned relation's generation
+  from a proof this request already resolved (never acquired here)."
+  [opts request-context]
+  (let [state (request-context/active-state request-context)
+        runtime (:runtime state)
+        identity (:basis-identity state)
+        tier (:scan-tier opts)
+        ordinary? (and (not (::historical-basis? runtime))
+                       (not= :speculative (:basis-kind identity))
+                       (nil? (:speculative-id identity)))
+        scope-fn
+        (when (and tier
+                   ordinary?
+                   (:completed-cache-request? opts))
+          (let [adapter (request-context/adapter request-context)
+                base (delay
+                       [(backend/backend-id adapter)
+                        (:source-id identity)
+                        (:branch identity)
+                        (:source-lifecycle identity)
+                        (backend/fingerprint adapter)
+                        (backend/identity-contract adapter)
+                        sealed-plan/fingerprint-domain])
+                scopes (volatile! {})]
+            (fn [relation-eid]
+              (or (get @scopes relation-eid)
+                  (when-let [resolved
+                             (proof-frame/resolved-generation
+                              (force (:proof-frame-delay state))
+                              relation-eid)]
+                    (let [scope (conj @base
+                                      (:schema-generation resolved)
+                                      relation-eid
+                                      (:generation resolved))]
+                      (vswap! scopes assoc relation-eid scope)
+                      scope))))))]
+    {:memo (scan-cache/memo)
+     :tier (when scope-fn tier)
+     :scope-fn scope-fn}))
+
 (defn- with-selected-context
   [api source opts consistency-value f]
   (let [ledger (or (:request-counter-ledger opts)
@@ -381,7 +426,12 @@
                           diagnostic)))}))
                  (selected-context api source opts consistency-value))]
            (try
-             (request-context/call-with-context context f)
+             (request-context/call-with-context
+              context
+              (fn [request-context]
+                (binding [engine/*scan-cache*
+                          (scan-cache-context opts request-context)]
+                  (f request-context))))
              (finally
                (request-context/close! context))))))))
 
@@ -2207,7 +2257,7 @@
 (defrecord RuntimeCacheLifecycle
            [token source-incarnation source-lifecycle basis-cache-store
             continuation-cache-store cursor-codec-cache
-            cursor-construction-cache derived-schema-caches
+            cursor-construction-cache derived-schema-caches scan-tier
             content-revision])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
@@ -2216,7 +2266,8 @@
 
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
-    :cursor-codec-cache :cursor-construction-cache :derived-schema-caches})
+    :cursor-codec-cache :cursor-construction-cache :derived-schema-caches
+    :scan-tier})
 
 ;; A transient Acl read has already captured and attached one immutable
 ;; lifecycle options map before selecting its basis. Keep that map opaque
@@ -2263,6 +2314,13 @@
         {:max-entries (cache-entry-capacity cache-option)
          :telemetry? (:telemetry-enabled? basis-cache-store)}))}))
 
+(defn- scan-tier-for-config
+  "The client's shared scan-response tier: present only while the client
+  cache is enabled and `:scan-cache` is not `false`."
+  [{:keys [scan-cache-option]} basis-cache-store]
+  (when (and basis-cache-store (not (false? scan-cache-option)))
+    (scan-cache/tier (if (map? scan-cache-option) scan-cache-option {}))))
+
 (defn- fresh-runtime-cache-lifecycle
   [{:keys [cache-option derived-schema-store-factory]
     :as config}
@@ -2286,6 +2344,7 @@
      cursor-codec-cache
      cursor-construction-cache
      (derived-schema-store-factory)
+     (scan-tier-for-config config basis-cache-store)
      content-revision)))
 
 (defn- narrow-runtime-cache-lifecycle
@@ -2315,6 +2374,7 @@
      (:cursor-codec-cache current)
      (:cursor-construction-cache current)
      (:derived-schema-caches current)
+     (scan-tier-for-config config basis-cache-store)
      content-revision)))
 
 (defn- lifecycle-content-revision
@@ -3761,7 +3821,9 @@
             (or structural-stats {:entry-count 0 :max-entries 0}))
       continuation-store
       (assoc :continuations
-             (continuation/stats continuation-store)))))
+             (continuation/stats continuation-store))
+      (:scan-tier opts)
+      (assoc :scan-cache (scan-cache/stats (:scan-tier opts))))))
 
 (defn- require-cache-client-options!
   [client operation]
@@ -3897,7 +3959,8 @@
     :execution-timeout-ms
     :aggregate-limits
     :service-admission
-    :read-only?})
+    :read-only?
+    :scan-cache})
 
 (defn- valid-security-kid?
   [kid]
@@ -4019,6 +4082,20 @@
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :unknown-keys (vec unknown-keys)
                        :known-keys known-client-opt-keys}))))
+  (when-let [scan-cache-option (:scan-cache config-opts)]
+    (when-not (or (false? scan-cache-option)
+                  (and (map? scan-cache-option)
+                       (every? #{:max-entries :max-prefix}
+                               (keys scan-cache-option))
+                       (every? (fn [[_ value]] (pos-int? value))
+                               scan-cache-option)))
+      (throw (ex-info (str "EACL Config Error: :scan-cache must be false or a "
+                           "map of positive integers under :max-entries and "
+                           ":max-prefix.")
+                      {:type :eacl/invalid-config
+                       :eacl/error :eacl/invalid-config
+                       :key :scan-cache
+                       :value scan-cache-option}))))
   (when (and (contains? config-opts :adapter-deterministic?)
              (not (boolean? adapter-deterministic?)))
     (throw (ex-info "EACL Config Error: :adapter-deterministic? must be boolean."
@@ -4146,6 +4223,7 @@
         (atom nil)
         runtime-cache-lifecycle-config
         {:cache-option cache
+         :scan-cache-option (:scan-cache config-opts)
          :proof-contract-reporter proof-contract-reporter
          :derived-schema-store-factory derived-schema/store
          :runtime-lifecycle-state runtime-lifecycle-state}

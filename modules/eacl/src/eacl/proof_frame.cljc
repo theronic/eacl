@@ -301,6 +301,26 @@
        (= (:dependency-stamp value)
           (dependency-frontier (:dependency-identity value)))))
 
+(defn resolved-generation
+  "The generation of `relation-id` from a proof this request has already
+  resolved and completed, with the certified schema generation, or nil when
+  no realized complete proof of the frame contains the relation. Never
+  acquires: an unresolved closure stays unresolved."
+  [frame relation-id]
+  (when frame
+    (some
+     (fn [resolution]
+       (when (realized? resolution)
+         (let [proof @resolution]
+           (when (complete? proof)
+             (some
+              (fn [[id generation]]
+                (when (= id relation-id)
+                  {:schema-generation (:schema-generation proof)
+                   :generation generation}))
+              (:relation-generations proof))))))
+     (vals @(:resolutions frame)))))
+
 (defn descriptor
   "Returns the complete completed-cache identity for a complete proof."
   [proof]

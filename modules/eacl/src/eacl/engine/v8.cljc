@@ -4,6 +4,7 @@
             [eacl.core :refer [spice-object]]
             [eacl.engine.least-path :as least-path]
             [eacl.engine.physical :as physical]
+            [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-page :as stable-page]
             [eacl.engine.stable-reducer :as stable-reducer]
@@ -1331,16 +1332,29 @@
   the routed path (the original absolute deadline still bounds every retry)."
   3)
 
+(def ^:dynamic *scan-cache*
+  "The request's scan-response cache context, bound by the client
+  orchestration for one request: `{:memo .. :tier .. :scope-fn ..}` (see
+  `eacl.engine.scan-cache/caching-fetch-fn`). Nil, the raw-facade default,
+  keeps the plain routed fetch function."
+  nil)
+
 (defn- routed-fetch-fn
-  "The classification/retry envelope shared by the reducer and least-path
-  physical read paths; `raw-fetch-fn` selects the adapter seam."
+  "The classification/retry envelope shared by the reducer, least-path, and
+  probe physical read paths; `raw-fetch-fn` selects the adapter seam. When a
+  request binds `*scan-cache*`, the exact scan-response layer wraps the
+  envelope: hits skip retry and classification, misses see classified,
+  retried replies."
   [raw-fetch-fn]
-  (let [attempts (when *recursive-traversal-stats* (atom 0))]
-    {:fetch-fn (physical/retrying-fetch-fn
+  (let [attempts (when *recursive-traversal-stats* (atom 0))
+        routed (physical/retrying-fetch-fn
                 raw-fetch-fn
                 {:max-attempts default-physical-attempts
                  :deadline-nanos (:deadline-nanos execution/*contract*)
-                 :attempts attempts})
+                 :attempts attempts})]
+    {:fetch-fn (if-let [context *scan-cache*]
+                 (scan-cache/caching-fetch-fn routed context)
+                 routed)
      :attempts attempts}))
 
 (defn- stable-fetch-fn
