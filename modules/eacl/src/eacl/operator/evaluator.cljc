@@ -133,7 +133,7 @@
     ;; between; only the post-scan check observes new elapsed time.
     (when (> next-command (:maximum-arrow-commands limits))
       (limit! :arrow-commands (:maximum-arrow-commands limits) next-command))
-    (let [options (cond-> {:direction :asc}
+    (let [options (cond-> {:direction :asc :limit chunk-size}
                     bound (assoc :bound-eid bound :inclusive-bound? false))
           values
           (into []

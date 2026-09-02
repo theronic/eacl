@@ -191,10 +191,8 @@
           emissions witnesses decisions)))
 
 (defn- add-counters [total delta]
-  (merge-with + total
-              (select-keys delta
-                           [:commands :fetched-values :stream-opens
-                            :emissions])))
+  ;; Both raw producers emit exactly the four counter keys.
+  (merge-with + total delta))
 
 (defn resume-coordinate
   "Returns the logical continuation coordinate. A physically evaluated
@@ -251,10 +249,10 @@
            last-examined nil
            counters {:commands 0 :fetched-values 0
                      :stream-opens 0 :emissions 0}
-           widths []]
+           widths (when *lookup-stats* [])]
       (execution/check! execution/*contract*
                         :operator-lookup/batch-boundary
-                        {:candidates (:examined schedule)})
+                        #(hash-map :candidates (:examined schedule)))
       (if (batch-schedule/done? schedule)
         (let [sentinel? (> (count accepted) page-size)
               selected (vec (take page-size accepted))
@@ -310,8 +308,8 @@
               (if sentinel?
                 (let [selected (vec (take page-size accepted))]
                   (observe-page! (+ (:examined schedule) consumed-count)
-                                 (count selected) (conj widths width)
-                                 overread)
+                                 (count selected)
+                                 (some-> widths (conj width)) overread)
                   {:emissions selected
                    :has-more? true :bounded? false :exhausted? false
                    ;; Resume after the last PUBLIC result, so a sentinel and
@@ -324,8 +322,8 @@
                 (if exhausted?
                   (do
                     (observe-page! (+ (:examined schedule) consumed-count)
-                                   (count accepted) (conj widths width)
-                                   overread)
+                                   (count accepted)
+                                   (some-> widths (conj width)) overread)
                     {:emissions (vec accepted)
                      :has-more? false :bounded? false :exhausted? true
                      :resume-coords last-consumed
@@ -338,7 +336,7 @@
                          accepted
                          last-consumed
                          counters
-                         (conj widths width)))))))))))
+                         (some-> widths (conj width))))))))))))
 
 (defn count-results
   "Exact count when :count-limit is absent; otherwise stops after the
@@ -372,7 +370,7 @@
                      :stream-opens 0 :emissions 0}]
       (execution/check! execution/*contract*
                         :operator-count/batch-boundary
-                        {:count accumulated})
+                        #(hash-map :count accumulated))
       (let [raw (raw-page
                  (assoc options :cover-plan cover-plan
                         :width width

@@ -340,9 +340,9 @@
           (try
             (let [decisions (evaluate! [root-permission root-id]
                                        (vec (range width)))]
-              (add-stat! :candidate-count width)
-              (add-stat! :mask-word-count (* 4 (bitmask/word-count width)))
               (when *vector-stats*
+                (add-stat! :candidate-count width)
+                (add-stat! :mask-word-count (* 4 (bitmask/word-count width)))
                 (swap! *vector-stats* assoc
                        :root-masks
                        (root-masks width

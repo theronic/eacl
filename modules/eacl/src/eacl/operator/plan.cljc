@@ -167,8 +167,8 @@
             descriptor))))))
 
 (defn ^:no-doc relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
+  (some #(when (= subject-type (:subject-type %)) %)
+        (:partitions descriptor)))
 
 (defn- validate-relation-subjects! [node descriptor declared]
   (let [actual (mapv :subject-type (:partitions descriptor))]

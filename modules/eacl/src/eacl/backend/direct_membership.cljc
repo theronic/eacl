@@ -172,16 +172,19 @@
    adapter :direct-membership-batch
    backend/direct-membership-batch-capability))
 
-(defn- scalar-match [direct-match {:keys [descriptor direction]} [_type eid]]
-  (if (= :forward direction)
-    (direct-match
-     (:subject-type descriptor) (:subject-eid descriptor)
-     (:relation-eid descriptor)
-     (:resource-type descriptor) eid)
-    (direct-match
-     (:subject-type descriptor) eid
-     (:relation-eid descriptor)
-     (:resource-type descriptor) (:resource-eid descriptor))))
+(defn- scalar-matcher
+  "One per batch: the captured direct-match invoker applied to each
+  candidate eid of a fixed descriptor and direction."
+  [direct-match {:keys [descriptor direction]}]
+  (let [{:keys [subject-type subject-eid relation-eid resource-type
+                resource-eid]} descriptor]
+    (if (= :forward direction)
+      (fn [eid]
+        (direct-match subject-type subject-eid relation-eid
+                      resource-type eid))
+      (fn [eid]
+        (direct-match subject-type eid relation-eid
+                      resource-type resource-eid)))))
 
 (defn ^:no-doc direct-match-many-checked?
   [adapter request]
@@ -192,24 +195,24 @@
     (if (empty? candidates)
       []
       (let [native? (native-batch? adapter)
-            direct-match (when-not native?
-                           (backend/direct-match-invoker adapter))
             result
             (if native?
               (vec (backend/invoke adapter :direct-match-many? request))
-              (loop [index 0
-                     result (transient [])]
-                (if (= index (count candidates))
-                  (persistent! result)
-                  (do
-                    (execution/check!
-                     execution/*contract*
-                     :direct-membership-batch/scalar-probe
-                     {:candidate-count index})
-                    (recur (inc index)
-                           (conj! result
-                                  (scalar-match direct-match request
-                                                (nth candidates index))))))))
+              (let [match (scalar-matcher
+                           (backend/direct-match-invoker adapter) request)]
+                (loop [index 0
+                       result (transient [])]
+                  (if (= index (count candidates))
+                    (persistent! result)
+                    (do
+                      (execution/check!
+                       execution/*contract*
+                       :direct-membership-batch/scalar-probe
+                       #(hash-map :candidate-count index))
+                      (recur (inc index)
+                             (conj! result
+                                    (match (second
+                                            (nth candidates index))))))))))
             matched-count
             (when-not native?
               (reduce (fn [total matched?]
@@ -232,7 +235,7 @@
         (execution/check!
          execution/*contract*
          :direct-membership-batch/after
-         {:candidate-count (count candidates)})
+         #(hash-map :candidate-count (count candidates)))
         (when-not (= (count candidates) (count result))
           (contract-violation!
            adapter :aligned-cardinality
@@ -274,35 +277,39 @@
    (when-not (fn? cache-lookup)
      (invalid-request! "Direct-membership cache lookup must be callable."
                        {:value-type (some-> cache-lookup type str)}))
-   (let [initial (vec (repeat (count probes) ::unresolved))
-         {:keys [results misses cache-hits]}
-         (reduce-kv
-          (fn [{:keys [results misses cache-hits]} index probe]
-            (when-not (closed-keys? probe probe-keys)
-              (invalid-request!
-               "Direct-membership probe has unknown or missing fields."
-               {:index index
-                :expected-keys probe-keys
-                :actual-keys (when (map? probe) (set (keys probe)))}))
-            ;; Establishes direction, descriptor, and typed-candidate
-            ;; validity before cache state can influence work.
-            (valid-probe! probe)
-            (let [cached (cache-lookup probe)]
-              (cond
-                (boolean? cached)
-                {:results (assoc results index cached)
-                 :misses misses :cache-hits (inc cache-hits)}
+   (let [probe-count (count probes)
+         [results misses cache-hits]
+         (loop [index 0
+                results (transient (vec (repeat probe-count ::unresolved)))
+                misses (transient [])
+                cache-hits 0]
+           (if (= index probe-count)
+             [(persistent! results) (persistent! misses) cache-hits]
+             (let [probe (nth probes index)]
+               (when-not (closed-keys? probe probe-keys)
+                 (invalid-request!
+                  "Direct-membership probe has unknown or missing fields."
+                  {:index index
+                   :expected-keys probe-keys
+                   :actual-keys (when (map? probe) (set (keys probe)))}))
+               ;; Establishes direction, descriptor, and typed-candidate
+               ;; validity before cache state can influence work.
+               (valid-probe! probe)
+               (let [cached (cache-lookup probe)]
+                 (cond
+                   (boolean? cached)
+                   (recur (inc index) (assoc! results index cached)
+                          misses (inc cache-hits))
 
-                (= cache-miss cached)
-                {:results results :cache-hits cache-hits
-                 :misses (conj misses (assoc probe :index index))}
+                   (= cache-miss cached)
+                   (recur (inc index) results
+                          (conj! misses (assoc probe :index index))
+                          cache-hits)
 
-                :else
-                (invalid-request!
-                 "Direct-membership cache lookup returned an invalid value."
-                 {:index index :value cached}))))
-          {:results initial :misses [] :cache-hits 0}
-          probes)
+                   :else
+                   (invalid-request!
+                    "Direct-membership cache lookup returned an invalid value."
+                    {:index index :value cached}))))))
          groups (group-by (juxt :direction :descriptor) misses)
          ;; Decorate-sort: the group key vector is built once per group.
          ordered-groups (map second

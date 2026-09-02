@@ -1772,7 +1772,10 @@
             :plan plan
             :candidates candidates
             :scope-identity proof-identity
-            :limits (recursive-operator-limits)})))))))
+            :limits (recursive-operator-limits)
+            ;; The engine reads only the decisions; skip the portable
+            ;; checkpoint's sorts and digest.
+            :checkpoint? false})))))))
 
 (declare first-discovery-lookup-page)
 
@@ -2117,7 +2120,8 @@
                    :resource-eid resource-eid
                    :direction :forward
                    :scope-identity scope-identity
-                   :limits (recursive-operator-limits)})
+                   :limits (recursive-operator-limits)
+                   :checkpoint? false})
                  (first
                   (operator-vector/check-cached-many-eids
                    {:adapter db :plan plan
@@ -2274,6 +2278,7 @@
         (fn []
           (operator-lookup/count-results
            {:adapter db :plan plan :traversal traversal
+            :cover-plan (stable-cover-plan db plan)
             :subject-type subject-type
             :anchor-eid anchor-eid :count-limit count-limit
             :scope-identity (operator-snapshot-proof-identity db)
