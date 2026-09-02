@@ -100,12 +100,18 @@ current per-request decision.
 | Cursor codec/construction | Authenticated token and construction contexts | Independent standard caches |
 | Derived schema | Parsed schema, dependency closures, roots, and sealed plans | Flat standard cache |
 | Scan response | Exact adapter scan prefixes per read descriptor, scoped by the scanned relation's generation | Standard cache; `:scan-cache {:max-entries :max-prefix}`; nonportable |
-| Range page | The longest completed plain page per query and start boundary, with one internal edge per result | Standard cache; nonportable |
+| Range segments | Completed plain pages of one walk as contiguous result segments with one internal edge per result, scoped like managed answers (equal proof frame over the walk's relations, else exact basis); any window inside a segment is served, a window past a segment composes its tail with one continuation, adjacent pages merge | Standard cache; `:range-reuse {:max-entries :max-results-per-walk :max-segments-per-walk}`; nonportable |
 
 The scan-response and range tiers are physical accelerators: a served scan
-reply equals the adapter's reply for the same bound and limit, a derived page
-equals the page traversal would produce, and results, order, cursors, limits,
-deadlines, and errors are identical with both disabled. Every request also
+reply equals the adapter's reply for the same bound and limit, a derived or
+composed page equals the page traversal would produce (both public orders
+are deterministic functions of plan, snapshot, and boundary, so every
+completed page is a slice of one fixed sequence), and results, order,
+cursors, limits, deadlines, and errors are identical with both disabled. A
+recursive plan's continuation past a retained segment resumes the stored
+checkpoint at the segment's end edge: the segment remembers the page series
+that produced it, and the continuation resumes that series' frontier
+whatever page size it requests. Every request also
 memoizes its own scan replies on its immutable basis; that memo is ordinary
 execution state and is not switched by `:cache?`, which governs only the
 shared store. `:cache? false` and a disabled client cache bypass both shared

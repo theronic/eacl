@@ -1844,6 +1844,77 @@ definition document {
          (not= expected (with-redefs [range-reuse/derive-page mutant]
                           (observe))))))
 
+(defn- range-segment-tier
+  "A tier holding one twenty-result forward segment with a next page."
+  []
+  (let [tier (range-reuse/tier {})
+        page {:data (vec (range 20))
+              :edges (mapv range-edge (range 20))
+              :range-reusable? true
+              :page-info {:start-cursor (range-edge 0)
+                          :end-cursor (range-edge 19)
+                          :has-next-page? true
+                          :has-previous-page? false}}]
+    (range-reuse/publish! tier :walk {:kind :first :size 20 :boundary nil} page)
+    tier))
+
+(defn range-window-position-off-by-one-killed?
+  "A window after a retained edge starts at the result after that edge; a
+  position at the edge's own result would repeat the boundary result."
+  []
+  (let [tier (range-segment-tier)
+        window {:kind :first :size 5 :boundary (range-edge 9)}
+        observe (fn [] (:data (:page (range-reuse/lookup! tier :walk window))))
+        expected [10 11 12 13 14]
+        original range-reuse/forward-position
+        mutant (fn [segment boundary]
+                 (let [position (original segment boundary)]
+                   (if (and position (pos? position)) (dec position) position)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/forward-position mutant]
+                          (observe))))))
+
+(defn range-window-past-segment-served-as-complete-killed?
+  "A window that runs past a segment with a next page is a partial answer
+  for composition, never a complete page: serving the tail as the whole
+  answer would drop the results that follow the segment."
+  []
+  (let [tier (range-segment-tier)
+        window {:kind :first :size 8 :boundary (range-edge 15)}
+        observe (fn [] (let [hit (range-reuse/lookup! tier :walk window)]
+                         [(some? (:page hit)) (some? (:partial hit))]))
+        expected [false true]
+        original range-reuse/serve-from-segment
+        mutant (fn [window segment]
+                 (let [answer (original window segment)]
+                   (if (:partial answer) {:page (:partial answer)} answer)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/serve-from-segment mutant]
+                          (observe))))))
+
+(defn range-composition-order-killed?
+  "A reverse window composes the continuation before the segment's head; a
+  forward window composes the segment's tail before the continuation."
+  []
+  (let [page (fn [from to]
+               {:data (vec (range from to))
+                :edges (mapv range-edge (range from to))
+                :range-reusable? true
+                :page-info {:start-cursor (range-edge from)
+                            :end-cursor (range-edge (dec to))
+                            :has-next-page? true
+                            :has-previous-page? true}})
+        observe (fn []
+                  [(:data (range-reuse/compose (page 16 20) {:kind :first :size 4 :boundary (range-edge 19)} (page 20 24)))
+                   (:data (range-reuse/compose (page 30 34) {:kind :last :size 4 :boundary (range-edge 30)} (page 26 30)))])
+        expected [(vec (range 16 24)) (vec (range 26 34))]
+        original range-reuse/compose
+        mutant (fn [partial continuation remainder]
+                 (original partial (update continuation :kind {:first :last :last :first}) remainder))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/compose mutant]
+                          (observe))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1910,7 +1981,13 @@ definition document {
    :range-derivation-end-edge-off-by-one
    range-derivation-end-edge-off-by-one-killed?
    :range-derivation-ignores-next-page
-   range-derivation-ignores-next-page-killed?})
+   range-derivation-ignores-next-page-killed?
+   :range-window-position-off-by-one
+   range-window-position-off-by-one-killed?
+   :range-window-past-segment-served-as-complete
+   range-window-past-segment-served-as-complete-killed?
+   :range-composition-order
+   range-composition-order-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

@@ -1490,6 +1490,11 @@
   (some-> (get-in client [:runtime :continuation-cache-store])
           continuation/stats))
 
+(defn- range-stats
+  "The client's range-segment tier stats, or nil without a cache."
+  [client]
+  (:range-reuse (orchestration/cache-stats client)))
+
 (defn assert-cursor-source-transition!
   "Checks one provider recreation/restart against the shared durability
   matrix. The caller owns backend setup and supplies the pre-transition page,
@@ -1576,11 +1581,13 @@
         expected cursor-continuation-expectations
         backend-work (atom {})
         before-checkpoints (continuation-stats client)
+        before-range (range-stats client)
         one-page
         (binding [backend/*backend-op-stats* backend-work]
           (eacl/lookup-resources
            client (assoc query :after forward-cursor)))
-        after-checkpoints (continuation-stats client)]
+        after-checkpoints (continuation-stats client)
+        after-range (range-stats client)]
     (testing "unrelated writes preserve forward and reverse oracle streams"
       (is (= :current (:unrelated-write expected)))
       (is (= (take (count (:data one-page))
@@ -1591,8 +1598,9 @@
           "cursor, answer, and checkpoint decisions share one request frame")
       (when (and before-checkpoints after-checkpoints
                  (ordered-generation-proofs? client))
-        (is (> (:hits after-checkpoints) (:hits before-checkpoints))
-            "an equal-frame later basis resumes the private checkpoint"))
+        (is (or (> (:hits after-checkpoints) (:hits before-checkpoints))
+                (> (:hits after-range 0) (:hits before-range 0)))
+            "an equal-frame later basis resumes the private checkpoint or the retained segment"))
       (is (<= (get @backend-work :schema-generation 0) 1))
       (is (= oracle-stream
              (into (:data forward-page)
@@ -1619,6 +1627,7 @@
   [client query oracle-stream forward-page reverse-page]
   (let [exact? (boolean (exact-selection-capable-reader? client))
         before-checkpoints (continuation-stats client)
+        before-range (range-stats client)
         expected
         (get-in cursor-continuation-expectations
                 [:relevant-write
@@ -1636,11 +1645,13 @@
         (continuation-outcome
          #(reverse-continuation-data
            client reverse-query reverse-cursor {}))
-        after-checkpoints (continuation-stats client)]
+        after-checkpoints (continuation-stats client)
+        after-range (range-stats client)]
     (when (and before-checkpoints after-checkpoints)
       (if (and exact? (ordered-generation-proofs? client))
-        (is (> (:hits after-checkpoints) (:hits before-checkpoints))
-            "exact fallback resumes the original accepted basis's private checkpoint")
+        (is (or (> (:hits after-checkpoints) (:hits before-checkpoints))
+                (> (:hits after-range 0) (:hits before-range 0)))
+            "exact fallback resumes the original accepted basis's private checkpoint or retained segment")
         (is (= (:hits before-checkpoints) (:hits after-checkpoints))
             "a changed current frame is never used for private resumption")))
     (case expected
@@ -1738,7 +1749,10 @@
         (eacl/release! older)))))
 
 (defn- assert-bounded-checkpoint-replay!
-  [client query oracle-stream]
+  "`second-walk` performs one checkpoint-publishing page of a different
+  walk: checkpoints are keyed by walk and boundary, so only another walk
+  competes for the single slot."
+  [client query oracle-stream second-walk]
   (when (ordered-generation-proofs? client)
     (testing "bounded checkpoint retention or replay preserves the page"
       (let [store (continuation/make-store {:max-entries 1})
@@ -1753,11 +1767,9 @@
             _ (swap! lifecycle-state assoc :continuation-cache-store store)
             query-a (assoc query :first 3
                            :evaluation :complete-denotation)
-            query-b (assoc query :first 4
-                           :evaluation :complete-denotation)
             first-page (eacl/lookup-resources client query-a)
             cursor (get-in first-page [:page-info :end-cursor])
-            _ (eacl/lookup-resources client query-b)
+            _ (second-walk)
             before (continuation/stats store)
             second-page
             (eacl/lookup-resources
@@ -1943,7 +1955,13 @@
 
         (assert-bounded-checkpoint-replay!
          client query
-         (mapv folder (range (inc recursive-connected-folder-count)))))
+         (mapv folder (range (inc recursive-connected-folder-count)))
+         #(eacl/lookup-subjects
+           client {:resource (folder (dec recursive-connected-folder-count))
+                   :permission :selfread
+                   :subject/type :user
+                   :first 1
+                   :evaluation :complete-denotation})))
 
       (eacl/delete-object! client (folder recursive-connected-folder-count))
       (let [after-delete

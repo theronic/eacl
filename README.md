@@ -1502,7 +1502,7 @@ Cache capacities are entry counts, not byte estimates:
 Completed pages above 1,000 result items are returned normally but are not
 retained. The public page-size maximum remains 10,000.
 
-Three further client options tune reuse below the answer cache and cost
+Four further client options tune reuse below the answer cache and cost
 nothing when unset:
 
 ```clojure
@@ -1510,6 +1510,9 @@ nothing when unset:
   (eacl.datomic.core/make-client
    conn
    {:scan-cache {:max-entries 2048 :max-prefix 512} ; or false to disable
+    :range-reuse {:max-entries 512                  ; or false to disable
+                  :max-results-per-walk 4096
+                  :max-segments-per-walk 8}
     :lookahead {:pages 1 :max-inflight 2}           ; off when absent
     :io-observer (fn [event] (log/info event))}))   ; nil when absent
 ```
@@ -1518,13 +1521,24 @@ nothing when unset:
 that later requests reuse instead of re-reading the same relationship edges;
 it is on by default while the cache is enabled and follows `:cache? false`.
 Every request also memoizes its own scan replies regardless of caching.
+`:range-reuse` bounds the client-private tier of completed page segments:
+every plain page (acyclic or recursive plan, no relationship filter) keeps
+one cursor edge per result, so any later window of the same walk on the same
+snapshot that lies inside retained segments (a shorter page, a continuation
+inside a longer page, any cursor the segment holds) is served without a
+traversal, a window that runs past a segment traverses only the remainder,
+and pages that continue one another merge into one segment; a recursive
+plan's continuation past a segment resumes the checkpoint of the series that
+produced the segment whatever page size it requests. It is on by default
+while the cache is enabled and follows `:cache? false`.
 `:lookahead` runs a served page's continuation in the background on a bounded
 daemon pool after the response, so the caller's next page is an exact hit; it
 spends reads ahead of demand and is therefore off by default and a no-op on
 ClojureScript. `:io-observer` receives each request's operation, provenance
 (`:request` or `:lookahead`), outcome, elapsed nanoseconds, and exact meters
 (adapter commands, fetched values, identity conversions, scan hits and
-misses, range derivations); an observer that throws never changes a result.
+misses, range derivations and compositions); an observer that throws never
+changes a result.
 
 Pass `:cache? false` to bypass the cache on a request:
 

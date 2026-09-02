@@ -99,3 +99,53 @@
          enabled
          [(eacl/->Relationship (fixture/user u) :member (fixture/group g))]))
       (round "after a deletion"))))
+
+(deftest random-windows-are-identical-under-every-cache-mode-test
+  ;; Windows from arbitrary retained boundaries, of arbitrary sizes, in
+  ;; both directions: the segment tier serves, composes, or computes them,
+  ;; and every public page equals the uncached computation.
+  (doseq [seed [5 17]]
+    (let [config {:users 8 :groups 14 :groups-per-user 6 :seed seed :empty-fraction 0.3}
+          {:keys [enabled disabled]} (seeded-clients config)
+          next-int (lcg (* 13 seed))
+          boundary (fn [u i]
+                     (when (pos? i)
+                       (get-in (fixture/page disabled u i :cache? false)
+                               [:page-info :end-cursor])))]
+      (doseq [u (range (:users config))]
+        (let [total (count (:data (fixture/page disabled u 200 :cache? false)))]
+          (dotimes [_ 12]
+            (let [i (next-int (inc (min total 20)))
+                  size (inc (next-int 9))
+                  after (boundary u i)]
+              (when (or (zero? i) after)
+                (let [[on on-commands] (commands-of #(fixture/page enabled u size :after after))
+                      [off off-commands] (commands-of #(fixture/page disabled u size :cache? false :after after))]
+                  (is (= (public-shape off) (public-shape on))
+                      (str "seed " seed " user " u " after " i " size " size))
+                  (is (<= (count on-commands) (count off-commands)))
+                  (when-let [cursor (get-in on [:page-info :end-cursor])]
+                    (is (= (public-shape (fixture/page disabled u size :cache? false :after cursor))
+                           (public-shape (fixture/page enabled u size :after cursor)))
+                        "continuations from served, composed, and computed cursors agree"))))))
+          (testing (str "reverse windows for user " u)
+            (dotimes [_ 6]
+              (let [size (inc (next-int 9))
+                    query (fn [client cache?]
+                            (eacl/lookup-resources
+                             client {:subject (fixture/user u) :permission :view
+                                     :resource/type :doc :last size :cache? cache?}))
+                    on (query enabled true)
+                    off (query disabled false)]
+                (is (= (public-shape off) (public-shape on)))
+                (when-let [cursor (get-in on [:page-info :start-cursor])]
+                  (let [size (inc (next-int 5))
+                        before (fn [client cache?]
+                                 (eacl/lookup-resources
+                                  client {:subject (fixture/user u) :permission :view
+                                          :resource/type :doc :last size
+                                          :before cursor :cache? cache?}))]
+                    (is (= (public-shape (before disabled false))
+                           (public-shape (before enabled true)))
+                        (str "reverse continuation of " size " for user " u))))))))))))
+

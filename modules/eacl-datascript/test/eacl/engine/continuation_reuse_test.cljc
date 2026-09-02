@@ -105,14 +105,20 @@
   ;; acyclic-keyset-pagination gives acyclic roots self-contained keyset
   ;; cursors that never touch the continuation store — see
   ;; acyclic-pagination-needs-no-checkpoints-test below).
-  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+  (let [{:keys [fixture client]} ;; Range reuse would serve page 2 from the retained segment; this
+        ;; test exercises the checkpoint mechanism itself.
+        (seeded-caching-client :folder-chain {:range-reuse false})
         store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)
                :first 5}
+        ;; Checkpoints are keyed by walk and boundary, not page size, and
+        ;; the store keeps the furthest boundary per walk; the oracle must
+        ;; not occupy that slot.
         one-shot (mapv :id (:data (eacl/lookup-resources
-                                   client (assoc query :first 1000))))]
+                                   client (assoc query :first 1000
+                                                 :populate-cache? false))))]
     (is (continuation/store? store)
         "the default client construction must provide a continuation store")
     (let [page-1 (eacl/lookup-resources client query)
@@ -135,6 +141,61 @@
                      (seq data))
               (recur (assoc q :after (:end-cursor page-info)) acc)
               (is (= one-shot acc)))))))))
+
+(deftest derived-window-on-a-recursive-plan-continues-from-the-checkpoint-test
+  ;; A shorter window served from a recursive-plan page hands out a cursor
+  ;; inside the retained segment; continuing from it is served from the
+  ;; segment, and the first window that leaves the segment resumes the
+  ;; checkpoint at the segment's end whatever page size produced it.
+  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+        store (get-in client [:runtime :continuation-cache-store])
+        query {:subject (get-in fixture [:principals :alice])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)}
+        ;; The oracle bypasses the cache so it seeds no segment.
+        one-shot (mapv :id (:data (eacl/lookup-resources
+                                   client (assoc query :first 1000 :cache? false))))
+        page-5 (eacl/lookup-resources client (assoc query :first 5))
+        derived (eacl/lookup-resources client (assoc query :first 3))
+        inside (eacl/lookup-resources
+                client (assoc query :first 1
+                              :after (get-in derived [:page-info :end-cursor])))
+        hits-before (:hits (continuation/stats store))
+        ;; Results five to seven: the segment holds result five, the
+        ;; remainder continues from the checkpoint at result five.
+        leaving (eacl/lookup-resources
+                 client (assoc query :first 3
+                               :after (get-in inside [:page-info :end-cursor])))
+        hits-after (:hits (continuation/stats store))]
+    (is (> (count one-shot) 8) "the fixture must reach past the eighth result")
+    (is (false? (:cached? page-5)))
+    (is (true? (:cached? derived)))
+    (is (= (take 3 one-shot) (mapv :id (:data derived))))
+    (is (true? (:cached? inside)) "a window inside the segment is served from it")
+    (is (= (take 1 (drop 3 one-shot)) (mapv :id (:data inside))))
+    (is (pos? (:partial-hits (:range-reuse (datascript/cache-stats client))))
+        "the window past the segment composes its tail with one continuation")
+    (is (= (take 3 (drop 4 one-shot)) (mapv :id (:data leaving))))
+    (is (> hits-after hits-before)
+        "the continuation resumed the checkpoint at the segment's end, not a replay")))
+
+(deftest page-size-change-continues-from-the-checkpoint-test
+  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+        store (get-in client [:runtime :continuation-cache-store])
+        query {:subject (get-in fixture [:principals :alice])
+               :permission (:permission fixture)
+               :resource/type (:resource-type fixture)}
+        one-shot (mapv :id (:data (eacl/lookup-resources
+                                   client (assoc query :first 1000 :cache? false))))
+        page-5 (eacl/lookup-resources client (assoc query :first 5))
+        hits-before (:hits (continuation/stats store))
+        page-7 (eacl/lookup-resources
+                client (assoc query :first 7
+                              :after (get-in page-5 [:page-info :end-cursor])))
+        hits-after (:hits (continuation/stats store))]
+    (is (= (take 7 (drop 5 one-shot)) (mapv :id (:data page-7))))
+    (is (> hits-after hits-before)
+        "a different page size resumes the same frontier")))
 
 (deftest repeated-page-request-is-served-from-cache-test
   ;; Repeating the identical page request resolves the completed internal
@@ -667,14 +728,15 @@
     (is (= 1 (:errors (continuation/stats store))))))
 
 (deftest population-disabled-leaves-no-tombstone-and-next-page-replays-test
-  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain)
+  (let [{:keys [fixture client]} (seeded-caching-client :folder-chain {:range-reuse false})
         store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
                :resource/type (:resource-type fixture)
                :first 3}
         oracle (mapv :id (:data (eacl/lookup-resources
-                                 client (assoc query :first 1000))))
+                                 client (assoc query :first 1000
+                                               :populate-cache? false))))
         before (continuation/stats store)
         page-1 (eacl/lookup-resources
                 client (assoc query :populate-cache? false))
@@ -881,7 +943,7 @@
 (deftest cursor-rejection-precedes-checkpoint-access-and-absence-replays-test
   (let [security-key "checkpoint-pipeline-test-key-0123456789"
         {:keys [fixture client]}
-        (seeded-caching-client :folder-chain {:security-key security-key})
+        (seeded-caching-client :folder-chain {:security-key security-key :range-reuse false})
         store (get-in client [:runtime :continuation-cache-store])
         query {:subject (get-in fixture [:principals :alice])
                :permission (:permission fixture)
@@ -908,7 +970,7 @@
     (testing "a wrong-lineage cursor never consults the other client store"
       (let [{other :client}
             (seeded-caching-client
-             :folder-chain {:security-key security-key})
+             :folder-chain {:security-key security-key :range-reuse false})
             other-store (get-in other [:runtime :continuation-cache-store])
             before (traffic (continuation/stats other-store))
             error (error-data

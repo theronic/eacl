@@ -15,7 +15,7 @@ set -eu
 
 gate_started_at=$(date +%s)
 # Iteration-speed guardrail, not a proof property. Raised 10 -> 12 with
-# the least-path and reducer-read-scope leaves (obligations 541 -> 651, scan-response cache -> 663, range answer reuse -> 669): the critical path is
+# the least-path and reducer-read-scope leaves (obligations 541 -> 651, scan-response cache -> 663, range answer reuse -> 673): the critical path is
 # the source-refinement JVM, and the prior ceiling was already exactly
 # at the wall on a loaded workstation.
 # Iteration-speed guardrail (not a proof property); CI overrides it via
@@ -310,7 +310,7 @@ dafny_obligations=$(awk \
   "$tlc_run_root/dafny-two.log" \
   "$tlc_run_root/dafny-three.log" \
   "$tlc_run_root/dafny-four.log")
-expected_dafny_obligations=669
+expected_dafny_obligations=673
 dafny_count_failed=0
 if [ "$dafny_obligations" -ne "$expected_dafny_obligations" ]; then
   printf 'expected %s Dafny obligations, observed %s\n' \

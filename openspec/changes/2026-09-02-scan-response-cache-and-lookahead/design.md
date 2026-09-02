@@ -263,6 +263,78 @@ would require re-authenticating cursors).
   background publication racing a newer basis (exact-basis keys make the
   stale publication unreachable for the new basis).
 
+### D12 — The range tier stores walk segments and serves any window inside them
+
+The first cut of range reuse (D11) keyed one resident page per start
+boundary and derived only shorter pages from the same start. That leaves
+the two patterns the customer feels most on the table: a continuation whose
+window lies inside a page already served (paging with a smaller size after a
+larger one), and any request whose boundary the client has already seen.
+Because both public orders are deterministic functions of plan, snapshot,
+and boundary, every completed plain page is a contiguous segment of one
+fixed result sequence, and its retained edges name every boundary inside
+it. The tier is therefore keyed by the walk (the semantic key minus page
+size and minus boundary, plus the window kind, under the same scope as a
+managed answer: the complete proof descriptor over the walk's relation
+closure when proof-managed reuse applies, so unrelated writes keep segments
+valid, else the exact basis) and holds a bounded list of segments per walk. A segment keeps
+results, edges, the exclusive boundary it started from (`:after`, or the
+`:before` edge for reverse windows), and the previous/next flags of the
+walk at its ends. A lookup locates the request's boundary among the
+segment's start boundary and edges (a walk-start request matches a segment
+with no previous page; a walk-end `:last` request matches one with no next
+page) and serves the window when the segment holds it or holds the rest of
+the walk in that direction. Publication merges a page that continues a
+segment's end edge (or ends at its start boundary) into that segment, so
+ordinary paging accumulates one segment; otherwise it adds a segment, and
+per-walk caps (`:max-results-per-walk`, default 4096; `:max-segments-per-walk`,
+default 8) drop the oldest segment. Alternatives: a per-result index across
+all pages (more memory, no merging benefit); keeping D11's one page per
+start boundary (misses the continuation-inside-a-page case entirely).
+
+### D13 — A window past a segment composes the tail with one continuation
+
+When the boundary is inside a segment that has a next page but the segment
+holds fewer results than requested, the orchestration serves the segment's
+tail and runs one ordinary continuation from the segment's end edge for the
+remainder, then concatenates data, edges, and flags (start from the tail,
+end and next-page flag from the continuation). The continuation is an
+internal engine call with the segment's end edge as its `:after` bound and
+the remaining size, under the same request bindings the ordinary evaluation
+uses, so proofs, limits, deadlines, and checkpoints behave as for any
+continuation; `PaginationComposition.dfy` and `RangeAnswerReuse.dfy` are
+the models (page of `N > M` equals page of `M` plus the continuation from
+its `M`-th edge). Reverse windows compose symmetrically with a `:before`
+continuation. Bounded routes never compose. The composed page is rendered
+and published like a computed page, and it extends the segment.
+
+### D14 — Recursive-plan pages participate, and a continuation leaving a segment resumes that segment's series
+
+The stable first-discovery route now marks its pages reusable and retains
+edges. Its continuations resume from checkpoints keyed by the walk, the
+page size of the series, and (in the store) the latest delivered boundary;
+one slot per key keeps memory bounded, and the size in the key keeps
+concurrent series of different sizes over one walk from evicting each
+other's frontier. The history-free reducer state at a delivered ordinal
+does not depend on how earlier pages were cut
+(`RuntimeCheckpointComposition.dfy` and `PaginationComposition.dfy` prove the
+checkpoint page equals the public page for any page size at that boundary),
+so a continuation may resume a frontier that a *different* size produced.
+Each retained segment remembers the size of the series that produced its
+end; a window that starts at a segment's end, or a composition remainder
+that continues past it, carries that size as `:checkpoint-size` in the
+internal query, and the engine keys its checkpoint lookup by the named
+series instead of the request's own size. A derived page's cursor inside a
+segment is served from the segment; leaving the segment resumes the series'
+checkpoint at its end edge; only eviction of the segment between the two
+requests falls back to the request's own series key and then to governed
+replay, the existing correctness paths. Alternatives: dropping the size from
+the key entirely (tried first: a long oracle page and a short series then
+shared one latest-only slot and the series replayed after any longer page,
+which the backend contract tests caught); a multi-slot checkpoint store
+(changes the ProgressCheckpoint model). Operator-expression routes keep
+their own checkpoint contract and are excluded from reuse in this change.
+
 ## Risks / Trade-offs
 
 - [Shared-tier key touches an attacker-influenced value] → Keys contain only

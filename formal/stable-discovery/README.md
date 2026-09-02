@@ -21,9 +21,10 @@ exact aggregate obligation count pinned in the script.
 Contents: the Dafny leaves (`ScanResponseCache.dfy` and
 `RangeAnswerReuse.dfy`, added 2026-09-02, prove that a scan-response cache
 reply equals the adapter's chunk for the same bound and limit, that
-contiguous extension keeps a prefix of the scan, and that a shorter page from
-the same start boundary is a prefix of the longer resident page, with a
-complete resident page answering larger requests unchanged;
+contiguous extension keeps a prefix of the scan, that any window inside a
+retained page segment is the page from that boundary, that a window running
+past a segment is the segment's tail plus the continuation from its end, and
+that a complete resident page answers larger requests unchanged;
 `ReducerReadScope.dfy`, added 2026-08-23,
 proves that every plan-derived scan stays inside the certified relation
 closure and, including adaptive scheduling, equal closure slices preserve

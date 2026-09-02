@@ -132,11 +132,16 @@ measurable regression.
 
 ## Recorded follow-ups (not in this change)
 
-- **Range composition** (spec MAY clause): answering a longer page as a
-  resident shorter page plus its ordinary continuation needs the page
-  pipeline to re-enter with an internal boundary and concatenate; today
-  every entry point internalizes a public cursor. Worth doing once
-  continuation pages are common in the demos.
+- **Request shell cost for derived pages**: a page served from a segment
+  still decodes its cursor, resolves the proof frame, builds keys, and mints
+  two cursors (about 150 µs on the JVM against a 30–55 µs rendered exact
+  hit). A rendered-page tier keyed by the public query with the *decoded*
+  boundary, or cheaper cursor minting, would bring derived pages near the
+  exact-hit floor.
+- **Operator-expression routes in range reuse**: intersection and exclusion
+  covers keep their own checkpoint contract and are not marked reusable;
+  they can join once their cursor edges are validated by the neutrality
+  differential.
 - **Order-insensitive exact counts**: the exhaustive reducer keeps an
   admitted set and one consumer scan per discovered grant; a merge or
   bitmap count saves CPU and memory but not remote reads, because every
@@ -161,22 +166,117 @@ measurable regression.
   batched membership probes bypass the routed fetch seam and therefore the
   scan tiers.
 
+## Any-window range reuse, composition, and recursive-plan participation (2026-09-02, D12–D14)
+
+Asked why range reuse stopped at acyclic plans and told to do whatever is
+most performant for the caller, the range tier was rebuilt around walk
+segments (D12), composition of a window that runs past a segment with one
+continuation (D13), and participation of the stable first-discovery route
+with page-size-independent checkpoints (D14).
+
+What changed in the code:
+
+- `eacl.client.range-reuse`: walk key (semantic key minus size and
+  boundary), window extraction from the authenticated internal boundary,
+  segments with an edge index, lookup from any retained boundary in both
+  window kinds (complete page, or partial page plus continuation request),
+  composition, publication with adjacent-segment merging (append, prepend,
+  covered), and per-walk caps. Stats gain `:partial-hits` and `:extensions`.
+- `eacl.client.orchestration`: the evaluation bindings are factored into
+  `evaluate-with`, so the composition remainder runs under the same
+  bindings as any evaluation; page callers supply the continuation compute
+  (internal query with the window replaced) through a private option key;
+  `:range-reuse` is a validated client option (`:max-entries`,
+  `:max-results-per-walk`, `:max-segments-per-walk`, or `false`).
+- `eacl.engine.v8`: first-discovery pages carry the reuse marker; the
+  checkpoint key keeps the page size as the series identity, and a
+  continuation names the series it resumes through the internal query's
+  `:checkpoint-size` (set by range reuse for windows that leave a retained
+  segment).
+- Counter `:range-compositions`; docs and README describe the segments.
+
+Segments are scoped like managed answers (the complete proof descriptor
+over the walk's relation closure when proof-managed reuse applies, else the
+exact basis). The first cut keyed them by exact basis; the backend
+contract's proof-equivalent-write section then found that a derived page
+had never traversed and so had published no checkpoint, and after an
+unrelated write neither a segment (new basis) nor a checkpoint (never
+written) could serve its continuation. Under the descriptor scope the
+segment survives the unrelated write and serves the continuation directly.
+
+The first cut of D14 dropped the page size from the checkpoint key. The
+backend contract tests then failed: the continuation store keeps one latest
+boundary per key, so a long oracle page and a short page series over one
+walk shared a slot and the series replayed after any longer page. The size
+is back in the key as the series identity; instead, every retained segment
+remembers the series that produced its end, and a continuation that starts
+at a segment's end (or the remainder of a composition) names that series
+(`:checkpoint-size`), so a page-size change resumes the frontier whenever
+the segment is retained and falls back to its own series key otherwise. Two
+isolation tests seed their oracle with `:populate-cache? false` and the
+three checkpoint-mechanism tests opt out of range reuse (`{:range-reuse
+false}`) because the segment tier would otherwise answer their
+continuations without touching the store; the shared contract's
+"resumes the private checkpoint" assertions accept a segment hit, and its
+bounded-store section now competes with a second walk.
+
+Measured on the same JVM (Datomic in-memory and DataScript; `:populate-cache?
+false` on the measured requests so the exact tier never serves a repeat;
+medians of 200 requests; a 54-result segment retained from one page):
+
+| Window | Backend | Exact hit | Served from segment | Traversal | Composition (half from the segment) | Full traversal |
+|---|---|---|---|---|---|---|
+| 20 results | Datomic | 56.5 µs | 185.2 µs | 434.5 µs | 267.2 µs | 357.0 µs |
+| 20 results | DataScript | 42.6 µs | 166.7 µs | 302.3 µs | 228.4 µs | 262.6 µs |
+| 50 results | Datomic | 37.4 µs | 149.3 µs | 520.9 µs | 197.0 µs | 365.2 µs |
+| 50 results | DataScript | 28.2 µs | 136.8 µs | 362.3 µs | 161.8 µs | 256.8 µs |
+
+A window served from a segment costs 2.3–3.5× less than its traversal at
+these sizes; composition saves in proportion to the share the segment holds.
+At a 6-result window (a 31-result walk) the served page was 190.6 µs against
+268.3 µs and composition was neutral (249.5 against 247.1 µs): below about ten
+results the request shell (cursor decode, proof frame, two cursor mints,
+keys) dominates both paths. That shell is the next target and is recorded
+under follow-ups. Recursive plans, DataScript, quiet machine. On the 12-result
+`:folder-chain` fixture a `:first 7` continuation from a `:first 5` page's
+end cursor costs the same with the series hint as with range reuse off
+(180.3 against 179.2 µs; a range lookup that serves nothing adds about
+10 µs), because replaying five results is as cheap as the lookup. On a
+300-folder parent chain at ordinal 200: the same-size continuation resumes
+its checkpoint in 267.5 µs; a `:first 7` continuation resumes the segment's
+series through the hint in 213.6 µs; without the hint (range reuse off, the
+seven-series has no checkpoint) it replays in 768.2 µs, and with the store
+cleared 776.1 µs. Replay grows with the prefix, the resumed cost does not.
+
+Certification of this pass: `RangeAnswerReuse.dfy` gained
+`WindowInsideSegmentIsThePage` and `WindowIsTailPlusContinuation` (10
+obligations; fast verifier pin 669 → 673); three executed mutation controls
+(`range-window-position-off-by-one`, `range-window-past-segment-served-as-complete`,
+`range-composition-order`; registry 149 → 152); the DataScript neutrality
+differential gained random forward and reverse windows from arbitrary
+retained boundaries; Datomic integration tests cover inside-window service,
+composition (fewer adapter commands than the uncached page), and windows from
+a boundary computed elsewhere; DataScript continuation tests cover a derived
+window on a recursive plan continuing from the checkpoint and a page-size
+change resuming the frontier. Gate results are in the certification table.
+
 ## Certification (fresh JVMs, final tree)
 
 | Gate | Result |
 |---|---|
-| CI battery (`modules/eacl`, `eacl-datomic`, `eacl-datascript`, `eacl-datahike`, `src-build`) | 1,178 tests, 55,564 assertions, 0 failures, 0 errors |
-| DataScript ClojureScript suite (clean build, node) | 581 tests, 28,750 assertions, 0 failures, 0 errors |
-| Datalevin suite (`:datalevin-test`, module and shared roots) | 438 tests, 23,374 assertions, 0 failures |
-| Generators + adversarial + mutation controls (strict-replay JVM) | 14 tests, 951 assertions, 0 failures (seven new controls killed) |
-| Counterexample replay, strict | 71 tests, 18,228 assertions, 0 failures |
+| CI battery (`modules/eacl`, `eacl-datomic`, `eacl-datascript`, `eacl-datahike`, `src-build`) | 1,206 tests, 57,071 assertions, 0 failures, 0 errors |
+| DataScript ClojureScript suite (clean build, node) | 588 tests, 29,539 assertions, 0 failures, 0 errors |
+| Datalevin suite (`:datalevin-test`, module and shared roots) | 442 tests, 23,411 assertions, 0 failures |
+| Generators + adversarial + mutation controls (strict-replay JVM) | 13 tests, 901 assertions, 0 failures (ten new controls killed) |
+| Counterexample replay, strict (smoke-alias JVM) | 71 tests, 18,228 assertions, 0 failures |
 | Eight generated-differential suites | 52 tests, 18,280 assertions, 0 failures |
-| Consistency-boundary gate | passed (median p95 1,349 ns under concurrent suites; ceiling 15,000 ns) |
+| Consistency-boundary gate | passed (ceiling 15,000 ns) |
 | Routing-certificate gate | passed |
-| Stable-discovery fast verifier | 669 Dafny obligations, 0 errors (pin updated from 651: `ScanResponseCache.dfy` 12, `RangeAnswerReuse.dfy` 6); scan-response-cache bridge 4,000 serve and 4,000 extend cases, 4 controls killed |
-| `clj-kondo` over the five source roots | 0 errors, 0 warnings |
-| `bin/formal source-closure` | passed (96 roots, 2,420 reachable definitions) |
+| Stable-discovery fast verifier | 673 Dafny obligations, 0 errors (pin updated from 651: `ScanResponseCache.dfy` 12, `RangeAnswerReuse.dfy` 10); scan-response-cache bridge 4,000 serve and 4,000 extend cases, 4 controls killed |
+| `clj-kondo` over the five source roots | 0 errors |
+| `bin/formal source-closure` | passed (96 roots, 2,438 reachable definitions) |
 | `bin/reflection-gate` | clean |
+| `bin/formal verify` (whole `formal/dafny` tree) | 48 modules, 0 errors |
 | `bin/formal manifest` | generated; exits 3 by design (assurance withheld by the authored contract) |
 
 `ScalarFrontierCoherence.dfy` gained one lemma (below); the module verifies alone (84 obligations, 0 errors) and the whole-tree `bin/formal verify` runs in CI's formal workflow.

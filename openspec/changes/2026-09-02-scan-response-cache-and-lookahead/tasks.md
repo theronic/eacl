@@ -72,3 +72,12 @@
 ## 10. Recorded follow-ups (not in this change)
 
 - [x] 10.1 Record in the implementation notes, with the measurements that justify deferral: order-insensitive counts (CPU and memory, not remote reads), compact reducer checkpoints, endpoint-scoped dependency stamps, materialized recursive closure, Datalevin native scan cost, and DynamoDB storage-backend statistics; verify each entry names the evidence.
+
+## 11. Any-window range reuse, composition, and recursive-plan participation
+
+- [x] 11.1 Rewrite `eacl.client.range-reuse` around walk keys and segments (D12): walk key, window extraction, segment lookup from any retained boundary in both window kinds, publication with adjacent-segment merging and per-walk caps, and tier stats; verify with the unit tests in `range_reuse_test.cljc` (prefix, inside-window, walk-start, reverse, merge, caps, decline cases).
+- [x] 11.2 Wire the orchestration page path to the segment tier: window lookup on an exact miss, composition of a partial hit with one internal continuation through the same evaluation bindings (D13), publication of computed and composed pages, and the `:range-compositions` counter; verify with the Datomic range-reuse integration tests (inside-window continuation, composition equals the uncached page, recursive plan) and the DataScript neutrality differential extended to random windows and sizes over the walk.
+- [x] 11.3 Mark stable first-discovery pages reusable and make `eacl.engine.v8/checkpoint-key` page-size independent (D14); verify the checkpoint-reuse tests still record hits, a page-size change mid-walk records a continuation hit, and the derived-page continuation on a recursive plan does not replay.
+- [x] 11.4 Extend `RangeAnswerReuse.dfy` with the any-window lemma (a window inside a segment equals the page from that boundary) and reference `PaginationComposition.dfy` for composition; add executed mutation controls for inside-window off-by-one, a window past a segment without a next page, composition order, and the size-independent checkpoint key; update the fast verifier pin and the registry; verify the fast verifier and the mutation suite pass.
+- [x] 11.5 Update `docs/cache.md`, the `:range-reuse` client option, the stable-discovery README, and the implementation notes with measurements (inside-window hit, composition, recursive continuation across page sizes) on Datomic, DataScript, and Datalevin; verify the docs describe the shipped behavior.
+

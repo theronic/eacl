@@ -885,6 +885,21 @@
      :expression-limits (:expression-limits opts)
      :permission-tree-limits (:permission-tree-limits opts)}))
 
+(defn- continuation-compute-fn
+  "The engine call for a range-composition remainder or a segment-end
+  resume: the request's internal query with its window replaced by
+  `{:kind :size :boundary}` (an internal edge the segment retained) and,
+  when the segment names its series, `:checkpoint-size`, evaluated by
+  `compute-query` under the ordinary request bindings."
+  [compute-query internal-query]
+  (fn [{:keys [kind size boundary checkpoint-size]}]
+    (compute-query
+     (cond-> (-> internal-query
+                 (dissoc :first :last :after :before :checkpoint-size)
+                 (assoc kind size
+                        (case kind :first :after :last :before) boundary))
+       (pos-int? checkpoint-size) (assoc :checkpoint-size checkpoint-size)))))
+
 (defn- cached-engine-result
   [request-context adapter opts operation query resource-type permission
    compute]
@@ -939,8 +954,8 @@
                 (proof-frame/descriptor
                  (proof-frame/resolve!
                   @request-proof-frame-delay relation-ids)))))
-        evaluate
-        #(do
+        evaluate-with
+        (fn [thunk]
            (execution/check! contract :schema-plan)
            (let [value
                  (binding [engine/*schema-cache* @schema-cache
@@ -962,9 +977,10 @@
                            execution/*contract* contract
                            subproblem/*decision-kernel*
                            (:decision-kernel opts)]
-                   (compute))]
+                   (thunk))]
              (execution/check! contract :semantic-evaluation)
              value))
+        evaluate #(evaluate-with compute)
         cacheable?
         (and (:basis-cache-store opts)
              (:completed-cache? opts)
@@ -1070,35 +1086,79 @@
                  frame (:relation-ids @dependencies))))
             semantic-key
             (completed-answer-semantic-key opts operation query)
-            ;; Range reuse: on an exact and managed miss, a shorter page of
-            ;; the same walk is derived from the longest resident page under
-            ;; the range key; a computed reusable page supersedes it.
+            ;; Range reuse: on an exact and managed miss, any window of the
+            ;; same walk is served from the retained segments; a window that
+            ;; runs past a segment composes its tail with one continuation;
+            ;; computed and composed pages extend the segments.
             range-tier
             (when (and (contains? #{:lookup-resources :lookup-subjects}
                                   operation)
                        (not speculative)
                        (not range-reuse/*disabled?*))
               (:range-tier opts))
-            range-key
+            ;; Segments are scoped like managed answers: by the complete
+            ;; proof descriptor over the walk's relation closure when
+            ;; proof-managed reuse applies (so unrelated writes keep them
+            ;; valid), else by the exact basis.
+            range-scope
             (when range-tier
-              (range-reuse/range-key exact-basis-key semantic-key))
-            requested-size
-            (when range-key
-              (range-reuse/page-size (get-in semantic-key [:query :public])))
+              (or (when (and managed-reuse? resource-type permission)
+                    (try
+                      (when-let [descriptor (proof-frame/descriptor @complete-proof)]
+                        [:frame descriptor])
+                      (catch #?(:clj Exception :cljs :default) _ nil)))
+                  exact-basis-key))
+            walk-key
+            (when range-scope
+              (range-reuse/walk-key range-scope semantic-key))
+            window
+            (when walk-key
+              (range-reuse/window semantic-key engine/max-page-size))
+            continuation-compute (::continuation-compute opts)
+            populate-range? (:populate-cache-request? opts true)
             derived? (volatile! false)
+            composed? (volatile! false)
             evaluate
-            (if-not range-key
+            (if-not (and walk-key window)
               evaluate
               (fn []
-                (if-let [page (range-reuse/lookup!
-                               range-tier range-key requested-size)]
-                  (do (vreset! derived? true)
-                      (request-counters/add! :range-derivations)
+                (let [hit (range-reuse/lookup! range-tier walk-key window)
+                      compute-and-publish
+                      (fn []
+                        (let [page (evaluate)]
+                          (when populate-range?
+                            (range-reuse/publish! range-tier walk-key window page))
+                          page))]
+                  (cond
+                    (:page hit)
+                    (do (vreset! derived? true)
+                        (request-counters/add! :range-derivations)
+                        (:page hit))
+
+                    (and (:partial hit) continuation-compute)
+                    (let [{:keys [partial continuation]} hit
+                          remainder (evaluate-with
+                                     #(continuation-compute continuation))
+                          page (range-reuse/compose partial continuation remainder)]
+                      (if page
+                        (do (vreset! composed? true)
+                            (request-counters/add! :range-compositions)
+                            (when populate-range?
+                              (range-reuse/publish! range-tier walk-key window page))
+                            page)
+                        (compute-and-publish)))
+
+                    ;; The window starts at a segment's end: compute it as
+                    ;; the continuation of the series that produced the
+                    ;; segment, so its checkpoint at that boundary resumes.
+                    (and (:continuation hit) continuation-compute)
+                    (let [page (evaluate-with
+                                #(continuation-compute (:continuation hit)))]
+                      (when populate-range?
+                        (range-reuse/publish! range-tier walk-key window page))
                       page)
-                  (let [page (evaluate)]
-                    (when (:populate-cache-request? opts true)
-                      (range-reuse/publish! range-tier range-key page))
-                    page))))]
+
+                    :else (compute-and-publish)))))]
         (execution/check! contract :cache-lookup)
         (let [answer
               (if speculative
@@ -1131,9 +1191,10 @@
                     #(proof-frame/descriptor @complete-proof))}
                  semantic-key evaluate))]
           (execution/check! contract :cache-publication)
-          (if @derived?
-            (assoc answer :cached? true :cache-tier :range)
-            answer))))))
+          (cond
+            @derived? (assoc answer :cached? true :cache-tier :range)
+            @composed? (assoc answer :cache-tier :range-composition)
+            :else answer))))))
 
 (defn- with-cache-info
   [value {:keys [cached? cache-basis]}]
@@ -1975,22 +2036,30 @@
                           (cond-> cursor-opts
                             rendered-cache
                             (assoc ::populate-exact-answer? false))
+                          compute-query
+                          (fn [internal-query]
+                            (validate!)
+                            (engine/lookup-resources
+                             adapter
+                             internal-query
+                             {:continuation-cache-fn
+                              (fn []
+                                (continuation-context
+                                 adapter cursor-opts
+                                 :lookup-resources query))}))
                           compute
                           (if (:resource/relationship query)
                             #(relationship-filtered-lookup-page
                               api opts request-context adapter selected-db
                               cursor-opts :lookup-resources query
                               internal-query validate!)
-                            #(do
-                               (validate!)
-                               (engine/lookup-resources
-                                adapter
-                                internal-query
-                                {:continuation-cache-fn
-                                 (fn []
-                                   (continuation-context
-                                    adapter cursor-opts
-                                    :lookup-resources query))})))
+                            #(compute-query internal-query))
+                          answer-opts
+                          (if (:resource/relationship query)
+                            answer-opts
+                            (assoc answer-opts ::continuation-compute
+                                   (continuation-compute-fn
+                                    compute-query internal-query)))
                           answer
                           (cached-engine-result
                            request-context adapter answer-opts
@@ -2153,22 +2222,30 @@
                           (cond-> cursor-opts
                             rendered-cache
                             (assoc ::populate-exact-answer? false))
+                          compute-query
+                          (fn [internal-query]
+                            (validate!)
+                            (engine/lookup-subjects
+                             adapter
+                             internal-query
+                             {:continuation-cache-fn
+                              (fn []
+                                (continuation-context
+                                 adapter cursor-opts
+                                 :lookup-subjects query))}))
                           compute
                           (if (:subject/relationship query)
                             #(relationship-filtered-lookup-page
                               api opts request-context adapter selected-db
                               cursor-opts :lookup-subjects query
                               internal-query validate!)
-                            #(do
-                               (validate!)
-                               (engine/lookup-subjects
-                                adapter
-                                internal-query
-                                {:continuation-cache-fn
-                                 (fn []
-                                   (continuation-context
-                                    adapter cursor-opts
-                                    :lookup-subjects query))})))
+                            #(compute-query internal-query))
+                          answer-opts
+                          (if (:subject/relationship query)
+                            answer-opts
+                            (assoc answer-opts ::continuation-compute
+                                   (continuation-compute-fn
+                                    compute-query internal-query)))
                           answer
                           (cached-engine-result
                            request-context adapter answer-opts
@@ -2396,10 +2473,11 @@
     (scan-cache/tier (if (map? scan-cache-option) scan-cache-option {}))))
 
 (defn- range-tier-for
-  "The client's range-reuse tier: present only while the client cache is."
-  [basis-cache-store]
-  (when basis-cache-store
-    (range-reuse/tier {})))
+  "The client's range-reuse tier: present only while the client cache is
+  enabled and `:range-reuse` is not `false`."
+  [{:keys [range-reuse-option]} basis-cache-store]
+  (when (and basis-cache-store (not (false? range-reuse-option)))
+    (range-reuse/tier (if (map? range-reuse-option) range-reuse-option {}))))
 
 (defn- fresh-runtime-cache-lifecycle
   [{:keys [cache-option derived-schema-store-factory]
@@ -2425,7 +2503,7 @@
      cursor-construction-cache
      (derived-schema-store-factory)
      (scan-tier-for-config config basis-cache-store)
-     (range-tier-for basis-cache-store)
+     (range-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- narrow-runtime-cache-lifecycle
@@ -2456,7 +2534,7 @@
      (:cursor-construction-cache current)
      (:derived-schema-caches current)
      (scan-tier-for-config config basis-cache-store)
-     (range-tier-for basis-cache-store)
+     (range-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- lifecycle-content-revision
@@ -4069,6 +4147,7 @@
     :service-admission
     :read-only?
     :scan-cache
+    :range-reuse
     :lookahead
     :io-observer})
 
@@ -4214,6 +4293,21 @@
                        :eacl/error :eacl/invalid-config
                        :key :scan-cache
                        :value scan-cache-option}))))
+  (when-let [range-option (:range-reuse config-opts)]
+    (when-not (or (false? range-option)
+                  (and (map? range-option)
+                       (every? #{:max-entries :max-results-per-walk
+                                 :max-segments-per-walk}
+                               (keys range-option))
+                       (every? (fn [[_ value]] (pos-int? value))
+                               range-option)))
+      (throw (ex-info (str "EACL Config Error: :range-reuse must be false or a "
+                           "map of positive integers under :max-entries, "
+                           ":max-results-per-walk, and :max-segments-per-walk.")
+                      {:type :eacl/invalid-config
+                       :eacl/error :eacl/invalid-config
+                       :key :range-reuse
+                       :value range-option}))))
   (when (and (contains? config-opts :adapter-deterministic?)
              (not (boolean? adapter-deterministic?)))
     (throw (ex-info "EACL Config Error: :adapter-deterministic? must be boolean."
@@ -4342,6 +4436,7 @@
         runtime-cache-lifecycle-config
         {:cache-option cache
          :scan-cache-option (:scan-cache config-opts)
+         :range-reuse-option (:range-reuse config-opts)
          :proof-contract-reporter proof-contract-reporter
          :derived-schema-store-factory derived-schema/store
          :runtime-lifecycle-state runtime-lifecycle-state}

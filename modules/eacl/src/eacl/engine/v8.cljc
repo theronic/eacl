@@ -50,7 +50,9 @@
   nil)
 
 (def ^:private default-page-size 1000)
-(def ^:private max-page-size 10000)
+(def ^:no-doc max-page-size
+  "The public page size ceiling; the range tier serves nothing larger."
+  10000)
 (def ^:dynamic *backend-work-stats*
   "Optional atom populated by tests, benchmarks, and diagnostic callers.
 
@@ -274,11 +276,12 @@
   not exit. Both flags are therefore clamped to false when there are no items."
   [{:keys [items has-next? has-previous? range-reusable?]}]
   (let [any? (boolean (seq items))]
-    ;; One internal edge per result lets a shorter page of the same walk be
-    ;; derived from this one (eacl.client.range-reuse). Only the least-path
-    ;; route sets the marker: its keyset cursors are history-free, whereas a
-    ;; derived first-discovery page would hand out a cursor with no
-    ;; checkpoint behind it and turn the continuation into a full replay.
+    ;; One internal edge per result lets any window of the same walk be
+    ;; derived from this page (eacl.client.range-reuse). The least-path and
+    ;; first-discovery routes set the marker; bounded candidate-window and
+    ;; operator routes do not. A derived first-discovery boundary inside a
+    ;; retained segment is served from the segment, and leaving the segment
+    ;; resumes the size-independent checkpoint at its end edge.
     (cond-> {:data (mapv :node items)
              :page-info (page-info {:items items
                                     :has-next? (and any? has-next?)
@@ -1446,7 +1449,14 @@
   Native revision is deliberately absent: equal frames in one lineage denote
   equal plan slices and therefore equal history-free reducer state. An
   unavailable frame disables acceleration and leaves deterministic replay as
-  the correctness path."
+  the correctness path. The page size names the page series: the store keeps
+  one latest boundary per key, so concurrent series of different sizes over
+  one walk keep separate frontiers. The history-free reducer state at a
+  delivered boundary does not depend on how earlier pages were cut
+  (RuntimeCheckpointComposition.dfy), so a continuation may name the series
+  whose frontier it resumes through the internal query's `:checkpoint-size`
+  (set by range reuse for a window leaving a retained segment) instead of
+  its own size."
   [plan traversal subject-type anchor-eid page-size]
   (when (and *request-lineage* *request-frame*)
     (when-let [frame (force *request-frame*)]
@@ -1457,6 +1467,13 @@
        subject-type
        anchor-eid
        page-size])))
+
+(defn- checkpoint-series-size
+  "The page size that keys a continuation's checkpoint: the series named
+  by the internal query, else the request's own size."
+  [query size]
+  (let [named (:checkpoint-size query)]
+    (if (pos-int? named) named size)))
 
 (defn- stable-items
   [plan traversal result-type start-ordinal eids]
@@ -1875,8 +1892,8 @@
             checkpoints (stable-checkpoints cache)
             checkpoint-key
             (when checkpoints
-              (checkpoint-key
-               plan traversal subject-type anchor-eid size))
+              (checkpoint-key plan traversal subject-type anchor-eid
+               (checkpoint-series-size query size)))
             fetch-exclusive
             (fn [candidate-bound limit]
               (if least-path?
@@ -2043,13 +2060,14 @@
                     db plan fetch-fn traversal subject-type anchor-eid
                     size direction bound checkpoints
                     (when checkpoints
-                      (checkpoint-key
-                       plan traversal subject-type anchor-eid size))
+                      (checkpoint-key plan traversal subject-type anchor-eid
+               (checkpoint-series-size query size)))
                     false))))]
     (report-adapter-attempts! attempts)
     (page-response
      {:items (stable-items plan traversal result-type
                            (:start-ordinal result) (:eids result))
+      :range-reusable? true
       :has-next? (:has-next? result)
       :has-previous? (:has-previous? result)})))
 
