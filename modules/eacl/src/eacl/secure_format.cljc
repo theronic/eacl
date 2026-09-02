@@ -7,6 +7,7 @@
   supports a compatible API."
   (:require [#?(:clj clojure.edn :cljs cljs.reader) :as edn]
             [clojure.string :as str]
+            [eacl.exact-integer :as exact-integer]
             #?@(:cljs [[goog.crypt :as gcrypt]
                        [goog.crypt.Hmac]
                        [goog.crypt.Sha256]]))
@@ -21,8 +22,8 @@
 (def default-maximum-size 65536)
 (def default-maximum-depth 32)
 (def default-maximum-entries 16384)
-(def maximum-safe-integer 9007199254740991)
-(def minimum-safe-integer (- maximum-safe-integer))
+(def maximum-safe-integer exact-integer/maximum)
+(def minimum-safe-integer exact-integer/minimum)
 (def ^:private hmac-domain "eacl/secure-format/key/v1")
 
 (defn- format-error!
@@ -32,11 +33,6 @@
                           :eacl/error :eacl.format/invalid
                           :reason reason}
                          data))))
-
-(defn- portable-integer?
-  [value]
-  (and (integer? value)
-       (<= minimum-safe-integer value maximum-safe-integer)))
 
 (defn- string-code-unit
   [character]
@@ -242,7 +238,7 @@
                            {:value (portable-render value)}))
 
           (integer? value)
-          (if (portable-integer? value)
+          (if (exact-integer/exact? value)
             1
             (format-error! :integer-out-of-range
                            {:value value
@@ -311,7 +307,7 @@
   "Returns the canonical portable EDN representation after enforcing bounds."
   ([value]
    (encode-canonical value {}))
-  ([value {:keys [maximum-size maximum-depth maximum-entries] :as limits
+  ([value {:keys [maximum-size maximum-depth maximum-entries]
            :or {maximum-size default-maximum-size}}]
    ;; `portable-render` already imposes the canonical map/set order and renders
    ;; every sequential value as a vector. Building a second recursively sorted

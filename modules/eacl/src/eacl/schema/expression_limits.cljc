@@ -80,7 +80,7 @@
     (enforce! metrics limits :direct-fan-in :maximum-direct-fan-in)
     metrics))
 
-(defn- record-children
+(defn ^:no-doc record-children
   [record]
   (case (first record)
     (:union :intersection) (second record)

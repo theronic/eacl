@@ -404,13 +404,9 @@
        :node-checks (* 2 node-count)
        :edge-checks (count edges)})))
 
-(defn- relation-index
-  [bindings]
-  (group-by :relation bindings))
-
 (defn- compiled-rules
   [{:keys [definitions relation-bindings]}]
-  (let [by-relation (relation-index relation-bindings)]
+  (let [by-relation (group-by :relation relation-bindings)]
     (vec
      (mapcat
       (fn [{:keys [kind resource-type permission relation subject-type
@@ -575,16 +571,16 @@
                   (:can? :lookup-resources :count-resources)
                   (filter
                    (fn [[rt _ perm st sid]]
-                     (and (= [rt perm st sid]
-                             [(or resource-type (:type resource)) permission
-                              (:type subject) (:id subject)])))
+                     (= [rt perm st sid]
+                        [(or resource-type (:type resource)) permission
+                         (:type subject) (:id subject)]))
                    grants)
                   (:lookup-subjects :count-subjects)
                   (filter
                    (fn [[rt rid perm st _]]
-                     (and (= [rt rid perm st]
-                             [(:type resource) (:id resource)
-                              permission subject-type])))
+                     (= [rt rid perm st]
+                        [(:type resource) (:id resource)
+                         permission subject-type]))
                    grants))
                 items
                 (case operation

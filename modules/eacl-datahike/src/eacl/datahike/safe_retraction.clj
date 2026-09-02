@@ -80,48 +80,6 @@
               (map :v))
         (d/datoms db {:index :eavt :components [eid]})))
 
-(defn- control-entity-data
-  [db eid]
-  (let [entity (d/entity db eid)]
-    {:db-ident (:db/ident entity)
-     :eacl-id (:eacl/id entity)
-     :schema-string (:eacl/schema-string entity)
-     :relation-name (:eacl.relation/relation-name entity)
-     :permission-name (:eacl.permission/permission-name entity)}))
-
-(defn- relation-triples
-  [db]
-  (mapv (fn [{:keys [e v]}]
-          [(nth v 0) e (nth v 2)])
-        (ddb/avet-datoms
-         db :eacl.relation/resource-type+relation-name+subject-type)))
-
-(defn- known-ghost-plan
-  [db target-eid]
-  (safe/combine-plans
-   (mapcat
-    (fn [[resource-type relation-eid subject-type]]
-      (let [reverse-value
-            [resource-type relation-eid subject-type target-eid]
-            forward-value
-            [subject-type relation-eid resource-type target-eid]
-            reverse-peers
-            (ddb/avet-datoms db storage/reverse-attribute reverse-value)
-            forward-peers
-            (ddb/avet-datoms db storage/forward-attribute forward-value)]
-        (concat
-         (for [{peer-eid :e} reverse-peers]
-           {:peer-retractions
-            [[:db/retract peer-eid storage/reverse-attribute reverse-value]]
-            :relation-ids [relation-eid]
-            :local-half-count 0})
-         (for [{peer-eid :e} forward-peers]
-           {:peer-retractions
-            [[:db/retract peer-eid storage/forward-attribute forward-value]]
-            :relation-ids [relation-eid]
-            :local-half-count 0}))))
-    (relation-triples db))))
-
 (defn retract-entity-function
   [db target]
   (safe/validate-target! target)
@@ -135,22 +93,8 @@
               (let [component-attrs (component-attributes db)]
                 (safe/component-closure
                  target-eid
-                 #(component-children db component-attrs %))))
-            protected-eid
-            (some (fn [eid]
-                    (when (safe/protected-control-entity?
-                           (control-entity-data db eid))
-                      eid))
-                  closure)]
-        (when protected-eid
-          (throw
-           (ex-info
-            "EACL safe retraction cannot delete schema/control entities."
-            {:type :eacl.safe-retraction/invalid
-             :eacl/error :eacl.safe-retraction/invalid
-             :reason :protected-control-entity
-             :target-eid target-eid
-             :protected-eid protected-eid})))
+                 #(component-children db component-attrs %))))]
+        (safe/ensure-unprotected! target-eid closure #(d/entity db %))
         (let [plan
               (if live?
                 (safe/combine-plans
@@ -163,10 +107,14 @@
                                    db eid storage/reverse-attribute))))
                       closure))
                 (if target-eid
-                  (known-ghost-plan db target-eid)
-                  {:peer-retractions []
-                   :relation-ids []
-                   :local-half-count 0}))]
+                  (safe/known-ghost-plan
+                   (storage/relation-triples
+                    (ddb/avet-datoms
+                     db :eacl.relation/resource-type+relation-name+subject-type))
+                   target-eid
+                   (fn [attribute value]
+                     (map :e (ddb/avet-datoms db attribute value))))
+                  safe/empty-plan))]
           (into []
                 (concat
                  (:peer-retractions plan)

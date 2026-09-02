@@ -97,9 +97,6 @@
   ([counters key amount]
    (vswap! counters update key (fnil + 0) amount)))
 
-(defn- root-index [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
-
 (defn- question
   [permission node-id direction subject-type subject-eid resource-eid]
   [permission node-id direction subject-type subject-eid resource-eid])
@@ -140,13 +137,10 @@
               "Recursive candidate must contain a complete typed point context."
               {:candidate candidate})))
 
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
-
 (defn- direct-probe [q descriptor]
   (when-let [{:keys [relation-id]}
-             (relation-partition descriptor (question-subject-type q))]
+             (operator-plan/relation-partition
+              descriptor (question-subject-type q))]
     (if (= :forward (question-direction q))
       {:direction :forward
        :descriptor
@@ -752,7 +746,7 @@
     (and (contains? facts left) (not (contains? facts right))) :authorize
     :else :deny))
 
-(defn- component-consumers [nodes component-of component]
+(defn- component-consumers [nodes component]
   (let [component-set (set component)]
     (reduce
      (fn [result head]
@@ -838,7 +832,7 @@
 
 (defn- run-component!
   [state nodes component completed component-of limits counters]
-  (let [consumers (component-consumers nodes component-of component)
+  (let [consumers (component-consumers nodes component)
         state (assoc state :agenda [] :agenda-index 0)
         state (initialize-component state nodes component completed
                                     component-of limits counters)]
@@ -868,7 +862,7 @@
                        (enqueue-fact! state head limits counters))
 
                      :intersection
-                     (let [{:keys [anchor-slot] :as rule} (get nodes head)
+                     (let [rule (get nodes head)
                            state
                            (case (join-transition-action state rule slot)
                              :update (update-join state rule slot)
@@ -1056,7 +1050,7 @@
               {:value-type (some-> candidates type str)}))
   (doseq [candidate candidates] (validate-candidate! candidate))
   (let [limits (normalize-limits limits)
-        roots (root-index plan)
+        roots (operator-plan/expression-roots plan)
         permission (or permission (:root plan))
         root-questions (mapv #(candidate->root-question roots permission %)
                              candidates)

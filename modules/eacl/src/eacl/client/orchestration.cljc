@@ -357,14 +357,6 @@
              (finally
                (request-context/close! context)))))))))
 
-(defn- context-runtime
-  [context]
-  (request-context/runtime context))
-
-(defn- context-selection
-  [context]
-  (::selection (context-runtime context)))
-
 (defn- context-db
   [context]
   (:db (backend/state (request-context/adapter context))))
@@ -572,7 +564,7 @@
   (let [;; Low-level raw-DB entry points may receive a client's opts map. They
         ;; must remain bound to that caller-owned DB and must not reach through
         ;; the client's live source during cursor recovery.
-        selection (context-selection request-context)
+        selection (::selection (request-context/runtime request-context))
         opts (if (:selected-snapshot selection)
                opts
                (dissoc opts :source))
@@ -1179,7 +1171,7 @@
      :resource (internalize resource)}))
 
 (defn- response-token-for-revision
-  [api native-revision opts]
+  [native-revision opts]
   (let [basis-source (:source opts)]
     (if (source/source? basis-source)
       (causal-token/issue
@@ -1192,21 +1184,18 @@
         native-revision))
       nil)))
 
-(defn- response-token
-  [api db opts]
-  (response-token-for-revision
-   api ((:db-native-revision api) db) opts))
-
 (defn- write-response
   [api db opts]
-  (if-let [token (response-token api db opts)]
+  (if-let [token
+           (response-token-for-revision
+            ((:db-native-revision api) db) opts)]
     {:zed/token token}
     {}))
 
 (defn- write-response-for-revision
-  [api native-revision opts]
+  [native-revision opts]
   (if-let [token
-           (response-token-for-revision api native-revision opts)]
+           (response-token-for-revision native-revision opts)]
     {:zed/token token}
     {}))
 
@@ -1218,7 +1207,7 @@
     (let [native-revision (native-revision-fn db)]
       (when-let [after-commit! (:after-commit! api)]
         (after-commit! native-revision opts))
-      (write-response-for-revision api native-revision opts))
+      (write-response-for-revision native-revision opts))
     (write-response api db opts)))
 
 (defn- relationship-commit-preconditions-first
@@ -1242,11 +1231,6 @@
                     (remove transaction-function? operations))))
     []))
 
-(defn- relationship-seq
-  [relationships]
-  (if (map? relationships)
-    (:data relationships)
-    relationships))
 
 (defn- validate-permission-root!
   [api request-context selected-db opts subject permission resource]
@@ -1323,13 +1307,6 @@
       #(check-permission-in-context
         api opts % subject permission resource))))
 
-(defn- batch-counters
-  [work-before work-stats ledger-before ledger output-units]
-  (batch/aggregate-counters
-   work-before @work-stats
-   ledger-before (request-counters/snapshot ledger)
-   output-units))
-
 (defn check-permissions
   [api source opts request]
   (let [request (batch/validate-request! request (:aggregate-limits opts))
@@ -1365,8 +1342,10 @@
                      work-stats (atom {})
                      work-before @work-stats
                      counters-fn
-                     #(batch-counters
-                       work-before work-stats ledger-before ledger %)
+                     #(batch/aggregate-counters
+                       work-before @work-stats
+                       ledger-before (request-counters/snapshot ledger)
+                       %)
                      limits (:aggregate-limits request)]
                  (binding [engine/*aggregate-work-stats* work-stats]
                    (loop [index 0
@@ -1433,7 +1412,7 @@
       :subject-type subject-type}))))
 
 (defn- relationship-filtered-lookup-page
-  [api opts request-context adapter selected-db cursor-opts operation query
+  [opts request-context adapter selected-db cursor-opts operation query
    internal-query validate!]
   (let [contract (:execution-contract opts)
         limits (:aggregate-limits contract)
@@ -1601,7 +1580,7 @@
                                   (vector? (:data %))
                                   (map? (:page-info %)))
                             #(relationship-filtered-lookup-page
-                              api opts request-context adapter selected-db
+                              opts request-context adapter selected-db
                               cursor-opts :lookup-resources query
                               internal-query validate!))
                            page
@@ -1778,7 +1757,7 @@
                                   (vector? (:data %))
                                   (map? (:page-info %)))
                             #(relationship-filtered-lookup-page
-                              api opts request-context adapter selected-db
+                              opts request-context adapter selected-db
                               cursor-opts :lookup-subjects query
                               internal-query validate!))
                            page
@@ -2060,12 +2039,6 @@
       (enforce-basis-retention! basis)))
   basis)
 
-(defn- basis-released?
-  [basis]
-  (if-let [selected (:selected-snapshot basis)]
-    (source/released? selected)
-    (= :released @(:release-state basis))))
-
 (defn- release-basis!
   [basis]
   (if-let [selected (:selected-snapshot basis)]
@@ -2093,23 +2066,6 @@
         (when released?
           (request-counters/add! :releases))
         released?))))
-
-(defn- public-basis
-  [basis]
-  (basis-open! basis)
-  (assoc
-   (select-keys (:identity basis)
-                [:backend :source-id :branch :source-lifecycle
-                 :revision :exact-locator])
-   :kind (:basis-kind basis)))
-
-(defn- basis-token*
-  [runtime basis]
-  (basis-open! basis)
-  (consistency-v3/selected-basis-token
-   (or (get-in basis [:speculative :committed-root])
-       (:identity basis))
-   (runtime-options runtime)))
 
 (defn- basis-token-data
   [runtime basis token source]
@@ -2359,10 +2315,24 @@
       (typed-capability-error! :speculative-diagnostics :ordinary-snapshot)))
 
   IAuthorizationSnapshot
-  (-basis [_] (public-basis basis))
-  (-basis-token [_] (basis-token* runtime basis))
+  (-basis [_]
+    (basis-open! basis)
+    (assoc
+     (select-keys (:identity basis)
+                  [:backend :source-id :branch :source-lifecycle
+                   :revision :exact-locator])
+     :kind (:basis-kind basis)))
+  (-basis-token [_]
+    (basis-open! basis)
+    (consistency-v3/selected-basis-token
+     (or (get-in basis [:speculative :committed-root])
+         (:identity basis))
+     (runtime-options runtime)))
   (-release! [_] (release-basis! basis))
-  (-released? [_] (basis-released? basis)))
+  (-released? [_]
+    (if-let [selected (:selected-snapshot basis)]
+      (source/released? selected)
+      (= :released @(:release-state basis)))))
 
 (defn- writable!
   [writer]
@@ -2486,7 +2456,7 @@
                             {:tx-data tx-data}
                             {:no-op-response
                              (write-response-for-revision
-                              api (:native-revision selection)
+                              (:native-revision selection)
                               options)}))))]
                  ;; An owned planning basis (notably Datalevin's read
                  ;; transaction) is released before the writer can block on a
@@ -2594,7 +2564,7 @@
                                      :response
                                      (or last-response
                                          (write-response-for-revision
-                                          api (:native-revision selection)
+                                          (:native-revision selection)
                                           options))}
                                     fitted))))]
                          (if-not (:tx-data planned)
@@ -2635,8 +2605,7 @@
        :eacl/error :eacl.schema/invalid-orphan-policy
        :orphan-policy :retain-inert
        :operation :write-schema!})))
-  (let [schema-string schema]
-  (require-operator-expression-writes-enabled! schema-string)
+  (require-operator-expression-writes-enabled! schema)
   (let [{:keys [conn options api]} (backend-writer/state writer)
         write-schema! (backend-writer/operation writer :write-schema!)
         contention? (backend-writer/operation writer :contention?)
@@ -2653,7 +2622,7 @@
                             db)))]
                     {:value
                     (write-schema!
-                      conn schema-string
+                      conn schema
                       (merge
                        (select-keys options
                                     [:token-ttl-seconds :expression-limits])
@@ -2678,7 +2647,7 @@
            (if (:eacl.schema/no-op? result)
              (write-response api (:eacl.schema/db-after result) options)
              (committed-write-response
-              api (:eacl.schema/db-after result) options))))))
+              api (:eacl.schema/db-after result) options)))))
 
 (defn- speculative-capability!
   [api capability]
@@ -3354,7 +3323,7 @@
 (defn- valid-security-kid?
   [kid]
   (or (keyword? kid)
-      (and (string? kid) (not (empty? kid)))))
+      (and (string? kid) (not= "" kid))))
 
 (defn- normalize-security-root-keyring
   [config-opts security-key security-keyring security-kid]

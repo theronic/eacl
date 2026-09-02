@@ -6,6 +6,7 @@
   borrow, exactly one adapter and carry an idempotent release boundary. Native
   handles and release tokens remain private to this namespace."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.exact-integer :as exact-integer]
             [eacl.request.counters :as request-counters]))
 
 (def source-version 1)
@@ -338,8 +339,7 @@
           :backend (::backend-id selected)
           :phase phase
           :constraint constraint})))
-     :cljs nil)
-  nil)
+     :cljs nil))
 
 (defn source-scope
   "Returns source-static source and branch identity without acquiring a DB."
@@ -382,12 +382,6 @@
   (or (= :mixed policy)
       (= policy ownership)))
 
-(defn- exact-natural?
-  [value]
-  (and (integer? value)
-       (not (neg? value))
-       (<= value backend/maximum-exact-integer)))
-
 (defn- adapter-semantic-identity
   [source adapter]
   (let [backend-id (backend/backend-id adapter)
@@ -407,7 +401,7 @@
        {:backend backend-id :source-scope scope}))
     (when-not (and (map? native-revision)
                    (contains? native-revision :exact-locator)
-                   (exact-natural? revision)
+                   (exact-integer/natural? revision)
                    (= revision order-hint)
                    (= (:exact-locator native-revision) exact-locator))
       (invalid-selected-basis!

@@ -244,14 +244,6 @@
 ;; Page execution
 ;; ---------------------------------------------------------------------------
 
-(defn- resolve-anchor-eid
-  [{:keys [adapter anchor]}]
-  (backend/invoke adapter :object-id->internal (second anchor)))
-
-(defn- external-id
-  [{:keys [adapter]} internal-id]
-  (backend/invoke adapter :internal-id->object internal-id))
-
 (defn- run-fresh
   [{:keys [direction] :as options} anchor-eid target]
   (let [run-options (merge (select-keys options
@@ -459,7 +451,7 @@
 
   Returns {:data [external-ids] :page-info {...}} in canonical forward
   order for both navigation modes."
-  [{:keys [plan direction anchor subject-type page-size after before
+  [{:keys [adapter plan direction anchor subject-type page-size after before
            checkpoints]
     :as options}]
   {:pre [(some? plan) (contains? #{:forward :reverse} direction)
@@ -467,7 +459,8 @@
          (pos-int? page-size) (not (and after before))]}
   (let [binding (execution-binding options)
         key (checkpoint-key binding)
-        anchor-eid (resolve-anchor-eid options)
+        anchor-eid (backend/invoke adapter :object-id->internal
+                                   (second anchor))
         payload (when-let [token (or after before)]
                   (decode-token options binding token))
         boundary-eid (when payload
@@ -485,7 +478,8 @@
                                  :before (when before edge)
                                  :checkpoints checkpoints
                                  :checkpoint-key key))
-        externals (mapv #(external-id options %) (:eids result))
+        externals (mapv #(backend/invoke adapter :internal-id->object %)
+                        (:eids result))
         start-ordinal (:start-ordinal result)]
     {:data externals
      :page-info

@@ -18,11 +18,6 @@
          :evictions 0
          :refreshes 0}))
 
-(defn- natural? [value]
-  (and #?(:clj (integer? value)
-          :cljs (and (number? value) (js/Number.isSafeInteger value)))
-       (<= 0 value exact-integer/maximum)))
-
 (defn- checked-add [left right]
   (let [result (+ left right)]
     (if (> result exact-integer/maximum)
@@ -57,7 +52,7 @@
     (when-not (and (keyword? backend)
                    (some? source-id)
                    (some? source-lifecycle)
-                   (natural? high-watermark)
+                   (exact-integer/natural? high-watermark)
                    (map? descriptor)
                    (contains? #{:forward :reverse :asc :desc} direction))
       (throw
@@ -147,7 +142,7 @@
    (record-exhausted! *store* *context* descriptor direction exact-count nil))
   ([store context descriptor direction exact-count io]
    (when (and store context)
-     (when-not (natural? exact-count)
+     (when-not (exact-integer/natural? exact-count)
        (throw
         (ex-info "Exact relationship observation count is invalid."
                  {:type :eacl.metrics/invalid-observation
@@ -181,7 +176,7 @@
   ([store context descriptor direction {:keys [count truncated?] :as result}]
    (when (and store context)
      (when-not (and (map? result)
-                    (natural? count)
+                    (exact-integer/natural? count)
                     (or (nil? truncated?) (boolean? truncated?)))
        (throw
         (ex-info "Count observation is malformed."

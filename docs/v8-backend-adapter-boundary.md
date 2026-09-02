@@ -178,9 +178,9 @@ cursor/cache publication) or after any failure.
 
 ## Assurance ownership
 
-`formal/verification/adapter-certification.edn` records separate runtime
-obligation maps. `SnapshotOracle.dfy` describes the immutable basis-adapter
-contract; `ConsistencyDecision.dfy` models source selection decisions; and the
+The adapter certification suites execute separate runtime obligation maps.
+`SnapshotOracle.dfy` describes the immutable basis-adapter contract;
+`ConsistencyDecision.dfy` models source selection decisions; and the
 cache/scalar-frontier models state writer stamping assumptions. A proof of one
 role is not evidence for another role's native effects.
 

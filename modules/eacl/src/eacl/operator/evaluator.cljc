@@ -95,15 +95,11 @@
     (limit! :memo-entries maximum (inc (count memo))))
   [(assoc memo key (boolean value)) (disj active key) (boolean value)])
 
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
-
 (defn- direct-match?
   [direct-match! subject-type subject-eid resource-type resource-eid
    descriptor]
   (if-let [{:keys [relation-id]}
-           (relation-partition descriptor subject-type)]
+           (operator-plan/relation-partition descriptor subject-type)]
     (do
       (execution/check! execution/*contract*
                         :operator-point/direct-before
@@ -263,7 +259,7 @@
                   :nary
                   (let [op (:op continuation)
                         decisive? (if (= :union op) returned (not returned))
-                        decision (if (= :union op) true false)]
+                        decision (= :union op)]
                     (if decisive?
                       (let [[memo active value]
                             (complete-value memo active key decision
@@ -280,7 +276,7 @@
                                memo active no-value)
                         (let [[memo active value]
                               (complete-value memo active key
-                                              (if (= :union op) false true)
+                                              (not= :union op)
                                               (:maximum-memo-entries limits))]
                           (recur stack memo active value)))))
 

@@ -2,9 +2,10 @@
 
 This tree contains the source of EACL's verification evidence. It does not
 claim that an operation is verified merely because a tool ran successfully.
-The coverage claim is controlled by
-[`verification/assurance-matrix.edn`](verification/assurance-matrix.edn) and
-the generated release manifest.
+The authored coverage and release policy is
+[`assurance_contract.clj`](assurance_contract.clj). Proof results, source
+closure, digests, and the release manifest are generated from live inputs
+under ignored `target/formal/verification/`.
 
 ## Layout
 
@@ -24,14 +25,12 @@ the generated release manifest.
   publication, logical-cursor, checkpoint, cache-lifecycle, and completed
   negative-premise histories.
 - `counterexamples/` retains minimized witnesses and their bug ledger.
-- `verification/` records the decision inventory, trusted boundary, assurance
-  matrix, tool-selection research, baselines, and release-manifest inputs.
+- `verification/` contains prose audits, threat assumptions, and review
+  procedures only. It contains no generated pass/fail ledgers.
+- `policy/` contains authored release ceilings; `baselines/` contains
+  deliberately reviewed comparison measurements.
 - `verification/temporal-model.md` records the detailed transition scope,
   bounded configurations, induction obligations, and claim boundary.
-- `verification/adapter-certification.edn` is the machine-readable record of
-  static snapshot and adversarial history checks for each backend/runtime.
-- `verification/performance-gates.edn` records quantitative build, runtime,
-  memory, token, and staged shadow-rollout gates.
 - `smoke/` contains handwritten boundary programs that exercise generated
   Java and JavaScript.
 
@@ -111,8 +110,8 @@ per-round operand-seek trace stops at the first exhausted child rather than
 opening later operands unnecessarily.
 
 Phase A is abstract: production does not call its two generated decision
-functions directly. Its exact claim, limitations, counts, and digests are
-recorded in `verification/operator-phase-a.edn`.
+functions directly. Its exact claim and limitations are authored in
+`assurance_contract.clj`; current counts come from the Dafny report.
 
 Phase B adds the generated recursive command boundary and binds the handwritten
 CLJ/CLJS parser, canonical expression storage, signed graph, plan, scalar and
@@ -120,10 +119,11 @@ vector evaluators, direct specializations, cursor progress, recursive state,
 cache seam, and all four adapters through digest closure, independent-oracle
 differentials, counterexample replay, backend certification, and killed
 production mutants. The locked whole-tree run verifies 9,361 obligations.
-Public intersection/exclusion schema writes and routing are enabled after the
-recorded conformance, storage, performance, remote-I/O, and release gates
-passed. The executable refinement claim and its host-language boundary are
-recorded in `verification/operator-phase-b.edn`.
+Public intersection/exclusion schema writes and routing are enabled only by
+the executable conformance, storage, performance, remote-I/O, and release
+gates. The refinement claim and host-language boundary are authored in
+`assurance_contract.clj`; CI executes the evidence rather than rereading a
+recorded `:passed` value.
 
 The operational guide, theorem navigation, adapter certification,
 counterexample workflow, generated-engine cutover policy, and assurance wording are in
@@ -143,21 +143,18 @@ not EACL runtime resources.
 
 `bin/formal artifact-size` runs after the Java, JavaScript, and browser builds.
 It measures each generated representation from the current build against
-`verification/generated-artifact-size.edn` and fails above its reviewed
+`policy/generated-artifact-size.edn` and fails above its reviewed
 full-kernel growth bound. A source or class byte count is not a proxy for
 allocation, retained heap, solver effort, or latency.
 
-`bin/formal source-closure` checks the locked CLJ/CLJS static call-closure
-ledger for the named shared, generated-provider, and backend roots declared in `bin/public-source-closure.mjs`. The ledger
-is deliberately marked verification-incomplete: enumerating every reachable
-definition (the committed `verification/public-source-closure.json` carries
-the exact definition and file counts; regenerate it with
-`node bin/public-source-closure.mjs write` after any public-source edit,
-including source-span attribution for inline `defrecord` methods) prevents
-silent omissions but does not establish source refinement or adapter
-semantics. `backend-dispatch.edn` separately checks that every CLJ and CLJS
-dispatch site uses one of exactly the required literal operation keys it pins
-(the required snapshot operations plus `:proof-frame`).
+`bin/formal source-closure` computes the locked CLJ/CLJS static call closure
+for the named shared, generated-provider, and backend roots declared in
+`bin/public-source-closure.mjs` and writes
+`target/formal/verification/public-source-closure.json`. Enumerating every
+reachable definition prevents silent omissions but does not establish source
+refinement or adapter semantics. The source-closure test derives every
+CLJ/CLJS backend dispatch site directly and checks it against the executable
+backend operation contract.
 
 ## Assurance status
 
@@ -168,5 +165,6 @@ when:
 1. its Dafny obligation passes without an admitted lemma;
 2. its boundary and differential checks pass;
 3. every adapter assumption named by the operation is certified;
-4. the cross-runtime and mutation gates named in the assurance matrix pass;
-5. the generated verification manifest records exact source and tool digests.
+4. the cross-runtime and mutation gates execute successfully;
+5. the generated target manifest matches current proof counts, closure,
+   source digests, generated targets, and authored release policy.

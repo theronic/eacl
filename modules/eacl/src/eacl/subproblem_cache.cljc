@@ -46,9 +46,6 @@
 (def default-decision-kernel
   production-kernel/default-selection)
 
-(def default-current-cache-refinement
-  production-kernel/current-cache-refinement)
-
 (def ^:dynamic *decision-kernel*
   "Generated-kernel selection inherited from the enclosing public client.
 
@@ -217,7 +214,7 @@
   [value]
   (instance? SubproblemStore value))
 
-(defn- record-metrics!
+(defn ^:no-doc record-metrics!
   [store f & args]
   (when (:telemetry-enabled? store)
     (apply swap! (:metrics store) f args))
@@ -416,10 +413,7 @@
   non-failing outcomes."
   ([store tier key options value]
    (publish! store tier key options value 4))
-  ([store tier key {:keys [valid? weight-fn]
-                    :or {valid? (constantly true)
-                         weight-fn (constantly 1)}
-                    :as options} value maximum-attempts]
+  ([store tier key options value maximum-attempts]
    (publish! store tier key options value maximum-attempts
              (get @(:state store) lifecycle-key)))
   ([store tier key {:keys [valid? weight-fn]
@@ -566,7 +560,7 @@
      :entry-count (count entries)
      :retained-weight (reduce + 0 (map :weight entries))}))
 
-(defn- positive-snapshot-bound!
+(defn ^:no-doc positive-snapshot-bound!
   [option value]
   (when-not (and (integer? value) (pos? value))
     (throw
@@ -586,7 +580,7 @@
   (positive-snapshot-bound! :max-entries max-entries)
   (let [{:keys [selected]}
         (reduce
-         (fn [{:keys [weight count] :as acc} tier]
+         (fn [acc tier]
            (reduce
             (fn [inner entry]
               (if (and (< (:count inner) max-entries)
@@ -602,7 +596,7 @@
          snapshot-tier-priority)]
     (snapshot-value store selected)))
 
-(defn- incompatible-snapshot!
+(defn ^:no-doc incompatible-snapshot!
   [message data]
   (throw
    (ex-info message
@@ -610,7 +604,7 @@
                     :eacl/error :eacl/cache-snapshot-incompatible}
                    data))))
 
-(defn- closed-map?
+(defn ^:no-doc closed-map?
   [value expected-keys]
   (and (map? value) (= expected-keys (set (keys value)))))
 

@@ -190,14 +190,11 @@
           [state evictions]))
       [state evictions])))
 
-(defn- plan-mismatch?
-  [families key]
-  (pos? (get families (checkpoint-family-key key) 0)))
-
 (defn- missing-reason
   [{:keys [families tombstones]} key]
   (or (get tombstones key)
-      (when (plan-mismatch? families key) :plan-mismatch)
+      (when (pos? (get families (checkpoint-family-key key) 0))
+        :plan-mismatch)
       :absent))
 
 (defn- miss!
@@ -227,20 +224,6 @@
     (catch #?(:clj Exception :cljs :default) _
       (metric! store kind :errors)
       nil)))
-
-(defn- peek-entry
-  [store kind key]
-  (let [entry (get-in @(:state store) [:entries key])]
-    (when (= kind (:kind entry))
-      (:value entry))))
-
-(defn- checkpoint-hit!
-  [store kind]
-  (metric! store kind :hits))
-
-(defn- checkpoint-miss!
-  [store kind reason]
-  (miss! store kind reason))
 
 (defn- mark-unavailable-if-absent!
   "Records why a new key was rejected without destroying older valid state.
@@ -420,18 +403,21 @@
           {:required? false
            :opaque-values? true
            :peek
-           #(peek-entry store :recursive-continuation
-                        (key-for :recursive-continuation %))
+           #(let [entry
+                  (get-in @(:state store)
+                          [:entries
+                           (key-for :recursive-continuation %)])]
+              (when (= :recursive-continuation (:kind entry))
+                (:value entry)))
            :get
            #(lookup! store :recursive-continuation
                      (key-for :recursive-continuation %))
            :hit!
            (fn []
-             (checkpoint-hit! store :recursive-continuation))
+             (metric! store :recursive-continuation :hits))
            :miss!
            (fn [reason]
-             (checkpoint-miss!
-              store :recursive-continuation reason))
+             (miss! store :recursive-continuation reason))
            :put!
            (fn [edge value weight]
              (and populate-cache?

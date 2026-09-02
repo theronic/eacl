@@ -8,6 +8,7 @@
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.stable-route :as stable-route]
             [eacl.execution :as execution]
+            [eacl.exact-integer :as exact-integer]
             [eacl.operator.batch-schedule :as operator-batch-schedule]
             [eacl.operator.cover-plan :as operator-cover-plan]
             [eacl.operator.cursor-scope :as operator-cursor-scope]
@@ -15,7 +16,6 @@
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.recursive :as operator-recursive]
             [eacl.operator.vector-evaluator :as operator-vector]
-            [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.secure-format :as secure-format]
@@ -212,21 +212,13 @@
        :size size
        :bound bound})))
 
-(defn- portable-page-natural?
-  [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value)
-                 (js/Number.isSafeInteger value)))
-   (<= 0 value backend/maximum-exact-integer)))
-
 (defn- generated-page-request-encodable?
   [query]
   (every?
    (fn [field]
      (or (not (contains? query field))
          (nil? (get query field))
-         (portable-page-natural? (get query field))))
+         (exact-integer/natural? (get query field))))
    [:first :last]))
 
 (defn- generated-page-presence
@@ -1964,9 +1956,7 @@
             fetch-exclusive
             (fn [candidate-bound limit]
               (if least-path?
-                (let [descending?
-                      (= :desc direction)
-                      run-options
+                (let [run-options
                       (merge
                        (stable-limits)
                        {:plan plan
@@ -2138,8 +2128,7 @@
   query canonicalization, proof-frame resolution, its backend reads —
   must only be built when the plan actually routes to first-discovery."
   [db traversal query cache-fn candidate-filter]
-  (let [{:keys [direction size bound] :as page-req}
-        (normalize-page-request query)
+  (let [{:keys [bound] :as page-req} (normalize-page-request query)
         forward? (= :forward traversal)
         result-type (if forward?
                       (:resource/type query)

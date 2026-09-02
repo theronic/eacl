@@ -16,9 +16,9 @@ production parser, expression storage, planner, acyclic evaluator, recursive
 evaluator, cursor scope, cache path, and backend capability protocol do accept
 intersection and exclusion. Public operator-expression writes and public
 operator routing are enabled after the recorded performance and release gates
-passed; independent dynamic gates remain as regression controls. Concrete
-refinement evidence is recorded in
-`formal/verification/operator-phase-b.edn`.
+passed; independent dynamic gates remain as regression controls. The authored
+refinement boundary is in `formal/assurance_contract.clj`; concrete evidence
+is executed by CI and emitted under ignored `target/formal/verification/`.
 
 | Decision area | Production source | Decision consumed by |
 | --- | --- | --- |
@@ -173,7 +173,7 @@ does not imply a global, lexical, domain, or cross-backend order.
 
 ## Machine-enforced source closure
 
-`public-source-closure.json` is generated from both CLJ and CLJS analysis of
+`target/formal/verification/public-source-closure.json` is generated from both CLJ and CLJS analysis of
 shared and backend EACL source files. It closes the cross-namespace call graph
 from engine, relationship-pagination, relay, cursor, cache, subproblem-cache,
 consistency, causal-token, authority-provider, and named
@@ -188,10 +188,9 @@ closure instead of silently adding a branch.
 
 This is a completeness ledger, not a source-refinement proof. Its explicit
 remaining scopes are adapter-operation semantic refinement and theorem
-classification for every reachable definition. `backend-dispatch.edn`
-separately proves the static closure fact that every CLJ and CLJS
-`backend/invoke` site uses a literal key from the pinned operation set (the
-required snapshot operations plus `:schema-generation` and `:proof-frame`; the committed ledger holds
-the exact site and key counts); this does not prove what an adapter
+classification for every reachable definition. The source-closure test
+separately derives the static fact that every CLJ and CLJS `backend/invoke`
+site uses a literal key from the executable operation set (the required
+snapshot operations plus `:schema-generation` and `:proof-frame`); this does not prove what an adapter
 implementation does. The release claim remains withheld until those semantic
 classifications are complete.

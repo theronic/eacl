@@ -4,6 +4,7 @@
             [eacl.consistency :as consistency]
             [eacl.core :as eacl]
             [eacl.execution :as execution]
+            [eacl.exact-integer :as exact-integer]
             [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def default-limits
@@ -16,14 +17,6 @@
 (def ^:private query-keys
   #{:resource :permission :consistency :timeout-ms
     :cancellation-token :cache? :populate-cache?})
-
-(defn- portable-positive-integer?
-  [value]
-  (and #?(:clj (integer? value)
-          :cljs (and (number? value)
-                     (js/Number.isSafeInteger value)))
-       (pos? value)
-       (<= value backend/maximum-exact-integer)))
 
 (defn normalize-limits
   [overrides]
@@ -44,7 +37,7 @@
          :key :permission-tree-limits
          :unknown-keys (vec unknown)
          :known-keys known})))
-    (when-not (every? portable-positive-integer? (vals overrides))
+    (when-not (every? exact-integer/positive? (vals overrides))
       (throw
        (ex-info
         "EACL Config Error: permission-tree limits must be positive portable exact integers."
@@ -145,13 +138,6 @@
           ;; of the guarded kernel callbacks can cross this boundary.
           (adapter-contract! :adapter-operation-failed))))))
 
-(defn- portable-natural?
-  [value]
-  (and #?(:clj (integer? value)
-          :cljs (and (number? value)
-                     (js/Number.isSafeInteger value)))
-       (<= 0 value backend/maximum-exact-integer)))
-
 (defn selected-basis-token
   "Issues a token from the selected basis through the redacting boundary."
   [opts]
@@ -212,7 +198,7 @@
         (when-not
          (every?
           (fn [definition]
-            (and (portable-natural? (:relation-id definition))
+            (and (exact-integer/natural? (:relation-id definition))
                  (= resource-type (:resource-type definition))
                  (= name (:relation-name definition))
                  (unqualified-keyword? (:subject-type definition))))
@@ -223,20 +209,19 @@
           (adapter-contract! :duplicate-relation-subject-type)))
 
       :permission
-      (do
-        (when-not
-         (every?
-          (fn [definition]
-            (and (portable-natural? (:permission-id definition))
-                 (= resource-type (:resource-type definition))
-                 (= name (:permission-name definition))
-                 (unqualified-keyword?
-                  (:source-relation-name definition))
-                 (contains? #{:relation :permission}
-                            (:target-type definition))
-                 (unqualified-keyword? (:target-name definition))))
-          definitions)
-          (adapter-contract! :malformed-permission-definition)))
+      (when-not
+       (every?
+        (fn [definition]
+          (and (exact-integer/natural? (:permission-id definition))
+               (= resource-type (:resource-type definition))
+               (= name (:permission-name definition))
+               (unqualified-keyword?
+                (:source-relation-name definition))
+               (contains? #{:relation :permission}
+                          (:target-type definition))
+               (unqualified-keyword? (:target-name definition))))
+        definitions)
+        (adapter-contract! :malformed-permission-definition))
 
       (adapter-contract! :unknown-definition-kind))
     definitions))
@@ -334,7 +319,7 @@
                 resolved))))
         render-internal!
         (fn [type internal-id]
-          (when-not (portable-natural? internal-id)
+          (when-not (exact-integer/natural? internal-id)
             (adapter-contract! :invalid-internal-identity))
           (let [cache-key [type internal-id]]
             (if (contains? @codec-cache cache-key)
@@ -407,7 +392,7 @@
            (backend/invoke adapter :object-id->internal root-id)))
         _ (check! :permission-tree-root-resolution)
         _ (when (and (some? internal-root-id)
-                     (not (portable-natural? internal-root-id)))
+                     (not (exact-integer/natural? internal-root-id)))
             (adapter-contract! :invalid-root-internal-identity))
         root-descriptor
         {:type root-type

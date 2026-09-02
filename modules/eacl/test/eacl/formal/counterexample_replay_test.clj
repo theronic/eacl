@@ -260,14 +260,10 @@
                     (io/file (.getParentFile file) artifact))
                    (str directory "/" artifact)))
              entry))
-         (entry-files))
-        manifest (read-edn
-                  (repo/file "formal" "verification" "manifest.edn"))
-        revision (:counterexample-corpus-revision manifest)]
+         (entry-files))]
     (is (= (set (keys regression-vars))
-           (set (map :id entries))
-           (set (:fixed revision))))
-    (is (= :EACL-FORMAL-067 (:latest revision)))
+           (set (map :id entries))))
+    (is (= :EACL-FORMAL-067 (:id (last entries))))
     (is (= 67 (count entries)))))
 
 (deftest replay-every-minimized-regression-test

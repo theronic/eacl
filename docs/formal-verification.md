@@ -71,23 +71,19 @@ bin/formal apalache-invariant
 `artifact-size` must run after all generated forms are rebuilt. It measures
 uncompressed Java source bytes, Java class bytes, JavaScript-with-runtime
 bytes, and browser-bundle bytes separately against the reviewed full-kernel
-ledger in `formal/verification/generated-artifact-size.edn`; it does not
+policy in `formal/policy/generated-artifact-size.edn`; it does not
 substitute one representation, solver effort, allocation, heap, or latency
 for another.
 
-`source-closure` checks the committed
-`formal/verification/public-source-closure.json` ledger with the exact
-clj-kondo version in the toolchain lock. The ledger closes the named shared,
-proof-provider, and backend roots declared in `bin/public-source-closure.mjs` over the reachable definitions it lists
-(the committed ledger is the authority for the exact counts; regenerate it
-with `node bin/public-source-closure.mjs write` after any public-source
-edit), including unattributed usages assigned to their exact containing
-`defrecord` spans. It is static completeness evidence only: it does not prove
-Clojure source or adapter semantics. `backend-dispatch.edn` additionally
-closes every CLJ/CLJS
-`backend/invoke` site to the exact literal operation keys the ledger pins
-(the required snapshot operations plus `:proof-frame`); the meaning of each
-adapter implementation remains a named obligation.
+`source-closure` derives
+`target/formal/verification/public-source-closure.json` with the exact
+clj-kondo version in the toolchain lock. It closes the named shared,
+proof-provider, and backend roots declared in `bin/public-source-closure.mjs`,
+including unattributed usages assigned to their exact containing `defrecord`
+spans. It is static completeness evidence only: it does not prove Clojure
+source or adapter semantics. A source test independently derives every
+CLJ/CLJS `backend/invoke` site and compares its literal operation keys with
+the executable backend contract.
 
 Generated Java classes must be tested in a fresh JVM after every regeneration:
 
@@ -120,11 +116,12 @@ starts no test JVM and only evaluates a supplied form in an existing server.
 | `WireFormat.dfy` | strict abstract boundary variants and bounds |
 | `PermissionTree.dfy` | typed shallow expansion topology, denotation, active-path cycles, structural budgets, and all-or-error outcomes |
 
-`formal/verification/assurance-matrix.edn` maps public operations to theorems,
-adapter assumptions, runtime targets, and CI evidence. A passing proof file is
-not by itself a public assurance claim. `formal/verification/manifest.edn` is
-the release gate and must continue to refuse verified status while any required
-obligation is incomplete.
+`formal/assurance_contract.clj` maps public operations to theorem sources,
+adapter assumptions, runtime targets, proof-count ratchets, and remaining
+obligations. A passing proof file is not by itself a public assurance claim.
+`bin/formal manifest` derives `target/formal/verification/manifest.edn` from
+that contract and live reports, and continues to refuse verified status while
+any required obligation is incomplete.
 
 ### Operator set-algebra boundary
 
@@ -144,9 +141,9 @@ modules and 9,361 obligations; generated Java and advanced JavaScript boundary
 suites, fixed/random differentials, counterexample replay, formal and temporal
 mutation controls, cross-backend conformance, storage, and matched-host
 performance gates pass. Public expression writes and public operator routing
-are enabled by default. Exact evidence and source digests are in
-`formal/verification/operator-phase-b.edn`; operational semantics and measured
-limits are in [Permission set algebra](permission-set-algebra.md).
+are enabled by default. CI executes the exact evidence and writes current
+source digests to the ignored generated manifest; operational semantics and
+measured limits are in [Permission set algebra](permission-set-algebra.md).
 
 ### Permission-tree assurance boundary
 
@@ -192,11 +189,12 @@ nREPL:
 - `eacl.datascript.adapter-certification-test` in CLJ and CLJS
 - `eacl.datahike.adapter-certification-test`
 
-The machine-readable result is
-`formal/verification/adapter-certification.edn`. Optional runtime guards check
-locally representable shape, order, uniqueness, bounds, booleans, adapters,
-and nonnegative exact-integer internal EIDs. Global completeness, ancestry,
-and generation-proof truthfulness remain certification obligations.
+These suites are the machine-readable result: CI fails on any failing
+assertion and may upload the current test output as a run artifact. Optional
+runtime guards check locally representable shape, order, uniqueness, bounds,
+booleans, adapters, and nonnegative exact-integer internal EIDs. Global
+completeness, ancestry, and generation-proof truthfulness remain certification
+obligations.
 
 ## Counterexamples and mutation controls
 

@@ -445,8 +445,9 @@ The matched v7/cache-bypassed performance gate passes:
 The local CLJS Explorer acceptance run keeps repeated nested page hits around
 1–3ms, completes recursive-schema view/admin switching at 10k, and completes
 the 50k recursive-schema exact count without recursive-limit or retained
-snapshot errors. Full evidence is recorded in
-`formal/verification/explorer-v8-release.edn`.
+snapshot errors. Reviewed comparison thresholds now live in
+`formal/baselines/`; current observations are emitted by CI rather than
+committed as a `:passed` ledger.
 
 The stable reducer releases exactly one scan value per logical transition
 regardless of render mode; physical chunk width (default 64) is a pure

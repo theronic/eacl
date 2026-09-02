@@ -30,12 +30,6 @@
                     :reason reason}
                    data))))
 
-(defn- exact-natural? [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value) (js/Number.isSafeInteger value)))
-   (<= 0 value exact-integer/maximum)))
-
 (defn- normalize-candidate [index candidate]
   (when-not (map? candidate)
     (invalid! :invalid-candidate "Vector candidate must be a map."
@@ -60,7 +54,7 @@
                 "Vector candidate entity types must be keywords."
                 {:index index :field field :value (get candidate field)})))
   (doseq [field [:subject-eid :resource-eid]]
-    (when-not (exact-natural? (get candidate field))
+    (when-not (exact-integer/natural? (get candidate field))
       (invalid! :invalid-typed-identity
                 "Vector candidate identifiers must be portable natural integers."
                 {:index index :field field :value (get candidate field)})))
@@ -92,16 +86,10 @@
                 {:width (count identities)}))
     normalized))
 
-(defn- roots [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
-
-(defn- relation-partition [descriptor subject-type]
-  (first (filter #(= subject-type (:subject-type %))
-                 (:partitions descriptor))))
-
 (defn- direct-probe [candidate descriptor]
   (when-let [{:keys [relation-id]}
-             (relation-partition descriptor (:subject-type candidate))]
+             (operator-plan/relation-partition
+              descriptor (:subject-type candidate))]
     (if (= :forward (:direction candidate))
       {:direction :forward
        :descriptor {:subject-type (:subject-type candidate)
@@ -151,11 +139,13 @@
     (if (zero? width)
       []
       (let [root-permission (or permission (:root plan))
-            root-id (or node-id (get (roots plan) root-permission))
+            root-id (or node-id
+                        (get (operator-plan/expression-roots plan)
+                             root-permission))
             memo (atom {})
             active (atom #{})
             mask-state (atom {})
-            node-roots (roots plan)
+            node-roots (operator-plan/expression-roots plan)
             cache-lookup (or cache-lookup (constantly direct/cache-miss))
             completed-leaves (atom [])]
         (when-not (or (nil? cache-publish-many!)
@@ -387,7 +377,8 @@
               {:plan-domain (:domain plan)}))
   (let [candidates (normalize-candidates candidates)
         permission (or permission (:root plan))
-        node-id (or node-id (get (roots plan) permission))
+        node-id (or node-id
+                    (get (operator-plan/expression-roots plan) permission))
         options (assoc options :candidates candidates
                        :permission permission :node-id node-id)
         store subproblem/*store*]

@@ -6,7 +6,8 @@
   (:require [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datomic.impl :as impl]
-            [eacl.datomic.impl.indexed :as indexed]))
+            [eacl.datomic.impl.indexed :as indexed]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]))
 
 (defn client-schema-status
   "Captures one current client basis and reports whether it carries EACL's
@@ -44,23 +45,9 @@
   (default 20). This is an offline O(number-of-relationships) operation."
   ([db]
    (dangling-relationship-report db {}))
-  ([db {:keys [sample-size] :or {sample-size 20}}]
-   (when-not (and (integer? sample-size) (not (neg? sample-size)))
-     (throw (ex-info ":sample-size must be a non-negative integer."
-                     {:type :eacl.integrity/invalid-options :eacl/error :eacl.integrity/invalid-options
-                      :sample-size sample-size})))
-   (let [{:keys [count by-half sample]}
-         (reduce (fn [{:keys [count] :as report} half]
-                   (cond-> (-> report
-                               (assoc :count (unchecked-inc count))
-                               (update-in [:by-half (:half half)] (fnil unchecked-inc 0)))
-                     (< count sample-size) (update :sample conj half)))
-                 {:count 0 :by-half {:forward 0 :reverse 0} :sample []}
-                 (dangling-relationship-halves db))]
-     {:valid? (zero? count)
-      :dangling-count count
-      :by-half by-half
-      :sample sample})))
+  ([db options]
+   (endpoint-pair/dangling-report
+    (dangling-relationship-halves db) options)))
 
 (defn repair-tx-data
   "Lazily converts dangling-half maps into Datomic retractions.

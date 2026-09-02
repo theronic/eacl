@@ -362,7 +362,7 @@
 (defn- fwd-rule-sub
   "Fresh per-rule traversal state."
   [env rule]
-  (let [{:keys [ctx subject-type subject-eid desc?]} env]
+  (let [{:keys [subject-type subject-eid desc?]} env]
     (case (:rule rule)
       :relation
       (when (= subject-type (:subject-type rule))
@@ -620,7 +620,7 @@
   "Advances one forward level; returns [{:value v :coords coords} state']
   or [nil state'] on exhaustion. Emissions are least-path filtered at
   this level (witness clauses) and every child level below it."
-  [env {:keys [node rules order oi sub] :as level}]
+  [env {:keys [rules order oi sub] :as level}]
   (if (>= oi (count order))
     [nil level]
     (let [rule (nth rules (nth order oi))

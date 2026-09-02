@@ -102,7 +102,7 @@
   :eacl.cache/basis-snapshot-v1)
 
 (defn- new-lifecycle
-  [subproblem-options]
+  []
   (->CacheLifecycle
    (atom {:tick 0 :generations {}})
    (atom {:tick 0 :generations {}})))
@@ -336,7 +336,7 @@
      (subproblem/store (dissoc subproblem-cache :enabled?))
      (let [content-revision (atom 0)]
      (->BasisCache
-      (atom (new-lifecycle subproblem-cache))
+      (atom (new-lifecycle))
       (atom {:exact-hits 0
              :managed-hits 0
              :misses 0
@@ -363,12 +363,6 @@
 (defn basis-cache?
   [value]
   (instance? BasisCache value))
-
-(defn- record-metrics!
-  [store f & args]
-  (when (:telemetry-enabled? store)
-    (apply swap! (:metrics store) f args))
-  nil)
 
 (def cache-option-keys
   "Closed configuration surface for the client-private authorization cache."
@@ -509,7 +503,7 @@
       (throw (ex-info "Expected an EACL basis cache."
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :cache store})))
-    (record-metrics! store update :bypasses inc))
+    (subproblem/record-metrics! store update :bypasses inc))
   nil)
 
 (defn record-proof-unavailable!
@@ -523,7 +517,7 @@
       (throw (ex-info "Expected an EACL basis cache."
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :cache store})))
-    (record-metrics!
+    (subproblem/record-metrics!
      store
      (fn [metrics]
        (-> metrics
@@ -550,7 +544,7 @@
       :contract-violation
       (do
         (reset! (:managed-lifting-disabled? store) true)
-        (record-metrics!
+        (subproblem/record-metrics!
          store
          (fn [metrics]
            (-> metrics
@@ -609,11 +603,11 @@
     (throw (ex-info "Expected an EACL basis cache."
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :cache store})))
-  (reset! (:lifecycle store) (new-lifecycle (:subproblem-options store)))
+  (reset! (:lifecycle store) (new-lifecycle))
   (reset! (:admissions store) empty-answer-sightings)
   (reset! (:managed-lifting-disabled? store) false)
   (reset! (:reported-contract-violations store) #{})
-  (record-metrics! store update :expirations inc)
+  (subproblem/record-metrics! store update :expirations inc)
   (swap! (:content-revision store) inc)
   nil)
 
@@ -787,15 +781,6 @@
       (some-> (get-in @(:managed lifecycle) [:generations generation-key])
               touch-generation!))))
 
-(defn- positive-snapshot-bound!
-  [option value]
-  (when-not (and (integer? value) (pos? value))
-    (throw
-     (ex-info "Cache snapshot bounds must be positive integers."
-              {:type :eacl/invalid-bound :eacl/error :eacl/invalid-bound
-               :option option :value value})))
-  value)
-
 (defn- generation-order
   [state]
   (->> (:generations state)
@@ -840,8 +825,8 @@
     (throw (ex-info "Expected an EACL basis cache."
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :cache store})))
-  (positive-snapshot-bound! :max-weight max-weight)
-  (positive-snapshot-bound! :max-entries max-entries)
+  (subproblem/positive-snapshot-bound! :max-weight max-weight)
+  (subproblem/positive-snapshot-bound! :max-entries max-entries)
   (let [lifecycle @(:lifecycle store)
         exact (generation-order @(:bases lifecycle))
         managed (generation-order @(:managed lifecycle))
@@ -879,48 +864,36 @@
      :entry-count entry-count
      :retained-weight retained-weight}))
 
-(defn- incompatible-snapshot!
-  [message data]
-  (throw
-   (ex-info message
-            (merge {:type :eacl/cache-snapshot-incompatible
-                    :eacl/error :eacl/cache-snapshot-incompatible}
-                   data))))
-
-(defn- closed-map?
-  [value expected-keys]
-  (and (map? value) (= expected-keys (set (keys value)))))
-
 (defn- validate-basis-snapshot-shape!
   [store snapshot max-weight max-entries]
   (when-not
-   (closed-map? snapshot
+   (subproblem/closed-map? snapshot
                 #{:format :contract :exact :managed :generation-counts
                   :entry-count :retained-weight})
-    (incompatible-snapshot! "Malformed basis cache snapshot."
+    (subproblem/incompatible-snapshot! "Malformed basis cache snapshot."
                             {:snapshot-keys (some-> snapshot keys set)}))
   (when-not (= basis-snapshot-format (:format snapshot))
-    (incompatible-snapshot! "Unsupported basis cache snapshot format."
+    (subproblem/incompatible-snapshot! "Unsupported basis cache snapshot format."
                             {:format (:format snapshot)}))
-  (when-not (closed-map? (:contract snapshot) #{:retained-bases})
-    (incompatible-snapshot! "Malformed basis cache snapshot contract."
+  (when-not (subproblem/closed-map? (:contract snapshot) #{:retained-bases})
+    (subproblem/incompatible-snapshot! "Malformed basis cache snapshot contract."
                             {:contract (:contract snapshot)}))
   (when-not (and (integer? (get-in snapshot [:contract :retained-bases]))
                  (pos? (get-in snapshot [:contract :retained-bases])))
-    (incompatible-snapshot! "Invalid retained-bases snapshot contract."
+    (subproblem/incompatible-snapshot! "Invalid retained-bases snapshot contract."
                             {:contract (:contract snapshot)}))
   (when-not (and (vector? (:exact snapshot))
                  (vector? (:managed snapshot)))
-    (incompatible-snapshot! "Basis cache generations must be vectors." {}))
+    (subproblem/incompatible-snapshot! "Basis cache generations must be vectors." {}))
   (when (or (> (count (:exact snapshot)) (:retained-bases store))
             (> (count (:managed snapshot)) (:retained-bases store)))
-    (incompatible-snapshot! "Snapshot exceeds retained generation capacity."
+    (subproblem/incompatible-snapshot! "Snapshot exceeds retained generation capacity."
                             {:retained-bases (:retained-bases store)}))
   (when-not
    (= {:exact (count (:exact snapshot))
        :managed (count (:managed snapshot))}
       (:generation-counts snapshot))
-    (incompatible-snapshot! "Snapshot generation totals do not match."
+    (subproblem/incompatible-snapshot! "Snapshot generation totals do not match."
                             {:generation-counts (:generation-counts snapshot)}))
   (when-not (and (integer? (:entry-count snapshot))
                  (not (neg? (:entry-count snapshot)))
@@ -928,7 +901,7 @@
                  (integer? (:retained-weight snapshot))
                  (not (neg? (:retained-weight snapshot)))
                  (<= (:retained-weight snapshot) max-weight))
-    (incompatible-snapshot! "Snapshot exceeds restore bounds."
+    (subproblem/incompatible-snapshot! "Snapshot exceeds restore bounds."
                             {:entry-count (:entry-count snapshot)
                              :retained-weight (:retained-weight snapshot)
                              :max-entries max-entries
@@ -936,12 +909,12 @@
 
 (defn- restore-exact-descriptor
   [store descriptor]
-  (when-not (closed-map? descriptor #{:basis-key :order :subproblems})
-    (incompatible-snapshot! "Malformed exact cache generation."
+  (when-not (subproblem/closed-map? descriptor #{:basis-key :order :subproblems})
+    (subproblem/incompatible-snapshot! "Malformed exact cache generation."
                             {:descriptor descriptor}))
   (when-not (and (valid-exact-basis-key? (:basis-key descriptor))
                  (integer? (:order descriptor)))
-    (incompatible-snapshot! "Invalid exact cache generation identity."
+    (subproblem/incompatible-snapshot! "Invalid exact cache generation identity."
                             {:basis-key (:basis-key descriptor)
                              :order (:order descriptor)}))
   (assoc descriptor
@@ -954,9 +927,9 @@
 (defn- restore-managed-descriptor
   [store descriptor]
   (when-not
-   (closed-map? descriptor
+   (subproblem/closed-map? descriptor
                 #{:generation-key :schema-generation :subproblems})
-    (incompatible-snapshot! "Malformed managed cache generation."
+    (subproblem/incompatible-snapshot! "Malformed managed cache generation."
                             {:descriptor descriptor}))
   (let [generation-key (:generation-key descriptor)
         schema-generation (:schema-generation descriptor)]
@@ -964,7 +937,7 @@
                    (= generation-key
                       (managed-generation-key
                        (:lineage generation-key) schema-generation)))
-      (incompatible-snapshot! "Invalid managed cache generation identity."
+      (subproblem/incompatible-snapshot! "Invalid managed cache generation identity."
                               {:generation-key generation-key
                                :schema-generation schema-generation})))
   (assoc descriptor
@@ -998,8 +971,8 @@
     (throw (ex-info "Expected an EACL basis cache."
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :cache store})))
-  (positive-snapshot-bound! :max-weight max-weight)
-  (positive-snapshot-bound! :max-entries max-entries)
+  (subproblem/positive-snapshot-bound! :max-weight max-weight)
+  (subproblem/positive-snapshot-bound! :max-entries max-entries)
   (validate-basis-snapshot-shape! store snapshot max-weight max-entries)
   (let [exact (mapv #(restore-exact-descriptor store %) (:exact snapshot))
         managed
@@ -1007,9 +980,9 @@
         exact-keys (mapv :basis-key exact)
         managed-keys (mapv :generation-key managed)]
     (when-not (= (count exact-keys) (count (set exact-keys)))
-      (incompatible-snapshot! "Duplicate exact cache generation identity." {}))
+      (subproblem/incompatible-snapshot! "Duplicate exact cache generation identity." {}))
     (when-not (= (count managed-keys) (count (set managed-keys)))
-      (incompatible-snapshot! "Duplicate managed cache generation identity." {}))
+      (subproblem/incompatible-snapshot! "Duplicate managed cache generation identity." {}))
     (let [actual-entry-count
           (reduce + 0
                   (map #(get-in % [:subproblems :entry-count])
@@ -1020,7 +993,7 @@
                        (concat exact managed)))]
       (when-not (and (= actual-entry-count (:entry-count snapshot))
                      (= actual-retained-weight (:retained-weight snapshot)))
-        (incompatible-snapshot! "Basis snapshot totals do not match entries."
+        (subproblem/incompatible-snapshot! "Basis snapshot totals do not match entries."
                                 {:declared-entry-count (:entry-count snapshot)
                                  :actual-entry-count actual-entry-count
                                  :declared-retained-weight
@@ -1045,7 +1018,7 @@
       (reset! (:admissions store) empty-answer-sightings)
       (reset! (:managed-lifting-disabled? store) false)
       (reset! (:reported-contract-violations store) #{})
-      (record-metrics! store update :restores inc)
+      (subproblem/record-metrics! store update :restores inc)
       (swap! (:content-revision store) inc)
       {:restored? true
        :generation-counts (:generation-counts snapshot)
@@ -1068,7 +1041,7 @@
         (when (valid-managed-descriptor? descriptor)
           descriptor))
       (catch #?(:clj Exception :cljs :default) _
-        (record-metrics! store update :stamp-failures inc)
+        (subproblem/record-metrics! store update :stamp-failures inc)
         nil))))
 
 (def ^:dynamic ^:no-doc *current-cache-specialization-enabled?* true)
@@ -1080,8 +1053,8 @@
 (defn ^:no-doc current-cache-specialization-authorized?
   [kernel]
   (and (identical? kernel subproblem/default-decision-kernel)
-       (cache-refinement/authorized-selection?
-        subproblem/default-current-cache-refinement)))
+       (cache-refinement/complete-mapping?
+        cache-refinement/current-cache-mapping)))
 
 (defn- current-cache-action
   [decision-kernel stage available?]
@@ -1125,7 +1098,7 @@
             (subproblem/with-decision-memo compute)))]
     (if-not (valid-exact-basis-key? exact-basis-key)
       (do
-        (record-metrics! store update :bypasses inc)
+        (subproblem/record-metrics! store update :bypasses inc)
         {:value (uncached-compute)
          :cached? false
          :cache-tier nil
@@ -1167,7 +1140,7 @@
                :cache-basis cache-basis})
             hit
             (fn [entry]
-              (record-metrics! store update :exact-hits inc)
+              (subproblem/record-metrics! store update :exact-hits inc)
               {:value (:value entry)
                :cached? true
                :cache-tier :exact-basis
@@ -1188,7 +1161,7 @@
               (if (:cached? resolved)
                 (hit entry)
                 (do
-                  (record-metrics!
+                  (subproblem/record-metrics!
                    store
                    #(-> %
                         (update :misses inc)
@@ -1199,7 +1172,7 @@
                    :cache-basis cache-basis
                    :subproblem-store answer-store})))
             (let [entry (evaluate-entry)]
-              (record-metrics!
+              (subproblem/record-metrics!
                store update (if remember-answer? :misses :bypasses) inc)
               {:value (:value entry)
                :cached? false
@@ -1235,7 +1208,7 @@
           (and (some? store) cacheable?)))
     (do
       (when (basis-cache? store)
-        (record-metrics! store update :bypasses inc))
+        (subproblem/record-metrics! store update :bypasses inc))
       {:value (binding [subproblem/*store* nil
                         subproblem/*managed-store* nil
                         subproblem/*managed-key-fn* nil
@@ -1268,7 +1241,7 @@
                (current-cache-action
                 decision-kernel :generation active?))
           (do
-            (record-metrics! store update :bypasses inc)
+            (subproblem/record-metrics! store update :bypasses inc)
             {:value (binding [subproblem/*store* nil
                               subproblem/*managed-store* nil
                               subproblem/*managed-key-fn* nil
@@ -1294,7 +1267,7 @@
                  decision-kernel :exact-entry (some? exact-entry))]
             (if (= :use-exact-entry exact-action)
               (do
-                (record-metrics! store update :exact-hits inc)
+                (subproblem/record-metrics! store update :exact-hits inc)
                 {:value (:value exact-entry)
                  :cached? true
                  :cache-tier :exact-basis
@@ -1330,8 +1303,8 @@
                       (subproblem/resolve-independent!
                        answer-store :answer entry-key answer-options
                        (fn [] managed-entry))
-                      (record-metrics! store update :puts inc))
-                    (record-metrics! store update :managed-hits inc)
+                      (subproblem/record-metrics! store update :puts inc))
+                    (subproblem/record-metrics! store update :managed-hits inc)
                     {:value (:value managed-entry)
                      :cached? true
                      :cache-tier :managed-current
@@ -1379,22 +1352,22 @@
                         ;; A compatible completed value was already visible
                         ;; at lookup time; serve it as the exact hit it is.
                           (do
-                            (record-metrics! store update :exact-hits inc)
+                            (subproblem/record-metrics! store update :exact-hits inc)
                             {:value (:value entry)
                              :cached? true
                              :cache-tier :exact-basis
                              :cache-basis (:cache-basis entry)
                              :subproblem-store answer-store})
                           (do
-                            (record-metrics! store update :misses inc)
-                            (record-metrics! store update :puts inc)
+                            (subproblem/record-metrics! store update :misses inc)
+                            (subproblem/record-metrics! store update :puts inc)
                             {:value (:value entry)
                              :cached? false
                              :cache-tier nil
                              :cache-basis (:cache-basis entry)
                              :subproblem-store answer-store})))
                       (let [entry (compute-entry)]
-                        (record-metrics!
+                        (subproblem/record-metrics!
                          store update
                          (if remember-answer? :misses :bypasses) inc)
                         {:value (:value entry)
@@ -1452,14 +1425,14 @@
               managed-store :answer entry-key answer-options)))]
       (if entry
         (do
-          (record-metrics! store update :managed-hits inc)
+          (subproblem/record-metrics! store update :managed-hits inc)
           {:value (:value entry)
            :cached? true
            :cache-tier :managed-current
            :cache-basis (:cache-basis entry)
            :subproblem-store nil})
         (do
-          (record-metrics! store update :bypasses inc)
+          (subproblem/record-metrics! store update :bypasses inc)
           {:value
            (binding [subproblem/*populate?* false
                      subproblem/*store* nil

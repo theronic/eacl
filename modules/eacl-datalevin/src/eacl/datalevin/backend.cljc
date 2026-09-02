@@ -112,12 +112,6 @@
      permission-id
      (expression-persistence/decode-entity permission))))
 
-(defn- permission-expression [db resource-type permission-name]
-  (some-> (expression-persistence/validate-entities
-           (impl/find-permission-defs db resource-type permission-name))
-          first
-          :entity))
-
 (defn- scalar-generation
   [db entity-id attribute]
   (some-> (first (d/datoms db :eav entity-id attribute)) :v))
@@ -240,7 +234,9 @@
        (fn [resource-type permission-name]
          (ddb/with-db
           snapshot
-          #(permission-expression % resource-type permission-name)))
+          #(expression-persistence/validated-expression-entity
+            (impl/find-permission-defs
+             % resource-type permission-name))))
 
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]

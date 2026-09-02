@@ -647,23 +647,10 @@
        (backend-id adapter) :basis-kind :known-basis-kind kind))
     kind))
 
-(defn- exact-integer?
-  [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value)
-                 (js/Number.isSafeInteger value)))
-   (<= minimum-exact-integer value maximum-exact-integer)))
-
-(defn- exact-natural?
-  [value]
-  (and (exact-integer? value)
-       (not (neg? value))))
-
 (defn schema-generation?
   "True for a portable certified schema-generation value."
   [value]
-  (exact-natural? value))
+  (exact-integer/natural? value))
 
 (defn- within-bound?
   [direction bound inclusive? value]
@@ -689,10 +676,10 @@
       (if-not remaining
         value
         (let [item (first remaining)]
-          (when-not (exact-integer? item)
+          (when-not (exact-integer/exact? item)
             (contract-violation!
              backend-id operation-key :exact-integer value))
-          (when-not (exact-natural? item)
+          (when-not (exact-integer/natural? item)
             (contract-violation!
              backend-id operation-key :nonnegative value))
           (when-not first?
@@ -721,21 +708,21 @@
       :object-id->internal
       (do
         (when (and (some? value)
-                   (not (exact-integer? value)))
+                   (not (exact-integer/exact? value)))
           (contract-violation!
            backend-id operation-key :exact-integer value))
         (when (and (some? value)
-                   (not (exact-natural? value)))
+                   (not (exact-integer/natural? value)))
           (contract-violation!
            backend-id operation-key :nonnegative value))
         value)
 
       :order-hint
       (do
-        (when-not (exact-integer? value)
+        (when-not (exact-integer/exact? value)
           (contract-violation!
            backend-id operation-key :exact-integer value))
-        (when-not (exact-natural? value)
+        (when-not (exact-integer/natural? value)
           (contract-violation!
            backend-id operation-key :nonnegative value))
         value)
@@ -980,7 +967,7 @@
             accumulator
             (let [item (first items)]
               (when (runtime-guards? adapter)
-                (when-not (exact-natural? item)
+                (when-not (exact-integer/natural? item)
                   (contract-violation!
                    (::id adapter) operation-key :exact-natural :redacted))
                 (when (and (some? previous)

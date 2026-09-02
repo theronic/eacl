@@ -5,6 +5,7 @@
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
             [eacl.operator.cover-plan :as cover-plan]
+            [eacl.operator.plan :as operator-plan]
             [eacl.operator.seekable :as seekable]
             [eacl.operator.vector-evaluator :as vector-evaluator]
             [eacl.request.counters :as request-counters]))
@@ -42,9 +43,6 @@
     (invalid! :invalid-limit "Operator lookup limits must be positive integers."
               {:field field :value value}))
   value)
-
-(defn- expression-roots [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
 
 (defn- semantic-candidate
   [permission direction subject-type subject-eid resource-eid true-nodes]
@@ -113,7 +111,7 @@
      (raw-options options))))
 
 (defn- specialization-node [plan permission]
-  (let [root-id (get (expression-roots plan) permission)
+  (let [root-id (get (operator-plan/expression-roots plan) permission)
         source-id (get-in plan [:generators permission root-id :source-node])]
     (some #(when (contains? #{:direct-k-way-intersection
                               :direct-monotone-exclusion}
@@ -158,7 +156,7 @@
            accept-result? scope-identity]}
    cover-plan emissions]
   (let [permission (or permission (:root plan))
-        node-id (get (expression-roots plan) permission)
+        node-id (get (operator-plan/expression-roots plan) permission)
         witnesses (mapv #(emission-witness plan cover-plan permission
                                            node-id specialization-node %)
                         emissions)
@@ -335,8 +333,7 @@
   "Exact count when :count-limit is absent; otherwise stops after the
   lookahead result needed to report truncation. Exact and bounded work remain
   separately observable through :exhaustive?."
-  [{:keys [adapter plan traversal subject-type anchor-eid count-limit
-           permission]
+  [{:keys [adapter plan count-limit permission]
     :as options}]
   (when-not (or (nil? count-limit)
                 (and (integer? count-limit) (not (neg? count-limit))))

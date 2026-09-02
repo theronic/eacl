@@ -14,7 +14,7 @@
   (io/file
    repo-root
    (or (first *command-line-args*)
-       "formal/verification/generated-artifact-size.edn")))
+       "formal/policy/generated-artifact-size.edn")))
 
 (def output-file
   (io/file

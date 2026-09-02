@@ -96,12 +96,11 @@ the abstract per-stratum theorem does not prove that production holds a stable,
 complete lower-stratum fact context at each concrete evaluator node; that is a
 section-10 source-refinement obligation.
 
-`formal/verification/operator-phase-a.edn` records the exact proof counts,
-source digests, temporal bounds, mutations, and cross-runtime vectors. Its
-status is `:passed-operator-authorized`: the project operator explicitly
-authorized Phase B after the abstract gates passed. No independent proof
-review has been performed, and the evidence records that absence as an
-assurance qualification rather than claiming external certification.
+`formal/assurance_contract.clj` records the proof-count ratchets and remaining
+obligations. Current proof counts, source digests, temporal checks, mutations,
+and cross-runtime vectors are derived or executed by CI. No independent proof
+review has been performed, and the release policy records that absence rather
+than claiming external certification.
 
 ### Concrete operator Phase B boundary
 
@@ -113,13 +112,14 @@ and refined in `OperatorRecursiveGeneratedPolicyRefinement.dfy` to the Phase A
 anchor-gated conjunction and strict-exclusion models. Like the two Phase A
 entry points, production does not call this generated function directly.
 
-`formal/verification/operator-phase-b.edn` binds the digest-closed production
+The executable Phase B gates bind the production
 parser, codec, signed graph, plan, scalar/vector evaluator, adaptive batching,
 seekable specializations, cursor progress, recursive state, cache boundary,
 and four backend implementations to those decisions through fixed and random
 differentials, CLJ/CLJS parity, counterexample replay, adapter certification,
 and ten executed production mutants. This is executable source-refinement
-evidence, not a formal semantics of Clojure or the storage engines. The
+evidence, not a formal semantics of Clojure or the storage engines. Their
+current digests and results are generated under `target/formal/verification/`. The
 measured production performance and the explicit route/write enablement gates
 have passed. Public expression writes and public routing are enabled by
 default; explicit dynamic bindings exercise both disabled paths, and the four

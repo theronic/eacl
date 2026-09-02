@@ -7,8 +7,8 @@
            (java.nio.file Files)
            (java.util.zip GZIPOutputStream)))
 
-(def ledger-path
-  (repo/file "formal" "verification" "cljs-production.edn"))
+(def policy-path
+  (repo/file "formal" "policy" "cljs-production.edn"))
 
 (defn- byte-size [file]
   (Files/size (.toPath file)))
@@ -21,7 +21,7 @@
 
 (deftest ^:formal-artifact
   production-cljs-bundle-is-native-small-and-oracle-free-test
-  (let [{:keys [bundle generated-oracle]} (edn/read-string (slurp ledger-path))
+  (let [{:keys [bundle generated-oracle]} (edn/read-string (slurp policy-path))
         empty-bundle (repo/file "target" "formal" "cljs-empty-bundle.js")
         kernel-bundle
         (repo/file "target" "formal" "cljs-portable-kernel-bundle.js")

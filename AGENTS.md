@@ -64,5 +64,6 @@ If you hit `Alias ... already exists` in an nREPL session, run `ns-unalias` on t
 
 Run the DataScript ClojureScript build (`cljs.main/-main ... -c eacl.datascript.cljs-test-runner`, then `node target/datascript-cljs-test.js`) last, exactly as CI does: `cljs.main/-main` calls `shutdown-agents` when it finishes, after which every `future`-based test in that JVM fails with `RejectedExecutionException` until the nREPL is restarted.
 
-After any edit under a public source root, regenerate the source-closure
-ledger before pushing: `node bin/public-source-closure.mjs write`.
+After any edit under a public source root, run `bin/formal source-closure`.
+The generated report lives under ignored `target/formal/verification/`; do
+not commit it.

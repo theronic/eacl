@@ -1,6 +1,7 @@
 (ns eacl.causal-token
   "Version-4 authenticated backend-native revision tokens."
   (:require [clojure.string :as str]
+            [eacl.exact-integer :as exact-integer]
             [eacl.secure-format :as secure]))
 
 (def token-version 4)
@@ -11,7 +12,7 @@
 (def payload-keys
   #{:version :backend :source-id :source-lifecycle :branch :revision
     :exact-locator :issued-at :expires-at})
-(def maximum-exact-integer 9007199254740991)
+(def maximum-exact-integer exact-integer/maximum)
 (def maximum-scope-characters 4096)
 
 (defn now-seconds
@@ -53,12 +54,6 @@
          (catch #?(:clj Exception :cljs :default) _
            false))))
 
-(defn- natural-revision?
-  [value]
-  (and (integer? value)
-       (not (neg? value))
-       (<= value maximum-exact-integer)))
-
 (defn validate-source-lifecycle!
   [value]
   (when-not (and (bounded-canonical-value? value)
@@ -76,9 +71,9 @@
                    (bounded-canonical-value? source-id)
                    (or (nil? branch) (bounded-canonical-value? branch))
                    (bounded-canonical-value? source-lifecycle)
-                   (natural-revision? revision)
+                   (exact-integer/natural? revision)
                    (or (nil? exact-locator)
-                       (natural-revision? exact-locator)
+                       (exact-integer/natural? exact-locator)
                        (and (string? exact-locator)
                             (not-empty exact-locator)
                             (<= (count exact-locator)

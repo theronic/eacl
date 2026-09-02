@@ -10,8 +10,8 @@ contract. Final production behavior is equal-proof continuation on current,
 verified exact-snapshot fallback on immutable history-capable backends, or a
 typed stale/conflict error. DataScript is current-basis-only. No current model,
 production branch, or active performance gate authorizes cursor rebase or
-restart. The current release claim is governed by the generated-boundary,
-pagination-kernel, execution-contract, and assurance-matrix ledgers.
+restart. The current release claim is governed by
+`formal/assurance_contract.clj` and live CI gates.
 
 ## Executive decision
 
@@ -332,7 +332,7 @@ Do not say:
 
 The external reviewer should:
 
-1. check every public assurance-matrix row against the exact theorem
+1. check every public assurance-contract operation against the exact theorem
    preconditions and production call path;
 2. challenge snapshot-oracle, adapter, identity, cryptographic, and limit
    assumptions;
