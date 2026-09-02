@@ -1209,6 +1209,16 @@
            work-before @work-stats
            ledger-before (request-counters/snapshot ledger)
            output-units))
+        ;; The validated context state, when the request carries it, lets each
+        ;; candidate take the memo fast path instead of re-validating the
+        ;; context's ownership and lifecycle.
+        context-state (::request-context-state opts)
+        memoized-decision!
+        (fn [key build]
+          (if context-state
+            (request-context/memoized-active-state!
+             context-state :decisions key build)
+            (request-context/memoized! request-context :decisions key build)))
         accept?
         (fn [relationship]
           ;; The diagnostic aggregate is built only on the throw path.
@@ -1217,9 +1227,7 @@
                 allowed?
                 (if-not (:id internal-subject)
                   false
-                  (request-context/memoized!
-                   request-context
-                   :decisions
+                  (memoized-decision!
                    ;; Exactly the demand-key fields, built once per candidate.
                    [:authorization-scan
                     {:subject subject

@@ -57,12 +57,25 @@
   "The immutable client-local admission profile bound around schema work."
   policy/default-client-limits)
 
+(def ^:private normalized-limits-memo
+  ;; [bound-profile normalized-profile] for the last non-default binding.
+  ;; Clients bind one immutable profile object for their whole lifetime, so
+  ;; identity is the memo key; a different object is normalized afresh.
+  (atom nil))
+
 (defn effective-expression-limits []
   ;; Reuse the complete immutable default profile. Non-default bindings still
-  ;; cross the public normalizer so bound overrides remain validated.
-  (if (identical? *expression-limits* policy/default-client-limits)
-    policy/default-client-limits
-    (policy/normalize-client-limits *expression-limits*)))
+  ;; cross the public normalizer so bound overrides remain validated, but the
+  ;; same bound object is normalized once, not on every derived-key build.
+  (let [bound *expression-limits*]
+    (if (identical? bound policy/default-client-limits)
+      policy/default-client-limits
+      (let [memo @normalized-limits-memo]
+        (if (and memo (identical? (nth memo 0) bound))
+          (nth memo 1)
+          (let [normalized (policy/normalize-client-limits bound)]
+            (reset! normalized-limits-memo [bound normalized])
+            normalized))))))
 
 (defn ->expression-id [resource-type permission-name]
   (str "eacl.permission-expression:" resource-type ":" permission-name))

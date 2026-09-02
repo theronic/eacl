@@ -193,6 +193,9 @@ jobs:
                  result))"
 
       - name: Gate portable CLJS indexed traversal scaling and ceiling
+        # The portable indexed traversal has no production caller; like the
+        # routing-certificate benchmark, its scaling gate runs on the schedule.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
