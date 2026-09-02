@@ -44,8 +44,12 @@
   [{:keys [disabled-client enabled-client users page-size trials warm-ups
            cache-stats-fn]
     :or {page-size 20 trials 5 warm-ups 2}}]
-  (let [config {:users users :page-size page-size :cache? true}
-        run (fn [client] (sweep client config))]
+  (let [trial-counter (atom 0)
+        ;; Every sweep uses a page size no earlier sweep used, so the answer
+        ;; and rendered-page tiers miss and only scan reuse is measured.
+        run (fn [client]
+              (let [size (+ page-size (swap! trial-counter inc))]
+                (sweep client {:users users :page-size size :cache? true})))]
     (dotimes [_ warm-ups] (run disabled-client) (run enabled-client))
     (let [results (vec (repeatedly trials
                                    (fn []

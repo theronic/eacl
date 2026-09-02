@@ -83,6 +83,7 @@
                'eacl.consistency-test
                'eacl.engine.relationships-test
                'eacl.engine.scan-cache-test
+               'eacl.client.lookahead-test
                'eacl.datascript.scan-cache-integration-test
                'eacl.engine.alias-frontier-test
                'eacl.engine.least-path-portable-test

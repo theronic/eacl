@@ -57,6 +57,7 @@
             [eacl.engine.v8 :as engine]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.scan-cache :as scan-cache]
+            [eacl.client.lookahead :as lookahead]
             [eacl.execution :as execution]
             [eacl.permission-tree :as permission-tree]
             [eacl.proof-frame :as proof-frame]
@@ -127,7 +128,7 @@
 (defn- ensure-execution-contract
   [opts operation request]
   (let [opts
-        (cond-> opts
+        (cond-> (assoc opts :request-operation operation)
           (nil? (:cache-lifecycle opts))
           (assoc :cache-lifecycle
                  (cache/capture-cache-lifecycle
@@ -337,6 +338,37 @@
         (when-let [selected (:selected-snapshot basis)]
           (source/release! selected))))))
 
+(defn- observe-request
+  "Runs `thunk` and delivers the request's exact mandatory meters to the
+  configured observer once, on success or failure; the observer can neither
+  change the outcome nor fail the request."
+  [observer opts ledger thunk]
+  (let [started (execution/now-nanos)
+        before (request-counters/snapshot ledger)
+        deliver! (fn [outcome error]
+                   (try
+                     (observer
+                      (cond-> {:operation (:request-operation opts)
+                               :provenance (if (pos? lookahead/*depth*)
+                                             :lookahead
+                                             :request)
+                               :outcome outcome
+                               :elapsed-nanos (- (execution/now-nanos) started)
+                               :meters (request-counters/delta
+                                        before
+                                        (request-counters/snapshot ledger))}
+                        error (assoc :error (or (:type (ex-data error))
+                                                #?(:clj (class error)
+                                                   :cljs (type error))))))
+                     (catch #?(:clj Throwable :cljs :default) _ nil)))]
+    (try
+      (let [result (thunk)]
+        (deliver! :completed nil)
+        result)
+      (catch #?(:clj Throwable :cljs :default) error
+        (deliver! :failed error)
+        (throw error)))))
+
 (defn- scan-cache-context
   "The request's scan-response cache context. The memo is unconditional;
   the shared tier applies only to cache-enabled requests on an ordinary
@@ -431,7 +463,10 @@
               (fn [request-context]
                 (binding [engine/*scan-cache*
                           (scan-cache-context opts request-context)]
-                  (f request-context))))
+                  (if-let [observer (:io-observer opts)]
+                    (observe-request observer opts ledger
+                                     #(f request-context))
+                    (f request-context)))))
              (finally
                (request-context/close! context))))))))
 
@@ -1817,7 +1852,9 @@
                     engine/*proof-frame* request-proof-frame
                     engine/*recursive-traversal-limits*
                     (:recursive-traversal-limits opts)
-                    engine/*service-admission* (:service-admission opts)
+                    engine/*service-admission*
+                    (when (zero? lookahead/*depth*)
+                      (:service-admission opts))
                     engine/*evaluation-mode* (:evaluation contract)
                     engine/*aggregate-work-stats* work-stats
                     execution/*contract* contract
@@ -2448,7 +2485,7 @@
     :recursive-traversal-limits :permission-tree-limits
     :execution-timeout-ms :consistency-sync-timeout-ms
     :service-admission :source-lifecycle :runtime-lifecycle-state
-    :maximum-snapshot-retention-ms})
+    :maximum-snapshot-retention-ms :io-observer :lookahead-state})
 
 (defn- reader-api
   [api]
@@ -3527,6 +3564,24 @@
         (vec (prepare db raw))
         []))))
 
+(defn- with-page-lookahead
+  "Runs the client-level page operation `thunk` and, when the client has
+  lookahead configured, submits the served page's continuation through the
+  same public operation on `client` after the response is complete."
+  [client runtime operation request thunk]
+  (let [page (thunk)
+        options (runtime-options runtime)]
+    (when-let [state (:lookahead-state options)]
+      (lookahead/submit!
+       state operation request page
+       (fn [continuation]
+         (case operation
+           :lookup-resources (eacl/lookup-resources client continuation)
+           :lookup-subjects (eacl/lookup-subjects client continuation)
+           :read-relationships (eacl/read-relationships client continuation)))
+       (:io-observer options)))
+    page))
+
 (defn- call-with-transient-snapshot
   "Selects one request basis, delegates to the ordinary Snapshot reader, and
   releases in `finally`. The transient runtime carries only the already
@@ -3568,26 +3623,32 @@
     (call-with-transient-snapshot
      runtime source api :read-schema request
      #(eacl/-read-schema % request)))
-  (-read-relationships [_ request]
+  (-read-relationships [this request]
     (relationship-filters/validate! request)
     (authorization-filters/validate-scan-authorization! request)
-    (binding [relationship-filters/*validated-request?* true
-              authorization-filters/*validated-request?* true]
-      (call-with-transient-snapshot
-       runtime source api :read-relationships request
-       #(eacl/-read-relationships % request))))
-  (-lookup-resources [_ request]
+    (with-page-lookahead
+      this runtime :read-relationships request
+      #(binding [relationship-filters/*validated-request?* true
+                 authorization-filters/*validated-request?* true]
+         (call-with-transient-snapshot
+          runtime source api :read-relationships request
+          (fn [snapshot] (eacl/-read-relationships snapshot request))))))
+  (-lookup-resources [this request]
     (authorization-filters/validate-lookup! :lookup-resources request)
-    (binding [authorization-filters/*validated-request?* true]
-      (call-with-transient-snapshot
-       runtime source api :lookup-resources request
-       #(eacl/-lookup-resources % request))))
-  (-lookup-subjects [_ request]
+    (with-page-lookahead
+      this runtime :lookup-resources request
+      #(binding [authorization-filters/*validated-request?* true]
+         (call-with-transient-snapshot
+          runtime source api :lookup-resources request
+          (fn [snapshot] (eacl/-lookup-resources snapshot request))))))
+  (-lookup-subjects [this request]
     (authorization-filters/validate-lookup! :lookup-subjects request)
-    (binding [authorization-filters/*validated-request?* true]
-      (call-with-transient-snapshot
-       runtime source api :lookup-subjects request
-       #(eacl/-lookup-subjects % request))))
+    (with-page-lookahead
+      this runtime :lookup-subjects request
+      #(binding [authorization-filters/*validated-request?* true]
+         (call-with-transient-snapshot
+          runtime source api :lookup-subjects request
+          (fn [snapshot] (eacl/-lookup-subjects snapshot request))))))
   (-count-resources [_ request]
     (call-with-transient-snapshot
      runtime source api :count-resources request
@@ -3960,7 +4021,9 @@
     :aggregate-limits
     :service-admission
     :read-only?
-    :scan-cache})
+    :scan-cache
+    :lookahead
+    :io-observer})
 
 (defn- valid-security-kid?
   [kid]
@@ -4082,6 +4145,14 @@
                       {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                        :unknown-keys (vec unknown-keys)
                        :known-keys known-client-opt-keys}))))
+  (when (and (contains? config-opts :io-observer)
+             (some? (:io-observer config-opts))
+             (not (fn? (:io-observer config-opts))))
+    (throw (ex-info "EACL Config Error: :io-observer must be a function."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :key :io-observer
+                     :value (:io-observer config-opts)})))
+  (lookahead/validate-option! (:lookahead config-opts))
   (when-let [scan-cache-option (:scan-cache config-opts)]
     (when-not (or (false? scan-cache-option)
                   (and (map? scan-cache-option)
@@ -4245,6 +4316,9 @@
          (select-keys config-opts
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
+          :io-observer (:io-observer config-opts)
+          :lookahead-state
+          (lookahead/state (lookahead/validate-option! (:lookahead config-opts)))
           :derived-schema-caches
           (:derived-schema-caches initial-runtime-cache-lifecycle)
           :adapter-fingerprint
