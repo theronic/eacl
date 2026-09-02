@@ -63,10 +63,10 @@
 
 ## 9. Certification
 
-- [ ] 9.1 Run the CI battery, the ClojureScript suite, the Datalevin suite, the parity trio, strict counterexample replay, and the differential suites on fresh JVMs and verify all pass with the counts recorded in the implementation notes.
-- [ ] 9.2 Run `clj-kondo`, the source-closure gate, and the reflection gate and verify they are clean.
+- [x] 9.1 Run the CI battery, the ClojureScript suite, the Datalevin suite, the parity trio, strict counterexample replay, and the differential suites on fresh JVMs and verify all pass with the counts recorded in the implementation notes.
+- [x] 9.2 Run `clj-kondo`, the source-closure gate, and the reflection gate and verify they are clean.
 - [ ] 9.3 Open the pull request on an `agent/*` branch with the change's evidence and verify CI is green.
 
 ## 10. Recorded follow-ups (not in this change)
 
-- [ ] 10.1 Record in the implementation notes, with the measurements that justify deferral: order-insensitive counts (CPU and memory, not remote reads), compact reducer checkpoints, endpoint-scoped dependency stamps, materialized recursive closure, Datalevin native scan cost, and DynamoDB storage-backend statistics; verify each entry names the evidence.
+- [x] 10.1 Record in the implementation notes, with the measurements that justify deferral: order-insensitive counts (CPU and memory, not remote reads), compact reducer checkpoints, endpoint-scoped dependency stamps, materialized recursive closure, Datalevin native scan cost, and DynamoDB storage-backend statistics; verify each entry names the evidence.

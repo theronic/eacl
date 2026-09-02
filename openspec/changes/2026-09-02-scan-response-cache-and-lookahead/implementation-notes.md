@@ -163,4 +163,20 @@ measurable regression.
 
 ## Certification (fresh JVMs, final tree)
 
-CERTIFICATION_TABLE
+| Gate | Result |
+|---|---|
+| CI battery (`modules/eacl`, `eacl-datomic`, `eacl-datascript`, `eacl-datahike`, `src-build`) | 1,178 tests, 55,564 assertions, 0 failures, 0 errors |
+| DataScript ClojureScript suite (clean build, node) | 581 tests, 28,750 assertions, 0 failures, 0 errors |
+| Datalevin suite (`:datalevin-test`, module and shared roots) | 438 tests, 23,374 assertions, 0 failures |
+| Generators + adversarial + mutation controls (strict-replay JVM) | 13 tests, 896 assertions, 0 failures (five new controls killed) |
+| Counterexample replay, strict | 71 tests, 18,228 assertions, 0 failures |
+| Eight generated-differential suites | 52 tests, 18,280 assertions, 0 failures |
+| Consistency-boundary gate | passed (median p95 1,349 ns under concurrent suites; ceiling 15,000 ns) |
+| Routing-certificate gate | passed |
+| Stable-discovery fast verifier | 663 Dafny obligations, 0 errors (pin updated from 651) |
+| `clj-kondo` over the five source roots | 0 errors, 0 warnings |
+| `bin/formal source-closure` | passed (96 roots, 2,420 reachable definitions) |
+| `bin/reflection-gate` | clean |
+| `bin/formal manifest` | generated; exits 3 by design (assurance withheld by the authored contract) |
+
+The `formal/dafny` tree is unchanged, so `bin/formal verify` was not rerun.
