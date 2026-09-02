@@ -201,8 +201,19 @@
         false)))))
 
 (defn- canonical-comparator
+  "Orders values by their canonical rendering.
+
+  Two keywords compare by the runtime's keyword string, which is
+  byte-identical to their rendering `:namespace/name` and needs no
+  allocation (the JVM caches it on the keyword; ClojureScript stores the
+  fully qualified name). Every other operand pair renders. Canonical maps
+  and sets carry this comparator, so every later lookup or equality check on
+  them runs it once per key comparison."
   [left right]
-  (compare (portable-render left) (portable-render right)))
+  (if (and (keyword? left) (keyword? right))
+    #?(:clj (compare (str left) (str right))
+       :cljs (compare (.-fqn ^Keyword left) (.-fqn ^Keyword right)))
+    (compare (portable-render left) (portable-render right))))
 
 (declare validate-value)
 

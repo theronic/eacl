@@ -1001,3 +1001,47 @@
                :proof
                :value})
             portable-cache-vector)))))
+
+(def ^:private keyword-alphabet
+  "Every character class the canonical keyword fast path accepts."
+  "abcxyzABCXYZ0123456789_*!?$%&=<>.+-")
+
+(defn- pseudo-random-keywords
+  "A deterministic keyword corpus over the accepted alphabet: bare and
+  namespaced spellings, one to four characters per component, so every
+  ordering edge (prefix, namespace versus bare, punctuation) is exercised."
+  [n]
+  (let [alphabet (vec keyword-alphabet)
+        head (vec (remove (set "0123456789") alphabet))
+        state (atom 20260902)
+        next-int (fn [bound]
+                   (let [value (mod (+ (* 1103515245 @state) 12345)
+                                    2147483648)]
+                     (reset! state value)
+                     (mod (quot value 65536) bound)))
+        component (fn []
+                    (apply str
+                           (nth head (next-int (count head)))
+                           (repeatedly (next-int 4)
+                                       #(nth alphabet
+                                             (next-int (count alphabet))))))]
+    (vec (repeatedly
+          n
+          #(if (zero? (next-int 2))
+             (keyword (component))
+             (keyword (component) (component)))))))
+
+(deftest canonical-comparator-keyword-fast-path-agrees-with-rendering-test
+  (let [comparator @#'secure/canonical-comparator
+        render (fn [k]
+                 (str ":" (when-let [ns (namespace k)] (str ns "/")) (name k)))
+        reference (fn [left right] (compare (render left) (render right)))
+        sign (fn [n] (cond (neg? n) -1 (pos? n) 1 :else 0))
+        corpus (into (pseudo-random-keywords 96)
+                     [:a :b :a/b :a/a :aa :a.b :a-b :_ :* :x/y :x/y-z
+                      :eacl/id :eacl.cursor/edge :Z :z :x9/x :x/x9])]
+    (doseq [left corpus
+            right corpus]
+      (is (= (sign (reference left right)) (sign (comparator left right)))
+          (str "ordering differs for " left " and " right)))
+    (is (= (sort reference corpus) (sort comparator corpus)))))
