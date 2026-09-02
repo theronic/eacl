@@ -48,6 +48,8 @@
 - [x] 6.2 Add the five executed mutation controls (short non-exhausted serve, values not beyond the bound, stale relation generation, widened limit or moved bound, fragment deposit) to the mutation registry and verify each mutant is killed by a named existing or new test.
 - [x] 6.3 Add the cache-neutrality differential to the parity suites: commands subset, replies equal, public outcomes identical across shared-tier on/off and memo on/off, on randomized graphs with interleaved supported writes, all four backends, both runtimes, and verify it runs in the parity job.
 - [x] 6.4 Recorded instead of modeled: exact-basis keys make a stale background publication unreachable for a newer basis, and the Datomic lookahead test exercises the basis-moved case executably (see implementation notes, deviations).
+- [x] 6.5 Add `RangeAnswerReuse.dfy` (shorter page is a prefix of the longer resident page from the same start boundary, a complete resident page answers larger requests unchanged, derived next-page flag) to the fast verifier, and two executed mutation controls for `derive-page` (end-edge off by one, ignored next-page flag).
+- [x] 6.6 Add `scan_response_cache_refinement_bridge.clj`: the production `serve`/`extend-entry` against a transcription of `ScanResponseCache.dfy` over 4,000 randomized cases per operation in both scan directions, with model-level killed controls, declared in the fast verifier's bridge manifest.
 
 ## 7. Paired gates and defaults
 

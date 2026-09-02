@@ -7,6 +7,7 @@
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.client.range-reuse :as range-reuse]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
@@ -1786,6 +1787,63 @@ definition document {
          (not= expected (with-redefs [scan-cache/extend-entry mutant]
                           (scan-cache-run fetches {}))))))
 
+;; ---------------------------------------------------------------------------
+;; Range answer reuse (eacl.client.range-reuse)
+;; ---------------------------------------------------------------------------
+
+(defn- range-edge [i] {:ordinal i :eid (* 10 i)})
+
+(defn- range-resident
+  [n next?]
+  {:data (vec (range n))
+   :edges (mapv range-edge (range n))
+   :range-reusable? true
+   :page-info {:start-cursor (range-edge 0)
+               :end-cursor (range-edge (dec n))
+               :has-next-page? next?
+               :has-previous-page? false}})
+
+(defn range-derivation-end-edge-off-by-one-killed?
+  "A derived page's end cursor must be the edge of its last result; the edge
+  after it would resume past a result the caller never received."
+  []
+  (let [resident (range-resident 20 true)
+        expected {:data (vec (range 10)) :end (range-edge 9) :next? true}
+        observe (fn []
+                  (let [page (range-reuse/derive-page [:first 10] resident)]
+                    {:data (:data page)
+                     :end (get-in page [:page-info :end-cursor])
+                     :next? (get-in page [:page-info :has-next-page?])}))
+        original range-reuse/derive-page
+        mutant (fn [request resident]
+                 (let [page (original request resident)
+                       [_ requested] request]
+                   (if (and page (< requested (count (:edges resident))))
+                     (assoc-in page [:page-info :end-cursor]
+                               (nth (:edges resident) requested))
+                     page)))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/derive-page mutant]
+                          (observe))))))
+
+(defn range-derivation-ignores-next-page-killed?
+  "A shorter request than a complete resident page is the resident page; a
+  shorter request than an incomplete one must not be answered from it."
+  []
+  (let [complete (range-resident 7 false)
+        incomplete (range-resident 7 true)
+        observe (fn []
+                  [(some? (range-reuse/derive-page [:first 30] complete))
+                   (some? (range-reuse/derive-page [:first 30] incomplete))])
+        expected [true false]
+        original range-reuse/derive-page
+        mutant (fn [request resident]
+                 (or (original request resident)
+                     resident))]
+    (and (= expected (observe))
+         (not= expected (with-redefs [range-reuse/derive-page mutant]
+                          (observe))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1848,7 +1906,11 @@ definition document {
    :scan-cache-serves-values-at-bound scan-cache-serves-values-at-bound-killed?
    :scan-cache-reuses-stale-generation scan-cache-reuses-stale-generation-killed?
    :scan-cache-widens-command scan-cache-widens-command-killed?
-   :scan-cache-deposits-fragment scan-cache-deposits-fragment-killed?})
+   :scan-cache-deposits-fragment scan-cache-deposits-fragment-killed?
+   :range-derivation-end-edge-off-by-one
+   range-derivation-end-edge-off-by-one-killed?
+   :range-derivation-ignores-next-page
+   range-derivation-ignores-next-page-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

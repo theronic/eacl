@@ -16,9 +16,15 @@ Requires the pinned toolchain cache under `target/formal-tools/` (see
 `bin/bootstrap-formal-tools`). Budget: 10 s hard ceiling, ~8 s observed. The
 gate self-checks its model/config/bridge manifests, scans for Dafny escape
 hatches, pins the TLA+ assumption-boundary fingerprint, and enforces the
-exact aggregate obligation count (651).
+exact aggregate obligation count pinned in the script.
 
-Contents: 47 Dafny leaves (`ReducerReadScope.dfy`, added 2026-08-23,
+Contents: the Dafny leaves (`ScanResponseCache.dfy` and
+`RangeAnswerReuse.dfy`, added 2026-09-02, prove that a scan-response cache
+reply equals the adapter's chunk for the same bound and limit, that
+contiguous extension keeps a prefix of the scan, and that a shorter page from
+the same start boundary is a prefix of the longer resident page, with a
+complete resident page answering larger requests unchanged;
+`ReducerReadScope.dfy`, added 2026-08-23,
 proves that every plan-derived scan stays inside the certified relation
 closure and, including adaptive scheduling, equal closure slices preserve
 transitions, emissions, order, and boundary positions;
@@ -34,8 +40,10 @@ total, and history-free, the filtered DFS emits exactly the reachable
 denotation once per entity, repeated-state pruning is sound, keyset
 resume equals the suffix, and descending agrees with ascending); two TLC families (`AtomicAttempt` with 3 mutants,
 `ProgressCheckpoint` with 6 mutants); the randomized refinement campaign
-(18,000 checks, 22 mutation controls) and four source bridges (public
-schema, sealed plan/rank, cursor codec, checkpoint publication). The former
+(18,000 checks, 22 mutation controls) and the source bridges (public
+schema, sealed plan/rank, cursor codec, checkpoint publication, and the
+scan-response cache's serve/extend functions against a transcription of
+`ScanResponseCache.dfy` in both scan directions). The former
 compiler-seam bridge bound to the retired `eacl.engine.v8` rule compiler and
 was removed with it; the production compiler (`eacl.engine.sealed-plan`) is
 gated by the module suites (`stable-discovery-gate-test`).

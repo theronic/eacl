@@ -168,15 +168,25 @@ measurable regression.
 | CI battery (`modules/eacl`, `eacl-datomic`, `eacl-datascript`, `eacl-datahike`, `src-build`) | 1,178 tests, 55,564 assertions, 0 failures, 0 errors |
 | DataScript ClojureScript suite (clean build, node) | 581 tests, 28,750 assertions, 0 failures, 0 errors |
 | Datalevin suite (`:datalevin-test`, module and shared roots) | 438 tests, 23,374 assertions, 0 failures |
-| Generators + adversarial + mutation controls (strict-replay JVM) | 13 tests, 896 assertions, 0 failures (five new controls killed) |
+| Generators + adversarial + mutation controls (strict-replay JVM) | 14 tests, 951 assertions, 0 failures (seven new controls killed) |
 | Counterexample replay, strict | 71 tests, 18,228 assertions, 0 failures |
 | Eight generated-differential suites | 52 tests, 18,280 assertions, 0 failures |
 | Consistency-boundary gate | passed (median p95 1,349 ns under concurrent suites; ceiling 15,000 ns) |
 | Routing-certificate gate | passed |
-| Stable-discovery fast verifier | 663 Dafny obligations, 0 errors (pin updated from 651) |
+| Stable-discovery fast verifier | 669 Dafny obligations, 0 errors (pin updated from 651: `ScanResponseCache.dfy` 12, `RangeAnswerReuse.dfy` 6); scan-response-cache bridge 4,000 serve and 4,000 extend cases, 4 controls killed |
 | `clj-kondo` over the five source roots | 0 errors, 0 warnings |
 | `bin/formal source-closure` | passed (96 roots, 2,420 reachable definitions) |
 | `bin/reflection-gate` | clean |
 | `bin/formal manifest` | generated; exits 3 by design (assurance withheld by the authored contract) |
 
-The `formal/dafny` tree is unchanged, so `bin/formal verify` was not rerun.
+`ScalarFrontierCoherence.dfy` gained one lemma (below); the module verifies alone (84 obligations, 0 errors) and the whole-tree `bin/formal verify` runs in CI's formal workflow.
+
+## Certification pass against the formal models (2026-09-02, after the PR opened)
+
+The implementation was checked against the models a second time, looking for claims made by one side and not the other. Three gaps were found and closed; no code change was needed.
+
+1. **Task 6.1 promised a singleton-frontier lemma that was never written.** The scan-response cache scopes a stored prefix by one relation's generation, which is `DependencyFrontier(snapshot, [relation])` in the scalar-frontier model. `SingletonFrontierIsRelationGeneration` now proves that frontier equals `RelationAt(snapshot, relation).generation`, so the existing monotonicity and stamping lemmas cover the cache's invalidation claim.
+2. **Range answer reuse had no model.** `RangeAnswerReuse.dfy` (over `StablePagination.Page`) proves the derived page is the prefix of the resident page of its own length, that a resident page which reached the end answers every larger request unchanged, and the derived next-page flag. Two executed mutation controls (`range-derivation-end-edge-off-by-one`, `range-derivation-ignores-next-page`) pin `eacl.client.range-reuse/derive-page` to it.
+3. **`ScanResponseCache.dfy` had no source bridge.** `scan_response_cache_refinement_bridge.clj` runs the production `serve` and `extend-entry` against a transcription of the model's `Serve`, `Extend`, and `Chunk` over randomized sequences, bounds, and limits in both directions (1,632 of 4,000 serve cases served, 2,017 of 4,000 extend cases extended, the rest correctly declined), and checks the proved properties directly on every reply.
+
+The stable-discovery README, `docs/formal-verification.md`, and the production decision inventory now describe the two leaves and the bridge; the leaf and obligation counts those docs used to carry are gone (the verifier pins the count).
