@@ -28,10 +28,6 @@
     :acquire-exact!
     :release!})
 
-(def optional-source-operations
-  "Operations a source MAY provide beyond committed basis selection."
-  #{})
-
 (def source-obligations
   "Runtime-facing assumptions for basis selection and native lifecycle. These
   are distinct from the immutable basis-adapter assumptions modeled by
@@ -343,9 +339,9 @@
          :phase :snapshot-acquisition}))))
   nil)
 
-(defn- require-owner-thread!
-  [selected constraint phase]
-  #?(:clj
+#?(:clj
+   (defn- require-owner-thread!
+     [selected constraint phase]
      (when (and (= :acquiring-thread constraint)
                 (not (identical? (::owner-thread selected)
                                  (Thread/currentThread))))
@@ -356,8 +352,11 @@
           :eacl/error :eacl/snapshot-thread-violation
           :backend (::backend-id selected)
           :phase phase
-          :constraint constraint})))
-     :cljs nil))
+          :constraint constraint}))))
+   :cljs
+   (defn- require-owner-thread!
+     [_selected _constraint _phase]
+     nil))
 
 (defn source-scope
   "Returns source-static source and branch identity without acquiring a DB."

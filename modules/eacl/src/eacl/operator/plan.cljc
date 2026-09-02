@@ -39,7 +39,7 @@
     :leaf-descriptors :costs :covers :generators :anchors
     :witness-programs :predicate-programs :specializations
     :capability-identity :compatibility-formats :versions :order-contract
-    :fingerprint})
+    :fingerprint :expression-roots :certificate-acyclic?})
 
 (defn- compile-error! [reason message data]
   (throw
@@ -55,8 +55,24 @@
        (= plan-version (:version value))
        (= :operator (:domain value))))
 
-(defn ^:no-doc expression-roots [plan]
-  (into {} (map (juxt :permission :root)) (:expressions plan)))
+(defn ^:no-doc expression-roots
+  "Permission → root-node index. Sealed into the plan at compile time;
+  the fallback recompute keeps hand-built test plans working."
+  [plan]
+  (or (:expression-roots plan)
+      (into {} (map (juxt :permission :root)) (:expressions plan))))
+
+(defn ^:no-doc certificate-acyclic?
+  "True when the dependency certificate has no cycle: every strongly
+  connected component is a singleton and no edge is a self-loop. Sealed
+  into the plan at compile time; the fallback keeps hand-built plans
+  working."
+  [plan]
+  (if (contains? plan :certificate-acyclic?)
+    (:certificate-acyclic? plan)
+    (let [certificate (:dependency-certificate plan)]
+      (and (every? #(= 1 (count %)) (:components certificate))
+           (not-any? #(= (:from %) (:to %)) (:edges certificate))))))
 
 (defn- expression-entity [adapter [resource-type permission-name :as node]]
   (let [entity (backend/invoke adapter :permission-expression
@@ -503,7 +519,14 @@
                                  (:negative result))))})]))))
 
 (defn- fingerprint-records [plan]
-  (let [without-fingerprint (dissoc plan :fingerprint)]
+  ;; Derived projections (:expression-roots, :certificate-acyclic?) stay
+  ;; outside the authenticated identity: they are pure recomputations of
+  ;; fingerprinted fields, and validate-plan's fresh-compile equality
+  ;; still covers them. Including them would break every outstanding
+  ;; cursor fingerprint for zero integrity gain.
+  (let [without-fingerprint (dissoc plan :fingerprint
+                                    :expression-roots
+                                    :certificate-acyclic?)]
     (into [[:header (:format plan) (:version plan) (:root plan)]]
           (for [key (sort-by str (keys without-fingerprint))]
             [:field key (get without-fingerprint key)]))))
@@ -607,8 +630,13 @@
          :order-contract order-contract}
         fingerprint
         (secure/canonical-records-digest fingerprint-domain
-                                         (fingerprint-records plan))]
-    (assoc plan :fingerprint fingerprint)))
+                                         (fingerprint-records plan))
+        ;; Derived fields ride outside the fingerprint and outside the
+        ;; cursor-scope digest key list: plan identity is unchanged.
+        plan (assoc plan :fingerprint fingerprint)]
+    (assoc plan
+           :expression-roots (expression-roots plan)
+           :certificate-acyclic? (certificate-acyclic? plan))))
 
 (defn seal-plan
   "Returns the existing union-only sealed plan unchanged, or compiles an

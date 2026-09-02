@@ -318,6 +318,10 @@ jobs:
           exit 1
 
       - name: Gate routing-certificate logical work and JVM allocation
+        # The gated operation is production-dormant (retired traversal
+        # authority); its scaling benchmark runs on the weekly cadence
+        # instead of every push.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
@@ -562,7 +566,8 @@ jobs:
       - name: Start parity nREPL
         run: |
           mkdir -p target/formal
-          clojure -M:dev:test:cljs-test:nrepl --port 7788 \
+          clojure -M:dev:test:cljs-test:formal-smoke:nrepl \
+            -J-Deacl.replay.strict=true --port 7788 \
             > target/formal/parity-nrepl.log 2>&1 &
           for attempt in {1..180}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
@@ -653,6 +658,14 @@ jobs:
         run: |
           bin/formal bootstrap
           bin/formal build-java
+
+      - name: Verify stable-discovery shipped-engine obligations
+        # The shipped enumeration engine's own proof gate (651 Dafny
+        # obligations, TLC families, refinement bridges) previously ran
+        # nowhere in CI while retired engines' proofs gated every push.
+        env:
+          EACL_VERIFY_FAST_LIMIT_SECONDS: '1800'
+        run: formal/stable-discovery/verify-fast.sh
 
       - name: Start campaign nREPL
         run: |

@@ -1654,47 +1654,6 @@
    consistency-validation-decisions
    result))
 
-(defn- expected-consistency-plan
-  [{:keys [mode capability-supported?]}]
-  (cond
-    (not capability-supported?)
-    (case mode
-      :minimize-latency :unsupported-capability
-
-      :at-exact-snapshot
-      :exact-snapshot-unavailable
-
-      :unsupported-head-barrier)
-
-    :else
-    (case mode
-      :minimize-latency :select-current
-      :fully-consistent :select-authoritative
-      :at-least-as-fresh :authenticate-and-select-at-least
-      :at-exact-snapshot :authenticate-and-select-exact)))
-
-(defn- expected-consistency-selection
-  [{:keys [kind selection-present? selected-adapter?
-           same-source-scope? revision-satisfied?]}]
-  (cond
-    (not selection-present?)
-    (if (= :exact kind)
-      :exact-snapshot-unavailable
-      :invalid-selected-adapter)
-
-    (not selected-adapter?)
-    :invalid-selected-adapter
-
-    (not same-source-scope?)
-    :incomparable-scope
-
-    (and (#{:at-least :exact} kind)
-         (not revision-satisfied?))
-    :history-divergence
-
-    :else
-    :accept))
-
 (defn- validate-ordered-merge-result!
   [result]
   (require-value!
@@ -1720,77 +1679,6 @@
       (require-value!
        operation [:result field] safe-natural? (get result field)))
     result))
-
-(defn- expected-enumeration-route
-  [{:keys [schema-identity certificate-schema-identity
-           root-defined? recursive? recursive-data-active?]}]
-  (cond
-    (or (empty? schema-identity)
-        (empty? certificate-schema-identity))
-    {:status :rejected :reason :missing-schema-identity}
-
-    (not= schema-identity certificate-schema-identity)
-    {:status :rejected :reason :schema-identity-mismatch}
-
-    :else
-    {:status :accepted
-     :route
-     (cond
-       (not root-defined?) :undefined
-       (and recursive? recursive-data-active?) :recursive
-       :else :acyclic)}))
-
-(defn- expected-acyclic-page
-  [{:keys [direction realized-eids size bound?]}]
-  (let [realized-count (count realized-eids)
-        take-count (min size realized-count)
-        sentinel? (> realized-count size)]
-    {:take-count take-count
-     :reverse? (= :desc direction)
-     :has-next? (if (= :asc direction) sentinel? bound?)
-     :has-previous? (if (= :asc direction) bound? sentinel?)
-     :merge-advances realized-count
-     :emitted-results take-count
-     :recursive-work 0}))
-
-(defn- expected-acyclic-continuation
-  [{:keys [authenticated? schema-matches? query-matches?
-           snapshot-matches? entry-present? entry-valid?]}]
-  (cond
-    (not (and authenticated?
-              schema-matches?
-              query-matches?
-              snapshot-matches?))
-    :reject
-
-    (and entry-present? entry-valid?)
-    :resume
-
-    :else
-    :replay))
-
-(defn- expected-acyclic-count
-  [{:keys [unique-count more? limit]}]
-  (let [limited? (some? limit)]
-    {:count
-     (if (and limited? (< limit unique-count))
-       limit
-       unique-count)
-     :truncated?
-     (boolean
-      (and limited?
-           (or (< limit unique-count)
-               (and (= limit unique-count) more?))))
-     :recursive-work 0}))
-
-(defn- expected-acyclic-work
-  [{:keys [requested-window merge-advances
-           emitted-results recursive-work]}]
-  (if (and (<= merge-advances (inc requested-window))
-           (<= emitted-results requested-window)
-           (zero? recursive-work))
-    :accepted
-    :rejected))
 
 (def indexed-scan-rejection-reasons
   #{:invalid-command
@@ -2207,114 +2095,11 @@
          {:operation operation
           :size (:size input)
           :take-count (:take-count result)}))
-
-      (when (and (= :consistency-plan operation)
-                 (not= result (expected-consistency-plan input)))
-        (boundary-error!
-         "Generated consistency plan contradicts its validated input."
-         {:operation operation
-          :mode (:mode input)
-          :result result}))
-      (when (and (= :consistency-validation operation)
-                 (not= result
-                       (expected-consistency-selection input)))
-        (boundary-error!
-         "Generated snapshot validation contradicts its validated input."
-         {:operation operation
-          :kind (:kind input)
-          :result result}))
-      (when (= :recursive-routing-certificate operation)
-        (let [node-count (:node-count input)
-              path-count (count (:path-descriptors input))
-              edge-count (count (:edges input))
-              accepted? (= :accepted (:status result))]
-          (when (or (> (:path-checks result) path-count)
-                    (> (:node-checks result) (* 2 node-count))
-                    (> (:edge-checks result) edge-count)
-                    (and
-                     accepted?
-                     (or (not= node-count
-                               (count (:traversal result)))
-                         (not= (* 2 node-count)
-                               (:node-checks result))
-                         (not= path-count
-                               (:path-checks result))
-                         (not= edge-count
-                               (:edge-checks result)))))
-            (boundary-error!
-             "Generated routing certificate result contradicts its validated input."
-             {:operation operation
-              :node-count node-count
-              :path-count path-count
-              :edge-count edge-count
-              :result-status (:status result)
-              :result-traversal-count
-              (when accepted?
-                (count (:traversal result)))
-              :result-path-checks (:path-checks result)
-              :result-node-checks (:node-checks result)
-              :result-edge-checks (:edge-checks result)}))))
-      (when (and (= :enumeration-route operation)
-                 (not= result (expected-enumeration-route input)))
-        (boundary-error!
-         "Generated enumeration route contradicts its schema binding."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-page operation)
-                 (not= result (expected-acyclic-page input)))
-        (boundary-error!
-         "Generated acyclic page contradicts its ordered input."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-continuation operation)
-                 (not= result
-                       (expected-acyclic-continuation input)))
-        (boundary-error!
-         "Generated acyclic continuation contradicts its authenticated context."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-count operation)
-                 (not= result (expected-acyclic-count input)))
-        (boundary-error!
-         "Generated acyclic count contradicts its unique input cardinality."
-         {:operation operation :input input :result result}))
-      (when (and (= :acyclic-work operation)
-                 (not= result (expected-acyclic-work input)))
-        (boundary-error!
-         "Generated acyclic work decision contradicts its bounded counters."
-         {:operation operation :input input :result result}))
-      (when (= :ordered-merge-chunk operation)
-        (let [left-consumed (:left-consumed result)
-              right-consumed (:right-consumed result)
-              left (:left input)
-              right (:right input)
-              expected-values
-              (->> (concat
-                    (take left-consumed left)
-                    (take right-consumed right))
-                   distinct
-                   (sort
-                    (case (:direction input)
-                      :asc <
-                      :desc >))
-                   vec)]
-          (when (or (> left-consumed (count left))
-                    (> right-consumed (count right))
-                    (and (or (empty? left) (empty? right))
-                         (or (pos? left-consumed)
-                             (pos? right-consumed)))
-                    (and (seq left)
-                         (seq right)
-                         (not
-                          (or (= left-consumed (count left))
-                              (= right-consumed (count right)))))
-                    (not= expected-values (:values result)))
-            (boundary-error!
-             "Generated merge chunk contradicts its validated input."
-             {:operation operation
-              :direction (:direction input)
-              :left-count (count left)
-              :right-count (count right)
-              :left-consumed left-consumed
-              :right-consumed right-consumed
-              :result-count (count (:values result))}))))
+      ;; The post-kernel `expected-*` re-derivations and the dead-operation
+      ;; compare branches were removed: the assurance contract mandates
+      ;; input/result validation at this boundary, not answer re-derivation,
+      ;; which the offline differential suites already provide at scale (and
+      ;; which on CLJS compared the portable kernel against itself).
       result)
     (catch #?(:clj Exception :cljs :default) error
       (if (= :eacl.verification/invalid-boundary

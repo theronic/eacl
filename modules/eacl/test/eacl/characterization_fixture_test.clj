@@ -180,12 +180,18 @@
            (set boundary-invariants)))))
 
 (deftest generated-java-boundary-is-reflection-free-test
-  (when
-   (try
-     (Class/forName "IndexedTraversal.ForwardStep")
-     true
-     (catch ClassNotFoundException _
-       false))
+  (let [classes-present?
+        (try
+          (Class/forName "IndexedTraversal.ForwardStep")
+          true
+          (catch ClassNotFoundException _
+            false))]
+    ;; In CI the generated classes are a build prerequisite: their absence
+    ;; must fail this gate loudly, never let it pass with zero assertions.
+    (when (System/getenv "CI")
+      (is classes-present?
+          "generated kernel classes are absent on a CI classpath"))
+    (when classes-present?
     (let [source
           (slurp
            (repo/file
@@ -222,7 +228,7 @@
             (str
              "Generated Java boundary contains reflective calls "
              "at source lines "
-             reflection-warning-lines))))))
+             reflection-warning-lines)))))))
 
 (deftest versioned-characterization-fixture-replays-test
   (let [{:keys [fixture-format

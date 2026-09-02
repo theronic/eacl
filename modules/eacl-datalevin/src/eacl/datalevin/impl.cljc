@@ -152,39 +152,27 @@
          :maximum ddb/maximum-unpaged-scan-results})))
     values))
 
-(defn subject->resources
-  [db subject-type subject-id relation-id resource-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound? limit]
-         :or {direction :asc}}
-        (if (map? cursor-or-options)
-          cursor-or-options
-          {:direction :asc
-           :bound-eid cursor-or-options
-           :inclusive-bound? false})
+(defn- endpoint-scan
+  [db endpoint-id attribute prefix cursor-or-options]
+  (let [{:keys [direction bound-eid inclusive-bound? limit]}
+        (relationship-storage/normalize-scan-options cursor-or-options)
         native-limit (inc (or limit ddb/maximum-unpaged-scan-results))]
     (eager-scan-values
      (ddb/eavt-endpoint-prefix
-      db subject-id relationship-storage/forward-attribute
-      [subject-type relation-id resource-type]
-      bound-eid direction native-limit)
+      db endpoint-id attribute prefix bound-eid direction native-limit)
      direction bound-eid inclusive-bound? limit)))
+
+(defn subject->resources
+  [db subject-type subject-id relation-id resource-type cursor-or-options]
+  (endpoint-scan db subject-id relationship-storage/forward-attribute
+                 [subject-type relation-id resource-type]
+                 cursor-or-options))
 
 (defn resource->subjects
   [db resource-type resource-id relation-id subject-type cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound? limit]
-         :or {direction :asc}}
-        (if (map? cursor-or-options)
-          cursor-or-options
-          {:direction :asc
-           :bound-eid cursor-or-options
-           :inclusive-bound? false})
-        native-limit (inc (or limit ddb/maximum-unpaged-scan-results))]
-    (eager-scan-values
-     (ddb/eavt-endpoint-prefix
-      db resource-id relationship-storage/reverse-attribute
-      [resource-type relation-id subject-type]
-      bound-eid direction native-limit)
-     direction bound-eid inclusive-bound? limit)))
+  (endpoint-scan db resource-id relationship-storage/reverse-attribute
+                 [resource-type relation-id subject-type]
+                 cursor-or-options))
 
 (defn- relationship-tuple
   [{:keys [subject-type relation-id resource-type resource-id]}]

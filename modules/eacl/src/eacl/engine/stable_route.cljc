@@ -67,6 +67,12 @@
    :relation-eid relation-eid :resource-type resource-type
    :bound-eid bound-eid :limit limit})
 
+(def ^:private run-option-keys
+  "Reducer run options forwarded verbatim by every traversal entry point."
+  [:adapter :fetch-fn :plan :subject-type :physical-chunk-size
+   :sidecar-cap :max-admissions :max-commands :max-transitions
+   :max-values :max-stack])
+
 (defn- probe-check-eids
   "Iterative depth-first membership search. Returns true iff a derivation
   of the plan's root permission on `resource-eid` bottoms out in a tuple
@@ -115,8 +121,8 @@
                  (when (>= (:commands @counters) max-commands)
                    (limit-failure! :max-commands @counters
                                    {:max-commands max-commands}))
-                 (let [values (into [] (take (:limit descriptor))
-                                    (fetch-fn descriptor))]
+                 (let [values (reducer/bounded-vector
+                               (fetch-fn descriptor) (:limit descriptor))]
                    (when (> (+ (:fetched-values @counters) (count values))
                             max-values)
                      (limit-failure! :max-values @counters
@@ -229,24 +235,18 @@
                   (request-counters/add-commands! (:commands @counters))
                   (request-counters/add-fetched-values!
                    (:fetched-values @counters))
-                  (doseq [stats
-                          (distinct
-                           (remove nil?
-                                   [reducer/*observer-stats*
-                                    reducer/*aggregate-work-stats*]))]
-                    (let [{:keys [admissions commands transitions
-                                  fetched-values]} @counters]
-                      (swap! stats
-                             (fn [c]
-                               (-> (or c {})
-                                   (update :derived-grants (fnil + 0) admissions)
-                                   (update :advanced-datoms (fnil + 0) commands)
-                                   (update :queued-work (fnil + 0) transitions)
-                                   (update :fetched-values (fnil + 0)
-                                           fetched-values)))))))]
+                  (let [{:keys [admissions commands transitions
+                                fetched-values]} @counters]
+                    (reducer/report-work-stats!
+                     [reducer/*observer-stats*
+                      reducer/*reducer-work-stats*]
+                     {:derived-grants admissions
+                      :advanced-datoms commands
+                      :queued-work transitions
+                      :fetched-values fetched-values})))]
     (loop [stack [[(or (:start-node options) (:root plan)) resource-eid]]
            visited (transient #{})]
-      (if (empty? stack)
+      (if (zero? (count stack))
         (do (report!) false)
         (let [[node eid :as state] (peek stack)
               stack (pop stack)]
@@ -386,13 +386,7 @@
                         (found!)))))]
       (try
         (let [finished (reducer/run-reverse
-                        (merge (select-keys options
-                                            [:adapter :fetch-fn :plan
-                                             :subject-type
-                                             :physical-chunk-size
-                                             :sidecar-cap :max-admissions
-                                             :max-commands
-                                             :max-transitions :max-values :max-stack])
+                        (merge (select-keys options run-option-keys)
                                {:resource-eid resource-eid
                                 :target exhaustion-target
                                 :cut-point! watch}))]
@@ -422,12 +416,7 @@
     (if (nil? subject-eid)
       {:count 0 :limit (or count-limit -1) :truncated? false}
       (let [finished (reducer/run-forward
-                      (merge (select-keys options
-                                          [:adapter :fetch-fn :plan
-                                           :subject-type :cut-point!
-                                           :physical-chunk-size :sidecar-cap
-                                           :max-admissions :max-commands
-                                           :max-transitions :max-values :max-stack])
+                      (merge (select-keys options run-option-keys)
                              {:subject-eid subject-eid
                               :result-sink :count
                               :target target}))
@@ -446,12 +435,7 @@
     (if (nil? resource-eid)
       {:count 0 :limit (or count-limit -1) :truncated? false}
       (let [finished (reducer/run-reverse
-                      (merge (select-keys options
-                                          [:adapter :fetch-fn :plan
-                                           :subject-type :cut-point!
-                                           :physical-chunk-size :sidecar-cap
-                                           :max-admissions :max-commands
-                                           :max-transitions :max-values :max-stack])
+                      (merge (select-keys options run-option-keys)
                              {:resource-eid resource-eid
                               :result-sink :count
                               :target target}))

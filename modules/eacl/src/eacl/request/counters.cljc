@@ -4,8 +4,7 @@
   Aggregate resource limits consume these exact counters. They are therefore
   semantic request state, not optional telemetry. A caller binds one ledger at
   the public boundary; internal operations may record work without accepting
-  another instrumentation parameter."
-  (:refer-clojure :exclude [reset!]))
+  another instrumentation parameter.")
 
 (def counter-keys
   [:acquisitions

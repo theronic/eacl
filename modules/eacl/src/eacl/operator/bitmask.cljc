@@ -22,7 +22,11 @@
    :words #?(:clj (int-array (word-count width))
              :cljs (js/Int32Array. (word-count width)))})
 
-(defn- check-index! [{:keys [width]} index]
+(defn- check-index!
+  "Mutator guard: an out-of-range write would silently set a padding bit
+  and corrupt the canonical portable form that cache entries rely on.
+  Reads need no guard — padding bits are provably zero."
+  [{:keys [width]} index]
   (when-not (and (integer? index) (<= 0 index) (< index width))
     (throw
      (ex-info "Candidate-mask bit index is outside the mask."
@@ -57,8 +61,7 @@
     mask))
 
 (defn bit-set?
-  [{:keys [words] :as mask} index]
-  (check-index! mask index)
+  [{:keys [words]} index]
   (not (zero? (bit-and (word-at words (quot index bits-per-word))
                        (bit-shift-left 1 (mod index bits-per-word))))))
 
@@ -67,7 +70,8 @@
   [{:keys [width words]}]
   {:width width
    :words (mapv #(bit-or 0 (word-at words %))
-                (range (word-count width)))})
+                (range #?(:clj (alength ^ints words)
+                          :cljs (.-length words))))})
 
 (defn from-indexes [width indexes]
   (let [mask (native width)]
@@ -77,5 +81,10 @@
 (defn indexes [{:keys [width] :as mask}]
   (into [] (filter #(bit-set? mask %)) (range width)))
 
-(defn empty? [mask]
-  (not-any? #(not (zero? %)) (:words (portable mask))))
+(defn empty? [{:keys [words]}]
+  (let [n #?(:clj (alength ^ints words) :cljs (.-length words))]
+    (loop [i 0]
+      (cond
+        (== i n) true
+        (zero? (word-at words i)) (recur (inc i))
+        :else false))))

@@ -1409,7 +1409,7 @@
      :resource (internalize resource)}))
 
 (defn- response-token-for-revision
-  [api native-revision opts]
+  [_api native-revision opts]
   (let [basis-source (:source opts)]
     (if (source/source? basis-source)
       (causal-token/issue
@@ -1472,11 +1472,6 @@
                     (remove transaction-function? operations))))
     []))
 
-(defn- relationship-seq
-  [relationships]
-  (if (map? relationships)
-    (:data relationships)
-    relationships))
 
 (defn- validate-permission-root!
   [api request-context selected-db opts subject permission resource]
@@ -1627,22 +1622,24 @@
                    (loop [index 0
                           output (transient [])]
                      (if (= index (count checks))
-                       (let [counters (counters-fn index)]
+                       (do
                          (try
+                           ;; Lazy consumed-work: the aggregate delta is
+                           ;; built only if the completion check throws.
                            (execution/check!
-                            batch-contract :batch-complete counters)
+                            batch-contract :batch-complete
+                            #(counters-fn index))
                            (catch #?(:clj Throwable :cljs :default) error
                              (batch/throw-demand-error!
-                              error (dec index) counters)))
+                              error (dec index) (counters-fn index))))
                          (persistent! output))
                        (let [demand (nth checks index)
-                             before-counters (counters-fn index)
                              decision
                              (try
                                (execution/check!
                                 batch-contract
                                 :batch-demand-schedule
-                                before-counters)
+                                #(counters-fn index))
                                (let [{:keys [subject permission resource]}
                                      demand]
                                  (request-context/memoized!
@@ -1688,7 +1685,7 @@
       :subject-type subject-type}))))
 
 (defn- relationship-filtered-lookup-page
-  [api opts request-context adapter selected-db cursor-opts operation query
+  [_api opts request-context adapter selected-db cursor-opts operation query
    internal-query validate!]
   (let [contract (:execution-contract opts)
         limits (:aggregate-limits contract)
@@ -3918,7 +3915,7 @@
 (defn- valid-security-kid?
   [kid]
   (or (keyword? kid)
-      (and (string? kid) (not (empty? kid)))))
+      (and (string? kid) (pos? (count kid)))))
 
 (defn- normalize-security-root-keyring
   [config-opts security-key security-keyring security-kid]

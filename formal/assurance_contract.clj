@@ -122,7 +122,7 @@
 (def operation-contracts
   [{:operation :execution-contract
     :entry-points
-    ['eacl.execution/normalize 'eacl.engine.v8/run-generated-traversal]
+    ['eacl.execution/normalize 'eacl.engine.v8/lookup-resources]
     :theorems
     [:deadline-dominates-quantum-and-adapter-boundaries
      :demand-page-stops-at-n-plus-one
@@ -267,7 +267,10 @@
     :entry-points
     ['eacl.consistency/selection-plan
      'eacl.consistency/select-from-source
-     'eacl.consistency/select]
+     'eacl.consistency/select
+     ;; Host-native production authority; the generated ConsistencyDecision
+     ;; model below remains its offline differential oracle.
+     'eacl.engine.portable-decisions/decide]
     :theorems
     [:unsupported-exact-plan-is-exact-snapshot-unavailable
      :at-least-acceptance-requires-ancestor
@@ -363,7 +366,7 @@
      :backend-proof-construction-refinement
      :independent-review]}
    {:operation :acyclic-frontier-alias-canonicalization
-    :entry-points ['eacl.engine.v8/frontier-permission-paths]
+    :entry-points ['eacl.engine.sealed-plan/derive-execution-frontier]
     :theorems
     [:canonical-permission-alias-preserves-denotation
      :canonical-frontier-deduplication-cannot-add-traversal-streams
@@ -403,7 +406,7 @@
      :source-fingerprint]
     :runtime-targets [:clj-java :cljs-javascript]}
    {:operation :recursive-scc-routing
-    :entry-points ['eacl.engine.v8/traversal-permission?]
+    :entry-points ['eacl.engine.sealed-plan/seal-plan]
     :theorems
     [:typed-permission-dependency-edge-identity
      :routing-step-monotonicity
@@ -431,11 +434,11 @@
      :allocation-retained-heap-and-latency-platform-contracts]}
    {:operation :indexed-traversal-transition
     :entry-points
-    ['eacl.engine.v8/recursive-forward-page
-     'eacl.engine.v8/recursive-reverse-page
-     'eacl.engine.v8/recursive-can?
-     'eacl.engine.v8/complete-generated-forward-denotation
-     'eacl.engine.v8/complete-generated-reverse-denotation]
+    ['eacl.verified-kernel/initialize-indexed
+     'eacl.verified-kernel/drive-indexed
+     'eacl.verified-kernel/resume-indexed
+     'eacl.verified-kernel/continue-indexed-page
+     'eacl.verified-kernel/read-indexed-result]
     :theorems
     [:malformed-indexed-scan-response-rejected
      :lifecycle-local-request-identity

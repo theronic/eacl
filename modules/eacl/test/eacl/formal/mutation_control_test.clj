@@ -59,19 +59,26 @@
 
 (defn- argument-ignoring-constant-fn?
   "True for a mutant expression that ignores every argument and returns a
-  literal: `(constantly x)`, or `(fn [& _] x)` and its underscore-parameter
-  variants. Such a mutant cannot be killed through production execution -
-  the kill assertion is decidable from the two literals alone."
+  literal: `(constantly x)`, or any `fn` whose single body form is a
+  constant (regardless of parameter naming - `(fn [a b] :rejected)` is as
+  undetectable through production execution as `(fn [& _] :rejected)`).
+  A body that is one of the parameters (an identity mutant) or any call
+  form still executes and is allowed."
   [form]
   (and (seq? form)
        (or (= 'constantly (first form))
            (and (contains? '#{fn fn*} (first form))
                 (vector? (second form))
-                (let [parameters (remove #{'&} (second form))
-                      body (drop 2 form)]
-                  (and (every? #(str/starts-with? (str %) "_") parameters)
-                       (= 1 (count body))
-                       (not (seq? (first body)))))))))
+                (let [parameters (set (remove #{'&} (second form)))
+                      body (drop 2 form)
+                      body-form (first body)
+                      references-parameter?
+                      (some parameters
+                            (filter symbol?
+                                    (tree-seq coll? seq [body-form])))]
+                  (and (= 1 (count body))
+                       (not (seq? body-form))
+                       (not references-parameter?)))))))
 
 (defn- with-redefs-bindings
   "Every `[symbol expression]` pair bound by any `with-redefs` inside `form`."

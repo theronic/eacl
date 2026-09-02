@@ -13,14 +13,7 @@
 
 (defn- scan-options
   [cursor-or-options]
-  (if (and (map? cursor-or-options)
-           (contains? cursor-or-options :direction))
-    {:direction (:direction cursor-or-options)
-     :bound-eid (:bound-eid cursor-or-options)
-     :inclusive-bound? (boolean (:inclusive-bound? cursor-or-options))}
-    {:direction :asc
-     :bound-eid cursor-or-options
-     :inclusive-bound? false}))
+  (relationship-storage/normalize-scan-options cursor-or-options))
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]

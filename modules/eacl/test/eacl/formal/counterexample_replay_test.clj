@@ -273,6 +273,16 @@
          regression-vars)]
     (is (seq available)
         "each isolated classpath must expose some closing regressions")
+    ;; Module-isolated nREPLs legitimately skip entries outside their
+    ;; classpath; the one job meant to be the complete replay gate sets
+    ;; this property so silent skips fail it instead of shrinking it.
+    (when (= "true" (System/getProperty "eacl.replay.strict"))
+      (is (= (count regression-vars) (count available))
+          (str "strict replay requires every recorded regression to "
+               "resolve; missing: "
+               (vec
+                (remove (set (map second available))
+                        (map second regression-vars))))))
     (doseq [[bug-id test-symbol test-var] available]
       (testing (name bug-id)
         (is (var? test-var) (str "missing replay " test-symbol))

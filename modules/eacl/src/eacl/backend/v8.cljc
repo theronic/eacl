@@ -676,12 +676,13 @@
       (if-not remaining
         value
         (let [item (first remaining)]
-          (when-not (exact-integer/exact? item)
-            (contract-violation!
-             backend-id operation-key :exact-integer value))
+          ;; One combined predicate on the hot path; the failed obligation
+          ;; is classified only on the cold violation branch.
           (when-not (exact-integer/natural? item)
             (contract-violation!
-             backend-id operation-key :nonnegative value))
+             backend-id operation-key
+             (if (exact-integer/exact? item) :nonnegative :exact-integer)
+             value))
           (when-not first?
             (if (= previous item)
               (contract-violation!
@@ -699,32 +700,29 @@
           (recur (next remaining) item false))))))
 
 (defn- guard-output!
-  [adapter operation-key args value]
+  [adapter operation-key options value]
   (let [backend-id (::id adapter)]
     (case operation-key
       (:subject->resources :resource->subjects)
-      (guard-scan! adapter operation-key (or (last args) {}) value)
+      (guard-scan! adapter operation-key (or options {}) value)
 
       :object-id->internal
       (do
         (when (and (some? value)
-                   (not (exact-integer/exact? value)))
-          (contract-violation!
-           backend-id operation-key :exact-integer value))
-        (when (and (some? value)
                    (not (exact-integer/natural? value)))
           (contract-violation!
-           backend-id operation-key :nonnegative value))
+           backend-id operation-key
+           (if (exact-integer/exact? value) :nonnegative :exact-integer)
+           value))
         value)
 
       :order-hint
       (do
-        (when-not (exact-integer/exact? value)
-          (contract-violation!
-           backend-id operation-key :exact-integer value))
         (when-not (exact-integer/natural? value)
           (contract-violation!
-           backend-id operation-key :nonnegative value))
+           backend-id operation-key
+           (if (exact-integer/exact? value) :nonnegative :exact-integer)
+           value))
         value)
 
       :basis-kind
@@ -862,21 +860,97 @@
               (observe-invocation! :failed adapter operation-key)
               (throw error))))))))
 
+(defn- invoke-completed
+  [adapter operation-key guarded? options value]
+  (observe-invocation! :after adapter operation-key)
+  (if guarded?
+    (guard-output! adapter operation-key options value)
+    value))
+
 (defn invoke
-  [adapter operation-key & args]
-  (request-counters/add-adapter-reads!)
-  (when *backend-op-stats*
-    (swap! *backend-op-stats* update operation-key (fnil inc 0)))
-  (observe-invocation! :before adapter operation-key)
-  (try
-    (let [value (apply (operation adapter operation-key) args)]
-      (observe-invocation! :after adapter operation-key)
-      (if (runtime-guards? adapter)
-        (guard-output! adapter operation-key args value)
-        value))
-    (catch #?(:clj Throwable :cljs :default) error
-      (observe-invocation! :failed adapter operation-key)
-      (throw error))))
+  "Invokes one adapter operation through the complete invocation boundary.
+  Fixed arities avoid per-call rest-arg allocation and `apply`; `operation`
+  validates the adapter once, so the guard flag is read directly. The
+  trailing options argument of a 5-argument ordered scan reaches the output
+  guard without traversing an argument seq."
+  ([adapter operation-key]
+   (let [implementation (operation adapter operation-key)
+         guarded? (true? (::runtime-guards? adapter))]
+     (request-counters/add-adapter-reads!)
+     (when *backend-op-stats*
+       (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+     (observe-invocation! :before adapter operation-key)
+     (try
+       (invoke-completed adapter operation-key guarded? nil
+                         (implementation))
+       (catch #?(:clj Throwable :cljs :default) error
+         (observe-invocation! :failed adapter operation-key)
+         (throw error)))))
+  ([adapter operation-key a]
+   (let [implementation (operation adapter operation-key)
+         guarded? (true? (::runtime-guards? adapter))]
+     (request-counters/add-adapter-reads!)
+     (when *backend-op-stats*
+       (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+     (observe-invocation! :before adapter operation-key)
+     (try
+       (invoke-completed adapter operation-key guarded? nil
+                         (implementation a))
+       (catch #?(:clj Throwable :cljs :default) error
+         (observe-invocation! :failed adapter operation-key)
+         (throw error)))))
+  ([adapter operation-key a b]
+   (let [implementation (operation adapter operation-key)
+         guarded? (true? (::runtime-guards? adapter))]
+     (request-counters/add-adapter-reads!)
+     (when *backend-op-stats*
+       (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+     (observe-invocation! :before adapter operation-key)
+     (try
+       (invoke-completed adapter operation-key guarded? nil
+                         (implementation a b))
+       (catch #?(:clj Throwable :cljs :default) error
+         (observe-invocation! :failed adapter operation-key)
+         (throw error)))))
+  ([adapter operation-key a b c]
+   (let [implementation (operation adapter operation-key)
+         guarded? (true? (::runtime-guards? adapter))]
+     (request-counters/add-adapter-reads!)
+     (when *backend-op-stats*
+       (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+     (observe-invocation! :before adapter operation-key)
+     (try
+       (invoke-completed adapter operation-key guarded? nil
+                         (implementation a b c))
+       (catch #?(:clj Throwable :cljs :default) error
+         (observe-invocation! :failed adapter operation-key)
+         (throw error)))))
+  ([adapter operation-key a b c d]
+   (let [implementation (operation adapter operation-key)
+         guarded? (true? (::runtime-guards? adapter))]
+     (request-counters/add-adapter-reads!)
+     (when *backend-op-stats*
+       (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+     (observe-invocation! :before adapter operation-key)
+     (try
+       (invoke-completed adapter operation-key guarded? nil
+                         (implementation a b c d))
+       (catch #?(:clj Throwable :cljs :default) error
+         (observe-invocation! :failed adapter operation-key)
+         (throw error)))))
+  ([adapter operation-key a b c d e]
+   (let [implementation (operation adapter operation-key)
+         guarded? (true? (::runtime-guards? adapter))]
+     (request-counters/add-adapter-reads!)
+     (when *backend-op-stats*
+       (swap! *backend-op-stats* update operation-key (fnil inc 0)))
+     (observe-invocation! :before adapter operation-key)
+     (try
+       (invoke-completed adapter operation-key guarded? e
+                         (implementation a b c d e))
+       (catch #?(:clj Throwable :cljs :default) error
+         (observe-invocation! :failed adapter operation-key)
+         (throw error))))))
 
 (defn reduce-definitions
   "Incrementally consumes one schema-definition sequence.

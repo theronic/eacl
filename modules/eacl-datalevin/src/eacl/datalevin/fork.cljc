@@ -6,10 +6,14 @@
   compilation with a missing Var."
   (:require [datalevin.core]))
 
-(defn- api-var
-  [symbol]
-  #?(:clj (ns-resolve 'datalevin.core symbol)
-     :cljs nil))
+#?(:clj
+   (defn- api-var
+     [sym]
+     (ns-resolve 'datalevin.core sym))
+   :cljs
+   (defn- api-var
+     [_sym]
+     nil))
 
 (defn write-policy-capabilities
   []

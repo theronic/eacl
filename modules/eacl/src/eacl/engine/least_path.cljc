@@ -1019,10 +1019,11 @@
                             v)})
 
           :arrow-permission
-          (let [subcoords (subvec (vec coords) 1 (dec (count coords)))
-                v (peek (vec coords))
+          (let [cv (vec coords)
+                subcoords (subvec cv 1 (dec (count cv)))
+                v (peek cv)
                 child (fwd-resume-level env (:target-node rule) subcoords)
-                i (last (butlast coords))]
+                i (peek (pop cv))]
             ;; The intermediate value is the sub-derivation's own leaf:
             ;; the deepest coordinate of the sub-path.
             {:child child

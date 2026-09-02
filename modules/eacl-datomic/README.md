@@ -134,3 +134,11 @@ Maven consumers install no formal tools.
 For the cross-backend capability matrix, recursive controls, and cache
 mutation rules, see the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
+
+## Removed (2026-09-01)
+
+- `eacl.datomic.codec` — page-token payload codec superseded by the portable
+  `eacl.secure-format` (used by `eacl.cursor` and `eacl.causal-token`).
+- `eacl.datomic.consistency` — the last remnant (`derive-signing-key`);
+  live Zed tokens are issued and authenticated by the shared
+  `eacl.causal-token` codec.

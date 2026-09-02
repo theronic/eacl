@@ -30,10 +30,8 @@
     eacl.datomic.cache-differential-test
     eacl.datomic.cache-model-test
     eacl.datomic.cache-review-regressions-test
-    eacl.datomic.codec-test
     eacl.datomic.config-test
     eacl.datomic.consistency-cache-test
-    eacl.datomic.consistency-test
     eacl.datomic.consistency-v3-test
     eacl.datomic.contract-test
     eacl.datomic.differential-test
@@ -79,12 +77,13 @@
 
 (def required-generated-authority-operations
   "The generated decision authority the stable-discovery design still
-  routes through on every backend: consistency selection, cursor continuation,
-  and relationship paging.
-  The retired traversal authorities (:enumeration-route, :acyclic-*,
-  :indexed-traversal-*) left with the engines they governed."
-  #{:consistency-plan
-    :cursor-continuation
+  routes through on every backend: cursor continuation and relationship
+  paging. Consistency selection/validation moved to the host-native
+  portable decision procedure (the generated model remains its offline
+  differential oracle), and the retired traversal authorities
+  (:enumeration-route, :acyclic-*, :indexed-traversal-*) left with the
+  engines they governed."
+  #{:cursor-continuation
     :relationship-page})
 
 (defn- count-call!
@@ -218,4 +217,7 @@
 
 (defn run-heavy!
   []
-  (run-suite! heavy-namespaces #{}))
+  ;; Heavy suites must also prove the generated authority executed: the
+  ;; empty set made the cutover assertion vacuous for benchmark runs.
+  (run-suite! heavy-namespaces
+              required-generated-authority-operations))

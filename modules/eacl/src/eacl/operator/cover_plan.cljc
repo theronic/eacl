@@ -170,7 +170,12 @@
                      :operator-cover (:fingerprint operator-plan)}
        :deterministic? (backend/deterministic? adapter)
        :identity-contract (backend/identity-contract adapter)
-       :runtime-guards? (backend/runtime-guards? adapter)
+       ;; The forwarding operations already run the base adapter's runtime
+       ;; guards (scan-invoker/direct-match-invoker capture them), and the
+       ;; synthetic node-definition operations serve trusted plan data.
+       ;; Re-enabling guards here re-validated every scanned value a second
+       ;; time on the operator cover path.
+       :runtime-guards? false
        :state (backend/state adapter)
        :operations operations}
        (backend/supports?

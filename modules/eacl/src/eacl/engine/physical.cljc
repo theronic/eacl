@@ -64,24 +64,22 @@
   single released value. A descriptor without a positive integer `:limit`
   realizes the complete scan, which keeps raw callers unchanged."
   [descriptor values]
-  (let [limit (:limit descriptor)
-        result
-        (cond
-          (and (int? limit) (pos? limit))
-          (cond
-            (and (vector? values) (<= (count values) limit)) values
-            (seq values) (into [] (take limit) values)
-            :else [])
+  (let [limit (:limit descriptor)]
+    (cond
+      (and (int? limit) (pos? limit))
+      (cond
+        (and (vector? values) (<= (count values) limit)) values
+        (seq values) (into [] (take limit) values)
+        :else [])
 
-          (vector? values)
-          values
+      (vector? values)
+      values
 
-          (seq values)
-          (vec values)
+      (seq values)
+      (vec values)
 
-          :else
-          [])]
-    result))
+      :else
+      [])))
 
 (defn classified-fetch-fn
   "Wraps a read-demand fetch so every outcome is one of the three classes.

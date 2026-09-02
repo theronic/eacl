@@ -340,14 +340,6 @@
                         (or (nil? subject-type)
                             (= subject-type (:eacl.relation/subject-type relation)))))))))
 
-(defn relationship-relation-ids
-  "The complete schema relation-id scope that can match a relationship read."
-  [db filters]
-  (->> (find-relations db filters)
-       (map :db/id)
-       sort
-       vec))
-
 (defn relationship-relation-id
   "Returns the schema relation eid named by one resolved relationship."
   [db relationship]

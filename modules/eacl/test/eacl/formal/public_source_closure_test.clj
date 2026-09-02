@@ -33,10 +33,10 @@
        (sort-by #(.getCanonicalPath %))))
 
 (defn- read-forms
-  [file features]
+  [source features]
   (with-open [reader
               (java.io.PushbackReader.
-               (io/reader file))]
+               (java.io.StringReader. source))]
     (loop [forms []]
       (let [form
             (read
@@ -52,7 +52,7 @@
   '#{backend/invoke eacl.backend.v8/invoke})
 
 (defn- invoke-calls
-  [file features]
+  [[file source] features]
   (mapcat
    (fn [form]
      (let [calls (atom [])]
@@ -69,7 +69,7 @@
           node)
         form)
        @calls))
-   (read-forms file features)))
+   (read-forms source features)))
 
 (deftest every-backend-dispatch-key-is-closed-over-the-required-contract
   (let [root (repository-root)
@@ -77,7 +77,9 @@
                       "modules/eacl-datomic/src"
                       "modules/eacl-datahike/src"
                       "modules/eacl-datascript/src"]
-        files (source-files root source-roots)
+        ;; One read per file; both reader-feature passes parse from the
+        ;; same string.
+        files (mapv (juxt identity slurp) (source-files root source-roots))
         required-operations
         (into (conj backend/required-snapshot-operations :proof-frame)
               backend/optional-snapshot-operations)]

@@ -9,7 +9,6 @@
             [eacl.exact-integer :as exact-integer]
             [eacl.request.counters :as request-counters]))
 
-(def request-version 1)
 (def cache-miss ::cache-miss)
 
 (def ^:dynamic *physical-stats*
@@ -19,6 +18,14 @@
 (defn- add-stat! [counter amount]
   (when *physical-stats*
     (swap! *physical-stats* update counter (fnil + 0) amount))
+  nil)
+
+(defn- add-stats!
+  "One observer update for a burst of counters (previously seven separate
+  dynamic-var checks and CAS swaps per batch)."
+  [deltas]
+  (when-let [stats *physical-stats*]
+    (swap! stats #(merge-with + (or % {}) deltas)))
   nil)
 
 (def ^:private request-keys #{:descriptor :candidates :direction})
@@ -45,6 +52,56 @@
      :operation :direct-match-many?
      :obligation obligation
      :value value})))
+
+(defn- closed-keys?
+  "Key-set equality without building a set: same size and every expected
+  key present."
+  [m expected]
+  (and (map? m)
+       (= (count m) (count expected))
+       (every? #(contains? m %) expected)))
+
+(defn- valid-probe!
+  "Per-probe equivalent of the `normalize-request` checks over one probe's
+  direction, descriptor, and candidate — run before cache state can
+  influence work, without the singleton request map or set allocations."
+  [{:keys [direction descriptor candidate]}]
+  (let [descriptor-keys (case direction
+                          :forward forward-descriptor-keys
+                          :reverse reverse-descriptor-keys
+                          nil)]
+    (when-not descriptor-keys
+      (invalid-request! "Direct-membership batch direction is invalid."
+                        {:direction direction
+                         :supported #{:forward :reverse}}))
+    (when-not (closed-keys? descriptor descriptor-keys)
+      (invalid-request!
+       "Direct-membership descriptor has unknown or missing fields."
+       {:direction direction
+        :expected-keys descriptor-keys
+        :actual-keys (when (map? descriptor) (set (keys descriptor)))}))
+    (doseq [field [:subject-type :resource-type]]
+      (when-not (keyword? (get descriptor field))
+        (invalid-request! "Direct-membership descriptor types must be keywords."
+                          {:field field :value (get descriptor field)})))
+    (doseq [field (if (= :forward direction)
+                    [:subject-eid :relation-eid]
+                    [:resource-eid :relation-eid])]
+      (when-not (exact-integer/natural? (get descriptor field))
+        (invalid-request!
+         "Direct-membership descriptor identifiers must be portable natural integers."
+         {:field field :value (get descriptor field)})))
+    (let [candidate-type (if (= :forward direction)
+                           (:resource-type descriptor)
+                           (:subject-type descriptor))]
+      (when-not (and (vector? candidate)
+                     (= 2 (count candidate))
+                     (= candidate-type (first candidate))
+                     (exact-integer/natural? (second candidate)))
+        (invalid-request!
+         "Direct-membership candidates must be aligned typed identifier pairs."
+         {:index 0 :candidate candidate
+          :expected-type candidate-type})))))
 
 (defn normalize-request
   "Validates and returns the closed portable batch request.
@@ -159,13 +216,13 @@
                         (if (true? matched?) (inc total) total))
                       0
                       result))]
-        (add-stat! :scalar-equivalent-predicates (count candidates))
-        (add-stat! :physical-subgroups 1)
-        (add-stat! :adapter-commands (if native? 1 (count candidates)))
-        (add-stat! :exact-seeks (if native? 0 (count candidates)))
-        (add-stat! :galloping-reseeks 0)
-        (add-stat! :prefix-values 0)
-        (add-stat! :batch-overread 0)
+        (add-stats! {:scalar-equivalent-predicates (count candidates)
+                     :physical-subgroups 1
+                     :adapter-commands (if native? 1 (count candidates))
+                     :exact-seeks (if native? 0 (count candidates))
+                     :galloping-reseeks 0
+                     :prefix-values 0
+                     :batch-overread 0})
         (when-not native?
           (request-counters/add-commands! (count candidates))
           (request-counters/add-probes! (count candidates))
@@ -220,19 +277,15 @@
          {:keys [results misses cache-hits]}
          (reduce-kv
           (fn [{:keys [results misses cache-hits]} index probe]
-            (when-not (and (map? probe)
-                           (= probe-keys (set (keys probe))))
+            (when-not (closed-keys? probe probe-keys)
               (invalid-request!
                "Direct-membership probe has unknown or missing fields."
                {:index index
                 :expected-keys probe-keys
                 :actual-keys (when (map? probe) (set (keys probe)))}))
-            ;; Singleton normalization establishes direction, descriptor, and
-            ;; typed-candidate validity before cache state can influence work.
-            (normalize-request
-             {:direction (:direction probe)
-              :descriptor (:descriptor probe)
-              :candidates [(:candidate probe)]})
+            ;; Establishes direction, descriptor, and typed-candidate
+            ;; validity before cache state can influence work.
+            (valid-probe! probe)
             (let [cached (cache-lookup probe)]
               (cond
                 (boolean? cached)
@@ -250,7 +303,13 @@
           {:results initial :misses [] :cache-hits 0}
           probes)
          groups (group-by (juxt :direction :descriptor) misses)
-         ordered-groups (sort-by (comp group-order-key key) groups)
+         ;; Decorate-sort: the group key vector is built once per group.
+         ordered-groups (map second
+                             (sort-by first compare
+                                      (map (fn [entry]
+                                             [(group-order-key (key entry))
+                                              entry])
+                                           groups)))
          completed
          (reduce
           (fn [results [[direction descriptor] entries]]
@@ -262,8 +321,11 @@
                    entries)
                   candidates
                   (->> (keys candidate->indexes)
-                       (sort-by (juxt (comp str first) second))
-                       vec)]
+                       (map (fn [candidate]
+                              [[(str (first candidate)) (second candidate)]
+                               candidate]))
+                       (sort-by first compare)
+                       (mapv second))]
               (reduce
                (fn [results candidate-chunk]
                  (let [request {:direction direction

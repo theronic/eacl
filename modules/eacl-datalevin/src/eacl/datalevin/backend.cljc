@@ -238,6 +238,13 @@
             (impl/find-permission-defs
              % resource-type permission-name))))
 
+       ;; Argument-domain guards stay: the adapter contract test and the
+       ;; EACL-FORMAL-027 ledger pin fail-closed rejection of non-natural
+       ;; inputs, and they are three scalar checks per call. The per-ELEMENT
+       ;; result guards were removed - the engine's guard-scan!
+       ;; (:runtime-guards? is true here) already rejects non-natural scan
+       ;; values, so every value was validated twice. `vec` keeps
+       ;; realization inside the LMDB snapshot scope `with-db` requires.
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
          (exact-natural! :subject-id subject-id)
@@ -246,11 +253,9 @@
            (exact-natural! :cursor-bound bound-eid))
          (ddb/with-db
            snapshot
-           #(mapv (fn [resource-id]
-                    (exact-natural! :resource-id resource-id))
-                  (impl/subject->resources
-                   % subject-type subject-id relation-id resource-type
-                   options))))
+           #(vec (impl/subject->resources
+                  % subject-type subject-id relation-id resource-type
+                  options))))
 
        :resource->subjects
        (fn [resource-type resource-id relation-id subject-type options]
@@ -260,11 +265,9 @@
            (exact-natural! :cursor-bound bound-eid))
          (ddb/with-db
            snapshot
-           #(mapv (fn [subject-id]
-                    (exact-natural! :subject-id subject-id))
-                  (impl/resource->subjects
-                   % resource-type resource-id relation-id subject-type
-                   options))))
+           #(vec (impl/resource->subjects
+                  % resource-type resource-id relation-id subject-type
+                  options))))
 
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]

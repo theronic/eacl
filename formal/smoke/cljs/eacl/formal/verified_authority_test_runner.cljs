@@ -39,8 +39,9 @@
   traversal authorities (:enumeration-route, :acyclic-*,
   :indexed-traversal-*, :recursive-routing-certificate) left with the
   engines they governed. Mirrors the JVM cutover suite's roster."
-  #{:consistency-plan
-    :cursor-continuation
+  ;; Consistency moved to the host-native portable authority; the
+  ;; generated model is its offline oracle.
+  #{:cursor-continuation
     :relationship-page})
 
 (defn- count-call!

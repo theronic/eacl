@@ -4,6 +4,7 @@
             [eacl.backend.source :as source]
             [eacl.causal-token :as causal-token]
             [eacl.spicedb.consistency :as public-consistency]
+            [eacl.engine.portable-decisions :as portable]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
@@ -91,12 +92,17 @@
         (throw error)))))
 
 (defn- decide
-  [options operation input]
-  (verified/decide
-   (or (:decision-kernel options)
-       subproblem/*decision-kernel*)
-   operation
-   input))
+  "Host-native consistency authority: consistency selection and validation
+  are total functions of validated host input, so they run the
+  differentially certified portable decision procedure inside the
+  certified validation vocabulary on every platform - zero
+  generated-runtime crossings and no per-decision kernel selection
+  (kernel-boundary-efficiency: request-invariant decisions cross no
+  runtime boundary). The generated kernel remains this procedure's
+  offline differential oracle."
+  [_options operation input]
+  (verified/validate-input! operation input)
+  (verified/validate-result! operation (portable/decide operation input)))
 
 (defn- capability-error
   [source mode]

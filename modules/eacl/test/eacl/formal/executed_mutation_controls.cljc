@@ -29,23 +29,34 @@
   (verified/decide portable/portable-decision-kernel operation input))
 
 (defn- portable-mutation-killed?
+  "Genuine differential kill: the unmutated kernel must first reproduce
+  `expected` (the baseline gate), the mutant must actually execute on the
+  claimed operation (the `invoked?` witness - a dispatch drift that skips
+  the mutant fails the control instead of passing vacuously), and the
+  mutated run must then differ or be rejected by the boundary."
   [original operation input expected mutant]
-  (let [gate #(= expected (production-decision operation input))]
+  (let [invoked? (volatile! false)
+        gate #(= expected (production-decision operation input))]
     (and
      (gate)
-     (try
-       (false?
-        (with-redefs [portable/decide
-                      (fn [candidate-operation candidate-input]
-                        (if (= operation candidate-operation)
-                          (if (fn? mutant)
-                            (mutant candidate-input)
-                            mutant)
-                          (original candidate-operation candidate-input)))]
-          (gate)))
-       (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
-              _
-         true)))))
+     (let [killed?
+           (try
+             (false?
+              (with-redefs [portable/decide
+                            (fn [candidate-operation candidate-input]
+                              (if (= operation candidate-operation)
+                                (do (vreset! invoked? true)
+                                    (if (fn? mutant)
+                                      (mutant candidate-input)
+                                      mutant))
+                                (original candidate-operation
+                                          candidate-input)))]
+                (gate)))
+             (catch #?(:clj clojure.lang.ExceptionInfo
+                       :cljs cljs.core.ExceptionInfo)
+                    _
+               true))]
+       (and @invoked? killed?)))))
 
 (def arrow-authorization-input
   {:objects [{:type "user" :id "u1"}
