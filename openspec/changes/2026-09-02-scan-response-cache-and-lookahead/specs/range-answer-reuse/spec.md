@@ -13,12 +13,16 @@ Reuse never changes any public content and stores only what demand produced.
 
 ### Requirement: A completed page retains every result's edge
 
-When a page operation on an unbounded route completes with caching enabled,
-the internal page published under its exact basis SHALL retain, alongside
-each result, the internal cursor edge that would end a page at that result,
-so that a page of any smaller size from the same start boundary can be
-derived without traversal. Bounded candidate-window routes SHALL NOT
-participate: their page content depends on the window size.
+When a page operation on the least-derivation-path route (an acyclic plan
+without a candidate window) completes with caching enabled, the internal
+page published under its exact basis SHALL retain, alongside each result,
+the internal cursor edge that would end a page at that result, so that a
+page of any smaller size from the same start boundary can be derived
+without traversal. Bounded candidate-window routes SHALL NOT participate:
+their page content depends on the window size. Stable first-discovery
+routes (recursive plans) SHALL NOT participate either: their continuation
+resumes from a stored checkpoint at the served boundary, and a derived
+page would hand out a boundary with no checkpoint behind it.
 
 #### Scenario: Edges retained
 
@@ -29,6 +33,11 @@ participate: their page content depends on the window size.
 
 - **WHEN** a page with a relationship filter reports `:bounded?`
 - **THEN** it is published only under its exact key and never used to derive another page size
+
+#### Scenario: Recursive plan excluded
+
+- **WHEN** a page is served by the stable first-discovery route of a recursive plan
+- **THEN** it is published only under its exact key, and its continuation still resumes from the stored checkpoint
 
 ### Requirement: A shorter page is served as a prefix of a longer completed page
 

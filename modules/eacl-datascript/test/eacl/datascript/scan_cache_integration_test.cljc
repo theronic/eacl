@@ -2,7 +2,8 @@
   "Cross-runtime parity of the exact scan-response cache on DataScript:
   identical pages, elided commands across requests, and the request-local
   memo under `:cache? false`."
-  (:require [#?(:clj clojure.test :cljs cljs.test)
+  (:require [clojure.set]
+            [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.backend.v8 :as backend]
@@ -42,16 +43,30 @@
             (range (:users config)))
       0))
 
+(defn- sharing-pair
+  []
+  (let [members (fixture/memberships config)
+        groups-of (fn [u] (set (take (:groups-per-user config) (get members u))))]
+    (first (for [a (range (:users config))
+                 b (range (:users config))
+                 :when (and (< a b) (seq (clojure.set/intersection (groups-of a) (groups-of b))))]
+             [a b]))))
+
 (deftest shared-tier-elides-commands-across-requests-test
-  (let [client (seed-client! {})
-        u (sharing-user client)
-        [first-page first-commands] (scan-commands #(fixture/page client u 20))
-        [second-page second-commands] (scan-commands #(fixture/page client u 19))
+  (let [conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        _ (fixture/seed! client config
+                         (fn [ids] (ds/transact! conn (mapv (fn [id] {:eacl/id id}) ids))))
+        disabled (datascript/make-client conn {:scan-cache false})
+        [a b] (sharing-pair)
+        [_ a-commands] (scan-commands #(fixture/page client a 20))
+        [b-page b-commands] (scan-commands #(fixture/page client b 20))
+        [b-plain plain-commands] (scan-commands #(fixture/page disabled b 20))
         stats (:scan-cache (datascript/cache-stats client))]
-    (testing "a different page size of the same walk reuses the scans"
-      (is (= (vec (take 19 (:data first-page))) (:data second-page)))
-      (is (pos? first-commands))
-      (is (< second-commands first-commands)))
+    (testing "a second user's walk reuses the group scans the first fetched"
+      (is (= (:data b-plain) (:data b-page)))
+      (is (pos? a-commands))
+      (is (< b-commands plain-commands)))
     (testing "meters"
       (is (pos? (:hits stats)))
       (is (pos? (:entry-count stats))))))

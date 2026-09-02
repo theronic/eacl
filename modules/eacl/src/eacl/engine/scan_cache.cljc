@@ -36,6 +36,11 @@
   retains, so memo-free execution's command multiset can be observed."
   false)
 
+(def ^:dynamic ^:no-doc *shared-disabled?*
+  "Internal test and benchmark seam: when true the shared tier is neither
+  consulted nor deposited into, whatever the client configured."
+  false)
+
 (defn descriptor-key
   "The reuse identity of one read descriptor, or nil for an unknown
   operation. Bound and limit are not part of it: one prefix serves every
@@ -210,7 +215,7 @@
                                 (serve resident-memo bound limit direction))]
               (do (request-counters/add! :scan-memo-hits)
                   reply)
-              (let [scope (when (and tier scope-fn)
+              (let [scope (when (and tier scope-fn (not *shared-disabled?*))
                             (scope-fn (:relation-eid descriptor)))
                     shared-key (when scope (shared-key scope key))
                     _ (when (and tier (nil? scope))

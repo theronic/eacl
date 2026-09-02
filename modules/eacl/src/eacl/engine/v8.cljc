@@ -272,18 +272,20 @@
   "An empty page carries no cursors, so it can advertise neither direction:
   `has-next-page? true` with a nil `end-cursor` gave clients a loop they could
   not exit. Both flags are therefore clamped to false when there are no items."
-  [{:keys [items has-next? has-previous?]}]
+  [{:keys [items has-next? has-previous? range-reusable?]}]
   (let [any? (boolean (seq items))]
     ;; One internal edge per result lets a shorter page of the same walk be
-    ;; derived from this one (eacl.client.range-reuse); both public orders
-    ;; are deterministic from the start boundary, so the marker is sound
-    ;; here and absent on candidate-window routes.
-    {:data (mapv :node items)
-     :edges (mapv :cursor items)
-     :range-reusable? true
-     :page-info (page-info {:items items
-                            :has-next? (and any? has-next?)
-                            :has-previous? (and any? has-previous?)})}))
+    ;; derived from this one (eacl.client.range-reuse). Only the least-path
+    ;; route sets the marker: its keyset cursors are history-free, whereas a
+    ;; derived first-discovery page would hand out a cursor with no
+    ;; checkpoint behind it and turn the continuation into a full replay.
+    (cond-> {:data (mapv :node items)
+             :page-info (page-info {:items items
+                                    :has-next? (and any? has-next?)
+                                    :has-previous? (and any? has-previous?)})}
+      range-reusable?
+      (assoc :edges (mapv :cursor items)
+             :range-reusable? true))))
 
 (defn- raw-subject->resources
   [snapshot subject-type subject-eid relation-eid resource-type opts]
@@ -1347,18 +1349,22 @@
 
 (defn- routed-fetch-fn
   "The classification/retry envelope shared by the reducer, least-path, and
-  probe physical read paths; `raw-fetch-fn` selects the adapter seam. When a
-  request binds `*scan-cache*`, the exact scan-response layer wraps the
-  envelope: hits skip retry and classification, misses see classified,
-  retried replies."
-  [raw-fetch-fn]
+  probe physical read paths; `raw-fetch-fn` selects the adapter seam over
+  `adapter`. When a request binds `*scan-cache*` for that same adapter, the
+  exact scan-response layer wraps the envelope: hits skip retry and
+  classification, misses see classified, retried replies. Scans against any
+  other adapter (cursor recovery on an older basis, detached bases) keep
+  the plain envelope: their replies belong to a different immutable basis,
+  and neither the request memo nor the shared tier may mix bases."
+  [raw-fetch-fn adapter]
   (let [attempts (when *recursive-traversal-stats* (atom 0))
         routed (physical/retrying-fetch-fn
                 raw-fetch-fn
                 {:max-attempts default-physical-attempts
                  :deadline-nanos (:deadline-nanos execution/*contract*)
-                 :attempts attempts})]
-    {:fetch-fn (if-let [context *scan-cache*]
+                 :attempts attempts})
+        context *scan-cache*]
+    {:fetch-fn (if (and context (identical? adapter (:adapter context)))
                  (scan-cache/caching-fetch-fn routed context)
                  routed)
      :attempts attempts}))
@@ -1371,14 +1377,14 @@
   under the request's original absolute deadline. Returns the fetch-fn and
   the attempt counter that feeds `:adapter-attempts` in the observer stats."
   [db]
-  (routed-fetch-fn (stable-reducer/adapter-fetch-fn db)))
+  (routed-fetch-fn (stable-reducer/adapter-fetch-fn db) db))
 
 (defn- least-path-fetch-fn
   "The routed physical read path for the least-path evaluator: identical
   classification/retry envelope to `stable-fetch-fn`, over the
   direction-aware seam (descending windows issue :desc scans)."
   [db]
-  (routed-fetch-fn (least-path/adapter-fetch-fn db)))
+  (routed-fetch-fn (least-path/adapter-fetch-fn db) db))
 
 (defn- report-adapter-attempts!
   [attempts]
@@ -1838,6 +1844,7 @@
         (report-adapter-attempts! attempts)
         (page-response
          {:items items
+          :range-reusable? true
           :has-next? (if descending?
                        (boolean bound)
                        (boolean (:has-more? run)))

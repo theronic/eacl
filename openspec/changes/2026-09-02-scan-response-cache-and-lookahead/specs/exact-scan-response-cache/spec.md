@@ -159,6 +159,11 @@ and deposit for that scan while leaving the request-local memo in effect.
 - **WHEN** the selected snapshot cannot supply a complete ordered-generation proof for the scanned relation
 - **THEN** the scan runs against the adapter with only the request-local memo, and the request completes without error
 
+#### Scenario: Scan against another basis inside one request
+
+- **WHEN** a request scans an adapter other than its selected one, as cursor recovery on an older basis does
+- **THEN** neither the memo nor the shared tier serves or retains those scans, and a later request on the current basis observes the write
+
 ### Requirement: The cache is a physical accelerator outside every semantic identity
 
 Cached prefixes MUST NOT appear in cursors, checkpoints, completed answers,

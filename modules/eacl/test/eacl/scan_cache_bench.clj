@@ -5,6 +5,7 @@
   the invoke observer. Backend modules supply the seeded client; the CI smoke
   test runs one small fixture per backend, the gate the full one."
   (:require [eacl.backend.v8 :as backend]
+            [eacl.client.range-reuse :as range-reuse]
             [eacl.scan-cache-fixture :as fixture]))
 
 (defn- median
@@ -27,7 +28,10 @@
                                          operation))
                      (swap! commands inc)))
         durations
-        (binding [backend/*invoke-observer* observer]
+        ;; Range reuse would answer a shorter or complete page without any
+        ;; scan; the harness measures scan reuse alone.
+        (binding [backend/*invoke-observer* observer
+                  range-reuse/*disabled?* true]
           (mapv (fn [u]
                   (let [start (System/nanoTime)]
                     (fixture/page client u page-size :cache? cache?)

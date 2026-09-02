@@ -129,7 +129,9 @@
 (defn- ensure-execution-contract
   [opts operation request]
   (let [opts
-        (cond-> (assoc opts :request-operation operation)
+        ;; The public operation name for observation only: `:request-operation`
+        ;; is reserved for batch endpoints and changes scalar decision keys.
+        (cond-> (assoc opts ::observed-operation operation)
           (nil? (:cache-lifecycle opts))
           (assoc :cache-lifecycle
                  (cache/capture-cache-lifecycle
@@ -349,7 +351,7 @@
         deliver! (fn [outcome error]
                    (try
                      (observer
-                      (cond-> {:operation (:request-operation opts)
+                      (cond-> {:operation (::observed-operation opts)
                                :provenance (if (pos? lookahead/*depth*)
                                              :lookahead
                                              :request)
@@ -411,7 +413,10 @@
                       scope))))))]
     {:memo (scan-cache/memo)
      :tier (when scope-fn tier)
-     :scope-fn scope-fn}))
+     :scope-fn scope-fn
+     ;; The engine applies the context only to scans against this adapter;
+     ;; a cursor recovered on an older basis scans a different one.
+     :adapter (request-context/adapter request-context)}))
 
 (defn- with-selected-context
   [api source opts consistency-value f]
@@ -1071,7 +1076,8 @@
             range-tier
             (when (and (contains? #{:lookup-resources :lookup-subjects}
                                   operation)
-                       (not speculative))
+                       (not speculative)
+                       (not range-reuse/*disabled?*))
               (:range-tier opts))
             range-key
             (when range-tier

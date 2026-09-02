@@ -122,7 +122,12 @@ build engine adapters outside a request context keep the plain routed fetch
 function unchanged. Hits skip retry and classification; misses see
 classified, retried replies and deposit only complete replies. The shared
 tier honors the execution contract's cache-stage availability exactly as the
-answer tiers do. `fetch-values` and the probe `fetch!`
+answer tiers do. The context names the adapter it was built for, and the
+engine applies it only to scans against that adapter: a cursor recovered
+on an older basis scans a detached adapter whose replies belong to another
+snapshot while the request's proofs carry the current generations, so
+admitting them would poison the tier with pre-write prefixes under
+post-write generations (found by the recursive cursor-recovery tests). `fetch-values` and the probe `fetch!`
 still count every served value, so limits, deadline checks, and typed errors
 are unchanged. The least-path seam preserves `:direction`; descending scans
 use a separate key and prefix (the descriptor includes direction) so the
@@ -224,8 +229,12 @@ rebuilds page info; a longer request runs the ordinary continuation from the
 retained end edge and concatenates. Derived pages go through the same
 render-and-publish path, so their rendered pages and exact answers are
 published as if computed. Bounded candidate-window routes are excluded
-because their content depends on the window size, and `:cache? false`
-bypasses range reuse like every other shared-store read. Retention: the
+because their content depends on the window size; stable first-discovery
+routes (recursive plans) are excluded because a derived page would hand
+out a cursor whose ordinal has no stored checkpoint, turning the
+continuation into a full replay (measured by the checkpoint-reuse test),
+so only least-path pages carry the marker. `:cache? false` bypasses range
+reuse like every other shared-store read. Retention: the
 range key keeps the longest completed page (replace-if longer); exact keys
 keep what demand produced. Cost of a derived hit is one answer-tier hit plus
 rendering of `M` identities and two cursor mints, far below a traversal.

@@ -17,6 +17,11 @@
 
 (def default-max-entries 512)
 
+(def ^:dynamic ^:no-doc *disabled?*
+  "Internal test and benchmark seam: when true no page is derived or
+  published through the range tier."
+  false)
+
 (defn tier
   [{:keys [max-entries] :or {max-entries default-max-entries}}]
   {:store (lru/store max-entries)
