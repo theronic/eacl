@@ -4,14 +4,14 @@
  :source-closure
  {:report "formal/verification/public-source-closure.json"
   :status :named-public-roots-enumerated
-  :source-files 103
+  :source-files 105
   :public-roots 91
-  :reachable-definitions 2202
+  :reachable-definitions 2288
   :inline-defrecord-method-attribution :source-span-closed
   :backend-dispatch
   {:report "formal/verification/backend-dispatch.edn"
-   :clj-invoke-sites 43
-   :cljs-invoke-sites 43
+   :clj-invoke-sites 49
+   :cljs-invoke-sites 49
    :literal-operation-keys 21
    :status :static-operation-key-closure-established
    :assurance :not-adapter-semantic-proof}
@@ -191,7 +191,9 @@
    :consumer ['eacl.engine.v8/enumeration-route]}
   {:source "formal/dafny/SchemaPlanCost.dfy"
    :class :proof-only-host-control-and-cost-model
-   :consumer ['eacl.engine.v8/frontier-permission-paths
+   :consumer ['eacl.engine.sealed-plan/resolve-pure-alias
+              'eacl.engine.sealed-plan/derive-execution-frontier
+              'eacl.engine.sealed-plan/seal-plan
               "formal/verification/performance-gates.edn"]}
   {:source "formal/dafny/SnapshotOracle.dfy"
    :class :spec-only-interface-contract
@@ -741,7 +743,7 @@
    :backend-certification [:datomic :datascript :datahike :datalevin]
    :production-mutations {:registered 10 :killed 10 :survived 0}
    :source-closure
-   {:source-files 103 :public-roots 91 :reachable-definitions 2202}
+   {:source-files 105 :public-roots 91 :reachable-definitions 2288}
    :production-authoritative
    :enabled-after-conformance-storage-and-performance-qualification
    :remaining []

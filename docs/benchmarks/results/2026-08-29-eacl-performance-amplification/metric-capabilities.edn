@@ -1,0 +1,64 @@
+{:document/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :runtime {:clojure "1.11.4" :java "26.0.2"}
+ :records
+ [{:format :eacl.performance/metric-capability-v1
+   :metric :elapsed-nanos
+   :instrument {:id :system-nano-time
+                :runtime :clj
+                :version "java-26.0.2"}
+   :status :supported
+   :unit :nanoseconds
+   :calibration
+   {:monotonic? true
+    :overhead-per-read 9.496417
+    :overhead-unit :nanoseconds
+    :iterations 1000000
+    :control {:kind :tight-read-loop :elapsed-nanos 9496417}}
+   :attribution
+   {:response-boundary :after-full-public-result-realization
+    :deferred-work :separate-lane}}
+  {:format :eacl.performance/metric-capability-v1
+   :metric :allocated-bytes
+   :instrument {:id :jvm-thread-allocated-bytes
+                :runtime :clj
+                :version "java-26.0.2-com.sun.management.ThreadMXBean"}
+   :status :supported
+   :unit :bytes
+   :calibration
+   {:monotonic? true
+    :overhead-per-read 27.982625
+    :overhead-unit :nanoseconds
+    :iterations 1000000
+    :control {:kind :tight-read-loop
+              :elapsed-nanos 27982625
+              :reader-allocated-byte-delta 1360}}
+   :attribution
+   {:response-boundary :after-full-public-result-realization
+    :deferred-work :separate-lane}}
+  {:format :eacl.performance/metric-capability-v1
+   :metric :mandatory-core-counters
+   :instrument {:id :eacl-request-counter-ledger
+                :runtime :clj
+                :version "eacl.request.counters-v1"}
+   :status :supported
+   :unit :count
+   :calibration
+   {:monotonic? true
+    :overhead-per-read 145.145205
+    :overhead-unit :nanoseconds
+    :iterations 200000
+    :control {:kind :commands-increment-loop
+              :elapsed-nanos 29029041
+              :expected-final 200000
+              :actual-final 200000}}
+   :attribution
+   {:response-boundary :after-full-public-result-realization
+    :deferred-work :separate-lane}}
+  {:format :eacl.performance/metric-capability-v1
+   :metric :cpu-nanos
+   :instrument {:id :same-thread-cpu-time
+                :runtime :clj
+                :version "unconfigured-java-26.0.2"}
+   :status :unsupported
+   :reason :not-calibrated-for-this-evidence-lane}]}

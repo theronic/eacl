@@ -20,6 +20,10 @@
 ;; Three-outcome classification (task 7.1)
 ;; ---------------------------------------------------------------------------
 
+(def ^:private retry-outcome
+  #?(:clj (Object.)
+     :cljs (js-obj)))
+
 (defn scan-failure?
   [error]
   (= :eacl.scan/failure (:eacl/error (ex-data error))))
@@ -63,9 +67,21 @@
   [descriptor values]
   (let [limit (:limit descriptor)
         result
-        (if (and (int? limit) (pos? limit))
-          (into [] (take limit) values)
-          (vec values))]
+        (cond
+          (and (int? limit) (pos? limit))
+          (cond
+            (and (vector? values) (<= (count values) limit)) values
+            (seq values) (into [] (take limit) values)
+            :else [])
+
+          (vector? values)
+          values
+
+          (seq values)
+          (vec values)
+
+          :else
+          [])]
     (when metrics/*store*
       (metrics/record-scan! descriptor result))
     result))
@@ -102,7 +118,7 @@
         (when attempts (swap! attempts inc))
         (let [outcome
               (try
-                {:values (classified descriptor)}
+                (classified descriptor)
                 (catch #?(:clj clojure.lang.ExceptionInfo
                           :cljs cljs.core/ExceptionInfo) failure
                   (if (and (scan-failure? failure)
@@ -111,11 +127,11 @@
                            (< attempt max-attempts)
                            (or (nil? deadline-nanos)
                                (< (execution/now-nanos) deadline-nanos)))
-                    {:retry failure}
+                    retry-outcome
                     (throw failure))))]
-          (if (contains? outcome :values)
-            (:values outcome)
-            (recur (inc attempt))))))))
+          (if (identical? retry-outcome outcome)
+            (recur (inc attempt))
+            outcome))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Service-edge admission and the replay ledger (task 7.5)

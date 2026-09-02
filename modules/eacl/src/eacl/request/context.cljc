@@ -95,6 +95,15 @@
     (require-owner-thread! state :context-access)
     context))
 
+(defn ^:no-doc active-state
+  "Returns the already validated state for one synchronous internal request.
+
+  The state may only be retained by the owning call stack.  Context closure is
+  owner-thread confined, so one successful validation is sufficient until
+  that stack returns; internal consumers must not publish or retain it."
+  [context]
+  (state-of (assert-open! context)))
+
 (defn closed?
   [context]
   (= :closed @(:close-state (state-of context))))
@@ -230,8 +239,8 @@
               maximum-proof-relation-count
               (assoc :maximum-relation-count
                      maximum-proof-relation-count))
-            request-proof-frame
-            (proof-frame/request-frame adapter proof-options)
+            proof-frame-delay
+            (delay (proof-frame/request-frame adapter proof-options))
             derived-delay
             (delay
               (engine/schema-cache-for!
@@ -250,11 +259,11 @@
               :lineage lineage
               :schema-generation-delay schema-generation-delay
               :contract contract
-              :proof-frame request-proof-frame
+              :proof-frame-delay proof-frame-delay
               :derived-delay derived-delay
-              :memos (zipmap memo-kinds (repeatedly #(atom {})))
+              :memos-delay (delay (atom {}))
               :counter-ledger ledger
-              :publication-buffer (atom [])
+              :publication-buffer-delay (delay (atom []))
               :owner-thread #?(:clj (Thread/currentThread) :cljs nil)
               :close-state (atom :open)})]
         (record! ledger :context-constructions)
@@ -294,7 +303,7 @@
 
 (defn proof-frame
   [context]
-  (:proof-frame (state-of (assert-open! context))))
+  (force (:proof-frame-delay (state-of (assert-open! context)))))
 
 (defn derived
   [context]
@@ -303,6 +312,25 @@
 (defn counter-ledger
   [context]
   (:counter-ledger (state-of (assert-open! context))))
+
+(defn- memoized-state!
+  [state memo-kind key build]
+  (let [memos (force (:memos-delay state))
+        memo-key [memo-kind key]
+        current @memos]
+    (if (contains? current memo-key)
+      (get current memo-key)
+      (let [value (build)]
+        (swap! memos
+               #(if (contains? % memo-key)
+                  %
+                  (assoc % memo-key value)))
+        (get @memos memo-key)))))
+
+(defn ^:no-doc memoized-active-state!
+  "Internal fast path after `active-state` validated ownership and lifecycle."
+  [state memo-kind key build]
+  (memoized-state! state memo-kind key build))
 
 (defn memoized!
   "Returns the one request-local value for `memo-kind` and `key`."
@@ -314,38 +342,36 @@
   (when-not (fn? build)
     (invalid-context! "Request-context memo builder must be a function."
                       {:memo-kind memo-kind :key key}))
-  (let [memos (:memos (state-of (assert-open! context)))
-        slot (get memos memo-kind)
-        candidate (delay (build))
-        selected
-        (get
-         (swap! slot
-                #(if (contains? % key)
-                   %
-                   (assoc % key candidate)))
-         key)]
-    @selected))
+  (memoized-state! (active-state context) memo-kind key build))
 
 (defn buffer-publication!
   "Buffers one valid artifact for publication after semantic success."
   [context publication]
-  (swap! (:publication-buffer (state-of (assert-open! context)))
+  (swap! (force (:publication-buffer-delay
+                 (state-of (assert-open! context))))
          conj publication)
   nil)
 
 (defn take-publications!
   "Atomically drains and returns the buffered publication artifacts."
   [context]
-  (let [buffer (:publication-buffer (state-of (assert-open! context)))]
-    (loop []
-      (let [current @buffer]
-        (if (compare-and-set! buffer current [])
-          current
-          (recur))))))
+  (let [buffer-delay
+        (:publication-buffer-delay (state-of (assert-open! context)))]
+    (if-not (realized? buffer-delay)
+      []
+      (let [buffer @buffer-delay]
+        (loop []
+          (let [current @buffer]
+            (if (compare-and-set! buffer current [])
+              current
+              (recur))))))))
 
 (defn discard-publications!
   [context]
-  (reset! (:publication-buffer (state-of (assert-open! context))) [])
+  (let [buffer-delay
+        (:publication-buffer-delay (state-of (assert-open! context)))]
+    (when (realized? buffer-delay)
+      (reset! @buffer-delay [])))
   nil)
 
 (defn call-with-context
@@ -375,7 +401,9 @@
           :open
           (if (compare-and-set! close-state :open :closing)
             (do
-              (reset! (:publication-buffer state) [])
+              (let [buffer-delay (:publication-buffer-delay state)]
+                (when (realized? buffer-delay)
+                  (reset! @buffer-delay [])))
               (try
                 (when-let [selected (:selected-snapshot state)]
                   (when (source/release! selected)

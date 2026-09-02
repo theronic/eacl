@@ -201,25 +201,27 @@
                       (eacl/->Relationship user :reader d2)
                       (eacl/->Relationship user :writer d2)])
         operator-plan (plan/seal-plan (:adapter env) [:document :view])
-        original-invoke backend/invoke
+        original-invoker backend/direct-match-invoker
         banned-id
         (get-in operator-plan
                 [:leaf-descriptors [:document :view] 0
                  :partitions 0 :relation-id])
         fail-on-banned
-        (fn [adapter operation & args]
-          (if (and (= :direct-match? operation)
-                   (= banned-id (nth args 2)))
-            (throw (ex-info "selected banned failure" {:type :test/failure}))
-            (apply original-invoke adapter operation args)))]
+        (fn [adapter]
+          (let [direct-match! (original-invoker adapter)]
+            (fn [& args]
+              (if (= banned-id (nth args 2))
+                (throw (ex-info "selected banned failure"
+                                {:type :test/failure}))
+                (apply direct-match! args)))))]
     (is (false?
-         (with-redefs [backend/invoke fail-on-banned]
+         (with-redefs [backend/direct-match-invoker fail-on-banned]
            (check env operator-plan user d1)))
         "false intersection-left evidence never demands exclusion-right")
     (is (= :test/failure
            (:type
             (error-data
-             #(with-redefs [backend/invoke fail-on-banned]
+             #(with-redefs [backend/direct-match-invoker fail-on-banned]
                 (check env operator-plan user d2)))))
         "a demanded exclusion-right error is propagated, never absence")))
 

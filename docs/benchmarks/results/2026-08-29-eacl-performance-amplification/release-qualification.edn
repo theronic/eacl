@@ -1,0 +1,202 @@
+{:evidence/version 1
+ :status :passed
+ :release-acceptance
+ {:path "release-acceptance.edn"
+  :record-digest
+  "8eba9de7d062bc39f1c89bd462f18b003422994fe5b5ce80f3582a011552a695"
+  :thresholds-unchanged-after-candidate-observation? true}
+ :source-isolation
+ {:baseline
+  {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+   :tree "324445d66d55446c4d6a5395608749fb832fec8f"
+   :production-diff :empty
+   :production-manifest-sha256
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   :generated-class-count 777
+   :generated-classes-sha256
+   "59c198b67e256081321ef16462671dff47313d0b2b5df97a8404c3c1b26bfb48"
+   :classpath-sha256
+   "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"}
+  :candidate
+  {:base-commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+   :production-source-state :frozen-working-tree
+   :production-manifest-sha256
+   "9a2e05402636c1558870b53778cd914e41f1a1d8186c1e5cc771e3927b40b989"
+   :matches-primary-worktree-production-manifest? true
+   :generated-class-count 777
+   :generated-classes-sha256
+   "59c198b67e256081321ef16462671dff47313d0b2b5df97a8404c3c1b26bfb48"
+   :classpath-sha256
+   "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"}
+  :harnesses
+  {:jvm
+   {:sha256
+    "5195ac571a4ef8a8a9efa3bf47c286963e99ba2fb273e5a2b6c099a391cd394e"
+    :identical-in-both-worktrees? true}
+   :cljs
+   {:sha256
+    "e2589af99a1f9f53f615ff2622b9a1e648f427bc01206cb6fbc35d3e25604664"
+    :compiler-optimizations :advanced
+    :identical-in-both-worktrees? true}}}
+ :sampling
+ {:warmups-per-artifact 10
+  :paired-blocks 40
+  :block-order :java-random-next-boolean
+  :block-order-seed 290829
+  :counterbalancing :baseline-or-candidate-first-per-block
+  :independent-processes? true
+  :outlier-policy :none-all-finite-samples-retained
+  :stopping-rule :exactly-40-complete-paired-blocks}
+ :estimator
+ {:implementation eacl.performance.evidence/paired-confidence
+  :effect-seed 87231
+  :resamples 10000
+  :confidence 0.95
+  :release-effect :one-minus-candidate-over-baseline
+  :safety-effect :candidate-over-baseline-minus-one}
+ :release-win
+ {:lane :recursive-star-exact-count
+  :public-operation :count-resources
+  :fixture {:shape :star :accounts 4096}
+  :result [4096 -1 false]
+  :result-frequency {:baseline 40 :candidate 40}
+  :checksums-equal? true
+  :latency-nanos
+  {:baseline
+   [21130417 17508625 17465417 17551083 16616958 16305958
+    16270834 20462125 16687083 16369458 16262708 16314292
+    16404916 16323458 16413250 16451875 20749333 16419291
+    16648291 16785875 16265250 16203292 15775583 16003584
+    16093292 20261750 16270709 16055584 15951250 16229583
+    16164292 16409042 16277917 21663208 28134125 26076334
+    24121959 24981625 23815416 25401083]
+   :candidate
+   [16648208 13999292 13408750 14220708 13460292 16371250
+    11311125 11309208 11216167 11198459 11295000 11478500
+    11168000 11134959 11359417 11633292 11094166 11426542
+    11630083 11436333 11273500 15409666 11818917 11378542
+    11463000 11467291 11316458 11233125 11309208 11403209
+    11355542 11118833 11502875 11227417 11116416 12360000
+    16011583 11146292 11396333 11353917]}
+  :confidence
+  {:pairs 40 :confidence 0.95 :resamples 10000 :seed 87231
+   :estimate 0.30465549771812517
+   :lower 0.2974367104824933
+   :upper 0.3168742467720547
+   :minimum-practical-reduction 0.20
+   :passed? true}
+  :allocated-bytes
+  {:baseline {:value 73415048 :repetitions 40}
+   :candidate {:value 40685928 :repetitions 40}
+   :reduction 0.44580942043380534}
+  :mandatory-logical-work
+  {:baseline
+   {:commands 4160 :fetched-values 4096 :candidates-examined 0 :probes 0}
+   :candidate
+   {:commands 4160 :fetched-values 4096 :candidates-examined 0 :probes 0}
+   :degradation 0
+   :passed? true}
+  :backend-operations
+  {:baseline
+   {:native-revision 1 :snapshot-id 1 :basis-kind 1 :order-hint 1
+    :exact-locator 1 :schema-generation 1 :object-id->internal 1
+    :subject->resources 4160}
+   :candidate
+   {:native-revision 1 :snapshot-id 1 :basis-kind 1 :order-hint 1
+    :exact-locator 1 :schema-generation 1 :object-id->internal 1
+    :subject->resources 4160}}
+  :post-response-work
+  {:baseline {:counter-delta {} :backend-operation-delta {}}
+   :candidate {:counter-delta {} :backend-operation-delta {}}}}
+ :safety-lanes
+ {:point-check-latency
+  {:result [true false]
+   :baseline-nanos
+   [547417 281875 281500 281083 277542 265875 259292 245041
+    259500 244875 210583 218667 273750 245791 219292 202792
+    257958 262458 328500 396125 192041 254666 193792 222166
+    227167 284125 262875 364167 288416 220875 208708 201791
+    227958 226375 312084 213000 223458 278500 244541 243459]
+   :candidate-nanos
+   [413125 264875 229708 294375 248750 235417 229667 202083
+    232625 239417 209500 217875 272584 211250 222125 204209
+    206083 238708 221292 177542 243250 185917 231000 232792
+    245834 225958 289291 326125 253917 205042 201042 166708
+    253458 209083 241625 229625 261583 216250 263625 247167]
+   :confidence
+   {:estimate -0.0740348027225935
+    :lower -0.10935824542169709 :upper -0.004701113007058
+    :maximum-degradation 0.05 :passed? true}
+   :allocated-bytes {:baseline 89904 :candidate 88896
+                     :reduction 0.011211959423384932}}
+  :bounded-page-latency
+  {:result [50 true]
+   :baseline-nanos
+   [1155709 884375 1064875 886667 929292 898959 934333
+    956875 859416 797209 869250 925958 991583 1022625 771500
+    903500 880542 808125 715375 814292 832541 883875 805917
+    757125 761750 780750 879125 787250 736833 760334 826084
+    799209 735709 784458 788000 680250 760333 818000 711416
+    793209]
+   :candidate-nanos
+   [982458 663167 635084 661000 655958 649542 790625 743625
+    730584 828500 711333 725041 804292 780500 716000 650250
+    565209 606500 620500 618584 666834 542166 657875 611375
+    607708 721458 723667 590541 584208 697708 697500 554250
+    701375 636958 563250 654875 653458 547958 697958 599167]
+   :confidence
+   {:estimate -0.20062942308717463
+    :lower -0.23855471194255562 :upper -0.18268212992595706
+    :maximum-degradation 0.05 :passed? true}
+   :allocated-bytes {:baseline 1157976 :candidate 782136
+                     :reduction 0.3245663122551763}}
+  :completed-hit-latency
+  {:result [true true]
+   :baseline-nanos
+   [225250 172458 222958 198875 253334 236584 269333 247083
+    194375 178583 195458 203375 216583 194834 208917 183500
+    223375 251541 316042 239583 216541 290917 214375 252334
+    229250 213791 576916 354000 352250 256500 188084 170583
+    164791 222541 211583 197916 218000 224000 181208 223042]
+   :candidate-nanos
+   [196041 147250 146291 183292 163709 198083 202250 190750
+    186167 167375 150375 181083 247542 136958 165625 193834
+    177167 294125 224500 178958 209375 171000 204792 225917
+    203375 197875 193417 290792 254000 179375 171833 128958
+    148625 209666 148750 179417 180541 162666 195209 208542]
+   :confidence
+   {:estimate -0.15445302368431751
+    :lower -0.2176066313253256 :upper -0.10139531303864313
+    :maximum-degradation 0.05 :passed? true}
+   :allocated-bytes {:baseline 75520 :candidate 73704
+                     :reduction 0.0240466101694915}}
+  :cljs-portable-wall-time
+  {:runtime :node-25.9.0
+   :compiler-optimizations :advanced
+   :result [4096 -1 false]
+   :baseline-nanos
+   [95041041 88280459 83818083 87760000 89806125 72063042
+    87396541 83603834 89986833 88776959 89089709 88420125
+    90790333 89119417 77631292 88736625 90323500 89871334
+    91149875 89313292 88613375 89783917 90361709 91425375
+    78108458 90761333 92368667 90611542 87797333 90483333
+    81177417 88504875 87062500 89871833 75205667 88749084
+    89576541 86962000 89080041 85803542]
+   :candidate-nanos
+   [75246291 70354750 69377958 69345333 66896500 60184833
+    67640458 71212417 78188125 73140916 73097666 71963833
+    70020709 70708083 69627417 70037834 71393417 70409042
+    65771791 70092584 67121375 68957041 69751625 70422333
+    70253333 69790250 67558000 63441334 65487250 69363958
+    69248209 71134500 65377709 68586791 70432500 70266417
+    69969792 66197542 66242959 67492500]
+   :confidence
+   {:estimate -0.21430602853353903
+    :lower -0.22842448650391856 :upper -0.20826668219998207
+    :maximum-degradation 0.10 :passed? true}}}
+ :decision
+ {:release-win-passed? true
+  :semantic-parity-passed? true
+  :mandatory-logical-work-passed? true
+  :all-safety-lanes-passed? true
+  :release-qualified? true}}

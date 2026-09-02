@@ -9,6 +9,9 @@
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
+            [eacl.engine.alias-frontier-test]
+            [eacl.engine.least-path-portable-test]
+            [eacl.engine.sealed-plan-test]
             [eacl.execution-test]
             [eacl.metrics-test]
             [eacl.proof-frame-test]
@@ -74,6 +77,9 @@
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test
+               'eacl.engine.alias-frontier-test
+               'eacl.engine.least-path-portable-test
+               'eacl.engine.sealed-plan-test
                'eacl.execution-test
                'eacl.metrics-test
                'eacl.proof-frame-test

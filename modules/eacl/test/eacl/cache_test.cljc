@@ -1,9 +1,150 @@
 (ns eacl.cache-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
             :refer [deftest is testing]]
+            #?(:clj [clojure.edn :as edn])
             [eacl.cache :as cache]
+            [eacl.cache-identity :as cache-identity]
             [eacl.core :as eacl]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.formal.current-cache-refinement :as cache-refinement]
+            #?(:clj [eacl.secure-format :as secure-format])
+            [eacl.subproblem-cache :as subproblem]
+            #?(:clj [eacl.test-support.repo :as repo])
+            [eacl.verified-kernel :as verified]))
+
+(deftest successful-result-query-removes-only-invocation-controls-test
+  (let [token (eacl/cancellation-token)
+        semantic
+        {:operation :lookup-resources
+         :subject {:type :user :id "alice"}
+         :permission :view
+         :resource/type :document
+         :first 17
+         :after {:ordinal 41}
+         :evaluation :complete-denotation
+         :aggregate-limits {:candidate-window 23}
+         :consistency :fully-consistent}
+        controlled
+        (assoc semantic
+               :timeout-ms 173
+               :cancellation-token token
+               :cache? false
+               :populate-cache? false)]
+    (is (= #{:timeout-ms :cancellation-token :cache? :populate-cache?}
+           cache-identity/invocation-control-keys))
+    (is (= semantic
+           (cache-identity/successful-result-query controlled)))
+    (doseq [[key changed]
+            [[:subject {:type :user :id "bob"}]
+             [:permission :edit]
+             [:resource/type :folder]
+             [:first 18]
+             [:after {:ordinal 42}]
+             [:evaluation :demand]
+             [:aggregate-limits {:candidate-window 22}]
+             [:consistency :minimize-latency]]]
+      (is (not=
+           (cache-identity/successful-result-query controlled)
+           (cache-identity/successful-result-query
+            (assoc controlled key changed)))
+          (name key)))))
+
+(deftest lookup-page-identity-is-control-independent-but-boundary-sensitive-test
+  (let [token-a (eacl/cancellation-token)
+        token-b (eacl/cancellation-token)
+        public
+        {:subject {:type :user :id "alice"}
+         :permission :view
+         :resource/type :document
+         :first 10
+         :after "signed-transport-a"
+         :consistency :fully-consistent
+         :timeout-ms 100
+         :cancellation-token token-a
+         :cache? true
+         :populate-cache? true}
+        internal
+        {:subject {:type :user :id 1}
+         :permission :view
+         :resource/type :document
+         :first 10
+         :after {:ordinal 7}
+         :timeout-ms 100
+         :cancellation-token token-a}
+        identity (cache/lookup-page-query-identity public internal)
+        varied-controls
+        (cache/lookup-page-query-identity
+         (assoc public
+                :timeout-ms 999
+                :cancellation-token token-b
+                :cache? false
+                :populate-cache? false)
+         (assoc internal
+                :timeout-ms 999
+                :cancellation-token token-b
+                :cache? false
+                :populate-cache? false))]
+    (is (= identity varied-controls))
+    (is (not (contains? (:public identity) :after))
+        "authenticated public transport is not semantic position")
+    (is (= {:ordinal 7} (get-in identity [:internal :after])))
+    (is (not=
+         identity
+         (cache/lookup-page-query-identity
+          public (assoc internal :after {:ordinal 8}))))
+    (is (not=
+         identity
+         (cache/lookup-page-query-identity
+          (assoc public :first 11) (assoc internal :first 11))))))
+
+(deftest current-cache-host-specialization-exhausts-generated-domain-test
+  (doseq [stage [:eligibility :generation :exact-entry
+                 :exact-only-entry :managed-entry]
+          available? [false true]]
+    (is (= (verified/decide
+            subproblem/default-decision-kernel
+            :current-cache-decision
+            {:stage stage :available? available?})
+           (cache/specialized-current-cache-action stage available?))
+        (str stage " " available?))))
+
+(deftest stale-or-incomplete-current-cache-refinement-is-not-authorized-test
+  (is (cache/current-cache-specialization-authorized?
+       subproblem/default-decision-kernel))
+  (let [stale-kernel subproblem/default-decision-kernel
+        stale-evidence (assoc subproblem/default-current-cache-refinement
+                              :artifact-sha256 "stale")]
+    (with-redefs [subproblem/default-decision-kernel stale-kernel
+                  subproblem/default-current-cache-refinement stale-evidence]
+      (is (false?
+           (cache/current-cache-specialization-authorized? stale-kernel)))))
+  (is (false?
+       (cache-refinement/complete-mapping?
+        (dissoc cache-refinement/current-cache-mapping
+                [:managed-entry false])))))
+
+#?(:clj
+   (deftest current-cache-refinement-artifact-binds-all-sources-test
+     (let [hex-digest
+           (fn [path]
+             (let [digest (java.security.MessageDigest/getInstance "SHA-256")
+                   bytes (.digest digest
+                                  (.getBytes (slurp path) "UTF-8"))]
+               (apply str
+                      (map #(format "%02x" (bit-and (int %) 255)) bytes))))
+           artifact-path
+           (repo/file "formal" "verification"
+                      "current-cache-specialization.edn")
+           artifact (edn/read-string (slurp artifact-path))]
+       (is (= cache-refinement/artifact-sha256
+              (hex-digest artifact-path)))
+       (is (= cache-refinement/current-cache-domain (:domain artifact)))
+       (is (= cache-refinement/current-cache-mapping (:mapping artifact)))
+       (is (= cache-refinement/mapping-digest
+              (secure-format/canonical-digest
+               cache-refinement/artifact-domain
+               {:domain (:domain artifact) :mapping (:mapping artifact)})))
+       (doseq [[path expected] (:source-digests artifact)]
+         (is (= expected (hex-digest (repo/file path))) path)))))
 
 (defn- snapshot-object
   []
@@ -97,6 +238,59 @@
                (cache/cache-content-revision restored)))
         (is (true? (:cached? (resolve restored :wrong)))
             "failed validation leaves the visible lifecycle intact")))))
+
+(deftest restored-timeout-bearing-answer-key-is-unreachable-test
+  (let [options {:retained-bases 1
+                 :subproblem-cache {:projection-max-weight 64
+                                    :denotation-max-weight 64
+                                    :answer-max-weight 8192}}
+        context (basis-context (snapshot-object) 7)
+        legacy-key
+        {:operation :count-resources
+         :query {:public {:subject :alice
+                          :permission :view
+                          :timeout-ms 100}
+                 :internal {:subject 1 :permission :view}}
+         :evaluation :demand
+         :demand {:kind :exact-count}
+         :engine-version 8
+         :order-abi 2
+         :compiler-plan-compatibility :test-plan
+         :cache-value-abi 2}
+        canonical-key
+        (update-in legacy-key [:query :public] dissoc :timeout-ms)
+        resolve
+        (fn [store key computed]
+          (cache/resolve-exact!
+           store context key :count-resources (constantly true)
+           (constantly computed)))
+        round-trip
+        (fn [entry-key value]
+          (let [source (cache/basis-cache options)
+                target (cache/basis-cache options)]
+            (is (= value (:value (resolve source entry-key value))))
+            (let [snapshot
+                  (cache/export-basis-snapshot
+                   source {:max-weight 16384 :max-entries 64})]
+              (is (= :eacl.cache/basis-snapshot-v1 (:format snapshot)))
+              (cache/restore-basis-snapshot!
+               target snapshot {:max-weight 16384 :max-entries 64})
+              target)))]
+    (let [restored-legacy (round-trip legacy-key :legacy-timeout-value)
+          canonical-result
+          (resolve restored-legacy canonical-key :fresh-canonical-value)]
+      (is (false? (:cached? canonical-result))
+          "the corrected canonical key cannot reach a restored timeout key")
+      (is (= :fresh-canonical-value (:value canonical-result)))
+      (is (true? (:cached?
+                  (resolve restored-legacy canonical-key :wrong-value)))))
+    (let [restored-canonical
+          (round-trip canonical-key :canonical-value)
+          canonical-hit
+          (resolve restored-canonical canonical-key :wrong-value)]
+      (is (true? (:cached? canonical-hit))
+          "an already canonical compatible snapshot entry remains reusable")
+      (is (= :canonical-value (:value canonical-hit))))))
 
 (deftest cache-content-revision-advances-on-expiry-test
   (let [store (cache/basis-cache)
@@ -391,6 +585,37 @@
     (is (false? (:cached? (resolve 2)))
         "the least-recently-used basis recomputes after eviction")
     (is (= {1 1, 2 2, 3 1} @computations))))
+
+(deftest exact-generation-hits-are-nonserializing-with-optional-telemetry-test
+  (let [store (cache/basis-cache {:retained-bases 2 :telemetry? false})
+        computations (atom {})
+        resolve
+        (fn [revision]
+          (cache/resolve-basis!
+           store (basis-context (snapshot-object) revision)
+           :same-query :decision integer?
+           (fn []
+             (swap! computations update revision (fnil inc 0))
+             revision)))]
+    (resolve 1)
+    (resolve 2)
+    (let [lifecycle @(:lifecycle store)
+          bases (:bases lifecycle)
+          basis-state @bases
+          metrics-state @(:metrics store)]
+      (is (= :exact-basis (:cache-tier (resolve 1))))
+      (is (identical? basis-state @bases)
+          "a generation hit does not swap the shared lifecycle state")
+      (is (identical? metrics-state @(:metrics store))
+          "disabled cache telemetry performs no observer mutation"))
+    (resolve 3)
+    (is (false? (:cached? (resolve 2)))
+        "the coalesced exact-generation touch still determines eviction")
+    (let [stats (cache/basis-cache-stats store)]
+      (is (false? (:telemetry-enabled? stats)))
+      (is (zero? (:exact-hits stats)))
+      (is (false? (get-in stats
+                          [:subproblems :telemetry-enabled?]))))))
 
 (deftest basis-kind-is-part-of-exact-cache-identity-test
   (let [store (cache/basis-cache)

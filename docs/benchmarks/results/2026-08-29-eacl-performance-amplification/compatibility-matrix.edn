@@ -1,0 +1,68 @@
+{:matrix/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :rows
+ [{:id :frontier-rule-change
+   :changed-input :frontier-or-rule
+   :plan-fingerprint :changed-for-affected-plan
+   :public-cursor :typed-fingerprint-mismatch
+   :private-state :miss-or-replay
+   :completed-cache :compiler-identity-miss
+   :fixtures {:old :alias-uncanonicalized-plan
+              :new :alias-canonicalized-plan}}
+  {:id :rank-change
+   :changed-input :rank-cost-contract
+   :plan-fingerprint :changed-for-affected-plan
+   :public-cursor :typed-fingerprint-mismatch
+   :private-state :miss-or-replay
+   :completed-cache :compiler-identity-miss
+   :fixtures {:old :rank-contract-v1 :new :rank-contract-v2}}
+  {:id :cursor-interpretation-change
+   :changed-input :cursor-coordinate-or-interpretation
+   :plan-fingerprint :changed-for-affected-plan
+   :public-cursor :typed-fingerprint-mismatch
+   :private-state :miss-or-replay
+   :completed-cache :compiler-identity-miss
+   :fixtures {:old :cursor-interpretation-v1
+              :new :cursor-interpretation-v2}}
+  {:id :work-only-adapter-change
+   :changed-input :adapter-work-capability
+   :plan-fingerprint :unchanged
+   :public-cursor :unchanged
+   :private-state :unchanged
+   :completed-cache :adapter-cache-abi-miss
+   :native-membership-abi :unchanged
+   :fixtures {:old :adapter-work-abi-v1 :new :adapter-work-abi-v2}}
+  {:id :checkpoint-layout-change
+   :changed-input :private-checkpoint-layout
+   :plan-fingerprint :unchanged
+   :public-cursor :unchanged
+   :private-state :continuation-state-abi-miss-or-replay
+   :completed-cache :embedded-private-state-miss
+   :fixtures {:old :continuation-state-v1 :new :continuation-state-v2}}
+  {:id :completed-value-representation-change
+   :changed-input :cache-value-abi
+   :plan-fingerprint :unchanged
+   :public-cursor :unchanged
+   :private-state :unchanged
+   :completed-cache :mandatory-miss-no-scalar-exception
+   :fixtures {:old :completed-value-v1 :new :completed-value-v2}}
+  {:id :scalar-compiler-compatibility-change
+   :changed-input :compiler-plan-compatibility
+   :plan-fingerprint :not-required-on-scalar
+   :public-cursor :not-embedded
+   :private-state :not-embedded
+   :completed-cache :mandatory-miss
+   :fixtures {:old :scalar-compiler-v1 :new :scalar-compiler-v2}}
+  {:id :unchanged-inputs
+   :changed-input :none
+   :plan-fingerprint :unchanged
+   :public-cursor :remains-valid
+   :private-state :remains-valid
+   :completed-cache :remains-eligible
+   :native-membership-abi :unchanged
+   :public-order :unchanged
+   :fixtures {:old :compatible-rebuild-a :new :compatible-rebuild-b}}]
+ :invariants
+ {:native-membership-abi :unchanged
+  :public-order :unchanged-unless-existing-versioned-contract-changes
+  :embedded-plan-bound-state :always-binds-producing-plan-fingerprint}}

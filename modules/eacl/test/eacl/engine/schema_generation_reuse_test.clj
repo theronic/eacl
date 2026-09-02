@@ -31,10 +31,8 @@
             (is (= 2 @seals))))))))
 
 (deftest transient-derivation-failure-does-not-poison-the-slot-test
-  ;; Review finding F13: a Clojure delay caches a thrown exception, so one
-  ;; transient adapter read failure inside a derived-artifact build poisoned
-  ;; the slot for the rest of the schema generation. A failed build must
-  ;; clear the slot so the next caller retries; success stays memoized.
+  ;; A failed request-owned build never enters the completed-value slot. The
+  ;; next caller retries independently; success stays memoized.
   (let [slot (atom nil)
         builds (atom 0)
         build (fn []
@@ -55,3 +53,66 @@
            (engine/memoized-derived! slot build))
         "success is memoized")
     (is (= 2 @builds))))
+
+(defn- independent-wave
+  [request-count call]
+  (let [ready (java.util.concurrent.CountDownLatch. request-count)
+        release (java.util.concurrent.CountDownLatch. 1)
+        builds (java.util.concurrent.atomic.AtomicLong.)
+        workers
+        (mapv
+         (fn [index]
+           (future
+             (call
+              (fn []
+                (.incrementAndGet builds)
+                (.countDown ready)
+                (.await release)
+                {:build index}))))
+         (range request-count))]
+    (is (.await ready 5 java.util.concurrent.TimeUnit/SECONDS)
+        "every miss enters its own builder before any builder completes")
+    (is (= request-count (.get builds)))
+    (.countDown release)
+    (mapv #(deref % 5000 ::timed-out) workers)))
+
+(deftest concurrent-derived-misses-build-independently-test
+  (let [slot (atom nil)
+        results (independent-wave
+                 8 #(engine/memoized-derived! slot %))]
+    (is (= (set (map #(hash-map :build %) (range 8))) (set results))
+        "publication losers use their own completed immutable values")
+    (is (contains? (set results)
+                   (engine/memoized-derived!
+                    slot #(throw (ex-info "warm slot rebuilt" {})))))))
+
+(deftest concurrent-sealed-plan-misses-never-share-a-delay-test
+  (let [root [:document :view]
+        schema-cache (unstamped-request-cache)
+        request-count 8
+        ready (java.util.concurrent.CountDownLatch. request-count)
+        release (java.util.concurrent.CountDownLatch. 1)
+        builds (java.util.concurrent.atomic.AtomicLong.)]
+    (with-redefs [engine/permission-relationship-eids (fn [& _] [])
+                  sealed-plan/seal-plan
+                  (fn [& _]
+                    (let [build (.getAndIncrement builds)]
+                      (.countDown ready)
+                      (.await release)
+                      {:rules [] :build build}))]
+      (let [workers
+            (mapv (fn [_]
+                    (future
+                      (binding [engine/*schema-cache* schema-cache]
+                        (engine/stable-plan :db root))))
+                  (range request-count))]
+        (is (.await ready 5 java.util.concurrent.TimeUnit/SECONDS)
+            "all sealed-plan misses build before any publication")
+        (is (= request-count (.get builds)))
+        (.countDown release)
+        (let [results (mapv #(deref % 5000 ::timed-out) workers)]
+          (is (= (set (map #(hash-map :rules [] :build %)
+                           (range request-count)))
+                 (set results)))
+          (binding [engine/*schema-cache* schema-cache]
+            (is (contains? (engine/stable-plan :db root) :build))))))))

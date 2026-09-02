@@ -10,6 +10,7 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
+            [eacl.formal.current-cache-refinement :as cache-refinement]
             [eacl.operator.evaluator :as operator-evaluator]
             [eacl.operator.lookup :as operator-lookup]
             [eacl.operator.plan :as operator-plan]
@@ -322,6 +323,26 @@
    {:stage :exact-entry :available? false}
    :probe-managed-entry
    :use-exact-entry))
+
+(defn current-cache-specialization-partition-killed?
+  []
+  (let [equivalent?
+        (fn []
+          (every?
+           (fn [[stage available?]]
+             (= (production-decision
+                 :current-cache-decision
+                 {:stage stage :available? available?})
+                (cache/specialized-current-cache-action stage available?)))
+           cache-refinement/current-cache-domain))]
+    (and
+     (equivalent?)
+     (false?
+      (with-redefs [cache-refinement/current-cache-mapping
+                    (assoc cache-refinement/current-cache-mapping
+                           [:managed-entry false]
+                           :use-managed-entry)]
+        (equivalent?))))))
 
 (defn mismatched-indexed-request-scope-response-killed?
   []
@@ -1060,7 +1081,7 @@ definition doc {
         (fn [candidate-expressions]
           (mapv #(assoc % :sign :positive)
                 (original candidate-expressions)))]
-       (negative?))))))
+        (negative?))))))
 
 (defn operator-missing-join-slot-killed?
   []
@@ -1082,7 +1103,7 @@ definition doc {
        [operator-recursive/update-join
         (fn [state candidate-rule slot]
           (if (= 1 slot) state (original state candidate-rule slot)))]
-       (complete?))))))
+        (complete?))))))
 
 (def ^:private operator-recursive-schema
   "definition user {}
@@ -1250,16 +1271,16 @@ definition doc {
                        :relation-eid 2 :resource-type :document}
           :candidate [:document 10]}]
         evaluate #(direct/dispatch adapter probes)
-        original direct/direct-match-many?]
+        original direct/direct-match-many-checked?]
     (and
      (= [false true] (evaluate))
      (not=
       [false true]
       (with-redefs
-       [direct/direct-match-many?
+       [direct/direct-match-many-checked?
         (fn [candidate-adapter request]
           (vec (reverse (original candidate-adapter request))))]
-       (evaluate))))))
+        (evaluate))))))
 
 (def ^:private operator-lookup-schema
   "definition user {}
@@ -1436,6 +1457,282 @@ definition doc {
                          (fn [data] false)]
              (probe))))))
 
+;;; ---------------------------------------------------------------------------
+;;; Acyclic pure-alias frontier controls
+
+(def ^:private alias-frontier-schema
+  "definition user {}
+definition organization {
+  relation member: user
+  permission base = member
+  permission alias = base
+}
+definition document {
+  relation organization: organization
+  permission view = organization->base + organization->alias
+}")
+
+(def ^:private distinct-alias-path-schema
+  "definition user {}
+definition organization {
+  relation member: user
+  permission base = member
+  permission alias = base
+}
+definition document {
+  relation organization: organization
+  relation backup: organization
+  permission view = organization->base + backup->alias
+}")
+
+(defn- alias-frontier-plan
+  [schema]
+  (sealed-plan/seal-plan (operator-probe-adapter schema #{})
+                         [:document :view]))
+
+(defn- alias-root-rules
+  [plan]
+  (get-in plan [:indexes :reverse-rules [:document :view]]))
+
+(defn alias-resolution-predicate-killed?
+  []
+  (let [expected [:organization :base]
+        gate #(= expected
+                 (:target
+                  (sealed-plan/resolve-pure-alias
+                   {[:organization :base]
+                    [{:resource-type :organization
+                      :permission-name :base
+                      :source-relation-name :self
+                      :source-subject-type nil
+                      :target-type :relation
+                      :target-name :member}]}
+                   [:organization :base])))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/resolve-pure-alias
+                    (fn [_ target]
+                      {:target [(first target)
+                                (keyword (str (name (second target))
+                                              "-invented"))]
+                       :changed? true :stop :mutant})]
+        (gate))))))
+
+(defn alias-cycle-stopping-killed?
+  []
+  (let [row (fn [permission target]
+              [{:resource-type :organization
+                :permission-name permission
+                :source-relation-name :self
+                :source-subject-type nil
+                :target-type :permission
+                :target-name target}])
+        bodies {[:organization :a] (row :a :b)
+                [:organization :b] (row :b :a)}
+        gate #(= {:target [:organization :a]
+                  :changed? false :stop :cycle}
+                 (sealed-plan/resolve-pure-alias
+                  bodies [:organization :a]))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/resolve-pure-alias
+                    (fn [_ target]
+                      {:target [(first target) :b]
+                       :changed? true :stop :cycle-mutant})]
+        (gate))))))
+
+(defn alias-complete-frontier-identity-killed?
+  []
+  (let [gate #(= 2 (count (alias-root-rules
+                           (alias-frontier-plan
+                            distinct-alias-path-schema))))
+        original sealed-plan/derive-execution-frontier
+        collapse-physical-paths
+        (fn [rules bodies]
+          (when-let [frontier (original rules bodies)]
+            (update
+             frontier :rules
+             (fn [frontier-rules]
+               (:rules
+                (reduce
+                 (fn [{:keys [seen] :as state} rule]
+                   (let [identity [(:node rule) (:target-node rule)]]
+                     (if (contains? seen identity)
+                       state
+                       (-> state
+                           (update :seen conj identity)
+                           (update :rules conj rule)))))
+                 {:seen #{} :rules []}
+                 frontier-rules))))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/derive-execution-frontier
+                    collapse-physical-paths]
+        (gate))))))
+
+(defn alias-first-position-retention-killed?
+  []
+  (let [plan (alias-frontier-plan alias-frontier-schema)
+        expected (->> (:rules plan)
+                      (filter #(= [:document :view] (:node %)))
+                      (map :ordinal)
+                      (apply min))
+        gate #(= expected
+                 (:ordinal (first (alias-root-rules
+                                   (alias-frontier-plan
+                                    alias-frontier-schema)))))
+        original sealed-plan/derive-execution-frontier
+        keep-later-position
+        (fn [rules bodies]
+          (when-let [frontier (original rules bodies)]
+            (let [later (->> rules
+                             (filter #(= [:document :view] (:node %)))
+                             (map :ordinal)
+                             (apply max))]
+              (update frontier :rules
+                      (fn [frontier-rules]
+                        (mapv #(if (= [:document :view] (:node %))
+                                 (assoc % :ordinal later)
+                                 %)
+                              frontier-rules))))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/derive-execution-frontier
+                    keep-later-position]
+        (gate))))))
+
+(defn alias-frontier-deduplication-killed?
+  []
+  (let [gate #(= 1 (count (alias-root-rules
+                           (alias-frontier-plan
+                            alias-frontier-schema))))]
+    (and
+     (gate)
+     (false?
+      (with-redefs [sealed-plan/derive-execution-frontier
+                    (fn [_ _] nil)]
+        (gate))))))
+
+;;; ---------------------------------------------------------------------------
+;;; Stable execution retention and staged-admission controls
+
+(def ^:private stable-probe-rule
+  {:rule :relation
+   :node [:document :view]
+   :resource-type :document
+   :permission :view
+   :relation-eid 101
+   :subject-type :user
+   :ordinal 0
+   :rank 1})
+
+(def ^:private stable-probe-plan
+  {:root [:document :view]
+   :indexes {:forward-seeds {:user [stable-probe-rule]}
+             :forward-consumers {}}})
+
+(defn- stable-probe-run
+  [result-sink]
+  (stable-reducer/run-forward
+   {:fetch-fn
+    (fn [{:keys [bound-eid limit]}]
+      (let [start (inc (or bound-eid -1))]
+        (vec (range start (min 32 (+ start limit))))))
+    :plan stable-probe-plan
+    :subject-type :user
+    :subject-eid 1
+    :target stable-reducer/exhaustion-target
+    :physical-chunk-size 7
+    :result-sink result-sink}))
+
+(defn stable-count-history-retention-killed?
+  []
+  (let [gate #(let [result (stable-probe-run :count)]
+                (and (= 32 (:discovered result))
+                     (empty? (:results result))))
+        original stable-reducer/finish]
+    (and
+     (gate)
+     (false?
+      (with-redefs [stable-reducer/finish
+                    (fn [state]
+                      (let [finished (original state)]
+                        (if (= :count (:result-sink finished))
+                          (assoc finished :results
+                                 (vec (range (:discovered finished))))
+                          finished)))]
+        (gate))))))
+
+(defn stable-completion-distinct-killed?
+  []
+  (let [rebuilt-width (atom 0)
+        run-with-width
+        (fn []
+          (reset! rebuilt-width 0)
+          (stable-probe-run :collect)
+          @rebuilt-width)
+        gate #(zero? (run-with-width))
+        original stable-reducer/finish]
+    (and
+     (gate)
+     (false?
+      (with-redefs [stable-reducer/finish
+                    (fn [state]
+                      (let [finished (original state)]
+                        (reset! rebuilt-width (count (:results finished)))
+                        (update finished :results
+                                #(vec (distinct %)))))]
+        (gate))))))
+
+(defn stable-admission-deduplication-killed?
+  []
+  (let [item {:kind :grant :rule {:node [:document :view]}
+              :resource-eid 7}
+        gate
+        #(= 1
+            (:admissions
+             (stable-reducer/schedule
+              {:stack [] :admitted (transient #{}) :admissions 0
+               :max-admissions 10 :max-stack 10 :maximum-stack 0}
+              nil [item item])))]
+    (and
+     (gate)
+     (false?
+      (let [serial (atom 0)]
+        (with-redefs [stable-reducer/work-id
+                      (fn [_] [:mutant (swap! serial inc)])]
+          (gate)))))))
+
+(defn stable-staged-limit-atomicity-killed?
+  []
+  (let [item {:kind :grant :rule {:node [:document :view]}
+              :resource-eid 7}
+        gate
+        (fn []
+          (let [state {:stack [] :admitted (transient #{})
+                       :admissions 9 :max-admissions 9
+                       :max-stack 10 :maximum-stack 0}]
+            (try
+              (stable-reducer/schedule state nil [item])
+              false
+              (catch #?(:clj clojure.lang.ExceptionInfo
+                        :cljs cljs.core.ExceptionInfo) error
+                (and (= :max-admissions (:limit (ex-data error)))
+                     (empty? (persistent! (:admitted state))))))))
+        original stable-reducer/schedule]
+    (and
+     (gate)
+     (false?
+      (with-redefs [stable-reducer/schedule
+                    (fn [state residual new-work]
+                      (conj! (:admitted state) [:mutant :partial-commit])
+                      (original state residual new-work))]
+        (gate))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1447,6 +1744,8 @@ definition doc {
    :cursor-scope cursor-scope-killed?
    :cache-fail-open cache-fail-open-killed?
    :current-cache-missing-entry-hit current-cache-missing-entry-hit-killed?
+   :current-cache-specialization-partition
+   current-cache-specialization-partition-killed?
    :mismatched-indexed-request-scope-response
    mismatched-indexed-request-scope-response-killed?
    :ordered-merge-wrong-comparator ordered-merge-wrong-comparator-killed?
@@ -1487,7 +1786,17 @@ definition doc {
    :operator-cache-selected-generator
    operator-cache-selected-generator-killed?
    :operator-active-recursion-as-false
-   operator-active-recursion-as-false-killed?})
+   operator-active-recursion-as-false-killed?
+   :alias-resolution-predicate alias-resolution-predicate-killed?
+   :alias-cycle-stopping alias-cycle-stopping-killed?
+   :alias-complete-frontier-identity
+   alias-complete-frontier-identity-killed?
+   :alias-first-position-retention alias-first-position-retention-killed?
+   :alias-frontier-deduplication alias-frontier-deduplication-killed?
+   :stable-count-history-retention stable-count-history-retention-killed?
+   :stable-completion-distinct stable-completion-distinct-killed?
+   :stable-admission-deduplication stable-admission-deduplication-killed?
+   :stable-staged-limit-atomicity stable-staged-limit-atomicity-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]

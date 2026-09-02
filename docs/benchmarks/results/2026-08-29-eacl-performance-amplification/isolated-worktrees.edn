@@ -1,0 +1,65 @@
+{:evidence/version 1
+ :purpose :source-isolated-release-win-comparison
+ :base
+ {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+  :tree "324445d66d55446c4d6a5395608749fb832fec8f"}
+ :instrumentation
+ {:jvm
+  {:relative-path "modules/eacl/test/eacl/performance/release_win.clj"
+   :sha256
+   "5195ac571a4ef8a8a9efa3bf47c286963e99ba2fb273e5a2b6c099a391cd394e"}
+  :cljs
+  {:relative-path
+   "modules/eacl/test/eacl/performance/release_win_cljs.cljs"
+   :sha256
+   "e2589af99a1f9f53f615ff2622b9a1e648f427bc01206cb6fbc35d3e25604664"}
+  :production-source? false
+  :identical-in-both-worktrees? true}
+ :artifacts
+ {:baseline
+  {:worktree-path "/private/tmp/eacl-performance-20260829-baseline"
+   :git-state :detached
+   :commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+   :tree "324445d66d55446c4d6a5395608749fb832fec8f"
+   :production-diff :empty
+   :production-manifest-sha256
+   "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+   :target-root "/private/tmp/eacl-performance-20260829-baseline/target"
+   :generated-class-count 777
+   :generated-classes-sha256
+   "59c198b67e256081321ef16462671dff47313d0b2b5df97a8404c3c1b26bfb48"
+   :classpath-sha256
+   "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"
+   :capture-process-status :stopped}
+  :candidate
+  {:worktree-path "/private/tmp/eacl-performance-20260829-candidate"
+   :git-state :detached
+   :commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+   :tree "324445d66d55446c4d6a5395608749fb832fec8f"
+   :production-diff :candidate-source-frozen
+   :production-manifest-sha256
+   "9a2e05402636c1558870b53778cd914e41f1a1d8186c1e5cc771e3927b40b989"
+   :matches-primary-worktree-production-manifest? true
+   :target-root "/private/tmp/eacl-performance-20260829-candidate/target"
+   :generated-class-count 777
+   :generated-classes-sha256
+   "59c198b67e256081321ef16462671dff47313d0b2b5df97a8404c3c1b26bfb48"
+   :classpath-sha256
+   "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"
+   :capture-process-status :stopped}}
+ :build
+ {:command ["bin/formal" "build-java"]
+  :formal-cache :per-worktree
+  :generated-output :per-worktree
+  :verified-declarations 12
+  :verification-errors 0
+  :same-harness? true
+  :same-dependencies? true
+  :separate-processes-required? true}
+ :candidate-measurement
+ {:status :complete
+  :report "release-qualification.edn"
+  :separate-jvm-processes? true
+  :separate-node-processes? true
+  :processes-stopped-after-capture? true
+  :release-qualified? true}}

@@ -39,21 +39,24 @@
   windows need `:desc` scans). Callers supplying their own `:fetch-fn`
   (the routed classified/retrying seam) must preserve `:direction`."
   [adapter]
-  (fn [{:keys [operation bound-eid direction] :as descriptor}]
-    (let [options (cond-> {:direction (or direction :asc)}
-                    bound-eid (assoc :bound-eid bound-eid
-                                     :inclusive-bound? false))]
-      (case operation
-        :subject->resources
-        (backend/invoke adapter :subject->resources
-                        (:subject-type descriptor) (:subject-eid descriptor)
-                        (:relation-eid descriptor) (:resource-type descriptor)
-                        options)
-        :resource->subjects
-        (backend/invoke adapter :resource->subjects
-                        (:resource-type descriptor) (:resource-eid descriptor)
-                        (:relation-eid descriptor) (:subject-type descriptor)
-                        options)))))
+  (let [subject->resources (backend/scan-invoker adapter :subject->resources)
+        resource->subjects (backend/scan-invoker adapter :resource->subjects)]
+    (fn [{:keys [operation bound-eid direction] :as descriptor}]
+      (let [options (cond-> {:direction (or direction :asc)}
+                      (:limit descriptor) (assoc :limit (:limit descriptor))
+                      bound-eid (assoc :bound-eid bound-eid
+                                       :inclusive-bound? false))]
+        (case operation
+          :subject->resources
+          (subject->resources
+           (:subject-type descriptor) (:subject-eid descriptor)
+           (:relation-eid descriptor) (:resource-type descriptor)
+           options)
+          :resource->subjects
+          (resource->subjects
+           (:resource-type descriptor) (:resource-eid descriptor)
+           (:relation-eid descriptor) (:subject-type descriptor)
+           options))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Context: budgeted, cut-pointed reads through the routed fetch seam
@@ -68,6 +71,12 @@
                           :fetched-values (:fetched-values counters)
                           :discovered 0}
                          detail))))
+
+(defn- bounded-vector
+  [values limit]
+  (if (and (vector? values) (<= (count values) limit))
+    values
+    (into [] (take limit) values)))
 
 (defn make-context
   "One request-scoped read context. `:fetch-fn` is the routed read seam
@@ -97,8 +106,8 @@
        (when (>= (:commands @counters) max-commands)
          (limit-failure! :max-commands @counters
                          {:max-commands max-commands}))
-       (let [values (into [] (take (:limit descriptor))
-                          (fetch-fn descriptor))]
+       (let [values (bounded-vector (fetch-fn descriptor)
+                                    (:limit descriptor))]
          (when (> (+ (:fetched-values @counters) (count values))
                   max-values)
            (limit-failure! :max-values @counters

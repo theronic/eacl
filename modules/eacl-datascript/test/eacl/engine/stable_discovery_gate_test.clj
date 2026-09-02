@@ -471,12 +471,18 @@
                             (nil? residual)
                             (@#'reducer/schedule
                              state nil (into successors
-                                             (value->successors value)))
+                                             (if value->successors
+                                               (value->successors value)
+                                               [(@#'reducer/scan-successor
+                                                 item value)])))
                             :else
                             (recur state residual
                                    (into successors
-                                         (value->successors value)))))))]
-                    (run-forward-ids seeded plan "alice" {}))]
+                                         (if value->successors
+                                           (value->successors value)
+                                           [(@#'reducer/scan-successor
+                                             item value)])))))))
+                    (run-forward-ids seeded plan "alice" {})])]
         (is (= ["f-a" "f-c" "f-d" "f-b"] reference)
             "one-value release discovers the subtree before later siblings")
         (is (not= reference eager) "eager whole-chunk release is killed")))))

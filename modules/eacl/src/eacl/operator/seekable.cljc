@@ -67,7 +67,7 @@
         (conj (vec prefix) (:ordinal relation-rule))))))
 
 (defn- scan-values
-  [{:keys [adapter traversal subject-type anchor-eid order-direction
+  [{:keys [scan-invoker traversal subject-type anchor-eid order-direction
            resource-type cut-point! physical-chunk-size max-commands
            max-values counters]}
    relation-id bound inclusive?]
@@ -85,14 +85,10 @@
           values
           (into [] (take physical-chunk-size)
                 (if (= :forward traversal)
-                  (backend/invoke adapter :subject->resources
-                                  subject-type anchor-eid relation-id
-                                  resource-type
-                                  scan-options)
-                  (backend/invoke adapter :resource->subjects
-                                  resource-type
-                                  anchor-eid relation-id subject-type
-                                  scan-options)))
+                  (scan-invoker subject-type anchor-eid relation-id
+                                resource-type scan-options)
+                  (scan-invoker resource-type anchor-eid relation-id
+                                subject-type scan-options)))
           next-values (+ (:fetched-values @counters) (count values))]
       (when (> next-values max-values)
         (limit! :fetched-values max-values next-values))
@@ -100,8 +96,8 @@
               :fetched-values next-values)
       (when (nil? bound)
         (vswap! counters update :stream-opens inc))
-      (request-counters/add! :commands)
-      (request-counters/add! :fetched-values (count values))
+      (request-counters/add-commands!)
+      (request-counters/add-fetched-values! (count values))
       (add-stat! :adapter-commands 1)
       (add-stat! :fetched-values (count values))
       values)))
@@ -287,6 +283,12 @@
                      :emissions 0})
           options (assoc request
                          :resource-type (first permission)
+                         :scan-invoker
+                         (backend/scan-invoker
+                          adapter
+                          (if (= :forward traversal)
+                            :subject->resources
+                            :resource->subjects))
                          :boundary-eid boundary-eid
                          :physical-chunk-size
                          (or (:physical-chunk-size limits)

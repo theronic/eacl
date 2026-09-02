@@ -258,6 +258,7 @@
                                         [:adapter :fetch-fn :plan
                                          :subject-type :cut-point!
                                          :physical-chunk-size :sidecar-cap
+                                         :result-sink :result-window-size
                                          :max-admissions :max-commands
                                          :max-transitions :max-values :max-stack])
                            {:target target})]
@@ -273,6 +274,7 @@
                                       [:adapter :fetch-fn :plan
                                        :subject-type :cut-point!
                                        :physical-chunk-size :sidecar-cap
+                                       :result-sink :result-window-size
                                        :max-admissions :max-commands
                                        :max-transitions :max-values :max-stack])
                          {:target target})
@@ -315,9 +317,12 @@
       {:state (:state hit) :pending (:pending hit)})
     (let [replayed (governed-replay
                     options
-                    #(run-fresh options anchor-eid ordinal))
+                    #(run-fresh (assoc options
+                                       :result-sink :window
+                                       :result-window-size 1)
+                                anchor-eid ordinal))
           results (:results replayed)]
-      (when (or (< (count results) ordinal)
+      (when (or (< (:discovered replayed) ordinal)
                 (not= boundary-eid (peek results)))
         (page-error! :eacl.page/invalid-cursor
                      "Replay could not validate the cursor boundary."
@@ -351,14 +356,17 @@
           start (max 0 (- ordinal 1 page-size))
           replayed (governed-replay
                     options
-                    #(run-fresh options anchor-eid ordinal))
+                    #(run-fresh (assoc options
+                                       :result-sink :window
+                                       :result-window-size (inc page-size))
+                                anchor-eid ordinal))
           results (:results replayed)]
-      (when (or (< (count results) ordinal)
+      (when (or (< (:discovered replayed) ordinal)
                 (not= eid (peek results)))
         (page-error! :eacl.page/invalid-cursor
                      "Backward run could not validate the supplied edge."
                      {:ordinal ordinal}))
-      {:eids (subvec results start (dec ordinal))
+      {:eids (pop results)
        :start-ordinal start
        :has-next? true
        :has-previous? (pos? start)})
@@ -366,14 +374,16 @@
     last-window?
     (let [run (governed-replay
                options
-               #(run-fresh options anchor-eid
+               #(run-fresh (assoc options
+                                  :result-sink :window
+                                  :result-window-size page-size)
+                           anchor-eid
                            reducer/exhaustion-target))
-          results (:results run)
-          start (max 0 (- (count results) page-size))]
-      {:eids (subvec results start)
-       :start-ordinal start
+          results (:results run)]
+      {:eids results
+       :start-ordinal (max 0 (- (:discovered run) (count results)))
        :has-next? false
-       :has-previous? (pos? start)})
+       :has-previous? (> (:discovered run) (count results))})
 
     :else
     (let [ordinal (:ordinal after 0)

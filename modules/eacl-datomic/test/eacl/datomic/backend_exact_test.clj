@@ -49,7 +49,7 @@
    conn
    {:source-lifecycle "datomic-exact-source-test"}))
 
-(deftest exact-acquisition-is-targeted-and-does-not-read-current-test
+(deftest exact-acquisition-reuses-one-covered-local-observation-test
   (with-mem-conn [conn schema/v7-schema]
     @(d/transact conn [{:db/ident :eacl.test/exact-selection}])
     (let [head (d/db conn)
@@ -75,14 +75,52 @@
                {:revision head-t :exact-locator head-t}
                50)]
           (try
-            (is (zero? @db-calls)
-                "exact-by-locator never performs a branch-head read")
-            (is (= [[conn head-t]] @sync-calls))
+            (is (= 1 @db-calls)
+                "exact acquisition captures the local Peer DB once")
+            (is (empty? @sync-calls)
+                "a locally covered locator performs no synchronization")
             (is (= [[head head-t]] @as-of-calls))
             (is (false? @cancelled?))
             (is (= {:revision head-t :exact-locator head-t}
                    (backend/invoke
                     (source/adapter selected) :native-revision)))
+            (finally
+              (source/release! selected))))))))
+
+(deftest exact-acquisition-synchronizes-once-only-when-local-is-behind-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [before (d/db conn)
+          _ @(d/transact conn [{:db/ident :eacl.test/exact-behind}])
+          head (d/db conn)
+          target (d/basis-t head)
+          basis-source (basis-source conn)
+          db-calls (atom 0)
+          sync-calls (atom [])
+          as-of-calls (atom [])
+          original-as-of d/as-of]
+      (is (< (d/basis-t before) target))
+      (with-redefs [d/db (fn [_]
+                           (swap! db-calls inc)
+                           before)
+                    d/sync (fn [actual-conn requested]
+                             (swap! sync-calls conj [actual-conn requested])
+                             (future head))
+                    d/as-of (fn [db requested]
+                              (swap! as-of-calls conj [db requested])
+                              (original-as-of db requested))]
+        (let [selected
+              (source/acquire!
+               basis-source :exact
+               {:revision target :exact-locator target}
+               50)]
+          (try
+            (is (= 1 @db-calls))
+            (is (= [[conn target]] @sync-calls))
+            (is (= [[head target]] @as-of-calls))
+            (is (= target
+                   (:revision
+                    (backend/invoke
+                     (source/adapter selected) :native-revision))))
             (finally
               (source/release! selected))))))))
 
@@ -134,6 +172,76 @@
           (is @cancelled?)
           (is (:caller-thread-interrupted? data))
           (Thread/interrupted))))))
+
+(deftest exact-acquisition-failures-stop-before-history-selection-test
+  (with-mem-conn [conn schema/v7-schema]
+    (let [local (d/db conn)
+          target (inc (d/basis-t local))
+          basis-source (basis-source conn)]
+      (testing "local observation failure is a selection failure"
+        (let [sync-calls (atom 0)
+              as-of-calls (atom 0)
+              data
+              (with-redefs [d/db (fn [_]
+                                   (throw (ex-info "db unavailable" {})))
+                            d/sync (fn [& _] (swap! sync-calls inc))
+                            d/as-of (fn [& _] (swap! as-of-calls inc))]
+                (error-data
+                 #(source/acquire!
+                   basis-source :exact
+                   {:revision target :exact-locator target} 50)))]
+          (is (= :eacl.basis/selection-failure (:type data)))
+          (is (= :retryable (:classification data)))
+          (is (= :exact-sync (:phase data)))
+          (is (zero? @sync-calls))
+          (is (zero? @as-of-calls))))
+
+      (testing "targeted sync provider failure is a selection failure"
+        (let [as-of-calls (atom 0)
+              provider (ex-info "sync unavailable" {})
+              data
+              (with-redefs [d/db (constantly local)
+                            d/sync (fn [_ _] (throw provider))
+                            d/as-of (fn [& _] (swap! as-of-calls inc))]
+                (error-data
+                 #(source/acquire!
+                   basis-source :exact
+                   {:revision target :exact-locator target} 50)))]
+          (is (= :eacl.basis/selection-failure (:type data)))
+          (is (= :retryable (:classification data)))
+          (is (= :exact-sync (:phase data)))
+          (is (identical? provider (:cause data)))
+          (is (zero? @as-of-calls))))
+
+      (testing "successful sync evidence below T is freshness unavailable"
+        (let [as-of-calls (atom 0)
+              data
+              (with-redefs [d/db (constantly local)
+                            d/sync (fn [_ _] (future local))
+                            d/as-of (fn [& _] (swap! as-of-calls inc))]
+                (error-data
+                 #(source/acquire!
+                   basis-source :exact
+                   {:revision target :exact-locator target} 50)))]
+          (is (= :eacl.consistency/freshness-unavailable (:type data)))
+          (is (= :head-behind (:reason data)))
+          (is (= target (:requested-order-hint data)))
+          (is (zero? @as-of-calls))))
+
+      (testing "history provider failure is classified after coverage only"
+        (let [failure (ex-info "history unavailable" {})
+              data
+              (with-redefs [d/db (constantly local)
+                            d/as-of (fn [& _] (throw failure))]
+                (error-data
+                 #(source/acquire!
+                   basis-source :exact
+                   {:revision (d/basis-t local)
+                    :exact-locator (d/basis-t local)} 50)))]
+          (is (= :eacl.basis/selection-failure (:type data)))
+          (is (= :retryable (:classification data)))
+          (is (= :exact-as-of (:phase data)))
+          (is (identical? failure (:cause data))))))))
 
 (deftest exact-acquisition-validates-before-storage-test
   (with-mem-conn [conn schema/v7-schema]

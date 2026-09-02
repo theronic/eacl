@@ -22,9 +22,11 @@ Completed-answer eviction SHALL be recency-based (least-recently-used or an equi
 - **THEN** a key seen twice in close succession is admitted with high probability (not the frozen-set behavior measured at 2.3%)
 
 ### Requirement: One store implementation for answers and subproblems
-Completed answers SHALL be a tier of the weighted subproblem store, inheriting its exact/managed generation layering, single-flight coordination, weight accounting, and metrics — one implementation of generation logic, not two.
+Completed answers SHALL be a tier of the weighted subproblem store, inheriting
+its exact/managed generation layering, independent request-owned miss behavior,
+bounded nonblocking publication, weight accounting, and metrics — one
+implementation of generation logic, not two.
 
 #### Scenario: Unified layering
 - **WHEN** a managed completed answer is valid for the current stamps and an exact-generation miss occurs for the same semantic key
 - **THEN** the layered resolution serves the managed value through the same code path the projection and denotation tiers use, and duplicate generation-management code (`bounded-assoc`, standalone admission maps, separate exact/managed branches) no longer exists
-

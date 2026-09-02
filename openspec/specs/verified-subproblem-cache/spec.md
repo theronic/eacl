@@ -49,7 +49,7 @@ projection beyond the configured chunk boundary.
 ### Requirement: Exact-generation reuse is observationally transparent
 An exact subproblem entry SHALL be eligible only for the identical immutable
 selected graph generation. Cache lookup, miss, admission, eviction, expiry,
-single-flight waiting, or provider failure MUST NOT change the public value,
+publication contention, or provider failure MUST NOT change the public value,
 typed error, order, cursor, page flags, count limit, or selected graph.
 
 #### Scenario: Unrelated transaction advances the head
@@ -94,27 +94,23 @@ answers.
 - **WHEN** a completed reverse anchored denotation is reused by a compatible reverse operation
 - **THEN** rendering preserves the reverse operation's declared ordering, de-duplication, limits, and cursor behavior
 
-### Requirement: Retained weight and actual callback execution are bounded
+### Requirement: Retained weight and publication attempts are bounded
 The client SHALL enforce separate weighted budgets for projection,
 authorization-denotation, continuation, and completed-answer entries.
-Incomplete candidates MUST NOT be evicted. Flight ownership MUST be separate
-from evictable cache entries and cache admission: at most one flight for a
-lifecycle-qualified exact semantic key may exist concurrently, including when
-the tier rejects admission.
+Only completely computed and validated immutable values may enter evictable
+cache state. Each miss SHALL compute under its own request contract and MAY
+make one bounded best-effort publication attempt; no cache structure may own,
+join, wait for, or bound application callback execution. Failed, cancelled,
+invalid, or partial computations MUST NOT publish or poison later requests.
 
-A coordinator shared across exact and managed stores and across generation
-replacement SHALL bound actual top-level compute callbacks. Saturated distinct
-work MUST wait or reject; it MUST NOT execute as an uncounted uncached
-fallback. A synchronous nested subproblem on the same host execution context
-MAY reuse that context's permit to avoid self-deadlock. Failed, cancelled,
-invalid, or partial computations MUST remove their own flight/candidate and
-MUST NOT poison later requests.
-
-Represented admission weight, represented candidates, registered flights,
-waiting callers, and executing callbacks SHALL be reported as distinct
-measures. Logical admission weight MUST NOT be described as JVM bytes or a
-whole-process heap, CPU-time, backend-operation, or wall-time bound without a
-separate checked production-refinement contract.
+Retained entry weight, admission metadata, publication attempts, and executing
+semantic work SHALL be described as different measures. Logical admission
+weight MUST NOT be described as JVM bytes or a whole-process heap, CPU-time,
+backend-operation, callback-concurrency, or wall-time bound without a separate
+checked production-refinement contract. An optional service-edge admission
+policy remains a separate routed-execution control; it does not become cache
+coordination and is not moved ahead of compatible completed hits by this
+requirement.
 
 #### Scenario: Entry exceeds its tier budget
 - **WHEN** a completed subproblem is larger than the configured maximum entry weight
@@ -122,61 +118,25 @@ separate checked production-refinement contract.
 
 #### Scenario: Concurrent identical misses
 - **WHEN** multiple requests miss the same exact subproblem concurrently
-- **THEN** they observe one successfully computed immutable value or independently recompute after failure, and all returned values equal cache-free evaluation
-
-#### Scenario: Admission rejects an identical flight
-- **WHEN** a tier cannot represent a new candidate but an identical
-  lifecycle-qualified semantic-key computation is already registered
-- **THEN** the caller joins that flight instead of starting an unadmitted
-  duplicate
-
-#### Scenario: Generated lookup governs an unrepresented flight
-- **WHEN** a lifecycle-qualified flight is registered but admission did not
-  place its candidate in the tier entry map
-- **THEN** lifecycle capture, recursive-self detection, represented-entry
-  lookup, and registered-flight lookup occur at one linearization point
-- **AND** the generated lookup input reports `computing` and its
-  `join-computation` action is applied before any host storage mutation
+- **THEN** each request may independently compute and return its own valid value
+- **AND** successful values race at most one bounded publication attempt and
+  all returned values equal cache-free evaluation
 
 #### Scenario: Generated action contradicts validated state
 - **WHEN** the generated boundary returns a lookup, admission, or publication
   action inconsistent with the complete validated transition input
 - **THEN** the boundary fails closed before the prohibited cache-state mutation
 
-#### Scenario: Flight completes while lifecycle selection is blocked
-- **WHEN** a computation finishes while another operation holds the
-  lifecycle-selection lock
-- **THEN** ticket-qualified flight removal waits for that lock and cannot
-  interleave outside the serial order used by selection and lifecycle
-  replacement
-- **AND** a 64-fold increase in represented entries does not make miss
-  finalization cost grow linearly
-
-#### Scenario: Actual callback execution reaches the global bound
-- **WHEN** the configured number of top-level compute callbacks is already
-  executing across any exact or managed store generation
-- **THEN** a miss for another distinct key waits or rejects without executing,
-  while an identical-key caller may still join its registered flight
-
-#### Scenario: A child execution context inherits recursive-self bindings
-- **WHEN** a child future or thread inherits a same-key resolving marker from
-  a parent callback but is not the execution context that owns the parent's
-  permit
-- **THEN** recursive self-bypass acquires its own coordinator permit before
-  invoking the child callback
-- **AND** only same-context synchronous recursion may reuse the parent's permit
-
 #### Scenario: Generation expires during a computation
 - **WHEN** an old-lifecycle callback is still executing and the same tier/key
   is requested in a new lifecycle
-- **THEN** the two lifecycle-qualified flights may coexist, their combined
-  executing callback count remains bounded, and the old result cannot publish
+- **THEN** both requests remain independent and the old result cannot publish
   into the new lifecycle
 
 ### Requirement: Cache bypass is a complete executable oracle
 For every public authorization operation, `:cache? false` SHALL bypass
 completed answers, subproblem lookups, subproblem publication, admissions,
-single-flight state, and managed proof providers. It SHALL remain suitable for
+and managed proof providers. It SHALL remain suitable for
 differential comparison with cache-enabled execution.
 
 #### Scenario: Cache-disabled request
@@ -186,7 +146,8 @@ differential comparison with cache-enabled execution.
 ### Requirement: Cache provenance and avoided work are observable
 Client cache statistics SHALL distinguish completed-answer, exact projection,
 managed projection, acyclic-denotation, recursive-component and
-continuation hits; misses; admissions; rejected proofs; single-flight waits;
+continuation hits; misses; admissions; rejected proofs; publication attempts,
+race losses, and rejections;
 evictions; fetched projection values; and avoided backend scans or probes.
 
 #### Scenario: Shared-subgraph hit
@@ -330,4 +291,3 @@ refinement contract for that measure.
 - **THEN** the exact versioned gate runtime is already installed and validated
 - **AND** a missing or different runtime fails the job rather than skipping,
   weakening, or marking the measurement passed
-

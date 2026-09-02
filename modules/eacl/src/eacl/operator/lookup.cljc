@@ -297,7 +297,7 @@
                   sentinel? (= (count accepted) result-demand)
                   exhausted? (and (:exhausted? raw)
                                   (= consumed-count (count emissions)))]
-              (request-counters/add! :candidates-examined consumed-count)
+              (request-counters/add-candidates-examined! consumed-count)
               (if sentinel?
                 (let [selected (vec (take page-size accepted))]
                   (observe-page! (+ (:examined schedule) consumed-count)

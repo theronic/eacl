@@ -19,7 +19,18 @@ EACL SHALL encode revision tokens with a version, backend identity, configured s
 - **THEN** EACL rejects it with a stable token-format or upgrade error
 
 ### Requirement: Datomic forward-history selection
-Within one unreplaced Datomic database history, EACL SHALL use authenticated database scope and transaction `t` as the native causal floor, targeted synchronization for at-least selection and for an exact token basis ahead of the local Peer, and `d/as-of` selection only for explicit exact-snapshot behavior. An authentic same-source exact basis that is ahead of one Peer SHALL be treated as propagation lag, not as an expired or out-of-range snapshot.
+Within one unreplaced Datomic database history, EACL SHALL use authenticated
+database scope and transaction `t` as the native causal floor. Exact selection
+SHALL validate token shape, authentication, source, lifecycle, and locator
+before storage access, capture one current local database value from the
+selected connection closure, and compare its basis with `t`. If locally
+covered, EACL SHALL select exactly `d/as-of t` from that value without
+synchronization. If behind, EACL SHALL perform at most one bounded targeted
+`d/sync` to `t`, verify coverage, and select exactly `d/as-of t` from the
+returned value. An authentic same-source exact basis ahead of one Peer is
+propagation lag, not an expired or out-of-range snapshot. This operation SHALL
+NOT require an unverifiable database-value connection-generation field or a
+cross-request observed-head watermark.
 
 #### Scenario: Peer is behind requested floor
 - **WHEN** a Datomic Peer receives an at-least token whose `t` is ahead of its locally observed database
@@ -39,7 +50,16 @@ Within one unreplaced Datomic database history, EACL SHALL use authenticated dat
 #### Scenario: Exact catch-up times out or is interrupted
 - **WHEN** the local Peer does not observe `t` before the consistency bound, or the wait is interrupted
 - **THEN** EACL cancels the targeted-sync future
-- **AND** returns typed freshness timeout or cancellation without calling `d/as-of`
+- **AND** timeout returns `:eacl.consistency/freshness-unavailable` with the
+  freshness-timeout reason, while interruption returns
+  `:eacl.basis/selection-failure` with the cancellation classification
+- **AND** neither path calls `d/as-of`
+
+#### Scenario: Exact catch-up provider fails
+- **WHEN** targeted synchronization fails for a provider reason other than
+  timeout or interruption
+- **THEN** EACL retains the existing typed selection-failure classification
+- **AND** performs no `d/as-of`, authorization evaluation, or cache publication
 
 #### Scenario: Exact synchronization returns behind the token
 - **WHEN** targeted synchronization returns a database whose basis is below `t`

@@ -43,6 +43,17 @@
   [prefix {:keys [v]}]
   (endpoint-pair/value-prefix? v prefix))
 
+(defn- matching-eavt-prefix?
+  [entity attr prefix {:keys [e a] :as datom}]
+  (and (= entity e)
+       (= attr a)
+       (matches-prefix? prefix datom)))
+
+(defn- matching-avet-prefix?
+  [attr prefix {:keys [a] :as datom}]
+  (and (= attr a)
+       (matches-prefix? prefix datom)))
+
 (defn eavt-endpoint-prefix
   "Endpoint datoms for an exact three-component value prefix.
 
@@ -60,13 +71,15 @@
            bound (conj prefix tail)
            scan  (if (= :desc direction)
                    (ds/rseek-datoms db :eavt entity attr bound)
-                   (ds/seek-datoms db :eavt entity attr bound))]
-       (take-while
-        (fn [{:keys [e a] :as datom}]
-          (and (= entity e)
-               (= attr a)
-               (matches-prefix? prefix datom)))
-        scan)))))
+                   (ds/seek-datoms db :eavt entity attr bound))
+           first-datom (first scan)]
+       ;; Most recursive probes are empty. Reject a non-matching seek head
+       ;; before constructing the predicate closure and lazy take-while chain;
+       ;; a matching head retains the same monotone prefix termination.
+       (if (and first-datom
+                (matching-eavt-prefix? entity attr prefix first-datom))
+         (take-while #(matching-eavt-prefix? entity attr prefix %) scan)
+         [])))))
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
@@ -82,9 +95,9 @@
            bound (conj prefix tail)
            scan  (if (= :desc direction)
                    (ds/rseek-datoms db :avet attr bound)
-                   (ds/seek-datoms db :avet attr bound))]
-       (take-while
-        (fn [{:keys [a] :as datom}]
-          (and (= attr a)
-               (matches-prefix? prefix datom)))
-        scan)))))
+                   (ds/seek-datoms db :avet attr bound))
+           first-datom (first scan)]
+       (if (and first-datom
+                (matching-avet-prefix? attr prefix first-datom))
+         (take-while #(matching-avet-prefix? attr prefix %) scan)
+         [])))))

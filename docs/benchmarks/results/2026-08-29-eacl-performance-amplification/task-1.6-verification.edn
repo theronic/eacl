@@ -1,0 +1,24 @@
+{:evidence/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :report "task-1.6-request-reproduction.edn"
+ :command "clj-nrepl-eval -p 7788 <task-1.6 invariant expression>"
+ :results
+ {:boundary true
+  :counter true
+  :snapshot true
+  :context true
+  :membership true
+  :invoker true
+  :hits true
+  :derived-allocation true
+  :misses true
+  :shared-base true
+  :shared-poison true
+  :shared-retry true
+  :finite true}
+ :interpretation
+ {:mandatory-meters "Counter fields consumed by aggregate-limit enforcement are semantic meters, regardless of the stale observation-only namespace documentation."
+  :optional-telemetry "Backend-operation, cache-hit, elapsed-time, and allocation observations do not authorize routing or result changes; unsupported observations are absent, never zero."
+  :read-hit "A read hit is counted only when lookup returned :cached? true from an already completed entry."
+  :publication-race "Every cold contender first missed, ran its own computation, returned its own value, and only then raced bounded publication; a loser was never relabeled as a hit."
+  :runtime-lanes "Elapsed nanoseconds and thread-allocated bytes are raw JVM observations paired with controls, not semantic claims or release acceptance evidence."}}

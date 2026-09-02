@@ -1,0 +1,30 @@
+{:evidence/version 1
+ :source-base "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+ :test-command
+ "clj-nrepl-eval -p 7788 \"(require '[eacl.performance.amplification-reproduction :as r] :reload '[eacl.performance.correctness-gate-test :as g] :reload '[eacl.subproblem-cache-test :as s] :reload) (clojure.test/test-vars [#'s/restored-entry-requires-operation-specific-validation-test #'g/completed-cache-semantic-key-binds-compiler-and-value-abi-test #'g/durable-cache-contracts-forbid-request-joining-test])\""
+ :results
+ [{:scope :restored-entry-operation-validation
+   :test
+   eacl.subproblem-cache-test/restored-entry-requires-operation-specific-validation-test
+   :status :failed-as-expected
+   :assertion-failures 3
+   :observed {:operation-validator-invocations 0
+              :wrong-shaped-entry-returned? true
+              :invalid-results 0}}
+  {:scope :completed-cache-compatibility-identity
+   :test
+   eacl.performance.correctness-gate-test/completed-cache-semantic-key-binds-compiler-and-value-abi-test
+   :status :failed-as-expected
+   :assertion-failures 1
+   :observed {:missing-semantic-key-fields
+              #{:compiler-plan-compatibility :cache-value-abi}}}
+  {:scope :cache-flight-contract-reconciliation
+   :test
+   eacl.performance.correctness-gate-test/durable-cache-contracts-forbid-request-joining-test
+   :status :failed-as-expected
+   :assertion-failures 1
+   :observed {:positive-flight-requirements 5
+              :files
+              ["openspec/specs/single-flight-coordination/spec.md"
+               "openspec/specs/answer-cache-bounding/spec.md"
+               "openspec/specs/verified-subproblem-cache/spec.md"]}}]}

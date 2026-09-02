@@ -7,9 +7,9 @@
   (:refer-clojure :exclude [resolve])
   (:require [eacl.execution :as execution]
             #?(:clj
-               [eacl.formal.production-kernel]
+               [eacl.formal.production-kernel :as production-kernel]
                :cljs
-               [eacl.formal.production-kernel-cljs])))
+               [eacl.formal.production-kernel-cljs :as production-kernel])))
 
 (def ^:dynamic *store*
   "The exact-generation subproblem store bound around one cached evaluation.
@@ -43,16 +43,19 @@
   remain active, but no completed subproblem is published."
   true)
 
+(def default-decision-kernel
+  production-kernel/default-selection)
+
+(def default-current-cache-refinement
+  production-kernel/current-cache-refinement)
+
 (def ^:dynamic *decision-kernel*
   "Generated-kernel selection inherited from the enclosing public client.
 
   Pure lookup, admission, and publication decisions run through generated
   code while storage mutation and value computation remain host-runtime
   responsibilities."
-  #?(:clj
-     eacl.formal.production-kernel/default-selection
-     :cljs
-     eacl.formal.production-kernel-cljs/default-selection))
+  default-decision-kernel)
 
 (def ^:private known-tiers #{:projection :denotation :answer})
 (def ^:private default-projection-max-weight (* 4 1024 1024))
@@ -62,7 +65,7 @@
 (def ^:private lifecycle-key ::lifecycle)
 (def ^:private option-keys
   #{:projection-max-weight :denotation-max-weight :answer-max-weight
-    :managed-proof-max-atoms})
+    :managed-proof-max-atoms :telemetry?})
 
 (defn- tier-hit-metric
   [tier]
@@ -88,7 +91,8 @@
 (declare positive-weight! publication-weight-ceiling)
 
 (defrecord SubproblemStore
-           [state metrics budgets managed-proof-max-atoms content-revision])
+           [state metrics budgets managed-proof-max-atoms content-revision
+            telemetry-enabled?])
 
 (def snapshot-format
   "Version identifier for the process-neutral subproblem snapshot value."
@@ -131,11 +135,12 @@
   ([options]
    (store options nil))
   ([{:keys [projection-max-weight denotation-max-weight answer-max-weight
-            managed-proof-max-atoms]
+            managed-proof-max-atoms telemetry?]
      :or {projection-max-weight default-projection-max-weight
           denotation-max-weight default-denotation-max-weight
           answer-max-weight default-answer-max-weight
-          managed-proof-max-atoms default-managed-proof-max-atoms}
+          managed-proof-max-atoms default-managed-proof-max-atoms
+          telemetry? true}
      :as options}
     content-revision]
    (let [unknown-keys (seq (sort (remove option-keys (keys options))))
@@ -157,6 +162,11 @@
          managed-proof-max-atoms
          (positive-weight!
           :managed-proof-max-atoms managed-proof-max-atoms)]
+     (when-not (boolean? telemetry?)
+       (throw
+        (ex-info "Subproblem cache :telemetry? must be boolean."
+                 {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                  :telemetry? telemetry?})))
      (->SubproblemStore
       (atom
        (assoc
@@ -200,11 +210,18 @@
              :fetched-projection-values 0})
       budgets
       managed-proof-max-atoms
-      content-revision))))
+      content-revision
+      telemetry?))))
 
 (defn store?
   [value]
   (instance? SubproblemStore value))
+
+(defn- record-metrics!
+  [store f & args]
+  (when (:telemetry-enabled? store)
+    (apply swap! (:metrics store) f args))
+  nil)
 
 (defn- record-content-change!
   [store]
@@ -232,6 +249,7 @@
                      :store store})))
   (let [state @(:state store)]
     (assoc @(:metrics store)
+           :telemetry-enabled? (:telemetry-enabled? store)
            :managed-proof-max-atoms
            (:managed-proof-max-atoms store)
            :tiers
@@ -272,8 +290,8 @@
    (record-avoided-backend-operation! *store*))
   ([store]
    (when store
-     (swap! (:metrics store)
-            update :avoided-backend-operations (fnil inc 0)))
+     (record-metrics!
+      store update :avoided-backend-operations (fnil inc 0)))
    nil))
 
 (defn- remove-entry-if-token!
@@ -323,7 +341,7 @@
          probes 0]
     (if (<= (:weight current) maximum-weight)
       [(maybe-compact-lru current) evictions probes]
-      (if-let [[victim-index victim entry victim-probes]
+      (if-let [[victim-index victim entry access-generation victim-probes]
                (loop [index (:lru-head current)
                       victim-probes 0]
                  (when (< index (count (:lru current)))
@@ -332,15 +350,33 @@
                          victim-probes (inc victim-probes)]
                      (if (and (= access (:access entry))
                               (not= protected-key key))
-                       [index key entry victim-probes]
+                       [index key entry
+                        (some-> (:access-state entry) deref)
+                        victim-probes]
                        (recur (inc index) victim-probes)))))]
-        (recur
-         (-> current
-             (update :entries dissoc victim)
-             (assoc :lru-head (inc victim-index))
-             (update :weight - (:weight entry)))
-         (inc evictions)
-         (+ probes victim-probes))
+        (if (and (integer? access-generation)
+                 (< (:promoted-access entry 0) access-generation))
+          ;; Hits mutate only this entry's tiny access counter. The next
+          ;; capacity-changing publication coalesces every touch since the
+          ;; previous promotion into one second chance. No touch can be lost
+          ;; to a failed store CAS because the counter is never cleared.
+          (let [tick (inc (:clock current))]
+            (recur
+             (-> current
+                 (assoc :clock tick :lru-head (inc victim-index))
+                 (assoc-in [:entries victim :access] tick)
+                 (assoc-in [:entries victim :promoted-access]
+                           access-generation)
+                 (update :lru conj [tick victim]))
+             evictions
+             (+ probes victim-probes)))
+          (recur
+           (-> current
+               (update :entries dissoc victim)
+               (assoc :lru-head (inc victim-index))
+               (update :weight - (:weight entry)))
+           (inc evictions)
+           (+ probes victim-probes)))
         [(maybe-compact-lru
           (assoc current :lru-head (count (:lru current))))
          evictions
@@ -361,18 +397,12 @@
       budget)))
 
 (defn- touch-entry!
-  [store tier key token]
-  (swap! (:state store)
-         (fn [state]
-           (let [entry (get-in state [tier :entries key])]
-             (if (and entry (identical? token (:token entry)))
-               (let [tick (inc (get-in state [tier :clock]))]
-                 (-> state
-                     (assoc-in [tier :clock] tick)
-                     (assoc-in [tier :entries key :access] tick)
-                     (update-in [tier :lru] conj [tick key])
-                     (update tier maybe-compact-lru)))
-               state))))
+  [entry]
+  ;; Per-entry access state is intentionally outside the immutable store map.
+  ;; A reader owns the held entry after lookup, so concurrent eviction cannot
+  ;; invalidate either its value or this best-effort recency signal.
+  (when-let [access-state (:access-state entry)]
+    (swap! access-state inc))
   nil)
 
 (declare lookup!)
@@ -423,25 +453,25 @@
      (cond
        deadline-expired?
        (do
-         (swap! (:metrics store) update :publication-rejections inc)
+         (record-metrics! store update :publication-rejections inc)
          {:published? false :reason :deadline-expired})
 
        (not valid-value?)
        (do
-         (swap! (:metrics store) update :invalid-results inc)
-         (swap! (:metrics store) update :publication-rejections inc)
+         (record-metrics! store update :invalid-results inc)
+         (record-metrics! store update :publication-rejections inc)
          {:published? false :reason :invalid-value})
 
        (nil? weight)
        (do
-         (swap! (:metrics store) update :invalid-results inc)
-         (swap! (:metrics store) update :publication-rejections inc)
+         (record-metrics! store update :invalid-results inc)
+         (record-metrics! store update :publication-rejections inc)
          {:published? false :reason :invalid-weight})
 
        (> (or weight 0) ceiling)
        (do
-         (swap! (:metrics store) update :oversized-rejections inc)
-         (swap! (:metrics store) update :publication-rejections inc)
+         (record-metrics! store update :oversized-rejections inc)
+         (record-metrics! store update :publication-rejections inc)
          {:published? false :reason :oversized})
 
        :else
@@ -451,12 +481,12 @@
              (cond
                (not (identical? lifecycle (get state lifecycle-key)))
                (do
-                 (swap! (:metrics store) update :detached-publications inc)
+                 (record-metrics! store update :detached-publications inc)
                  {:published? false :reason :detached})
 
                (get-in state [tier :entries key])
                (do
-                 (swap! (:metrics store) update :publication-races inc)
+                 (record-metrics! store update :publication-races inc)
                  {:published? false :reason :compatible-winner})
 
                :else
@@ -466,7 +496,9 @@
                                 :value value
                                 :weight weight
                                 :validated? true
-                                :access tick}
+                                :access tick
+                                :access-state (atom 0)
+                                :promoted-access 0}
                      updated-tier
                      (-> (get state tier)
                          (assoc-in [:entries key] candidate)
@@ -478,17 +510,17 @@
                  (cond
                    (> (:weight trimmed) maximum-weight)
                    (do
-                     (swap! (:metrics store) update :publication-rejections inc)
+                     (record-metrics! store update :publication-rejections inc)
                      {:published? false :reason :capacity})
 
                    (compare-and-set!
                     (:state store) state (assoc state tier trimmed))
                    (do
-                     (swap! (:metrics store) update :puts inc)
+                     (record-metrics! store update :puts inc)
                      (when (pos? evictions)
-                       (swap! (:metrics store) update :evictions + evictions))
+                       (record-metrics! store update :evictions + evictions))
                      (when (pos? probes)
-                       (swap! (:metrics store) update :eviction-probes + probes))
+                       (record-metrics! store update :eviction-probes + probes))
                      (record-content-change! store)
                      {:published? true :reason :published})
 
@@ -497,8 +529,8 @@
 
                    :else
                    (do
-                     (swap! (:metrics store)
-                            update :publication-contention inc)
+                     (record-metrics!
+                      store update :publication-contention inc)
                      {:published? false :reason :contention})))))))))))
 
 (defn snapshot-tier-entries
@@ -683,8 +715,11 @@
                                  [key {:token (lifecycle-token)
                                        :value value
                                        :weight weight
-                                       :validated? true
-                                       :access (inc index)}]))
+                                       :validated? false
+                                       :restored? true
+                                       :access (inc index)
+                                       :access-state (atom 0)
+                                       :promoted-access 0}]))
                               chronological)]
                     [tier {:entries entries
                            :lru (mapv (fn [index {:keys [key]}]
@@ -716,7 +751,7 @@
                store tier key options value *publication-attempt-limit*
                lifecycle)
               {:published? false :reason :suppressed})]
-        (swap! (:metrics store) update :misses inc)
+        (record-metrics! store update :misses inc)
         {:value value
          :cached? false
          :cache-tier nil
@@ -764,7 +799,7 @@
     (if (> (dependency-atom-count dependency)
            (:managed-proof-max-atoms *store*))
       (do
-        (swap! (:metrics *store*) update :managed-proof-overflows inc)
+        (record-metrics! *store* update :managed-proof-overflows inc)
         nil)
       (try
         (let [resolved
@@ -777,15 +812,15 @@
                 (constantly
                  (+ 128 (* 24 (dependency-atom-count dependency))))}
                #(do
-                  (swap! (:metrics *store*)
-                         update :managed-proof-reads inc)
+                  (record-metrics!
+                   *store* update :managed-proof-reads inc)
                   (*managed-key-fn* dependency)))]
           (when (:cached? resolved)
-            (swap! (:metrics *store*) update :managed-proof-hits inc))
+            (record-metrics! *store* update :managed-proof-hits inc))
           (when (valid-managed-descriptor? (:value resolved))
             (:value resolved)))
         (catch #?(:clj Throwable :cljs :default) _
-          (swap! (:metrics *store*) update :managed-proof-failures inc)
+          (record-metrics! *store* update :managed-proof-failures inc)
           nil)))))
 
 (declare lookup!)
@@ -823,8 +858,8 @@
               options
               compute)]
          (when (:cached? managed)
-           (swap! (:metrics *store*)
-                  update (managed-tier-hit-metric tier) inc)
+           (record-metrics!
+            *store* update (managed-tier-hit-metric tier) inc)
            (record-avoided-backend-operation! *store*))
          (:value managed))
        (compute)))))
@@ -841,19 +876,55 @@
     (throw (ex-info "Subproblem lookup callbacks must be functions."
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :tier tier})))
-  (swap! (:metrics store) update :lookup-probes inc)
-  (let [entry (get-in @(:state store) [tier :entries key])]
-    (if-not (true? (:validated? entry))
+  (let [state @(:state store)
+        entry (get-in state [tier :entries key])
+        validated?
+        (and entry
+             (or (true? (:validated? entry))
+                 (and (:restored? entry)
+                      (try
+                        (boolean (valid? (:value entry)))
+                        (catch #?(:clj Throwable :cljs :default) _ false)))))]
+    (cond
+      (nil? entry)
       (do
-        (when entry
-          (remove-entry-if-token! store tier key (:token entry))
-          (swap! (:metrics store) update :invalid-results inc))
-        (swap! (:metrics store) update :lookup-misses inc)
+        (record-metrics!
+         store
+         #(-> %
+              (update :lookup-probes inc)
+              (update :lookup-misses inc)))
         nil)
+
+      (not validated?)
       (do
-        (touch-entry! store tier key (:token entry))
-        (swap! (:metrics store) update :hits inc)
-        (swap! (:metrics store) update (tier-hit-metric tier) inc)
+        (remove-entry-if-token! store tier key (:token entry))
+        (record-metrics!
+         store
+         #(-> %
+              (update :lookup-probes inc)
+              (update :lookup-misses inc)
+              (update :invalid-results inc)))
+        nil)
+
+      :else
+      (do
+        ;; Restored entries start unvalidated. A successful first reader makes
+        ;; one bounded best-effort publication of the operation-specific
+        ;; validation state, but may use its own held immutable value even if
+        ;; a peer or eviction wins the race.
+        (when-not (true? (:validated? entry))
+          (compare-and-set!
+           (:state store) state
+           (-> state
+               (assoc-in [tier :entries key :validated?] true)
+               (update-in [tier :entries key] dissoc :restored?))))
+        (touch-entry! entry)
+        (record-metrics!
+         store
+         #(-> %
+              (update :lookup-probes inc)
+              (update :hits inc)
+              (update (tier-hit-metric tier) inc)))
         {:value (:value entry)
          :cached? true
          :cache-tier (exact-cache-tier tier)}))))

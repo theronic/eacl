@@ -185,6 +185,12 @@
         (is (contains? #{obligation :aligned-boolean-vector}
                        (:obligation data)))))))
 
+(deftest scalar-response-is-validated-at-the-captured-boundary-test
+  (let [scalar (adapter (constantly :not-boolean))
+        data (error-data #(direct/direct-match-many? scalar forward-request))]
+    (is (= :eacl/backend-contract-violation (:type data)))
+    (is (= :boolean-result (:obligation data)))))
+
 (deftest selected-native-basis-does-not-follow-concurrent-head-test
   (let [selected #{0 2}
         head (atom selected)
@@ -200,6 +206,7 @@
 
 (deftest dispatcher-elides-cache-hits-groups-deduplicates-and-scatters-test
   (let [requests (atom [])
+        normalizations (atom 0)
         stats (atom {})
         native
         (adapter
@@ -219,14 +226,19 @@
                  :candidate [:document 4]}
                 {:direction :reverse :descriptor reverse
                  :candidate [:user 2]}]
+        original-normalize direct/normalize-request
         result
-        (binding [direct/*physical-stats* stats]
-          (direct/dispatch
-           native probes
-           (fn [probe]
-             (if (= [:user 3] (:candidate probe))
-               true
-               direct/cache-miss))))]
+        (with-redefs [direct/normalize-request
+                      (fn [request]
+                        (swap! normalizations inc)
+                        (original-normalize request))]
+          (binding [direct/*physical-stats* stats]
+            (direct/dispatch
+             native probes
+             (fn [probe]
+               (if (= [:user 3] (:candidate probe))
+                 true
+                 direct/cache-miss)))))]
     (is (= [true true true true true] result))
     (is (= 2 (count @requests)))
     (is (= [[:document 2] [:document 4]]
@@ -236,6 +248,8 @@
     (is (= 2 (:physical-subgroups @stats)))
     (is (= 3 (:scalar-equivalent-predicates @stats)))
     (is (= 2 (:adapter-commands @stats)))
+    (is (= (count probes) @normalizations)
+        "each external probe is normalized once before grouping")
     (is (= 0 (:galloping-reseeks @stats)))
     (is (= 0 (:batch-overread @stats)))))
 

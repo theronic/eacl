@@ -5,6 +5,7 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.v8 :as engine]
             [eacl.lazy-merge-sort :as lazy-sort]
+            [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -423,7 +424,135 @@
           (is (= obligation
                  (:obligation
                   (violation operation implementation args)))
-              (str "guard " operation)))))))
+            (str "guard " operation)))))))
+
+(deftest captured-scan-invoker-preserves-the-complete-boundary-test
+  (let [calls (atom [])
+        phases (atom [])
+        adapter
+        (backend/make-adapter
+         {:id :captured-scan
+          :capabilities {}
+          :runtime-guards? true
+          :operations
+          (assoc (operation-map)
+                 :subject->resources
+                 (fn [& args]
+                   (swap! calls conj args)
+                   [3 5 8]))})
+        scan! (backend/scan-invoker adapter :subject->resources)
+        ledger (request-counters/make-ledger)
+        stats (atom {})
+        result
+        (request-counters/call-with-ledger
+         ledger
+         #(binding [backend/*backend-op-stats* stats
+                    backend/*invoke-observer* (fn [event]
+                                                (swap! phases conj event))]
+            (scan! :user 1 2 :document
+                   {:direction :asc :bound-eid 2
+                    :inclusive-bound? false :limit 3})))]
+    (is (= [3 5 8] result))
+    (is (= [[:user 1 2 :document
+             {:direction :asc :bound-eid 2
+              :inclusive-bound? false :limit 3}]]
+           @calls))
+    (is (= 1 (:adapter-reads
+              (request-counters/snapshot ledger))))
+    (is (= {:subject->resources 1} @stats))
+    (is (= [[:before :subject->resources]
+            [:after :subject->resources]]
+           (mapv (juxt :phase :operation) @phases))))
+  (testing "runtime-guard failures retain after-then-failed observation"
+    (let [phases (atom [])
+          adapter
+          (backend/make-adapter
+           {:id :captured-scan-violator
+            :capabilities {}
+            :runtime-guards? true
+            :operations
+            (assoc (operation-map)
+                   :resource->subjects (fn [& _] [2 3]))})
+          scan! (backend/scan-invoker adapter :resource->subjects)
+          failure
+          (binding [backend/*invoke-observer* (fn [{:keys [phase]}]
+                                                (swap! phases conj phase))]
+            (error-data
+             #(scan! :document 4 2 :user
+                     {:direction :asc :bound-eid 2
+                      :inclusive-bound? false})))]
+      (is (= :inclusive-exclusive-bound (:obligation failure)))
+      (is (= [:before :after :failed] @phases))))
+  (testing "adapter exceptions retain before-then-failed observation"
+    (let [phases (atom [])
+          adapter
+          (backend/make-adapter
+           {:id :captured-scan-failure
+            :capabilities {}
+            :operations
+            (assoc (operation-map)
+                   :subject->resources
+                   (fn [& _] (throw (ex-info "scan failed" {:cause :test}))))})
+          scan! (backend/scan-invoker adapter :subject->resources)
+          failure
+          (binding [backend/*invoke-observer* (fn [{:keys [phase]}]
+                                                (swap! phases conj phase))]
+            (error-data
+             #(scan! :user 1 2 :document {:direction :asc})))]
+      (is (= :test (:cause failure)))
+      (is (= [:before :failed] @phases))))
+  (testing "diagnostic stand-ins retain generic call-time dispatch"
+    (let [calls (atom [])
+          scan! (backend/scan-invoker ::stand-in :subject->resources)]
+      (with-redefs [backend/invoke
+                    (fn [adapter operation & args]
+                      (swap! calls conj [adapter operation args])
+                      [7])]
+        (is (= [7] (scan! :user 1 2 :document {:direction :asc}))))
+      (is (= [[::stand-in :subject->resources
+               [:user 1 2 :document {:direction :asc}]]]
+             @calls)))))
+
+(deftest captured-direct-match-invoker-preserves-the-complete-boundary-test
+  (let [calls (atom [])
+        phases (atom [])
+        adapter
+        (backend/make-adapter
+         {:id :captured-direct-match
+          :capabilities {}
+          :runtime-guards? true
+          :operations
+          (assoc (operation-map)
+                 :direct-match?
+                 (fn [& args]
+                   (swap! calls conj args)
+                   true))})
+        direct-match! (backend/direct-match-invoker adapter)
+        ledger (request-counters/make-ledger)
+        stats (atom {})
+        result
+        (request-counters/call-with-ledger
+         ledger
+         #(binding [backend/*backend-op-stats* stats
+                    backend/*invoke-observer* (fn [{:keys [phase]}]
+                                                (swap! phases conj phase))]
+            (direct-match! :user 1 2 :document 3)))]
+    (is (true? result))
+    (is (= [[:user 1 2 :document 3]] @calls))
+    (is (= 1 (:adapter-reads
+              (request-counters/snapshot ledger))))
+    (is (= {:direct-match? 1} @stats))
+    (is (= [:before :after] @phases)))
+  (testing "diagnostic stand-ins retain generic call-time dispatch"
+    (let [calls (atom [])
+          direct-match! (backend/direct-match-invoker ::stand-in)]
+      (with-redefs [backend/invoke
+                    (fn [adapter operation & args]
+                      (swap! calls conj [adapter operation args])
+                      true)]
+        (is (true? (direct-match! :user 1 2 :document 3))))
+      (is (= [[::stand-in :direct-match? [:user 1 2 :document 3]]]
+             @calls)))))
 
 (deftest runtime-guards-reject-negative-internal-eids-test
   (letfn [(violation [operation implementation args]

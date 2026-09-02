@@ -442,8 +442,8 @@
   "Builds a static borrowed Datomic basis source.
 
   Construction reads only the connection's durable database id. Exact
-  selection starts a targeted `d/sync` and never qualifies the request by
-  acquiring current first."
+  selection captures one local Peer DB and starts one targeted `d/sync T`
+  only when that immutable observation is below the authenticated locator."
   [conn opts]
   (let [source-scope
         {:source-id (connection-source-id conn) :branch nil}
@@ -495,12 +495,33 @@
          (validate-exact-token! token-data)
          (let [locator (:exact-locator token-data)
                timeout-ms (timeout timeout-ms)
+               local-db
+               (try
+                 (d/db conn)
+                 (catch Exception failure
+                   (selection-failure!
+                    "Failed capturing the local Datomic basis."
+                    :retryable :exact-sync
+                    {:requested-t locator
+                     :requested-order-hint locator
+                     :timeout-ms timeout-ms}
+                    failure)))
                caught-up
-               (await-sync! (start-sync! #(d/sync conn locator)
-                                         :exact-sync locator :selection)
-                            timeout-ms
-                            :exact-sync locator)
-               exact-db (d/as-of caught-up locator)]
+               (await-basis-db
+                conn local-db locator timeout-ms :exact-sync)
+               exact-db
+               (try
+                 (d/as-of caught-up locator)
+                 (catch Exception failure
+                   (selection-failure!
+                    "Failed reconstructing the exact Datomic basis."
+                    :retryable :exact-as-of
+                    {:requested-t locator
+                     :observed-t (d/basis-t caught-up)
+                     :requested-order-hint locator
+                     :observed-order-hint (d/basis-t caught-up)
+                     :timeout-ms timeout-ms}
+                    failure)))]
            ;; `db-revision` of the as-of view returns the requested locator
            ;; verbatim, so it cannot witness anything. The reachable
            ;; divergence is a synchronized head that still sits below the

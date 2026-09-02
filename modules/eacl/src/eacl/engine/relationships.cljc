@@ -352,7 +352,7 @@
                 (let [[accepted examined last-examined]
                       (reduce
                        (fn [[accepted examined _] row]
-                         (request-counters/add! :candidates-examined)
+                         (request-counters/add-candidates-examined!)
                          [(cond-> accepted
                             (accept? (:relationship row))
                             (conj row))

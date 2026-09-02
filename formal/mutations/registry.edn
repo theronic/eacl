@@ -1,7 +1,7 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 132
- :historical-clojure-mutant-count 120
+ :historical-mutant-count 141
+ :historical-clojure-mutant-count 129
  :historical-model-mutant-count 12
  :mutants
  [{:id :wrong-arrow-direction
@@ -287,6 +287,16 @@
    :killed-by
    {:test
     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :current-cache-specialization-partition
+   :mechanism :executed-production
+   :mutation :change-one-host-specialization-partition
+   :target-symbol "cache-refinement/current-cache-mapping"
+   :consumer-symbol "cache/specialized-current-cache-action"
+   :detector "current-cache-specialization-partition-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
   {:id :operator-swapped-exclusion
    :mechanism :executed-production
    :mutation :swap-exclusion-left-and-right
@@ -340,7 +350,7 @@
   {:id :operator-vector-misalignment
    :mechanism :executed-production
    :mutation :reverse-physical-membership-decisions-before-scatter
-   :target-symbol "direct/direct-match-many?"
+   :target-symbol "direct/direct-match-many-checked?"
    :consumer-symbol "direct/dispatch"
    :detector "operator-vector-misalignment-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
@@ -383,6 +393,93 @@
    :target-symbol "operator-evaluator/active-recursion-outcome"
    :consumer-symbol "operator-evaluator/check-eids"
    :detector "operator-active-recursion-as-false-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :alias-resolution-predicate
+   :mechanism :executed-production
+   :mutation :treat-relation-dependent-body-as-pure-alias
+   :target-symbol "sealed-plan/resolve-pure-alias"
+   :detector "alias-resolution-predicate-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :alias-cycle-stopping
+   :mechanism :executed-production
+   :mutation :retain-revisited-alias-target
+   :target-symbol "sealed-plan/resolve-pure-alias"
+   :detector "alias-cycle-stopping-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :alias-complete-frontier-identity
+   :mechanism :executed-production
+   :mutation :deduplicate-frontiers-without-physical-path-fields
+   :target-symbol "sealed-plan/derive-execution-frontier"
+   :consumer-symbol "sealed-plan/seal-plan"
+   :detector "alias-complete-frontier-identity-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :alias-first-position-retention
+   :mechanism :executed-production
+   :mutation :retain-later-equal-frontier-position
+   :target-symbol "sealed-plan/derive-execution-frontier"
+   :consumer-symbol "sealed-plan/seal-plan"
+   :detector "alias-first-position-retention-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :alias-frontier-deduplication
+   :mechanism :executed-production
+   :mutation :keep-duplicate-normalized-frontier
+   :target-symbol "sealed-plan/derive-execution-frontier"
+   :consumer-symbol "sealed-plan/seal-plan"
+   :detector "alias-frontier-deduplication-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :stable-count-history-retention
+   :mechanism :executed-production
+   :mutation :retain-one-result-per-discovery-in-exact-count
+   :target-symbol "stable-reducer/finish"
+   :consumer-symbol "stable-reducer/run-forward"
+   :detector "stable-count-history-retention-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :stable-completion-distinct
+   :mechanism :executed-production
+   :mutation :rebuild-result-width-uniqueness-state-at-completion
+   :target-symbol "stable-reducer/finish"
+   :consumer-symbol "stable-reducer/run-forward"
+   :detector "stable-completion-distinct-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :stable-admission-deduplication
+   :mechanism :executed-production
+   :mutation :assign-distinct-identities-to-equal-successors
+   :target-symbol "stable-reducer/work-id"
+   :consumer-symbol "stable-reducer/schedule"
+   :detector "stable-admission-deduplication-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+   {:test
+    :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :stable-staged-limit-atomicity
+   :mechanism :executed-production
+   :mutation :commit-admission-before-staged-limit-check
+   :target-symbol "stable-reducer/schedule"
+   :detector "stable-staged-limit-atomicity-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
    {:test
@@ -650,6 +747,5 @@
     :aggregate-release-imbalance
     :cljs-scan-scope-check-removed
     :cljs-lookahead-continuation-dropped
-    :pure-permission-alias-keeps-duplicate-frontier
     :fuel-cut-wave-rolls-back-original-state
     :page-scan-wave-is-host-selectable]}]}

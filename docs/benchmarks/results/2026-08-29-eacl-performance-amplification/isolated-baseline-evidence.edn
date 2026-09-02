@@ -1,0 +1,148 @@
+{:format :eacl.performance/evidence-v1
+ :phase :baseline
+ :identity
+ {:source
+  {:commit "e137dc55512d4eeebcc31cfbe5087d61ab04465b"
+   :tree "324445d66d55446c4d6a5395608749fb832fec8f"
+   :artifact
+   {:generated-class-count 777
+    :generated-classes-sha256
+    "59c198b67e256081321ef16462671dff47313d0b2b5df97a8404c3c1b26bfb48"
+    :harness-sha256
+    "5195ac571a4ef8a8a9efa3bf47c286963e99ba2fb273e5a2b6c099a391cd394e"}}
+  :dependencies
+  {:classpath-sha256
+   "0fe14955538600e6940ffdd2c9cb63d993471117ea45115ca8ac0e53a14f48b5"}
+  :runtime {:language :clj :version "1.11.4" :jvm "26.0.2"}
+  :environment
+  {:host-class ["Mac OS X" "aarch64" "26"]
+   :os-version "26.4.1"
+   :java-vendor "Eclipse Adoptium"
+   :available-processors 14
+   :maximum-heap-bytes 9663676416}
+  :backend
+  {:id :datascript
+   :adapter-fingerprint
+   {:implementation :eacl.datascript.backend/v8
+    :codec :eacl-id-immutable-v1}}
+  :fixture
+  {:id :recursive-star-exact-count
+   :digest
+   "f0ef94a458d1fbb5f84b60cd239f8fe78677ec9788473b043357808f523ccae2"
+   :shape {:shape :star :accounts 4096}
+   :expected-count 4096}
+  :basis
+  {:kind :ordinary
+   :revision 536870925
+   :identity "b841a823-2576-45e4-9d1b-fd7bc7ecc78f"}
+  :command
+  {:operation :count-resources
+   :subject :user/user-1
+   :permission :view
+   :resource-type :account
+   :count-limit :exact}
+  :cache-regime :completed-disabled-derived-warm
+  :operation-boundary :fully-realized-public-result
+  :estimator
+  {:id :paired-bootstrap-median-direction-normalized-effect
+   :version 1
+   :release-acceptance-digest
+   "8eba9de7d062bc39f1c89bd462f18b003422994fe5b5ce80f3582a011552a695"}}
+ :metrics
+ {:elapsed
+  {:unit :microseconds
+   :samples
+   [15883.791 15785.125 15854.042 21590.25 22815.25 25080.792
+    24211.709 25003.084 24619.375 27687.791 25819.5 24834.333
+    25002.416 24579.292 25941.0 25278.916 33396.75 33149.25
+    38624.958 31044.083 26563.708 28961.375 31461.542 32243.958
+    33442.667 30527.125 34052.375 32235.958 19201.292 19494.291
+    19707.292 16694.75 16730.291 15579.125 15552.417 16284.0
+    16650.916 16498.625 16240.625 15797.084]}
+  :mandatory
+  {:commands {:unit :count :samples [4160]}
+   :fetched-values {:unit :count :samples [4096]}
+   :candidates-examined {:unit :count :samples [0]}
+   :probes {:unit :count :samples [0]}}
+  :optional
+  {:allocated-bytes
+   {:unit :bytes
+    :samples
+    [73710840 73710840 73710840 73710840 73710840 73710840
+     73710840 73710840 73710840 73710840 73710840 73710840
+     73710840 73710840 73710840 73710840 73710840 73710840
+     73710840 73710840 73710840 73710840 73710840 73710840
+     73710840 73710840 73710840 73710840 73710840 73710840
+     73710840 73710840 73710840 73710840 73710840 73710840
+     73710840 73710840 73710840 73710840]}
+   :cpu-nanos {:status :unsupported :reason :runtime-unavailable}
+   :post-response-counter-delta {:unit :count :samples [0]}
+   :post-response-backend-operation-delta {:unit :count :samples [0]}}}
+ :raw
+ [{:sampling
+   {:warmups 10
+    :paired-blocks 40
+    :interleaving :alternating-forward-reverse
+    :outlier-policy :none}
+   :baseline-a
+   {:latency-us
+    [15883.791 15785.125 15854.042 21590.25 22815.25 25080.792
+     24211.709 25003.084 24619.375 27687.791 25819.5 24834.333
+     25002.416 24579.292 25941.0 25278.916 33396.75 33149.25
+     38624.958 31044.083 26563.708 28961.375 31461.542 32243.958
+     33442.667 30527.125 34052.375 32235.958 19201.292 19494.291
+     19707.292 16694.75 16730.291 15579.125 15552.417 16284.0
+     16650.916 16498.625 16240.625 15797.084]
+    :allocated-bytes {:value 73710840 :repetitions 40}
+    :checksum {:value -521091732 :repetitions 40}}
+   :baseline-b
+   {:latency-us
+    [16471.5 15821.75 15743.792 15752.042 22208.042 23755.417
+     25066.791 24755.292 24726.666 24425.625 24398.875 24761.834
+     26120.125 23996.708 25312.625 24536.958 26247.583 36873.833
+     34188.625 31026.708 29777.334 31498.375 28919.125 29029.417
+     37334.125 25141.083 30119.792 27681.375 20592.208 20778.416
+     16867.917 24599.083 16350.167 15617.916 16768.042 16032.375
+     17122.458 16588.125 15930.708 16400.833]
+    :allocated-bytes {:value 73710840 :repetitions 40}
+    :checksum {:value -521091732 :repetitions 40}}
+   :relative-median-gap 0.007869817978726105
+   :observed-invocation
+   {:result [4096 -1 false]
+    :elapsed-nanos 20089917
+    :response-boundary :fully-realized-public-result
+    :mandatory-counters
+    {:contract-normalizations 1
+     :acquisitions 1
+     :writer-submissions 0
+     :publications 0
+     :context-constructions 1
+     :cursor-builds 0
+     :fetched-values 4096
+     :public-entries 1
+     :probes 0
+     :commands 4160
+     :proof-derivations 0
+     :releases 1
+     :candidates-examined 0
+     :generation-reads 1
+     :renderings 0
+     :adapter-reads 4167
+     :cache-key-builds 0
+     :definition-reads 0
+     :identity-conversions 0
+     :seals 0}
+    :backend-operations
+    {:native-revision 1
+     :snapshot-id 1
+     :basis-kind 1
+     :order-hint 1
+     :exact-locator 1
+     :schema-generation 1
+     :object-id->internal 1
+     :subject->resources 4160}
+    :post-response
+    {:observation-window-nanos 10000000
+     :counter-delta {}
+     :backend-operation-delta {}}}}]
+ :raw-digest "8d25e958f0ed975f7a439443f08c982780a2c5c90471e624d5264c08bd8a2037"}

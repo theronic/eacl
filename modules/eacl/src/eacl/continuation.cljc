@@ -49,11 +49,16 @@
           :max-weight max-weight})))
      (->BoundedContinuationStore
       (atom {:entries {}
+             :metadata-cap max-entries
              :order []
+             :order-index 0
              :weight 0
              :families {}
              :tombstones {}
-             :tombstone-order []})
+             :tombstone-generations {}
+             :tombstone-order []
+             :tombstone-order-index 0
+             :tombstone-clock 0})
       (atom {:hits 0
              :misses 0
              :puts 0
@@ -77,13 +82,32 @@
          (update metric (fnil inc 0))
          (update-in [:by-kind kind metric] (fnil inc 0))))))
 
-(defn- without-key
-  [order key]
-  (into [] (remove #(= key %)) order))
+(defn- compact-entry-order
+  [{:keys [order order-index metadata-cap] :as current}]
+  (let [pending (- (count order) order-index)]
+    (if (or (> order-index metadata-cap)
+            (> pending (* 2 metadata-cap)))
+      (assoc current
+             :order (into [] (drop order-index order))
+             :order-index 0)
+      current)))
 
-(defn- touch
-  [order key]
-  (conj (without-key order key) key))
+(defn- compact-tombstone-order
+  [{:keys [tombstone-order tombstone-order-index
+           tombstone-generations metadata-cap]
+    :as current}]
+  (let [pending (- (count tombstone-order) tombstone-order-index)]
+    (if (or (> tombstone-order-index metadata-cap)
+            (> pending (* 2 metadata-cap)))
+      (assoc current
+             :tombstone-order
+             (into []
+                   (filter
+                    (fn [[key generation]]
+                      (= generation (get tombstone-generations key))))
+                   (drop tombstone-order-index tombstone-order))
+             :tombstone-order-index 0)
+      current)))
 
 (defn- checkpoint-family-key
   "Returns the exact checkpoint identity with only its plan fingerprint
@@ -116,24 +140,39 @@
 
 (defn- remember-tombstone
   [current key reason limit]
-  (let [order (touch (:tombstone-order current) key)
-        tombstones (assoc (:tombstones current) key reason)
-        excess (max 0 (- (count order) limit))
-        expired (take excess order)]
-    (assoc current
-           :tombstones (apply dissoc tombstones expired)
-           :tombstone-order (subvec order excess))))
+  (let [generation (inc (:tombstone-clock current))
+        current
+        (-> current
+            (assoc :tombstone-clock generation)
+            (assoc-in [:tombstones key] reason)
+            (assoc-in [:tombstone-generations key] generation)
+            (update :tombstone-order conj [key generation]))]
+    (loop [current current]
+      (if (<= (count (:tombstones current)) limit)
+        (compact-tombstone-order current)
+        (let [index (:tombstone-order-index current)
+              [oldest oldest-generation]
+              (nth (:tombstone-order current) index)
+              current (assoc current :tombstone-order-index (inc index))]
+          (if (= oldest-generation
+                 (get-in current [:tombstone-generations oldest]))
+            (recur
+             (-> current
+                 (update :tombstones dissoc oldest)
+                 (update :tombstone-generations dissoc oldest)))
+            (recur current)))))))
 
 (defn- evict-oldest
-  [{:keys [entries order weight] :as current} tombstone-limit]
-  (if-let [oldest (first order)]
+  [{:keys [entries order order-index weight] :as current} tombstone-limit]
+  (if-let [oldest (nth order order-index nil)]
     (let [entry (get entries oldest)]
       [(remember-tombstone
         (-> current
             (assoc :entries (dissoc entries oldest)
-                   :order (subvec order 1)
+                   :order-index (inc order-index)
                    :weight (- weight (:weight entry)))
-            (remove-family oldest))
+            (remove-family oldest)
+            compact-entry-order)
         oldest :evicted tombstone-limit)
        true])
     [current false]))
@@ -272,7 +311,8 @@
                        (+ (- entry-weight (or (:weight prior) 0))
                           current-weight))
                       (update :tombstones dissoc key)
-                      (update :tombstone-order without-key key))
+                      (update :tombstone-generations dissoc key)
+                      compact-tombstone-order)
                    (nil? prior) (add-family key))
                  [bounded evictions]
                  (enforce-bounds
@@ -297,8 +337,11 @@
 (defn clear!
   [store]
   (reset! (:state store)
-          {:entries {} :order [] :weight 0 :families {}
-           :tombstones {} :tombstone-order []})
+          {:entries {} :metadata-cap (:max-entries store)
+           :order [] :order-index 0 :weight 0 :families {}
+           :tombstones {} :tombstone-generations {}
+           :tombstone-order [] :tombstone-order-index 0
+           :tombstone-clock 0})
   nil)
 
 (defn stats
