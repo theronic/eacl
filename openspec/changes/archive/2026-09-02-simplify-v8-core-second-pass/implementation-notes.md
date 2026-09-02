@@ -50,6 +50,21 @@ Cost of the executor change, measured through the store API on one thread with a
 
 Re-certification on freshly started JVMs after these three changes: CI battery 1139 tests, 40437 assertions, 0 failures; Datalevin suite (same directory set as above) 419 tests, 10490 assertions, 0 failures; generators + adversarial + mutation controls 13 tests, 891 assertions, 0 failures; strict counterexample replay 71 tests, 18228 assertions, 0 failures; the eight generated-differential suites 52 tests, 18280 assertions, 0 failures; consistency-boundary gate passed at median p95 800.5 ns on a quiet host and 423.7 ns with another suite running (the benchmark does not touch the cache; the spread is measurement noise under a 15000 ns ceiling); routing-certificate gate passed; `bin/reflection-gate` clean; `clj-kondo` reports only the pre-existing unresolved-symbol diagnostics in the Datomic test file. The ClojureScript suite was not rerun: the change is JVM-only (`#?(:clj ...)` branch, a `.clj` test, the workflow, and prose).
 
+## Status at hand-off (2026-09-02, after commit 876b8303)
+
+Done:
+
+- Core PR #165 (`codex/simplify-v8-core-second-pass`, base `codex/streamline-kernel-authority-and-counts` = PR #163) carries eight commits; head `876b8303`. The Tests workflow is green for that head on both the push and the pull-request events. The Formal workflow's parity job is green on both events (it had never reached its suites before the flag fix). At hand-off the `temporal-models` job was still running on both events and `dafny-and-generated-boundaries` on the push event; the previous push run's Dafny job (run 33616935781) had also not finished. The PR description lists the findings, the CI fixes, and the certification table.
+- Demo PR #70 (`codex/upgrade-eacl-second-pass` on eacl-demo) is repinned to `876b8303` (commit `85b1f8e`, 19 tracked files rewritten by `npm run upgrade:eacl`) and pushed. It is not merged; `production` is untouched.
+- No session JVMs are left running. The core working tree is clean apart from the four untracked `openspec/changes/*` directories that predate this work; the demo tree has two untracked `verification/results/*` files that also predate it.
+
+Next steps, in order:
+
+1. Wait for the Formal workflow on `876b8303` to finish: `temporal-models` on both events and `dafny-and-generated-boundaries` on the push event (it now runs `bin/formal manifest`; exit 3 is the documented "assurance withheld" outcome and is accepted). If the Dafny job fails, inspect the manifest step first; the `.dfy` sources did not change in this pass.
+2. Merge the demo: `gh pr merge 70 --merge` on eacl-demo, then `git fetch origin && git push origin origin/main:production`, then watch `deploy-demos.yml` (deploys run only on pushes to `production`). Smoke the live demos afterwards.
+3. Land the stack: PR #163 first, then PR #165 (its base is #163's branch; retarget to `main` if #163 merges by squash).
+4. Recorded follow-ups, unchanged: the sixteen vacuous answer-substitution mutation controls; per-push Dafny wall clock on retired-engine models; triple execution of shared suites across workflows; the Datalevin per-operation read-scope seam; least-path witness memoization across chunks; the retired indexed authority cut.
+
 ## Traps recorded for the next pass
 
 - A warm nREPL that reloads `eacl.verified-kernel` invalidates every already-instantiated generated kernel (the protocol is redefined); a reload of `eacl.engine.stable-reducer` likewise breaks `instance?` checks against `AdmissionKey`/`ReducerState` in previously loaded tests. Certification batteries must run on a fresh JVM.
