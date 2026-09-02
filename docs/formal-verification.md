@@ -138,8 +138,10 @@ repeated binary filtering.
 Phase B adds the generated recursive command decision and digest-closes the
 handwritten parser, canonical expression codec/storage, signed graph, plan,
 evaluators, cursor/cache boundary, Datahike density-bounded batch, scalar
-fallbacks, and four backend adapters. The clean whole-tree run verifies 48
-modules and 9,384 obligations; generated Java and advanced JavaScript boundary
+fallbacks, and four backend adapters. The module and obligation counts of the
+clean whole-tree run are reported by CI (`bin/formal verify` writes
+`target/formal/dafny-verification.json`) and are not recorded in this
+document; generated Java and advanced JavaScript boundary
 suites, fixed/random differentials, counterexample replay, formal and temporal
 mutation controls, cross-backend conformance, storage, and matched-host
 performance gates pass. Public expression writes and public operator routing

@@ -1502,6 +1502,30 @@ Cache capacities are entry counts, not byte estimates:
 Completed pages above 1,000 result items are returned normally but are not
 retained. The public page-size maximum remains 10,000.
 
+Three further client options tune reuse below the answer cache and cost
+nothing when unset:
+
+```clojure
+(def acl
+  (eacl.datomic.core/make-client
+   conn
+   {:scan-cache {:max-entries 2048 :max-prefix 512} ; or false to disable
+    :lookahead {:pages 1 :max-inflight 2}           ; off when absent
+    :io-observer (fn [event] (log/info event))}))   ; nil when absent
+```
+
+`:scan-cache` bounds the client-private tier of exact adapter scan prefixes
+that later requests reuse instead of re-reading the same relationship edges;
+it is on by default while the cache is enabled and follows `:cache? false`.
+Every request also memoizes its own scan replies regardless of caching.
+`:lookahead` runs a served page's continuation in the background on a bounded
+daemon pool after the response, so the caller's next page is an exact hit; it
+spends reads ahead of demand and is therefore off by default and a no-op on
+ClojureScript. `:io-observer` receives each request's operation, provenance
+(`:request` or `:lookahead`), outcome, elapsed nanoseconds, and exact meters
+(adapter commands, fetched values, identity conversions, scan hits and
+misses, range derivations); an observer that throws never changes a result.
+
 Pass `:cache? false` to bypass the cache on a request:
 
 ```clojure
