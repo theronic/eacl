@@ -205,6 +205,34 @@ are hoisted to per-basis memos in the request context.
 Alternative rejected: caching rendered strings for arbitrary values (an
 unbounded, attacker-influenced memo).
 
+### D11 — Range answer reuse derives pages from retained edges
+
+Both public orders are deterministic functions of plan, snapshot, and start
+boundary: least-derivation-path order is history-free by construction and
+the stable first-discovery order replays deterministically from its
+boundary. The first `M` results of a page of `N ≥ M` from one start boundary
+are therefore the page of `M`, and a page of `N > M` is the page of `M`
+followed by the continuation from its `M`-th edge (`LeastPathResume.dfy`,
+`PaginationComposition.dfy`). Today the internal page keeps only the start
+and end cursor edges (`page-info`) and drops the per-item cursors the routes
+already computed, so the completed-answer value gains an `:edges` vector
+parallel to `:data` (format `completed-answer-v3`; older envelopes are
+ordinary misses). Lookup adds one range key per completed page: the exact
+semantic key minus page size, plus direction and start edge. On an exact miss
+the range entry is consulted; a shorter request slices data and edges and
+rebuilds page info; a longer request runs the ordinary continuation from the
+retained end edge and concatenates. Derived pages go through the same
+render-and-publish path, so their rendered pages and exact answers are
+published as if computed. Bounded candidate-window routes are excluded
+because their content depends on the window size, and `:cache? false`
+bypasses range reuse like every other shared-store read. Retention: the
+range key keeps the longest completed page (replace-if longer); exact keys
+keep what demand produced. Cost of a derived hit is one answer-tier hit plus
+rendering of `M` identities and two cursor mints, far below a traversal.
+Alternative rejected: storing every page size separately (the status quo),
+and deriving from rendered transport pages (they carry no per-item edges and
+would require re-authenticating cursors).
+
 ### D10 — Formal obligations
 
 - New Dafny leaf `ScanResponseCache.dfy` (stable-discovery tree): for a

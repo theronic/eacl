@@ -29,7 +29,8 @@
    :publications
    :scan-memo-hits
    :scan-shared-hits
-   :scan-misses])
+   :scan-misses
+   :range-derivations])
 
 (def ^:private known-counter-keys (set counter-keys))
 (def ^:private counter-index (zipmap counter-keys (range)))

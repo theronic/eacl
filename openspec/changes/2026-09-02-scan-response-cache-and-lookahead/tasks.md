@@ -28,6 +28,14 @@
 - [ ] 4.3 Verify isolation: the foreground page's result, cursors, counters, deadline behavior, and service-admission accounting are identical with and without lookahead; a saturated executor drops submissions silently; a throwing lookahead reaches only the observer.
 - [ ] 4.4 Verify basis movement: a write between the served page and the continuation request yields the ordinary path's answer on the new basis, and the lookahead's stale publication is never served.
 
+## 4b. Range answer reuse
+
+- [ ] 4b.1 Retain per-item cursor edges in the internal page value at the three page-assembly sites for unbounded routes, bump the completed-answer envelope format, and verify existing answer-tier tests treat older envelopes as misses and new envelopes round-trip.
+- [ ] 4b.2 Add the range key (exact semantic key minus page size, plus direction and start edge) and its retention rule (longest page wins) to the answer tier, and verify a test that a `:first 20` publication supersedes a `:first 10` entry under the same range key.
+- [ ] 4b.3 Add prefix derivation on exact miss for `:first` and suffix derivation for `:last`, rebuilding page info from retained edges, routed through the ordinary render-and-publish path, and verify derived pages equal uncached computations (results, cursors, flags) on all four backends.
+- [ ] 4b.4 Record composition for longer requests (resident page plus its ordinary continuation) as a follow-up with the plumbing it needs (re-entering the page pipeline with an internal boundary), and verify the notes name the spec's MAY clause it leaves unexercised.
+- [ ] 4b.5 Verify `:cache? false` and a disabled client cache bypass range reuse, and that bounded candidate-window pages never publish a range entry.
+
 ## 5. Request I/O observation
 
 - [ ] 5.1 Add ledger counters for scan-cache hits, misses, and elided commands and verify the counter tests and the preindexed-slot invariants still pass.

@@ -1,7 +1,7 @@
 {:schema-version 3
  :required-score 1.0
- :historical-mutant-count 142
- :historical-clojure-mutant-count 128
+ :historical-mutant-count 147
+ :historical-clojure-mutant-count 133
  :historical-model-mutant-count 14
  :mutants
  [{:id :wrong-arrow-direction
@@ -9,6 +9,51 @@
    :mutation :swap-arrow-resource-and-subject
    :target-symbol "portable/decide"
    :detector "wrong-arrow-direction-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-serves-short-prefix
+   :mechanism :executed-production
+   :mutation :serve-short-non-exhausted-prefix
+   :target-symbol "scan-cache/serve"
+   :detector "scan-cache-serves-short-prefix-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-serves-values-at-bound
+   :mechanism :executed-production
+   :mutation :include-exclusive-bound-in-reply
+   :target-symbol "scan-cache/serve"
+   :detector "scan-cache-serves-values-at-bound-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-reuses-stale-generation
+   :mechanism :executed-production
+   :mutation :drop-relation-generation-from-shared-key
+   :target-symbol "scan-cache/shared-key"
+   :detector "scan-cache-reuses-stale-generation-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-widens-command
+   :mechanism :executed-production
+   :mutation :widen-forwarded-limit
+   :target-symbol "scan-cache/forward-command"
+   :detector "scan-cache-widens-command-killed?"
+   :control {:kind :clojure :runtimes [:clj :cljs]}
+   :killed-by
+    {:test
+     :eacl.formal.executed-mutation-controls/every-portable-production-mutant-is-killed-test}}
+  {:id :scan-cache-deposits-fragment
+   :mechanism :executed-production
+   :mutation :retain-fragment-as-prefix
+   :target-symbol "scan-cache/extend-entry"
+   :detector "scan-cache-deposits-fragment-killed?"
    :control {:kind :clojure :runtimes [:clj :cljs]}
    :killed-by
     {:test

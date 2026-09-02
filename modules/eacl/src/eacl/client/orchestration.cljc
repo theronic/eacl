@@ -58,6 +58,7 @@
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.client.lookahead :as lookahead]
+            [eacl.client.range-reuse :as range-reuse]
             [eacl.execution :as execution]
             [eacl.permission-tree :as permission-tree]
             [eacl.proof-frame :as proof-frame]
@@ -1063,7 +1064,35 @@
                 (proof-frame/resolve!
                  frame (:relation-ids @dependencies))))
             semantic-key
-            (completed-answer-semantic-key opts operation query)]
+            (completed-answer-semantic-key opts operation query)
+            ;; Range reuse: on an exact and managed miss, a shorter page of
+            ;; the same walk is derived from the longest resident page under
+            ;; the range key; a computed reusable page supersedes it.
+            range-tier
+            (when (and (contains? #{:lookup-resources :lookup-subjects}
+                                  operation)
+                       (not speculative))
+              (:range-tier opts))
+            range-key
+            (when range-tier
+              (range-reuse/range-key exact-basis-key semantic-key))
+            requested-size
+            (when range-key
+              (range-reuse/page-size (get-in semantic-key [:query :public])))
+            derived? (volatile! false)
+            evaluate
+            (if-not range-key
+              evaluate
+              (fn []
+                (if-let [page (range-reuse/lookup!
+                               range-tier range-key requested-size)]
+                  (do (vreset! derived? true)
+                      (request-counters/add! :range-derivations)
+                      page)
+                  (let [page (evaluate)]
+                    (when (:populate-cache-request? opts true)
+                      (range-reuse/publish! range-tier range-key page))
+                    page))))]
         (execution/check! contract :cache-lookup)
         (let [answer
               (if speculative
@@ -1096,7 +1125,9 @@
                     #(proof-frame/descriptor @complete-proof))}
                  semantic-key evaluate))]
           (execution/check! contract :cache-publication)
-          answer)))))
+          (if @derived?
+            (assoc answer :cached? true :cache-tier :range)
+            answer))))))
 
 (defn- with-cache-info
   [value {:keys [cached? cache-basis]}]
@@ -2295,7 +2326,7 @@
            [token source-incarnation source-lifecycle basis-cache-store
             continuation-cache-store cursor-codec-cache
             cursor-construction-cache derived-schema-caches scan-tier
-            content-revision])
+            range-tier content-revision])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
@@ -2304,7 +2335,7 @@
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
     :cursor-codec-cache :cursor-construction-cache :derived-schema-caches
-    :scan-tier})
+    :scan-tier :range-tier})
 
 ;; A transient Acl read has already captured and attached one immutable
 ;; lifecycle options map before selecting its basis. Keep that map opaque
@@ -2358,6 +2389,12 @@
   (when (and basis-cache-store (not (false? scan-cache-option)))
     (scan-cache/tier (if (map? scan-cache-option) scan-cache-option {}))))
 
+(defn- range-tier-for
+  "The client's range-reuse tier: present only while the client cache is."
+  [basis-cache-store]
+  (when basis-cache-store
+    (range-reuse/tier {})))
+
 (defn- fresh-runtime-cache-lifecycle
   [{:keys [cache-option derived-schema-store-factory]
     :as config}
@@ -2382,6 +2419,7 @@
      cursor-construction-cache
      (derived-schema-store-factory)
      (scan-tier-for-config config basis-cache-store)
+     (range-tier-for basis-cache-store)
      content-revision)))
 
 (defn- narrow-runtime-cache-lifecycle
@@ -2412,6 +2450,7 @@
      (:cursor-construction-cache current)
      (:derived-schema-caches current)
      (scan-tier-for-config config basis-cache-store)
+     (range-tier-for basis-cache-store)
      content-revision)))
 
 (defn- lifecycle-content-revision
@@ -3884,7 +3923,9 @@
       (assoc :continuations
              (continuation/stats continuation-store))
       (:scan-tier opts)
-      (assoc :scan-cache (scan-cache/stats (:scan-tier opts))))))
+      (assoc :scan-cache (scan-cache/stats (:scan-tier opts)))
+      (:range-tier opts)
+      (assoc :range-reuse (range-reuse/stats (:range-tier opts))))))
 
 (defn- require-cache-client-options!
   [client operation]

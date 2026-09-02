@@ -168,6 +168,18 @@
          :max-entries (:max-entries tier)
          :max-prefix (:max-prefix tier)))
 
+(defn shared-key
+  "The shared tier's storage key: the validity scope with the descriptor key.
+  Two requests share an entry only under equal scopes."
+  [scope key]
+  [scope key])
+
+(defn forward-command
+  "Forwards the evaluator's command to the routed fetch function unchanged:
+  same descriptor, bound, limit, and direction."
+  [inner descriptor]
+  (inner descriptor))
+
 (defn- shared-deposit!
   [tier key resident candidate]
   (let [store (:store tier)]
@@ -200,7 +212,7 @@
                   reply)
               (let [scope (when (and tier scope-fn)
                             (scope-fn (:relation-eid descriptor)))
-                    shared-key (when scope [scope key])
+                    shared-key (when scope (shared-key scope key))
                     _ (when (and tier (nil? scope))
                         (meter! tier :scope-unavailable))
                     shared-hit (when shared-key
@@ -215,7 +227,7 @@
                       (when memo?
                         (memo-remember! memo key resident-shared))
                       reply)
-                  (let [values (inner descriptor)]
+                  (let [values (forward-command inner descriptor)]
                     (request-counters/add! :scan-misses)
                     (when shared-key (meter! tier :misses))
                     (let [base (or resident-memo resident-shared)

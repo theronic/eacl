@@ -274,7 +274,13 @@
   not exit. Both flags are therefore clamped to false when there are no items."
   [{:keys [items has-next? has-previous?]}]
   (let [any? (boolean (seq items))]
+    ;; One internal edge per result lets a shorter page of the same walk be
+    ;; derived from this one (eacl.client.range-reuse); both public orders
+    ;; are deterministic from the start boundary, so the marker is sound
+    ;; here and absent on candidate-window routes.
     {:data (mapv :node items)
+     :edges (mapv :cursor items)
+     :range-reusable? true
      :page-info (page-info {:items items
                             :has-next? (and any? has-next?)
                             :has-previous? (and any? has-previous?)})}))

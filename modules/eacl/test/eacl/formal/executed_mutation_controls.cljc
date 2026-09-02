@@ -7,6 +7,7 @@
             [eacl.authorization.batch :as batch]
             [eacl.cache :as cache]
             [eacl.engine.portable-decisions :as portable]
+            [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.engine.stable-reducer :as stable-reducer]
             [eacl.engine.v8 :as engine]
@@ -16,6 +17,7 @@
             [eacl.operator.recursive :as operator-recursive]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.context :as request-context]
+            [eacl.request.counters :as request-counters]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-graph :as expression-graph]
             [eacl.schema.expression-persistence :as persistence]
@@ -1664,6 +1666,126 @@ definition document {
                       (original state residual new-work))]
         (gate))))))
 
+;; ---------------------------------------------------------------------------
+;; Exact scan-response cache (eacl.engine.scan-cache)
+;; ---------------------------------------------------------------------------
+
+(defn- scan-cache-adapter
+  "A fixed ascending scan per subject id, honoring bound and limit exactly and
+  recording every command it receives."
+  [sequences commands]
+  (fn [{:keys [bound-eid limit] :as descriptor}]
+    (swap! commands conj (select-keys descriptor [:subject-eid :bound-eid :limit]))
+    (let [values (get sequences (:subject-eid descriptor) [])
+          beyond (if (nil? bound-eid) values (filterv #(> % bound-eid) values))]
+      (vec (take limit beyond)))))
+
+(def ^:private scan-cache-descriptor
+  {:operation :subject->resources :subject-type :user :subject-eid 1
+   :relation-eid 9 :resource-type :doc})
+
+(defn- scan-cache-run
+  "Runs `fetches` (vectors of [bound limit]) through one caching fetch
+  function over the adapter and returns [replies commands]."
+  [fetches {:keys [tier scope]}]
+  (let [commands (atom [])
+        inner (scan-cache-adapter {1 [1 2 3 4 5 6 7 8]} commands)
+        fetch (scan-cache/caching-fetch-fn
+               inner
+               (cond-> {:memo (scan-cache/memo)}
+                 tier (assoc :tier tier
+                             ;; Like production, the scope is a flat vector
+                             ;; whose last component is the generation.
+                             :scope-fn (fn [relation-eid]
+                                         [:scope relation-eid scope]))))]
+    (request-counters/call-with-ledger
+     (request-counters/make-ledger)
+     (fn []
+       [(mapv (fn [[bound limit]]
+                (fetch (assoc scan-cache-descriptor :bound-eid bound :limit limit)))
+              fetches)
+        @commands]))))
+
+(defn scan-cache-serves-short-prefix-killed?
+  "A prefix shorter than the request that is not exhausted must miss; serving
+  its remainder would hand the reducer a short chunk that means exhaustion."
+  []
+  (let [fetches [[nil 3] [2 3]]
+        expected [[[1 2 3] [3 4 5]] [{:subject-eid 1 :bound-eid nil :limit 3}
+                                     {:subject-eid 1 :bound-eid 2 :limit 3}]]
+        original scan-cache/serve
+        mutant (fn [{:keys [prefix] :as entry} bound limit direction]
+                 (or (original entry bound limit direction)
+                     (let [start (count (take-while #(<= (compare % bound) 0)
+                                                    prefix))]
+                       (when (and (some? bound) (< start (count prefix)))
+                         (subvec prefix start)))))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/serve mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-serves-values-at-bound-killed?
+  "A served reply must contain only values strictly beyond the exclusive
+  bound; an off-by-one that includes the bound duplicates a released value."
+  []
+  (let [fetches [[nil 4] [2 2]]
+        expected [[[1 2 3 4] [3 4]] [{:subject-eid 1 :bound-eid nil :limit 4}]]
+        mutant (fn [{:keys [prefix exhausted?]} bound limit _direction]
+                 (let [start (if (nil? bound)
+                               0
+                               (count (take-while #(neg? (compare % bound)) prefix)))
+                       available (- (count prefix) start)]
+                   (cond
+                     (>= available limit) (subvec prefix start (+ start limit))
+                     exhausted? (subvec prefix start)
+                     :else nil)))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/serve mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-reuses-stale-generation-killed?
+  "The shared key must carry the complete validity scope; dropping its last
+  component (the scanned relation's generation) serves a prefix across a
+  write that changed the relation."
+  []
+  (let [run (fn [tier scope] (second (scan-cache-run [[nil 3]] {:tier tier :scope scope})))
+        commands-under (fn []
+                         (let [tier (scan-cache/tier {:max-entries 8 :max-prefix 8})]
+                           [(count (run tier 1))
+                            (count (run tier 2))]))
+        expected [1 1]
+        mutant (fn [scope key] [(vec (butlast scope)) key])]
+    (and (= expected (commands-under))
+         (not= expected (with-redefs [scan-cache/shared-key mutant]
+                          (commands-under))))))
+
+(defn scan-cache-widens-command-killed?
+  "A miss must forward the evaluator's command unchanged; widening its limit
+  reads values the evaluator did not demand."
+  []
+  (let [fetches [[nil 2] [2 2]]
+        expected [[[1 2] [3 4]] [{:subject-eid 1 :bound-eid nil :limit 2}
+                                 {:subject-eid 1 :bound-eid 2 :limit 2}]]
+        mutant (fn [inner descriptor] (inner (update descriptor :limit inc)))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/forward-command mutant]
+                          (scan-cache-run fetches {}))))))
+
+(defn scan-cache-deposits-fragment-killed?
+  "A reply that does not start at a known position of the scan must not
+  become a prefix; retaining it serves the wrong first values later."
+  []
+  (let [fetches [[5 2] [nil 2]]
+        expected [[[6 7] [1 2]] [{:subject-eid 1 :bound-eid 5 :limit 2}
+                                 {:subject-eid 1 :bound-eid nil :limit 2}]]
+        original scan-cache/extend-entry
+        mutant (fn [entry bound values limit direction max-prefix]
+                 (or (original entry bound values limit direction max-prefix)
+                     {:prefix (vec values) :exhausted? (< (count values) limit)}))]
+    (and (= expected (scan-cache-run fetches {}))
+         (not= expected (with-redefs [scan-cache/extend-entry mutant]
+                          (scan-cache-run fetches {}))))))
+
 (def controls
   {:wrong-arrow-direction wrong-arrow-direction-killed?
    :premature-cycle-cut premature-cycle-cut-killed?
@@ -1721,7 +1843,12 @@ definition document {
    :stable-count-history-retention stable-count-history-retention-killed?
    :stable-completion-distinct stable-completion-distinct-killed?
    :stable-admission-deduplication stable-admission-deduplication-killed?
-   :stable-staged-limit-atomicity stable-staged-limit-atomicity-killed?})
+   :stable-staged-limit-atomicity stable-staged-limit-atomicity-killed?
+   :scan-cache-serves-short-prefix scan-cache-serves-short-prefix-killed?
+   :scan-cache-serves-values-at-bound scan-cache-serves-values-at-bound-killed?
+   :scan-cache-reuses-stale-generation scan-cache-reuses-stale-generation-killed?
+   :scan-cache-widens-command scan-cache-widens-command-killed?
+   :scan-cache-deposits-fragment scan-cache-deposits-fragment-killed?})
 
 (deftest every-portable-production-mutant-is-killed-test
   (doseq [[id detector] controls]
