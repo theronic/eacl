@@ -11,7 +11,7 @@
   #?(:clj
      (:import [com.github.benmanes.caffeine.cache Cache Caffeine Policy]
               [java.util Map$Entry]
-              [java.util.concurrent ConcurrentMap])))
+              [java.util.concurrent ConcurrentMap Executor])))
 
 (defrecord StandardLruStore [state max-entries])
 
@@ -52,8 +52,18 @@
 (defn- empty-lru
   [max-entries]
   #?(:clj
+     ;; Run policy maintenance on the calling thread. Caffeine's default
+     ;; asynchronous maintenance makes admission depend on scheduler timing:
+     ;; reads recorded before the lazily initialised frequency sketch has
+     ;; settled are discarded, so a hot entry can lose an admission contest to
+     ;; a one-hit candidate whenever the pool thread lags. Synchronous
+     ;; maintenance makes retention a function of the access sequence alone
+     ;; and removes the common-pool dependency from constrained hosts.
      (-> (Caffeine/newBuilder)
          (.maximumSize (long max-entries))
+         (.executor (reify Executor
+                      (execute [_ task]
+                        (.run ^Runnable task))))
          (.build))
      :cljs
      ;; Never seed library policy state from caller-controlled or restored

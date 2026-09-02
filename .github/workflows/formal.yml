@@ -582,8 +582,10 @@ jobs:
       - name: Start parity nREPL
         run: |
           mkdir -p target/formal
-          clojure -M:dev:test:cljs-test:formal-smoke:nrepl \
-            -J-Deacl.replay.strict=true --port 7788 \
+          # JVM options must precede -M: a -J flag after the alias is handed to
+          # nrepl.cmdline, which then ignores --port and picks a random one.
+          clojure -J-Deacl.replay.strict=true \
+            -M:dev:test:cljs-test:formal-smoke:nrepl --port 7788 \
             > target/formal/parity-nrepl.log 2>&1 &
           for attempt in {1..180}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then

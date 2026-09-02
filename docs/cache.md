@@ -19,8 +19,12 @@ Caffeine is not strict LRU and the runtimes need not evict the same cold key.
 Caffeine ordinary reads are nonblocking. Its buffered maintenance can use
 an internal eviction lock, and `maximumSize` is an eventual bound during
 concurrent writes, so EACL does not claim the whole cache is lock-free. EACL
-adds no access queue, frequency/recency sidecar, loader, validator, proof
-acquisition, rendering, or request computation to cache operations.
+runs that maintenance on the calling thread rather than on the common
+`ForkJoinPool`: retention is then a function of the access sequence, not of
+scheduler timing, and constrained hosts need no pool thread to settle a
+cache. EACL adds no access queue, frequency/recency sidecar, loader,
+validator, proof acquisition, rendering, or request computation to cache
+operations.
 
 There is no single-flight owner. Concurrent misses compute independently and
 race best-effort publication. Each request returns its own completed result
