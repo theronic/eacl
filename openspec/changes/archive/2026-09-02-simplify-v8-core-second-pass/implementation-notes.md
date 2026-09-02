@@ -50,20 +50,20 @@ Cost of the executor change, measured through the store API on one thread with a
 
 Re-certification on freshly started JVMs after these three changes: CI battery 1139 tests, 40437 assertions, 0 failures; Datalevin suite (same directory set as above) 419 tests, 10490 assertions, 0 failures; generators + adversarial + mutation controls 13 tests, 891 assertions, 0 failures; strict counterexample replay 71 tests, 18228 assertions, 0 failures; the eight generated-differential suites 52 tests, 18280 assertions, 0 failures; consistency-boundary gate passed at median p95 800.5 ns on a quiet host and 423.7 ns with another suite running (the benchmark does not touch the cache; the spread is measurement noise under a 15000 ns ceiling); routing-certificate gate passed; `bin/reflection-gate` clean; `clj-kondo` reports only the pre-existing unresolved-symbol diagnostics in the Datomic test file. The ClojureScript suite was not rerun: the change is JVM-only (`#?(:clj ...)` branch, a `.clj` test, the workflow, and prose).
 
-## Status at hand-off (2026-09-02, after commit 876b8303)
+## Status (2026-09-02, after the demo deploy)
 
 Done:
 
-- Core PR #165 (`codex/simplify-v8-core-second-pass`, base `codex/streamline-kernel-authority-and-counts` = PR #163) carries eight commits; head `876b8303`. The Tests workflow is green for that head on both the push and the pull-request events. The Formal workflow's parity job is green on both events (it had never reached its suites before the flag fix). At hand-off the `temporal-models` job was still running on both events and `dafny-and-generated-boundaries` on the push event; the previous push run's Dafny job (run 33616935781) had also not finished. The PR description lists the findings, the CI fixes, and the certification table.
-- Demo PR #70 (`codex/upgrade-eacl-second-pass` on eacl-demo) is repinned to `876b8303` (commit `85b1f8e`, 19 tracked files rewritten by `npm run upgrade:eacl`) and pushed. It is not merged; `production` is untouched.
+- Core PR #165 (`codex/simplify-v8-core-second-pass`, base `codex/streamline-kernel-authority-and-counts` = PR #163) carries nine commits; head `84a864a8`. The branch history was rewritten once, message-only, to remove tool attribution trailers (the tree of `84a864a8` is identical to the pre-rewrite head `9326df7a`, whose Tests and Formal workflows were green on both the push and pull-request events, including the Dafny job with the new manifest step). The CI-fix commit is `296e163b` (previously `876b8303`).
+- Demo PR #70 (`codex/upgrade-eacl-second-pass`) was repinned to `84a864a8` (commit `347f2df`) and merged into `main` (`3bd5868`); `production` was fast-forwarded to the same commit, which started deploy run 33638002478 (five jobs, each of which deploys and smoke-tests one profile: static, Datahike/S3, Datahike/DynamoDB, Datomic/DynamoDB, Datalevin/memory). Before the deploy every API profile reported `eaclSha 9e0105f2` (the PR #163 head) and `demoSha 41342054`.
 - No session JVMs are left running. The core working tree is clean apart from the four untracked `openspec/changes/*` directories that predate this work; the demo tree has two untracked `verification/results/*` files that also predate it.
+
+Deploy outcome: run 33638002478 completed with all five jobs green; each job's `deploy-live-demo.mjs` step performs the profile's health, identity, bootstrap, and allow/deny authorization smoke checks before reporting success. After the run, `/health` on every API profile (Datahike/S3 and Datahike/DynamoDB function URLs, `datomic.demo.eacl.dev`, `datalevin.demo.eacl.dev`) reported `ready true`, `eaclSha 84a864a8`, `demoSha 3bd5868b`, and the static demo answered 200. The Formal workflow rerun on `84a864a8` had its parity and temporal jobs green on both events; the push-event Dafny job was still running when this was written (the identical tree passed it on `9326df7a`).
 
 Next steps, in order:
 
-1. Wait for the Formal workflow on `876b8303` to finish: `temporal-models` on both events and `dafny-and-generated-boundaries` on the push event (it now runs `bin/formal manifest`; exit 3 is the documented "assurance withheld" outcome and is accepted). If the Dafny job fails, inspect the manifest step first; the `.dfy` sources did not change in this pass.
-2. Merge the demo: `gh pr merge 70 --merge` on eacl-demo, then `git fetch origin && git push origin origin/main:production`, then watch `deploy-demos.yml` (deploys run only on pushes to `production`). Smoke the live demos afterwards.
-3. Land the stack: PR #163 first, then PR #165 (its base is #163's branch; retarget to `main` if #163 merges by squash).
-4. Recorded follow-ups, unchanged: the sixteen vacuous answer-substitution mutation controls; per-push Dafny wall clock on retired-engine models; triple execution of shared suites across workflows; the Datalevin per-operation read-scope seam; least-path witness memoization across chunks; the retired indexed authority cut.
+1. Land the stack: PR #163 first, then PR #165 (its base is #163's branch; retarget to `main` if #163 merges by squash). New branches for follow-up work use the `agent/*` prefix.
+2. Recorded follow-ups, unchanged: the sixteen vacuous answer-substitution mutation controls; per-push Dafny wall clock on retired-engine models; triple execution of shared suites across workflows; the Datalevin per-operation read-scope seam; least-path witness memoization across chunks; the retired indexed authority cut.
 
 ## Traps recorded for the next pass
 
