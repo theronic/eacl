@@ -17,13 +17,15 @@
    }")
 
 (defn- lcg
-  "A deterministic generator: returns a fn of a bound."
+  "A deterministic generator (Park-Miller minimal standard): returns a fn
+  of a bound. Every intermediate stays below 2^47, so the sequence is
+  identical on the JVM and in JavaScript doubles."
   [seed]
-  (let [state (atom seed)]
+  (let [state (atom (inc (mod seed 2147483646)))]
     (fn [bound]
-      (let [value (mod (+ (* 1103515245 @state) 12345) 2147483648)]
+      (let [value (mod (* 48271 @state) 2147483647)]
         (reset! state value)
-        (mod (quot value 65536) bound)))))
+        (mod (quot value 256) bound)))))
 
 (defn group [g] (eacl/spice-object :group (str "grp-" g)))
 (defn doc [g i] (eacl/spice-object :doc (str "doc-" g "-" i)))

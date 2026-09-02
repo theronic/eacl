@@ -43,12 +43,18 @@
     {:conn conn :enabled enabled :disabled disabled}))
 
 (defn- lcg
+  "Park-Miller minimal standard; exact on both runtimes."
   [seed]
-  (let [state (atom seed)]
+  (let [state (atom (inc (mod seed 2147483646)))]
     (fn [bound]
-      (let [value (mod (+ (* 1103515245 @state) 12345) 2147483648)]
+      (let [value (mod (* 48271 @state) 2147483647)]
         (reset! state value)
-        (mod (quot value 65536) bound)))))
+        (mod (quot value 256) bound)))))
+
+(defn- member-groups
+  [config u]
+  (set (take (:groups-per-user config)
+             (get (fixture/memberships config) u))))
 
 (deftest pages-are-identical-under-every-cache-mode-test
   (doseq [seed [3 11 29]]
@@ -75,9 +81,10 @@
                                  (public-shape (fixture/page enabled u n :after cursor)))
                               "continuations from the served cursor agree"))))))]
       (round "before any write")
-      ;; A supported write to the scanned relations between rounds.
+      ;; A supported write to the scanned relations between rounds: a new
+      ;; doc under a group the chosen user does not belong to yet.
       (let [u (next-int (:users config))
-            g (next-int (:groups config))
+            g (first (remove (member-groups config u) (range (:groups config))))
             doc-id (str "doc-w-" seed)]
         (ds/transact! conn [{:eacl/id doc-id}])
         (eacl/create-relationships!
@@ -85,8 +92,9 @@
          [(eacl/->Relationship (fixture/group g) :group (eacl/spice-object :doc doc-id))
           (eacl/->Relationship (fixture/user u) :member (fixture/group g))]))
       (round "after a relevant write")
+      ;; And a deletion of one of another user's existing memberships.
       (let [u (next-int (:users config))
-            g (next-int (:groups config))]
+            g (first (sort (member-groups config u)))]
         (eacl/delete-relationships!
          enabled
          [(eacl/->Relationship (fixture/user u) :member (fixture/group g))]))

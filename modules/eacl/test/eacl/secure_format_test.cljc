@@ -1014,11 +1014,11 @@
   (let [alphabet (vec keyword-alphabet)
         head (vec (remove (set "0123456789") alphabet))
         state (atom 20260902)
+        ;; Park-Miller minimal standard: exact in JavaScript doubles too.
         next-int (fn [bound]
-                   (let [value (mod (+ (* 1103515245 @state) 12345)
-                                    2147483648)]
+                   (let [value (mod (* 48271 @state) 2147483647)]
                      (reset! state value)
-                     (mod (quot value 65536) bound)))
+                     (mod (quot value 256) bound)))
         component (fn []
                     (apply str
                            (nth head (next-int (count head)))
