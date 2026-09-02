@@ -102,14 +102,6 @@
 
     nil))
 
-(defn half-identity
-  "Stable identity of one physical half, independent of backend datom type."
-  [direction endpoint-eid value]
-  (when (and (#{:forward :reverse} direction)
-             (nat-int? endpoint-eid)
-             (endpoint-value? value))
-    [direction endpoint-eid value]))
-
 (defn dangling-report
   "Summarizes a dangling-half stream without retaining its scan head."
   [halves {:keys [sample-size] :or {sample-size 20}}]

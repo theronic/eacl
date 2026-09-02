@@ -243,12 +243,6 @@
   [demand]
   (select-keys demand [:subject :permission :resource]))
 
-(defn root-key
-  [demand]
-  [(get-in demand [:resource :type])
-   (:permission demand)
-   (get-in demand [:subject :type])])
-
 (defn scalar-contract
   "Derives a point-check contract without renewing any request-wide control."
   [batch-contract]

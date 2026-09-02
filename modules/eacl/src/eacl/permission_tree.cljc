@@ -272,10 +272,10 @@
                   execution-contract stage #(safe-counters @counters)))
         definitions!
         (fn [kind resource-type name]
-          (let [cache-key [kind resource-type name]]
-            (if-not (identical? memo-miss
-                                (get @schema-cache cache-key memo-miss))
-              (get @schema-cache cache-key)
+          (let [cache-key [kind resource-type name]
+                hit (get @schema-cache cache-key memo-miss)]
+            (if-not (identical? memo-miss hit)
+              hit
               (let [operation (if (= :relation kind)
                                 :relation-defs
                                 :permission-defs)
@@ -307,10 +307,10 @@
                 definitions))))
         expression!
         (fn [resource-type permission-name]
-          (let [cache-key [resource-type permission-name]]
-            (if-not (identical? memo-miss
-                                (get @expression-cache cache-key memo-miss))
-              (get @expression-cache cache-key)
+          (let [cache-key [resource-type permission-name]
+                hit (get @expression-cache cache-key memo-miss)]
+            (if-not (identical? memo-miss hit)
+              hit
               (let [entity
                     (adapter-call!
                      (fn [_]
@@ -330,10 +330,10 @@
         (fn [type internal-id]
           (when-not (exact-integer/natural? internal-id)
             (adapter-contract! :invalid-internal-identity))
-          (let [cache-key [type internal-id]]
-            (if-not (identical? memo-miss
-                                (get @codec-cache cache-key memo-miss))
-              (get @codec-cache cache-key)
+          (let [cache-key [type internal-id]
+                hit (get @codec-cache cache-key memo-miss)]
+            (if-not (identical? memo-miss hit)
+              hit
               (do
                 (check! :permission-tree-render)
                 (let [external-id
@@ -385,12 +385,17 @@
                                    :relationship-values 1)
                          (when leaf?
                            (consume! limits counters :leaf-subjects 1))
+                         ;; A leaf renders straight to its public object;
+                         ;; intermediates keep the typed descriptor.
                          (conj acc
-                               {:type subject-type
-                                :internal-id internal-id
-                                :identity [:internal subject-type internal-id]
-                                :public (render-internal!
-                                         subject-type internal-id)}))))}))))
+                               (if leaf?
+                                 (render-internal! subject-type internal-id)
+                                 {:type subject-type
+                                  :internal-id internal-id
+                                  :identity
+                                  [:internal subject-type internal-id]
+                                  :public (render-internal!
+                                           subject-type internal-id)})))))}))))
              []
              relation-definitions)))
         root-type (:type resource)
@@ -432,12 +437,6 @@
                 (let [{:keys [resource name expected depth active]} frame
                       _ (check-depth! limits counters depth)
                       expansion-key [(:identity resource) name]
-                      _ (when (and (= :permission expected)
-                                   (contains? active expansion-key))
-                          (permission-tree-error!
-                           :eacl.permission-tree/cycle-detected
-                           "Permission-tree expansion encountered an active-path cycle."
-                           {:path-node [(:type resource) name]}))
                       relations (definitions! :relation (:type resource) name)
                       expression (expression! (:type resource) name)
                       operator-expression
@@ -475,8 +474,7 @@
                          (conj values
                                {:expanded-object (:public resource)
                                 :expanded-relation name
-                                :leaf
-                                {:subjects (mapv :public subjects)}})]))
+                                :leaf {:subjects subjects}})]))
                     (do
                       (when (contains? active expansion-key)
                         (permission-tree-error!

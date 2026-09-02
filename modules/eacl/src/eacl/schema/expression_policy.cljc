@@ -2,8 +2,7 @@
   "Calibrated client-local admission limits and code compatibility formats."
   (:require [eacl.exact-integer :as exact-integer]
             [eacl.schema.expression :as expression]
-            [eacl.schema.expression-limits :as limits]
-            [eacl.secure-format :as secure]))
+            [eacl.schema.expression-limits :as limits]))
 
 (def policy-format :eacl.permission-expression-policy/v1)
 (def operator-plan-format :eacl.operator-plan/v1)
@@ -112,7 +111,3 @@
    :normalized-dag-format limits/normalized-dag-format
    :codec-limits expression/codec-limits})
 
-(def compatibility-digest
-  (secure/canonical-digest
-   "eacl/permission-expression-policy/v1"
-   compatibility-value))

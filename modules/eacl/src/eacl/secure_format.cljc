@@ -217,7 +217,7 @@
    value))
 
 (defn- validate-value
-  [value depth {:keys [maximum-depth maximum-entries]}]
+  [value depth {:keys [maximum-depth maximum-entries] :as limits}]
   (when (> depth maximum-depth)
     (format-error! :too-deep {:maximum-depth maximum-depth}))
   (let [entries
@@ -247,23 +247,20 @@
 
           (map? value)
           (validate-map value depth
-                        {:maximum-depth maximum-depth
-                         :maximum-entries maximum-entries})
+                        limits)
 
           (set? value)
           (reduce
            (fn [n item]
              (+ n (validate-value item (inc depth)
-                                  {:maximum-depth maximum-depth
-                                   :maximum-entries maximum-entries})))
+                                  limits)))
            1 value)
 
           (or (vector? value) (sequential? value))
           (reduce
            (fn [n item]
              (+ n (validate-value item (inc depth)
-                                  {:maximum-depth maximum-depth
-                                   :maximum-entries maximum-entries})))
+                                  limits)))
            1 value)
 
           :else

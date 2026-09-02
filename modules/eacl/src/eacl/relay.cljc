@@ -867,7 +867,7 @@
 
 (defn- internalize-tracked-edge
   [adapter edge]
-  (let [missing? (atom false)
+  (let [missing? (volatile! false)
         transformed
         (transform-edge-ids
          (fn [object-id]
@@ -875,7 +875,7 @@
                  (backend/invoke
                   adapter :object-id->internal object-id)]
              (when (nil? internal-id)
-               (reset! missing? true))
+               (vreset! missing? true))
              internal-id))
          edge)]
     {:edge transformed
@@ -1007,21 +1007,22 @@
         (update-in [:page-info :end-cursor] encode-edge))))
 
 (defn- internal-id->object
-  [adapter opts internal-id]
+  [adapter internal-id]
   (request-counters/add! :identity-conversions)
-  (execution/check! (:execution-contract opts) :render-identity)
-  (let [external-id (backend/invoke adapter :internal-id->object internal-id)]
-    (execution/check! (:execution-contract opts) :rendered-identity)
-    external-id))
+  (backend/invoke adapter :internal-id->object internal-id))
 
 (defn- resolve-external-identities!
+  "Deadline and cancellation are observed around the identity batch rather
+  than around every object: one page renders at most a page of ids."
   [adapter opts operation internal-ids]
-  (let [resolved
+  (let [contract (:execution-contract opts)
+        _ (execution/check! contract :render-identity)
+        resolved
         (mapv
          (fn [internal-id]
-            [internal-id
-            (internal-id->object adapter opts internal-id)])
+           [internal-id (internal-id->object adapter internal-id)])
          (distinct internal-ids))
+        _ (execution/check! contract :rendered-identity)
         missing
         (into [] (keep (fn [[internal-id external-id]]
                          (when (nil? external-id) internal-id)))
@@ -1062,7 +1063,7 @@
                    :edge
                    (if (contains? identities internal-id)
                      (get identities internal-id)
-                     (internal-id->object adapter opts internal-id))))
+                     (internal-id->object adapter internal-id))))
                 edge)))
              page-info))
          (:page-info page)

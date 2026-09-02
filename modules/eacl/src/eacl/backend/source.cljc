@@ -312,16 +312,24 @@
     (swap! *source-op-stats* update operation-key (fnil inc 0)))
   (apply (operation source operation-key) args))
 
+#?(:clj
+   (def ^:private is-virtual-method
+     ;; Resolved once: Java runtimes before virtual threads have no
+     ;; `Thread.isVirtual`, and a by-name reflective lookup per snapshot
+     ;; acquisition scanned the Thread method table every time.
+     (delay
+       (try
+         (.getMethod ^Class Thread "isVirtual" (make-array Class 0))
+         (catch Throwable _ nil)))))
+
 (defn- virtual-thread?
   []
   #?(:clj
-     (try
-       (boolean
-        (clojure.lang.Reflector/invokeInstanceMethod
-         (Thread/currentThread) "isVirtual" (object-array 0)))
-       ;; Java runtimes before virtual threads have no `Thread.isVirtual`.
-       (catch Throwable _
-         false))
+     (if-let [^java.lang.reflect.Method method @is-virtual-method]
+       (try
+         (boolean (.invoke method (Thread/currentThread) (object-array 0)))
+         (catch Throwable _ false))
+       false)
      :cljs false))
 
 (defn- require-acquisition-runtime!

@@ -68,7 +68,7 @@
   (str "eacl.permission-expression:" resource-type ":" permission-name))
 
 (defn expression-entity
-  [resolved-expression _metadata]
+  [resolved-expression]
   (let [resolved-expression (expression/canonicalize resolved-expression)
         {:keys [resource-type permission-name]} resolved-expression]
     {:eacl/id (->expression-id resource-type permission-name)
@@ -78,17 +78,12 @@
 
 (defn candidate-schema
   "Converts a fully validated resolver result to backend transaction values."
-  [{:keys [definitions relations expressions expression-metadata]
-    :as validated}]
+  [{:keys [expressions expression-metadata] :as validated}]
   (when-not (= (count expressions) (count expression-metadata))
     (throw (ex-info "Expression metadata is not aligned."
                     {:type :eacl.schema/invalid-expression-metadata
                      :eacl/error :eacl.schema/invalid-expression-metadata})))
-  (assoc validated
-         :definitions definitions
-         :relations relations
-         :permissions (mapv expression-entity expressions
-                            expression-metadata)))
+  (assoc validated :permissions (mapv expression-entity expressions)))
 
 (defn entity-deletions
   "Returns only retracted entities whose logical identity is absent from the

@@ -77,7 +77,6 @@
             [eacl.spicedb.consistency :as consistency]))
 
 (declare request-cache-controls
-         validate-permission-root!
          speculative-with-snapshot
          speculative-with-schema-snapshot
          snapshot-tx-relationship
@@ -338,13 +337,7 @@
 
 (defn- with-selected-context
   [api source opts consistency-value f]
-  (if-let [active-context (::request-context opts)]
-    (request-context/call-with-context
-     active-context
-     (fn [context]
-       (binding [execution/*contract* (:execution-contract opts)]
-         (f context))))
-    (let [ledger (or (:request-counter-ledger opts)
+  (let [ledger (or (:request-counter-ledger opts)
                      request-counters/*ledger*
                      (request-counters/make-ledger))
           opts (assoc opts :request-counter-ledger ledger)]
@@ -390,7 +383,7 @@
            (try
              (request-context/call-with-context context f)
              (finally
-               (request-context/close! context)))))))))
+               (request-context/close! context))))))))
 
 (defn- context-runtime
   [context]
@@ -1218,7 +1211,8 @@
            output-units))
         accept?
         (fn [relationship]
-          (execution/check! contract :authorization-candidate (counters 0))
+          ;; The diagnostic aggregate is built only on the throw path.
+          (execution/check! contract :authorization-candidate #(counters 0))
           (let [endpoint (get relationship on)
                 allowed?
                 (if-not (:id internal-subject)
@@ -1226,11 +1220,11 @@
                   (request-context/memoized!
                    request-context
                    :decisions
+                   ;; Exactly the demand-key fields, built once per candidate.
                    [:authorization-scan
-                    (batch/demand-key
-                     {:subject subject
-                      :permission permission
-                      :resource endpoint})]
+                    {:subject subject
+                     :permission permission
+                     :resource endpoint}]
                    #(binding [engine/*schema-cache* @schema-cache
                               expression-persistence/*expression-limits*
                               (:expression-limits opts)
@@ -1321,14 +1315,8 @@
                           (schema-errors/validate-authorized-relationship-read!
                            (request-schema api page-db)
                            filters))
-                        base-filters
-                        (apply dissoc filters
-                               [:first :last :after :before :consistency
-                                :cache? :populate-cache? :evaluation
-                                :timeout-ms :cancellation-token
-                                :aggregate-limits :authorization])
-                        subject-id (:subject/id base-filters)
-                        resource-id (:resource/id base-filters)
+                        subject-id (:subject/id filters)
+                        resource-id (:resource/id filters)
                         subject-eid
                         (when subject-id
                           (object-id->entid page-db subject-id))
@@ -1662,12 +1650,6 @@
                               error index counters)))
                          (recur next-count (conj! output decision)))))))))))))))
 
-(defn can?
-  [api source opts subject permission resource consistency]
-  (:allowed?
-   (check-permission
-    api source opts subject permission resource consistency)))
-
 (defn- required-direct-relation-id
   [adapter resource-type relation subject-type]
   (or
@@ -1741,7 +1723,7 @@
           accept?
           (fn [candidate]
             (execution/check!
-             contract :authorization-probe (counters 0))
+             contract :authorization-probe #(counters 0))
             (request-counters/add-probes!)
             (let [matches?
                   (if-not (:id internal-anchor)
@@ -1757,9 +1739,10 @@
                        (:type candidate) (:id candidate)
                        relation-id (:type internal-anchor)
                        (:id internal-anchor))))]
-              (execution/check!
-               contract :authorization-probe-complete (counters 0))
-              (batch/check-aggregate-limits! limits (counters 0) nil)
+              (let [consumed (counters 0)]
+                (execution/check!
+                 contract :authorization-probe-complete consumed)
+                (batch/check-aggregate-limits! limits consumed nil))
               matches?))
           engine-options
           {:continuation-cache-fn
@@ -1973,10 +1956,6 @@
    query]
   (when-not authorization-filters/*validated-request?*
     (authorization-filters/validate-lookup! :lookup-subjects query))
-  (when (contains? query :subject/relation)
-    (throw (ex-info ":subject/relation is not supported by lookup-subjects."
-                    {:eacl/error :eacl.pagination/unsupported-filter
-                     :filter :subject/relation})))
   (let [opts (ensure-execution-contract opts :lookup-subjects query)]
     (with-selected-context
       api source opts (:consistency query)

@@ -79,9 +79,13 @@
      data))))
 
 (defn- exact-keys!
+  "Closed key-set check without materializing a key set on the success
+  path: equal count plus membership of every expected key admits neither a
+  missing nor an unknown field."
   [operation label value expected]
   (when-not (and (map? value)
-                 (= expected (set (keys value))))
+                 (== (count value) (count expected))
+                 (every? #(contains? value %) expected))
     (boundary-error!
      "Generated-kernel boundary map has unknown or missing fields."
      {:operation operation
@@ -90,19 +94,8 @@
       :actual-keys (when (map? value) (set (keys value)))}))
   value)
 
-(defn- safe-integer?
-  [value]
-  (and
-   #?(:clj (integer? value)
-      :cljs (and (number? value)
-                 (js/Number.isSafeInteger value)))
-   (<= exact-integer/minimum
-       value
-       exact-integer/maximum)))
-
-(defn- safe-natural?
-  [value]
-  (and (safe-integer? value) (not (neg? value))))
+(def ^:private safe-integer? exact-integer/exact?)
+(def ^:private safe-natural? exact-integer/natural?)
 
 (defn- nonempty-string?
   [value]
@@ -2040,7 +2033,24 @@
      {:operation operation
       :known-operations operations})))
 
+(declare normalize-general-selection)
+
 (defn normalize-selection
+  [selection]
+  (if (and (map? selection)
+           (== 1 (count selection))
+           (contains? selection :kernel))
+    ;; The production shape: one closed configuration map that cannot carry
+    ;; an unknown field, so only the kernel itself needs checking.
+    (do
+      (when-not (kernel? (:kernel selection))
+        (boundary-error!
+         "EACL v8 requires a generated DecisionKernel."
+         {:kernel-type (str (type (:kernel selection)))}))
+      selection)
+    (normalize-general-selection selection)))
+
+(defn- normalize-general-selection
   [selection]
   (let [selection
         (cond
