@@ -216,13 +216,14 @@
                         (if (true? matched?) (inc total) total))
                       0
                       result))]
-        (add-stats! {:scalar-equivalent-predicates (count candidates)
-                     :physical-subgroups 1
-                     :adapter-commands (if native? 1 (count candidates))
-                     :exact-seeks (if native? 0 (count candidates))
-                     :galloping-reseeks 0
-                     :prefix-values 0
-                     :batch-overread 0})
+        (when *physical-stats*
+          (add-stats! {:scalar-equivalent-predicates (count candidates)
+                       :physical-subgroups 1
+                       :adapter-commands (if native? 1 (count candidates))
+                       :exact-seeks (if native? 0 (count candidates))
+                       :galloping-reseeks 0
+                       :prefix-values 0
+                       :batch-overread 0}))
         (when-not native?
           (request-counters/add-commands! (count candidates))
           (request-counters/add-probes! (count candidates))

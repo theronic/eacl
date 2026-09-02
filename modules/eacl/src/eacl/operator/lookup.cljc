@@ -119,28 +119,39 @@
              %)
           (distinct [root-id source-id]))))
 
-(defn- emission-witness
-  [plan cover-plan permission node-id specialization-node emission]
+(defn- emission-witness-fn
+  "Returns the witness function for one generator node: the plan nodes an
+  emission has already proven true. A union root's child is read from its
+  root-rule ordinal; that index is built once per batch instead of scanning
+  the cover rules for every emission."
+  [plan cover-plan permission node-id specialization-node]
   (let [{:keys [source-node source-nodes]}
         (get-in plan [:generators permission node-id])]
     (cond
       (= specialization-node node-id)
-      #{[permission node-id]}
+      (constantly #{[permission node-id]})
 
       (some? source-node)
-      #{[permission source-node]}
+      (constantly #{[permission source-node]})
 
       (seq source-nodes)
-      (let [ordinal (first (:coords emission))
-            root (:root cover-plan)
-            rule (some #(when (and (= root (:node %))
-                                   (= ordinal (:ordinal %))) %)
-                       (:rules cover-plan))
-            child (get (:operator-synthetic->semantic cover-plan)
-                       (:target-node rule))]
-        (if child #{child} #{}))
+      (let [root (:root cover-plan)
+            synthetic->semantic (:operator-synthetic->semantic cover-plan)
+            ordinal->child
+            (reduce (fn [index rule]
+                      (if (and (= root (:node rule))
+                               (not (contains? index (:ordinal rule))))
+                        (assoc index (:ordinal rule)
+                               (get synthetic->semantic (:target-node rule)))
+                        index))
+                    {}
+                    (:rules cover-plan))]
+        (fn [emission]
+          (if-let [child (get ordinal->child (first (:coords emission)))]
+            #{child}
+            #{})))
 
-      :else #{})))
+      :else (constantly #{}))))
 
 (defn- candidate
   [permission traversal subject-type anchor-eid witness {:keys [value]}]
@@ -157,8 +168,8 @@
    cover-plan emissions]
   (let [permission (or permission (:root plan))
         node-id (get (operator-plan/expression-roots plan) permission)
-        witnesses (mapv #(emission-witness plan cover-plan permission
-                                           node-id specialization-node %)
+        witnesses (mapv (emission-witness-fn plan cover-plan permission
+                                             node-id specialization-node)
                         emissions)
         candidates (mapv #(candidate permission traversal subject-type
                                      anchor-eid %1 %2)

@@ -5,7 +5,6 @@
             [eacl.causal-token :as causal-token]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.engine.portable-decisions :as portable]
-            [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
 (def error-types
