@@ -32,10 +32,6 @@
   [db eid-or-ref]
   (ds/entid db eid-or-ref))
 
-(defn entity-exists?
-  [db eid]
-  (boolean (seq (ds/datoms db :eav eid))))
-
 (defn avet-datoms
   ([db attr]
    (ds/datoms db :ave attr))

@@ -16,16 +16,6 @@
   [db object-id]
   (ddb/object-eid db object-id))
 
-(defn subject->resources
-  [db subject-type subject-id relation-id resource-type cursor-or-options]
-  (ddb/subject->resources
-   db subject-type subject-id relation-id resource-type cursor-or-options))
-
-(defn resource->subjects
-  [db resource-type resource-id relation-id subject-type cursor-or-options]
-  (ddb/resource->subjects
-   db resource-type resource-id relation-id subject-type cursor-or-options))
-
 (defn relation-datoms
   [db resource-type relation-name]
   (ddb/relation-datoms db resource-type relation-name))
@@ -44,11 +34,7 @@
 
 (defn- basis-adapter
   [db]
-  (backend/basis-adapter
-   db
-   {:object-eid-fn object-eid
-    :subject->resources-fn subject->resources
-    :resource->subjects-fn resource->subjects}))
+  (backend/basis-adapter db {}))
 
 (defmacro ^:private with-engine-bindings
   [& body]
@@ -58,10 +44,6 @@
              engine/*recursive-traversal-stats*
              *recursive-traversal-stats*]
      ~@body))
-
-(defn normalize-page-request
-  [query]
-  (engine/normalize-page-request query))
 
 (defn calc-permission-paths
   [db resource-type permission-name]
@@ -73,18 +55,6 @@
   [db resource-type permission-name]
   (with-engine-bindings
     (engine/get-permission-paths
-     (basis-adapter db) resource-type permission-name)))
-
-(defn permission-relationship-eids
-  [db resource-type permission-name]
-  (with-engine-bindings
-    (engine/permission-relationship-eids
-     (basis-adapter db) resource-type permission-name)))
-
-(defn permission-schema-nodes
-  [db resource-type permission-name]
-  (with-engine-bindings
-    (engine/permission-schema-nodes
      (basis-adapter db) resource-type permission-name)))
 
 (defn can?

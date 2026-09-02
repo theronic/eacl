@@ -71,49 +71,51 @@
            resource-type cut-point! physical-chunk-size max-commands
            max-values counters]}
    relation-id bound inclusive?]
-  (execution/check! execution/*contract*
-                    :operator-seekable/scan
-                    {:commands (:commands @counters)})
-  (when cut-point! (cut-point! @counters))
-  (let [next-command (inc (:commands @counters))]
-    (when (> next-command max-commands)
-      (limit! :commands max-commands next-command))
-    (let [scan-options
-          (cond-> {:direction order-direction}
-            (some? bound)
-            (assoc :bound-eid bound :inclusive-bound? inclusive?))
-          values
-          (into [] (take physical-chunk-size)
-                (if (= :forward traversal)
-                  (scan-invoker subject-type anchor-eid relation-id
-                                resource-type scan-options)
-                  (scan-invoker resource-type anchor-eid relation-id
-                                subject-type scan-options)))
-          next-values (+ (:fetched-values @counters) (count values))]
-      (when (> next-values max-values)
-        (limit! :fetched-values max-values next-values))
-      (vswap! counters assoc :commands next-command
-              :fetched-values next-values)
-      (when (nil? bound)
-        (vswap! counters update :stream-opens inc))
-      (request-counters/add-commands!)
-      (request-counters/add-fetched-values! (count values))
-      (add-stat! :adapter-commands 1)
-      (add-stat! :fetched-values (count values))
-      values)))
+  (let [current @counters]
+    ;; The routed cut point is the same deadline/cancellation check as the
+    ;; direct one; run whichever the caller installed, never both.
+    (if cut-point!
+      (cut-point! current)
+      (execution/check! execution/*contract* :operator-seekable/scan
+                        #(hash-map :commands (:commands current))))
+    (let [next-command (inc (:commands current))]
+      (when (> next-command max-commands)
+        (limit! :commands max-commands next-command))
+      (let [scan-options
+            ;; `:limit` lets natively paging adapters stop at the chunk.
+            (cond-> {:direction order-direction :limit physical-chunk-size}
+              (some? bound)
+              (assoc :bound-eid bound :inclusive-bound? inclusive?))
+            values
+            (into [] (take physical-chunk-size)
+                  (if (= :forward traversal)
+                    (scan-invoker subject-type anchor-eid relation-id
+                                  resource-type scan-options)
+                    (scan-invoker resource-type anchor-eid relation-id
+                                  subject-type scan-options)))
+            fetched (count values)
+            next-values (+ (:fetched-values current) fetched)]
+        (when (> next-values max-values)
+          (limit! :fetched-values max-values next-values))
+        (vswap! counters #(cond-> (assoc % :commands next-command
+                                         :fetched-values next-values)
+                            (nil? bound) (update :stream-opens inc)))
+        (request-counters/add-commands!)
+        (request-counters/add-fetched-values! fetched)
+        (add-stat! :adapter-commands 1)
+        (add-stat! :fetched-values fetched)
+        values))))
 
 (defn- cursor
   [relation-id boundary]
-  {:relation-id relation-id :buffer [] :index 0 :bound boundary
-   :inclusive? false :done? false :opened? false})
+  {:relation-id relation-id :buffer [] :index 0 :bound boundary :done? false})
 
 (defn- refill [options cursor bound inclusive?]
   (let [values (scan-values options (:relation-id cursor) bound inclusive?)
         chunk (:physical-chunk-size options)]
     (assoc cursor :buffer values :index 0
            :bound (peek values)
-           :done? (< (count values) chunk)
-           :opened? true)))
+           :done? (< (count values) chunk))))
 
 (defn- head [options cursor]
   (cond
@@ -160,7 +162,7 @@
 
 (defn- furthest
   [order-direction values]
-  (apply (if (= :asc order-direction) max min) values))
+  (reduce (if (= :asc order-direction) max min) values))
 
 (defn- intersection-emissions
   [options relation-ids width coords-prefix]

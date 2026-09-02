@@ -354,10 +354,11 @@
 
 (defn require-qualified-topology!
   "Fails closed with `:eacl.topology/unqualified` when the adapter's derived
-  capability record does not certify stable discovery. Clients call this
-  once at construction against their source adapter, so an adapter whose
+  capability record does not certify stable discovery, so an adapter whose
   declared execution profile is the conservative default (no strict scan
-  contract) cannot be routed through the stable engine. Returns the record."
+  contract) cannot be routed through the stable engine. Clients validate
+  the source-static counterpart at construction
+  (`require-qualified-source-topology!`). Returns the record."
   [adapter]
   (let [capabilities (adapter-topology-capabilities adapter)]
     (when-not (stable-discovery-qualified? capabilities)
@@ -384,24 +385,3 @@
          :backend (source/backend-id basis-source)
          :capabilities capabilities})))
     capabilities))
-
-;; ---------------------------------------------------------------------------
-;; Per-layer telemetry (task 7.8)
-;; ---------------------------------------------------------------------------
-
-(defn telemetry
-  "Separates every observable cost layer of one finished run: canonical
-  reducer transitions, logical scan commands, values fetched versus
-  admitted logical work, and adapter attempts when a counting retry
-  wrapper was installed. Node-cache and remote-operation counters remain
-  storage-layer observations and are never inferred here."
-  [finished-state & [{:keys [attempts]}]]
-  (cond-> {:reducer-transitions (:transitions finished-state)
-           :logical-scan-commands (:commands finished-state)
-           :values-fetched (:fetched-values finished-state)
-           :logical-admissions (:admissions finished-state)
-           :results-discovered (:discovered finished-state)
-           :maximum-stack (:maximum-stack finished-state)
-           :maximum-retained-buffers (:maximum-sidecar-buffers finished-state)
-           :maximum-retained-values (:maximum-sidecar-values finished-state)}
-    attempts (assoc :adapter-attempts @attempts)))

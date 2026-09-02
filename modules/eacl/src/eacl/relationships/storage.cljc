@@ -25,11 +25,12 @@
   "Normalizes the `cursor-or-options` scan argument shared by every
   backend's ordered scans: a bare value is an exclusive ascending lower
   bound; a map may carry :direction, :bound-eid, :inclusive-bound?, and
-  (where the backend pages natively) :limit."
+  (where the backend pages natively) :limit. Every engine caller already
+  passes a map naming its direction, which is validated and returned as
+  is; consumers read :inclusive-bound? and :limit by truthiness."
   [cursor-or-options]
   (if (map? cursor-or-options)
-    (let [{:keys [direction bound-eid inclusive-bound? limit]
-           :or {direction :asc}} cursor-or-options]
+    (let [direction (get cursor-or-options :direction :asc)]
       ;; `case` dispatches correctly on both platforms; keyword
       ;; `identical?` is false in ClojureScript for non-interned literals.
       (case direction
@@ -38,10 +39,9 @@
                         {:type :eacl/invalid-scan-options
                          :eacl/error :eacl/invalid-scan-options
                          :direction direction})))
-      {:direction direction
-       :bound-eid bound-eid
-       :inclusive-bound? (boolean inclusive-bound?)
-       :limit limit})
+      (if (contains? cursor-or-options :direction)
+        cursor-or-options
+        (assoc cursor-or-options :direction :asc)))
     {:direction :asc
      :bound-eid cursor-or-options
      :inclusive-bound? false

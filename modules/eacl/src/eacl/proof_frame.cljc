@@ -210,7 +210,6 @@
        :schema-generation certified-generation
        :relation-ids relation-ids
        :relation-generations raw
-       :relation-generation-map (into {} raw)
        :dependency-stamp
        (reduce
         (fn [frontier [_ generation]]
@@ -259,12 +258,13 @@
   [frame relation-ids]
   (let [canonical (canonical-relation-ids relation-ids)
         key (or canonical ::noncanonical)
-        created (delay (acquire frame canonical))
+        resolutions (:resolutions frame)
         selected
-        (get
-         (swap! (:resolutions frame)
-                #(if (contains? % key) % (assoc % key created)))
-         key)]
+        (or (get @resolutions key)
+            (let [created (delay (acquire frame canonical))]
+              (get (swap! resolutions
+                          #(if (contains? % key) % (assoc % key created)))
+                   key)))]
     @selected))
 
 (defn complete?
@@ -279,8 +279,7 @@
                      (generation? (first %))
                      (generation? (second %)))
                value)
-       (= (mapv first value)
-          (canonical-relation-ids (mapv first value)))))
+       (some? (canonical-relation-ids (mapv first value)))))
 
 (defn- dependency-frontier
   [dependency-identity]

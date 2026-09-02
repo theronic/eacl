@@ -35,8 +35,6 @@
     (swap! *physical-stats* update counter (fnil + 0) amount))
   nil)
 
-(defn- checkpoint! [stage consumed]
-  (execution/check! execution/*contract* stage consumed))
 
 (defn- shape
   [{:keys [direction descriptor]}]
@@ -77,18 +75,23 @@
            (<= span (* density-multiplier candidate-count))))))
 
 (defn- dense-decisions
-  [db {:keys [endpoint-eid attribute prefix]} ordered]
+  [db contract {:keys [endpoint-eid attribute prefix]} ordered]
   (let [first-eid (:eid (first ordered))
         last-eid (:eid (peek ordered))
         datoms
         (ddb/eavt-tuple-prefix
          db endpoint-eid attribute 4 prefix first-eid)
+        ;; The deadline check reads its diagnostic only on the throw path;
+        ;; one primitive cell and one thunk serve every datom.
+        progress (long-array 1)
+        consumed #(hash-map :fetched-values (aget ^longs progress 0))
         {:keys [present realized overread]}
         (loop [remaining datoms
                present (transient #{})
                realized 0]
-          (checkpoint! :direct-membership-batch/dense-prefix
-                       {:fetched-values realized})
+          (aset ^longs progress 0 (long realized))
+          (execution/check! contract :direct-membership-batch/dense-prefix
+                            consumed)
           (if-let [datom (first remaining)]
             (let [eid (nth (:v datom) 3)
                   realized (inc realized)]
@@ -110,31 +113,36 @@
     (mapv #(contains? present (:eid %)) ordered)))
 
 (defn- sparse-decisions
-  [db {:keys [endpoint-eid attribute prefix]} ordered]
-  (loop [index 0
-         decisions (transient [])
-         fetched 0]
-    (if (= index (count ordered))
-      (let [decisions (persistent! decisions)]
-        (request-counters/add-fetched-values! fetched)
-        (request-counters/add-probes! (count ordered))
-        (add-stat! :physical-subgroups 1)
-        (add-stat! :sparse-exact-groups 1)
-        (add-stat! :exact-seeks (count ordered))
-        (add-stat! :adapter-fetched-values fetched)
-        decisions)
-      (do
-        (checkpoint! :direct-membership-batch/sparse-probe
-                     {:probes index :fetched-values fetched})
-        (let [eid (:eid (nth ordered index))
-              present?
-              (boolean
-               (seq
-                (ddb/eavt-datoms
-                 db endpoint-eid attribute (conj prefix eid))))]
-          (recur (inc index)
-                 (conj! decisions present?)
-                 (+ fetched (if present? 1 0))))))))
+  [db contract {:keys [endpoint-eid attribute prefix]} ordered]
+  (let [progress (long-array 2)
+        consumed #(hash-map :probes (aget ^longs progress 0)
+                            :fetched-values (aget ^longs progress 1))]
+    (loop [index 0
+           decisions (transient [])
+           fetched 0]
+      (if (= index (count ordered))
+        (let [decisions (persistent! decisions)]
+          (request-counters/add-fetched-values! fetched)
+          (request-counters/add-probes! (count ordered))
+          (add-stat! :physical-subgroups 1)
+          (add-stat! :sparse-exact-groups 1)
+          (add-stat! :exact-seeks (count ordered))
+          (add-stat! :adapter-fetched-values fetched)
+          decisions)
+        (do
+          (aset ^longs progress 0 (long index))
+          (aset ^longs progress 1 (long fetched))
+          (execution/check! contract :direct-membership-batch/sparse-probe
+                            consumed)
+          (let [eid (:eid (nth ordered index))
+                present?
+                (boolean
+                 (seq
+                  (ddb/eavt-datoms
+                   db endpoint-eid attribute (conj prefix eid))))]
+            (recur (inc index)
+                   (conj! decisions present?)
+                   (+ fetched (if present? 1 0)))))))))
 
 (defn direct-match-many?
   "Executes one already-normalized batch and returns decisions in the original
@@ -145,12 +153,13 @@
     []
     (let [ordered (ordered-candidates candidates)
           descriptor (shape request)
+          contract execution/*contract*
           ;; A wrapped basis cannot honor the dense kernel's seek bound, so
           ;; selecting it there would realize the entire endpoint prefix.
           dense? (and (ddb/direct-db? db) (dense-span? ordered))
           decisions (if dense?
-                      (dense-decisions db descriptor ordered)
-                      (sparse-decisions db descriptor ordered))]
+                      (dense-decisions db contract descriptor ordered)
+                      (sparse-decisions db contract descriptor ordered))]
       (request-counters/add-commands!)
       (add-stat! :adapter-commands 1)
       (add-stat! :scalar-equivalent-predicates (count candidates))

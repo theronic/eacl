@@ -415,13 +415,16 @@
 
 (defn- exact-denotation-key-fn
   [basis-key]
-  (fn [semantic-key]
-    (cache-key/exact-denotation-key
-     {:tier :denotation
-      :source-lifecycle (exact-source-identity basis-key)
-      :abi authorization-abi
-      :semantic semantic-key
-      :reuse basis-key})))
+  ;; The source identity is a function of the basis key alone; build it once
+  ;; per request rather than once per candidate key.
+  (let [source-lifecycle (exact-source-identity basis-key)]
+    (fn [semantic-key]
+      (cache-key/exact-denotation-key
+       {:tier :denotation
+        :source-lifecycle source-lifecycle
+        :abi authorization-abi
+        :semantic semantic-key
+        :reuse basis-key}))))
 
 (defn- lifecycle-content-change
   [lifecycle-ref token content-change-fn]

@@ -57,18 +57,31 @@
   "The immutable client-local admission profile bound around schema work."
   policy/default-client-limits)
 
+(def ^:private normalized-limits-memo
+  ;; [bound-profile normalized-profile] for the last non-default binding.
+  ;; Clients bind one immutable profile object for their whole lifetime, so
+  ;; identity is the memo key; a different object is normalized afresh.
+  (atom nil))
+
 (defn effective-expression-limits []
   ;; Reuse the complete immutable default profile. Non-default bindings still
-  ;; cross the public normalizer so bound overrides remain validated.
-  (if (identical? *expression-limits* policy/default-client-limits)
-    policy/default-client-limits
-    (policy/normalize-client-limits *expression-limits*)))
+  ;; cross the public normalizer so bound overrides remain validated, but the
+  ;; same bound object is normalized once, not on every derived-key build.
+  (let [bound *expression-limits*]
+    (if (identical? bound policy/default-client-limits)
+      policy/default-client-limits
+      (let [memo @normalized-limits-memo]
+        (if (and memo (identical? (nth memo 0) bound))
+          (nth memo 1)
+          (let [normalized (policy/normalize-client-limits bound)]
+            (reset! normalized-limits-memo [bound normalized])
+            normalized))))))
 
 (defn ->expression-id [resource-type permission-name]
   (str "eacl.permission-expression:" resource-type ":" permission-name))
 
 (defn expression-entity
-  [resolved-expression _metadata]
+  [resolved-expression]
   (let [resolved-expression (expression/canonicalize resolved-expression)
         {:keys [resource-type permission-name]} resolved-expression]
     {:eacl/id (->expression-id resource-type permission-name)
@@ -78,17 +91,12 @@
 
 (defn candidate-schema
   "Converts a fully validated resolver result to backend transaction values."
-  [{:keys [definitions relations expressions expression-metadata]
-    :as validated}]
+  [{:keys [expressions expression-metadata] :as validated}]
   (when-not (= (count expressions) (count expression-metadata))
     (throw (ex-info "Expression metadata is not aligned."
                     {:type :eacl.schema/invalid-expression-metadata
                      :eacl/error :eacl.schema/invalid-expression-metadata})))
-  (assoc validated
-         :definitions definitions
-         :relations relations
-         :permissions (mapv expression-entity expressions
-                            expression-metadata)))
+  (assoc validated :permissions (mapv expression-entity expressions)))
 
 (defn entity-deletions
   "Returns only retracted entities whose logical identity is absent from the

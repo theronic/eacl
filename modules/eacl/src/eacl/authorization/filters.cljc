@@ -46,9 +46,6 @@
 (defn validate-scan-authorization!
   "Validates read-relationships' closed authorization clause."
   [filters]
-  (if *validated-request?*
-    filters
-    (do
   (when (contains? filters :authorization)
     (let [authorization (:authorization filters)]
     (when-not (map? authorization)
@@ -85,7 +82,7 @@
           :on (:on authorization)
           :required-filter required-type
           :value (get filters required-type)})))))
-      filters)))
+  filters)
 
 (defn- validate-relationship-clause!
   [clause clause-key anchor-key]
@@ -115,9 +112,6 @@
   "Validates a lookup route's closed query and optional direct relationship
   predicate before snapshot selection."
   [operation query]
-  (if *validated-request?*
-    query
-    (do
   (when-not (map? query)
     (invalid! "An authorization lookup query must be a map."
               {:operation operation :value query}))
@@ -146,4 +140,4 @@
     (when (contains? query clause-key)
       (validate-relationship-clause!
        (get query clause-key) clause-key anchor-key)))
-      query)))
+  query)

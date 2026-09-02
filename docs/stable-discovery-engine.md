@@ -203,10 +203,12 @@ client's standard cache boundary. The transport value is process-local and
 contains no request object. Fetched relationship chunks and incomplete
 traversals remain request-local and are never published.
 
-Per-layer telemetry (`eacl.engine.physical/telemetry`) reports reducer
-transitions, logical scan commands, values fetched, logical admissions,
-results discovered, maximum stack, and retained-buffer high-water marks —
-plus adapter attempts when the counting retry wrapper is installed.
+The finished reducer state carries every observable cost layer of one run:
+`:transitions`, logical scan `:commands`, `:fetched-values`, logical
+`:admissions`, `:discovered` results, `:maximum-stack`, and the
+retained-buffer high-water marks `:maximum-sidecar-buffers` and
+`:maximum-sidecar-values`; the routed fetch seam counts adapter attempts
+separately when its counting retry wrapper is installed.
 Storage-layer counters are observed at the storage layer and never inferred.
 The continuation store reports hits, publications, replacements, approximate
 evictions, errors, actual entry count/capacity, and classified misses such as

@@ -45,13 +45,16 @@
 
 (defn value-prefix?
   "Whether a valid endpoint value begins with `prefix`. Oversized prefixes and
-  malformed stored values never match."
+  malformed stored values never match. Compares component-wise, so a scan
+  pays no allocation per datom."
   [value prefix]
-  (let [prefix (vec prefix)
-        prefix-size (count prefix)]
+  (let [n (count prefix)]
     (and (endpoint-value? value)
-         (<= prefix-size value-arity)
-         (= prefix (subvec value 0 prefix-size)))))
+         (<= n value-arity)
+         (loop [i 0]
+           (or (== i n)
+               (and (= (nth prefix i) (nth value i))
+                    (recur (inc i))))))))
 
 (defn decode-forward
   [subject-eid value]
@@ -98,14 +101,6 @@
                                    resource-type resource-eid)))
 
     nil))
-
-(defn half-identity
-  "Stable identity of one physical half, independent of backend datom type."
-  [direction endpoint-eid value]
-  (when (and (#{:forward :reverse} direction)
-             (nat-int? endpoint-eid)
-             (endpoint-value? value))
-    [direction endpoint-eid value]))
 
 (defn dangling-report
   "Summarizes a dangling-half stream without retaining its scan head."

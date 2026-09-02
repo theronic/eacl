@@ -282,13 +282,15 @@
    :eacl.permission/expression-payload])
 
 (defn- eager-entity
+  "The named attributes of one entity as a plain map; the pull vectors above
+  name attributes only, never `:db/id`."
   [db eid attributes]
   (let [entity (ds/entity db eid)]
-    (into (if (some #{:db/id} attributes) {:db/id eid} {})
+    (into {}
           (keep (fn [attribute]
                   (when-some [value (get entity attribute)]
                     [attribute value])))
-          (remove #{:db/id} attributes))))
+          attributes)))
 
 (defn read-relations
   [db]
@@ -394,7 +396,6 @@
        schema-fence-missing-after? (conj :eacl.datalevin/schema-write-fence))
      :db-after db-after})))
 
-(def validate-schema-references model/validate-schema-references)
 (def compare-schema model/compare-schema)
 
 (defn count-relationships-using-relation

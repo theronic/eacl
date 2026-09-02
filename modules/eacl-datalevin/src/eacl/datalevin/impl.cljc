@@ -9,13 +9,6 @@
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.model :as model]))
 
-(def Relation model/Relation)
-(def Permission model/Permission)
-
-(defn Relationship
-  [subject relation resource]
-  (eacl/->Relationship subject relation resource))
-
 (def permission-def-pull
   '[:db/id
     :eacl/id
@@ -119,38 +112,32 @@
           db :ave
           :eacl.permission/resource-type+permission-name))))
 
-(defn- eager-scan-values
-  [datoms direction bound-eid inclusive-bound? limit]
-  (let [_ (case direction :asc nil :desc nil)
-        bound-xf
-        (if bound-eid
-          (filter
-           (case direction
-             :asc
-            (if inclusive-bound?
-              #(<= bound-eid %)
-              #(< bound-eid %))
+(defn- scan-value [datom] (nth (:v datom) 3))
 
-             :desc
-            (if inclusive-bound?
-              #(>= bound-eid %)
-              #(> bound-eid %))))
-          identity)
-        values (into []
-                     (comp (map (comp #(nth % 3) :v))
-                           bound-xf
-                           (distinct)
-                           (if limit (take limit) identity))
-                     datoms)]
-    (when (and (nil? limit)
-               (> (count values) ddb/maximum-unpaged-scan-results))
-      (throw
-       (ex-info
-        "Datalevin relationship scan exceeded its certified eager bound."
-        {:type :eacl/scan-limit-exceeded
-         :eacl/error :eacl/scan-limit-exceeded
-         :maximum ddb/maximum-unpaged-scan-results})))
-    values))
+(defn- eager-scan-values
+  "Realizes one endpoint scan. The native prefix seek already starts at the
+  inclusive bound and yields one EAV datom per distinct value, so the only
+  remaining work is dropping an exclusive boundary row and bounding the
+  page; nothing is re-filtered or de-duplicated per value."
+  [datoms bound-eid inclusive-bound? limit]
+  (let [values (into [] (map scan-value) datoms)
+        values (if (and (some? bound-eid)
+                        (not inclusive-bound?)
+                        (pos? (count values))
+                        (= bound-eid (nth values 0)))
+                 (subvec values 1)
+                 values)]
+    (if limit
+      (if (< limit (count values)) (subvec values 0 limit) values)
+      (do
+        (when (> (count values) ddb/maximum-unpaged-scan-results)
+          (throw
+           (ex-info
+            "Datalevin relationship scan exceeded its certified eager bound."
+            {:type :eacl/scan-limit-exceeded
+             :eacl/error :eacl/scan-limit-exceeded
+             :maximum ddb/maximum-unpaged-scan-results})))
+        values))))
 
 (defn- endpoint-scan
   [db endpoint-id attribute prefix cursor-or-options]
@@ -160,7 +147,7 @@
     (eager-scan-values
      (ddb/eavt-endpoint-prefix
       db endpoint-id attribute prefix bound-eid direction native-limit)
-     direction bound-eid inclusive-bound? limit)))
+     bound-eid inclusive-bound? limit)))
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
@@ -299,31 +286,6 @@
      :resource-id resource-id
      :resource-identity-guard
      (endpoint-identity-guard db :resource resource-id resource)}))
-
-(defn find-one-relationship-id
-  "Returns the resolved tuple identity for an existing relationship, or nil.
-  A read: unresolvable endpoints mean no such relationship can exist -> nil."
-  [db relationship]
-  (let [resolved (try
-                   (resolve-relationship db relationship)
-                   (catch #?(:clj clojure.lang.ExceptionInfo :cljs ExceptionInfo) e
-                     (when-not (= :eacl/unknown-object (:type (ex-data e)))
-                       (throw e))))
-        existing? (and resolved
-                       (seq
-                        (ddb/eavt-datoms
-                         db
-                         (:subject-id resolved)
-                         relationship-storage/forward-attribute
-                         (relationship-tuple resolved)))
-                       (seq
-                        (ddb/eavt-datoms
-                         db
-                         (:resource-id resolved)
-                         relationship-storage/reverse-attribute
-                         (reverse-relationship-tuple resolved))))]
-    (when existing?
-      resolved)))
 
 (defn relationship-relation-id
   [db relationship]
@@ -466,14 +428,12 @@
                      (:resume-inclusive? cursor)
                      (assoc :resume-inclusive? true))))
                (drop-until-beyond-cursor [spec cursor direction rows]
-                 (drop-while
-                  #(not
-                    (relationship-engine/beyond-cursor?
-                     (:scan-kind spec)
-                     direction
-                     (normalized-cursor cursor)
-                     %))
-                  rows))
+                 (let [cursor (normalized-cursor cursor)
+                       scan-kind (:scan-kind spec)]
+                   (drop-while
+                    #(not (relationship-engine/beyond-cursor?
+                           scan-kind direction cursor %))
+                    rows)))
                (native-page-limit [spec cursor]
                  (when-let [remaining (:physical-limit spec)]
                   ;; Native seeks are inclusive. A continued page therefore
@@ -727,48 +687,3 @@
   "Every relation named by endpoint-pair retraction operations."
   [tx-data]
   (relationship-mutations/affected-relation-ids tx-data #{:db/retract}))
-
-(defn orphaned-relationship-halves
-  "Lazy deterministic scan of physical relationship halves whose exact peer
-  half is absent. Malformed values are reported as dangling rather than
-  throwing from the diagnostic."
-  [db]
-  (concat
-   (for [{subject-id :e value :v}
-         (ddb/avet-datoms db relationship-storage/forward-attribute)
-         :let [decoded (endpoint-pair/decode-forward subject-id value)
-               peer (endpoint-pair/peer-half :forward subject-id value)]
-         :when
-         (or (nil? decoded)
-             (empty?
-              (ddb/eavt-datoms
-               db (:endpoint-eid peer)
-               relationship-storage/reverse-attribute
-               (:value peer))))]
-     {:half :forward
-      :e subject-id
-      :attr relationship-storage/forward-attribute
-      :v (if (sequential? value) (vec value) value)
-      :subject-eid subject-id
-      :resource-eid (:resource-eid decoded)
-      :relation-eid (:relation-eid decoded)
-      :value-arity (when (counted? value) (count value))})
-   (for [{resource-id :e value :v}
-         (ddb/avet-datoms db relationship-storage/reverse-attribute)
-         :let [decoded (endpoint-pair/decode-reverse resource-id value)
-               peer (endpoint-pair/peer-half :reverse resource-id value)]
-         :when
-         (or (nil? decoded)
-             (empty?
-              (ddb/eavt-datoms
-               db (:endpoint-eid peer)
-               relationship-storage/forward-attribute
-               (:value peer))))]
-     {:half :reverse
-      :e resource-id
-      :attr relationship-storage/reverse-attribute
-      :v (if (sequential? value) (vec value) value)
-      :subject-eid (:subject-eid decoded)
-      :resource-eid resource-id
-      :relation-eid (:relation-eid decoded)
-      :value-arity (when (counted? value) (count value))})))

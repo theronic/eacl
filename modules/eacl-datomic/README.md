@@ -142,3 +142,14 @@ mutation rules, see the
 - `eacl.datomic.consistency` — the last remnant (`derive-signing-key`);
   live Zed tokens are issued and authenticated by the shared
   `eacl.causal-token` codec.
+
+## Removed (2026-09-02)
+
+- `eacl.datomic.impl.indexed/{subject->resources,resource->subjects,normalize-page-request,permission-relationship-eids,permission-schema-nodes}`
+  — unreferenced facade wrappers; call `eacl.datomic.db` and `eacl.engine.v8`
+  directly.
+- Basis-adapter configuration keys `:object-eid-fn`, `:subject->resources-fn`
+  and `:resource->subjects-fn` — an override seam whose only client was an
+  identity facade; the adapter reads `eacl.datomic.db` directly.
+- `eacl.datomic.schema/{calc-set-deltas,compare-schema}` are now aliases of
+  `eacl.schema.model` (same values).

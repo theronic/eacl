@@ -39,18 +39,27 @@
     (ddb/seek-tuple-prefix db schema/relation-key-attr 3 [resource-type relation-name])
     []))
 
+(defn v8-permission-storage?
+  "Whether `db` carries the v8 expression-storage stamp; constant for one
+   immutable db value, so adapters read it once rather than per definition
+   read."
+  [db]
+  (= schema/permission-storage-version
+     (schema/stamped-permission-storage-version db)))
+
 (defn find-permission-defs
-  [db resource-type permission-name]
-  (let [definitions
-        (->> (ddb/avet-datoms
-              db schema/permission-key-attr [resource-type permission-name])
-             (map :e)
-             (mapv #(d/pull db permission-def-pull %)))]
-    (if (= schema/permission-storage-version
-           (schema/stamped-permission-storage-version db))
-      (filterv #(contains? % :eacl.permission/expression-payload)
-               definitions)
-      definitions)))
+  ([db resource-type permission-name]
+   (find-permission-defs db (v8-permission-storage? db)
+                         resource-type permission-name))
+  ([db v8-storage? resource-type permission-name]
+   (let [definitions
+         (mapv #(d/pull db permission-def-pull (:e %))
+               (ddb/avet-datoms
+                db schema/permission-key-attr [resource-type permission-name]))]
+     (if v8-storage?
+       (filterv #(contains? % :eacl.permission/expression-payload)
+                definitions)
+       definitions))))
 
 (defn all-relation-defs
   [db]
@@ -96,7 +105,7 @@
                #(> bound-eid %)))
      values)))
 
-(def ^:private scan-value (comp #(nth % 3) :v))
+(defn- scan-value [datom] (nth (:v datom) 3))
 
 (defn- endpoint-scan
   [db endpoint-id attribute prefix cursor-or-options]
@@ -421,14 +430,12 @@
                      (:resume-inclusive? cursor)
                      (assoc :resume-inclusive? true))))
                (drop-until-beyond-cursor [spec cursor direction rows]
-                 (drop-while
-                  #(not
-                    (relationship-engine/beyond-cursor?
-                     (:scan-kind spec)
-                     direction
-                     (normalized-cursor cursor)
-                     %))
-                  rows))
+                 (let [cursor (normalized-cursor cursor)
+                       scan-kind (:scan-kind spec)]
+                   (drop-while
+                    #(not (relationship-engine/beyond-cursor?
+                           scan-kind direction cursor %))
+                    rows)))
                (exact-match-row [spec cursor direction]
                  (let [row (when (and (:subject-id spec) (:resource-id spec))
                              (when (direct-match?

@@ -43,7 +43,9 @@
    :complete-public-engine
    {:claim
     :conditional-composition-of-generated-authority-and-source-specializations-under-documented-tcb
-    :minimum-proof-efforts 9385}
+    ;; The 2026-08-31 ConsistencyDecision.dfy revision retired one obligation;
+    ;; the locked whole-tree run verifies 9384.
+    :minimum-proof-efforts 9384}
    :cursor-codec-cost-model
    {:source "formal/dafny/CursorCost.dfy"
     :claim :conditional-operation-count-bound

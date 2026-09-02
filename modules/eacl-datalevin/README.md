@@ -147,3 +147,10 @@ See [PORTING.md](PORTING.md) for the adapter boundary and unsupported
 configurations. The trusted boundary requires this maintained fork for every
 Datalog writer. Raw KV writes to Datalevin's datom/meta DBIs, direct file
 mutation, or opening the directory with upstream Datalevin are outside it.
+
+## Removed (2026-09-02)
+
+- `eacl.datalevin.impl/{find-one-relationship-id,orphaned-relationship-halves,Relation,Permission,Relationship}`,
+  `eacl.datalevin.db/entity-exists?` and the
+  `eacl.datalevin.schema/validate-schema-references` alias — unreferenced
+  since the module's integrity namespace was retired.

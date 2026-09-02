@@ -116,3 +116,14 @@ context while the Snapshot's backend selection facts remain fixed.
 
 Application-facing module selection lives in the
 [backend guide](../../docs/v8-backend-modules-and-upgrade.md).
+
+## Removed (2026-09-02)
+
+Unreferenced vars removed from the core module: `eacl.client.orchestration/can?`
+(use `eacl.core/can?`), `eacl.engine.physical/telemetry` (the finished reducer
+state carries every counter), `eacl.engine.sealed-plan/local-read-cost` (read
+`rank-contract`), `eacl.operator.recursive/check-eids` (use
+`check-cached-eids`), `eacl.relationships.endpoint-pair/half-identity`,
+`eacl.authorization.batch/root-key`,
+`eacl.schema.expression-policy/compatibility-digest` and
+`eacl.schema.expression-resolver/resolve-definitions`.

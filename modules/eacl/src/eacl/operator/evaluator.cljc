@@ -65,19 +65,27 @@
 (def ^:private known-limit-keys (set (keys default-limits)))
 
 (defn- normalize-limits [overrides]
-  (let [overrides (or overrides {})]
-    (when-not (map? overrides)
-      (invalid! :invalid-limits "Operator limits must be a map."
-                {:value overrides}))
-    (when-let [unknown (seq (remove known-limit-keys (keys overrides)))]
-      (invalid! :unknown-limit "Operator limits contain unknown keys."
-                {:unknown-keys (vec unknown)
-                 :known-keys known-limit-keys}))
-    (when-not (every? (fn [[_ value]] (and (integer? value) (pos? value)))
-                      overrides)
-      (invalid! :invalid-limit "Operator limits must be positive integers."
-                {:limits overrides}))
-    (merge default-limits overrides)))
+  ;; The common caller passes no overrides; the closed defaults are already a
+  ;; complete normalized map, so no merge or key scan is needed for them.
+  (cond
+    (nil? overrides)
+    default-limits
+
+    (not (map? overrides))
+    (invalid! :invalid-limits "Operator limits must be a map."
+              {:value overrides})
+
+    :else
+    (do
+      (when-let [unknown (seq (remove known-limit-keys (keys overrides)))]
+        (invalid! :unknown-limit "Operator limits contain unknown keys."
+                  {:unknown-keys (vec unknown)
+                   :known-keys known-limit-keys}))
+      (when-not (every? (fn [[_ value]] (and (integer? value) (pos? value)))
+                        overrides)
+        (invalid! :invalid-limit "Operator limits must be positive integers."
+                  {:limits overrides}))
+      (merge default-limits overrides))))
 
 (def ^:private acyclic-plan? operator-plan/certificate-acyclic?)
 
@@ -95,9 +103,8 @@
   (if-let [{:keys [relation-id]}
            (operator-plan/relation-partition descriptor subject-type)]
     (do
-      (execution/check! execution/*contract*
-                        :operator-point/direct-before
-                        {:probes 0})
+      ;; The transition check that dispatched this frame ran with no work in
+      ;; between; only the post-probe check observes new elapsed time.
       (request-counters/add-probes!)
       (add-stat! :scalar-equivalent-predicates 1)
       (let [decision
@@ -119,45 +126,44 @@
    limits counters]
   (let [[permission _ _ _ resource-eid] key
         resource-type (first permission)
-        partition (nth (:partitions descriptor) partition-index)]
-    (execution/check! execution/*contract*
-                      :operator-point/arrow-scan-before
-                      {:commands (:arrow-commands @counters)
-                       :fetched-values (:arrow-values @counters)})
-    (let [options (cond-> {:direction :asc}
+        partition (nth (:partitions descriptor) partition-index)
+        chunk-size (:physical-chunk-size limits)
+        next-command (inc (:arrow-commands @counters))]
+    ;; The transition check that dispatched this frame ran with no work in
+    ;; between; only the post-scan check observes new elapsed time.
+    (when (> next-command (:maximum-arrow-commands limits))
+      (limit! :arrow-commands (:maximum-arrow-commands limits) next-command))
+    (let [options (cond-> {:direction :asc :limit chunk-size}
                     bound (assoc :bound-eid bound :inclusive-bound? false))
-          next-command (inc (:arrow-commands @counters))
-          _ (when (> next-command (:maximum-arrow-commands limits))
-              (limit! :arrow-commands
-                      (:maximum-arrow-commands limits) next-command))
           values
           (into []
-                (take (:physical-chunk-size limits))
+                (take chunk-size)
                 (resource->subjects!
                  resource-type resource-eid
                  (:via-relation-eid partition)
                  (:intermediate-type partition)
                  options))
-          _ (vswap! counters assoc :arrow-commands next-command)
-          _ (request-counters/add-commands!)
-          _ (request-counters/add-fetched-values! (count values))
-          _ (add-stat! :adapter-commands 1)
-          _ (add-stat! :adapter-fetched-values (count values))
-          next-values (+ (:arrow-values @counters) (count values))]
+          fetched (count values)
+          next-values (+ (:arrow-values @counters) fetched)]
       (when (> next-values (:maximum-arrow-values limits))
         (limit! :arrow-values (:maximum-arrow-values limits) next-values))
-      (vswap! counters assoc :arrow-values next-values)
+      (vswap! counters assoc
+              :arrow-commands next-command
+              :arrow-values next-values)
+      (request-counters/add-commands!)
+      (request-counters/add-fetched-values! fetched)
+      (add-stat! :adapter-commands 1)
+      (add-stat! :adapter-fetched-values fetched)
       (execution/check! execution/*contract*
                         :operator-point/arrow-scan-after
-                        {:commands (:arrow-commands @counters)
+                        {:commands next-command
                          :fetched-values next-values})
-      (if (seq values)
+      (if (pos? fetched)
         (assoc frame
                :values values
                :value-index 0
                :bound (peek values)
-               :exhausted? (< (count values)
-                              (:physical-chunk-size limits)))
+               :exhausted? (< fetched chunk-size))
         (next-partition frame)))))
 
 (defn- target-key [roots subject-type subject-eid intermediate-eid partition]

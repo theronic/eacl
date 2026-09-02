@@ -284,15 +284,6 @@
        :aggregate-metrics
        (expression-limits/check-aggregate! metadata limits)}))))
 
-(defn resolve-definitions
-  "Resolves every permission and returns canonical expressions sorted by
-   [resource-type permission-name]. The optional limits map accepts the source
-   and normalized dimensions from eacl.schema.expression-limits."
-  ([definitions]
-   (resolve-definitions definitions {}))
-  ([definitions limits]
-   (:expressions (resolve-definitions-with-metadata definitions limits))))
-
 (defn resolve-parse-tree
   "Validates parser-level restrictions and resolves every expression in one
    parsed candidate schema without invoking flat permission storage."

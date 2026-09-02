@@ -97,7 +97,7 @@ The abstract operator Phase A consists of
 `ExpressionPlanRefinement.dfy`, `OperatorGeneratedPolicy.dfy`,
 `OperatorGeneratedPolicyRefinement.dfy`, and `OperatorProofKernel.dfy`.
 Together they add 525 proof-leaf obligations plus six obligations at the
-generated `EaclKernel` boundary; the locked whole-tree run verifies 9,325
+generated `EaclKernel` boundary; the locked whole-tree run verifies 9,384
 obligations. The generated `DecideOperatorBatch` and
 `DecideOperatorSignedGraph` boundaries are each exercised by Java and
 JavaScript against fixed and 1,000-case randomized independent host oracles,
@@ -120,7 +120,7 @@ CLJ/CLJS parser, canonical expression storage, signed graph, plan, scalar and
 vector evaluators, direct specializations, cursor progress, recursive state,
 cache seam, and all four adapters through digest closure, independent-oracle
 differentials, counterexample replay, backend certification, and killed
-production mutants. The locked whole-tree run verifies 9,361 obligations.
+production mutants. The locked whole-tree run verifies 9,384 obligations.
 Public intersection/exclusion schema writes and routing are covered by the
 production differential, backend, storage, and performance tests.
 

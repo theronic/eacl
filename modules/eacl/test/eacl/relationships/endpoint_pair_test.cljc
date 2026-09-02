@@ -39,11 +39,7 @@
               :endpoint-eid subject-eid
               :value forward}
              (select-keys (pair/peer-half :reverse resource-eid reverse)
-                          [:direction :endpoint-eid :value])))
-      (is (= [:forward subject-eid forward]
-             (pair/half-identity :forward subject-eid forward)))
-      (is (= [:reverse resource-eid reverse]
-             (pair/half-identity :reverse resource-eid reverse))))))
+                          [:direction :endpoint-eid :value]))))))
 
 (deftest endpoint-value-validation-test
   (let [valid [:user 1 :document 2]]

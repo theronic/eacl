@@ -151,10 +151,9 @@ nrepl_eval() {
   # The CI bridge inspects nREPL response status and exits nonzero on an
   # evaluation error. The developer convenience executable prints remote
   # exceptions but currently exits zero, which would make a red replay or
-  # mutation suite look green when run locally.
-  eval_timeout_ms=$2
-  eval_form=$3
-  : "$eval_timeout_ms"
+  # mutation suite look green when run locally. The bridge owns the
+  # evaluation timeout.
+  eval_form=$2
   exec sh "$repo_root/bin/ci-nrepl-eval" "$eval_port" "$eval_form"
 }
 
@@ -233,9 +232,14 @@ case "$command" in
     # Reuse a fresh compile-js output and installed smoke dependencies:
     # build-js immediately before this ran both, and re-running them
     # doubled the heaviest steps of every formal job for identical bytes.
-    newest_dfy=$(ls -t "$repo_root"/formal/dafny/*.dfy | head -1)
+    # compile-js output depends on every model and on the JavaScript runtime
+    # patches applied after translation, so freshness is checked against the
+    # newest of all of them.
+    newest_input=$(ls -t "$repo_root"/formal/dafny/*.dfy \
+                         "$repo_root"/formal/runtime/js/*.js \
+                         "$repo_root"/bin/patch-generated-collections.mjs | head -1)
     if [ ! -f "$output_root/js/EaclKernel.js" ] || \
-       [ "$newest_dfy" -nt "$output_root/js/EaclKernel.js" ]; then
+       [ "$newest_input" -nt "$output_root/js/EaclKernel.js" ]; then
       "$repo_root/bin/formal" compile-js
     else
       echo "browser-bundle: reusing fresh compile-js output"
@@ -262,7 +266,7 @@ case "$command" in
         "EACL_NREPL_PORT must name a running dev nREPL." >&2
       exit 2
     fi
-    nrepl_eval "$EACL_NREPL_PORT" 60000 \
+    nrepl_eval "$EACL_NREPL_PORT" \
       "(do
          (require 'eacl.formal.generators :reload)
          (require 'eacl.formal.mutation-control-test :reload)
@@ -278,7 +282,7 @@ case "$command" in
         "EACL_NREPL_PORT must name a running dev nREPL." >&2
       exit 2
     fi
-    nrepl_eval "$EACL_NREPL_PORT" 180000 \
+    nrepl_eval "$EACL_NREPL_PORT" \
       "(do
          ;; Reload the shared cache implementation before constructing replay
          ;; fixtures, then reload every lazily resolved regression namespace.

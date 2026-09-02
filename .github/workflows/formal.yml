@@ -72,6 +72,19 @@ jobs:
             node bin/formal-assurance-summary.mjs >> "$GITHUB_STEP_SUMMARY"
           fi
 
+      - name: Validate the release assurance manifest
+        # The manifest ratchets proof efforts, operation coverage, source
+        # digests, generated artifacts and the counterexample corpus against
+        # the authored contract. Exit 3 is the contract's permanent
+        # "conditionally verified" status (documented residual obligations);
+        # any other non-zero exit is a ratchet or drift failure.
+        run: |
+          status=0
+          bin/formal manifest || status=$?
+          if [ "$status" -ne 0 ] && [ "$status" -ne 3 ]; then
+            exit "$status"
+          fi
+
       - name: Start heap-bounded generated-boundary nREPL
         run: |
           JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
@@ -193,6 +206,9 @@ jobs:
                  result))"
 
       - name: Gate portable CLJS indexed traversal scaling and ceiling
+        # The portable indexed traversal has no production caller; like the
+        # routing-certificate benchmark, its scaling gate runs on the schedule.
+        if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
         run: |
           sh bin/ci-nrepl-eval 7788 \
             "(do
@@ -566,8 +582,10 @@ jobs:
       - name: Start parity nREPL
         run: |
           mkdir -p target/formal
-          clojure -M:dev:test:cljs-test:formal-smoke:nrepl \
-            -J-Deacl.replay.strict=true --port 7788 \
+          # JVM options must precede -M: a -J flag after the alias is handed to
+          # nrepl.cmdline, which then ignores --port and picks a random one.
+          clojure -J-Deacl.replay.strict=true \
+            -M:dev:test:cljs-test:formal-smoke:nrepl --port 7788 \
             > target/formal/parity-nrepl.log 2>&1 &
           for attempt in {1..180}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then

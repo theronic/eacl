@@ -193,14 +193,12 @@
 
        :object-id->internal
        (fn [object-id]
-         (ddb/with-db
-           snapshot
-           (fn [db]
-             (let [internal-id
-                   (if (number? object-id)
-                     object-id
-                     (object-id->entid db object-id))]
-               (when (some? internal-id)
+         (if (number? object-id)
+           (exact-natural! :entity-id object-id)
+           (ddb/with-db
+             snapshot
+             (fn [db]
+               (when-some [internal-id (object-id->entid db object-id)]
                  (exact-natural! :entity-id internal-id))))))
 
        :internal-id->object
@@ -240,11 +238,10 @@
 
        ;; Argument-domain guards stay: the adapter contract test and the
        ;; EACL-FORMAL-027 ledger pin fail-closed rejection of non-natural
-       ;; inputs, and they are three scalar checks per call. The per-ELEMENT
-       ;; result guards were removed - the engine's guard-scan!
-       ;; (:runtime-guards? is true here) already rejects non-natural scan
-       ;; values, so every value was validated twice. `vec` keeps
-       ;; realization inside the LMDB snapshot scope `with-db` requires.
+       ;; inputs, and they are three scalar checks per call. Scan results
+       ;; are vectors realized inside the LMDB snapshot scope by
+       ;; `impl/subject->resources`; the engine's guard-scan!
+       ;; (:runtime-guards? is true here) validates every value once.
        :subject->resources
        (fn [subject-type subject-id relation-id resource-type options]
          (exact-natural! :subject-id subject-id)
@@ -253,9 +250,8 @@
            (exact-natural! :cursor-bound bound-eid))
          (ddb/with-db
            snapshot
-           #(vec (impl/subject->resources
-                  % subject-type subject-id relation-id resource-type
-                  options))))
+           #(impl/subject->resources
+             % subject-type subject-id relation-id resource-type options)))
 
        :resource->subjects
        (fn [resource-type resource-id relation-id subject-type options]
@@ -265,9 +261,8 @@
            (exact-natural! :cursor-bound bound-eid))
          (ddb/with-db
            snapshot
-           #(vec (impl/resource->subjects
-                  % resource-type resource-id relation-id subject-type
-                  options))))
+           #(impl/resource->subjects
+             % resource-type resource-id relation-id subject-type options)))
 
        :direct-match?
        (fn [subject-type subject-id relation-id resource-type resource-id]
@@ -276,10 +271,9 @@
          (exact-natural! :resource-id resource-id)
          (ddb/with-db
            snapshot
-           #(boolean
-             (impl/direct-match?
-              % subject-type subject-id relation-id
-              resource-type resource-id))))
+           #(impl/direct-match?
+             % subject-type subject-id relation-id
+             resource-type resource-id)))
 
        :all-permission-nodes
        (fn []
@@ -364,7 +358,6 @@
   [conn opts]
   (let [_ (validate-topology! conn opts)
         source-scope {:source-id (:native-source-id opts) :branch nil}
-        opts (assoc opts :source-scope source-scope)
         adapter-options (select-keys opts adapter-config-keys)
         source-lifecycle
         (fn []

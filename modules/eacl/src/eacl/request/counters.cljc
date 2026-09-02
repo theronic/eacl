@@ -58,12 +58,18 @@
 (defn- current-ledger
   []
   #?(:clj
-     (let [entry (.get active-ledger-cache)]
-       (if (and entry
-                (identical? (aget ^objects entry 0)
-                            (clojure.lang.Var/getThreadBindingFrame)))
+     (let [entry (.get active-ledger-cache)
+           frame (clojure.lang.Var/getThreadBindingFrame)]
+       (if (and entry (identical? (aget ^objects entry 0) frame))
          (aget ^objects entry 1)
-         *ledger*))
+         ;; A nested `binding` (the execution contract, engine observers)
+         ;; pushed a new frame. Resolve the Var once and re-key the cache to
+         ;; this frame so per-tuple increments under it stay allocation-free;
+         ;; every later frame change falls back to the Var again.
+         (let [ledger *ledger*]
+           (when entry
+             (.set active-ledger-cache (object-array [frame ledger])))
+           ledger)))
      :cljs
      *ledger*))
 

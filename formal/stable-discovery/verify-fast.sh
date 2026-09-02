@@ -25,8 +25,21 @@ gate_hard_limit_seconds=${EACL_VERIFY_FAST_LIMIT_SECONDS:-12}
 
 repo_root=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 model_root="$repo_root/formal/stable-discovery"
-dafny="$repo_root/target/formal-tools/dafny-4.11.0/dafny/dafny"
-tla_jar="$repo_root/target/formal-tools/tla2tools-1.7.4.jar"
+lock_file="$repo_root/formal/toolchain.lock.json"
+lock_value() {
+  node -e '
+    const fs = require("fs");
+    const value = process.argv[2].split(".").reduce(
+      (current, key) => current === undefined ? undefined : current[key],
+      JSON.parse(fs.readFileSync(process.argv[1], "utf8"))
+    );
+    if (value === undefined || typeof value === "object") process.exit(2);
+    process.stdout.write(String(value));
+  ' "$lock_file" "$1"
+}
+# Tool locations follow the checksum lock exactly as bin/formal resolves them.
+dafny="$repo_root/target/formal-tools/dafny-$(lock_value tools.dafny.version)/dafny/dafny"
+tla_jar="$repo_root/target/formal-tools/tla2tools-$(lock_value tools.tla2tools.version).jar"
 tlc_runner_source="$model_root/TLCFamilyRunner.java"
 tlc_runner_classes="$repo_root/target/formal/stable-discovery-gate/tlc-runner-classes"
 tlc_runner_class="$tlc_runner_classes/TLCFamilyRunner.class"

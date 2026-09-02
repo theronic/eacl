@@ -25,10 +25,8 @@
 (def ^:dynamic ^:no-doc *validated-request?* false)
 
 (defn validate!
+  "Every production caller consults `*validated-request?*` before calling."
   [filters]
-  (if *validated-request?*
-    filters
-    (do
   (when-not (map? filters)
     (throw
      (ex-info
@@ -92,4 +90,4 @@
              :operation :read-relationships
              :filter :subject/id
              :required-filter :subject/type})))
-      filters)))
+  filters)

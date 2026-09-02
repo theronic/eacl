@@ -72,12 +72,6 @@
                           :discovered 0}
                          detail))))
 
-(defn- bounded-vector
-  [values limit]
-  (if (and (vector? values) (<= (count values) limit))
-    values
-    (into [] (take limit) values)))
-
 (defn make-context
   "One request-scoped read context. `:fetch-fn` is the routed read seam
   (or `:adapter` for the direct path); budgets and the cut-point mirror
@@ -87,7 +81,6 @@
     :or {physical-chunk-size reducer/default-physical-chunk-size
          max-commands reducer/default-max-commands
          max-values reducer/default-max-values}}]
-  {:pre [(or (some? adapter) (some? fetch-fn))]}
   (let [fetch-fn (or fetch-fn (adapter-fetch-fn adapter))
         counters (volatile! {:commands 0 :fetched-values 0
                              :stream-opens 0 :emissions 0})]
@@ -106,8 +99,8 @@
        (when (>= (:commands @counters) max-commands)
          (limit-failure! :max-commands @counters
                          {:max-commands max-commands}))
-       (let [values (bounded-vector (fetch-fn descriptor)
-                                    (:limit descriptor))]
+       (let [values (reducer/bounded-vector (fetch-fn descriptor)
+                                            (:limit descriptor))]
          (when (> (+ (:fetched-values @counters) (count values))
                   max-values)
            (limit-failure! :max-values @counters
@@ -292,14 +285,11 @@
   "Does `subject-eid` reach `node`'s permission on `resource-eid`? The
   certified membership-probe check anchored at `node`
   (`eacl.engine.stable-route/derives-from-node?`)."
-  [{:keys [plan route-opts subject-type] :as env}
-   node subject-eid resource-eid]
+  [{:keys [route-opts] :as env} node subject-eid resource-eid]
   (and
    (route/derives-from-node?
     (assoc route-opts
-           :plan plan
            :start-node node
-           :subject-type subject-type
            :subject-eid subject-eid
            :resource-eid resource-eid))
    (candidate-accepted? env node subject-eid resource-eid)))
@@ -600,20 +590,19 @@
 
 ;; --- the forward machine ---------------------------------------------------
 
-(defn- fwd-earlier-in-sealed-order
+(defn- earlier-in-sealed-order
   "Rule indexes of arms sealed-before the current one — compared by
   SEALED ORDINAL, never by list position (the per-node lists are in
   (rank, ordinal) order, which need not agree with ordinal order) —
-  direction-independent witness domain."
+  direction-independent witness domain, shared by both machines."
   [{:keys [rules order oi]}]
   (let [ordinal (:ordinal (nth rules (nth order oi)))]
     (filterv #(< (:ordinal (nth rules %)) ordinal) order)))
 
 (defn- fwd-emit2?
   [env level rule binding v]
-  (and (not (boolean
-             (some #(fwd-rule-derives? env (nth (:rules level) %) v)
-                   (fwd-earlier-in-sealed-order level))))
+  (and (not-any? #(fwd-rule-derives? env (nth (:rules level) %) v)
+                 (earlier-in-sealed-order level))
        (not (fwd-same-rule-witness? env rule binding v))))
 
 (defn fwd-level-next
@@ -649,10 +638,8 @@
                 ;; earlier-rule witness only: the child already emits
                 ;; least-only within the target node.
                 (if (and
-                     (not (boolean
-                           (some #(fwd-rule-derives?
-                                   env (nth rules %) v)
-                                 (fwd-earlier-in-sealed-order level))))
+                     (not-any? #(fwd-rule-derives? env (nth rules %) v)
+                               (earlier-in-sealed-order level))
                      (candidate-accepted?
                       env (:node level) (:subject-eid env) v))
                   [{:value v
@@ -841,19 +828,11 @@
                            (:intermediate-type rule) (:value %)))
          nil)))))
 
-(defn- rev-earlier-in-sealed-order
-  "Mirror of `fwd-earlier-in-sealed-order`: sealed-ordinal comparison,
-  never list position."
-  [{:keys [rules order oi]}]
-  (let [ordinal (:ordinal (nth rules (nth order oi)))]
-    (filterv #(< (:ordinal (nth rules %)) ordinal) order)))
-
 (defn- rev-emit?
   [env level rule i s]
-  (and (not (boolean
-             (some #(rev-rule-derives? env (nth (:rules level) %)
-                                       (:entity level) s)
-                   (rev-earlier-in-sealed-order level))))
+  (and (not-any? #(rev-rule-derives? env (nth (:rules level) %)
+                                     (:entity level) s)
+                 (earlier-in-sealed-order level))
        (not (rev-same-rule-witness? env rule (:entity level) i s))))
 
 (defn rev-level-next
@@ -885,10 +864,8 @@
               (let [level' (assoc level :sub {:child child'})
                     s (:value emission)]
                 (if (and
-                     (not (boolean
-                           (some #(rev-rule-derives?
-                                   env (nth rules %) entity s)
-                                 (rev-earlier-in-sealed-order level))))
+                     (not-any? #(rev-rule-derives? env (nth rules %) entity s)
+                               (earlier-in-sealed-order level))
                      (candidate-accepted?
                       env (:node level) s (:entity level)))
                   [{:value s
@@ -1004,7 +981,7 @@
 
           :self-permission
           {:child (fwd-resume-level env (:target-node rule)
-                                    (subvec (vec coords) 1))}
+                                    (subvec coords 1))}
 
           :arrow-relation
           (let [i (nth coords 1) v (nth coords 2)]
@@ -1019,11 +996,10 @@
                             v)})
 
           :arrow-permission
-          (let [cv (vec coords)
-                subcoords (subvec cv 1 (dec (count cv)))
-                v (peek cv)
+          (let [subcoords (subvec coords 1 (dec (count coords)))
+                v (peek coords)
                 child (fwd-resume-level env (:target-node rule) subcoords)
-                i (peek (pop cv))]
+                i (peek (pop coords))]
             ;; The intermediate value is the sub-derivation's own leaf:
             ;; the deepest coordinate of the sub-path.
             {:child child
@@ -1056,7 +1032,7 @@
 
           :self-permission
           {:child (rev-resume-level env (:target-node rule) entity
-                                    (subvec (vec coords) 1))}
+                                    (subvec coords 1))}
 
           :arrow-relation
           (let [i (nth coords 1) s (nth coords 2)]
@@ -1072,7 +1048,7 @@
 
           :arrow-permission
           (let [i (nth coords 1)
-                subcoords (subvec (vec coords) 2)]
+                subcoords (subvec coords 2)]
             {:outer (stream #(rev-scan (:resource-type rule) entity
                                        (:via-relation-eid rule)
                                        (:intermediate-type rule) %1 %2 desc?)
@@ -1096,10 +1072,9 @@
    :desc? (boolean desc?)
    :traversal traversal
    :candidate-accept? candidate-accept?
-   :route-opts (select-keys options
-                            [:adapter :fetch-fn :physical-chunk-size
-                             :max-commands :max-values :max-transitions
-                             :max-admissions :max-stack :cut-point!])})
+   ;; Probe options are invariant per page: plan, subject type, budgets and
+   ;; the cut point are selected once here, never re-attached per witness.
+   :route-opts (select-keys options reducer/run-option-keys)})
 
 (defn- run-page
   [env level next-fn page-size raw-candidates?]
@@ -1132,10 +1107,7 @@
   smaller coordinates); `:last?` starts a descending walk from the end.
   Descending pages return emissions in descending coordinate order; the
   caller reverses for public presentation."
-  [{:keys [plan subject-eid page-size after-coords before-coords last?]
-    :as options}]
-  {:pre [(some? plan) (pos-int? page-size) (some? subject-eid)
-         (not (and after-coords before-coords))]}
+  [{:keys [plan page-size after-coords before-coords last?] :as options}]
   (let [ctx (make-context options)
         desc? (boolean (or before-coords last?))
         env (make-env (assoc options :desc? desc? :traversal :forward) ctx)
@@ -1152,8 +1124,6 @@
   "One least-path page of subjects for the entity; see `forward-page`."
   [{:keys [plan resource-eid page-size after-coords before-coords last?]
     :as options}]
-  {:pre [(some? plan) (pos-int? page-size) (some? resource-eid)
-         (not (and after-coords before-coords))]}
   (let [ctx (make-context options)
         desc? (boolean (or before-coords last?))
         env (make-env (assoc options :desc? desc? :traversal :reverse) ctx)

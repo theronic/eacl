@@ -247,10 +247,12 @@
   (when-not (map? options)
     (invalid-config! "Subproblem cache publication options must be a map."
                      {:options options}))
-  (let [unknown
-        (seq (sort-by pr-str
-                      (remove publication-option-keys (keys options))))]
-    (when unknown
+  ;; The engine's constant `{:valid? f}` maps cannot carry an unknown key;
+  ;; every other shape takes the diagnostic scan in its original order.
+  (when-not (and (== 1 (count options)) (contains? options :valid?))
+    (when-let [unknown
+               (seq (sort-by pr-str
+                             (remove publication-option-keys (keys options))))]
       (invalid-config!
        "Unknown subproblem cache publication option."
        {:unknown-keys (vec unknown)
@@ -590,7 +592,10 @@
                            #{:exact :managed}
                            #{:exact})
                          (nth identity 1))
-              (every? some? (subvec identity 2 6))))))
+              (some? (nth identity 2))
+              (some? (nth identity 3))
+              (some? (nth identity 4))
+              (some? (nth identity 5))))))
 
 (defn restore-store
   "Constructs fresh bounded stores from an already trusted decoded v2 value.

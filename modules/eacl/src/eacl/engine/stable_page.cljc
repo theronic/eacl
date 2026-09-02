@@ -276,13 +276,7 @@
 
 (defn- run-fresh
   [{:keys [direction] :as options} anchor-eid target]
-  (let [run-options (merge (select-keys options
-                                        [:adapter :fetch-fn :plan
-                                         :subject-type :cut-point!
-                                         :physical-chunk-size :sidecar-cap
-                                         :result-sink :result-window-size
-                                         :max-admissions :max-commands
-                                         :max-transitions :max-values :max-stack])
+  (let [run-options (merge (select-keys options reducer/run-option-keys)
                            {:target target})]
     (case direction
       :forward (reducer/run-forward
@@ -292,13 +286,7 @@
 
 (defn- run-resume
   [options checkpoint-state target]
-  (reducer/resume (merge (select-keys options
-                                      [:adapter :fetch-fn :plan
-                                       :subject-type :cut-point!
-                                       :physical-chunk-size :sidecar-cap
-                                       :result-sink :result-window-size
-                                       :max-admissions :max-commands
-                                       :max-transitions :max-values :max-stack])
+  (reducer/resume (merge (select-keys options reducer/run-option-keys)
                          {:target target})
                   checkpoint-state))
 
@@ -362,13 +350,9 @@
   window of the exhausted sequence. When `:service-admission` names a
   service-edge admission, replays (checkpoint misses, backward runs and last
   windows) run under its replay ledger keyed by `:checkpoint-key`."
-  [{:keys [plan direction anchor-eid subject-type page-size
-           after before last-window? checkpoints checkpoint-key
-           raw-candidates?]
+  [{:keys [anchor-eid page-size after before last-window? checkpoints
+           checkpoint-key raw-candidates?]
     :as options}]
-  {:pre [(some? plan) (contains? #{:forward :reverse} direction)
-         (keyword? subject-type) (pos-int? page-size)
-         (not (and after before))]}
   (cond
     (nil? anchor-eid)
     {:eids [] :start-ordinal 0 :has-next? false :has-previous? false}
@@ -423,10 +407,14 @@
                        #(run-fresh
                          options anchor-eid
                          (if raw-candidates? page-size (inc page-size))))]
-              {:page-ids (vec (take page-size (:results run)))
-               :lookahead (if raw-candidates?
+              {:page-ids (let [results (:results run)]
+                           (subvec results 0 (min page-size (count results))))
+               ;; A fresh vector, never a suffix view retained by the
+               ;; checkpoint store.
+               :lookahead (if (or raw-candidates?
+                                  (<= (count (:results run)) page-size))
                             []
-                            (vec (drop page-size (:results run))))
+                            (into [] (subvec (:results run) page-size)))
                :end-state (reducer/history-free run)}))
           delivered (+ ordinal (count page-ids))]
       (when (and (seq page-ids) checkpoints checkpoint-key)
@@ -468,8 +456,9 @@
                                   (+ (:discovered state) needed-fresh))))
         available (into (vec pending)
                         (when continued (:results continued)))
-        page-ids (vec (take page-size available))
-        lookahead (vec (take 1 (drop page-size available)))]
+        n (count available)
+        page-ids (subvec available 0 (min page-size n))
+        lookahead (if (< page-size n) [(nth available page-size)] [])]
     {:page-ids page-ids
      :lookahead lookahead
      :end-state (if continued (reducer/history-free continued) state)}))
@@ -481,12 +470,7 @@
 
   Returns {:data [external-ids] :page-info {...}} in canonical forward
   order for both navigation modes."
-  [{:keys [adapter plan direction anchor subject-type page-size after before
-           checkpoints]
-    :as options}]
-  {:pre [(some? plan) (contains? #{:forward :reverse} direction)
-         (vector? anchor) (keyword? subject-type)
-         (pos-int? page-size) (not (and after before))]}
+  [{:keys [adapter anchor after before checkpoints] :as options}]
   (let [binding (execution-binding options)
         key (checkpoint-key binding)
         anchor-eid (backend/invoke adapter :object-id->internal

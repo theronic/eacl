@@ -342,13 +342,9 @@
                                         (inc (hops to)))))))))
                  (range node-count)))))
 
-(def local-read-cost
-  "Compatibility view of `rank-contract`; production execution reads the
-  contract directly so cost, metadata, diagnostics, and fingerprint cannot
-  drift into independently handwritten tables."
-  (:local-read-costs rank-contract))
-
 (defn- current-order-contract
+  "The order contract as derived from `rank-contract` at seal time, so a
+  rebound rank contract drives execution metadata and the fingerprint."
   []
   (assoc order-contract :rank-costs (:local-read-costs rank-contract)))
 
@@ -587,7 +583,6 @@
                              (derive-execution-frontier ranked
                                                         permission-bodies))
         execution-rules (or (:rules execution-frontier) ranked)
-        active-order-contract (current-order-contract)
         plan {:version plan-version
               :root root-node
               :root-index root-index
@@ -595,7 +590,7 @@
               :rules ranked
               :edges edges
               :certificate certificate
-              :order-contract active-order-contract
+              :order-contract (current-order-contract)
               ;; ABI v2: order mode is selected statically per plan and
               ;; participates in the digest (an acyclic root's whole
               ;; reachable program is acyclic, so regimes never compose).
