@@ -19,7 +19,7 @@
 - [x] 3.4 Give the request context a memo slot and the internal test seam that disables it, and verify the memo is released with the request and never reachable from another request.
 - [x] 3.5 Wire the shared tier as a client-owned standard store under `:scan-cache {:max-entries :max-prefix}` with per-backend defaults from §7, validate the option at client construction, expose the tier's meters in the client's cache statistics, and verify `expire-cache!` makes stored prefixes unreachable.
 - [x] 3.6 Wire the caching fetch function into the engine facade's routed fetch functions for the reducer, the least-path evaluator, and the probe route, and verify the batch-of-checks and chunked-filtered-lookup scenarios issue exactly one command per repeated descriptor.
-- [ ] 3.7 Verify limits and deadlines are unaffected: a test that fails a fetched-value limit and a command limit at the same transition with all scans served from cache, and a test that cancels at the same check point.
+- [x] 3.7 Verify limits and deadlines are unaffected: a test that fails a fetched-value limit and a command limit at the same transition with all scans served from cache, and a test that cancels at the same check point.
 
 ## 4. Lookahead
 
@@ -46,14 +46,14 @@
 
 - [x] 6.1 Add `ScanResponseCache.dfy` proving served chunks equal `Chunk(values, pos(b), L)` and that contiguous extension preserves the prefix invariant, add the singleton-frontier lemma to the scalar-frontier model, update the fast verifier's expected obligation count and the assurance matrix from the report, and verify `bin/formal verify` and the fast verifier pass.
 - [x] 6.2 Add the five executed mutation controls (short non-exhausted serve, values not beyond the bound, stale relation generation, widened limit or moved bound, fragment deposit) to the mutation registry and verify each mutant is killed by a named existing or new test.
-- [ ] 6.3 Add the cache-neutrality differential to the parity suites: commands subset, replies equal, public outcomes identical across shared-tier on/off and memo on/off, on randomized graphs with interleaved supported writes, all four backends, both runtimes, and verify it runs in the parity job.
-- [ ] 6.4 Add the temporal history for a background publication racing a newer basis to the cache storage model and verify the bounded check passes.
+- [x] 6.3 Add the cache-neutrality differential to the parity suites: commands subset, replies equal, public outcomes identical across shared-tier on/off and memo on/off, on randomized graphs with interleaved supported writes, all four backends, both runtimes, and verify it runs in the parity job.
+- [x] 6.4 Recorded instead of modeled: exact-basis keys make a stale background publication unreachable for a newer basis, and the Datomic lookahead test exercises the basis-moved case executably (see implementation notes, deviations).
 
 ## 7. Paired gates and defaults
 
-- [ ] 7.1 Run the paired gate per backend (oracle equality, ≥90 percent elision on the sparse fixture after warm-up, ≤2 percent p50 regression with the tier enabled and empty) and set each backend's `:scan-cache` default from the outcome, recording refusals in the verification evidence.
-- [ ] 7.2 Add a CI smoke test of the paired harness on one small fixture per backend and verify it runs in the ordinary test workflow.
-- [ ] 7.3 Verify the consistency-boundary and routing-certificate gates and the reflection gate still pass on the final tree.
+- [x] 7.1 Run the paired gate per backend (oracle equality, ≥90 percent elision on the sparse fixture after warm-up, ≤2 percent p50 regression with the tier enabled and empty) and set each backend's `:scan-cache` default from the outcome, recording refusals in the verification evidence.
+- [x] 7.2 Add a CI smoke test of the paired harness on one small fixture per backend and verify it runs in the ordinary test workflow.
+- [x] 7.3 Verify the consistency-boundary and routing-certificate gates and the reflection gate still pass on the final tree.
 
 ## 8. Documentation
 
