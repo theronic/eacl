@@ -124,7 +124,7 @@ endpoint identity CAS. For high-degree targets, prefer batched
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
-not declare core separately. EACL targets Java 26 by default; explicit
+not declare core separately. EACL targets Java 25 by default; explicit
 source/custom builds can target older Java, subject to Datomic's own runtime
 requirements. Build this module in isolation with `clojure -T:build jar`; Git and `:local/root`
 development must first follow the explicitly opt-in
