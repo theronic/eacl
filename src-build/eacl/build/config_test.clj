@@ -55,12 +55,14 @@
          clojure.lang.ExceptionInfo
          #"MAJOR.MINOR.PATCH"
          (config/version {:version "8.0-SNAPSHOT"}))))
-  (testing "Java 26 is the default and older bytecode targets are explicit"
-    (is (= 26 config/default-java-release))
-    (is (= 26 (config/java-release {})))
+  (testing "Java 25 is the default and other bytecode targets are explicit"
+    (is (= 25 config/default-java-release))
+    (is (= 26 config/maximum-java-release))
+    (is (= 25 (config/java-release {})))
     (is (= 8 (config/java-release {:java-release 8})))
     (is (= 17 (config/java-release {:java-release "17"})))
     (is (= 52 (config/java-class-major-version {:java-release 8})))
+    (is (= 69 (config/java-class-major-version {})))
     (is (= 70 (config/java-class-major-version {:java-release 26})))
     (is (thrown-with-msg?
          clojure.lang.ExceptionInfo

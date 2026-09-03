@@ -22,11 +22,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Set up Temurin JDK 26
+      - name: Set up Temurin JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '26'
+          java-version: '25'
 
       - name: Set up Clojure CLI
         uses: DeLaGuardo/setup-clojure@13.6.1
@@ -496,11 +496,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 26
+      - name: Set up Temurin JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '26'
+          java-version: '25'
 
       - name: Set up Babashka
         uses: DeLaGuardo/setup-clojure@13.6.1
@@ -546,11 +546,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 26
+      - name: Set up Temurin JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '26'
+          java-version: '25'
 
       - name: Set up Clojure CLI
         uses: DeLaGuardo/setup-clojure@13.6.1
@@ -648,11 +648,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set up Temurin JDK 26
+      - name: Set up Temurin JDK 25
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '26'
+          java-version: '25'
 
       - name: Set up Clojure CLI and Node
         uses: DeLaGuardo/setup-clojure@13.6.1

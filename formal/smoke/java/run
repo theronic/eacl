@@ -7,7 +7,7 @@ generated="$repo_root/target/formal/java"
 classes="$generated/classes"
 dafny_runtime="$repo_root/target/formal-tools/dafny-4.11.0/dafny/DafnyRuntime.jar"
 clojure_classpath=$(clojure -Spath)
-java_release=${EACL_JAVA_RELEASE:-26}
+java_release=${EACL_JAVA_RELEASE:-25}
 
 case "$java_release" in
   ''|*[!0-9]*)

@@ -27,18 +27,18 @@ The core release artifact SHALL contain the Clojure and ClojureScript sources, `
 - **THEN** required core entries, POM coordinates, licence metadata, exact core dependency versions, and the absence of undeclared workspace paths are verified
 
 ### Requirement: Portable generated JVM bytecode
-The EACL 8 generated kernel build SHALL default to Java 26, the latest generally available Java feature release when this release contract was defined, and SHALL permit an explicit whole-number bytecode target from Java 8 through Java 26 for source and custom artifact builds. The artifact audit SHALL derive the expected class-file major version from the selected target. A generated artifact SHALL NOT vary by operating system, processor architecture, or installed JVM patch version, and SHALL run on its selected Java release and newer JVMs without requiring JVM-specific EACL classes.
+The EACL 8 generated kernel build SHALL default to Java 25 and SHALL permit an explicit whole-number bytecode target from Java 8 through Java 26 for source and custom artifact builds. The artifact audit SHALL derive the expected class-file major version from the selected target. A generated artifact SHALL NOT vary by operating system, processor architecture, or installed JVM patch version, and SHALL run on its selected Java release and newer JVMs without requiring JVM-specific EACL classes.
 
 #### Scenario: Default target execution
 - **WHEN** no bytecode override is supplied and the packaged core artifact is built and exercised
-- **THEN** its generated classes use Java 26 class-file major version 70 and produce the expected smoke result
+- **THEN** its generated classes use Java 25 class-file major version 69 and produce the expected smoke result
 
 #### Scenario: Newer-JVM execution
-- **WHEN** an artifact compiled for a selected Java target is exercised on a later supported JVM
+- **WHEN** an artifact compiled for a selected Java target is exercised on the same or a later supported JVM
 - **THEN** the generated kernel produces the same boundary result without recompilation
 
 #### Scenario: Explicit older target
-- **WHEN** a source or custom artifact build explicitly selects Java 8 through Java 25
+- **WHEN** a source or custom artifact build explicitly selects Java 8 through Java 26
 - **THEN** the generated sources are compiled and audited at that target and the artifact can run on that Java release or newer, subject to backend dependency requirements
 
 ### Requirement: Ordinary release provenance and gating
@@ -77,4 +77,3 @@ Only a job that references the GitHub `clojars` environment after satisfying rep
 #### Scenario: Unauthorized Maven group
 - **WHEN** the configured Clojars user cannot deploy the verified `dev.eacl` group
 - **THEN** a preflight fails before artifact upload and reports that group creation or authorization is required
-

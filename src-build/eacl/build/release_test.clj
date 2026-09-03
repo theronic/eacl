@@ -11,7 +11,7 @@
     (is (string/includes? workflow "secrets.CLOJARS_DEPLOY_TOKEN"))
     (is (not (string/includes? workflow "secrets.CLOJURE_")))
     (is (string/includes? workflow "run: clojure -X:deploy"))
-    (is (string/includes? workflow "EACL_JAVA_RELEASE: '26'"))))
+    (is (string/includes? workflow "EACL_JAVA_RELEASE: '25'"))))
 
 (deftest release-build-propagates-one-explicit-java-target
   (let [builds (atom [])]

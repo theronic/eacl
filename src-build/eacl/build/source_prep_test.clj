@@ -37,7 +37,7 @@
       (is (re-find #"\(defn prep" build-source))
       (is (re-find #"Build and stage the generated JVM and browser runtimes"
                    build-source)))
-    (testing "Java 26 is the default but source preparation accepts an override"
-      (is (re-find #"EACL_JAVA_RELEASE:-26" java-build-script))
+    (testing "Java 25 is the default but source preparation accepts an override"
+      (is (re-find #"EACL_JAVA_RELEASE:-25" java-build-script))
       (is (re-find #"javac --release \"\$java_release\""
                    java-build-script)))))

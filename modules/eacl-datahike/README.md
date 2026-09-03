@@ -162,7 +162,7 @@ client-level `:permission-tree-limits`.
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
-not declare core separately. EACL targets Java 26 by default; explicit
+not declare core separately. EACL targets Java 25 by default; explicit
 source/custom builds can target older Java, subject to Datahike's own runtime
 requirements. Git and `:local/root` development must first follow the explicitly opt-in
 [core source preparation instructions](../../README.md#source-dependencies-and-formal-tooling).
