@@ -3,8 +3,9 @@
   (:require [clojure.string :as string]))
 
 (def default-version "8.0.0-SNAPSHOT")
-(def default-java-release 26)
+(def default-java-release 25)
 (def minimum-java-release 8)
+(def maximum-java-release 26)
 
 (def module-order
   [:eacl :eacl-datomic :eacl-datahike :eacl-datascript :eacl-datalevin])
@@ -120,7 +121,7 @@
     :else nil))
 
 (defn java-release
-  "Returns the bytecode release for generated Java. Java 26 is the pinned
+  "Returns the bytecode release for generated Java. Java 25 is the pinned
   default; source builds may explicitly target Java 8 through 26."
   [options]
   (let [candidate
@@ -129,14 +130,14 @@
             default-java-release)
         release (parse-java-release candidate)]
     (when-not (and release
-                   (<= minimum-java-release release default-java-release))
+                   (<= minimum-java-release release maximum-java-release))
       (throw
        (ex-info
         "EACL Java release must be an integer from 8 through 26."
         {:type :eacl.build/invalid-java-release
          :java-release candidate
          :minimum minimum-java-release
-         :maximum default-java-release})))
+         :maximum maximum-java-release})))
     release))
 
 (defn java-class-major-version

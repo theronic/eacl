@@ -691,7 +691,7 @@ clojure -T:build jar :java-release 17
 ```
 
 Pass the same `:java-release` to `prep` and `jar` or `install`. The generated
-kernel defaults to Java 26 bytecode and may be compiled for Java 8 through 26,
+kernel defaults to Java 25 bytecode and may be compiled for Java 8 through 26,
 but the complete JVM EACL module requires Java 11 or newer because its Caffeine
 cache dependency does. Java 17 is EACL's supported production runtime floor.
 See [formal/README.md](formal/README.md) for tool versions and the full
