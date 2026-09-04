@@ -66,3 +66,10 @@ gate passed the locked 76 obligations and 8,199 assertions; boundary negative
 controls rejected profile drift, a proof escape hatch, and an unregistered
 model. Strict OpenSpec validation passed. This checkpoint precedes every
 Phase 2 production source edit in the branch history.
+
+The portable plan and partial evaluator add 9,374 independent type, cost,
+source-to-plan, residual-codec, finite-outcome, and seeded-value comparisons.
+The fast gate now locks 19,847 assertions. Source literals remain scalar;
+residuals can contain substituted typed containers. The finite residual typing
+extension passed the 78-obligation gate before its production implementation.
+The focused portable suite passes 101 assertions on JVM and Node/CLJS.

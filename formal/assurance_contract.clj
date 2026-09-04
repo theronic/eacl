@@ -133,7 +133,10 @@
     :entry-points ['eacl.relationships.qualifier/normalize
                    'eacl.relationships.qualifier/decode
                    'eacl.caveats.values/encode-context
-                   'eacl.caveats.values/decode-context]
+                   'eacl.caveats.values/decode-context
+                   'eacl.caveats.plan/compile-plan
+                   'eacl.caveats.plan/decode-plan
+                   'eacl.caveats.partial/evaluate]
     :theorems [:atomic-qualifier-pair-publication
                :prepared-qualifiers-have-no-authorization-effect
                :immutable-single-owner-qualifier-replacement

@@ -33,8 +33,8 @@
 ## 5. Implement the bounded evaluator subsystem
 
 - [ ] 5.1 Add `com.exoscale/cel-parser` 0.1.8 to the JVM implementation module only and implement a narrow adapter for program construction, complete-context evaluation, value conversion, returned-error detection, and profile fingerprinting; verify isolated core, adapter, and CLJS builds contain no dependency leak.
-- [ ] 5.2 Build the canonical bounded Caveat plan/residual representation needed for static checking and partial evaluation; verify encode/decode and equality are portable and library-object free.
-- [ ] 5.3 Implement EACL partial evaluation for incomplete context, preserving short-circuit definite results and canonical conditional residuals; verify exhaustive finite cases match the pre-green model.
+- [x] 5.2 Build the canonical bounded Caveat plan/residual representation needed for static checking and partial evaluation; verify encode/decode and equality are portable and library-object free.
+- [x] 5.3 Implement EACL partial evaluation for incomplete context, preserving short-circuit definite results and canonical conditional residuals; verify exhaustive finite cases match the pre-green model.
 - [ ] 5.4 Implement a bounded process-local program cache keyed by canonical definition/profile identity with concurrent miss coalescing; verify cache hits change only work counters, never outcomes.
 - [ ] 5.5 Define the evaluator capability/fingerprint protocol and JVM default registration; verify CLJS and clients without a matching evaluator fail before Caveated serving activation.
 

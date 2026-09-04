@@ -109,12 +109,16 @@
   {:maximum-size (:context-utf8-bytes limits) :maximum-depth 8
    :maximum-entries (:context-total-entries limits)})
 
-(defn- encode-payload [value]
-  (let [encoded (try (secure/encode-canonical value encoding-options)
+(defn encode-bounded
+  "Canonical encoding with explicit byte, entry, and depth bounds."
+  [value options]
+  (let [encoded (try (secure/encode-canonical value options)
                      (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) e
                        (error! :resource-limit {:limit (:reason (ex-data e))})))]
-    (when (> (utf8-size encoded) (:context-utf8-bytes limits)) (error! :resource-limit {:limit :context-utf8-bytes}))
+    (when (> (utf8-size encoded) (:maximum-size options)) (error! :resource-limit {:limit :payload-bytes}))
     encoded))
+
+(defn- encode-payload [value] (encode-bounded value encoding-options))
 
 (defn encode-parameters [parameters]
   (encode-payload [:eacl.caveat/parameters format-version (normalize-parameters parameters)]))
@@ -131,10 +135,12 @@
                      (sort (keys context)))]
     (encode-payload [:eacl.caveat/context format-version pairs])))
 
-(defn- bounded-source! [payload]
-  (when-not (and (string? payload) (<= (count payload) (:context-utf8-bytes limits))
-                (<= (utf8-size payload) (:context-utf8-bytes limits)))
-    (error! :resource-limit {:limit :context-utf8-bytes}))
+(defn- bounded-source! [payload {:keys [maximum-size maximum-depth]}]
+  (when-not (and (string? payload) (<= (count payload) maximum-size))
+    (error! :resource-limit {:limit :payload-bytes}))
+  (let [size (try (utf8-size payload)
+                  (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) _ (error! :malformed-payload)))]
+    (when (> size maximum-size) (error! :resource-limit {:limit :payload-bytes})))
   (loop [chars (seq payload) depth 0 quoted? false escaped? false]
     (when-let [c (first chars)]
       (cond
@@ -142,15 +148,20 @@
         (and quoted? (= c \\)) (recur (next chars) depth true true)
         (= c \u0022) (recur (next chars) depth (not quoted?) false)
         quoted? (recur (next chars) depth true false)
-        (#{\[ \{ \(} c) (if (>= depth 8) (error! :resource-limit {:limit :payload-depth})
+        (#{\[ \{ \(} c) (if (>= depth maximum-depth) (error! :resource-limit {:limit :payload-depth})
                              (recur (next chars) (inc depth) false false))
         (#{\] \} \)} c) (recur (next chars) (dec depth) false false)
         :else (recur (next chars) depth false false)))))
 
+(defn decode-bounded
+  "Checks byte and raw nesting limits before invoking the portable reader."
+  [payload options]
+  (bounded-source! payload options)
+  (try (secure/decode-canonical payload options)
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) _ (error! :malformed-payload))))
+
 (defn- decode-payload [tag payload]
-  (bounded-source! payload)
-  (let [v (try (secure/decode-canonical payload encoding-options)
-                (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) _ (error! :malformed-payload)))]
+  (let [v (decode-bounded payload encoding-options)]
     (when-not (and (vector? v) (= 3 (count v)) (= tag (first v))
                    (= format-version (second v)) (vector? (nth v 2)))
       (error! :malformed-payload))
@@ -189,6 +200,21 @@
 
 (defn normalize-context [parameters context]
   (decode-context parameters (encode-context parameters context)))
+
+(defn normalize-value [type value]
+  (get (normalize-context [["value" type]] {"value" value}) "value"))
+
+(defn tag-value [type value]
+  (when-not (parameter-type? type) (error! :parameter-type))
+  (let [tagged (encode-value type value (volatile! [0 0]))]
+    (encode-payload tagged)
+    tagged))
+
+(defn untag-value [type tagged]
+  (when-not (parameter-type? type) (error! :parameter-type))
+  (let [value (decode-value type tagged)]
+    (when-not (= tagged (tag-value type value)) (error! :noncanonical-payload))
+    value))
 
 (defn merge-context [parameters request bound]
   (normalize-context parameters (merge (normalize-context parameters request)
