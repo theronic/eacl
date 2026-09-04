@@ -245,7 +245,7 @@
   (let [names (set (map :name definitions))]
     (if (and (= expected-generation (:generation selected))
              (valid-definitions? definitions)
-             (every? #(set/subset? % names) (vals allowances))
+             (every? #(set/subset? (disj % nil) names) (vals allowances))
              (set/subset? retained names))
       {:accepted true
        :selected {:generation (inc expected-generation)
@@ -254,4 +254,4 @@
       {:accepted false :selected selected})))
 
 (defn allowed? [schema relation caveat]
-  (or (nil? caveat) (contains? (get-in schema [:allowances relation] #{}) caveat)))
+  (contains? (get-in schema [:allowances relation] #{}) caveat))

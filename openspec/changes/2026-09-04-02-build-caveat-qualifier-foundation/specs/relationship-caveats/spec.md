@@ -50,6 +50,16 @@ A Relation subject branch SHALL declare which Caveat may qualify a Relationship.
 - **WHEN** a qualifier references a Caveat not allowed by the resolved Relation subject branch
 - **THEN** validation rejects the Relationship
 
+#### Scenario: Only a Caveated branch is declared
+- **WHEN** a Relation permits `user with office_hours` without a plain `user` alternative
+- **THEN** an unqualified or expiry-only Relationship is rejected
+- **AND** the required Caveat cannot be omitted
+
+#### Scenario: Plain and Caveated alternatives coexist
+- **WHEN** a Relation permits `user | user with office_hours`
+- **THEN** both an unqualified Relationship and one qualified by `office_hours` are valid alternatives
+- **AND** they share one first-four Relationship identity rather than becoming parallel grants
+
 #### Scenario: More than one Caveat is requested
 - **WHEN** a Relationship update attempts to bind multiple Caveats
 - **THEN** validation rejects it rather than creating multiple logical Relationships

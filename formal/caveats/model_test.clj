@@ -122,7 +122,7 @@
   (let [selected {:generation 0 :definitions {} :allowances {}}
         definition {:name "region" :parameters [["a" :bool]]
                     :plan [:param "a"] :profile-version "eacl-cel/1"}
-        replacement (m/schema-result selected 0 [definition] {:viewer #{"region"}} #{})
+        replacement (m/schema-result selected 0 [definition] {:viewer #{nil "region"}} #{})
         installed (:selected replacement)]
     (is (:accepted replacement))
     (is (= 1 (:generation installed)))
@@ -135,8 +135,12 @@
     (is (false? (:accepted (m/schema-result selected 0 [definition] {:viewer #{"other"}} #{}))))
     (is (= 2 (count (:definitions (:selected (m/schema-result selected 0 [definition (assoc definition :name "second")] {} #{}))))))
     (doseq [relation [:viewer :editor] caveat [nil "region" "other"]]
-      (is (= (or (nil? caveat) (and (= relation :viewer) (= caveat "region")))
-             (m/allowed? installed relation caveat))))))
+      (is (= (and (= relation :viewer) (or (nil? caveat) (= caveat "region")))
+             (m/allowed? installed relation caveat))))
+    (doseq [allowed [#{nil} #{"region"} #{nil "region"}]
+            caveat [nil "region" "other"]]
+      (is (= (contains? allowed caveat)
+             (m/allowed? {:allowances {:viewer allowed}} :viewer caveat))))))
 
 (deftest mutation-controls
   (let [i (first identities) other (second identities)

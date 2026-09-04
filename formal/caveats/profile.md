@@ -6,8 +6,9 @@ machine-readable limits and operation inventory are in `profile.edn`.
 
 ## Values, source, and identity
 
-Scalar types are `bool`, `int`, `string`, and `timestamp`. Containers are
-`list<T>` and `map<string,T>`, where T is one scalar type. No container nesting
+Scalar types are `bool`, `int`, `string`, and `timestamp`. Source declarations
+use `list<T>` and SpiceDB's `map<T>` (string keys), where T is one scalar type.
+The portable map type descriptor is `[:map :string T]`. No container nesting
 or implicit numeric/string/time coercion is allowed. Integers are exact in
 [-9007199254740991, 9007199254740991]. Timestamps and `valid-until-ms` are exact
 epoch milliseconds in [-62135596800000, 253402300799999] (UTC years 0001–9999).
@@ -117,6 +118,12 @@ with a Caveat is omitted. An empty qualifier normalizes to nil; a stored entity
 containing only a marker is corrupt. All nonempty entities have format 1.
 The Caveat reference is one concrete native eid; public names resolve through
 the selected schema before planning. No expression source lives on a qualifier.
+
+Relation allowance follows the source branches: `user with c` requires c;
+`user | user with c` permits either no Caveat or c. The model records nil/zero
+as the plain-branch alternative in the same allowance set. An expiry-only
+qualifier still has no Caveat and requires a plain branch. Branch alternatives
+are grouped under one Relation identity, never separate logical Relationships.
 
 Prepared qualifiers have no owner and are inert. Publication atomically adds
 both symmetric endpoint refs, the Relation stamp, and caller facts. Ownership

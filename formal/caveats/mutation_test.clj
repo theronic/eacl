@@ -50,11 +50,15 @@
                         (fn [s _ r] (assoc-in r [:state :generation] (:generation s))))
      :qualifier-is-shared
      (kills-transition? published [:publish other nil nil #{}]
-                        (fn [_ _ r] (-> r (assoc-in [:state :forward other] 1) (assoc-in [:state :reverse other] 1))))}))
+                        (fn [_ _ r] (-> r (assoc-in [:state :forward other] 1) (assoc-in [:state :reverse other] 1))))
+     :required-caveat-omitted
+     (let [original m/allowed?]
+       (with-redefs [m/allowed? (fn [schema relation caveat] (or (nil? caveat) (original schema relation caveat)))]
+         (not= false (m/allowed? {:allowances {:viewer #{"c"}}} :viewer nil))))}))
 
 (deftest registered-mutations-are-executed-and-killed
   (let [registered (:controls (edn/read-string (slurp "formal/caveats/mutations.edn")))
         results (run-controls)]
-    (is (= 10 (count registered)))
+    (is (= 11 (count registered)))
     (is (= (set (map :id registered)) (set (keys results))))
     (doseq [[id killed?] results] (is (true? killed?) (name id)))))

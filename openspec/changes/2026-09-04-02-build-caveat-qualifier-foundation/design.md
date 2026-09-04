@@ -93,6 +93,8 @@ definition device {
 
 Exact types and functions are limited to a versioned EACL Caveat profile. Schema admission rejects unknown Caveats, duplicate declarations, undeclared variables, non-Boolean root expressions, unsupported CEL constructs/functions/types, parameter-name collisions, oversized source/AST/context bounds, and incompatible Relation branches before durable replacement.
 
+Relation alternatives retain SpiceDB's required/optional distinction. `user with region_match` requires that Caveat; `user | user with region_match` permits either plain or Caveated input. Alternatives sharing one subject type are grouped into one Relation identity with an explicit allowance set. An expiry-only qualifier has no Caveat and therefore requires a plain alternative. The finite model includes the plain alternative explicitly rather than admitting `nil` for every Relation.
+
 The profile version is part of schema identity, evaluator fingerprint, cache/cursor identity in Phase 3, and conformance fixtures. Expanding the profile is a compatibility change, not an accidental consequence of upgrading a dependency.
 
 ### 6. Use cel-parser through a narrow JVM adapter

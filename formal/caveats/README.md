@@ -7,8 +7,8 @@ the repository root with a project `:dev` nREPL:
 EACL_NREPL_PORT=7788 bin/formal fast
 ```
 
-The gate verifies four independent Dafny modules (76 obligations), executes
-10,461 assertions through nREPL, and requires all ten registered mutation
+The gate verifies four independent Dafny modules (78 obligations), executes
+10,471 assertions through nREPL, and requires all eleven registered mutation
 controls to be exercised and killed. `gate.lock.json` locks the profile and
 mutation inventory hashes, proof count, assertion count, and per-proof resource
 limits. Reports are generated under ignored `target/formal/caveats/`. The

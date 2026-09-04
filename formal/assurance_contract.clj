@@ -14,7 +14,7 @@
               "formal/dafny/CaveatSchema.dfy"
               "formal/dafny/QualifierLifecycle.dfy"]
     :claim :proof-only-typed-profile-partial-outcomes-and-atomic-qualifier-lifecycle
-    :minimum-proof-efforts 76}
+    :minimum-proof-efforts 78}
    :abstract-operator-engine-phase-a
    {:sources
     ["formal/dafny/PermissionSetAlgebra.dfy"
@@ -130,8 +130,10 @@
 
 (def operation-contracts
   [{:operation :staged-caveat-qualifier-foundation
-    ;; No production entry point exists at the pre-implementation gate.
-    :entry-points []
+    :entry-points ['eacl.relationships.qualifier/normalize
+                   'eacl.relationships.qualifier/decode
+                   'eacl.caveats.values/encode-context
+                   'eacl.caveats.values/decode-context]
     :theorems [:atomic-qualifier-pair-publication
                :prepared-qualifiers-have-no-authorization-effect
                :immutable-single-owner-qualifier-replacement

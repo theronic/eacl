@@ -10,4 +10,5 @@
   {:id :schema-generation-stalls :theorem :accepted-replacement-is-atomic}
   {:id :prepared-qualifier-authorizes :theorem :preparation-is-inert}
   {:id :publication-stamp-stalls :theorem :publication-is-atomic}
-  {:id :qualifier-is-shared :theorem :shared-is-fault}]}
+  {:id :qualifier-is-shared :theorem :shared-is-fault}
+  {:id :required-caveat-omitted :theorem :unqualified-requires-plain-branch}]}
