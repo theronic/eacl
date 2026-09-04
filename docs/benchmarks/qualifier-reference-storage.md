@@ -86,7 +86,7 @@ All CLJS cases pass the same latency/allocation budgets. Build `eacl.bench.quali
 - JVM: 1,215 tests, 58,148 assertions; Datalevin: 57 tests, 4,541 assertions.
 - DataScript CLJS: 602 tests, 30,719 assertions.
 - Recursive/reverse performance battery: 2 tests, 430 assertions.
-- Counterexample replay: 53 tests, 2,963 assertions; mutation controls: 3 tests, 176 assertions.
+- Strict counterexample replay with the CI `:formal-smoke` classpath: 71 tests, 18,229 assertions; mutation controls: 3 tests, 176 assertions. This includes the native Datomic state-trace fixtures with explicitly bootstrapped storage ABI 9.
 - Dafny: 49 modules, 9,385 proof efforts, zero errors.
 - Public source closure: 96 roots, 2,466 definitions, zero forbidden policy matches.
 - Reflection gate, Java 25 release build/install/cold-start smoke, and strict OpenSpec validation pass.

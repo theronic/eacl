@@ -507,7 +507,7 @@
        calls)))
 
   (testing "Datomic"
-    (with-mem-conn [conn datomic-schema/v7-schema]
+    (with-mem-conn [conn datomic-schema/v8-schema]
       (let [calls (atom {})
             common
             {:security-key
@@ -902,7 +902,7 @@
       (assert-recursive-generated! client limited-clients)))
 
   (testing "Datomic"
-    (with-mem-conn [conn datomic-schema/v7-schema]
+    (with-mem-conn [conn datomic-schema/v8-schema]
       (let [common
             {:cache shared-cache/no-cache
              :security-key
