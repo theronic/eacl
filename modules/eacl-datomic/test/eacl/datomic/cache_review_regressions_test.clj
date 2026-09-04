@@ -57,7 +57,7 @@
 ;; --- Follow-up review -------------------------------------------------------
 
 (deftest proofless-cursor-falls-back-to-exact-snapshot-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client
           (core/make-client
            conn
@@ -98,7 +98,7 @@
   ;; It was removed from cursor identity but accidentally retained in finished
   ;; lookup/count keys, so an explicit true recomputed an answer already cached
   ;; by the equivalent request with the option omitted.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (core/make-client conn {:security-key token-key
                                       :cache {}})
           _ (seed-direct! conn acl 3)
@@ -128,7 +128,7 @@
         (is (= 1 @count-calls))))))
 
 (deftest transient-acl-exact-token-is-authenticated-once-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (live-client conn)
           _ (seed-direct! conn acl 1)
           selected (eacl/snapshot acl)
@@ -155,7 +155,7 @@
           "exact selection authenticates once; delegated Snapshot reuses it"))))
 
 (deftest warm-public-answer-hits-do-no-datomic-identity-lookups-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [boot (live-client conn)
           _ (seed-direct! conn boot 3)
           identity-lookups (atom 0)
@@ -237,7 +237,7 @@
                (map :operation @observed))))))))
 
 (deftest retained-snapshot-relationship-transport-hits-do-zero-backend-work-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [boot (live-client conn)
           _ (seed-direct! conn boot 3)
           identity-lookups (atom 0)
@@ -286,7 +286,7 @@
 ;; --- H2 ---------------------------------------------------------------------
 
 (deftest client-built-before-the-first-schema-write-can-paginate-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [early (core/make-client conn {:security-key token-key})
           admin (core/make-client conn {:security-key token-key})]
       (is (nil? (:schema-state early))
@@ -328,7 +328,7 @@
   ;; the historical branch selects an explicit nil schema version. Falling back
   ;; to the client's generation there (`or` rather than `contains?`) would fail
   ;; validation the moment the client later adopted a stamp.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (core/make-client conn {:security-key token-key})]
       (is (nil? (:schema-state acl)))
       (let [page-1 (eacl/read-relationships acl {:resource/id "absent" :first 2})]
@@ -343,7 +343,7 @@
   ;; :eacl.consistency/snapshot-unavailable — a cache/snapshot diagnosis for a
   ;; fault that also fires with {:cache shared-cache/no-cache}, naming only the first offender.
   (doseq [config [{:cache shared-cache/no-cache} {}]]
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [acl (core/make-client conn (assoc config :security-key token-key))
             _ (seed-direct! conn acl 3)
             gone (mapv #(d/entid (d/db conn) [:eacl/id (str "acct" %)]) [1 2])]
@@ -378,7 +378,7 @@
   ;; The exact key pins the complete source lineage, schema generation,
   ;; operation, query identity, and basis revision. One source at one revision
   ;; therefore maps to exactly one immutable database value.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (core/make-client conn {:security-key token-key
                                       :cache {}})
           _ (seed-direct! conn acl 1)
@@ -409,7 +409,7 @@
   ;; checked. It caught Exception but not Error, so deeply nested EDN threw a
   ;; StackOverflowError straight out of lookup-resources, and there was no
   ;; length bound at all on an unauthenticated caller-supplied parameter.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (core/make-client conn {:security-key token-key})
           _ (seed-direct! conn acl 2)
           query {:subject (spice-object :user "alice")
@@ -462,7 +462,7 @@
 (deftest current-cursor-pages-use-the-current-answer-cache-test
   ;; Non-exact cursor validation recovers on the current snapshot and may
   ;; publish only after re-evaluation there.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (live-client conn)
           _ (seed-direct! conn acl 9)
           query {:subject (spice-object :user "alice")
@@ -539,7 +539,7 @@
   ;; (validate-page-token-schema! moved above the short-circuit for the same
   ;; reason, matching lookup-resources; for a cursor its expectation is pinned
   ;; by the historical basis, so this identity check is the observable half.)
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (core/make-client conn {:security-key token-key})
           _ (seed-direct! conn acl 4)
           cursor (get-in (eacl/read-relationships acl {:subject/type :user
@@ -557,7 +557,7 @@
 ;; --- L4 ---------------------------------------------------------------------
 
 (deftest result-shape-does-not-depend-on-cache-configuration-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [boot (core/make-client conn {:cache shared-cache/no-cache :security-key token-key})
           _ (seed-direct! conn boot 3)
           query {:subject (spice-object :user "alice")

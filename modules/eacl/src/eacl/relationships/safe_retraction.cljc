@@ -9,7 +9,7 @@
             [eacl.relationships.storage :as storage]))
 
 (def function-ident :eacl.fn/retractEntity)
-(def function-version 2)
+(def function-version 3)
 (def function-doc-prefix "EACL safe entity retraction function")
 (def supported-modes #{:named :direct :unsupported})
 
@@ -155,7 +155,7 @@
   (let [forward-plans
         (mapv
          (fn [value]
-           (let [{:keys [subject-type relation-eid resource-type resource-eid]}
+           (let [{:keys [subject-type relation-eid resource-type resource-eid qualifier-eid]}
                  (decoded-half! :forward target-eid value)]
              {:relation-eid relation-eid
               :peer-eid resource-eid
@@ -164,12 +164,12 @@
                    resource-eid
                    storage/reverse-attribute
                    (endpoint-pair/reverse-value
-                    resource-type relation-eid subject-type target-eid)]}))
+                    resource-type relation-eid subject-type target-eid qualifier-eid)]}))
          forward-values)
         reverse-plans
         (mapv
          (fn [value]
-           (let [{:keys [subject-type subject-eid relation-eid resource-type]}
+           (let [{:keys [subject-type subject-eid relation-eid resource-type qualifier-eid]}
                  (decoded-half! :reverse target-eid value)]
              {:relation-eid relation-eid
               :peer-eid subject-eid
@@ -178,7 +178,7 @@
                    subject-eid
                    storage/forward-attribute
                    (endpoint-pair/forward-value
-                    subject-type relation-eid resource-type target-eid)]}))
+                    subject-type relation-eid resource-type target-eid qualifier-eid)]}))
          reverse-values)
         plans (into forward-plans reverse-plans)]
     {:peer-retractions
@@ -198,8 +198,8 @@
 (defn known-ghost-plan
   "Plans peer-half cleanup when a numeric target eid has no local datoms.
 
-  `peer-eids` performs the backend's exact AVET read for an attribute/value."
-  [relation-triples target-eid peer-eids]
+  `peer-datoms` seeks one first-four identity and returns exact stored values."
+  [relation-triples target-eid peer-datoms]
   (combine-plans
    (mapcat
     (fn [[resource-type relation-eid subject-type]]
@@ -210,14 +210,14 @@
             (endpoint-pair/forward-value
              subject-type relation-eid resource-type target-eid)]
         (concat
-         (for [peer-eid (peer-eids storage/reverse-attribute reverse-value)]
+         (for [{:keys [e v]} (peer-datoms storage/reverse-attribute reverse-value)]
            {:peer-retractions
-            [[:db/retract peer-eid storage/reverse-attribute reverse-value]]
+            [[:db/retract e storage/reverse-attribute v]]
             :relation-ids [relation-eid]
             :local-half-count 0})
-         (for [peer-eid (peer-eids storage/forward-attribute forward-value)]
+         (for [{:keys [e v]} (peer-datoms storage/forward-attribute forward-value)]
            {:peer-retractions
-            [[:db/retract peer-eid storage/forward-attribute forward-value]]
+            [[:db/retract e storage/forward-attribute v]]
             :relation-ids [relation-eid]
             :local-half-count 0}))))
     relation-triples)))

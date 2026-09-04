@@ -13,7 +13,8 @@
             [eacl.datomic.schema :as schema]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.migrations.v6-to-v7 :as mig]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.relationships.legacy-v7 :as relationship-storage]
+            [eacl.datomic.migrations.v7-to-v9 :as storage-migration]))
 
 (def ->user (partial spice-object :user))
 (def ->account (partial spice-object :account))
@@ -133,7 +134,7 @@
                     (catch clojure.lang.ExceptionInfo e e))]
         (is (some? ex))
         (is (= :eacl/storage-version (:type (ex-data ex))))
-        (is (= :v6 (:detected (ex-data ex))))))
+        (is (= :v6-prerequisite (:reason (ex-data ex))))))
 
     (testing "migrate! with a re-asserted schema string"
       (let [report (mig/migrate! conn {:schema schema-str})]
@@ -154,7 +155,8 @@
       (is (= :v7 (mig/detect-storage-version (d/db conn))))
       (is (= 7 (mig/stamped-storage-version (d/db conn)))))
 
-    (testing "make-client now starts and tuple reads are correct"
+    (storage-migration/migrate! conn {:quiesced? true})
+    (testing "make-client starts after the second explicit storage migration"
       (let [acl (eacl.datomic/make-client conn {})]
         (assert-expected-permissions! acl)
         (is (= ["product-1"]
@@ -196,18 +198,14 @@
       (is (= :eacl/invalid-config (:type error)))
       (is (= [:retract-v6-entities?] (:unknown-keys error))))))
 
-(deftest make-client-auto-migrate-test
-  (testing "{:auto-migrate-v6 {:schema ...}} migrates during construction"
+(deftest make-client-rejects-auto-migrate-test
+  (doseq [options [{:auto-migrate-v6 {:schema schema-str}} {:auto-migrate-v6 true}]]
     (with-mem-conn [conn v6-schema]
       (populate-v6! conn)
-      (let [acl (eacl.datomic/make-client conn {:auto-migrate-v6 {:schema schema-str}})]
-        (is (= 7 (mig/stamped-storage-version (d/db conn))))
-        (assert-expected-permissions! acl))))
-  (testing "{:auto-migrate-v6 true} uses default options: stored schema entities carry over"
-    (with-mem-conn [conn v6-schema]
-      (populate-v6! conn)
-      (let [acl (eacl.datomic/make-client conn {:auto-migrate-v6 true})]
-        (assert-expected-permissions! acl)))))
+      (let [error (try (eacl.datomic/make-client conn options) nil
+                      (catch clojure.lang.ExceptionInfo error (ex-data error)))]
+        (is (= :eacl/invalid-config (:type error)))
+        (is (= :v6 (mig/detect-storage-version (d/db conn))))))))
 
 (deftest ancient-schema-entities-test
   (with-mem-conn [conn v6-schema]
@@ -227,6 +225,7 @@
         (is (empty? (get-in report [:schema-deltas :relations :additions])))
         (is (empty? (get-in report [:schema-deltas :relations :retractions])))
         (is (= 2 (count (seq (d/datoms (d/db conn) :aevt :eacl.relation/relation-name))))))
+      (storage-migration/migrate! conn {:quiesced? true})
       (assert-expected-permissions! (eacl.datomic/make-client conn {})))))
 
 (deftest missing-relation-aborts-test
@@ -247,24 +246,18 @@
 (deftest fresh-v7-database-test
   (with-mem-conn [conn schema/v7-schema]
     (schema/write-schema! conn schema-str)
-    @(d/transact conn (mapv (fn [id] {:eacl/id id}) entity-ids))
-    (testing "fresh v7 installs need no stamp and no opt-in"
-      (let [acl (eacl.datomic/make-client conn {})]
-        (eacl/create-relationships! acl
-          [(eacl/->Relationship (->user "user-1") :owner (->account "account-1"))
-           (eacl/->Relationship (->account "account-1") :account (->product "product-1"))])
-        (assert-expected-permissions! acl)
-        (is (= :v7 (mig/detect-storage-version (d/db conn))))))
-    (testing "migrate! on an already-v7 database is a harmless no-op"
-      (let [report (mig/migrate! conn {})]
-        (is (= 0 (:relationships-backfilled report)))
-        (is (true? (get-in report [:verify :complete?])))))))
+    (is (thrown? clojure.lang.ExceptionInfo (eacl.datomic/make-client conn {})))
+    (let [report (mig/migrate! conn {})]
+      (is (= 0 (:relationships-backfilled report)))
+      (is (true? (get-in report [:verify :complete?]))))
+    (storage-migration/migrate! conn {:quiesced? true})
+    (is (some? (eacl.datomic/make-client conn {})))))
 
 (deftest empty-v6-database-test
   (with-mem-conn [conn v6-schema]
     (is (= :none (mig/detect-storage-version (d/db conn))))
-    (is (some? (eacl.datomic/make-client conn {}))
-        "no relationship data at all — nothing to migrate, startup proceeds")))
+    (is (thrown? clojure.lang.ExceptionInfo (eacl.datomic/make-client conn {}))
+        "Empty legacy schemas also require explicit upgrade/bootstrap.")))
 
 (deftest migrate!-rejects-unknown-options-test
   (with-mem-conn [conn v6-schema]

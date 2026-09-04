@@ -12,6 +12,8 @@
             [eacl.datomic.impl :as impl]
             [eacl.datomic.impl.indexed :as indexed]
             [eacl.datomic.schema :as schema]
+            [eacl.datomic.storage :as target-storage]
+            [eacl.relationships.upgrade :as storage-upgrade]
             [eacl.migrations.v7-to-v8 :as v7-to-v8]
             [eacl.migrations.v6-to-v7 :as migrations]
             [eacl.relationships.storage :as relationship-storage]
@@ -161,24 +163,14 @@
                      :eacl/error :eacl/invalid-client}))))
 
 (defn make-client
-  "Builds a shared EACL `Acl` over a Datomic connection.
-
-  `:auto-migrate-v6` and `:auto-migrate-v7` are consumed by explicit storage
-  compatibility gates. Every remaining option belongs to the uniform EACL
-  client contract."
+  "Builds an EACL v8 client over explicitly initialized Relationship storage 9.
+  Storage and permission upgrades must be invoked before construction."
   [conn config-opts]
-  (let [expression-limits
-        (expression-policy/normalize-client-limits
-         (:expression-limits config-opts))]
-    (migrations/assert-storage-compatible!
-     conn {:auto-migrate-v6 (:auto-migrate-v6 config-opts)})
-    (v7-to-v8/assert-permission-storage-compatible!
-     conn {:auto-migrate-v7 (:auto-migrate-v7 config-opts)
-           :expression-limits expression-limits})
-    (orchestration/make-client
-     api conn (-> config-opts
-                  (dissoc :auto-migrate-v6 :auto-migrate-v7)
-                  (assoc :expression-limits expression-limits)))))
+  (storage-upgrade/reject-auto-migration! config-opts)
+  (target-storage/assert-compatible! (d/db conn))
+  (let [expression-limits (expression-policy/normalize-client-limits (:expression-limits config-opts))]
+    (v7-to-v8/assert-permission-storage-compatible! conn {:expression-limits expression-limits})
+    (orchestration/make-client api conn (assoc config-opts :expression-limits expression-limits))))
 
 (defn db
   "Returns the immutable Datomic DB held by an EACL-created snapshot."

@@ -17,7 +17,7 @@
   "0123456789abcdef0123456789abcdef")
 
 (deftest portable-cache-api-round-trip-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {})
           bounds {:max-entries 64}
           before (core/cache-content-revision client)
@@ -30,7 +30,7 @@
 
 (deftest eacl-config-tests
   (testing ""
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (fixtures/install-expression-schema! conn)
       @(d/transact conn fixtures/entity-fixtures)
       @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
@@ -73,7 +73,7 @@
                                                                :subject/type :user}))))))))))
 
 (deftest cursor-ttl-is-validated-at-the-client-boundary-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (doseq [value [nil "300" 0 -1 (inc (quot Long/MAX_VALUE 1000))]]
       (let [data (try
                    (core/make-client conn {:cursor-ttl-seconds value})
@@ -84,7 +84,7 @@
         (is (= :cursor-ttl-seconds (:key data)) (pr-str value))))))
 
 (deftest cursor-expiry-is-optional-and-independent-from-authorization-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key test-security-key})
           opts (runtime-options client)]
       (is (nil? (:cursor-ttl-seconds opts))
@@ -116,7 +116,7 @@
         (is (= [:ttl-ms] (:unknown-keys data)))))))
 
 (deftest uniform-construction-option-family-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [lookup-ref (fn [object-id] [:eacl/id object-id])
           client (core/make-client
                   conn
@@ -153,7 +153,7 @@
         (is (contains? (:known-keys data) :cursor-ttl-seconds))))))
 
 (deftest flat-denotation-cache-config-is-forwarded-and-validated-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client
           (eacl.datomic.core/make-client
            conn
@@ -186,7 +186,7 @@
           (pr-str cache-config)))))
 
 (deftest execution-config-is-strict-and-cache-attempt-is-removed-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (doseq [options [{:execution-timeout-ms 0}
                      {:execution-timeout-ms "30"}]]
       (let [data
@@ -218,7 +218,7 @@
   ;; is the one public operation that hands the adapter an external id, so a
   ;; codec whose external ids differ from :eacl/id used to yield an absent
   ;; root (no subjects anywhere) instead of the tree.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (fixtures/install-expression-schema! conn)
     @(d/transact conn fixtures/entity-fixtures)
     @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))
@@ -258,7 +258,7 @@
         (is (contains? (leaf-subjects codec-tree) "U1"))))))
 
 (deftest service-admission-option-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (fixtures/install-expression-schema! conn)
     @(d/transact conn fixtures/entity-fixtures)
     @(d/transact conn (fixtures/relationship-fixtures (d/db conn)))

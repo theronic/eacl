@@ -30,6 +30,9 @@
                (assoc options :cursor-ttl-seconds 10))))))
 
 (def portable-cursor-vector
+  "eacl_c6_OmN1cnJlbnQ.AAECAwQFBgcICQoL.UJT1UYpqo7dsc4IeLWdWWp-8M7Fd8FoVN6T_txYtrC55Du-InRPcvGOMS9hbR7s3N6FCoK8FchEBYATB8H976iRPA4QRmWGNSi1PtXfL5KcIvl4mYvqc-w-k6PzJxsPzCiP87_1rWO3ZwfTgkx-ffXA10ztD7SG-_KmHgxszGsY3.BkFSj4QbQtkVMp5qOHQBMTM5sQ5DECuWEEEYG2hERCU")
+
+(def previous-storage-cursor-vector
   "eacl_c5_OmN1cnJlbnQ.AAECAwQFBgcICQoL.QZ_P3mknLrCiPflRU2H_hccCTQDt3aST6krVrhIEy_I4dnWIfbanUmV8cfHj6sDjMhIN8Cd0lHIwkYS96UxCLc_WdfnW2VPzKBMSBiUyisCbhT9UFcFddkxT5ucySUPkLI31YQ68regKJar5aOo90d9lE3m6f7zG_vos_8kHIuEb.sOgle-nVuH1EijEmdIzlDQKGcUjJmxvyjlgYMDrjkUQ")
 
 (def legacy-portable-cursor-vector
@@ -975,13 +978,10 @@
            (cursor/token->cursor
             portable-cursor-vector
             vector-options)))
-    (is (= :malformed-token
-           (:reason
-            (error-data
-             #(cursor/token->cursor
-               legacy-portable-cursor-vector
-               vector-options))))
-        "the removed authenticated-plaintext cursor format is not decoded")
+    (doseq [old-cursor [legacy-portable-cursor-vector previous-storage-cursor-vector]]
+      (is (= :malformed-token
+             (:reason (error-data #(cursor/token->cursor old-cursor vector-options))))
+          "pre-storage-9 cursor formats are rejected without restarting pagination"))
     (is (= portable-cache-vector
            (secure/encode-authenticated
             cache-options

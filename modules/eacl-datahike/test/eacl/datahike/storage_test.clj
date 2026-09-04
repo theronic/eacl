@@ -364,11 +364,11 @@
                         forward reverse]}
                 (relationship-state db)]
             (is (= [[user-eid
-                     [[:user relation-eid :account account-eid]]]]
+                     [[:user relation-eid :account account-eid nil]]]]
                    [[(:e (first forward))
                      (mapv :v forward)]]))
             (is (= [[account-eid
-                     [[:account relation-eid :user user-eid]]]]
+                     [[:account relation-eid :user user-eid nil]]]]
                    [[(:e (first reverse))
                      (mapv :v reverse)]]))
             (is (= 2 (+ (count forward) (count reverse)))

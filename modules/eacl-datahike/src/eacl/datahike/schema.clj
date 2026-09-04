@@ -2,6 +2,8 @@
   (:require [clojure.set :as set]
             [datahike.api :as d]
             [eacl.datahike.db :as ddb]
+            [eacl.datahike.storage :as target-storage]
+            [eacl.relationships.upgrade :as upgrade]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
@@ -104,25 +106,19 @@
 
    {:db/ident       relationship-storage/forward-attribute
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
    {:db/ident       relationship-storage/reverse-attribute
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}])
 
 (def datahike-schema
   "EACL's own attributes, as datahike transaction data."
-  (into component-schema tuple-schema))
+  (into (into component-schema upgrade/metadata-schema) tuple-schema))
 
 (defn merge-schema
   "EACL's attributes plus the caller's. `extra-schema` is datahike-native
@@ -170,6 +166,7 @@
      (d/create-database cfg)
      (let [conn (d/connect cfg)]
        (d/transact conn (merge-schema extra-schema))
+       (target-storage/bootstrap! conn)
        conn))))
 
 (def relation-pull
@@ -372,11 +369,11 @@
       (max
        (count
         (ddb/avet-tuple-prefix
-         db relationship-storage/forward-attribute 4
+         db relationship-storage/forward-attribute relationship-storage/value-arity
          [subject-type relation-eid resource-type]))
        (count
         (ddb/avet-tuple-prefix
-         db relationship-storage/reverse-attribute 4
+         db relationship-storage/reverse-attribute relationship-storage/value-arity
          [resource-type relation-eid subject-type]))))))
 
 (defn relationship-present-for-relation?
@@ -389,11 +386,11 @@
      (or
       (first
        (ddb/avet-tuple-prefix
-        db relationship-storage/forward-attribute 4
+        db relationship-storage/forward-attribute relationship-storage/value-arity
         [subject-type relation-eid resource-type]))
       (first
        (ddb/avet-tuple-prefix
-        db relationship-storage/reverse-attribute 4
+        db relationship-storage/reverse-attribute relationship-storage/value-arity
         [resource-type relation-eid subject-type]))))))
 
 (defn current-schema-generation

@@ -111,7 +111,7 @@
                       :eacl.relation/resource-type :account
                       :eacl.relation/relation-name :owner
                       :eacl.relation/subject-type :user}
-            forward-value [:user relation-eid :account account-eid]]
+            forward-value [:user relation-eid :account account-eid nil]]
         (d/transact
          conn
          [[:db/retract user-eid
@@ -124,7 +124,7 @@
              (ddb/eavt-datoms
               (d/db conn) account-eid
               relationship-storage/reverse-attribute
-              [:account relation-eid :user user-eid])))
+              [:account relation-eid :user user-eid nil])))
         (is (true?
              (schema/relationship-present-for-relation?
               (d/db conn) relation))

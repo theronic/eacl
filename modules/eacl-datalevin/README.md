@@ -154,3 +154,13 @@ mutation, or opening the directory with upstream Datalevin are outside it.
   `eacl.datalevin.db/entity-exists?` and the
   `eacl.datalevin.schema/validate-schema-references` alias — unreferenced
   since the module's integrity namespace was retired.
+
+## Relationship storage 9
+
+This EACL v8 adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. This phase writes `nil` and raises `:eacl/unsupported-qualifier`
+when serving encounters a qualifier. Upgrades are explicit and restartable;
+ordinary client construction requires a completed target store. Follow the
+[7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before starting clients.
+
+The adapter's `create-conn` helper explicitly bootstraps fresh stores.

@@ -539,8 +539,8 @@ The EACL-specific attributes are detailed below.
 ### Relationships
 
 EACL Relationships are light by virtue of being stored directly on entities as two tuples:
-- Forward subject->resource tuple: `:eacl.v7.relationship/subject-type+relation+resource-type+resource`
-- Reverse resource->subject tuple: `:eacl.v7.relationship/resource-type+relation+subject-type+subject`
+- Forward subject->resource tuple: `:eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier`
+- Reverse resource->subject tuple: `:eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier`
 
 To retract an entity and its Relationships, use `:eacl.fn/retractEntity`, an optional Transactor function you can install.
 
@@ -587,7 +587,7 @@ inside the client.
 - `:eacl/schema-string` stores a valid schema string was written via `eacl/write-schema!`.
 - `:eacl/schema-version` track the schema revision in Datomic Pro.
 - `:eacl/schema-generation` and `:eacl/schema-write-fence` track schema writes in Datahike and DataScript. Datalevin uses scalar `:eacl.datalevin/schema-generation` and `:eacl.datalevin/schema-write-fence` values in its native `max-tx` domain.
-- `:eacl/storage-version` identifies Datomic's current Relationship storage model, e.g. version 7 (current).
+- `:eacl/storage-version` identifies Relationship storage ABI 9 across the bundled backends (five-slot endpoint pairs).
 - `:eacl/permission-storage-version` identifies Datomic's canonical permission representation (version 8).
 - `:eacl.fn/assert-relation-unused` is a Transactor function in Datomic that guards removing Relations with active Relationships (to avoids orphaned Relationships).
 
@@ -842,10 +842,11 @@ the authorization schema directly, follow the recovery procedure in
 [Caching](#caching) before resuming authorization traffic.
 
 Datomic and Datahike consumers upgrading a released v7 database must run the
-backend's explicit permission-only v7-to-v8 migration before constructing an
-ordinary v8 client. Both reuse the existing relationship tuple attributes and
-datoms without a relationship rebuild. See the
-[v7-to-v8 migration guide](docs/migration-v7-to-v8.md).
+backend's explicit permission-only v7-to-v8 migration, followed by the
+[Relationship storage 7-to-9 migration](docs/migration-v7-to-v9.md), before
+constructing an ordinary v8 client. Permission storage remains version 8.
+Storage 9 writes a `nil` qualifier reference in slot five; caveat and expiry
+evaluation belong to later phases.
 
 ### Permission-tree expansion
 
@@ -1004,7 +1005,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 (def conn (d/connect datomic-uri))
 
 ; Install EACL's current Datomic Relationship schema:
-@(d/transact conn schema/v8-schema)
+(schema/install! conn)
 
 ; Make an EACL client that satisfies the `IAuthorization` protocol:
 (def acl

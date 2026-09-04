@@ -1,11 +1,12 @@
 (ns eacl.migrations.v7-to-v8
   "Permission-only released-v7 to v8 upgrade.
 
-  Released v7 relationship tuples are already the v8 relationship ABI. This
+  Relationship storage upgrades are a separate maintenance step. This
   namespace never enumerates or rewrites them; only bounded schema-definition
   rows are read and one atomic permission replacement is submitted."
   (:require [datomic.api :as d]
-            [eacl.datomic.schema :as schema]))
+            [eacl.datomic.schema :as schema]
+            [eacl.relationships.upgrade :as storage-upgrade]))
 
 (def permission-storage-version schema/permission-storage-version)
 
@@ -37,33 +38,16 @@
    (d/entity db [:eacl/id "schema-string"])))
 
 (defn assert-permission-storage-compatible!
-  "Fails startup on released-v7 flat or mixed permissions unless the caller
-  explicitly opts into the permission-only migration."
-  [conn {:keys [auto-migrate-v7 expression-limits]}]
+  "Read-only permission admission. All conversions require explicit migrate!."
+  [conn options]
+  (storage-upgrade/reject-auto-migration! options)
   (let [shape (schema/permission-storage-shape (d/db conn))]
-    (case shape
-      (:expression :none) :ok
-      :flat
-      (if auto-migrate-v7
-        (do
-          (migrate! conn (if (map? auto-migrate-v7)
-                           (assoc auto-migrate-v7
-                                  :expression-limits expression-limits)
-                           {:expression-limits expression-limits}))
-          :migrated)
-        (throw
-         (ex-info
-          "EACL v8 requires an explicit released-v7 permission upgrade."
-          {:type :eacl/permission-storage-version
-           :eacl/error :eacl/permission-storage-version
-           :detected :flat-v7
-           :required-version permission-storage-version
-           :migration-ns 'eacl.migrations.v7-to-v8})))
-      :mixed
-      (throw
-       (ex-info
-        "EACL permission storage contains mixed flat and expression rows."
-        {:type :eacl/permission-storage-version
-         :eacl/error :eacl/permission-storage-version
-         :detected :mixed
-         :required-version permission-storage-version})))))
+    (if (contains? #{:expression :none} shape)
+      :ok
+      (throw (ex-info "EACL v8 requires canonical permission storage. Run the explicit permission migration."
+                      {:type :eacl/permission-storage-version
+                       :eacl/error :eacl/permission-storage-version
+                       :backend :datomic
+                       :detected (if (= :flat shape) :flat-v7 shape)
+                       :required-version permission-storage-version
+                       :migration-ns 'eacl.migrations.v7-to-v8})))))

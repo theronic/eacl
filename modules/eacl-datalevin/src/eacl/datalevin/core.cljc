@@ -13,6 +13,7 @@
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]
             [eacl.datalevin.schema :as schema]
+            [eacl.datalevin.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]))
 
 (def cursor->token cursor/cursor->token)
@@ -444,6 +445,7 @@
            :eacl/error :eacl.datalevin/revision-regression
            :revision revision
            :revision-watermark watermark})))))
+  (target-storage/assert-compatible! (ds/db conn))
   (let [{:keys [source-id schema-eid write-token]}
         (schema/ensure-physical-schema! conn)
         validated-source-id (datalevin-backend/connection-source-id conn)

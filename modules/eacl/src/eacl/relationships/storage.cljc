@@ -1,15 +1,22 @@
 (ns eacl.relationships.storage
   "Canonical relationship-storage attribute identities shared by every backend.
 
-  The `v7` keyword namespace is the persisted storage ABI, not an executable
-  v7 engine contract. EACL v8 retains it so existing tuple data does not need
-  to be rewritten merely to upgrade the library.")
+  Relationship storage ABI 9 is independent of the EACL v8 library and
+  permission representation. Serving adapters consume only this layout.")
+
+(def version 9)
+(def value-arity 5)
+(def identity-arity 4)
+(def tuple-types
+  [:db.type/keyword :db.type/ref :db.type/keyword :db.type/ref :db.type/ref])
+(def qualifier-capability :nil-only)
+(def format-id :eacl.relationship/endpoint-pair-v9-qualifier-ref)
 
 (def forward-attribute
-  :eacl.v7.relationship/subject-type+relation+resource-type+resource)
+  :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier)
 
 (def reverse-attribute
-  :eacl.v7.relationship/resource-type+relation+subject-type+subject)
+  :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier)
 
 (def attributes
   #{forward-attribute reverse-attribute})

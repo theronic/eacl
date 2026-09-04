@@ -316,7 +316,7 @@
                  conn
                  #(eacl/write-schema! acl schema))]
     (is (eacl/acl? acl))
-    (is (zero? (:db-calls construction)))
+    (is (= 1 (:db-calls construction)) "One bounded storage admission read.")
     (is (empty? (:provider-calls construction)))
     (is (= :eacl/unsupported-capability
            (:type (ex-data (:failure failure)))))

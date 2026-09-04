@@ -113,7 +113,7 @@
                      db :eacl.relation/resource-type+relation-name+subject-type))
                    target-eid
                    (fn [attribute value]
-                     (map :e (ddb/avet-datoms db attribute value))))
+                     (ddb/global-relationship-identity-datoms db attribute value)))
                   safe/empty-plan))]
           (into []
                 (concat

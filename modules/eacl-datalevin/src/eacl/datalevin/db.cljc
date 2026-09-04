@@ -1,6 +1,6 @@
 (ns eacl.datalevin.db
   "Guarded native Datalevin index access for endpoint-pair relationship
-  values. Every seek starts from a complete four-element tuple and is eagerly
+  values. Every seek starts from a complete five-element tuple and is eagerly
   realized inside the explicit Datalevin read-snapshot scope."
   (:require [datalevin.core :as ds]
             [eacl.backend.v8 :as backend]
@@ -44,6 +44,48 @@
   ([db entity attr value]
    (ds/datoms db :eav entity attr value)))
 
+(defn relationship-identity-datoms
+  "A bounded native seek includes enough rows to detect duplicate qualifiers."
+  [db entity attr value]
+  (let [prefix (endpoint-pair/identity-prefix value)]
+    (into []
+          (take-while #(and (= entity (:e %)) (= attr (:a %))
+                           (endpoint-pair/value-prefix? (:v %) prefix)))
+          (ds/seek-datoms db :eav entity attr (conj prefix nil) 2))))
+
+(defn global-relationship-identity-datoms
+  [db attr value]
+  (let [prefix (endpoint-pair/identity-prefix value)
+        rows (into []
+                   (take-while #(and (= attr (:a %))
+                                    (endpoint-pair/value-prefix? (:v %) prefix)))
+                   (ds/seek-datoms db :ave attr (conj prefix nil) nil
+                                   (inc maximum-unpaged-scan-results)))]
+    (when (> (count rows) maximum-unpaged-scan-results)
+      (throw (ex-info "Relationship repair exceeds the bounded scan limit."
+                      {:type :eacl/invalid-relationship-storage
+                       :eacl/error :eacl/invalid-relationship-storage
+                       :reason :repair-limit})))
+    rows))
+
+(defn all-relationship-identity-datoms
+  "Exact identity cleanup may need more than the two-row membership probe.
+  Only a corrupt multi-qualifier identity enters the bounded repair scan."
+  [db entity attr value]
+  (let [probe (relationship-identity-datoms db entity attr value)]
+    (if (< (count probe) 2)
+      probe
+      (let [prefix (endpoint-pair/identity-prefix value)
+            rows (into [] (take-while #(and (= entity (:e %)) (= attr (:a %))
+                                            (endpoint-pair/value-prefix? (:v %) prefix)))
+                       (ds/seek-datoms db :eav entity attr (conj prefix nil)
+                                       (inc maximum-unpaged-scan-results)))]
+        (when (> (count rows) maximum-unpaged-scan-results)
+          (throw (ex-info "Relationship repair exceeds the bounded scan limit."
+                          {:type :eacl/invalid-relationship-storage
+                           :eacl/error :eacl/invalid-relationship-storage :reason :repair-limit})))
+        rows))))
+
 (defn- within-inclusive-cursor?
   [direction cursor-eid {:keys [v]}]
   (or (nil? cursor-eid)
@@ -72,7 +114,7 @@
             ordered (if (= :desc direction)
                       (rseq matching)
                       matching)]
-        (into [] (take native-limit) ordered)))))
+        (into [] (take native-limit) (endpoint-pair/checked-datoms ordered))))))
 
 (defn eavt-endpoint-prefix
   "Endpoint datoms for an exact three-component value prefix.
@@ -96,21 +138,21 @@
        db entity attr prefix cursor-eid direction native-limit)
       (let [tail  (or cursor-eid
                       (if (= :desc direction) max-eid min-eid))
-            bound (conj prefix tail)
+            bound (endpoint-pair/seek-bound prefix tail direction max-eid)
             scan  (if (= :desc direction)
-                    (ds/rseek-datoms db :eav entity attr bound native-limit)
-                    (ds/seek-datoms db :eav entity attr bound native-limit))]
-        (into []
-              (take-while
-               (fn [{:keys [e a] :as datom}]
-                 (and (= entity e)
-                      (= attr a)
-                      (endpoint-pair/value-prefix? (:v datom) prefix))))
-              scan))))))
+                    (ds/rseek-datoms db :eav entity attr bound (inc native-limit))
+                    (ds/seek-datoms db :eav entity attr bound (inc native-limit)))]
+        (into [] (take native-limit)
+              (endpoint-pair/checked-datoms
+               (take-while
+                (fn [{:keys [e a] :as datom}]
+                  (and (= entity e) (= attr a)
+                       (endpoint-pair/value-prefix? (:v datom) prefix)))
+                scan))))))))
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
-  using a complete four-component AVET seek bound."
+  using a complete five-component AVET seek bound."
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc
                          maximum-unpaged-scan-results))
@@ -127,15 +169,15 @@
      []
      (let [tail  (or cursor-eid
                      (if (= :desc direction) max-eid min-eid))
-           bound (conj prefix tail)
+           bound (endpoint-pair/seek-bound prefix tail direction max-eid)
            scan  (if (= :desc direction)
                    (ds/rseek-datoms
-                    db :ave attr bound cursor-entity native-limit)
+                    db :ave attr bound cursor-entity (inc native-limit))
                    (ds/seek-datoms
-                    db :ave attr bound cursor-entity native-limit))]
-       (into []
-             (take-while
-              (fn [{:keys [a] :as datom}]
-                (and (= attr a)
-                     (endpoint-pair/value-prefix? (:v datom) prefix))))
-             scan)))))
+                    db :ave attr bound cursor-entity (inc native-limit)))]
+       (into [] (take native-limit)
+             (endpoint-pair/checked-datoms
+              (take-while
+               (fn [{:keys [a] :as datom}]
+                 (and (= attr a) (endpoint-pair/value-prefix? (:v datom) prefix)))
+               scan)))))))

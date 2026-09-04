@@ -9,7 +9,8 @@
             [eacl.datomic.safe-retraction :as safe-datomic]
             [eacl.datomic.schema :as schema]
             [eacl.relationships.safe-retraction :as safe]
-            [eacl.relationships.storage :as storage]))
+            [eacl.relationships.storage :as storage]
+            [eacl.relationships.endpoint-pair :as pair]))
 
 (defn- relation-eid
   [db resource-type relation-name subject-type]
@@ -30,8 +31,8 @@
     {:subject-eid subject-eid
      :resource-eid resource-eid
      :relation-eid relation-eid
-     :forward [(:type subject) relation-eid (:type resource) resource-eid]
-     :reverse [(:type resource) relation-eid (:type subject) subject-eid]}))
+     :forward (pair/forward-value (:type subject) relation-eid (:type resource) resource-eid)
+     :reverse (pair/reverse-value (:type resource) relation-eid (:type subject) subject-eid)}))
 
 (defn- relationship-present?
   [db relationship]
@@ -55,7 +56,7 @@
   true)
 
 (deftest installation-is-explicit-idempotent-versioned-and-conflict-safe-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (is (nil? (d/entid (d/db conn) safe/function-ident)))
     (is (= :named (:mode (safe-datomic/support-descriptor))))
     (is (= 64 (count safe-datomic/function-digest)))
@@ -67,7 +68,7 @@
     (is (= {:installed? false :state :current}
            (select-keys (safe-datomic/install! conn) [:installed? :state]))))
   (testing "recognized EACL markers upgrade"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       @(d/transact
         conn
         [{:db/ident safe/function-ident
@@ -77,7 +78,7 @@
                               :code '(do [])})}])
       (is (= :upgradeable (:state (safe-datomic/install! conn))))))
   (testing "unrecognized occupants fail closed"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       @(d/transact
         conn
         [{:db/ident safe/function-ident
@@ -93,7 +94,7 @@
                (:type (ex-data error))))))))
 
 (deftest target-only-function-removes-both-halves-and-stamps-only-affected-relations-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (seed-contract! conn)
     (safe-datomic/install! conn)
     (let [before (d/db conn)
@@ -127,7 +128,7 @@
         (is (= (nth generations-before 2) (nth generations-after 2)))))))
 
 (deftest known-retracted-numeric-eid-repairs-a-peer-only-ghost-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (seed-contract! conn)
     (safe-datomic/install! conn)
     (let [relationship (nth contract/safe-retraction-relationships 2)
@@ -145,7 +146,7 @@
                        [:eacl/id "missing"]))))))
 
 (deftest multiple-and-repeated-invocations-compose-in-one-transaction-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (seed-contract! conn)
     (safe-datomic/install! conn)
     (let [db (d/db conn)
@@ -169,7 +170,7 @@
           :db/valueType :db.type/ref
           :db/cardinality :db.cardinality/one
           :db/isComponent true}]]
-    (with-mem-conn [conn (into schema/v7-schema extra-schema)]
+    (with-mem-conn [conn (into schema/v8-schema extra-schema)]
       (seed-contract! conn)
       (safe-datomic/install! conn)
       (let [client (core/make-client conn {})
@@ -207,7 +208,7 @@
    }")
 
 (deftest managed-cache-and-stale-endpoint-writes-remain-correct-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn cache-schema)
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a"}])
     (safe-datomic/install! conn)
@@ -238,7 +239,7 @@
               "commit-time endpoint identity CAS rejects the stale plan"))))))
 
 (deftest live-expansion-size-ignores-unrelated-database-growth-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (seed-contract! conn)
     (safe-datomic/install! conn)
     (let [target [:eacl/id "target-account"]

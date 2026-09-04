@@ -49,7 +49,7 @@
     (eacl/->Relationship (folder "folder-2") :parent (folder "folder-3"))]))
 
 (deftest extraction-preserves-public-v8-behavior-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "v8-extraction-characterization00"
           client (core/make-client
                   conn
@@ -159,7 +159,7 @@
         (is (= 3 (:count (eacl/count-resources client query))))))))
 
 (deftest public-api-arity-characterization-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:security-key "v8-public-api-arity-characterization"})]

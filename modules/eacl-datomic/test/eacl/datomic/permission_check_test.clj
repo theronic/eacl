@@ -42,7 +42,7 @@
 
 (deftest arrow-to-all-relation-permission-test
   (doseq [fan-out [1 2 50]]
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [acl (client! conn exhaustive-schema)
             teams (mapv #(str "t" %) (range fan-out))]
         (apply ids! conn "alice" "bob" "d1" teams)
@@ -93,7 +93,7 @@
   ;; of this test without them passes even when `exhaustive?` is wrong.
   (doseq [depth [1 2 5]
           decoys [2 20]]
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [acl (client! conn nested-schema)
             groups (mapv #(str "g" %) (range (inc depth)))
             decoy-ids (mapv #(str "decoy" %) (range decoys))]
@@ -119,7 +119,7 @@
                                  :view (spice-object :doc "d1"))))))))
 
   (testing "the direct intersection still answers when it can"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [acl (client! conn nested-schema)]
         (ids! conn "alice" "d1" "g0")
         (relate! acl (spice-object :group "g0") :grp (spice-object :doc "d1"))
@@ -139,7 +139,7 @@
    }")
 
 (deftest arrow-to-relation-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (client! conn arrow-to-relation-schema)
           teams (mapv #(str "t" %) (range 30))]
       (apply ids! conn "alice" "bob" "d1" teams)
@@ -168,7 +168,7 @@
    }")
 
 (deftest multi-subject-type-arrow-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (client! conn multi-subject-schema)
           teams (mapv #(str "t" %) (range 20))]
       (apply ids! conn "alice" "r2d2" "d1" teams)
@@ -200,7 +200,7 @@
   ;; so which branch of a union `can?` tried first was hash order and could
   ;; differ between deployments of the same schema. On a doc with many teams
   ;; that decided between a point lookup and a full intermediate scan.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (client! conn union-schema)
     (let [db (d/db conn)]
       (doseq [permission [:arrow_written_first :relation_written_first]]
@@ -209,7 +209,7 @@
             (str permission " is evaluated relation-first regardless of source order")))))
 
   (testing "both orderings agree, and agree with lookup"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [acl (client! conn union-schema)
             teams (mapv #(str "t" %) (range 40))]
         (apply ids! conn "alice" "bob" "d1" teams)

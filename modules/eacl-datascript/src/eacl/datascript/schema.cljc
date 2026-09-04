@@ -1,6 +1,7 @@
 (ns eacl.datascript.schema
   (:require [datascript.core :as ds]
             [eacl.datascript.db :as ddb]
+            [eacl.datascript.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
@@ -9,6 +10,7 @@
             [eacl.schema.replacement-plan :as replacement-plan]))
 
 (def datascript-schema
+  (merge target-storage/metadata-schema
   {:eacl/id {:db/unique :db.unique/identity}
    :eacl.datascript/source-id {:db/unique :db.unique/identity}
    :eacl/schema-generation {:db/valueType :db.type/ref}
@@ -41,7 +43,7 @@
     :db/index true}
    relationship-storage/reverse-attribute
    {:db/cardinality :db.cardinality/many
-    :db/index true}})
+    :db/index true}}))
 
 (defn merge-schema
   ([] datascript-schema)
@@ -58,6 +60,7 @@
       conn
       [{:eacl/id "datascript-metadata"
         :eacl.datascript/source-id source-id}])
+     (target-storage/bootstrap! conn)
      conn)))
 
 (defn read-relations

@@ -6,7 +6,8 @@
             [eacl.datahike.db :as ddb]
             [eacl.datahike.migrations.v7-to-v8 :as migration]
             [eacl.datahike.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.legacy-v7 :as relationship-storage]
+            [eacl.datahike.migrations.v7-to-v9 :as storage-migration]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.schema.model :as model]))
@@ -16,7 +17,7 @@
    (remove #(contains? #{:eacl.permission/expression-payload
                          :eacl/permission-storage-version}
                        (:db/ident %))
-           schema/datahike-schema)))
+           (relationship-storage/source-schema schema/datahike-schema))))
 
 (def ^:private schema-string
   "definition user {}
@@ -135,6 +136,7 @@
                           :eacl.permission/target-name)
                         legacy-ids)
                 "released-v7 rows remain inert instead of forcing S3 index deletions")
+            (storage-migration/migrate! conn {:quiesced? true})
             (let [client (datahike/make-client conn {})]
               (is (true?
                    (eacl/can? client
@@ -144,14 +146,17 @@
           (finally
             (release-and-delete! conn)))))))
 
-(deftest startup-fails-closed-and-can-explicitly-auto-migrate-test
+(deftest startup-fails-closed-and-requires-explicit-migrations-test
   (let [conn (new-v7-conn true)]
     (try
       (populate-v7! conn)
       (let [failure (exception-data #(datahike/make-client conn {}))]
-        (is (= :eacl/permission-storage-version (:type failure)))
-        (is (= :flat-v7 (:detected failure))))
-      (is (some? (datahike/make-client conn {:auto-migrate-v7 true})))
+        (is (= :eacl/storage-version (:type failure)))
+        (is (= :legacy-data (:reason failure))))
+      (is (= :eacl/invalid-config (:type (exception-data #(datahike/make-client conn {:auto-migrate-v7 true})))))
+      (migration/migrate! conn)
+      (storage-migration/migrate! conn {:quiesced? true})
+      (is (some? (datahike/make-client conn {})))
       (is (= :expression
              (schema/permission-storage-shape (d/db conn))))
       (finally

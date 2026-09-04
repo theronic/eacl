@@ -56,7 +56,7 @@
                               (spice-object :account [:eacl/id "a"])))))
 
 (deftest proof-keyed-schema-generation-is-reused-across-unrelated-db-values-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
     (let [path-calcs (atom 0)
@@ -82,7 +82,7 @@
               "unrelated and identical schema transactions never recompute permission paths"))))))
 
 (deftest write-schema-through-client-replaces-one-generation-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
     @(d/transact conn [{:eacl/id "viewer"}])
@@ -115,7 +115,7 @@
 (deftest page-token-across-schema-generations-uses-exact-snapshot-test
   ;; Datomic can reconstruct the authenticated immutable old snapshot. It does
   ;; not reinterpret the cursor under the changed current schema.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn schema-v1)
     @(d/transact conn [{:eacl/id "u"} {:eacl/id "a-1"} {:eacl/id "a-2"}])
     (doseq [account ["a-1" "a-2"]]
@@ -143,7 +143,7 @@
           "a new enumeration uses the new schema generation"))))
 
 (deftest arbitrary-db-evaluation-is-uncached-and-isolated-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
     (let [acl (core/make-client conn {})
@@ -188,7 +188,7 @@
           (is (true? (eacl/can? acl public-u :admin public-a))))))))
 
 (deftest unstamped-client-does-not-latch-schema-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     @(d/transact conn [(Relation :account :owner :user)])
     (seed-owner! conn)
     (let [acl (core/make-client conn {})
@@ -214,7 +214,7 @@
         (is (true? (eacl/can? acl u :admin a)))))))
 
 (deftest unstamped-client-does-not-cache-lookup-results-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     @(d/transact conn (into [(Relation :account :owner :user)]
                             (expression-permissions schema-v1)))
     (seed-owner! conn)
@@ -245,7 +245,7 @@
             "the schema write installs a new exact generation; its repeat hits")))))
 
 (deftest out-of-band-schema-write-is-observed-by-existing-client-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
     @(d/transact conn [{:eacl/id "viewer"}])
@@ -269,7 +269,7 @@
       (is (true? (eacl/can? (core/make-client conn {}) viewer :admin account))))))
 
 (deftest immutable-snapshot-read-does-not-block-schema-commit-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn schema-v1)
     (seed-owner! conn)
     (let [acl (core/make-client conn {})

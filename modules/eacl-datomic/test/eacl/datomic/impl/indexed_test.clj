@@ -23,7 +23,7 @@
   (slurp (io/resource "eacl/fixtures.schema")))
 
 (defn eacl-schema-fixture [f]
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     ;; Use write-schema! with SpiceDB DSL instead of direct Relation/Permission fixtures
     (schema/write-schema! conn fixtures-schema-string)
     ;; Transact entity fixtures and relationship fixtures together (tempids reference each other)
@@ -50,7 +50,7 @@
 
       (when created?
         (prn 'transacting 'schema)
-        @(d/transact conn schema/v7-schema)
+        (schema/install! conn)
         @(d/transact conn (fixtures/base-fixtures (d/db conn))))
 
       (->> (lookup-resources (d/db conn)
@@ -756,7 +756,7 @@
 
 (deftest tx-relationship-strictness-test
   ;; Audit §12: silent tempid pass-through minted ghost entities on typo'd ids.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     @(d/transact conn [(Relation :account :owner :user)])
     @(d/transact conn [{:eacl/id "alice"} {:eacl/id "acct-1"}])
     (let [db (d/db conn)]
@@ -784,7 +784,7 @@
 (deftest relation-datoms-keyword-collation-test
   ;; Audit §2: the old [:a]..[:z] index-range made relations whose subject-type
   ;; keyword collates outside that window invisible to permission evaluation.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn
                           "definition zebra {}
 
@@ -1008,7 +1008,7 @@
       (is (not (impl.indexed/can? db (->vpc :test/vpc2) :view (->server :test/server1)))))))
 
 (deftest recursive-arrow-permission-path-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [db    (load-recursive-parent-db! conn)
           paths (impl.indexed/get-permission-paths db :account :read)]
       (testing "recursive parent->permission should retain the arrow path on an acyclic tree"
@@ -1021,7 +1021,7 @@
                   paths))))))
 
 (deftest recursive-arrow-permission-can-and-lookup-subjects-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [db   (load-recursive-parent-db! conn)
           user (recursive-user-ref "user-1")]
       (testing "can? should climb an acyclic parent tree"
@@ -1068,7 +1068,7 @@
                  (paginated->spice db previous))))))))
 
 (deftest recursive-arrow-permission-lookup-resources-visited-state-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [db                  (load-recursive-parent-db! conn)
           user                (recursive-user-ref "user-1")
           reader-relation-eid (:db/id (impl.indexed/find-relation-def db :account :reader))
@@ -1104,7 +1104,7 @@
                                                 :resource/type :account})))))))))
 
 (deftest recursive-dependency-closure-traversal-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [db   (load-recursive-document-db! conn)
           user (spice-object :user [:eacl/id "user-1"])]
       (testing "acyclic roots that depend on recursive permissions should use traversal"
@@ -1120,7 +1120,7 @@
                                               :resource/type :document}))))))))
 
 (deftest recursive-traversal-pagination-contract-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [db   (load-recursive-out-of-eid-order-db! conn)
           user (recursive-user-ref "user-1")]
       (testing "recursive lookup-resources returns generated logical order"
@@ -1215,7 +1215,7 @@
 
 (deftest reproduce-infinite-recursion-test
   (testing "lookup-resources should handle cyclic permissions without throwing"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (schema/write-schema!
        conn
        "definition user {}

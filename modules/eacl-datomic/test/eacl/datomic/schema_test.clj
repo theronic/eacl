@@ -92,6 +92,11 @@
      permission b = a
    }")
 
+(def schema-with-legacy-permissions
+  (into schema/v8-schema
+        (filter #(contains? expression-persistence/legacy-flat-attributes (:db/ident %))
+                schema/v7-schema)))
+
 (def direct-storage-schema
   "definition user {}
    definition document {
@@ -112,7 +117,7 @@
       (is (empty? (:permissions (schema/read-schema (d/db conn))))))))
 
 (deftest permission-storage-is-expression-only-and-replaceable-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn operator-storage-schema)
     (let [before-db (d/db conn)
           before (schema/read-permissions before-db)
@@ -122,7 +127,7 @@
           before-payload
           (:eacl.permission/expression-payload
            (first (filter #(= view-id (:eacl/id %)) before)))
-          installed-idents (set (map :db/ident schema/v7-schema))]
+          installed-idents (set (map :db/ident schema/v8-schema))]
       (is (= 2 (count before)))
       (is (every? #(not-any? (fn [attribute]
                                (contains? % attribute))
@@ -188,7 +193,7 @@
                       :eacl.permission/expression-payload "not-edn")]
               :invalid-payload]]]
       (testing label
-        (with-mem-conn [conn schema/v7-schema]
+        (with-mem-conn [conn schema-with-legacy-permissions]
           @(d/transact conn entities)
           (is (= reason
                  (:reason
@@ -196,7 +201,7 @@
                    #(schema/read-schema (d/db conn)))))))))))
 
 (deftest expression-storage-export-import-and-logical-backup-restore-test
-  (with-mem-conn [source schema/v7-schema]
+  (with-mem-conn [source schema/v8-schema]
     (schema/write-schema! source operator-storage-schema)
     (let [source-db (d/db source)
           expected (expression-storage-projection source-db)
@@ -207,12 +212,12 @@
           {:schema-string exported-source
            :relations (:relations (schema/read-schema source-db))
            :permissions (:permissions (schema/read-schema source-db))}]
-      (with-mem-conn [imported schema/v7-schema]
+      (with-mem-conn [imported schema/v8-schema]
         (schema/write-schema! imported exported-source)
         (is (= expected
                (expression-storage-projection (d/db imported)))
             "source export/import preserves canonical expressions"))
-      (with-mem-conn [restored schema/v7-schema]
+      (with-mem-conn [restored schema/v8-schema]
         @(d/transact
           restored
           (concat
@@ -225,7 +230,7 @@
             "logical entity backup/restore preserves expression rows")))))
 
 (deftest eacl-schema-stable-ident-tests
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema-with-legacy-permissions]
     (testing "flat-only permission rows are rejected even when their legacy identities are stable"
       (is @(d/transact conn fixtures/relations+permissions))
       (is @(d/transact conn fixtures/relations+permissions))
@@ -235,13 +240,13 @@
 
 (deftest schema-does-not-include-persisted-grants-test
   (testing "recursive traversal does not require persisted effective grant attrs"
-    (let [idents (set (map :db/ident schema/v7-schema))]
+    (let [idents (set (map :db/ident schema/v8-schema))]
       (is (not (contains? idents :eacl.v7.grant/subject-type+permission+resource-type+resource)))
       (is (not (contains? idents :eacl.v7.grant/resource-type+permission+subject-type+subject)))
       (is (not (contains? idents :eacl.grant/indexed-node))))))
 
 (deftest schema-does-not-include-derived-expression-metrics-test
-  (let [idents (set (map :db/ident schema/v7-schema))]
+  (let [idents (set (map :db/ident schema/v8-schema))]
     (is (empty?
          (clojure.set/intersection
           idents
@@ -285,7 +290,7 @@
             :permissions [:retained :added]})))))
 
 (deftest write-schema-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (testing "Initial schema write"
       (let [deltas (schema/write-schema! conn example-schema-string)
             db     (d/db conn)
@@ -352,7 +357,7 @@
   "Tests for ADR 012 requirement: 'Invalid schema should be rejected and no changes made.'"
 
   (testing "permission referencing non-existent relation is rejected"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [bad-schema "definition user {}
                         definition account {
                           permission admin = nonexistent_relation
@@ -362,7 +367,7 @@
                        #(schema/write-schema! conn bad-schema))))))))
 
   (testing "arrow permission with invalid target is rejected"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [bad-schema "definition user {}
                         definition account {
                           relation owner: user
@@ -376,7 +381,7 @@
                        #(schema/write-schema! conn bad-schema))))))))
 
   (testing "self-permission referencing non-existent permission is rejected"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [bad-schema "definition user {}
                         definition server {
                           permission view = fake_permission
@@ -386,7 +391,7 @@
                        #(schema/write-schema! conn bad-schema))))))))
 
   (testing "arrow permission with missing source relation is rejected"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [bad-schema "definition user {}
                         definition account {
                           relation owner: user
@@ -399,7 +404,7 @@
                        #(schema/write-schema! conn bad-schema))))))))
 
   (testing "valid schema is accepted"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [good-schema "definition user {}
                          definition platform {
                            relation super_admin: user
@@ -426,7 +431,7 @@
                                :eacl/relation-version
                                :eacl.fn/assert-relation-unused}
                              ident))
-                schema/v7-schema)]
+                schema/v8-schema)]
     (with-mem-conn [conn without-stamps]
       (is (nil? (d/entid (d/db conn) :eacl/schema-version)))
       (is (nil? (d/entid (d/db conn) :eacl/relation-version)))
@@ -448,7 +453,7 @@
   ;; Two writers diffing from the same generation previously submitted plain
   ;; adds/retracts. Both transactions could commit, producing the UNION of two
   ;; replacement schemas while :eacl/schema-string described only the winner.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema! conn "definition user {}")
     (let [schema-left
           "definition user {}
@@ -498,7 +503,7 @@
   ;; Force a relationship into the window between the preflight count and
   ;; schema transaction. The transactor-side guard must reject the replacement
   ;; rather than orphaning a tuple whose relation definition was retracted.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [with-owner
           "definition user {}
            definition account {
@@ -542,7 +547,7 @@
             "the failed replacement leaves the relation definition intact")))))
 
 (deftest relationships-using-relation-count-uses-canonical-identity-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema!
      conn
      "definition user {}
@@ -565,7 +570,7 @@
       (is (= 1 (schema/count-relationships-using-relation db relation))))))
 
 (deftest stale-relationship-tx-cannot-resurrect-a-removed-relation-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [with-owner
           "definition user {}
            definition account {
@@ -592,7 +597,7 @@
         (is (empty? (schema/read-relations (d/db conn))))))))
 
 (deftest relation-removal-rejects-reverse-only-orphans-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [with-owner
           "definition user {}
            definition account {
@@ -612,7 +617,7 @@
                            (filter
                             #(and (vector? %)
                                   (= :db/add (first %))
-                                  (= :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                                  (= :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
                                      (nth % 2 nil)))
                             tx-data))]
         @(d/transact conn tx-data)
@@ -631,7 +636,7 @@
 
 (deftest write-schema-parse-failure-test
   (testing "a malformed schema string throws a typed error and leaves the stored schema untouched"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (schema/write-schema! conn example-schema-string)
       (let [before (schema/read-schema (d/db conn))]
         (try
@@ -647,7 +652,7 @@
             "schema must be unchanged after a failed write"))))
 
   (testing "a schema containing comments (e.g. pasted from the SpiceDB playground) writes cleanly"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (is (schema/write-schema! conn "// users of the system
          definition user {}
          /* accounts own things */
@@ -659,7 +664,7 @@
 
 (deftest write-schema-empty-guard-test
   (testing "zero-definition output cannot wipe a non-empty schema (parser-gap belt-and-braces)"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (schema/write-schema! conn example-schema-string)
       (with-redefs [expression-resolver/validate-schema
                     (fn [_ & _]
@@ -690,7 +695,7 @@
     (testing "arrow targets are validated against ALL subject types, regardless of declaration order"
       ;; mgmt exists on user but not group: both orders must be rejected identically.
       (doseq [types ["user | group" "group | user"]]
-        (with-mem-conn [conn schema/v7-schema]
+        (with-mem-conn [conn schema/v8-schema]
           (is (= :eacl.schema/expression-resolution-failed
                  (:type
                   (exception-data
@@ -699,7 +704,7 @@
               (str "owner: " types " should be rejected — mgmt missing on group")))))
 
     (testing "accepted when the target exists on every subject type"
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (is (schema/write-schema! conn
               "definition user {
                  relation boss: user
@@ -717,7 +722,7 @@
 (deftest fixtures-schema-round-trip-test
   "Tests that fixtures.schema can be written and read back correctly.
    ADR 012 requirement: 'Rewrite the fixtures... to a new test/eacl/fixtures.schema file'"
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [schema-string (slurp (io/resource "eacl/fixtures.schema"))
           _             (schema/write-schema! conn schema-string)
           db            (d/db conn)

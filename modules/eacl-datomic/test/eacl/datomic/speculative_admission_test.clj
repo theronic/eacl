@@ -66,7 +66,7 @@
 
 (deftest caller-native-database-values-have-no-public-constructor-test
   (is (nil? (ns-resolve 'eacl.datomic.core 'snapshot)))
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [db (d/db conn)
           values
           [db
@@ -87,7 +87,7 @@
           (is (= :non-eacl (:target data))))))))
 
 (deftest same-t-same-tx-instant-different-content-cannot-poison-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})]
       (seed! client conn)
       ;; Leave a second document relationship after the speculative removal so
@@ -167,7 +167,7 @@
           "the committed exact-basis answer is not the speculative grant"))))
 
 (deftest eacl-with-is-composable-and-schema-storage-is-guarded-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})]
       (seed! client conn)
       (eacl/with-snapshot [base (eacl/snapshot client)]
@@ -193,7 +193,7 @@
             (is (= :with-schema (:use data)))))))))
 
 (deftest speculative-read-through-reuses-only-disjoint-committed-proof-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})
           report-demand
           {:subject alice :permission :view :resource report}]
@@ -215,7 +215,7 @@
                   "speculative read-through never promotes or publishes"))))))))
 
 (deftest with-schema-shares-planning-and-retain-inert-is-bounded-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})]
       (seed! client conn)
       (eacl/with-snapshot [base (eacl/snapshot client)]
@@ -267,7 +267,7 @@
       (is (false? (view? client))))))
 
 (deftest speculative-schema-change-reuses-only-disjoint-schema-proof-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})
           report-demand {:subject alice :permission :view :resource report}]
       (seed! client conn)
@@ -286,7 +286,7 @@
             (is (= (:puts before) (:puts after)))))))))
 
 (deftest transaction-function-expanded-datoms-drive-effects-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})]
       (seed! client conn)
       @(d/transact
@@ -317,7 +317,7 @@
               (is (= (:puts before) (:puts after))))))))))
 
 (deftest unclassified-application-datom-disables-all-read-through-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})
           report-demand {:subject alice :permission :view :resource report}]
       (seed! client conn)
@@ -337,7 +337,7 @@
             (is (= (:puts before) (:puts after)))))))))
 
 (deftest speculative-snapshots-are-immutable-lifecycle-values-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})]
       (seed! client conn)
       (eacl/with-snapshot [base (eacl/snapshot client)]
@@ -366,7 +366,7 @@
             (is (true? (eacl/released? prospective)))))))))
 
 (deftest sibling-speculation-never-shares-computed-answers-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})]
       (seed! client conn)
       (is (false? (view? client)))
@@ -395,7 +395,7 @@
       (is (false? (view? client))))))
 
 (deftest every-public-speculative-read-has-zero-cache-publication-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})
           demand {:subject alice :permission :view :resource doc}]
       (seed! client conn)

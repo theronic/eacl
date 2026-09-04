@@ -362,7 +362,7 @@
         (str "datomic:mem://eacl-cross-backend-workload-" (random-uuid))
         _ (d/create-database uri)
         connection (d/connect uri)
-        _ @(d/transact connection datomic-schema/v7-schema)
+        _ (datomic-schema/install! connection)
         clients (make-clients datomic/make-client connection true)
         fixture
         {:writer (:cache-enabled clients)

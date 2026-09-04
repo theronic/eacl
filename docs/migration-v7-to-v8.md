@@ -78,32 +78,12 @@ Additive attribute definitions installed before a failed final transaction are
 inert for v7 readers. Mixed flat/expression storage is rejected rather than
 guessed or repaired.
 
-Client construction is fail-closed until migration succeeds:
+Current client construction first requires completed Relationship storage 9,
+then canonical permission storage 8. Run this permission-only migration and the
+[Relationship migration](migration-v7-to-v9.md) as separate explicit maintenance
+steps before starting clients. Constructors reject `:auto-migrate-*` options.
 
-```clojure
-(eacl.datomic.core/make-client conn {})
-;; throws :eacl/permission-storage-version on released-v7 permission rows
-```
-
-The equivalent Datahike call is `eacl.datahike.core/make-client` and reports
-the same typed `:eacl/permission-storage-version` error.
-
-An application may opt into the same migration during construction:
-
-```clojure
-(eacl.datomic.core/make-client
- conn
- {:expression-limits {:maximum-source-nodes 32768
-                      :maximum-source-depth 64}
-  :auto-migrate-v7 {:schema released-v8-schema-string}})
-```
-
-For Datahike, use `{:auto-migrate-v7 true}` to consume the stored schema, or
-`{:auto-migrate-v7 {:schema released-v8-schema-string}}` to provide it
-explicitly.
-
-Do not use automatic migration when several processes may start concurrently;
-run the explicit maintenance step once, then start ordinary v8 clients. A
+A
 concurrent schema replacement fails with `:eacl.schema/concurrent-write`; retry
 the migration against the new current database value after resolving which
 schema is authoritative.
