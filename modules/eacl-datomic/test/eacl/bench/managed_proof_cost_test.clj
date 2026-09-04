@@ -380,7 +380,7 @@
   (let [uri (str "datomic:mem://eacl-proof-cost-" (random-uuid))
         _ (d/create-database uri)
         connection (d/connect uri)
-        _ @(d/transact connection datomic-schema/v7-schema)
+        _ (datomic-schema/install! connection)
         client
         (datomic/make-client
          connection

@@ -2,7 +2,11 @@
   (:require [clojure.walk :as walk]
             [datomic.api :as d]
             [eacl.datomic.impl.indexed :as impl.indexed]
+            [eacl.datomic.storage :as target-storage]
+            [eacl.relationships.upgrade :as upgrade]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.legacy-v7 :as legacy-v7]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.schema.expression :as expression]
             [eacl.schema.expression-limits :as expression-limits]
             [eacl.schema.expression-persistence :as expression-persistence]
@@ -122,22 +126,25 @@
     {:lang "clojure"
      :params '[db resource-type relation-eid subject-type]
      :code
-     '(if (or
+     (walk/postwalk-replace
+      {'endpoint-value-constructor endpoint-pair/constructor-form}
+      '(let [endpoint-value endpoint-value-constructor]
+         (if (or
            (seq
             (datomic.api/index-range
              db
-             :eacl.v7.relationship/subject-type+relation+resource-type+resource
-             [subject-type relation-eid resource-type 0]
-             [subject-type relation-eid resource-type Long/MAX_VALUE]))
+             :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+             (endpoint-value subject-type relation-eid resource-type 0 nil)
+             (endpoint-value subject-type relation-eid resource-type Long/MAX_VALUE Long/MAX_VALUE)))
            ;; Healthy relationships have both tuple halves. Check the reverse
            ;; index too so relation removal cannot strand a reverse-only tuple
            ;; after an interrupted legacy write or manual data corruption.
            (seq
             (datomic.api/index-range
              db
-             :eacl.v7.relationship/resource-type+relation+subject-type+subject
-             [resource-type relation-eid subject-type 0]
-             [resource-type relation-eid subject-type Long/MAX_VALUE])))
+             :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+             (endpoint-value resource-type relation-eid subject-type 0 nil)
+             (endpoint-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE))))
         (throw
          (ex-info
           "Cannot delete an EACL relation that is used by relationships."
@@ -146,7 +153,7 @@
            :relation-eid relation-eid
            :resource-type resource-type
            :subject-type subject-type}))
-        [])})})
+        [])))})})
 
 (def v7-compatible-schema
   [; :eacl/id is now optional.
@@ -167,7 +174,7 @@
    assert-relation-unused-fn-definition
 
    {:db/ident       :eacl/storage-version
-    :db/doc         "EACL relationship storage-model major version (7 = tuple relationships). Stamped by eacl.migrations.v6-to-v7 on completed migration; eacl.datomic.core/make-client refuses to start against unmigrated v6 relationship data without it."
+    :db/doc         "Relationship storage ABI: 9 = five-slot qualifier-reference endpoint pairs. Written only by explicit bootstrap or a verified migration; clients require completed storage 9."
     :db/valueType   :db.type/long
     :db/cardinality :db.cardinality/one
     :db/index       true}
@@ -247,24 +254,18 @@
     :db/cardinality :db.cardinality/one
     :db/index       true}
 
-   ;; v7 Relationships: forward and reverse tuple indexes only.
+   ;; v9 Relationships: forward and reverse tuple indexes only.
    {:db/ident       relationship-storage/forward-attribute
-    :db/doc         "EACL v7 relationship tuple from subject to resource."
+    :db/doc         "EACL v9 relationship tuple from subject to resource."
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}
 
    {:db/ident       relationship-storage/reverse-attribute
-    :db/doc         "EACL v7 reverse relationship tuple from resource to subject."
+    :db/doc         "EACL v9 reverse relationship tuple from resource to subject."
     :db/valueType   :db.type/tuple
-    :db/tupleTypes  [:db.type/keyword
-                     :db.type/ref
-                     :db.type/keyword
-                     :db.type/ref]
+    :db/tupleTypes  relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index       true}])
 
@@ -275,13 +276,22 @@
   (filterv
    #(not (contains? expression-persistence/legacy-flat-attributes
                     (:db/ident %)))
-   v7-compatible-schema))
+   (into v7-compatible-schema
+         [(second upgrade/metadata-schema) target-storage/basis-guard])))
+
+(defn install!
+  "Explicitly installs and bootstraps fresh Relationship storage 9. Existing
+  v7 databases must use eacl.datomic.migrations.v7-to-v9/migrate! instead."
+  [conn]
+  @(d/transact conn v8-schema)
+  (target-storage/bootstrap! conn)
+  conn)
 
 (def v7-schema
   "Compatibility name for the former all-in-one installer. New v8 databases
-  should transact `v8-schema`; released-v7 databases already contain the flat
+  should call `install!`; released-v7 databases already contain the flat
   attributes required by the explicit permission migration."
-  v7-compatible-schema)
+  (legacy-v7/source-schema v7-compatible-schema))
 
 (def ^:private authoritative-permission-attribute-idents
   #{:eacl/id
@@ -375,7 +385,7 @@
     (count missing)))
 
 (defn count-relationships-using-relation
-  "Counts v7 forward relationship tuples that reference the given relation."
+  "Counts current forward relationship tuples that reference the given relation."
   [db {:eacl.relation/keys [resource-type relation-name subject-type] :as relation}]
   {:pre [(keyword? resource-type)
          (keyword? relation-name)
@@ -390,14 +400,14 @@
                0
                (d/index-range db
                               relationship-storage/forward-attribute
-                              [subject-type relation-eid resource-type 0]
-                              [subject-type relation-eid resource-type Long/MAX_VALUE]))
+                              (endpoint-pair/forward-value subject-type relation-eid resource-type 0)
+                              (endpoint-pair/forward-value subject-type relation-eid resource-type Long/MAX_VALUE Long/MAX_VALUE)))
        (reduce (fn [n _] (inc n))
                0
                (d/index-range db
                               relationship-storage/reverse-attribute
-                              [resource-type relation-eid subject-type 0]
-                              [resource-type relation-eid subject-type Long/MAX_VALUE]))))))
+                              (endpoint-pair/reverse-value resource-type relation-eid subject-type 0)
+                              (endpoint-pair/reverse-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE)))))))
 
 (defn relationship-present-for-relation?
   "A bounded endpoint-index presence decision used only by speculative
@@ -410,13 +420,13 @@
       (first
        (d/index-range db
                       relationship-storage/forward-attribute
-                      [subject-type relation-eid resource-type 0]
-                      [subject-type relation-eid resource-type Long/MAX_VALUE]))
+                      (endpoint-pair/forward-value subject-type relation-eid resource-type 0)
+                      (endpoint-pair/forward-value subject-type relation-eid resource-type Long/MAX_VALUE Long/MAX_VALUE)))
       (first
        (d/index-range db
                       relationship-storage/reverse-attribute
-                      [resource-type relation-eid subject-type 0]
-                      [resource-type relation-eid subject-type Long/MAX_VALUE]))))))
+                      (endpoint-pair/reverse-value resource-type relation-eid subject-type 0)
+                      (endpoint-pair/reverse-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE)))))))
 
 (defn read-relations
   "Enumerates all EACL Relation schema entities in DB and returns pull maps."

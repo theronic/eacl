@@ -877,8 +877,8 @@
     :evaluation *evaluation-mode*
     :page-request (select-keys query [:first :after :last :before])}))
 
-(def stable-order-abi 2)
-(def stable-cursor-version 2)
+(def stable-order-abi 3)
+(def stable-cursor-version 3)
 
 (def compiler-plan-compatibility
   "Complete compatibility identity for completed values produced by the v8

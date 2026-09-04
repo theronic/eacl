@@ -267,8 +267,8 @@
       (d/transact
        conn
        [[:db/add anchor-eid
-         :eacl.v7.relationship/subject-type+relation+resource-type+resource
-         [:user relation-eid :resource absent-eid]]])
+         :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+         [:user relation-eid :resource absent-eid nil]]])
       (is (= [false] (direct/direct-match-many? adapter request))
           "the already selected Datahike DB does not follow the live head")
       (let [as-of-adapter

@@ -24,7 +24,7 @@
             [eacl.secure-format :as secure-format]))
 
 (def token-version 1)
-(def order-abi 1)
+(def order-abi 2)
 (def token-domain "eacl/stable-page/v1")
 (def token-prefix "eacl_sd1.")
 

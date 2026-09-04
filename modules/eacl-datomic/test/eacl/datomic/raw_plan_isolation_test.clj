@@ -57,7 +57,7 @@ definition doc {
   ;; A filter that hides the owner permission arm changes the sealed plan
   ;; but not the schema stamp, the database id, or the basis. Whichever
   ;; view seals first must not answer for the other.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (core/make-client conn {:cache shared-cache/no-cache})
           _ (eacl/write-schema! acl stamped-schema)
           _ @(d/transact conn [{:eacl/id "alice"} {:eacl/id "doc1"}])
@@ -90,7 +90,7 @@ definition doc {
   ;; Unstamped databases key plans by basis, which a d/with value shares
   ;; with the NEXT committed transaction. A speculative extra permission
   ;; arm must not answer for the committed database at the same basis.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [owner-schema
           "definition user {}
            definition doc {
@@ -114,15 +114,15 @@ definition doc {
           (:db-after
            (d/with db0 [(permission-entity owner+editor-schema)
                         [:db/add [:eacl/id "alice"]
-                         :eacl.v7.relationship/subject-type+relation+resource-type+resource
+                         :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
                          [:user (d/entid db0 [:eacl/id
                                               "eacl.relation::doc::editor::user"])
-                          :doc (d/entid db0 [:eacl/id "doc1"])]]
+                          :doc (d/entid db0 [:eacl/id "doc1"]) nil]]
                         [:db/add [:eacl/id "doc1"]
-                         :eacl.v7.relationship/resource-type+relation+subject-type+subject
+                         :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
                          [:doc (d/entid db0 [:eacl/id
                                              "eacl.relation::doc::editor::user"])
-                          :user (d/entid db0 [:eacl/id "alice"])]]]))
+                          :user (d/entid db0 [:eacl/id "alice"]) nil]]]))
           ;; Commit a DIFFERENT transaction so the committed basis equals the
           ;; speculative basis: alice becomes an editor in data, but the
           ;; committed schema still grants :view through :owner only.
@@ -131,11 +131,11 @@ definition doc {
           alice-eid (d/entid db0 [:eacl/id "alice"])
           _ @(d/transact conn
                          [[:db/add alice-eid
-                           :eacl.v7.relationship/subject-type+relation+resource-type+resource
-                           [:user editor-rel-eid :doc doc-eid]]
+                           :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+                           [:user editor-rel-eid :doc doc-eid nil]]
                           [:db/add doc-eid
-                           :eacl.v7.relationship/resource-type+relation+subject-type+subject
-                           [:doc editor-rel-eid :user alice-eid]]])
+                           :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+                           [:doc editor-rel-eid :user alice-eid nil]]])
           committed (d/db conn)
           alice (spice-object :user "alice")
           doc (spice-object :doc "doc1")]
@@ -148,7 +148,7 @@ definition doc {
             "the committed schema grants only through :owner")))))
 
 (deftest raw-facade-amortizes-expression-decodes-within-one-request-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (core/make-client conn {:cache shared-cache/no-cache})
           _ (eacl/write-schema! acl operator-schema)
           _ @(d/transact conn [{:eacl/id "alice"} {:eacl/id "doc1"}])

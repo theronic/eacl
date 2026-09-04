@@ -147,7 +147,7 @@
 
 (deftest differential-nonrecursive-test
   (doseq [seed [7 23 42 1337]]
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [rng       (java.util.Random. (long seed))
             users     (mapv #(str "user-" %) (range 3))
             accounts  (mapv #(str "acct-" %) (range 3))
@@ -198,7 +198,7 @@
 
 (deftest differential-recursive-test
   (doseq [seed [11 99]]
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [rng     (java.util.Random. (long seed))
             folders (mapv #(str "folder-" %) (range 10))
             users   ["reader-1" "reader-2"]]

@@ -33,6 +33,9 @@
             [eacl.operator.feature-gate-test]
             [eacl.operator.recursive-test]
             [eacl.relationships.endpoint-pair-test]
+            [eacl.relationships.upgrade-test]
+            [eacl.datascript.qualifier-storage-test]
+            [eacl.datascript.migrations.v7-to-v9-test]
             [eacl.relay-test]
             [eacl.request.context-test]
             [eacl.request.counters-test]
@@ -108,6 +111,9 @@
                'eacl.operator.feature-gate-test
                'eacl.operator.recursive-test
                'eacl.relationships.endpoint-pair-test
+               'eacl.relationships.upgrade-test
+               'eacl.datascript.qualifier-storage-test
+               'eacl.datascript.migrations.v7-to-v9-test
                'eacl.relay-test
                'eacl.request.context-test
                'eacl.request.counters-test

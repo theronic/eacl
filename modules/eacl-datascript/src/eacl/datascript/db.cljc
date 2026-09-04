@@ -1,7 +1,7 @@
 (ns eacl.datascript.db
   "Guarded native DataScript index access for endpoint-pair relationship
   values. DataScript compares vectors by length before components, so every
-  seek and reverse-seek starts from a complete four-element value."
+  seek and reverse-seek starts from a complete five-element value."
   (:require [datascript.core :as ds]
             [eacl.relationships.endpoint-pair :as endpoint-pair]))
 
@@ -31,6 +31,22 @@
   ([db entity attr value]
    (ds/datoms db :eavt entity attr value)))
 
+(defn relationship-identity-datoms
+  "One native seek for an owner-qualified first-four identity. Raw values are
+  retained for exact deletion; serving callers apply the shared value guard."
+  [db entity attr value]
+  (let [prefix (endpoint-pair/identity-prefix value)]
+    (take-while #(and (= entity (:e %)) (= attr (:a %))
+                     (endpoint-pair/value-prefix? (:v %) prefix))
+                (ds/seek-datoms db :eavt entity attr (conj prefix nil)))))
+
+(defn global-relationship-identity-datoms
+  [db attr value]
+  (let [prefix (endpoint-pair/identity-prefix value)]
+    (take-while #(and (= attr (:a %))
+                     (endpoint-pair/value-prefix? (:v %) prefix))
+                (ds/seek-datoms db :avet attr (conj prefix nil)))))
+
 (defn- matching-eavt-prefix?
   [entity attr prefix {:keys [e a] :as datom}]
   (and (= entity e)
@@ -56,7 +72,7 @@
      []
      (let [tail  (or cursor-eid
                      (if (= :desc direction) max-eid min-eid))
-           bound (conj prefix tail)
+           bound (endpoint-pair/seek-bound prefix tail direction max-eid)
            scan  (if (= :desc direction)
                    (ds/rseek-datoms db :eavt entity attr bound)
                    (ds/seek-datoms db :eavt entity attr bound))
@@ -66,12 +82,13 @@
        ;; a matching head retains the same monotone prefix termination.
        (if (and first-datom
                 (matching-eavt-prefix? entity attr prefix first-datom))
-         (take-while #(matching-eavt-prefix? entity attr prefix %) scan)
+         (endpoint-pair/checked-datoms
+          (take-while #(matching-eavt-prefix? entity attr prefix %) scan))
          [])))))
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
-  using a complete four-component AVET seek bound."
+  using a complete five-component AVET seek bound."
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc))
   ([db attr prefix cursor-eid direction]
@@ -80,12 +97,13 @@
      []
      (let [tail  (or cursor-eid
                      (if (= :desc direction) max-eid min-eid))
-           bound (conj prefix tail)
+           bound (endpoint-pair/seek-bound prefix tail direction max-eid)
            scan  (if (= :desc direction)
                    (ds/rseek-datoms db :avet attr bound)
                    (ds/seek-datoms db :avet attr bound))
            first-datom (first scan)]
        (if (and first-datom
                 (matching-avet-prefix? attr prefix first-datom))
-         (take-while #(matching-avet-prefix? attr prefix %) scan)
+         (endpoint-pair/checked-datoms
+          (take-while #(matching-avet-prefix? attr prefix %) scan))
          [])))))

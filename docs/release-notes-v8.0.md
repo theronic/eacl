@@ -11,13 +11,15 @@ V8 uses database-visible native schema/relation generations, authenticated
 native-revision tokens, and confidential authenticated-encryption cursors, and moves the DataScript/Datahike ports to
 the v8 Relay list/count contract. The earlier v8 candidate's mutation graph,
 random mutation records, anchor membership, and global graph-head CAS are
-superseded and are not installed on new databases. The relationship storage
-version stays at 7: Datomic
-keeps its v7 layout, Datahike uses the same two-tuple physical layout, and
-DataScript uses the same logical two-endpoint representation with indexed
-ordinary vector values. Upgraded databases expose an explicit additive
-`prepare-cache-coherence!` step that initializes missing physical relation
-generations before managed v4 readers start.
+superseded and are not installed on new databases. Relationship storage is
+now **ABI 9**, while the library remains **v8** and permission storage remains
+**8**. Every endpoint pair gains a fifth nullable qualifier reference, with
+unchanged first-four identity and opposite-endpoint ordering. This phase writes
+`nil` and rejects non-`nil` qualifiers on serving reads. It introduces an explicit,
+restartable migration on Datomic, Datahike, DataScript, and Datalevin, and rejects
+automatic migration during client construction. See the
+[operator guide](migration-v7-to-v9.md). Old cache and cursor compatibility
+identities are retired; deploy with empty persisted caches and fresh cursors.
 
 ## Modular artifacts
 
@@ -42,7 +44,7 @@ EACL v8.0 is a workspace with independently consumable modules:
 
 Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
-does not alter v7 relationship storage. Tokens, cursors, cache envelopes, and
+is independent of the required Relationship storage-9 migration. Tokens, cursors, cache envelopes, and
 the additive native-generation schema are deliberately new v8 formats; no
 downgrade or dual-format cache/token mode is provided. Third-party adapters
 implement the validated v8 operation/capability contract (`eacl.backend.v8`);

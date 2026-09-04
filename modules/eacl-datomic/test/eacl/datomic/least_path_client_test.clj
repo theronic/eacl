@@ -47,7 +47,7 @@ definition doc {
     acl))
 
 (deftest cache-off-pagination-is-flat-in-the-page-ordinal-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 600)
           alice (spice-object :user "alice")
           query {:subject alice :permission :view
@@ -74,7 +74,7 @@ definition doc {
             (recur cursor (inc k) (max max-scans scans))))))))
 
 (deftest last-window-works-under-demand-evaluation-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 120)
           alice (spice-object :user "alice")
           forward (loop [after nil out []]
@@ -109,7 +109,7 @@ definition doc {
   ;; Task 7.2: the evaluator's own scans and emissions must be visible to
   ;; observers under the public counter names, not only the witness
   ;; probe-checks.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 60)
           alice (spice-object :user "alice")
           stats (atom {})
@@ -125,7 +125,7 @@ definition doc {
         (is (pos? (:stream-opens @stats 0)))))))
 
 (deftest lookup-subjects-least-path-round-trip-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [acl (seed! conn 40)
           _ (let [raw (core/make-client conn {:cache shared-cache/no-cache})]
               (doseq [u ["bob" "carol" "dave"]]

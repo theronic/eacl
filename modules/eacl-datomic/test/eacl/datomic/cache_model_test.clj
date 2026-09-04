@@ -98,7 +98,7 @@
           ;; divergence from automatic managed coherence.
           seed (range 5)]
     (testing (str "automatic managed coherence, seed " seed)
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (let [random (java.util.Random. seed)
               cached (core/make-client
                       conn

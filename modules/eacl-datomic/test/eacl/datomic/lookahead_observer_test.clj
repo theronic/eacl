@@ -36,7 +36,7 @@
       :else (do (Thread/sleep 25) (recur (dec remaining))))))
 
 (deftest lookahead-turns-the-continuation-into-an-exact-hit-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [events (atom [])
           client (datomic/make-client
                   conn {:lookahead {:pages 1 :max-inflight 2}
@@ -70,7 +70,7 @@
           (is (pos? (get-in background [:meters :commands]))))))))
 
 (deftest lookahead-is-off-by-default-and-observer-is-optional-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client conn {})
           _ (seed! conn client)
           u (rich-user client)
@@ -82,7 +82,7 @@
           "without lookahead the continuation is computed on demand"))))
 
 (deftest observer-failures-never-change-results-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (datomic/make-client
                   conn {:io-observer (fn [_] (throw (ex-info "observer broke" {})))})
           _ (seed! conn client)
@@ -92,7 +92,7 @@
              (:data (fixture/page client u 5)))))))
 
 (deftest lookahead-and-observer-options-are-validated-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #":lookahead"
                           (datomic/make-client conn {:lookahead {:pages 1}})))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #":io-observer"

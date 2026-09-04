@@ -7,6 +7,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.cache.standard-lru :as lru]
+            [eacl.causal-token :as causal-token]
             [eacl.client.orchestration :as orchestration]
             [eacl.continuation :as continuation]
             [eacl.core :as eacl]
@@ -2068,19 +2069,23 @@
 
 (defn- assert-cache-differential-call!
   [label call request]
-  (let [enabled (operation-outcome call request)
-        repeated (operation-outcome call request)
-        bypassed (operation-outcome call (assoc request :cache? false))]
-    (is (= (semantic-outcome enabled)
-           (semantic-outcome repeated)
-           (semantic-outcome bypassed))
-        (str label " preserves value, order, cursors, and errors"))
-    (when-let [bypassed-value (:value bypassed)]
-      (when (and (map? bypassed-value)
-                 (contains? bypassed-value :cached?))
-        (is (false? (:cached? bypassed-value))
-            (str label " reports bypass provenance"))))
-    (:value repeated)))
+  ;; The semantic comparison includes authenticated response tokens. Keep
+  ;; their issuance time equal even when the three calls cross a second.
+  (let [issued-at (causal-token/now-seconds)]
+    (with-redefs [causal-token/now-seconds (constantly issued-at)]
+      (let [enabled (operation-outcome call request)
+            repeated (operation-outcome call request)
+            bypassed (operation-outcome call (assoc request :cache? false))]
+        (is (= (semantic-outcome enabled)
+               (semantic-outcome repeated)
+               (semantic-outcome bypassed))
+            (str label " preserves value, order, cursors, and errors"))
+        (when-let [bypassed-value (:value bypassed)]
+          (when (and (map? bypassed-value)
+                     (contains? bypassed-value :cached?))
+            (is (false? (:cached? bypassed-value))
+                (str label " reports bypass provenance"))))
+        (:value repeated)))))
 
 (defn assert-v8-cache-differential!
   "Cache-enabled versus per-request bypass conformance on one authenticated

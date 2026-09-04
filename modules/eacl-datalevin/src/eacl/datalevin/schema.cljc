@@ -3,6 +3,7 @@
             [datalevin.core :as ds]
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
+            [eacl.datalevin.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
@@ -10,6 +11,7 @@
             [eacl.schema.model :as model]))
 
 (def datalevin-schema
+  (merge target-storage/metadata-schema
   {:eacl/id {:db/valueType :db.type/string
              :db/unique :db.unique/identity}
    :eacl/schema-string {:db/valueType :db.type/string}
@@ -50,16 +52,14 @@
 
    relationship-storage/forward-attribute
    {:db/valueType :db.type/tuple
-    :db/tupleTypes [:db.type/keyword :db.type/ref
-                    :db.type/keyword :db.type/ref]
+    :db/tupleTypes relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
     :db/index true}
    relationship-storage/reverse-attribute
    {:db/valueType :db.type/tuple
-    :db/tupleTypes [:db.type/keyword :db.type/ref
-                    :db.type/keyword :db.type/ref]
+    :db/tupleTypes relationship-storage/tuple-types
     :db/cardinality :db.cardinality/many
-    :db/index true}})
+    :db/index true}}))
 
 (defn merge-schema
   ([] datalevin-schema)
@@ -102,10 +102,14 @@
        :commit-generation-attributes
        #{:eacl.datalevin/schema-generation
          :eacl.datalevin/schema-write-fence
-         :eacl.datalevin/relation-generation}
+         :eacl.datalevin/relation-generation
+         :eacl.storage/migration-generation}
        :stamp-rules
        (into
-        [{:when-attribute relationship-storage/forward-attribute
+        [{:when-attribute :eacl.storage/migration-state
+          :stamp-attribute :eacl.storage/migration-generation
+          :stamp-entity [:constant schema-eid]}
+         {:when-attribute relationship-storage/forward-attribute
           :stamp-attribute :eacl.datalevin/relation-generation
           :stamp-entity [:tuple-position 1]}
          {:when-attribute relationship-storage/reverse-attribute
@@ -155,7 +159,12 @@
   ([dir extra-schema store-options]
    ;; Qualification and bootstrap belong to make-client. Merely opening a
    ;; connection must not submit an unadmitted protected transaction.
-   (ds/get-conn dir (merge-schema extra-schema) store-options)))
+   (let [conn (ds/get-conn dir (merge-schema extra-schema) store-options)
+         found (target-storage/evidence (ds/db conn))]
+     (when (and (nil? (:version found)) (nil? (:state found))
+                (not (:legacy? found)) (not (:v6? found)))
+       (target-storage/bootstrap! conn))
+     conn)))
 
 (def ^:private physical-schema-keys
   #{:db/valueType :db/cardinality :db/unique :db/index
@@ -176,7 +185,8 @@
   "Installs missing EACL attributes on a quiesced embedded connection and
   rejects any incompatible definition. Installs the storage write policy and
   returns the persisted source UUID plus the per-open writer token."
-  [conn]
+  ([conn] (ensure-physical-schema! conn nil))
+  ([conn migration-token]
   (let [existing-policy (fork/write-policy conn)
         actual (ds/schema conn)
         drift
@@ -243,7 +253,8 @@
         (let [expected-policy (expected-write-policy conn)
               policy-result
               (try
-                (fork/install-write-policy! conn expected-policy)
+                (fork/install-write-policy! conn expected-policy
+                                            (when migration-token {:datalevin/write-token migration-token}))
                 (catch #?(:clj Throwable :cljs :default) error
                   (throw
                    (ex-info
@@ -268,7 +279,7 @@
            :schema-eid (ds/entid (ds/db conn) [:eacl/id "schema-string"])
            :write-token (:write-token policy-result)
            :write-policy (:policy policy-result)
-           :fork-capabilities (:capabilities policy-result)})))))
+           :fork-capabilities (:capabilities policy-result)}))))))
 
 (def relation-pull
   [:eacl/id :eacl.relation/subject-type

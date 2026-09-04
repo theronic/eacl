@@ -50,7 +50,7 @@
    {:source-lifecycle "datomic-exact-source-test"}))
 
 (deftest exact-acquisition-reuses-one-covered-local-observation-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     @(d/transact conn [{:db/ident :eacl.test/exact-selection}])
     (let [head (d/db conn)
           head-t (d/basis-t head)
@@ -88,7 +88,7 @@
               (source/release! selected))))))))
 
 (deftest exact-acquisition-synchronizes-once-only-when-local-is-behind-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [before (d/db conn)
           _ @(d/transact conn [{:db/ident :eacl.test/exact-behind}])
           head (d/db conn)
@@ -125,7 +125,7 @@
               (source/release! selected))))))))
 
 (deftest exact-acquisition-cancels-bounded-waits-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [local (d/db conn)
           local-t (d/basis-t local)
           target (inc local-t)
@@ -174,7 +174,7 @@
           (Thread/interrupted))))))
 
 (deftest exact-acquisition-failures-stop-before-history-selection-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [local (d/db conn)
           target (inc (d/basis-t local))
           basis-source (basis-source conn)]
@@ -244,7 +244,7 @@
           (is (identical? failure (:cause data))))))))
 
 (deftest exact-acquisition-validates-before-storage-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [local-t (d/basis-t (d/db conn))
           basis-source (basis-source conn)
           storage-calls (atom 0)]
@@ -267,7 +267,7 @@
         (is (zero? @storage-calls))))))
 
 (deftest every-bounded-source-wait-is-cancelled-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [local (d/db conn)
           target (inc (d/basis-t local))
           basis-source (basis-source conn)]

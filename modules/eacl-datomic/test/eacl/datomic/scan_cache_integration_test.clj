@@ -58,7 +58,7 @@
              [a b]))))
 
 (deftest shared-tier-elides-commands-across-requests-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn {})
           disabled (datomic/make-client conn {:scan-cache false})
           [a b] (sharing-pair)
@@ -76,7 +76,7 @@
         (is (pos? (:entry-count stats)))))))
 
 (deftest cache-disabled-requests-keep-the-request-local-memo-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn {})
           u (sharing-user client)
           [memo-page memo-commands] (scan-commands #(fixture/page client u 20 :cache? false))
@@ -91,7 +91,7 @@
       (is (zero? (:deposits stats)) "cache-disabled requests never write the shared tier"))))
 
 (deftest write-to-the-scanned-relation-invalidates-the-tier-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn {})
           u (sharing-user client)
           _ (fixture/page client u 20)
@@ -108,7 +108,7 @@
       (is (some #(= new-doc %) (:data after)) "the new grant is visible"))))
 
 (deftest scan-cache-option-is-validated-test
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #":scan-cache"
                           (datomic/make-client conn {:scan-cache {:max-entries 0}})))
     (is (thrown-with-msg? clojure.lang.ExceptionInfo #":scan-cache"
@@ -125,7 +125,7 @@
   ;; the older basis. Its scans read that older slice under the current
   ;; generation of the same relation, so admitting them into the shared tier
   ;; would serve pre-write prefixes to later requests on the new basis.
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [client (seed-client! conn {})
           u (sharing-user client)
           page-1 (fixture/page client u 3)
@@ -151,7 +151,7 @@
   ;; a traversal that exceeds a ceiling fails with the same typed error and
   ;; the same reported ceiling whether its scans come from the adapter, the
   ;; request memo, or the shared tier.
-  (with-mem-conn [conn datomic-schema/v7-schema]
+  (with-mem-conn [conn datomic-schema/v8-schema]
     (let [seeded (seed-client! conn {})
           tight (datomic/make-client conn {:recursive-traversal-limits
                                            {:max-advanced-datoms 8}})

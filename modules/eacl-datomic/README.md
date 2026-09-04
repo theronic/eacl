@@ -153,3 +153,13 @@ mutation rules, see the
   identity facade; the adapter reads `eacl.datomic.db` directly.
 - `eacl.datomic.schema/{calc-set-deltas,compare-schema}` are now aliases of
   `eacl.schema.model` (same values).
+
+## Relationship storage 9
+
+This EACL v8 adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. This phase writes `nil` and raises `:eacl/unsupported-qualifier`
+when serving encounters a qualifier. Upgrades are explicit and restartable;
+ordinary client construction requires a completed target store. Follow the
+[7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before starting clients.
+
+Use `(eacl.datomic.schema/install! conn)` to bootstrap a fresh native database.

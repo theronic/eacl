@@ -48,7 +48,7 @@
     client))
 
 (deftest relationship-contention-reacquires-replans-and-releases-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (client! conn)
           user (eacl/spice-object :user "u1")
           document (eacl/spice-object :document "d1")
@@ -76,7 +76,7 @@
       (is (true? (eacl/can? client user :view document))))))
 
 (deftest public-operations-report-unknown-schema-names-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (client! conn)
           user (eacl/spice-object :user "u1")
           document (eacl/spice-object :document "d1")]
@@ -175,7 +175,7 @@
                              :subject/type :user})))))))))
 
 (deftest schema-validation-uses-the-selected-snapshot-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache shared-cache/no-cache})
           old-token (:zed/token (eacl/write-schema! client permission-schema))
           user (eacl/spice-object :user "absent-user")
@@ -191,7 +191,7 @@
             (consistency/at-exact-snapshot old-token)))))))
 
 (deftest detailed-check-defaults-to-minimize-latency-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (client! conn)
           demand {:subject (eacl/spice-object :user "u1")
                   :permission :view
@@ -215,7 +215,7 @@
   ;; typed errors the reads use (an unknown relation, definition, or a
   ;; subject type the relation does not declare); a well-typed write may
   ;; still fail on an unknown object.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (client! conn)
           user (eacl/spice-object :user "u1")
           document (eacl/spice-object :document "d1")]
@@ -255,7 +255,7 @@
           (is (= :eacl/relationship-conflict (:eacl/error data))))))))
 
 (deftest repeated-and-conflicting-relationship-batch-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (client! conn)
           user (eacl/spice-object :user "u1")
           document (eacl/spice-object :document "d1")
@@ -302,7 +302,7 @@
                     client {:resource/type :document})))))))
 
 (deftest schema-and-page-request-errors-are-typed-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (client! conn)
           user (eacl/spice-object :user "u1")]
       (testing "reference validation failures carry a category"

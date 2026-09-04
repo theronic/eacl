@@ -4,23 +4,48 @@
   namespace only owns the value shape and its symmetry."
   (:require [eacl.relationships.storage :as storage]))
 
-(def value-arity 4)
+(def value-arity storage/value-arity)
+
+(def constructor-form
+  "Portable constructor embedded in Datomic transaction functions. The
+  transactor need not load EACL namespaces to use the same fixed storage ABI."
+  '(fn [owner-type relation-eid endpoint-type endpoint-eid qualifier-eid]
+     [owner-type relation-eid endpoint-type endpoint-eid qualifier-eid]))
 
 (defn forward-value
-  [subject-type relation-eid resource-type resource-eid]
-  [subject-type relation-eid resource-type resource-eid])
+  ([subject-type relation-eid resource-type resource-eid]
+   (forward-value subject-type relation-eid resource-type resource-eid nil))
+  ([subject-type relation-eid resource-type resource-eid qualifier-eid]
+   [subject-type relation-eid resource-type resource-eid qualifier-eid]))
 
 (defn reverse-value
-  [resource-type relation-eid subject-type subject-eid]
-  [resource-type relation-eid subject-type subject-eid])
+  ([resource-type relation-eid subject-type subject-eid]
+   (reverse-value resource-type relation-eid subject-type subject-eid nil))
+  ([resource-type relation-eid subject-type subject-eid qualifier-eid]
+   [resource-type relation-eid subject-type subject-eid qualifier-eid]))
+
+(defn identity-prefix
+  "The qualifier-independent identity of one endpoint value (owner separate)."
+  [value]
+  (subvec value 0 storage/identity-arity))
+
+(defn seek-bound
+  "Full-arity inclusive bound for an opposite endpoint. Qualifier refs sort
+  after nil; descending bounds must include the whole identity group."
+  [prefix endpoint-eid direction maximum-eid]
+  (conj prefix
+        (or endpoint-eid (if (= :desc direction) maximum-eid 0))
+        (when (= :desc direction) maximum-eid)))
 
 (defn retractions
   "Both physical retractions for one logical relationship."
-  [subject-type subject-eid relation-eid resource-type resource-eid]
-  [[:db/retract subject-eid storage/forward-attribute
-    (forward-value subject-type relation-eid resource-type resource-eid)]
-   [:db/retract resource-eid storage/reverse-attribute
-    (reverse-value resource-type relation-eid subject-type subject-eid)]])
+  ([subject-type subject-eid relation-eid resource-type resource-eid]
+   (retractions subject-type subject-eid relation-eid resource-type resource-eid nil))
+  ([subject-type subject-eid relation-eid resource-type resource-eid qualifier-eid]
+   [[:db/retract subject-eid storage/forward-attribute
+     (forward-value subject-type relation-eid resource-type resource-eid qualifier-eid)]
+    [:db/retract resource-eid storage/reverse-attribute
+     (reverse-value resource-type relation-eid subject-type subject-eid qualifier-eid)]]))
 
 (defn endpoint-value?
   "True for a stored endpoint value with the expected heterogeneous shape.
@@ -32,7 +57,45 @@
        (keyword? (nth value 0))
        (nat-int? (nth value 1))
        (keyword? (nth value 2))
-       (nat-int? (nth value 3))))
+       (nat-int? (nth value 3))
+       (or (nil? (nth value 4)) (nat-int? (nth value 4)))))
+
+(defn assert-supported!
+  "Checks a value at a serving boundary; integrity and migration decoders may
+  inspect structurally valid future qualifiers without authorizing them."
+  [value]
+  (when-not (endpoint-value? value)
+    (throw (ex-info "Malformed EACL Relationship endpoint value."
+                    {:type :eacl/invalid-relationship-storage
+                     :eacl/error :eacl/invalid-relationship-storage
+                     :value value})))
+  (when (some? (nth value 4))
+    (throw (ex-info "Relationship qualifiers are not enabled in this release."
+                    {:type :eacl/unsupported-qualifier
+                     :eacl/error :eacl/unsupported-qualifier
+                     :qualifier-eid (nth value 4)})))
+  value)
+
+(defn checked-datoms
+  "Validates one ordered stream before publishing each row. A single-row
+  lookahead detects competing qualifier variants before either can authorize."
+  [datoms]
+  (lazy-seq
+   (when-let [rows (seq datoms)]
+     (let [row (first rows)
+           next-row (second rows)
+           value (:v row)]
+       (when (and next-row (= (:e row) (:e next-row))
+                  (endpoint-value? value) (endpoint-value? (:v next-row))
+                  (= (identity-prefix value) (identity-prefix (:v next-row))))
+         (throw (ex-info "Duplicate logical Relationship identity."
+                         {:type :eacl/invalid-relationship-storage
+                          :eacl/error :eacl/invalid-relationship-storage
+                          :reason :duplicate-identity
+                          :endpoint-eid (:e row)
+                          :identity (identity-prefix value)})))
+       (assert-supported! value)
+       (cons row (checked-datoms (rest rows)))))))
 
 (defn valid-prefix?
   "True for the complete typed three-component endpoint index prefix."
@@ -59,22 +122,24 @@
 (defn decode-forward
   [subject-eid value]
   (when (endpoint-value? value)
-    (let [[subject-type relation-eid resource-type resource-eid] value]
+    (let [[subject-type relation-eid resource-type resource-eid qualifier-eid] value]
       {:subject-type subject-type
        :subject-eid subject-eid
        :relation-eid relation-eid
        :resource-type resource-type
-       :resource-eid resource-eid})))
+       :resource-eid resource-eid
+       :qualifier-eid qualifier-eid})))
 
 (defn decode-reverse
   [resource-eid value]
   (when (endpoint-value? value)
-    (let [[resource-type relation-eid subject-type subject-eid] value]
+    (let [[resource-type relation-eid subject-type subject-eid qualifier-eid] value]
       {:subject-type subject-type
        :subject-eid subject-eid
        :relation-eid relation-eid
        :resource-type resource-type
-       :resource-eid resource-eid})))
+       :resource-eid resource-eid
+       :qualifier-eid qualifier-eid})))
 
 (defn peer-half
   "Returns the exact peer endpoint and value for one decoded physical half."
@@ -82,23 +147,23 @@
   (case direction
     :forward
     (when-let [{:keys [subject-type subject-eid relation-eid
-                       resource-type resource-eid] :as decoded}
+                       resource-type resource-eid qualifier-eid] :as decoded}
                (decode-forward endpoint-eid value)]
       (assoc decoded
              :direction :reverse
              :endpoint-eid resource-eid
              :value (reverse-value resource-type relation-eid
-                                   subject-type subject-eid)))
+                                   subject-type subject-eid qualifier-eid)))
 
     :reverse
     (when-let [{:keys [subject-type subject-eid relation-eid
-                       resource-type resource-eid] :as decoded}
+                       resource-type resource-eid qualifier-eid] :as decoded}
                (decode-reverse endpoint-eid value)]
       (assoc decoded
              :direction :forward
              :endpoint-eid subject-eid
              :value (forward-value subject-type relation-eid
-                                   resource-type resource-eid)))
+                                   resource-type resource-eid qualifier-eid)))
 
     nil))
 
@@ -125,3 +190,31 @@
      :dangling-count count
      :by-half by-half
      :sample sample}))
+
+(defn half-retractions
+  "Exact pair cleanup derived from either physical half, preserving qualifier."
+  [direction owner value]
+  (if-let [{:keys [subject-type subject-eid relation-eid resource-type
+                   resource-eid qualifier-eid]}
+           (peer-half direction owner value)]
+    (retractions subject-type subject-eid relation-eid resource-type resource-eid qualifier-eid)
+    (throw (ex-info "Cannot repair a malformed Relationship endpoint value."
+                    {:type :eacl/invalid-relationship-storage
+                     :eacl/error :eacl/invalid-relationship-storage
+                     :endpoint-eid owner :value value}))))
+
+(defn orphaned-halves
+  "Offline diagnostics over one direction. Native peer lookup stays in the adapter."
+  [direction datoms peer-exists?]
+  (keep (fn [{:keys [e v]}]
+          (let [peer (peer-half direction e v)]
+            (when (or (nil? peer) (not (peer-exists? peer)))
+              {:half direction :e e
+               :attr (if (= :forward direction) storage/forward-attribute storage/reverse-attribute)
+               :v v
+               :subject-eid (:subject-eid peer)
+               :resource-eid (:resource-eid peer)
+               :relation-eid (:relation-eid peer)
+               :qualifier-eid (:qualifier-eid peer)
+               :value-arity (when (counted? v) (count v))})))
+        datoms))

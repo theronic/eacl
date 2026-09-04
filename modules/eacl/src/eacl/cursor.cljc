@@ -12,9 +12,9 @@
               [javax.crypto Mac]
               [javax.crypto.spec IvParameterSpec SecretKeySpec])))
 
-(def cursor-version 5)
-(def cursor-prefix "eacl_c5_")
-(def cursor-domain "eacl/cursor/envelope/v5")
+(def cursor-version 6)
+(def cursor-prefix "eacl_c6_")
+(def cursor-domain "eacl/cursor/envelope/v6")
 (def payload-keys #{:version :cursor :issued-at :expires-at})
 (def ^:private nonce-size 12)
 (def ^:private aes-block-size 16)

@@ -12,7 +12,7 @@
 (deftest datomic-adapter-certification-test
   (doseq [fixture (certification/coherent-fixtures [820084])]
     (testing (str "seed " (:seed fixture))
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (let [client
               (datomic/make-client
                conn
@@ -78,8 +78,8 @@
                           [affected-relation-id]}))))))))))))
 
 (deftest datomic-memory-live-source-identity-certification-test
-  (with-mem-conn [first-conn schema/v7-schema]
-    (with-mem-conn [second-conn schema/v7-schema]
+  (with-mem-conn [first-conn schema/v8-schema]
+    (with-mem-conn [second-conn schema/v8-schema]
       (is (= :certified
              (:status
               (certification/certify-live-source-identity!

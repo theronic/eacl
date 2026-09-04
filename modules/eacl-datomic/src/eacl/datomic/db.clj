@@ -1,7 +1,25 @@
 (ns eacl.datomic.db
   "Datomic-only entity, schema-definition, and ordered adjacency operations."
   (:require [datomic.api :as d]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.endpoint-pair :as endpoint-pair]))
+
+(defn relationship-identity-datoms
+  "One owner/attribute/identity seek, retaining exact qualifier variants."
+  [db entity attr value]
+  (let [attribute-eid (d/entid db attr)
+        prefix (endpoint-pair/identity-prefix value)]
+    (take-while #(and (= entity (:e %)) (= attribute-eid (:a %))
+                     (endpoint-pair/value-prefix? (:v %) prefix))
+                (d/seek-datoms db :eavt entity attribute-eid (conj prefix nil)))))
+
+(defn global-relationship-identity-datoms
+  [db attr value]
+  (let [attribute-eid (d/entid db attr)
+        prefix (endpoint-pair/identity-prefix value)]
+    (take-while #(and (= attribute-eid (:a %))
+                     (endpoint-pair/value-prefix? (:v %) prefix))
+                (d/seek-datoms db :avet attribute-eid (conj prefix nil)))))
 
 (defn object-eid
   [db object-id]
@@ -20,10 +38,7 @@
         (relationship-storage/normalize-scan-options cursor-or-options)
         attr-id (d/entid db attr)
         [p0 p1 p2] prefix
-        start-tuple (conj prefix
-                          (case direction
-                            :asc (or bound-eid 0)
-                            :desc (or bound-eid Long/MAX_VALUE)))
+        start-tuple (endpoint-pair/seek-bound prefix bound-eid direction Long/MAX_VALUE)
         datoms (case direction
                  :asc (d/seek-datoms
                        db :eavt endpoint-id attr-id start-tuple)
@@ -39,6 +54,7 @@
                      (= p0 (nth value 0))
                      (= p1 (nth value 1))
                      (= p2 (nth value 2))))))
+      true endpoint-pair/checked-datoms
       skip-bound? (drop-while #(= bound-eid (nth (:v %) 3)))
       true (map #(nth (:v %) 3)))))
 
@@ -113,9 +129,10 @@
   [db subject-type subject-id relation-id resource-type resource-id]
   (boolean
    (seq
-    (d/datoms
-     db :eavt subject-id relationship-storage/forward-attribute
-     [subject-type relation-id resource-type resource-id]))))
+    (endpoint-pair/checked-datoms
+     (relationship-identity-datoms
+      db subject-id relationship-storage/forward-attribute
+      (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))))))
 
 (defn schema-version
   [db]

@@ -53,7 +53,7 @@
    token))
 
 (deftest map-can-rejects-malformed-consistency-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [authorization (client conn)
           _ (seed! conn authorization)
           error
@@ -68,7 +68,7 @@
       (is (false? (:consistency error))))))
 
 (deftest public-datomic-reads-use-balanced-borrowed-provider-selections-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [authorization (client conn)
           _ (seed! conn authorization)
           _ (eacl/create-relationship! authorization relationship)
@@ -93,7 +93,7 @@
             (is (= 1 (:release! @calls 0)))))))))
 
 (deftest minimize-authoritative-and-locally-covered-at-least-arities-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [authorization (client conn)
           _ (seed! conn authorization)
           token
@@ -127,7 +127,7 @@
             "at-least-as-fresh must not synchronize when the local DB covers the token")))))
 
 (deftest cross-connection-anchor-and-exact-identity-test
-  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+  (with-mem-conns [writer-conn reader-conn schema/v8-schema]
     (let [writer (client writer-conn)
           reader (client reader-conn)
           _ (seed! writer-conn writer)
@@ -155,7 +155,7 @@
                      (consistency/at-exact-snapshot token)))))))))))
 
 (deftest lagging-real-peer-exact-selection-targets-token-basis-test
-  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+  (with-mem-conns [writer-conn reader-conn schema/v8-schema]
     (let [client-opts {:security-key security-key
                        :source-lifecycle source-lifecycle
                        :consistency-sync-timeout-ms 5000}
@@ -191,7 +191,7 @@
             "real Datomic targeted sync catches the lagging Peer up exactly to T")))))
 
 (deftest lagging-real-peer-resumes-historical-cursor-test
-  (with-mem-conns [writer-conn reader-conn schema/v7-schema]
+  (with-mem-conns [writer-conn reader-conn schema/v8-schema]
     (let [client-opts {:security-key security-key
                        :source-lifecycle source-lifecycle
                        :consistency-sync-timeout-ms 5000}
@@ -238,7 +238,7 @@
             "cursor replay catches the lagging Peer up to the authenticated basis")))))
 
 (deftest missing-anchor-and-bounded-wait-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [authorization (client conn)
           _ (seed! conn authorization)
           before-write (d/db conn)
@@ -286,7 +286,7 @@
             (is (<= 1 (:timeout-ms data) 5))))))))
 
 (deftest authenticated-cache-lifts-only-across-equal-proofs-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [authorization
           (datomic/make-client
            conn
@@ -319,7 +319,7 @@
         (is (false? (:cached? after-revocation)))))))
 
 (deftest encrypted-cursor-current-recovery-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [authorization (client conn)
           _ (eacl/write-schema! authorization authorization-schema)
           _ @(d/transact conn [{:eacl/id "user"}

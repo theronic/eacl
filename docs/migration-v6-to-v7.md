@@ -1,17 +1,14 @@
-# Migrating v6 relationship storage to EACL v8
+# Prerequisite: migrating v6 Relationship entities to storage 7
 
-EACL v8 reads and writes the endpoint-local tuple storage introduced in v7.
-Databases that still contain v6 relationship entities must run one forward
-storage migration before constructing a v8 Datomic client.
-
-This is the only v8 migration path. It migrates stored relationships; it does
-not preserve an old authorization engine, old client options, old cursors, or
-an application rollback mode.
+This explicit Datomic migration converts v6 Relationship entities into the
+four-slot storage-7 source format. Current EACL v8 clients require a subsequent
+[storage 7-to-9 migration](migration-v7-to-v9.md). Keep readers and writers
+quiesced across both steps. Neither step preserves an older runtime reader.
 
 ## Storage change
 
 v6 stored one entity per relationship, including five scalar attributes and
-two derived composite tuples. The current Datomic layout stores two
+two derived composite tuples. The intermediate storage-7 layout stores two
 cardinality-many heterogeneous tuple datoms:
 
 ```clojure
@@ -25,8 +22,7 @@ cardinality-many heterogeneous tuple datoms:
 ```
 
 The `eacl.v7.relationship` keyword namespace is the persisted storage ABI. It
-does not select a v7 engine. Keeping those attribute identities avoids an
-unnecessary rewrite when upgrading tuple-based databases to v8.
+does not select a v7 engine. The next migration converts these attributes into storage-9 endpoint pairs.
 
 The relation component is the entity id of the matching Relation definition,
 not the relation-name keyword. Both tuple halves must exist.
@@ -55,27 +51,10 @@ authorization-relevant writes, then run:
 7. records `:eacl/storage-version 7`.
 
 The operation is idempotent and can be rerun after interruption. It never
-retracts v6 entities until verification succeeds. Once it succeeds, deploy
-v8 and resume writes. There is no library-level rollback procedure; restore
-the pre-migration backup if an operational rollback is required.
-
-You may instead opt in during client construction:
-
-```clojure
-(eacl.datomic.core/make-client
- conn
- {:auto-migrate-v6
-  {:schema "definition user {} ..."}})
-```
-
-Passing `true` uses the default migration options:
-
-```clojure
-(eacl.datomic.core/make-client conn {:auto-migrate-v6 true})
-```
-
-For a controlled production rollout, invoking `migrate!` explicitly is
-preferable because it separates data conversion from process startup.
+retracts v6 entities until verification succeeds. Continue with the explicit
+7-to-9 migration before constructing clients or resuming traffic. Client
+construction rejects every `:auto-migrate-*` option. Restore the complete
+pre-migration backup if rollback is required.
 
 ## Detect and verify
 
@@ -120,7 +99,7 @@ synchronization because v8 has no old-engine rollout mode.
 
 ## Operational checks
 
-After migration:
+After both the v6-to-v7 and v7-to-v9 migrations:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn options))

@@ -17,10 +17,9 @@
   - `migrate!` runs the whole migration end-to-end (see its docstring for the
     exact steps). It is idempotent and converges storage forward: verified v7
     tuples replace the v6 relationship entities in the same run.
-  - `assert-storage-compatible!` is called by eacl.datomic.core/make-client on
-    startup. It throws {:type :eacl/storage-version} when the database still
-    contains unmigrated v6 relationship data, unless the client opts into
-    automatic migration with {:auto-migrate-v6 <opts>}.
+  - `assert-storage-compatible!` is a read-only legacy-source diagnostic.
+    Ordinary clients require the subsequent storage 7-to-9 migration.
+
 
   Flat v6 permissions are converted once to canonical expression entities.
   Pass your SpiceDB schema string as {:schema ...} to validate and replace the
@@ -33,7 +32,8 @@
   (:require [datomic.api :as d]
             [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as schema]
-            [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.legacy-v7 :as relationship-storage]
+            [eacl.relationships.upgrade :as storage-upgrade]
             [eacl.schema.expression-resolver :as expression-resolver]))
 
 (def storage-version
@@ -232,8 +232,8 @@
                 :resource-type       resource-type
                 :relation-name       relation-name
                 :subject-type        subject-type})))
-    [[:db/add subject-eid relationship-storage/forward-attribute [subject-type relation-eid resource-type resource-eid]]
-     [:db/add resource-eid relationship-storage/reverse-attribute [resource-type relation-eid subject-type subject-eid]]]))
+    [[:db/add subject-eid relationship-storage/forward-attribute (relationship-storage/endpoint-value subject-type relation-eid resource-type resource-eid)]
+     [:db/add resource-eid relationship-storage/reverse-attribute (relationship-storage/endpoint-value resource-type relation-eid subject-type subject-eid)]]))
 
 (defn backfill-relationship-tuples!
   "Asserts the v7 tuple pair for every v6 relationship entity, in batches.
@@ -269,11 +269,11 @@
                 forward?     (boolean
                                (and relation-eid
                                     (seq (d/datoms db :eavt subject-eid relationship-storage/forward-attribute
-                                           [subject-type relation-eid resource-type resource-eid]))))
+                                           (relationship-storage/endpoint-value subject-type relation-eid resource-type resource-eid)))))
                 reverse?     (boolean
                                (and relation-eid
                                     (seq (d/datoms db :eavt resource-eid relationship-storage/reverse-attribute
-                                           [resource-type relation-eid subject-type subject-eid]))))]
+                                           (relationship-storage/endpoint-value resource-type relation-eid subject-type subject-eid)))))]
           :when (not (and forward? reverse?))]
       {:v6-relationship-eid v6-rel-eid
        :subject-type        subject-type
@@ -383,17 +383,10 @@
 ;; Startup guard --------------------------------------------------------------
 
 (defn assert-storage-compatible!
-  "Startup check called by eacl.datomic.core/make-client. EACL v8 reads the
-  v7 tuple storage ABI, so starting against unmigrated v6 relationship data would
-  silently answer every permission check with false/empty — this fails loudly
-  instead.
-
-  Passes when the database has a :eacl/storage-version stamp >= 7, or contains
-  no v6 relationship entities (fresh install, or migrated & cleaned up).
-  Otherwise: with {:auto-migrate-v6 opts} it runs (migrate! conn opts) —
-  pass {:auto-migrate-v6 true} for default options — and with no opt-in it
-  throws {:type :eacl/storage-version}."
-  [conn {:keys [auto-migrate-v6]}]
+  "Read-only legacy storage-7 diagnostic, retained for prerequisite tooling.
+  Current clients use eacl.datomic.storage/assert-compatible! instead."
+  [conn options]
+  (storage-upgrade/reject-auto-migration! options)
   (let [db    (d/db conn)
         stamp (stamped-storage-version db)]
     (cond
@@ -417,18 +410,13 @@
       (empty? (take 1 (v6-relationship-eids db)))
       :ok
 
-      auto-migrate-v6
-      (do (migrate! conn (if (map? auto-migrate-v6) auto-migrate-v6 {}))
-          :migrated)
-
       :else
       (throw
         (ex-info
           (str "EACL storage-version mismatch: this database contains v6 relationship entities "
                "(:eacl.relationship/*), which EACL v8 does not read — starting up would answer "
                "every permission check with false/empty results. "
-               "Run (eacl.migrations.v6-to-v7/migrate! conn {:schema <your schema string>}), or opt in "
-               "at startup with (make-client conn {:auto-migrate-v6 {:schema <your schema string>}}). "
+               "Run (eacl.migrations.v6-to-v7/migrate! conn {:schema <your schema string>}) explicitly. "
                "See docs/migration-v6-to-v7.md.")
           {:type :eacl/storage-version :eacl/error :eacl/storage-version
            :detected         (detect-storage-version db)

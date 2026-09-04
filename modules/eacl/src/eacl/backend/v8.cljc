@@ -7,7 +7,7 @@
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
-(def adapter-version 8)
+(def adapter-version 9)
 (def maximum-exact-integer exact-integer/maximum)
 (def minimum-exact-integer exact-integer/minimum)
 

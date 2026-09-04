@@ -706,7 +706,7 @@
               {:eacl/id {:db/valueType :db.type/long
                          :db/unique :db.unique/identity}})]
     (try
-      (is (= :eacl.datalevin/physical-schema-drift
+      (is (= :eacl/storage-version
              (:type
               (error-data
                #(datalevin/make-client conn (client-config))))))
@@ -723,13 +723,14 @@
             schema-eid (d/entid (d/db conn) [:eacl/id "schema-string"])]
         (d/transact!
          conn
-         [[:db/retractEntity schema-eid]]
+         [[:db/retractEntity schema-eid]
+          [:db/add schema-eid :eacl.storage/migration-generation :db/current-tx]]
          {:datalevin/write-token token})
         (let [error
               (error-data
                #(datalevin/make-client conn (client-config)))]
-          (is (= :eacl.cache/generation-unprepared (:type error)))
-          (is (= :schema-singleton (:missing error)))
+          (is (= :eacl/storage-version (:type error)))
+          (is (= :incomplete-storage (:reason error)))
           (is (= :datalevin (:backend error))))))))
 
 (deftest persisted-write-policy-drift-is-rejected-test

@@ -321,7 +321,7 @@
 
   (testing "Datomic"
     #_{:clj-kondo/ignore [:unresolved-symbol]}
-    (with-mem-conn [conn datomic-schema/v7-schema]
+    (with-mem-conn [conn datomic-schema/v8-schema]
       (let [client (datomic/make-client conn {})]
         (write-operator-schema! client schema-source)
         @(d/transact conn (mapv #(hash-map :eacl/id %) ids-to-create))

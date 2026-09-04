@@ -1,0 +1,1 @@
+{:backend :datomic, :document-count 2000, :relationship-count 4001, :logical-relationship-datoms 8002, :index-density {:unavailable "Datomic memory database does not expose native segment/page occupancy."}, :durable-apparent-bytes nil, :relationship-transaction-edn-bytes 620151}

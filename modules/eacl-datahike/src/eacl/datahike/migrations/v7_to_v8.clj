@@ -1,11 +1,12 @@
 (ns eacl.datahike.migrations.v7-to-v8
   "Permission-only released-v7 to v8 Datahike upgrade.
 
-  Released-v7 relationship tuples already use the v8 relationship ABI. This
+  Relationship storage upgrades are a separate maintenance step. This
   namespace therefore examines only bounded schema-definition rows and never
   enumerates or rewrites application relationship data."
   (:require [datahike.api :as d]
-            [eacl.datahike.schema :as schema]))
+            [eacl.datahike.schema :as schema]
+            [eacl.relationships.upgrade :as storage-upgrade]))
 
 (def permission-storage-version schema/permission-storage-version)
 
@@ -36,37 +37,16 @@
    (schema/migrate-v7-permissions! conn schema expression-limits)))
 
 (defn assert-permission-storage-compatible!
-  "Fails startup on released-v7 flat or mixed permissions unless the caller
-  explicitly opts into the bounded permission-only migration."
-  [conn {:keys [auto-migrate-v7 expression-limits]}]
+  "Read-only permission admission. All conversions require explicit migrate!."
+  [conn options]
+  (storage-upgrade/reject-auto-migration! options)
   (let [shape (schema/permission-storage-shape (d/db conn))]
-    (case shape
-      (:expression :none) :ok
-
-      :flat
-      (if auto-migrate-v7
-        (do
-          (migrate! conn (if (map? auto-migrate-v7)
-                           (assoc auto-migrate-v7
-                                  :expression-limits expression-limits)
-                           {:expression-limits expression-limits}))
-          :migrated)
-        (throw
-         (ex-info
-          "EACL v8 requires an explicit released-v7 Datahike permission upgrade."
-          {:type :eacl/permission-storage-version
-           :eacl/error :eacl/permission-storage-version
-           :backend :datahike
-           :detected :flat-v7
-           :required-version permission-storage-version
-           :migration-ns 'eacl.datahike.migrations.v7-to-v8})))
-
-      :mixed
-      (throw
-       (ex-info
-        "EACL Datahike permission storage contains mixed flat and expression rows."
-        {:type :eacl/permission-storage-version
-         :eacl/error :eacl/permission-storage-version
-         :backend :datahike
-         :detected :mixed
-         :required-version permission-storage-version})))))
+    (if (contains? #{:expression :none} shape)
+      :ok
+      (throw (ex-info "EACL v8 requires canonical permission storage. Run the explicit permission migration."
+                      {:type :eacl/permission-storage-version
+                       :eacl/error :eacl/permission-storage-version
+                       :backend :datahike
+                       :detected (if (= :flat shape) :flat-v7 shape)
+                       :required-version permission-storage-version
+                       :migration-ns 'eacl.datahike.migrations.v7-to-v8})))))

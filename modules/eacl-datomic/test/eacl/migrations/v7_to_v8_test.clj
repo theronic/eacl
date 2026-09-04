@@ -7,7 +7,8 @@
             [eacl.datomic.impl.base :as base]
             [eacl.datomic.schema :as schema]
             [eacl.migrations.v7-to-v8 :as migration]
-            [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.legacy-v7 :as relationship-storage]
+            [eacl.datomic.migrations.v7-to-v9 :as storage-migration]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.secure-format :as secure]))
@@ -138,6 +139,7 @@
       (is (every? nil?
                   (map #(d/entid (d/db conn) %)
                        persistence/retired-expression-attributes)))
+      (storage-migration/migrate! conn {:quiesced? true})
       (let [acl (eacl.datomic/make-client conn {})]
         (is (true?
              (eacl/can? acl
@@ -148,12 +150,14 @@
 (deftest startup-requires-explicit-v7-permission-upgrade-test
   (with-mem-conn [conn released-v7-schema]
     (populate-v7! conn)
-    (let [error (try (eacl.datomic/make-client conn {}) nil
-                     (catch clojure.lang.ExceptionInfo exception
-                       (ex-data exception)))]
-      (is (= :eacl/permission-storage-version (:type error))))
-    (is (some? (eacl.datomic/make-client
-                conn {:auto-migrate-v7 {:schema schema-string}})))
+    (is (= :eacl/storage-version
+           (:type (error-data #(eacl.datomic/make-client conn {})))))
+    (is (= :eacl/invalid-config
+           (:type (error-data #(eacl.datomic/make-client
+                               conn {:auto-migrate-v7 {:schema schema-string}})))))
+    (migration/migrate! conn {:schema schema-string})
+    (storage-migration/migrate! conn {:quiesced? true})
+    (is (some? (eacl.datomic/make-client conn {})))
     (is (= :expression (schema/permission-storage-shape (d/db conn))))))
 
 (deftest v7-upgrade-applies-invoking-client-expression-limits-test

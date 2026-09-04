@@ -64,20 +64,20 @@ It reads and rewrites only schema-definition rows, never enumerates or rewrites
 relationship tuples, and commits the expression rows plus version stamp behind
 the existing schema-write fence. Legacy flat entities remain inert to avoid
 S3 persistent-index deletion amplification. On released-v7 rows, ordinary
-construction fails with
-`:eacl/permission-storage-version`; `{:auto-migrate-v7 true}` explicitly opts
-one writer into the same migration. Prefer a single maintenance writer over
-automatic migration when several processes can start concurrently.
+construction requires completed Relationship storage 9 and permission storage 8.
+After this permission-only step, run the explicit
+[Relationship migration](../../docs/migration-v7-to-v9.md). Client constructors
+reject `:auto-migrate-*` options.
 
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:
 
 ```clojure
-[subject-eid :eacl.v7.relationship/subject-type+relation+resource-type+resource
- [subject-type relation-eid resource-type resource-eid]]
+[subject-eid :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+ [subject-type relation-eid resource-type resource-eid nil]]
 
-[resource-eid :eacl.v7.relationship/resource-type+relation+subject-type+subject
- [resource-type relation-eid subject-type subject-eid]]
+[resource-eid :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+ [resource-type relation-eid subject-type subject-eid nil]]
 ```
 
 This avoids a relationship entity and five derived composite indexes. As with
@@ -182,3 +182,13 @@ the backend. The accumulator is process-global and not reentrant: use it for
 one probe at a time in demos and diagnostics, never on a production request
 path. `eacl.datahike.io/storage-io-stats-available?` reports whether the
 statistics can be captured.
+
+## Relationship storage 9
+
+This EACL v8 adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. This phase writes `nil` and raises `:eacl/unsupported-qualifier`
+when serving encounters a qualifier. Upgrades are explicit and restartable;
+ordinary client construction requires a completed target store. Follow the
+[7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before starting clients.
+
+The adapter's `create-conn` helper explicitly bootstraps fresh stores.

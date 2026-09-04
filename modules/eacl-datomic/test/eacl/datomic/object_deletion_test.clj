@@ -50,7 +50,7 @@
 
 (deftest retract-entity-leaves-orphans-that-delete-object-prevents-test
   (testing "deleting the RESOURCE: the subject's forward half used to keep granting"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [{:keys [u a]} (seed! conn)]
         (is (true? (idx/can? (d/db conn) (spice-object :user u) :admin (spice-object :account a))))
 
@@ -70,7 +70,7 @@
                                                       :resource/type :account}))))))))
 
   (testing "deleting the SUBJECT: the resource's reverse half used to keep listing it"
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [{:keys [u a]} (seed! conn)]
         @(d/transact conn (impl/tx-delete-object (d/db conn) u))
         @(d/transact conn [[:db.fn/retractEntity u]])
@@ -86,7 +86,7 @@
                                                      :subject/type :user})))))))))
 
 (deftest delete-object-through-the-client-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [u a]} (seed! conn)
           acl (core/make-client
                conn
@@ -110,7 +110,7 @@
 (deftest delete-object-accepts-a-raw-eid-after-the-entity-is-gone-test
   ;; The cleanup path for an entity already retracted the bare Datomic way:
   ;; its :eacl/id no longer resolves, but the eid still identifies the orphans.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [u a]} (seed! conn)
           acl (core/make-client conn {})]
       @(d/transact conn [[:db.fn/retractEntity u]])
@@ -128,7 +128,7 @@
                                                :first        10})))))))
 
 (deftest delete-object-counts-only-datoms-that-existed-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [u a]} (seed! conn)
           acl (core/make-client conn {})
           forward (first
@@ -149,7 +149,7 @@
       (is (zero? (reverse-count (d/db conn) a))))))
 
 (deftest delete-object-accumulates-exact-count-across-batches-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [relationship-count 501
           acl (core/make-client conn {})
           user (spice-object :user "u")]
@@ -186,7 +186,7 @@
                   (d/entid (d/db conn) [:eacl/id "u"])))))))
 
 (deftest delete-object-discovery-is-lazy-and-nonduplicating-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [relationship-count 20
           acl (core/make-client conn {})
           user (spice-object :user "u")]
@@ -210,7 +210,7 @@
             "each relationship contributes two tuple retractions exactly once")))))
 
 (deftest delete-object-stream-handles-self-relationships-once-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (schema/write-schema!
      conn
      "definition folder {
@@ -230,7 +230,7 @@
                     {:subject/type :folder :subject/id "f" :first 10})))))))
 
 (deftest orphan-detection-and-repair-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [u a]} (seed! conn)]
       (is (empty? (impl/orphaned-relationship-halves (d/db conn)))
           "a well-formed database has no orphans")
@@ -254,7 +254,7 @@
                                                :first        10})))))))
 
 (deftest public-integrity-audit-is-explicit-and-bounded-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [u]} (seed! conn)
           acl (core/make-client conn {})]
       (is (= :current (:status (integrity/client-schema-status acl))))
@@ -301,7 +301,7 @@
   ;; relationship-exists? consulted only the forward index, so a surviving
   ;; reverse half read as "already there" to :touch and "nothing to do" to
   ;; :delete — permanently unrepairable through the write API.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [u a]} (seed! conn)
           acl (core/make-client conn {})
           rel (Relationship (spice-object :user "u") :owner (spice-object :account "a"))]
@@ -340,7 +340,7 @@
   ;; unchanged. EACL deliberately does not add entity-existence probes to every
   ;; can?; the consumer deletion contract and explicit integrity auditor own
   ;; this failure mode.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [{:keys [u a]} (seed! conn)
           acl (core/make-client conn {:object-id->lookup-ref identity
                                       :entid->object-id (fn [_db eid] eid)})]

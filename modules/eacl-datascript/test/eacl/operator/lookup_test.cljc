@@ -619,7 +619,7 @@
             "the current public cursor envelope version is unchanged")
         (is (= :operator-least-path-edge
                (get-in envelope [:edge :kind])))
-        (is (= 2 (get-in envelope [:edge :version])))
+        (is (= 3 (get-in envelope [:edge :version])))
         (is (string? (get-in envelope [:edge :fingerprint])))
         (is (string? (get-in envelope [:edge :cover-fingerprint])))
         (is (string? (get-in envelope [:edge :semantic-scope])))

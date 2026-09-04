@@ -192,7 +192,7 @@
 (deftest cache-configurations-match-a-cache-disabled-oracle-test
   (testing "recursive traversal permission"
     (doseq [[label config] (cache-configurations)]
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (let [boot (client conn {:cache shared-cache/no-cache})
               _ (seed-recursive! conn boot 14)
               acl (client conn config)
@@ -205,7 +205,7 @@
 
   (testing "acyclic union-of-arrows permission"
     (doseq [[label config] (cache-configurations)]
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (let [boot (client conn {:cache shared-cache/no-cache})
               _ (seed-acyclic! conn boot 8)
               acl (client conn config)
@@ -294,7 +294,7 @@
 (deftest cache-agrees-with-the-oracle-across-interleaved-writes-test
   (testing "recursive traversal permission"
     (doseq [[label config] (cache-configurations)]
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (let [boot (client conn {:cache shared-cache/no-cache})
               _ (seed-recursive! conn boot 8)
               acl (client conn config)
@@ -312,7 +312,7 @@
 
   (testing "acyclic union-of-arrows permission"
     (doseq [[label config] (cache-configurations)]
-      (with-mem-conn [conn schema/v7-schema]
+      (with-mem-conn [conn schema/v8-schema]
         (let [boot (client conn {:cache shared-cache/no-cache})
               _ (seed-acyclic! conn boot 6)
               acl (client conn config)
@@ -332,7 +332,7 @@
   ;; Opaque stream heads are retained only in the bounded client-private store.
   ;; Its key commits to the same proof identity authenticated into the cursor;
   ;; caller-supplied providers can neither inject nor share these values.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [boot (client conn {:cache shared-cache/no-cache})
           _ (seed-acyclic! conn boot 12)
           acl (client conn {})
@@ -406,7 +406,7 @@
   ;; page BEFORE the cursor — or an empty page, which stops a paginating client
   ;; early and under-reports what a subject may access.
   (doseq [[label config] (cache-configurations)]
-    (with-mem-conn [conn schema/v7-schema]
+    (with-mem-conn [conn schema/v8-schema]
       (let [boot (client conn {:cache shared-cache/no-cache})
             _ (seed-recursive! conn boot 12)
             acl (client conn config)

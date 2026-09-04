@@ -11,6 +11,8 @@
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.schema :as schema]
+            [eacl.datascript.storage :as target-storage]
+            [eacl.relationships.upgrade :as storage-upgrade]
             [eacl.relationships.storage :as relationship-storage]))
 
 (def cursor->token cursor/cursor->token)
@@ -197,6 +199,8 @@
   DataScript is current-basis-only across requests. It does not retain old DB
   values and rejects :at-exact-snapshot before cache access."
   [conn config-opts]
+  (storage-upgrade/reject-auto-migration! config-opts)
+  (target-storage/assert-compatible! (ds/db conn))
   (orchestration/make-client api conn config-opts))
 
 (defn db

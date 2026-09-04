@@ -58,7 +58,7 @@
   {})
 
 (deftest live-non-recursive-pages-survive-unrelated-transactions-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
@@ -93,7 +93,7 @@
         (is (= 1 @reverse-calls) "reverse lookup uses the same logical generation")))))
 
 (deftest relationship-write-invalidates-live-pages-but-no-op-does-not-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
@@ -143,7 +143,7 @@
   ;; tx-relationship's returned tx-data now carries the :eacl/relation-version
   ;; stamp, so such a caller publishes the change without knowing the cache
   ;; exists, and no explicit eviction is needed.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
@@ -162,7 +162,7 @@
           "a relationship written outside the EACL client takes effect"))))
 
 (deftest live-page-dependencies-include-arrow-relations-and-target-permissions-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           alice (spice-object :user "alice")
           bob (spice-object :user "bob")
@@ -210,7 +210,7 @@
             "the arrow's source relation is also a dependency")))))
 
 (deftest cached-pages-store-eids-and-reapply-current-id-coercion-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           original engine/lookup-resources
           calls (atom 0)]
@@ -243,7 +243,7 @@
             "a changed public identity binding cannot reuse the old query key")))))
 
 (deftest recreated-external-id-does-not-reuse-the-retracted-entity-cache-key-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           alice (spice-object :user "alice")
           account (spice-object :account "a-1")
@@ -266,7 +266,7 @@
             "the recreated external ID resolves to a new internal cache key")))))
 
 (deftest disabled-cache-uses-the-indexed-path-and-provider-is-rejected-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [disabled (core/make-client conn {:cache shared-cache/no-cache})
           unsupported-provider (Object.)
           query {:subject (spice-object :user "alice")
@@ -285,7 +285,7 @@
                (:reason (ex-data error))))))))
 
 (deftest live-counts-share-dependency-aware-result-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           forward-query {:subject (spice-object :user "alice")
                          :permission :admin
@@ -334,7 +334,7 @@
             "a relevant relation epoch invalidates both count directions")))))
 
 (deftest recursive-cursors-replay-across-independent-client-proofs-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [token-key "shared-store-opaque-continuation"
           first-client (core/make-client conn {:cache {}
                                                :source-lifecycle
@@ -376,7 +376,7 @@
             "no unauthenticated recursive page is reused across clients")))))
 
 (deftest recursive-cursors-resume-from-the-client-private-denotation-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client
                   conn
                   {:cache {}
@@ -439,7 +439,7 @@
               "an evicted checkpoint replays a bounded prefix, never the closure"))))))
 
 (deftest long-count-does-not-hold-relationship-writer-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
           query {:subject (spice-object :user "alice")
                  :permission :admin
@@ -473,7 +473,7 @@
                 "the post-write dependency epoch selects the new snapshot")))))))
 
 (deftest cache-config-is-validated-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (is (thrown? clojure.lang.ExceptionInfo
                  (core/make-client conn {:cache :yes})))
     (is (thrown? clojure.lang.ExceptionInfo
@@ -571,7 +571,7 @@
 ;; --- per-request cache override ----------------------------------------------
 
 (deftest disabled-cache-skips-native-cache-strategy-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [enabled (core/make-client conn {:cache {}})
           _ (seed-direct! conn enabled)
           disabled (core/make-client conn {:cache shared-cache/no-cache})
@@ -588,7 +588,7 @@
             "per-request bypass evaluates directly")))))
 
 (deftest per-request-cache-flag-bypasses-the-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache {}})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
@@ -642,7 +642,7 @@
   ;; :cache is excluded from the cursor's query identity. Leaving it in would
   ;; make a page-2 request that omits it fail against a page-1 token minted
   ;; with it — the same failure :consistency once caused.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache {}})]
       (eacl/write-schema! client direct-schema)
       @(d/transact conn (into [{:eacl/id "alice"}]
@@ -680,7 +680,7 @@
   ;; a hard error, not something to ignore — so :cache? had to be added to the
   ;; accepted set. This test is why that was caught: an operation-by-operation
   ;; sweep rather than a spot check on can? and lookup-resources.
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key "bypass-all0000000000000000000000"})
           _ (seed-direct! conn client)
           alice (spice-object :user "alice")
@@ -726,7 +726,7 @@
 ;; --- cache provenance on responses -------------------------------------------
 
 (deftest responses-report-whether-they-came-from-cache-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:security-key "provenance0000000000000000000000"
                                          :cache {}})
           _ (seed-direct! conn client)
@@ -776,7 +776,7 @@
           (is (false? (:cached? (eacl/count-resources plain query)))))))))
 
 (deftest default-client-cache-has-no-ttl-test
-  (with-mem-conn [conn schema/v7-schema]
+  (with-mem-conn [conn schema/v8-schema]
     (is (nil? (:lookup-cache-ttl-ms
                (:runtime (core/make-client conn {}))))
         "client-private authorization results do not expire by wall clock")
