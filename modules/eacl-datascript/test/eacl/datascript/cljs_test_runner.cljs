@@ -8,6 +8,8 @@
             [eacl.cache.key-test]
             [eacl.cache.standard-lru-test]
             [eacl.cache-test]
+            [eacl.caveats.values-test]
+            [eacl.relationships.qualifier-test]
             [eacl.core-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
@@ -118,6 +120,8 @@
                'eacl.request.context-test
                'eacl.request.counters-test
                'eacl.secure-format-test
+               'eacl.caveats.values-test
+               'eacl.relationships.qualifier-test
                'eacl.schema.expression-test
                'eacl.schema.expression-limits-test
                'eacl.schema.expression-resolver-test

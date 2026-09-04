@@ -1,6 +1,7 @@
 (ns eacl.datahike.schema
   (:require [clojure.set :as set]
             [datahike.api :as d]
+            [eacl.caveats.schema :as caveat-schema]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.storage :as target-storage]
             [eacl.relationships.upgrade :as upgrade]
@@ -118,7 +119,8 @@
 
 (def datahike-schema
   "EACL's own attributes, as datahike transaction data."
-  (into (into component-schema upgrade/metadata-schema) tuple-schema))
+  (into (into component-schema upgrade/metadata-schema)
+        (concat tuple-schema caveat-schema/datom-schema)))
 
 (defn merge-schema
   "EACL's attributes plus the caller's. `extra-schema` is datahike-native

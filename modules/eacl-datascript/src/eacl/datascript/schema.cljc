@@ -1,5 +1,6 @@
 (ns eacl.datascript.schema
   (:require [datascript.core :as ds]
+            [eacl.caveats.schema :as caveat-schema]
             [eacl.datascript.db :as ddb]
             [eacl.datascript.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]
@@ -10,7 +11,7 @@
             [eacl.schema.replacement-plan :as replacement-plan]))
 
 (def datascript-schema
-  (merge target-storage/metadata-schema
+  (merge target-storage/metadata-schema caveat-schema/datascript-schema
   {:eacl/id {:db/unique :db.unique/identity}
    :eacl.datascript/source-id {:db/unique :db.unique/identity}
    :eacl/schema-generation {:db/valueType :db.type/ref}

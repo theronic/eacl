@@ -1,6 +1,7 @@
 (ns eacl.datomic.schema
   (:require [clojure.walk :as walk]
             [datomic.api :as d]
+            [eacl.caveats.schema :as caveat-schema]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.storage :as target-storage]
             [eacl.relationships.upgrade :as upgrade]
@@ -277,7 +278,8 @@
    #(not (contains? expression-persistence/legacy-flat-attributes
                     (:db/ident %)))
    (into v7-compatible-schema
-         [(second upgrade/metadata-schema) target-storage/basis-guard])))
+         (concat [(second upgrade/metadata-schema) target-storage/basis-guard]
+                 caveat-schema/datom-schema))))
 
 (defn install!
   "Explicitly installs and bootstraps fresh Relationship storage 9. Existing

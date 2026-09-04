@@ -1,6 +1,7 @@
 (ns eacl.datalevin.schema
   (:require [clojure.string :as str]
             [datalevin.core :as ds]
+            [eacl.caveats.schema :as caveat-schema]
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.storage :as target-storage]
@@ -11,7 +12,7 @@
             [eacl.schema.model :as model]))
 
 (def datalevin-schema
-  (merge target-storage/metadata-schema
+  (merge target-storage/metadata-schema caveat-schema/datalevin-schema
   {:eacl/id {:db/valueType :db.type/string
              :db/unique :db.unique/identity}
    :eacl/schema-string {:db/valueType :db.type/string}

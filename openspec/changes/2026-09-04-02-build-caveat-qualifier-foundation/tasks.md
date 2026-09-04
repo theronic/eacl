@@ -15,8 +15,8 @@
 
 ## 3. Add qualifier and Caveat persistence
 
-- [ ] 3.1 Add qualifier format, Caveat ref, canonical context payload, and `valid-until-ms` attributes to bundled backend schemas, plus only the backend-specific creation-version field needed where assertion `t` is unavailable; verify sparse physical shape and backend module isolation.
-- [ ] 3.2 Implement canonical qualifier normalization and validation, including empty-to-`nil`, context-without-Caveat rejection, exact time bounds, and unknown-field rejection; verify property tests against the pre-green formal model.
+- [x] 3.1 Add qualifier format, Caveat ref, canonical context payload, and `valid-until-ms` attributes to bundled backend schemas, plus only the backend-specific creation-version field needed where assertion `t` is unavailable; verify sparse physical shape and backend module isolation.
+- [x] 3.2 Implement canonical qualifier normalization and validation, including empty-to-`nil`, context-without-Caveat rejection, exact time bounds, and unknown-field rejection; verify property tests against the pre-green formal model.
 - [x] 3.3 Exercise each bundled backend's real transaction API with newly allocated qualifier refs inside slot five, including DataScript/CLJS and Datalevin stores; verify and record whether inline allocation resolves to a concrete eid or must be rejected.
 - [ ] 3.4 Implement an explicit qualified-writer capability with certified inline-allocation and prepared-reference strategies; verify the latter precreates only an inert qualifier and the final transaction atomically publishes both halves, Relation stamp, and caller-composed datoms.
 - [ ] 3.5 Implement singly owned immutable qualifier create/replace/delete planners behind internal staged APIs; verify every semantic update uses a fresh qid, never embeds an unresolved lookup ref/tempid, and leaves no one-sided serving state.

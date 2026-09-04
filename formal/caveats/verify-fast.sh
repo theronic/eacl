@@ -33,7 +33,10 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (load-file \"formal/caveats/model.clj\")
      (load-file \"formal/caveats/model_test.clj\")
      (load-file \"formal/caveats/mutation_test.clj\")
-     (let [r (clojure.test/run-tests 'eacl.formal.caveats.model-test 'eacl.formal.caveats.mutation-test)]
+     (require 'eacl.caveats.values :reload)
+     (require 'eacl.relationships.qualifier :reload)
+     (load-file \"formal/caveats/refinement_bridge.clj\")
+     (let [r (clojure.test/run-tests 'eacl.formal.caveats.model-test 'eacl.formal.caveats.mutation-test 'eacl.formal.caveats.refinement-bridge)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Caveat finite gate failed or assertion inventory changed\" r)))
        r))" > "$output/finite.log" 2>&1 || {
