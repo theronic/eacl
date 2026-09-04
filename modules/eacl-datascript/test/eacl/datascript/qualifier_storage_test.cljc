@@ -11,7 +11,20 @@
   (let [calls (atom 0)
         seek d/seek-datoms]
     (try
-      (with-redefs [d/seek-datoms (fn [& args] (swap! calls inc) (apply seek args))]
+      ;; Preserve native multi-arity dispatch: advanced CLJS calls the arity
+      ;; property directly, which neither a variadic nor single-arity fn has.
+      (with-redefs [d/seek-datoms
+                    (fn
+                      ([db index]
+                       (swap! calls inc) (seek db index))
+                      ([db index c0]
+                       (swap! calls inc) (seek db index c0))
+                      ([db index c0 c1]
+                       (swap! calls inc) (seek db index c0 c1))
+                      ([db index c0 c1 c2]
+                       (swap! calls inc) (seek db index c0 c1 c2))
+                      ([db index c0 c1 c2 c3]
+                       (swap! calls inc) (seek db index c0 c1 c2 c3)))]
         (apply impl/direct-match? args))
       (finally (is (= 1 @calls) "one native seek per identity probe")))))
 
