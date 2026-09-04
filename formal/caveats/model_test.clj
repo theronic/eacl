@@ -142,6 +142,15 @@
       (is (= (contains? allowed caveat)
              (m/allowed? {:allowances {:viewer allowed}} :viewer caveat))))))
 
+(deftest container-substitution-preserves-residual-type
+  (doseq [[type value] [[[:list :int] [1 2]] [[:map :string :bool] {"enabled" true}]]]
+    (let [parameters {"x" :string "items" type}
+          expression (if (= :list (first type))
+                       [:in [:literal :int 1] [:param "items"]]
+                       [:index [:param "items"] [:param "x"]])
+          result (m/partial-value parameters expression {"items" value})]
+      (is (= :bool (m/plan-type parameters (:residual result)))))))
+
 (deftest mutation-controls
   (let [i (first identities) other (second identities)
         prepared (:state (m/transition m/empty-state [:prepare nil 1 {:caveat 1} nil]))

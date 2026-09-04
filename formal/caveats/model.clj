@@ -60,7 +60,9 @@
   (let [ts (mapv #(plan-type parameters %) (if (#{:literal :param} op) [] args))
         [a b] ts]
     (cond
-      (and (= :literal op) (= 3 (count plan)) (contains? scalar-types (first args))
+      ;; Source literals are scalar; partial residuals may substitute a typed
+      ;; list/map parameter. These remain values, never source-level literals.
+      (and (= :literal op) (= 3 (count plan)) (parameter-type? (first args))
            (value-valid? (first args) (second args))) (first args)
       (and (= :param op) (= 2 (count plan)) (contains? parameters (first args)))
       (get parameters (first args))
