@@ -1,0 +1,36 @@
+{:profile "eacl-cel/1"
+ :canonical-format 1
+ :scalar-types [:bool :int :string :timestamp]
+ :container-types [[:list :scalar] [:map :string :scalar]]
+ :operators
+ {:boolean [:and :or :not]
+  :same-scalar-type [:eq :ne]
+  :ordered-types {:int [:lt :le :gt :ge] :timestamp [:lt :le :gt :ge]}
+  :membership [:scalar-in-list :string-in-map]
+  :index [:string-map-key]
+  :string [:contains :starts-with :ends-with]}
+ :bounds
+ {:source-utf8-bytes 8192
+  :tokens 1024
+  :source-group-depth 32
+  :plan-depth 32
+  :plan-nodes 256
+  :parameters 32
+  :identifier-ascii-bytes 64
+  :string-utf8-bytes 4096
+  :container-entries 128
+  :context-total-entries 1024
+  :context-utf8-bytes 16384
+  :work-units 1048576
+  :program-cache-entries 256
+  :program-build-concurrency 4
+  :integer-min -9007199254740991
+  :integer-max 9007199254740991
+  :timestamp-min-ms -62135596800000
+  :timestamp-max-ms 253402300799999}
+ :excluded
+ [:arithmetic :repeated-unary :conditional-operator :macros :comprehensions
+  :regex :string-order :size :list-index :container-literals :aggregate-equality
+  :list-concatenation :null :double :uint :bytes :duration :dyn :any
+  :nested-container-types :timestamp-conversion :timestamp-selector
+  :type-conversion :optional :protobuf :custom-functions]}

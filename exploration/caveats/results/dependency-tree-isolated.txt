@@ -1,0 +1,7 @@
+org.clojure/clojure 1.11.4
+  . org.clojure/spec.alpha 0.3.218
+  . org.clojure/core.specs.alpha 0.2.62
+com.exoscale/cel-parser 0.1.8
+  . org.antlr/antlr4-runtime 4.9.2
+  . com.exoscale/antlr-cel 0.1.1
+    . org.antlr/antlr4-runtime 4.9.2

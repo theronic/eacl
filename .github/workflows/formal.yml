@@ -100,6 +100,11 @@ jobs:
           cat target/formal/ci-nrepl.log
           exit 1
 
+      - name: Verify Caveat foundation finite models and mutation controls
+        env:
+          EACL_NREPL_PORT: '7788'
+        run: bin/formal fast
+
       - name: Run generated Java differential boundaries through nREPL
         run: |
           sh bin/ci-nrepl-eval 7788 \

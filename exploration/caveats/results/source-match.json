@@ -1,0 +1,32 @@
+[
+  {
+    "path": "exoscale/cel/antlr.clj",
+    "matches_jar": true,
+    "sha256": "858d680ea097256789a005ba98e62a1e2f26a1c4774f67f5ac0468c276508e5f"
+  },
+  {
+    "path": "exoscale/cel/bindings.clj",
+    "matches_jar": true,
+    "sha256": "27419e26f4a4b45a9468500c7dea9dea7d0d07869501dc3b68dd21cf7ff51b41"
+  },
+  {
+    "path": "exoscale/cel/expr.clj",
+    "matches_jar": true,
+    "sha256": "2b2f7053a3ae1d4b9e22e748d3fc31732668aa3a11de85fb03c56b165d600b00"
+  },
+  {
+    "path": "exoscale/cel/parser.clj",
+    "matches_jar": true,
+    "sha256": "a02cf5ce8fe00501205d485219dc8d4cf01a59e52588417c27edb1da848d29bb"
+  },
+  {
+    "path": "exoscale/cel/unescape.clj",
+    "matches_jar": true,
+    "sha256": "1a04d259c79573aec4125cc5532fde268f30dd49691d2ae5904c342938a5cc0a"
+  },
+  {
+    "path": "exoscale/cel/visitor.clj",
+    "matches_jar": true,
+    "sha256": "f51912a81a010bf889f3158b74d836562ca02abe056f5279924853877cb3e022"
+  }
+]

@@ -8,7 +8,14 @@
   are generated under target/formal and are deliberately absent here.")
 
 (def theorem-policies
-  {:abstract-operator-engine-phase-a
+  {:caveat-qualifier-foundation
+   {:sources ["formal/dafny/CaveatOutcomes.dfy"
+              "formal/dafny/CaveatProfile.dfy"
+              "formal/dafny/CaveatSchema.dfy"
+              "formal/dafny/QualifierLifecycle.dfy"]
+    :claim :proof-only-typed-profile-partial-outcomes-and-atomic-qualifier-lifecycle
+    :minimum-proof-efforts 76}
+   :abstract-operator-engine-phase-a
    {:sources
     ["formal/dafny/PermissionSetAlgebra.dfy"
      "formal/dafny/SignedDependencyStratification.dfy"
@@ -122,7 +129,30 @@
     :minimum-proof-efforts 73}})
 
 (def operation-contracts
-  [{:operation :execution-contract
+  [{:operation :staged-caveat-qualifier-foundation
+    ;; No production entry point exists at the pre-implementation gate.
+    :entry-points []
+    :theorems [:atomic-qualifier-pair-publication
+               :prepared-qualifiers-have-no-authorization-effect
+               :immutable-single-owner-qualifier-replacement
+               :non-nil-missing-qualifier-is-a-fault
+               :schema-generation-cas-and-retained-caveat-references
+               :bound-context-overrides-request-context
+               :four-valued-logical-composition
+               :typed-profile-and-bounded-progress]
+    :dafny ["formal/dafny/CaveatOutcomes.dfy"
+            "formal/dafny/CaveatProfile.dfy"
+            "formal/dafny/CaveatSchema.dfy"
+            "formal/dafny/QualifierLifecycle.dfy"]
+    :adapter-obligations [:native-nested-ref-publication
+                          :immutable-snapshot-and-qualifier-history-evidence
+                          :canonical-context-and-plan-encoding
+                          :bounded-cel-value-and-error-conversion]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:phase-2-production-refinement
+                :phase-3-serving-activation
+                :independent-review]}
+   {:operation :execution-contract
     :entry-points
     ['eacl.execution/normalize 'eacl.engine.v8/lookup-resources]
     :theorems
