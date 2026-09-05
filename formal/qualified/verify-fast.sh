@@ -40,6 +40,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.backend.v8 :reload)
      (require 'eacl.operator.evaluator :reload)
      (require 'eacl.operator.evaluator-test :reload)
+     (require 'eacl.operator.arrow-evidence-test :reload)
+     (load-file \"formal/qualified/arrow_bridge.clj\")
      (require 'eacl.backend.direct-membership :reload)
      (require 'eacl.operator.vector-evaluator :reload)
      (require 'eacl.operator.vector-evaluator-test :reload)
@@ -71,6 +73,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.formal.qualified.recursive-bridge 'eacl.formal.qualified.stable-route-bridge
                                    'eacl.formal.qualified.seekable-bridge
                                    'eacl.formal.qualified.lookup-bridge
+                                   'eacl.formal.qualified.arrow-bridge
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Qualified finite gate failed or assertion inventory changed\" r)))

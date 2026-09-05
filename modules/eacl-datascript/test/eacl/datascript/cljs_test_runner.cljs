@@ -28,6 +28,7 @@
             [eacl.engine.stable-route-native-evidence-test]
             [eacl.operator.seekable-evidence-test]
             [eacl.operator.lookup-evidence-test]
+            [eacl.operator.arrow-evidence-test]
             [eacl.datascript.evaluation-clock-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
@@ -115,6 +116,7 @@
                'eacl.engine.stable-route-native-evidence-test
                'eacl.operator.seekable-evidence-test
                'eacl.operator.lookup-evidence-test
+               'eacl.operator.arrow-evidence-test
                'eacl.datascript.evaluation-clock-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test

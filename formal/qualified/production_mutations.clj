@@ -19,6 +19,8 @@
             [eacl.operator.seekable :as seekable]
             [eacl.operator.lookup :as lookup]
             [eacl.operator.lookup-evidence-test :as lookup-test]
+            [eacl.operator.evaluator :as scalar]
+            [eacl.operator.arrow-evidence-test :as arrow-test]
             [eacl.operator.seekable-evidence-test :as seekable-test]
             [eacl.operator.recursive :as recursive]
             [eacl.operator.vector-evaluator :as vector]
@@ -123,6 +125,12 @@
                (fn [options]
                  (check-many (update options :candidates
                                      #(mapv (fn [candidate] (dissoc candidate :evidence-witnesses)) %))))}}
+     :arrow-witness-scope-validation-bypassed
+     {:gate #'arrow-test/a-known-arrow-binding-is-completed-without-rechecking-its-target
+      :redefs {#'scalar/validate-arrow-witness! (fn [_ _ _ witness] witness)}}
+     :arrow-rechecks-already-proven-binding
+     {:gate #'arrow-test/a-known-arrow-binding-is-completed-without-rechecking-its-target
+      :redefs {#'scalar/known-arrow-binding? (constantly false)}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -133,7 +141,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 22 (count cases)))
+    (is (= 24 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

@@ -9,6 +9,7 @@
   (:require [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.v8 :as backend]
+            [eacl.exact-integer :as exact]
             [eacl.execution :as execution]
             [eacl.operator.plan :as operator-plan]
             [eacl.request.counters :as request-counters]
@@ -183,6 +184,33 @@
                 {:permission permission}))
     [permission root subject-type subject-eid intermediate-eid]))
 
+(defn- validate-arrow-witness!
+  "A generator may discharge one exact arrow binding in this selected point.
+   Its evidence is only a lower bound for the arrow's union of bindings."
+  [plan qualification root-key witness]
+  (when (some? witness)
+    (when-not (and (map? witness)
+                   (= #{:point :partition :intermediate :evidence :scope} (set (keys witness)))
+                   qualification
+                   (= root-key (:point witness))
+                   (= (qualification/exact-reuse-identity qualification) (:scope witness)))
+      (invalid! :arrow-witness-scope "Arrow witness must belong to this exact point and request." {}))
+    (let [predicate (get-in (:predicate-programs plan) [(first root-key) (second root-key)])
+          partition (:partition witness)]
+      (when-not (and (= :arrow-membership (:instruction predicate))
+                     (exact/natural? partition)
+                     (< partition (count (get-in predicate [:descriptor :partitions])))
+                     (exact/natural? (:intermediate witness)))
+        (invalid! :arrow-witness-binding "Arrow witness names an invalid binding." {})))
+    (when-not (boolean? (:evidence witness)) (evidence/encode (:evidence witness)))
+    (when-not (evidence/before? (:time qualification) (evidence/valid-until (:evidence witness)))
+      (invalid! :expired-arrow-witness "Arrow witness certificate has already expired." {})))
+  witness)
+
+(defn- known-arrow-binding? [witness root-key key partition-index intermediate-eid]
+  (and (= root-key key) (= partition-index (:partition witness))
+       (= intermediate-eid (:intermediate witness))))
+
 (defn check-eids
   "Returns exact point membership for an acyclic operator plan.
 
@@ -191,7 +219,7 @@
   denied without backend work. Recursive plans fail with a typed transition
   requirement; they are never interpreted as false."
   [{:keys [adapter plan subject-type subject-eid resource-eid limits
-           permission node-id qualification]}]
+           permission node-id qualification arrow-witness]}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Operator evaluation requires a sealed operator plan."
@@ -217,6 +245,7 @@
             root-id (or node-id (get roots root-permission))
             root-key [root-permission root-id subject-type
                       subject-eid resource-eid]
+            arrow-witness (validate-arrow-witness! plan qualification root-key arrow-witness)
             counters (volatile! {:transitions 0
                                  :arrow-commands 0
                                  :arrow-values 0})
@@ -231,7 +260,8 @@
           (invalid! :missing-root "Operator plan root expression is missing."
                     {:root root-permission}))
         (loop [stack [{:kind :eval :key root-key}]
-               memo {}
+               memo (if (and arrow-witness (decisive? :union (:evidence arrow-witness)))
+                      {root-key (:evidence arrow-witness)} {})
                active #{}
                returned no-value]
           (if (not= no-value returned)
@@ -361,7 +391,9 @@
                                  {:kind :arrow-next
                                   :key key
                                   :descriptor (:descriptor predicate)
-                                  :partition-index 0 :accumulated false
+                                  :partition-index 0
+                                  :accumulated (if (and arrow-witness (= root-key key))
+                                                 (:evidence arrow-witness) false)
                                   :values [] :value-index 0
                                   :bound nil :exhausted? false})
                            memo active no-value)
@@ -421,11 +453,20 @@
                           (let [compact-edge (nth values value-index)
                                 intermediate-eid (edge/endpoint compact-edge)
                                 partition (nth partitions partition-index)
-                                via (if qualification
-                                      (qualification/qualify qualification (:via-relation-eid partition) compact-edge)
-                                      true)
+                                known? (and arrow-witness
+                                            (known-arrow-binding? arrow-witness root-key key
+                                                                  partition-index intermediate-eid))
+                                via (when-not known?
+                                      (if qualification
+                                        (qualification/qualify qualification (:via-relation-eid partition) compact-edge)
+                                        true))
                                 next-frame (update frame :value-index inc)]
                             (cond
+                              known?
+                              ;; The seed already contributed this exact binding.
+                              ;; Visit only remaining target obligations.
+                              [(conj stack next-frame) memo active no-value]
+
                               (evidence/fault? via)
                               (let [[memo active value]
                                     (complete-value memo active key via maximum-memo-entries)]
