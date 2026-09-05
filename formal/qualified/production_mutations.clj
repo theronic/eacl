@@ -17,6 +17,9 @@
             [eacl.authorization.clock :as clock]
             [eacl.authorization.evidence-test :as evidence-test]
             [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualifier-cache :as qualifier-cache]
+            [eacl.authorization.qualifier-cache-test :as qualifier-cache-test]
+            [eacl.datascript.qualifier-cache-test :as public-qualifier-cache-test]
             [eacl.authorization.qualification-test :as qualification-test]
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.scan-cache-test :as scan-test]
@@ -86,6 +89,8 @@
         check-stable stable-route/check-eids
         validate-stable @#'stable-route/validate-known-witness!
         aggregate batch/aggregate-counters
+        content-key qualifier-cache/content-key
+        exact-key qualifier-cache/exact-key
         collect data/collect
         can? core/can?
         check-evidence engine/check-evidence
@@ -106,7 +111,27 @@
         plan-entry @#'staged/plan-entry
         plan-batch staged/plan-batch
         write-relationship! core/write-relationship!]
-    {:public-write-drops-qualifier-input
+    {:qualifier-cache-omits-native-content
+     {:gate #'qualifier-cache-test/complete-content-proofs-detect-unstamped-mutations-and-deletion
+      :redefs {#'qualifier-cache/content-key (fn [basis rid qid version _ named relation]
+                                               (content-key basis rid qid version nil named relation))}}
+     :qualifier-cache-omits-definition-content
+     {:gate #'qualifier-cache-test/complete-content-proofs-detect-unstamped-mutations-and-deletion
+      :redefs {#'qualifier-cache/content-key (fn [basis rid qid version entity _ relation]
+                                               (content-key basis rid qid version entity nil relation))}}
+     :qualifier-cache-omits-source-lifecycle
+     {:gate #'qualifier-cache-test/exact-and-content-reuse-retain-data-and-reevaluate-each-request
+      :redefs {#'qualifier-cache/content-key (fn [basis & args]
+                                               (apply content-key (dissoc basis :source-lifecycle) args))}}
+     :qualifier-cache-omits-owning-relation-proof
+     {:gate #'qualifier-cache-test/exact-and-content-reuse-retain-data-and-reevaluate-each-request
+      :redefs {#'qualifier-cache/content-key (fn [basis rid qid version entity named _]
+                                               (content-key basis rid qid version entity named nil))}}
+     :qualifier-cache-exact-scope-omits-native-basis
+     {:gate #'public-qualifier-cache-test/public-decode-reuse-rechecks-unknown-native-writers
+      :redefs {#'qualifier-cache/exact-key (fn [basis & args]
+                                             (apply exact-key (dissoc basis :revision :exact-locator :backend-snapshot-id) args))}}
+     :public-write-drops-qualifier-input
      {:gate #'mutations-test/qualified-write-input-is-one-named-caveat-with-bounded-context-and-expiry
       :redefs {#'mutations/normalize-relationship
                (fn [relationship] (select-keys (normalize-relationship relationship) [:subject :relation :resource]))}}
@@ -444,7 +469,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 83 (count cases)))
+    (is (= 88 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

@@ -4,6 +4,7 @@
   (:require [eacl.authorization.context :as context]
             [eacl.authorization.data :as data]
             [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualifier-cache :as qualifier-cache]
             [eacl.backend.v8 :as backend]
             [eacl.cache.standard-lru :as lru]
             [eacl.caveats.definition :as definition]
@@ -15,20 +16,20 @@
             [eacl.request.counters :as counters]))
 
 (def maximum-request-entries 100000)
-(defrecord Qualification [time context evaluator entity version basis cache memos lookup prepared-context])
+(defrecord Qualification [time context evaluator entity version basis cache memos lookup prepared-context populate-cache?])
 
 (defn request
   "Captures trusted time and exact source/basis identity supplied by request
    orchestration. Entity/version callbacks close over that same native basis.
-   Decode retention is optional and always uses complete exact basis identity."
+   Decode retention is optional and requires exact basis or complete content identity."
   [{:keys [time context evaluator entity version basis cache lookup prepared-context] :as options}]
   (when-not (and (values/valid-time? time) (or (nil? context) (map? context))
-                (or (and (fn? entity) (fn? version) (nil? lookup))
-                    (and (fn? lookup) (nil? entity) (nil? version)))
-                (map? basis) (seq basis)
-                (or (nil? cache) (lru/store? cache))
-                (or (nil? prepared-context)
-                    (context/prepared? prepared-context)))
+                 (or (and (fn? entity) (fn? version) (nil? lookup))
+                     (and (fn? lookup) (nil? entity) (nil? version)))
+                 (map? basis) (seq basis)
+                 (or (nil? cache) (lru/store? cache) (qualifier-cache/cache? cache))
+                 (or (nil? prepared-context)
+                     (context/prepared? prepared-context)))
     (qualifier/error! :qualification-context))
   (let [prepared (if (and prepared-context
                           (or (not (contains? options :context))
@@ -36,7 +37,7 @@
                    prepared-context
                    (context/prepare (or context {})))]
     (->Qualification time (context/value prepared) evaluator entity version basis cache
-                     (delay (volatile! {})) lookup prepared)))
+                     (delay (volatile! {})) lookup prepared (not (false? (:populate-cache? options))))))
 
 (defn require-publication! [adapter]
   ;; Check before any answer/cache route, including empty or ordinary edges.
@@ -87,7 +88,7 @@
                              (<= 0 (:fact-count result) data/maximum-entity-facts))
                 (qualifier/error! :qualification-data))
               result))
-    {:entity ((:entity request) eid)}))
+    (memo! request [:entity-data eid] #(hash-map :entity ((:entity request) eid)))))
 
 (defn- named-definition [request eid]
   (memo! request [:caveat eid]
@@ -105,26 +106,6 @@
                     (select-keys (evaluator/descriptor engine)
                                  [:profile :profile-fingerprint :fingerprint :capability-version])))))
 
-(defn- decoded [request qid]
-  (memo! request [:qualifier qid]
-    #(let [key [(:basis request) qid qualifier/format-version]
-           cached (when-let [cache (:cache request)] (lru/lookup! cache key))]
-       (if (:found? cached)
-         (:value cached)
-         (let [data (entity-data request qid)
-               entity (:entity data)
-               caveat-id (get entity qualifier/caveat-attribute)
-               _ (when (and (some? caveat-id) (not (qualifier/concrete-eid? caveat-id)))
-                   (qualifier/error! :qualifier-ref))
-               named (when caveat-id (named-definition request caveat-id))
-               value (qualifier/decode entity (get-in named [:header :parameters] []))
-               version (if (:lookup request) (:version data) ((:version request) qid))
-               _ (when (and (some? version) (not (qualifier/concrete-eid? version)))
-                   (qualifier/error! :qualifier-version))
-               result {:qualifier value :definition named :version version}]
-           (when-let [cache (:cache request)] (lru/put-if-absent! cache key result))
-           result)))))
-
 (defn- allowed! [request relation-id caveat-id]
   (let [allowed (memo! request [:relation relation-id]
                        #(let [relation (:entity (entity-data request relation-id))]
@@ -133,13 +114,56 @@
                           (qualifier/relation-allowance relation)))]
     (when-not (contains? allowed caveat-id) (qualifier/error! :caveat-not-allowed))))
 
+(defn- qualifier-input [request qid]
+  (let [data (entity-data request qid)
+        entity (:entity data)
+        caveat-id (get entity qualifier/caveat-attribute)
+        _ (when (and (some? caveat-id) (not (qualifier/concrete-eid? caveat-id)))
+            (qualifier/error! :qualifier-ref))
+        named (when caveat-id (named-definition request caveat-id))
+        version (if (:lookup request) (:version data) ((:version request) qid))]
+    (when (and (some? version) (not (qualifier/concrete-eid? version)))
+      (qualifier/error! :qualifier-version))
+    {:entity entity :named named :version version}))
+
+(defn- decode-input [{:keys [entity named version]}]
+  {:qualifier (qualifier/decode entity (get-in named [:header :parameters] []))
+   :definition named :version version})
+
+(defn- cached-decoded [request relation-id qid cache]
+  (let [exact (qualifier-cache/exact-key (:basis request) relation-id qid)
+        cached (qualifier-cache/lookup! cache exact)]
+    (if (:found? cached)
+      (:value cached)
+      (let [{:keys [entity named version] :as input} (qualifier-input request qid)
+            relation (:entity (entity-data request relation-id))
+            content (qualifier-cache/content-key (:basis request) relation-id qid version entity (:entity named) relation)
+            cached (qualifier-cache/lookup! cache content)
+            result (if (:found? cached) (:value cached) (decode-input input))]
+        (if (:populate-cache? request)
+          (qualifier-cache/publish! cache exact content result)
+          result)))))
+
+(defn- decoded [request relation-id qid]
+  (memo! request [:qualifier qid]
+         #(let [cache (:cache request)]
+            (if (qualifier-cache/cache? cache)
+              (cached-decoded request relation-id qid cache)
+              (let [key [(:basis request) qid qualifier/format-version]
+                    cached (when cache (lru/lookup! cache key))]
+                (if (:found? cached)
+                  (:value cached)
+                  (let [result (decode-input (qualifier-input request qid))]
+                    (when (and cache (:populate-cache? request)) (lru/put-if-absent! cache key result))
+                    result)))))))
+
 (defn inspect
   "Returns decoded public qualifier metadata without running a Caveat program.
    The request memo and exact qualifier validation are shared with authorization."
   [request relation-id qualifier-id]
   (if-not qualifier-id
     {}
-    (let [{:keys [qualifier definition]} (decoded request qualifier-id)
+    (let [{:keys [qualifier definition]} (decoded request relation-id qualifier-id)
           {:keys [caveat caveat-context valid-until-ms]} qualifier]
       (allowed! request relation-id caveat)
       (cond-> {}
@@ -173,14 +197,14 @@
       (execution/check! :qualifier-resolution)
       (try
         (when-not (edge/valid? compact-edge) (qualifier/error! :qualifier-ref))
-        (let [{:keys [qualifier definition]} (decoded request (edge/qualifier-id compact-edge))
+        (let [{:keys [qualifier definition]} (decoded request relation-id (edge/qualifier-id compact-edge))
               {:keys [caveat caveat-context valid-until-ms]} qualifier]
           (allowed! request relation-id caveat)
           (if (and valid-until-ms (>= (:time request) valid-until-ms))
             false
             (evidence/with-certificate
-             (if caveat (caveat-evidence request definition caveat-context) true)
-             valid-until-ms true)))
+              (if caveat (caveat-evidence request definition caveat-context) true)
+              valid-until-ms true)))
         (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
           (let [{:keys [type reason]} (ex-data error)]
             (if (contains? #{:eacl.qualifier/invalid :eacl.caveat/invalid

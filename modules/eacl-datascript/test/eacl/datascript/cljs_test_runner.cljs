@@ -10,6 +10,8 @@
             [eacl.authorization.context-test]
             [eacl.authorization.result-test]
             [eacl.authorization.qualification-test]
+            [eacl.authorization.qualifier-cache-test]
+            [eacl.datascript.qualifier-cache-test]
             [eacl.cache.derived-schema-test]
             [eacl.cache.key-test]
             [eacl.cache.standard-lru-test]
@@ -122,6 +124,8 @@
                'eacl.authorization.context-test
                'eacl.authorization.result-test
                'eacl.authorization.qualification-test
+               'eacl.authorization.qualifier-cache-test
+               'eacl.datascript.qualifier-cache-test
                'eacl.cache.derived-schema-test
                'eacl.cache.key-test
                'eacl.cache.standard-lru-test

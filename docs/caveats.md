@@ -262,3 +262,24 @@ Expiry retains Relationship identity. `:create` conflicts with an expired row;
 Omitting `:valid-until-ms` on a replacement removes expiry. Omitting all qualifier
 metadata returns the row to the nil-qid representation when the Relation permits
 plain input. No collection job is required for expiration correctness.
+
+## Phase 3 decoded qualifier cache
+
+Qualified clients have an optional bounded local decode cache. Configure
+`:qualifier-cache {:max-entries 256}` or disable it with `:qualifier-cache false`.
+The capacity counts both exact-basis and content-proof indices together. The
+client's `eacl.cache/no-cache` setting disables this tier too; request
+`:cache? false` bypasses it, while `:populate-cache? false` permits retained reads
+without publishing new entries. Source lifecycle rotation replaces the tier.
+It is private decoded data and is not part of exported authorization snapshots.
+
+Exact-basis hits omit qualifier refetching. Across bases, current adapters compare
+all native qualifier fields, the marker assertion version when available,
+named Caveat definition, owning Relation content, and source lifecycle before
+reusing the decoded structure. Datalevin uses its complete content proof without
+claiming a native creation version. A publication-capable backend does not by
+itself certify that every external writer preserves immutable qualifiers, so
+cross-basis hits still perform bounded native content reads. This detects
+unstamped in-place mutations, deletion and entity reuse without scanning the
+graph for reverse ownership. Expiry and Caveat evaluation run for each request;
+neither Boolean decisions nor conditional evidence enter this decode cache.

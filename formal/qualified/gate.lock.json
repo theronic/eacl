@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 584088,
+  "assertions": 584191,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -26,7 +26,7 @@
     "modules/eacl-datascript/test/eacl/operator/recursive_test.cljc": "ba7994d6834206a02622cecae7105fc889ba10b29b0d04469a9ac0e880f9a0c6",
     "formal/qualified/stable_route_bridge.clj": "79057574de4fa3ee2dc0aba63166037a3648df51f9060b2d3bdb597ee7b85577",
     "modules/eacl/test/eacl/engine/stable_route_evidence_test.cljc": "4e4a1990f3ff461539309919b14fc9bae8df9def37a61fc91085d96ed07c4d84",
-    "formal/qualified/production_mutations.clj": "bd9a0ea343bac2cfa3724d6bc12d4d47a8a3f764fef27e7ddd01d007c6f7da22",
+    "formal/qualified/production_mutations.clj": "f8feb9e5b5241bf11ce169c5f0e145e00a2d299f7ade94776fc3b87bb487341c",
     "modules/eacl-datascript/test/eacl/engine/stable_route_native_evidence_test.cljc": "bbe7fb3ce769a0abf3c1bc3b471780fad44aa6ec262beb35335da8dfe29d108d",
     "modules/eacl/test/eacl/engine/scan_cache_test.cljc": "59afc0cfe74af16b17801d18b513b86efd4634949f187a2fd58a656333d18925",
     "modules/eacl-datascript/test/eacl/datascript/evaluation_clock_test.cljc": "6a53273d259a534c0feab05d8c5818c7da8685ec7757cfd436804c859cde3435",
@@ -70,6 +70,9 @@
     "modules/eacl/src/eacl/relationships/inspection.cljc": "6e5f57e9b847d1040f51845b4419613320296867f718828035a19043758f0524",
     "modules/eacl/test/eacl/authorization/inspection_test.cljc": "dd2c6013b2236085a07dfdc362095912369902e71e43435fd653b1c40a73fa0e",
     "modules/eacl/test/eacl/caveats/inspection_contract.cljc": "052d8e05b7cfd82e29059576d2e9d76a80dd3aa16f573f38d9411e6fee9ec114",
-    "modules/eacl-datascript/test/eacl/datascript/qualified_inspection_test.cljc": "4ddef4cd36c3e8a1d55b0521311ce5f006e604a6104d8a3ff4b15adecc7729f4"
+    "modules/eacl-datascript/test/eacl/datascript/qualified_inspection_test.cljc": "4ddef4cd36c3e8a1d55b0521311ce5f006e604a6104d8a3ff4b15adecc7729f4",
+    "modules/eacl/src/eacl/authorization/qualifier_cache.cljc": "9f14da0aed30f64701ee301c56cf508de26adb5398bd2c6a9b65bb12d315bc62",
+    "modules/eacl/test/eacl/authorization/qualifier_cache_test.cljc": "80b5d47f9587ee14b79300e202fd9d4d68407401431524b332dd01f7cadb9990",
+    "modules/eacl-datascript/test/eacl/datascript/qualifier_cache_test.cljc": "0002c29749a5160ee7ea57a60e1ffabba747075a9b16dc59ae84c27a182fe628"
   }
 }

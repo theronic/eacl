@@ -18,7 +18,7 @@
 
 - [x] 3.1 Implement exact qualifier fetch/decode/validation across bundled backends, including format, certified creation `t`/version, Caveat allowance, context, and expiry; verify malformed/dangling fixtures fault while managed hot-path instrumentation performs no reverse graph scan for writer-certified ownership.
 - [x] 3.2 Add one bounded request-local qid cache shared by recursive/operator paths; verify one distinct non-`nil` qid causes at most one qualifier fetch per top-level operation.
-- [ ] 3.3 Add optional longer-lived qualifier decode caching keyed by source lifecycle, qid, certified creation `t`/version, and format, conditioned on owning Relation/supported-writer proof with exact/content-proof fallback for unknown writers; verify eid reuse/reset, deletion, and in-place mutation traces cannot reuse stale data.
+- [x] 3.3 Add optional longer-lived qualifier decode caching keyed by source lifecycle, qid, certified creation `t`/version, and format, conditioned on owning Relation/supported-writer proof with exact/content-proof fallback for unknown writers; verify eid reuse/reset, deletion, and in-place mutation traces cannot reuse stale data.
 - [x] 3.4 Ensure qualifier-cache values are decoded data only and perform expiry/Caveat evaluation per request; verify different times/contexts reuse structure but not final authorization.
 
 ## 4. Activate Caveat evaluation and public permissionship

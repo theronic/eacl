@@ -284,3 +284,24 @@ shortening, and expiry removal through immutable touch. Existing compact scan
 cache, weighted reducer, checkpoint/head, dimensional-budget and candidate-window
 conformance is complemented by stopping after a native qualifier read when the
 absolute execution deadline or cancellation token fires.
+
+### Implemented decode reuse proof strength
+
+The optional client decode cache shares one bounded LRU capacity between exact
+and complete-content indices. Exact identity retains the full native basis;
+content identity retains source lifecycle/branch, Relation eid and complete
+content, qid, marker assertion version when available, qualifier format and
+complete content, and the named Caveat entity. Raw native writers remain possible
+on the bundled backends: atomic publication capability therefore does not imply
+a source-wide non-reuse contract. Cross-basis decode reuse currently takes the
+stronger complete-content fallback and performs bounded entity reads. It never
+skips those reads based only on a qid, assertion marker, or Relation stamp.
+
+Both indices retain decoded data only. Per-request context and expiry evaluation,
+request-local shared fetch memoization, request cache controls, source rotation,
+and speculative no-publication rules remain independent. A single capacity
+counts both indices, and each points to the same immutable decoded value.
+Portable and native traces compare warm and uncached outcomes after lifecycle
+reset, deletion, unchanged-marker mutation, Caveat replacement, and Relation
+allowance change. No global ownership scan or authorization result is introduced
+into this structural tier.

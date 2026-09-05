@@ -37,6 +37,7 @@
             [eacl.authorization.context :as caveat-context]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualifier-cache :as qualifier-cache]
             [eacl.authorization.result :as authorization-result]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.source :as source]
@@ -108,7 +109,9 @@
   (when *qualified-authorization-enabled?*
     {:time (:evaluation-time-ms opts)
      :prepared-context (::caveat-context opts)
-     :evaluator (:caveat-evaluator opts)}))
+     :evaluator (:caveat-evaluator opts)
+     :cache (when (not (false? (:completed-cache-request? opts))) (:qualifier-decode-cache opts))
+     :populate-cache? (:populate-cache-request? opts true)}))
 
 (def ^:dynamic *operator-expression-writes-enabled?*
   "Public schema-write gate for intersection or exclusion expressions.
@@ -2494,7 +2497,7 @@
            [token source-incarnation source-lifecycle basis-cache-store
             continuation-cache-store cursor-codec-cache
             cursor-construction-cache derived-schema-caches scan-tier
-            range-tier content-revision])
+            range-tier qualifier-decode-cache content-revision])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
@@ -2503,7 +2506,7 @@
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
     :cursor-codec-cache :cursor-construction-cache :derived-schema-caches
-    :scan-tier :range-tier})
+    :scan-tier :range-tier :qualifier-decode-cache})
 
 ;; A transient Acl read has already captured and attached one immutable
 ;; lifecycle options map before selecting its basis. Keep that map opaque
@@ -2564,6 +2567,10 @@
   (when (and basis-cache-store (not (false? range-reuse-option)))
     (range-reuse/tier (if (map? range-reuse-option) range-reuse-option {}))))
 
+(defn- qualifier-tier-for
+  [{:keys [qualifier-cache-option]} basis-cache-store]
+  (when basis-cache-store (qualifier-cache/cache qualifier-cache-option)))
+
 (defn- fresh-runtime-cache-lifecycle
   [{:keys [cache-option derived-schema-store-factory]
     :as config}
@@ -2589,6 +2596,7 @@
      (derived-schema-store-factory)
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
+     (qualifier-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- narrow-runtime-cache-lifecycle
@@ -2620,6 +2628,7 @@
      (:derived-schema-caches current)
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
+     (qualifier-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- lifecycle-content-revision
@@ -2679,7 +2688,7 @@
 
 (def ^:private runtime-option-keys
   #{:adapter-fingerprint :adapter-deterministic? :aggregate-limits
-    ::evaluation-clock :caveat-evaluator
+    ::evaluation-clock :caveat-evaluator :qualifier-decode-cache
     :continuation-cache-store :basis-cache-store
     :cursor-codec-cache :cursor-construction-cache :decision-kernel
     :derived-schema-caches :expression-limits
@@ -2998,6 +3007,7 @@
       ;; it must not repopulate the cleared runtime under its old lineage.
       (assoc :basis-cache-store nil
              :cache-lifecycle nil
+             :qualifier-decode-cache nil
              :continuation-cache-store nil
              :cursor-codec-cache nil
              :cursor-construction-cache nil
@@ -4356,6 +4366,7 @@
   #{:entid->object-id
     :clock
     :caveat-evaluator
+    :qualifier-cache
     :object-id->lookup-ref
     :internal-cursor->spice
     :spice-cursor->internal
@@ -4517,6 +4528,7 @@
   (when (some? (:caveat-evaluator config-opts))
     (caveat-evaluator/require-matching!
      (:caveat-evaluator config-opts) caveat-evaluator/profile-fingerprint))
+  (qualifier-cache/normalize-option (:qualifier-cache config-opts))
   (when-let [scan-cache-option (:scan-cache config-opts)]
     (when-not (or (false? scan-cache-option)
                   (and (map? scan-cache-option)
@@ -4674,6 +4686,7 @@
         runtime-cache-lifecycle-config
         {:cache-option cache
          :scan-cache-option (:scan-cache config-opts)
+         :qualifier-cache-option (:qualifier-cache config-opts)
          :range-reuse-option (:range-reuse config-opts)
          :proof-contract-reporter proof-contract-reporter
          :derived-schema-store-factory derived-schema/store
@@ -4697,8 +4710,8 @@
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
           :caveat-evaluator (if (contains? config-opts :caveat-evaluator)
-                             (:caveat-evaluator config-opts)
-                             (caveat-evaluator/default-evaluator))
+                              (:caveat-evaluator config-opts)
+                              (caveat-evaluator/default-evaluator))
           ::evaluation-clock (if (contains? config-opts :clock)
                                (authorization-clock/clock (:clock config-opts))
                                authorization-clock/system-clock)

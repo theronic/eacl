@@ -104,3 +104,14 @@ qid or rendered metadata, remove the candidate-work limit, or admit noncanonical
 cached metadata. Qualification deadline and cancellation tests stop immediately
 after a native data read and preserve the operational error on retry. The combined
 gate has 584,088 assertions and 83 detected production mutations.
+
+Optional qualifier decode retention now uses exact-basis or complete native
+content proof. The latter includes source lifecycle, qid, assertion version,
+format, all qualifier fields, the owning Relation and named Caveat definition.
+It does not infer a source-wide immutable-writer contract from publication
+capability. Portable and public native tests add 93 assertions for same-basis
+fetch omission, cross-basis decode reuse with content reads, fresh per-request
+context/expiry evaluation, unchanged-marker mutation, deletion, source reset,
+capacity, and read-only/disabled cache controls. Five controls omit native
+content, definition content, lifecycle, Relation proof or exact native basis.
+The combined gate has 584,191 assertions and 88 detected production mutations.
