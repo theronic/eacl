@@ -55,8 +55,11 @@
    definition document {
      relation reader: user
      relation parent: group
+     relation banned: user
      permission view = reader & parent->active
      permission direct_inherited = reader & parent->member
+     permission inherited = parent->active - banned
+     permission inherited_direct = parent->member - banned
    }")
 
 (def shared-dag-schema

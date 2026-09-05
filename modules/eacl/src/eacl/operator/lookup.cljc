@@ -7,6 +7,7 @@
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
             [eacl.operator.cover-plan :as cover-plan]
+            [eacl.operator.evaluator :as scalar]
             [eacl.operator.plan :as operator-plan]
             [eacl.operator.seekable :as seekable]
             [eacl.operator.vector-evaluator :as vector-evaluator]
@@ -65,8 +66,31 @@
   "Maximum exact node entries retained during one bounded raw batch."
   100000)
 
+(defn- complete-arrow-witness
+  [options predicate permission node-id subject-type subject-eid resource-eid witness]
+  (let [value (evidence/throw-if-fault! (:evidence witness))]
+    (if (evidence/has? value)
+      value
+      (let [rule (:rule witness)
+            partition (first (keep-indexed
+                              (fn [i p]
+                                (when (and (= (:intermediate-type rule) (:intermediate-type p))
+                                           (= (:via-relation-eid rule) (:via-relation-eid p))) i))
+                              (get-in predicate [:descriptor :partitions])))
+            request (:qualification options)]
+        (when-not (some? partition)
+          (invalid! :arrow-witness-partition "Generated arrow binding is outside its predicate." {}))
+        (scalar/check-eids
+         {:adapter (:adapter options) :plan (:plan options)
+          :permission permission :node-id node-id :subject-type subject-type
+          :subject-eid subject-eid :resource-eid resource-eid
+          :qualification request :limits (:vector-limits options)
+          :arrow-witness {:point [permission node-id subject-type subject-eid resource-eid]
+                          :partition partition :intermediate (:intermediate witness)
+                          :evidence value :scope (qualification/exact-reuse-identity request)}})))))
+
 (defn- local-node-acceptor
-  [{:keys [adapter plan cache-lookup vector-limits scope-identity qualification]} cover-plan]
+  [{:keys [adapter plan cache-lookup vector-limits scope-identity qualification] :as options} cover-plan]
   (let [root-semantic (:operator-root-semantic cover-plan)
         node-map (:operator-synthetic->semantic cover-plan)
         memo (when qualification (volatile! {:points {} :entries 0}))]
@@ -78,11 +102,14 @@
                     "Least-path requested an unmapped operator cover node." {:node node}))
         (if qualification
           (let [point [direction subject-type subject-eid resource-eid]
+                _ (when evidence-witness
+                    (evidence/throw-if-fault! (:evidence evidence-witness)))
                 previous (get-in @memo [:points point] {})
                 proof-node (when evidence-witness
                              (case (get-in evidence-witness [:rule :rule])
                                :relation semantic
                                :self-permission (get node-map (get-in evidence-witness [:rule :target-node]))
+                               (:arrow-relation :arrow-permission) nil
                                (invalid! :unsupported-generator-witness
                                          "Qualified generator witness is not an exact node result." {})))
                 known (if proof-node
@@ -90,8 +117,15 @@
                                (evidence/throw-if-fault! (:evidence evidence-witness)))
                         previous)
                 result
-                (if (contains? known semantic)
+                (cond
+                  (contains? known semantic)
                   (get known semantic)
+
+                  (and evidence-witness (= :arrow-membership (:instruction predicate)))
+                  (complete-arrow-witness options predicate permission node-id subject-type
+                                          subject-eid resource-eid evidence-witness)
+
+                  :else
                   (first
                    (vector-evaluator/check-cached-many-eids
                     (cond->

@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 364944,
+  "assertions": 438681,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -19,14 +19,14 @@
     "formal/qualified/qualification_bridge.clj": "a7c827bb9c60a885635591172f99676ecfed1706518a676329a6f0235359beba",
     "modules/eacl/test/eacl/authorization/qualification_test.cljc": "0a8b3f5a8199c664700f486597b533404cedafccaff7ba8c0cf2e592b1476d75",
     "formal/qualified/operator_bridge.clj": "7583c20f0a29e949719368fd67f71ca4167f76fabb0d5c04f0743facf2b32648",
-    "modules/eacl-datascript/test/eacl/operator/evaluator_test.cljc": "91f9e18146a4b14e70a1e26707885fec0cac776764652ca8126ed06a6c37db1e",
+    "modules/eacl-datascript/test/eacl/operator/evaluator_test.cljc": "b6ed238fbeb884d8c6503b8e7f4b9d8245c0120b88cd1645e60fd567eece5c11",
     "modules/eacl-datascript/test/eacl/operator/vector_evaluator_test.cljc": "e66dab6b0c5f376db91cc5255a29307df78bd38bb64e26b30798b8ff22badf3d",
     "modules/eacl/test/eacl/authorization/evidence_index_test.cljc": "6880dddab5bf70e1fd14ebf22a7535b00f1687fc75818ffa6eff40fac64b3251",
     "formal/qualified/recursive_bridge.clj": "c4700e5a72794894091971219a229c815fd61102946702b431cbe1c0a234acc7",
     "modules/eacl-datascript/test/eacl/operator/recursive_test.cljc": "ba7994d6834206a02622cecae7105fc889ba10b29b0d04469a9ac0e880f9a0c6",
     "formal/qualified/stable_route_bridge.clj": "9ebb7bbf6828c29b2ddef78d985286110444ab34b242f5a601c4b554798aab18",
     "modules/eacl/test/eacl/engine/stable_route_evidence_test.cljc": "a1e2683083c7cd5106a77aca483752324e47dbdb868cf115bca75dac145f2002",
-    "formal/qualified/production_mutations.clj": "26a2719b7d10235df03b39521e878a60fb904110444ec6b52b2d5c54119d1a13",
+    "formal/qualified/production_mutations.clj": "e91b754f16bdabb0150a6bec165b7d858b63e64ddde5c8d4bbbe7fcf542e6b8e",
     "modules/eacl-datascript/test/eacl/engine/stable_route_native_evidence_test.cljc": "bbe7fb3ce769a0abf3c1bc3b471780fad44aa6ec262beb35335da8dfe29d108d",
     "modules/eacl/test/eacl/engine/scan_cache_test.cljc": "59afc0cfe74af16b17801d18b513b86efd4634949f187a2fd58a656333d18925",
     "modules/eacl-datascript/test/eacl/datascript/evaluation_clock_test.cljc": "6a53273d259a534c0feab05d8c5818c7da8685ec7757cfd436804c859cde3435",
@@ -34,7 +34,7 @@
     "modules/eacl-datascript/test/eacl/operator/seekable_evidence_test.cljc": "61311bd1edd97b336149b6d355bc897d576b2cea3020d92627f4ab18111489e6",
     "formal/qualified/lookup_bridge.clj": "a412922d87e1e23a19f8eea99976de415c7a4f12b7d90b4765129de38f34d999",
     "modules/eacl-datascript/test/eacl/operator/lookup_evidence_test.cljc": "9837b00bd8b50ac9a327abf2a003e4b3d79ba97799976bb278c107836a2ac8af",
-    "formal/qualified/arrow_bridge.clj": "e710d7532027a5ed0072e45c4c2741c935ea6efea048120ee6211e8922d308bb",
-    "modules/eacl-datascript/test/eacl/operator/arrow_evidence_test.cljc": "66d5f2153dc185a45bc9c636026403cf978952337bf10cf5f2ba90803bae9d11"
+    "formal/qualified/arrow_bridge.clj": "71e8f613f3bda21a35f3dc88cb66fb5eb9869adce01ba65d8402d532e3fa6e10",
+    "modules/eacl-datascript/test/eacl/operator/arrow_evidence_test.cljc": "19ec8e7a2e745433ab6338e885ebb06e8c27faa92ddadf62769aca6b31622841"
   }
 }

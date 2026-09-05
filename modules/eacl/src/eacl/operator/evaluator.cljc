@@ -189,6 +189,7 @@
    Its evidence is only a lower bound for the arrow's union of bindings."
   [plan qualification root-key witness]
   (when (some? witness)
+    (execution/check! :arrow-witness)
     (when-not (and (map? witness)
                    (= #{:point :partition :intermediate :evidence :scope} (set (keys witness)))
                    qualification

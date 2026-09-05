@@ -12,6 +12,8 @@
             [eacl.operator.evaluator :as scalar]
             [eacl.operator.evaluator-test :as fixtures]
             [eacl.operator.plan :as plan]
+            [eacl.operator.lookup :as lookup]
+            [eacl.operator.lookup-evidence-test :as lookup-fixtures]
             [eacl.operator.seekable-evidence-test :as errors]
             [eacl.relationships.edge :as edge]
             [eacl.relationships.staged :as staged]))
@@ -54,6 +56,73 @@
 (defn resolver [qids semantic]
   (fn [_ _ compact]
     (if (vector? compact) (get semantic (get qids (edge/qualifier-id compact))) (some? compact))))
+
+(defn lookup-fixture []
+  (let [{:keys [conn user groups document member] :as env} (fixture)]
+    (ds/transact! conn (mapv #(hash-map :eacl/id %) ["user2" "document2" "document3"]))
+    (let [users [user (ds/entid (ds/db conn) [:eacl/id "user2"])]
+          documents [document (ds/entid (ds/db conn) [:eacl/id "document2"])
+                     (ds/entid (ds/db conn) [:eacl/id "document3"])]
+          parent (ds/entid (ds/db conn) [:eacl.relation/resource-type+relation-name+subject-type
+                                       [:document :parent :group]])
+          writer (qualifiers/writer conn)]
+      (doseq [group groups target (rest documents)]
+        (staged/write! writer :create [:group group parent :document target] {:valid-until-ms 1000}))
+      (doseq [subject (rest users) group groups]
+        (staged/write! writer :create [:user subject member :group group] {:valid-until-ms 1000}))
+      (let [db (ds/db conn)
+            qids (into {} (concat
+                            (for [[i group] (map-indexed vector groups) target documents]
+                              [(edge/qualifier-id (impl/direct-edge db :group group parent :document target)) [:via i]])
+                            (for [[i group] (map-indexed vector groups) subject users]
+                              [(edge/qualifier-id (impl/direct-edge db :user subject member :group group)) [:target i]])))]
+        (assoc env :db db :adapter (datascript-backend/basis-adapter db {})
+                   :users users :documents documents :qids qids)))))
+
+(defn lookup-options [env permission traversal direction width policy]
+  (-> (options env permission)
+      (dissoc :node-id :arrow-witness)
+      (assoc :traversal traversal :anchor-eid (if (= traversal :forward) (:user env) (:document env))
+             :order-direction direction :page-size width :candidate-window 2
+             :result-policy policy :direct-specializations? false
+             :traversal-limits {:physical-chunk-size 1})))
+
+(defn check-lookup-case! [env permission traversal direction width policy values]
+  (let [semantic (zipmap [[:via 0] [:target 0] [:via 1] [:target 1]] values)
+        result (evidence/combine :union (evidence/combine :arrow (nth values 0) (nth values 1))
+                                          (evidence/combine :arrow (nth values 2) (nth values 3)))
+        options (lookup-options env permission traversal direction width policy)
+        rows (with-redefs [qualification/qualify (resolver (:qids env) semantic)]
+               (lookup-fixtures/drain options))
+        selected? (if (= policy :definite) (evidence/has? result) (not (evidence/no? result)))
+        expected (if selected? (if (= traversal :forward) (:documents env) (:users env)) [])]
+    (is (= (set expected) (set (map :value rows))))
+    (is (= (count expected) (count rows)))
+    (is (every? #(= (evidence/value result) (evidence/value (:evidence %))) rows))))
+
+(deftest ordered-arrows-compose-whole-child-evidence-and-resume-bindings
+  (let [env (lookup-fixture) x symbolic/x y symbolic/y
+        negative-x (evidence/combine :exclusion true x)
+        inputs (for [a [true x negative-x] b [x negative-x] c [false true] d [true y]] [a b c d])]
+    (doseq [permission [:inherited :inherited_direct] traversal [:forward :reverse]
+            direction [:asc :desc] width [1 2] policy [:definite :detailed] values inputs]
+      (check-lookup-case! env permission traversal direction width policy values))))
+
+(deftest expired-group-bans-change-arrow-lookups-without-a-write
+  (let [{:keys [conn users groups] :as env} (lookup-fixture)
+        disabled (ds/entid (ds/db conn) [:eacl.relation/resource-type+relation-name+subject-type
+                                        [:group :disabled :user]])
+        writer (qualifiers/writer conn)]
+    (doseq [subject users group groups]
+      (staged/write! writer :create [:user subject disabled :group group] {:valid-until-ms 100}))
+    (let [db (ds/db conn) env (assoc env :db db :adapter (datascript-backend/basis-adapter db {}))]
+      (doseq [time [99 100] traversal [:forward :reverse]]
+        (let [options (assoc (lookup-options env :inherited traversal :asc 1 :definite)
+                              :qualification (fixtures/qualified-request db time {}))
+              rows (lookup-fixtures/drain options)
+              expected (if (< time 100) [] (if (= traversal :forward) (:documents env) users))]
+          (is (= (set expected) (set (map :value rows))))
+          (is (every? #(evidence/has? (:evidence %)) rows)))))))
 
 (deftest a-known-arrow-binding-is-completed-without-rechecking-its-target
   (let [{:keys [qids groups member] :as env} (fixture)

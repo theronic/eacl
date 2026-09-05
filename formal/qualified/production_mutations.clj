@@ -16,6 +16,7 @@
             [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
             [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
+            [eacl.formal.qualified.arrow-bridge :as arrow-bridge]
             [eacl.operator.seekable :as seekable]
             [eacl.operator.lookup :as lookup]
             [eacl.operator.lookup-evidence-test :as lookup-test]
@@ -40,6 +41,7 @@
         head-evidence @#'seekable/head-evidence
         count-categories @#'lookup/count-categories
         accepted-emission @#'least-path/accepted-emission
+        stream-next @#'least-path/stream-next
         check-many vector/check-cached-many-eids
         enqueue @#'recursive/enqueue-evidence!]
     {:qualifier-reference-ignored
@@ -131,6 +133,19 @@
      :arrow-rechecks-already-proven-binding
      {:gate #'arrow-test/a-known-arrow-binding-is-completed-without-rechecking-its-target
       :redefs {#'scalar/known-arrow-binding? (constantly false)}}
+     :arrow-witness-ignores-joint-residual
+     {:gate #'arrow-test/ordered-arrows-compose-whole-child-evidence-and-resume-bindings
+      :redefs {#'least-path/path-hit? (fn [_ _ other] (and (some? other) (not (evidence/no? other))))}}
+     :arrow-resume-drops-binding-evidence
+     {:gate #'arrow-test/ordered-arrows-compose-whole-child-evidence-and-resume-bindings
+      :redefs {#'least-path/resume-evidence! (constantly true)}}
+     :witness-skips-expired-prefix-before-alternating
+     {:gate #'arrow-bridge/expired-prefix-witness-work-is-bounded-by-the-physical-shorter-side
+      :redefs {#'least-path/stream-next (fn [ctx state]
+                                        (loop [state state]
+                                          (let [[value next-state] (stream-next ctx state)]
+                                            (if (and value (evidence/no? (get next-state :evidence true)))
+                                              (recur next-state) [value next-state]))))}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -141,7 +156,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 24 (count cases)))
+    (is (= 27 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))
