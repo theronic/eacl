@@ -60,7 +60,7 @@ carried over unchanged; the design it implemented was rejected
 ## 7. Benchmarks and gate
 
 - [ ] 7.1 Promote `review/bench/seg_bench.clj` into `^:benchmark` tests: Fixture A (accounts), Fixture B (sparse shared groups), hot-resource `can?`; Datomic, Datahike `:file`, DataScript
-- [ ] 7.2 Record elided-command ratio, p50/p95 miss-page latency cache-on vs off, cold-overhead delta, allocation per page; write results to `docs/benchmarks/results/`
+- [ ] 7.2 Record elided-command ratio, p50/p95 miss-page latency cache-on vs off, cold-overhead delta, allocation per page; write results to ignored `target/benchmarks/` or CI artifacts; do not commit run output
 - [ ] 7.3 Gate per `exact-scan-response-cache` adoption requirement; default-on only when it passes on every backend
 
 ## 8. Cleanup — remove retired cache mechanisms

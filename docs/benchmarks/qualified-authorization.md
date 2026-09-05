@@ -72,6 +72,7 @@ Version 5 retains that protocol after optimizing definition-content reuse. The
 checker rejects duplicate reports, mixed versions/budgets, missing operations,
 and incomplete sample sets.
 
-The [2026-09-05 accepted matrix](results/qualified-authorization-2026-09-05/README.md)
-contains all 24 reports, raw samples, source provenance, and the 1,440 passing
-budget comparisons.
+Write all backend reports, raw samples, source provenance, and the budget-checker
+result to ignored `target/benchmarks/qualified-authorization/` or CI artifacts.
+Keep this workload and the authored budgets in Git; do not commit a run's matrix
+or use a previous successful run as evidence for changed sources.

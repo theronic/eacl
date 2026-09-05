@@ -67,3 +67,12 @@ Run the DataScript ClojureScript build (`cljs.main/-main ... -c eacl.datascript.
 After any edit under a public source root, run `bin/formal source-closure`.
 The generated report lives under ignored `target/formal/verification/`; do
 not commit it.
+
+## Benchmark output
+
+Keep raw samples, timing/allocation tables, machine provenance, qualification
+summaries, and report archives under ignored `target/benchmarks/` (or as CI
+artifacts). Do not commit run output, including successful qualification reports.
+Version benchmark code, authored acceptance budgets fixed before sampling, and
+intentional regression fixtures instead. A retained fixture must have a named
+test consumer; a measurement does not become a fixture merely by being old.
