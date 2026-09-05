@@ -15,7 +15,7 @@
 ## 3. Runtime integration
 
 - [x] 3.1 Let static primary/Zed options construct private controllers, preserve Zed-to-primary fallback, and let explicit controllers be shared by multiple clients; verify updates reach every sharing client while separate controller scopes remain isolated.
-- [ ] 3.2 Capture exactly one controller snapshot per protected encode/decode and select keys by direct id lookup; verify instrumentation detects no second mutable-state read and no ring-wide key trial.
+- [x] 3.2 Capture exactly one controller snapshot per protected encode/decode and select keys by direct id lookup; verify instrumentation detects no second mutable-state read and no ring-wide key trial.
 - [x] 3.3 Cache domain-separated derived keys by controller generation, key id, domain, and format version and remove retired/unreachable entries; verify rotation never pairs one state's id with another state's key.
 - [x] 3.4 Add safe keyring status and optional rotation events with closed non-secret fields; verify log, metric, event, exception, and status redaction tests find no raw/encoded key fragments.
 
@@ -38,9 +38,9 @@
 
 ## 6. Performance and simplicity gates
 
-- [ ] 6.1 Benchmark steady-state mint/decode before and after live-ring integration at ring sizes 1, 2, 4, and 16; verify the hot operation performs one atomic read and one direct map lookup with no work proportional to ring size.
-- [ ] 6.2 Measure activation and retirement with populated cursor/imported-cache stores; verify synchronous trust detachment is bounded, physical cleanup may be deferred safely, and locally computed authorization caches are not globally flushed.
-- [ ] 6.3 Review production source against the simplicity inventory and remove runtime oracle execution, distributed acknowledgements, database reads, network secret fetching, redundant key checks, and global cache flushes introduced only for testing; verify the final request path matches Design D8.
+- [x] 6.1 Benchmark steady-state mint/decode before and after live-ring integration at ring sizes 1, 2, 4, and 16; verify the hot operation performs one atomic read and one direct map lookup with no work proportional to ring size.
+- [x] 6.2 Measure activation and retirement with populated cursor/imported-cache stores; verify synchronous trust detachment is bounded, physical cleanup may be deferred safely, and locally computed authorization caches are not globally flushed.
+- [x] 6.3 Review production source against the simplicity inventory and remove runtime oracle execution, distributed acknowledgements, database reads, network secret fetching, redundant key checks, and global cache flushes introduced only for testing; verify the final request path matches Design D8.
 
 ## 7. Documentation and release
 
@@ -48,4 +48,4 @@
 - [x] 7.2 Publish the multi-Peer distribute/observe/activate/overlap/retire runbook with rollback and partial-rollout recovery; verify a reviewer can execute a two-Peer drill using only documented public APIs.
 - [x] 7.3 Document that default non-expiring cursors require indefinite old-key retention for lossless resume, and show finite TTL configuration for bounded retirement; verify the warning appears beside every rotation example.
 - [x] 7.4 Update API docs, release notes, backend/module guides, cryptographic assumptions, and error references; verify key addition/activation does not claim to rotate source lifecycle or authorization proofs.
-- [ ] 7.5 Run the combined nREPL test battery, CLJS suite, source-closure gate, secure-format/adversarial tests, and OpenSpec strict validation; verify all pass before release.
+- [x] 7.5 Run the combined nREPL test battery, CLJS suite, source-closure gate, secure-format/adversarial tests, and OpenSpec strict validation; verify all pass before release.

@@ -1,0 +1,72 @@
+{:format :eacl.security-keyring/static-baseline-v1,
+ :warmup-operations 2000,
+ :samples 7,
+ :operations-per-sample 1000,
+ :java "26.0.2",
+ :steady-state
+ [{:ring-size 1,
+   :mint
+   {:median-ns-per-operation 6501.333,
+    :samples-ns-per-operation
+    [12865.291
+     11466.458
+     11607.167
+     6501.333
+     6293.791
+     6219.625
+     6187.209]},
+   :decode
+   {:median-ns-per-operation 24511.958,
+    :samples-ns-per-operation
+    [25446.208
+     24382.042
+     24390.916
+     24511.958
+     25598.917
+     24945.125
+     24465.166]}}
+  {:ring-size 2,
+   :mint
+   {:median-ns-per-operation 6126.875,
+    :samples-ns-per-operation
+    [6197.541 6126.875 6141.041 6051.917 6112.5 7241.208 6125.667]},
+   :decode
+   {:median-ns-per-operation 25858.709,
+    :samples-ns-per-operation
+    [24193.292
+     24614.375
+     26818.041
+     27698.334
+     25822.041
+     25858.709
+     26430.334]}}
+  {:ring-size 4,
+   :mint
+   {:median-ns-per-operation 6518.833,
+    :samples-ns-per-operation
+    [6518.833 7887.833 6531.875 6474.458 6214.25 6226.375 6590.834]},
+   :decode
+   {:median-ns-per-operation 24653.5,
+    :samples-ns-per-operation
+    [25269.083
+     25615.834
+     24529.667
+     24653.5
+     24354.084
+     25660.833
+     24336.167]}}
+  {:ring-size 16,
+   :mint
+   {:median-ns-per-operation 6289.125,
+    :samples-ns-per-operation
+    [6244.292 6289.125 6218.209 6553.417 6366.25 6402.417 6220.875]},
+   :decode
+   {:median-ns-per-operation 24724.625,
+    :samples-ns-per-operation
+    [25982.375
+     24618.792
+     24522.417
+     24389.292
+     27070.667
+     25224.208
+     24724.625]}}]}

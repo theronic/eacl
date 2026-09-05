@@ -1,59 +1,82 @@
-# Live keyring integration inventory
+# Live keyring boundaries and simplicity review
 
-- Primary options: `eacl.client.orchestration/base-client-opt-keys`, `normalize-security-root-keyring`, `make-client` (~4440–4815). Static `:security-key`, `:security-keyring`, `:security-kid` become `:format-options {:current-kid ... :keyring ...}` captured at construction. Errors currently include invalid ring `:value` and chained causes: redact at the configuration boundary.
-- Dedicated Zed options are documented at README ~1689 but are NOT accepted by the current runtime. Existing Datomic test named `zed-token-keyring-is-shared-and-rotatable-across-clients-test` actually uses the primary `:security-keyring`. Phase 4 should implement the documented dedicated static names and the new controller option; primary fallback already exists.
-- `eacl.secure-format/signing-context`, `encode-authenticated`, `decode-authenticated`: HMAC envelopes include authenticated `kid`; direct map selection, no trial loop. Only production caller is `eacl.causal-token`. Canonical key normalization lives here. Avoid a secure-format <-> controller implementation cycle (a narrow snapshot/derived-key protocol is one option).
-- `eacl.causal-token/issue`, `token-data`: version 4, domain `eacl/zed-token/envelope/v4`, kid already authenticated. Orchestration uses primary format opts for basis-token, write responses, and consistency decode (~1731,2929); dedicated scope must cover every one.
-- `eacl.cursor`: confidential envelope v13, kid authenticated with nonce/ciphertext. `encode-context`, `decode-aead`, `codec-identity`, `cache-policy-identity`, `cursor->token`, `token->authenticated-cursor` all currently consume static rings. Client-private codec cache can skip crypto for locally minted tokens, so snapshot/key-presence acceptance must precede hits. Decoder must return authenticated kid alongside payload. Preserve deterministic cached cursor reuse across unrelated rotation when the issuing key remains accepted; new encodes must use current active key.
-- `eacl.continuation` owns bounded stores for continuation contexts. Stable-page checkpoints, visited/rendered page stores, lookahead/replay stores are selected by orchestration. Tag and partition by authenticated series kid, and carry it from decoded cursor through publication. Current selected-basis/evaluator/time/certificate checks remain independent.
-- `eacl.cache`: public export/restore is currently trusted, already-decoded flat `basis-snapshot-v2`, not a cryptographic provider protocol. README explicitly assigns byte authentication and bounds to the host. No production authenticated cache envelope currently exists. Keep the trusted low-level shape compatible, add protected snapshot APIs/boundaries with kid metadata and import trust scope, and preserve local answer-cache entries on retirement.
-- `cache/restore-basis-snapshot!` builds off-side subproblem stores and swaps lifecycle. `export-basis-snapshot` exports only answer/denotation entries. Rendered pages are process-local and omitted. Imported trust must remain distinguishable from later locally computed entries; misses should recompute selected snapshot without invalid grants.
-- Existing tests: secure_format_test, cursor_test, causal_token_test, continuation_test, cache_test; backend config tests and consistency_cache_test; shared contract_support; advanced DataScript cljs runner. New controller/oracle and rotation contracts should be shared across CLJ/CLJS and four backends.
+This is the final v9 inventory. The controller and cache additions do not alter
+Relationship storage, Caveat evaluation, database selection, or proof identity.
 
-Public controller APIs are in `eacl.core`: `security-keyring`, `security-keyring?`,
+## Ownership and evidence
+
+| Boundary | Owner | Evidence |
+|---|---|---|
+| Primary/static and dedicated Zed configuration | `eacl.security.configuration/format-scopes`; backend `make-client` APIs | `security.configuration-test`; four backend shared contracts |
+| Atomic controller, copied material, closed validation/status/errors | `eacl.security.keyring`; seven `eacl.core` APIs | `security.keyring-test`; constructor and state killed controls |
+| One immutable capture, named lookup, domain cache | `security.protocols/KeyringSource`; `secure-format/capture-keyring`, `domain-key` | `security.format-test`; ring-size 1/2/4/16 instrumented work |
+| Cursor v6 (`eacl_c6_`) carrying Relay payload v13 | `eacl.cursor`; `eacl.relay` | format tampering, TTL, cached-token, and backend resume contracts |
+| Zed-token v4, dedicated scope or explicit primary fallback | `eacl.causal-token`; orchestration issuance and consistency paths | format tests and four backend dedicated-ring tests |
+| Authenticated snapshot v1 (`eacl_cache1_`) around snapshot v2 | `eacl.cache`; four backend export/restore APIs | cache archive, malformed input, retired-import, and backend contracts |
+| Imported trust and derivative publication | `security.imports`; subproblem cache, continuation, range and rendered-page publication | imported-denotation contract; cache fail-open killed control |
+| Continuation and range series; rendered pages | `eacl.continuation`, `client.range-reuse`, `eacl.cache`; orchestration | mismatched key tags, resume contracts, retirement cleanup tests |
+| Bounded retired-state cleanup | `security.retention`; cursor codec and orchestration page setup | skipped cleanup, other-controller isolation, racing replacement |
+| Lookahead/replay | existing opaque token queue re-enters the public page API | existing lookahead tests and mandatory input-token decoding |
+
+## Public contract
+
+`eacl.core` exports `security-keyring`, `security-keyring?`,
 `security-keyring-status`, `replace-security-keyring!`, `add-security-key!`,
-`activate-security-key!`, and `retire-security-key!`. `eacl.security.keyring`
-owns validation and atomic updates; `eacl.security.protocols/KeyringSource`
-allows codecs to capture state without depending on controller construction.
-Errors use `:eacl.keyring/invalid` with a closed reason or
-`:eacl.keyring/conflict` with safe status. Transport preserves the existing
-`:eacl.pagination/invalid-cursor` and `:eacl/invalid-zed-token` categories,
-adding reason `:security-key-unavailable` when the named key is absent.
+`activate-security-key!`, and `retire-security-key!`.
 
 Constructor options are `:keys`, `:active-kid`, and optional lower ceilings
 `:max-keys` / `:max-retired-kids`. Hard limits are 64 accepted keys, 65,536
-retired ids, 1,024 encoded bytes per id, and 4,096 bytes per root key. Replacement
-requires the full desired `:keys` and `:active-kid` plus `:expected-generation`.
-Accepted identifiers cannot change key material; removed identifiers cannot
-return. Repeated add/activate/retire convenience operations are idempotent when
-they request an already established state. Full replacement advances once even
-when the requested keys match, and convenience operations retry at most 32 CAS
-conflicts. Each generation owns a bounded 256-entry derived-key cache; its keys
-will include kid, derivation domain, and format version.
+retired IDs, 1,024 encoded bytes per ID, and 4,096 bytes per root. Replacement
+requires complete desired keys and active ID plus `:expected-generation`.
+Convenience operations retry at most 32 conflicts. Accepted IDs cannot change
+material; retired IDs cannot return. Every generation owns a 256-entry derived
+cache indexed by generation, ID, domain, and format version.
 
-Configuration contract: each primary or dedicated scope accepts either its
-controller or its static key/keyring plus optional active id, never both. No
-primary material creates a private controller around the existing process-local
-key. No dedicated options select primary fallback. Any dedicated options select
-an independent controller and require dedicated key material; the dedicated id
-alone does not silently select primary material. Static key and keyring together
-are invalid, as are a controller plus even an explicit static id. Equivalent
-construction cases will run through the shared backend contract.
+Status contains exactly generation, active ID, accepted IDs, and retired IDs.
+Errors are `:eacl.keyring/invalid` with a closed reason or
+`:eacl.keyring/conflict` with safe status. There is no library event callback or
+metric label containing application inputs. Applications may emit optional
+rotation events from the returned safe status. Raw and encoded secret canaries
+are checked in exception chains, printing, status, and diagnostics.
 
-## Implemented boundaries
+Each primary/dedicated scope accepts either a controller or static key/ring
+options. Static configuration creates private controllers. With no dedicated
+options, Zed tokens use the primary controller under a distinct domain; any
+dedicated options require dedicated material. Mixed sources are rejected.
 
-The baseline inventory above records the pre-change gaps. Static/controller
-normalization now lives in `eacl.security.configuration/format-scopes`; primary
-and dedicated scopes are installed in orchestration runtime options separately.
-`eacl.secure-format/capture-keyring` and the cursor codec consume a single
-captured generation. The cursor transport envelope is v6 (`eacl_c6_`), carrying
-Relay payload v13; these two versions must not be conflated.
+## Cache and retirement trust
 
-Authenticated snapshot APIs are available through all four backend modules.
-`eacl.cache` authenticates the `eacl_cache1_` envelope before normal closed
-snapshot validation. `eacl.security.imports` retains the verifying controller
-and ID in non-serializable private wrappers. Completed-answer and denotation
-lookups consult current key acceptance. A consumed import suppresses derivative
-publication into answers, denotations, range segments, continuations and rendered
-pages. Ordinary locally computed entries retain their existing representation.
-Exports omit imported entries to prevent re-signing from extending their trust.
+Every externally protected artifact authenticates its key ID. Decoder lookup
+selects only that ID and cannot fall back to another root or another scope.
+Caller cursors and Zed tokens fail with their existing typed categories and
+`:security-key-unavailable`. Optional imported cache data misses and recomputes
+against the already selected snapshot.
+
+Private imported values retain a verifying controller/ID wrapper. Local entries
+retain their ordinary representation. Consuming an import binds request-local
+provenance that prevents derivative answer/denotation/range/continuation/rendered
+publication. Export omits imports, preventing re-signing from extending trust.
+The host-trusted decoded snapshot API remains compatible.
+
+Retirement changes accepted keys synchronously without inspecting client stores.
+The next codec/page use performs bounded targeted cleanup; individual imported
+lookups detach unavailable trust. Late publishers can leave unreachable bounded
+entries until normal eviction. Cleanup uses expected resident identity, preserves
+racing replacements, and never flushes locally computed authorization entries.
+
+## Production simplicity review
+
+The request path reads one controller snapshot and directly selects one key.
+Domain derivation and authentication use that same state, including when an
+update races the operation. No production code imports the transition oracle,
+executes mutation controls, trials the ring, contacts a Peer/secret manager,
+reads the database to validate a security key, or performs cluster acknowledgement.
+Key addition/activation does not rotate source lifecycle or authorization proof
+identity. Controllers do not register client watchers or retain an unbounded
+list of clients. Store cleanup remains a bounded optional hygiene operation.
+
+The test-only oracle and mutants live under test roots. The timing fixtures are
+explicit nREPL functions under `eacl.bench`, not automatic performance tests.
+Source closure certifies 132 public roots with no forbidden policy matches.
+The [operator guide](../../docs/security-keyrings.md) documents external entropy,
+non-durability, zeroization limits, and indefinite retention for non-expiring cursors.

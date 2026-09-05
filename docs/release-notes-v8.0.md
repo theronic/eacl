@@ -367,7 +367,9 @@ compatible existing envelopes.
   or parsed. Datomic retains its compact AES-GCM codec. Rotate either kind of
   authenticated-encryption key before 2^32 cursor encryptions. At high cursor
   volume plan key rotation accordingly (`:security-keyring` supports staged
-  rotation); EACL does not count invocations for you.
+  rotation); EACL does not count invocations for you. Default non-expiring
+  cursors require indefinite retention of old keys for lossless resume. For
+  v9 live updates, see the [security-key guide](security-keyrings.md).
 - Constructing a client without explicit token key material warns at
   startup: defaulted keys are process-local and random, so cursors and
   tokens do not survive restarts and are not portable across peers or

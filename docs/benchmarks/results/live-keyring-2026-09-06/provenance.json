@@ -1,0 +1,17 @@
+{
+  "sourceCommit": "040d2d051e61d58253735b01e8c84faf4e380c7f",
+  "baselineCommit": "a5b84b05f07fe1838dbab20f942f86615acce2c4",
+  "timezone": "Africa/Johannesburg",
+  "date": "2026-09-06",
+  "sha256": {
+    "docs/benchmarks/results/live-keyring-2026-09-06/live-pilot.edn": "9e8d44528ed07d79bf4d186132d88ec962f2a232e10de970c79ccb79007873ab",
+    "docs/benchmarks/results/live-keyring-2026-09-06/before-option-reuse.edn": "72c77bedc4d5d23fa45df941c6741629a7c3ffd6a73e15d404c90985184c1ede",
+    "docs/benchmarks/results/live-keyring-2026-09-06/baseline.edn": "b8b8b4dc954777b7ab8206c8722b0379fd1eb5d4fc53e41d6945189339e95922",
+    "docs/benchmarks/results/live-keyring-2026-09-06/baseline-pilot.edn": "112db232da0b149661308ed9e7f60a8c40efb3f2f956b58a196c6e63d620c924",
+    "docs/benchmarks/results/live-keyring-2026-09-06/live.edn": "a05a7b5c3a332f937359b45094d2601d36a90900c277d46b69fc1673f62d0fce",
+    "docs/benchmarks/results/live-keyring-2026-09-06/performance.edn": "1c00c653b0cb600246bc983f10ba77551123e82fce11b09d077c03ef68b07fb5",
+    "modules/eacl/test/eacl/bench/security_keyring.clj": "50e10762ef805f6ea82d886f1116e6c204e27367b8e6b8978c0f6c2f8a9b9aa2",
+    "modules/eacl/test/eacl/bench/security_keyring_baseline.clj": "6a6a44d5eecb7a414e69ef6504d191fadc76ca61c202db6cf67799bf5302b802",
+    "modules/eacl/src/eacl/cursor.cljc": "e780a2f2a6a2027dc294466d9f992696cbd06e83387598037385c04c265d6634"
+  }
+}
