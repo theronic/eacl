@@ -5,6 +5,7 @@
   (:require [clojure.test :refer [deftest is]]
             [eacl.authorization.evidence :as evidence]
             [eacl.engine.stable-route-evidence-test :as fixture]
+            [eacl.relationships.edge :as edge]
             [eacl.formal.qualified.evidence-bridge :as bridge]
             [eacl.formal.qualified.model :as model]
             [eacl.formal.qualified.model-test :as contract]))
@@ -46,6 +47,36 @@
                       (active (bridge/production-for-worlds (if (= source 1) #{2 3} contract/universe))
                               (nth [nil 100 110] (mod (+ target source) 3)) time)
                       false)]))})
+
+(deftest known-path-evidence-refines-remaining-alternatives
+  (let [inputs (remove evidence/fault? (take-nth 3 (bridge/inputs)))]
+    (doseq [kind [:relation :self-permission :arrow-relation :arrow-permission]
+            chunk [1 2] a inputs b inputs]
+      (let [arrow? (contains? #{:arrow-relation :arrow-permission} kind)
+            rule (case kind
+                   :relation (fixture/direct fixture/root 10)
+                   :self-permission {:rule kind :node fixture/root :target-node fixture/target}
+                   :arrow-relation {:rule kind :node fixture/root :resource-type :doc :via-relation-eid 20
+                                    :intermediate-type :group :target-relation-eid 30 :target-subject-type :user}
+                   :arrow-permission (fixture/arrow fixture/root 20 fixture/target))
+            plan (fixture/sealed {fixture/root (if arrow? [rule] [rule (fixture/direct fixture/root 11)])
+                                  fixture/target [(fixture/direct fixture/target (if arrow? 30 10))]})
+            rows (if arrow? [[2 20 100 201] [3 20 100 202] [1 30 2 301] [1 30 3 302]]
+                     [[1 10 100 101] [1 11 100 102]])
+            a (active a 110 99) b (active b 120 99)
+            leaves (if arrow? {201 a 202 b 301 true 302 true} {101 a 102 b})
+            options (assoc (fixture/known-options rule a (when arrow? 2)) :physical-chunk-size chunk)
+            result (fixture/run plan rows leaves options)
+            answer (:answer result)
+            oracle (fn [time] (model/compose :union (bridge/model-value (active a 110 time))
+                                                      (bridge/model-value (active b 120 time))))]
+        (is (= (oracle 99) (bridge/model-value answer)))
+        (is (not-any? #(contains? (if arrow? #{201 301} #{101})
+                                  (edge/qualifier-id (second %)))
+                      (:qualification-reads result)))
+        (doseq [time [109 110 119 120]]
+          (is (or (not (evidence/reusable? answer 99 time))
+                  (= (oracle time) (bridge/model-value answer)))))))))
 
 (defn graph-oracle [semantic]
   (:values

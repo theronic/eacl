@@ -25,6 +25,7 @@
     behind an independent denotation-equivalence proof (none exists yet)."
   (:require [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
+            [eacl.execution :as execution]
             [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.relationships.edge :as edge]
@@ -70,6 +71,29 @@
    :relation-eid relation-eid :resource-type resource-type
    :bound-eid bound-eid :limit limit})
 
+(defn- validate-known-witness!
+  [{:keys [plan qualification known-witness subject-type subject-eid resource-eid start-node]}]
+  (when (some? known-witness)
+    (execution/check! :stable-route/witness)
+    (let [node (or start-node (:root plan))
+          rule (:rule known-witness)
+          arrow? (contains? #{:arrow-permission :arrow-relation} (:rule rule))
+          required-keys (cond-> #{:point :rule :evidence :scope} arrow? (conj :intermediate))
+          valid? (and qualification (map? known-witness)
+                      (= required-keys (set (keys known-witness)))
+                      (= [node subject-type subject-eid resource-eid] (:point known-witness))
+                      (= (qualification/exact-reuse-identity qualification) (:scope known-witness))
+                      (some #(= rule %) (get-in plan [:indexes :reverse-rules node]))
+                      (or (not arrow?) (and (integer? (:intermediate known-witness))
+                                           (edge/valid? (:intermediate known-witness))
+                                           (pos? (:intermediate known-witness))))
+                      (evidence/before? (:time qualification) (evidence/valid-until (:evidence known-witness))))]
+      (when-not valid?
+        (throw (ex-info "Known path evidence does not match the selected point."
+                        {:type :eacl.route/invalid-witness :eacl/error :eacl.route/invalid-witness})))
+      (evidence/encode (:evidence known-witness))
+      known-witness)))
+
 (defn- probe-check-eids
   "Iterative depth-first membership search. Without qualification, returns true iff a derivation
   of the plan's root permission on `resource-eid` bottoms out in a tuple
@@ -109,7 +133,12 @@
          max-values reducer/default-max-values
          max-stack reducer/default-max-stack}
     :as options}]
-  (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
+  (let [known-witness (validate-known-witness! options)
+        start-node (or (:start-node options) (:root plan))
+        known-rule? (fn [node eid rule]
+                      (and known-witness (= start-node node) (= resource-eid eid)
+                           (= (:rule known-witness) rule)))
+        fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
         reverse-rules (get-in plan [:indexes :reverse-rules])
         qualify (if qualification
                   (fn [relation value] (qualification/qualify qualification relation value))
@@ -188,7 +217,7 @@
         ;; cost is bounded by the smaller side plus one chunk per side.
         intersect-arm?
         (fn [resource-type eid via-relation-eid intermediate-type
-             target-relation-eid]
+             target-relation-eid skip-intermediate]
           (loop [vias [] via-index 0 via-bound nil vias-done? false
                  holdings [] holding-index 0 holding-bound nil
                  holdings-done? false answer false]
@@ -207,7 +236,8 @@
                 ;; matching pair has contributed its evidence.
                 answer
                 (let [via-edge (nth vias via-index)
-                      via (qualify via-relation-eid via-edge)
+                      via (if (= skip-intermediate (edge/endpoint via-edge))
+                            false (qualify via-relation-eid via-edge))
                       path (if (or (evidence/no? via) (evidence/fault? via))
                              via
                              (evidence/combine
@@ -236,9 +266,11 @@
                       (if (>= holding-index (count holdings))
                         answer
                         (let [holding-edge (nth holdings holding-index)
-                              via (qualify via-relation-eid
-                                           (via-probe? resource-type eid via-relation-eid
-                                                       intermediate-type (edge/endpoint holding-edge)))
+                              via (if (= skip-intermediate (edge/endpoint holding-edge))
+                                    false
+                                    (qualify via-relation-eid
+                                             (via-probe? resource-type eid via-relation-eid
+                                                         intermediate-type (edge/endpoint holding-edge))))
                               path (if (or (evidence/no? via) (evidence/fault? via))
                                      via
                                      (evidence/combine :arrow via
@@ -274,10 +306,10 @@
                         :advanced-datoms commands
                         :queued-work transitions
                         :fetched-values fetched-values}))))]
-    (loop [stack [[(or (:start-node options) (:root plan)) resource-eid]]
+    (loop [stack [[start-node resource-eid]]
            visited (transient (if qualification {} #{}))
-           answer false]
-      (if (zero? (count stack))
+           answer (if known-witness (:evidence known-witness) false)]
+      (if (or (done? answer) (zero? (count stack)))
         (do (report!) answer)
         (let [[node eid incoming :as frame] (peek stack)
               state (if qualification [node eid] frame)
@@ -313,7 +345,8 @@
                   base-answer
                   (reduce (fn [answer rule]
                             (let [answer (if (and (= :relation (:rule rule))
-                                                  (= subject-type (:subject-type rule)))
+                                                  (= subject-type (:subject-type rule))
+                                                  (not (known-rule? node eid rule)))
                                            (join-path answer
                                                       (probe? (:resource-type rule) eid
                                                               (:relation-eid rule)))
@@ -331,7 +364,9 @@
                          (let [next-successors
                                (case (:rule rule)
                                  :self-permission
-                                 (conj successors (successor (:target-node rule) eid prefix))
+                                 (if (known-rule? node eid rule)
+                                   successors
+                                   (conj successors (successor (:target-node rule) eid prefix)))
 
                                  :arrow-permission
                                  (if-let [target-rules
@@ -349,14 +384,19 @@
                                                           (:resource-type rule) eid
                                                           (:via-relation-eid rule)
                                                           (:intermediate-type rule)
-                                                          (:relation-eid target-rule))))
+                                                          (:relation-eid target-rule)
+                                                          (when (known-rule? node eid rule)
+                                                            (:intermediate known-witness)))))
                                                (when (done? @answer) (reduced nil)))
                                              nil target-rules)
                                      successors)
                                    (reduce (fn [successors compact-edge]
-                                             (let [via (evidence/combine
-                                                        :arrow prefix
-                                                        (qualify (:via-relation-eid rule) compact-edge))]
+                                             (let [via (if (and (known-rule? node eid rule)
+                                                               (= (:intermediate known-witness) (edge/endpoint compact-edge)))
+                                                         false
+                                                         (evidence/combine
+                                                          :arrow prefix
+                                                          (qualify (:via-relation-eid rule) compact-edge)))]
                                                (if (or (evidence/no? via) (evidence/fault? via))
                                                  (do (vswap! answer #(evidence/combine :union % via))
                                                      (if (done? @answer) (reduced successors) successors))
@@ -376,7 +416,9 @@
                                               (:resource-type rule) eid
                                               (:via-relation-eid rule)
                                               (:intermediate-type rule)
-                                              (:target-relation-eid rule))))
+                                              (:target-relation-eid rule)
+                                              (when (known-rule? node eid rule)
+                                                (:intermediate known-witness)))))
                                    successors)
 
                                  :relation
@@ -409,7 +451,9 @@
   hold the plan's root permission on the resource? Decided by the
   membership-probe search (`probe-check-eids`); nil ids never hold.
   With `:qualification`, returns conditional/temporal Evidence or a plain
-  timeless Boolean; callers must project through evidence/has?."
+  timeless Boolean; callers must project through evidence/has?. A scoped
+  `:known-witness` contributes one rule or arrow binding; the same search
+  completes all remaining alternatives without repeating that path."
   [{:keys [subject-eid resource-eid] :as options}]
   (if (or (nil? subject-eid) (nil? resource-eid))
     false

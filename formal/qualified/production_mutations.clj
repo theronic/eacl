@@ -14,6 +14,8 @@
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
+            [eacl.engine.stable-route :as stable-route]
+            [eacl.engine.stable-route-evidence-test :as stable-route-test]
             [eacl.engine.least-path :as least-path]
             [eacl.engine.stable-route-native-evidence-test :as native-test]
             [eacl.datascript.evaluation-clock-test :as clock-test]
@@ -47,10 +49,22 @@
         accepted-emission @#'least-path/accepted-emission
         stream-next @#'least-path/stream-next
         check-many vector/check-cached-many-eids
+        check-stable stable-route/check-eids
+        validate-stable @#'stable-route/validate-known-witness!
         aggregate batch/aggregate-counters
         collect data/collect
         enqueue @#'recursive/enqueue-evidence!]
-    {:qualification-data-outside-aggregate-budget
+    {:stable-known-witness-scope-ignored
+     {:gate #'stable-route-test/known-witness-scope-is-validated-before-a-definite-shortcut
+      :redefs {#'stable-route/validate-known-witness! :known-witness}}
+     :stable-known-path-is-reprobed
+     {:gate #'stable-route-test/known-direct-and-child-witnesses-complete-only-remaining-alternatives
+      :redefs {#'stable-route/check-eids (fn [options] (check-stable (dissoc options :known-witness)))}}
+     :stable-known-arrow-binding-is-reprobed
+     {:gate #'stable-route-test/known-arrow-binding-is-not-requalified-or-reprobed
+      :redefs {#'stable-route/validate-known-witness!
+               (fn [options] (some-> (validate-stable options) (assoc :intermediate -1)))}}
+     :qualification-data-outside-aggregate-budget
      {:gate #'qualification-test/qualifier-data-consumes-aggregate-command-and-fact-budgets
       :redefs {#'batch/aggregate-counters
                (fn [& args] (assoc (apply aggregate args)
@@ -179,7 +193,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 32 (count cases)))
+    (is (= 35 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

@@ -3,6 +3,7 @@
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.evidence-test :as completions]
             [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualification-test :as qualification-fixture]
             [eacl.engine.stable-route :as route]
             [eacl.relationships.edge :as edge]))
 
@@ -47,6 +48,56 @@
                           :qualification ::injected :physical-chunk-size 1}
                          extra)))]
     {:answer answer :commands @calls :qualification-reads @reads}))
+
+(defn known-options [rule value intermediate]
+  (let [request (qualification-fixture/request)]
+    {:qualification request
+     :known-witness (cond-> {:point [root :user 1 100] :rule rule :evidence value
+                            :scope (qualification/exact-reuse-identity request)}
+                      intermediate (assoc :intermediate intermediate))}))
+
+(deftest known-direct-and-child-witnesses-complete-only-remaining-alternatives
+  (doseq [rule [(direct root 10) {:rule :self-permission :node root :target-node target}]]
+    (let [plan (sealed {root [rule (direct root 11)] target [(direct target 10)]})
+          rows [[1 10 100 101] [1 11 100 102]]
+          x (evidence/with-certificate completions/x 110 true)
+          y (evidence/with-certificate completions/y 120 true)
+          result (run plan rows {101 x 102 y} (known-options rule x nil))]
+      (is (= #{1 2 3} (completions/completions (:answer result) [completions/x completions/y])))
+      (is (= 110 (evidence/valid-until (:answer result))))
+      (is (= [11] (mapv :relation-eid (:commands result))))
+      (doseq [value [(evidence/with-certificate true 110 true) (evidence/fault :test/failure :invalid)]]
+        (let [result (run plan rows {101 value 102 y} (known-options rule value nil))]
+          (is (= value (:answer result)))
+          (is (= [] (:commands result))))))))
+
+(deftest known-arrow-binding-is-not-requalified-or-reprobed
+  (doseq [rule [(arrow root 20 target)
+                {:rule :arrow-relation :node root :resource-type :doc :via-relation-eid 20
+                 :intermediate-type :group :target-relation-eid 30 :target-subject-type :user}]
+          chunk [1 2]]
+    (let [plan (sealed {root [rule] target [(direct target 30)]})
+          rows [[2 20 100 201] [3 20 100 202] [1 30 2 301] [1 30 3 302]]
+          result (run plan rows {201 completions/x 202 completions/y 301 true 302 true}
+                      (assoc (known-options rule completions/x 2) :physical-chunk-size chunk))]
+      (is (= #{1 2 3} (completions/completions (:answer result) [completions/x completions/y])))
+      (is (not-any? #(= 1 (:bound-eid %)) (:commands result)))
+      (is (not-any? #(contains? #{201 301} (edge/qualifier-id (second %)))
+                    (:qualification-reads result))))))
+
+(deftest known-witness-scope-is-validated-before-a-definite-shortcut
+  (let [rule (direct root 10) plan (sealed {root [rule]})
+        options (known-options rule true nil)]
+    (doseq [invalid [(assoc-in options [:known-witness :point] [root :user 2 100])
+                      (assoc-in options [:known-witness :scope] [:other-basis])
+                      (assoc-in options [:known-witness :rule] (direct root 11))
+                      (assoc-in options [:known-witness :extra] true)
+                      (assoc-in options [:known-witness :evidence] (evidence/with-certificate true 99 true))
+                      (assoc options :qualification nil)]]
+      (is (= :eacl.route/invalid-witness
+             (try (run plan [] {} invalid) nil
+                  (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                    (:type (ex-data error)))))))))
 
 (deftest direct-union-retains-residuals-deadlines-and-failures
   (let [plan (sealed {root [(direct root 10) (direct root 11)]})
