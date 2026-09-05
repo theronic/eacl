@@ -26,3 +26,12 @@ pass `eacl.relationships.edge/from-datom` to `measure` for the production
 implementation. Native conformance separately checks forward/reverse/direct
 results and every ascending/descending inclusive/exclusive bound on all four
 backends, including both Datahike attribute modes.
+
+The production nil-qid qualification seam was measured with the same probe:
+project each ordinary datom through `edge/from-datom`, then call
+`qualification/qualify` with nil request state. Both it and the eid-only
+baseline used 1,008.0024 bytes per 100-edge chunk in all eleven samples. The
+small fractional amount is fixed probe overhead; their allocation difference
+is zero. The portable test also verifies that ordinary visits never realize
+the request's qualifier memo. This measurement does not cover request setup
+or end-to-end authorization latency.
