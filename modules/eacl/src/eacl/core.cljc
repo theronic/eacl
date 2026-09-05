@@ -1,6 +1,33 @@
 (ns eacl.core
   "Public authorization capabilities, records, and normalization helpers."
-  (:require [eacl.execution :as execution]))
+  (:require [eacl.execution :as execution]
+            [eacl.security.keyring :as keyring]))
+
+(defn security-keyring
+  "Creates a non-durable live security-key controller."
+  [options]
+  (keyring/keyring options))
+
+(defn security-keyring? [value] (keyring/keyring? value))
+
+(defn security-keyring-status
+  "Returns generation and key identifiers, never secret material."
+  [controller]
+  (keyring/status controller))
+
+(defn replace-security-keyring!
+  "Atomically replaces all accepted keys at :expected-generation."
+  [controller desired]
+  (keyring/replace! controller desired))
+
+(defn add-security-key! [controller kid material]
+  (keyring/add! controller kid material))
+
+(defn activate-security-key! [controller kid]
+  (keyring/activate! controller kid))
+
+(defn retire-security-key! [controller kid]
+  (keyring/retire! controller kid))
 
 (defn cancellation-token
   "Creates a caller-owned cooperative cancellation token for one request."

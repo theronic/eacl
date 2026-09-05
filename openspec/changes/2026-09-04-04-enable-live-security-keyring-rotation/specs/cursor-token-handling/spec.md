@@ -1,11 +1,11 @@
 ## MODIFIED Requirements
 
 ### Requirement: Invalid cursor tokens throw typed errors
-`token->cursor` SHALL return `nil` only for a `nil` input meaning first page and SHALL pass supported raw cursor maps through unchanged where the existing backward-compatibility contract allows them. Every non-nil encoded cursor MUST name exactly one authenticated security key identifier. A malformed cursor, authentication failure, unknown or retired key identifier, mismatched cursor-cache key identifier, or unsupported format SHALL throw `ex-info` with `:type :eacl/invalid-cursor` and MUST NOT silently restart pagination from the first page.
+`token->cursor` SHALL return `nil` only for a `nil` input meaning first page and SHALL pass supported raw cursor maps through unchanged where the existing backward-compatibility contract allows them. Every non-nil encoded cursor MUST name exactly one authenticated security key identifier. A malformed cursor, authentication failure, unknown or retired key identifier, mismatched cursor-cache key identifier, or unsupported format SHALL throw `ex-info` with `:type :eacl.pagination/invalid-cursor` and MUST NOT silently restart pagination from the first page.
 
 #### Scenario: Garbage token fails loudly
-- **WHEN** `lookup-resources` is called with `:cursor "eacl1_not-valid"` or `:cursor "garbage"`
-- **THEN** an `ex-info` with `:type :eacl/invalid-cursor` is thrown and the first page is not silently returned
+- **WHEN** `lookup-resources` is called with `:after "eacl1_not-valid"` or `:after "garbage"`
+- **THEN** an `ex-info` with `:type :eacl.pagination/invalid-cursor` is thrown and the first page is not silently returned
 
 #### Scenario: nil cursor still means first page
 - **WHEN** `lookup-resources` is called with `:cursor nil`
@@ -13,7 +13,7 @@
 
 #### Scenario: Retired key names an outstanding cursor
 - **WHEN** a cursor names a key identifier that has been retired from the live ring
-- **THEN** resume fails with `:eacl/invalid-cursor` and reason `:security-key-unavailable`
+- **THEN** resume fails with `:eacl.pagination/invalid-cursor` and reason `:security-key-unavailable`
 - **AND** EACL does not try another key, rebase, replay unauthenticated state, or restart at page one
 
 #### Scenario: Cursor cache entry names another key

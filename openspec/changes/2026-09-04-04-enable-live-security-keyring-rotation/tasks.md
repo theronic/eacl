@@ -1,16 +1,16 @@
 ## 1. Baseline and API contract
 
-- [ ] 1.1 Inventory every current primary and dedicated Zed-token key option, fallback rule, normalized keyring value, cursor/Zed/cache envelope, derived-key cache, continuation store, cache export/import path, and public documentation location; verify the inventory names the owning source and tests for each path.
-- [ ] 1.2 Define the public `SecurityKeyring` controller, safe status shape, typed conflict/error taxonomy, full-state replacement API, and add/activate/retire convenience APIs; verify API review covers CLJ/CLJS portability and secret redaction.
+- [x] 1.1 Inventory every current primary and dedicated Zed-token key option, fallback rule, normalized keyring value, cursor/Zed/cache envelope, derived-key cache, continuation store, cache export/import path, and public documentation location; verify the inventory names the owning source and tests for each path.
+- [x] 1.2 Define the public `SecurityKeyring` controller, safe status shape, typed conflict/error taxonomy, full-state replacement API, and add/activate/retire convenience APIs; verify API review covers CLJ/CLJS portability and secret redaction.
 - [ ] 1.3 Specify compatibility between primary static/controller options and dedicated Zed-token static/controller options, including primary fallback and rejection of mixed sources within one scope; verify construction tests enumerate every accepted and rejected combination.
 
 ## 2. Pure keyring state machine
 
 - [ ] 2.1 Implement a pure validated keyring-state constructor with non-empty ring, active-key presence, bounded key/id collections, canonical key ids, existing key-strength rules, and no secret-bearing errors; verify unit tests kill each omitted validation.
-- [ ] 2.2 Implement generation-guarded complete-state replacement over an atomic immutable state and verify sequential tests prove all-or-nothing visibility and exactly-one generation advancement.
-- [ ] 2.3 Implement install, activate, and retire as bounded CAS operations over the common replacement primitive; verify racing operations are linearizable and stale updates return the typed conflict.
-- [ ] 2.4 Track retired key ids/fingerprints privately and reject every retired-id reintroduction without exposing fingerprints; verify currently accepted same-key installation is idempotent and no retired id can revive old artifacts.
-- [ ] 2.5 Add a pure test-only transition oracle and generated operation traces; verify production transitions equal the oracle without importing the oracle into public/runtime source.
+- [x] 2.2 Implement generation-guarded complete-state replacement over an atomic immutable state and verify sequential tests prove all-or-nothing visibility and exactly-one generation advancement.
+- [x] 2.3 Implement install, activate, and retire as bounded CAS operations over the common replacement primitive; verify racing operations are linearizable and stale updates return the typed conflict.
+- [x] 2.4 Track retired key ids/fingerprints privately and reject every retired-id reintroduction without exposing fingerprints; verify currently accepted same-key installation is idempotent and no retired id can revive old artifacts.
+- [x] 2.5 Add a pure test-only transition oracle and generated operation traces; verify production transitions equal the oracle without importing the oracle into public/runtime source.
 
 ## 3. Runtime integration
 

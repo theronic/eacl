@@ -27,6 +27,7 @@
             [eacl.relationships.qualifier-test]
             [eacl.relationships.mutations-test]
             [eacl.core-test]
+            [eacl.security.keyring-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
@@ -135,6 +136,7 @@
                'eacl.cache.standard-lru-test
                'eacl.cache-test
                'eacl.core-test
+               'eacl.security.keyring-test
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test

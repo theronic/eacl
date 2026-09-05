@@ -64,6 +64,12 @@ A controller may be passed to multiple clients on one Peer:
 
 For source compatibility, static `:security-key`, `:security-keyring`, and `:security-kid` create a private primary controller. Existing dedicated Zed-token key options create a private dedicated controller; a new `:zed-token-keyring-controller` permits live rotation of that separate ring. When neither dedicated static options nor a dedicated controller is supplied, Zed tokens reuse the primary controller with their existing distinct derivation domain. Supplying both a controller and static material for the same scope is rejected as ambiguous.
 
+The existing cursor error category remains `:eacl.pagination/invalid-cursor`;
+unknown/retired ids add reason `:security-key-unavailable`. Zed tokens retain
+`:eacl/invalid-zed-token` with the same reason. This preserves current handler
+compatibility while distinguishing retirement from authentication and age expiry.
+The inventory in `formal/security/inventory.md` records the public API and bounds.
+
 *Alternative considered:* mutate each client independently. Rejected because applications commonly hold several clients/caches on one Peer and could accidentally leave them on inconsistent rings.
 
 ### D2. Make complete-state compare-and-set the primitive
