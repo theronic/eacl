@@ -24,6 +24,8 @@
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
             [eacl.engine.scan-cache-test]
+            [eacl.engine.stable-route-evidence-test]
+            [eacl.engine.stable-route-native-evidence-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
             [eacl.datascript.scan-cache-integration-test]
@@ -106,6 +108,8 @@
                'eacl.consistency-test
                'eacl.engine.relationships-test
                'eacl.engine.scan-cache-test
+               'eacl.engine.stable-route-evidence-test
+               'eacl.engine.stable-route-native-evidence-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test

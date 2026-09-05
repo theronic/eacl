@@ -257,9 +257,13 @@
   [cursor-or-opts]
   (if (and (map? cursor-or-opts)
            (contains? cursor-or-opts :direction))
-    {:direction (:direction cursor-or-opts)
-     :bound-eid (:bound-eid cursor-or-opts)
-     :inclusive-bound? (boolean (:inclusive-bound? cursor-or-opts))}
+    (cond-> {:direction (:direction cursor-or-opts)
+             :bound-eid (:bound-eid cursor-or-opts)
+             :inclusive-bound? (boolean (:inclusive-bound? cursor-or-opts))}
+      (true? (:include-qualifier? cursor-or-opts))
+      (assoc :include-qualifier? true)
+      (:limit cursor-or-opts)
+      (assoc :limit (:limit cursor-or-opts)))
     {:direction :asc
      :bound-eid cursor-or-opts
      :inclusive-bound? false}))

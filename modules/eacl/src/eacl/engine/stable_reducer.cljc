@@ -574,6 +574,8 @@
         resource->subjects (backend/scan-invoker adapter :resource->subjects)]
     (fn [{:keys [operation bound-eid] :as descriptor}]
       (let [options (cond-> {:direction :asc}
+                      (true? (:include-qualifier? descriptor))
+                      (assoc :include-qualifier? true)
                       (:limit descriptor)
                       (assoc :limit (:limit descriptor))
                       bound-eid (assoc :bound-eid bound-eid

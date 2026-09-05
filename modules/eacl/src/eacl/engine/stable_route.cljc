@@ -23,8 +23,11 @@
     stack or a typed `:max-admissions`/`:max-values` failure, never at a
     silent cap. An order-insensitive specialization remains permitted only
     behind an independent denotation-equivalence proof (none exists yet)."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]
+            [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]))
 
 (def exhaustion-target
@@ -68,7 +71,7 @@
    :bound-eid bound-eid :limit limit})
 
 (defn- probe-check-eids
-  "Iterative depth-first membership search. Returns true iff a derivation
+  "Iterative depth-first membership search. Without qualification, returns true iff a derivation
   of the plan's root permission on `resource-eid` bottoms out in a tuple
   whose subject is `subject-eid`; equivalently, iff `subject-eid` belongs
   to the exhaustive reverse denotation `run-reverse` would emit.
@@ -88,9 +91,16 @@
   enumerate their intermediates and descend. Typed limits mirror the
   reducer's budgets: `:max-admissions` bounds distinct visited states,
   `:max-transitions` visits, `:max-commands` fetches, `:max-values` fetched
-  values, `:max-stack` instantaneous stack depth."
+  values, `:max-stack` instantaneous stack depth.
+
+  Qualification annotates the same physical paths with bounded residuals
+  and temporal evidence. A visited state retains the union of its incoming
+  path prefixes, and only a changed full value/certificate revisits it.
+  Conditional matches continue the existing search; definite witnesses and
+  demanded faults terminate it. Either exhausted side of a bidirectional
+  arm covers every matching pair, including its qualified evidence."
   [{:keys [adapter fetch-fn plan subject-type subject-eid resource-eid
-           cut-point! physical-chunk-size
+           cut-point! physical-chunk-size qualification
            max-admissions max-commands max-transitions max-values max-stack]
     :or {physical-chunk-size reducer/default-physical-chunk-size
          max-admissions reducer/default-max-admissions
@@ -101,6 +111,10 @@
     :as options}]
   (let [fetch-fn (or fetch-fn (reducer/adapter-fetch-fn adapter))
         reverse-rules (get-in plan [:indexes :reverse-rules])
+        qualify (if qualification
+                  (fn [relation value] (qualification/qualify qualification relation value))
+                  (fn [_ value] (some? value)))
+        done? (fn [value] (or (evidence/has? value) (evidence/fault? value)))
         counters (volatile! {:admissions 0 :transitions 0 :commands 0
                              :fetched-values 0})
         fetch! (fn [descriptor]
@@ -114,7 +128,9 @@
                    (limit-failure! :max-commands @counters
                                    {:max-commands max-commands}))
                  (let [values (reducer/bounded-vector
-                               (fetch-fn descriptor) (:limit descriptor))]
+                               (fetch-fn (cond-> descriptor qualification
+                                                 (assoc :include-qualifier? true)))
+                               (:limit descriptor))]
                    (when (> (+ (:fetched-values @counters) (count values))
                             max-values)
                      (limit-failure! :max-values @counters
@@ -125,11 +141,15 @@
                                          (update :fetched-values
                                                  + (count values))))
                    values))
+        matching-edge (fn [candidate values]
+                        (let [value (first values)]
+                          (when (= candidate (edge/endpoint value)) value)))
         probe? (fn [resource-type eid relation-eid]
-                 (= subject-eid
-                    (first (fetch! (reverse-scan resource-type eid
-                                                 relation-eid subject-type
-                                                 (dec subject-eid) 1)))))
+                 (qualify relation-eid
+                          (matching-edge subject-eid
+                                         (fetch! (reverse-scan resource-type eid
+                                                               relation-eid subject-type
+                                                               (dec subject-eid) 1)))))
         intermediates (fn [resource-type eid via-relation-eid intermediate-type]
                         (loop [bound nil acc (transient [])]
                           (let [chunk (fetch! (reverse-scan resource-type eid
@@ -140,26 +160,26 @@
                                 acc (reduce conj! acc chunk)]
                             (if (< (count chunk) physical-chunk-size)
                               (persistent! acc)
-                              (recur (peek chunk) acc)))))
+                              (recur (edge/endpoint (peek chunk)) acc)))))
         ;; One exact-bound probe per side of a two-layer arrow arm
         ;; (BidirectionalArrowIntersection.dfy): a via candidate is decided
         ;; on the subject's forward index, a holding candidate on the
         ;; resource's reverse index.
         holding-probe? (fn [target-relation-eid intermediate-type candidate]
-                         (= candidate
-                            (first (fetch! (forward-scan
-                                            subject-type subject-eid
-                                            target-relation-eid
-                                            intermediate-type
-                                            (dec candidate) 1)))))
+                         (matching-edge candidate
+                                        (fetch! (forward-scan
+                                                 subject-type subject-eid
+                                                 target-relation-eid
+                                                 intermediate-type
+                                                 (dec candidate) 1))))
         via-probe? (fn [resource-type eid via-relation-eid intermediate-type
                         candidate]
-                     (= candidate
-                        (first (fetch! (reverse-scan
-                                        resource-type eid
-                                        via-relation-eid
-                                        intermediate-type
-                                        (dec candidate) 1)))))
+                     (matching-edge candidate
+                                    (fetch! (reverse-scan
+                                             resource-type eid
+                                             via-relation-eid
+                                             intermediate-type
+                                             (dec candidate) 1))))
         ;; The interleaved bidirectional decision for one two-layer arm:
         ;; vias(resource) ∩ holdings(subject) ≠ ∅. Round order and both
         ;; exhaustion exits follow the verified model exactly
@@ -171,7 +191,7 @@
              target-relation-eid]
           (loop [vias [] via-index 0 via-bound nil vias-done? false
                  holdings [] holding-index 0 holding-bound nil
-                 holdings-done? false]
+                 holdings-done? false answer false]
             (let [[vias via-index via-bound vias-done?]
                   (if (and (>= via-index (count vias)) (not vias-done?))
                     (let [chunk (fetch! (reverse-scan resource-type eid
@@ -179,41 +199,57 @@
                                                       intermediate-type
                                                       via-bound
                                                       physical-chunk-size))]
-                      [chunk 0 (if (seq chunk) (peek chunk) via-bound)
+                      [chunk 0 (if (seq chunk) (edge/endpoint (peek chunk)) via-bound)
                        (< (count chunk) physical-chunk-size)])
                     [vias via-index via-bound vias-done?])]
               (if (>= via-index (count vias))
-                ;; The via side is exhausted with every candidate probed
-                ;; negative: the intersection is empty.
-                false
-                (if (holding-probe? target-relation-eid intermediate-type
-                                    (nth vias via-index))
-                  true
-                  (let [[holdings holding-index holding-bound holdings-done?]
-                        (if (and (>= holding-index (count holdings))
-                                 (not holdings-done?))
-                          (let [chunk (fetch! (forward-scan
-                                               subject-type subject-eid
-                                               target-relation-eid
-                                               intermediate-type
-                                               holding-bound
-                                               physical-chunk-size))]
-                            [chunk 0
-                             (if (seq chunk) (peek chunk) holding-bound)
-                             (< (count chunk) physical-chunk-size)])
-                          [holdings holding-index holding-bound
-                           holdings-done?])]
-                    (if (>= holding-index (count holdings))
-                      ;; The holdings side is exhausted with every candidate
-                      ;; probed negative: the intersection is empty.
-                      false
-                      (if (via-probe? resource-type eid via-relation-eid
-                                      intermediate-type
-                                      (nth holdings holding-index))
-                        true
-                        (recur vias (inc via-index) via-bound vias-done?
-                               holdings (inc holding-index) holding-bound
-                               holdings-done?)))))))))
+                ;; Either exhausted physical side proves that every possible
+                ;; matching pair has contributed its evidence.
+                answer
+                (let [via-edge (nth vias via-index)
+                      via (qualify via-relation-eid via-edge)
+                      path (if (or (evidence/no? via) (evidence/fault? via))
+                             via
+                             (evidence/combine
+                              :arrow via
+                              (qualify target-relation-eid
+                                       (holding-probe? target-relation-eid intermediate-type
+                                                       (edge/endpoint via-edge)))))
+                      answer (evidence/combine :union answer path)]
+                  (cond
+                    (done? answer) answer
+                    :else
+                    (let [[holdings holding-index holding-bound holdings-done?]
+                          (if (and (>= holding-index (count holdings))
+                                   (not holdings-done?))
+                            (let [chunk (fetch! (forward-scan
+                                                 subject-type subject-eid
+                                                 target-relation-eid
+                                                 intermediate-type
+                                                 holding-bound
+                                                 physical-chunk-size))]
+                              [chunk 0
+                               (if (seq chunk) (edge/endpoint (peek chunk)) holding-bound)
+                               (< (count chunk) physical-chunk-size)])
+                            [holdings holding-index holding-bound
+                             holdings-done?])]
+                      (if (>= holding-index (count holdings))
+                        answer
+                        (let [holding-edge (nth holdings holding-index)
+                              via (qualify via-relation-eid
+                                           (via-probe? resource-type eid via-relation-eid
+                                                       intermediate-type (edge/endpoint holding-edge)))
+                              path (if (or (evidence/no? via) (evidence/fault? via))
+                                     via
+                                     (evidence/combine :arrow via
+                                                       (qualify target-relation-eid holding-edge)))
+                              answer (evidence/combine :union answer path)]
+                          (cond
+                            (done? answer) answer
+                            :else
+                            (recur vias (inc via-index) via-bound vias-done?
+                                   holdings (inc holding-index) holding-bound
+                                   holdings-done? answer)))))))))))
         ;; A target permission every one of whose derivations is a base
         ;; relation reduces its arrow to a union of two-layer intersections;
         ;; any other shape keeps the enumerate-and-descend route.
@@ -239,106 +275,141 @@
                         :queued-work transitions
                         :fetched-values fetched-values}))))]
     (loop [stack [[(or (:start-node options) (:root plan)) resource-eid]]
-           visited (transient #{})]
+           visited (transient (if qualification {} #{}))
+           answer false]
       (if (zero? (count stack))
-        (do (report!) false)
-        (let [[node eid :as state] (peek stack)
+        (do (report!) answer)
+        (let [[node eid incoming :as frame] (peek stack)
+              state (if qualification [node eid] frame)
+              admitted? (contains? visited state)
+              prefix (if qualification
+                       (evidence/combine :union (get visited state false)
+                                         (if (= 3 (count frame)) incoming true))
+                       true)
+              unchanged? (if qualification
+                           (and admitted? (= prefix (get visited state)))
+                           admitted?)
               stack (pop stack)]
           (when (>= (:transitions @counters) max-transitions)
             (limit-failure! :max-transitions @counters
                             {:max-transitions max-transitions}))
           (vswap! counters update :transitions inc)
           (when cut-point! (cut-point! @counters))
-          (if (contains? visited state)
-            (recur stack visited)
-            (let [_ (when (>= (:admissions @counters) max-admissions)
+          (if unchanged?
+            (recur stack visited answer)
+            (let [_ (when (and (not admitted?) (>= (:admissions @counters) max-admissions))
                       (limit-failure! :max-admissions @counters
                                       {:max-admissions max-admissions
                                        :staged 1}))
-                  _ (vswap! counters update :admissions inc)
-                  visited (conj! visited state)
-                  rules (get reverse-rules node)]
+                  _ (when-not admitted? (vswap! counters update :admissions inc))
+                  visited (if qualification (assoc! visited state prefix) (conj! visited state))
+                  rules (get reverse-rules node)
+                  successor (if qualification
+                              (fn [target next-eid via] [target next-eid via])
+                              (fn [target next-eid _] [target next-eid]))
+                  join-path (fn [answer path]
+                              (evidence/combine :union answer
+                                                (evidence/combine :arrow prefix path)))
+                  base-answer
+                  (reduce (fn [answer rule]
+                            (let [answer (if (and (= :relation (:rule rule))
+                                                  (= subject-type (:subject-type rule)))
+                                           (join-path answer
+                                                      (probe? (:resource-type rule) eid
+                                                              (:relation-eid rule)))
+                                           answer)]
+                              (if (done? answer) (reduced answer) answer)))
+                          answer rules)]
               ;; Base tuples first: one exact-bound probe per direct rule.
-              (if (some (fn [rule]
-                          (and (= :relation (:rule rule))
-                               (= subject-type (:subject-type rule))
-                               (probe? (:resource-type rule) eid
-                                       (:relation-eid rule))))
-                        rules)
-                (do (report!) true)
+              (if (done? base-answer)
+                (do (report!) base-answer)
                 ;; Then the arrows: enumerate intermediates, probe or descend.
-                (let [outcome
+                (let [answer (volatile! base-answer)
+                      outcome
                       (reduce
                        (fn [successors rule]
-                         (case (:rule rule)
-                           :self-permission
-                           (conj successors [(:target-node rule) eid])
+                         (let [next-successors
+                               (case (:rule rule)
+                                 :self-permission
+                                 (conj successors (successor (:target-node rule) eid prefix))
 
-                           :arrow-permission
-                           (if-let [target-rules
-                                    (relation-only-rules (:target-node rule))]
+                                 :arrow-permission
+                                 (if-let [target-rules
+                                          (relation-only-rules (:target-node rule))]
                              ;; Every derivation of the target permission is
                              ;; a base relation: the arm is a union of
                              ;; two-layer intersections, each decided
                              ;; bidirectionally without materializing the
                              ;; via fan-in.
-                             (if (some (fn [target-rule]
-                                         (and (= subject-type
-                                                 (:subject-type target-rule))
-                                              (intersect-arm?
-                                               (:resource-type rule) eid
-                                               (:via-relation-eid rule)
-                                               (:intermediate-type rule)
-                                               (:relation-eid target-rule))))
-                                       target-rules)
-                               (reduced ::found)
-                               successors)
-                             (into successors
-                                   (map (fn [i] [(:target-node rule) i]))
-                                   (intermediates (:resource-type rule) eid
-                                                  (:via-relation-eid rule)
-                                                  (:intermediate-type rule))))
+                                   (do
+                                     (reduce (fn [_ target-rule]
+                                               (when (= subject-type (:subject-type target-rule))
+                                                 (vswap! answer join-path
+                                                         (intersect-arm?
+                                                          (:resource-type rule) eid
+                                                          (:via-relation-eid rule)
+                                                          (:intermediate-type rule)
+                                                          (:relation-eid target-rule))))
+                                               (when (done? @answer) (reduced nil)))
+                                             nil target-rules)
+                                     successors)
+                                   (reduce (fn [successors compact-edge]
+                                             (let [via (evidence/combine
+                                                        :arrow prefix
+                                                        (qualify (:via-relation-eid rule) compact-edge))]
+                                               (if (or (evidence/no? via) (evidence/fault? via))
+                                                 (do (vswap! answer #(evidence/combine :union % via))
+                                                     (if (done? @answer) (reduced successors) successors))
+                                                 (conj successors
+                                                       (successor (:target-node rule)
+                                                                  (edge/endpoint compact-edge) via)))))
+                                           successors
+                                           (intermediates (:resource-type rule) eid
+                                                          (:via-relation-eid rule)
+                                                          (:intermediate-type rule))))
 
-                           :arrow-relation
-                           (if (and (= subject-type (:target-subject-type rule))
-                                    (intersect-arm?
-                                     (:resource-type rule) eid
-                                     (:via-relation-eid rule)
-                                     (:intermediate-type rule)
-                                     (:target-relation-eid rule)))
-                             (reduced ::found)
-                             successors)
+                                 :arrow-relation
+                                 (do
+                                   (when (= subject-type (:target-subject-type rule))
+                                     (vswap! answer join-path
+                                             (intersect-arm?
+                                              (:resource-type rule) eid
+                                              (:via-relation-eid rule)
+                                              (:intermediate-type rule)
+                                              (:target-relation-eid rule))))
+                                   successors)
 
-                           :relation
-                           successors
+                                 :relation
+                                 successors
 
                            ;; Fail closed on an unrecognized rule kind, like
                            ;; the reducer's reverse-goal-work: silently
                            ;; skipping one would under-derive and answer
                            ;; false where enumeration paths error.
-                           (throw
-                            (ex-info
-                             "Point check met an unrecognized sealed rule kind."
-                             {:eacl/error :eacl.plan/unknown-rule-kind
-                              :rule-kind (:rule rule)
-                              :node node}))))
+                                 (throw
+                                  (ex-info
+                                   "Point check met an unrecognized sealed rule kind."
+                                   {:eacl/error :eacl.plan/unknown-rule-kind
+                                    :rule-kind (:rule rule)
+                                    :node node})))]
+                           (if (done? @answer) (reduced next-successors) next-successors)))
                        []
                        rules)]
-                  ;; Value comparison, not `identical?`: ClojureScript keyword
-                  ;; literals are not interned objects.
-                  (if (= ::found outcome)
-                    (do (report!) true)
+                  (if (done? @answer)
+                    (do (report!) @answer)
                     (let [stack (into stack (rseq outcome))]
                       (when (> (count stack) max-stack)
                         (limit-failure! :max-stack @counters
                                         {:max-stack max-stack
                                          :staged (count outcome)}))
-                      (recur stack visited))))))))))))
+                      (recur stack visited @answer))))))))))))
 
 (defn check-eids
   "Anchored point check over pre-resolved internal ids: does the subject
   hold the plan's root permission on the resource? Decided by the
-  membership-probe search (`probe-check-eids`); nil ids never hold."
+  membership-probe search (`probe-check-eids`); nil ids never hold.
+  With `:qualification`, returns conditional/temporal Evidence or a plain
+  timeless Boolean; callers must project through evidence/has?."
   [{:keys [subject-eid resource-eid] :as options}]
   (if (or (nil? subject-eid) (nil? resource-eid))
     false
