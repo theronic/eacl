@@ -223,8 +223,9 @@
 
 (defn- format-options
   [options]
-  (merge (select-keys options format-option-keys)
-         (:format-options options)))
+  (or (::captured-format-options options)
+      (merge (select-keys options format-option-keys)
+             (:format-options options))))
 
 (defn ^:no-doc plausible-token?
   "Cheap admission check before a raw token may enter any cache key.
@@ -399,7 +400,9 @@
                                (and (= controller-id (:controller-id entry))
                                     (or (contains? retired (:security-kid entry))
                                         (not= (:generation snapshot) (:generation entry))))))))))
-    (assoc options :format-options configured)))
+    ;; Selection is complete for this operation. Nested codec helpers reuse
+    ;; this exact map instead of rebuilding it at each derivation/cache step.
+    (assoc options :format-options configured ::captured-format-options configured)))
 
 (defn- named-root-key [configured kid]
   (or (get (or (:keyring configured) {:default secure/default-root-key}) kid)
