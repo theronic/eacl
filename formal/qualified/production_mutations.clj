@@ -3,6 +3,7 @@
    conformance tests. Every control first checks its unmodified gate."
   (:require [clojure.test :as t :refer [deftest is]]
             [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.clock :as clock]
             [eacl.authorization.evidence-test :as evidence-test]
             [eacl.authorization.qualification :as qualification]
             [eacl.authorization.qualification-test :as qualification-test]
@@ -10,8 +11,11 @@
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.stable-route-native-evidence-test :as native-test]
+            [eacl.datascript.evaluation-clock-test :as clock-test]
+            [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
             [eacl.operator.recursive :as recursive]
+            [eacl.operator.vector-evaluator :as vector]
             [eacl.operator.vector-evaluator-test :as vector-test]))
 
 (defn failures [gate]
@@ -24,6 +28,7 @@
 (defn mutation-cases []
   (let [qualify qualification/qualify identity qualification/exact-reuse-identity
         fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
+        snapshot-opts @#'orchestration/snapshot-opts
         enqueue @#'recursive/enqueue-evidence!]
     {:qualifier-reference-ignored
      {:gate #'qualification-test/exclusive-expiry-precedes-program-work
@@ -64,6 +69,19 @@
      :time-omitted-from-exact-point-scope
      {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
       :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 nil))}}
+     :evidence-witness-validation-bypassed
+     {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
+      :redefs {#'vector/validate-evidence-witnesses! (fn [& _] nil)}}
+     :cached-grant-hides-encountered-witness-fault
+     {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
+      :redefs {#'vector/demanded-witness-fault (constantly nil)}}
+     :raw-clock-regresses
+     {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
+      :redefs {#'clock/clock clojure.core/identity}}
+     :snapshot-resamples-time
+     {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
+      :redefs {#'orchestration/snapshot-opts (fn [runtime basis]
+                                            (dissoc (snapshot-opts runtime basis) :evaluation-time-ms))}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -74,7 +92,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 12 (count cases)))
+    (is (= 16 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

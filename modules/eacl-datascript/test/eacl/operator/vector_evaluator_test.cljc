@@ -3,6 +3,9 @@
              :refer [deftest is]]
             [datascript.core :as ds]
             [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.evidence-test :as evidence-fixtures]
+            [eacl.backend.direct-membership :as direct]
             [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
@@ -494,3 +497,58 @@
                                :candidates (mapv #(assoc % :direction :reverse) candidates)
                                :qualification (scalar-fixtures/qualified-request db 100 {})}]
           (is (= (:result after) (vector-evaluator/check-many-eids reverse-options))))))))
+
+(deftest exact-evidence-witnesses-avoid-rechecking-proven-nodes
+  (let [{:keys [adapter db user documents eid]} (fixture)
+        sealed (plan/seal-plan adapter [:document :view])
+        root-key [[:document :view] (get (plan/expression-roots sealed) [:document :view])]
+        candidate {:direction :forward :subject-type :user :subject-eid (eid user)
+                   :resource-type :document :resource-eid (eid (nth documents 2))}
+        request (scalar-fixtures/qualified-request db 99 {})
+        options {:adapter adapter :plan sealed :qualification request :candidates [candidate]}
+        scope (qualification/exact-reuse-identity request)]
+    (doseq [leaf (list true false evidence-fixtures/x
+                       (evidence/with-certificate true 100 true)
+                       (evidence/with-certificate evidence-fixtures/x 100 false)
+                       (evidence/fault :test/failure :invalid))]
+      (let [expected (with-redefs [qualification/qualify (fn [_ _ edge] (if edge leaf false))]
+                       (vector-evaluator/check-many-eids options))
+            witnessed (assoc candidate :evidence-witnesses {root-key (first expected)})]
+        (with-redefs [direct/dispatch-edges (fn [& _] (throw (ex-info "Already proved" {})))]
+          (is (= expected (vector-evaluator/check-many-eids
+                           (assoc options :candidates [witnessed] :witness-scope scope)))))))
+    (let [witnessed (assoc candidate :evidence-witnesses {root-key true})
+          options (assoc options :candidates [witnessed] :witness-scope scope)]
+      (doseq [changed [(assoc options :witness-scope nil)
+                       (assoc options :qualification (scalar-fixtures/qualified-request db 100 {}))
+                       (assoc options :qualification (scalar-fixtures/qualified-request db 99 {"flag" true}))
+                       (assoc options :qualification (qualification/request (assoc request :basis {:source :another :revision 1})))
+                       (assoc options :qualification (qualification/request (assoc request :evaluator nil)))]]
+        (is (= :witness-scope (:reason (error-data #(vector-evaluator/check-many-eids changed))))))
+      (is (= :qualified-witness-required
+             (:reason (error-data #(vector-evaluator/check-many-eids (dissoc options :qualification))))))
+      (is (= :expired-witness
+             (:reason (error-data #(vector-evaluator/check-many-eids
+                                    (assoc options :candidates [(assoc candidate :evidence-witnesses
+                                                                       {root-key (evidence/with-certificate true 99 true)})]))))))
+      (with-redefs [vector-evaluator/maximum-evidence-witnesses 0]
+        (is (= :witness-limit (:reason (error-data #(vector-evaluator/check-many-eids options))))))
+      (with-redefs [vector-evaluator/maximum-evidence-witness-bytes 0]
+        (is (= :witness-size (:reason (error-data #(vector-evaluator/check-many-eids options))))))
+      (let [store (subproblem/store)]
+        (binding [subproblem/*store* store subproblem/*exact-denotation-key-fn* test-exact-key]
+          (is (= [true] (vector-evaluator/check-cached-many-eids options)))
+          (let [leaf-key [[:document :view]
+                          (first (remove #{(second root-key)}
+                                         (keys (get-in sealed [:predicate-programs [:document :view]]))))]
+                fault (evidence/fault :test/failure :invalid)]
+            (with-redefs [direct/dispatch-edges (fn [& _] (throw (ex-info "Fault already encountered" {})))]
+              (is (= [fault] (vector-evaluator/check-cached-many-eids
+                              (assoc options :candidates [(assoc candidate :evidence-witnesses {leaf-key fault})]))))))
+          (is (= :witness-scope
+                 (:reason (error-data #(vector-evaluator/check-cached-many-eids
+                                        (dissoc options :witness-scope)))))))))
+    (is (= :invalid-witness-node
+           (:reason (error-data #(vector-evaluator/check-many-eids
+                                  (assoc options :witness-scope scope
+                                         :candidates [(assoc candidate :evidence-witnesses {[[:absent :view] 0] true})]))))))))

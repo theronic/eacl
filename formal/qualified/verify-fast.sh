@@ -56,6 +56,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.engine.scan-cache :reload)
      (require 'eacl.engine.scan-cache-test :reload)
      (require 'eacl.engine.stable-route-native-evidence-test :reload)
+     (require 'eacl.datascript.evaluation-clock-test :reload)
      (load-file \"formal/qualified/production_mutations.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge

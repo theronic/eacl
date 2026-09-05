@@ -4,6 +4,8 @@
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.direct-membership :as direct]
             [eacl.backend.v8 :as backend]
+            [eacl.caveats.values :as caveat-values]
+            [eacl.execution :as execution]
             [eacl.exact-integer :as exact-integer]
             [eacl.operator.bitmask :as bitmask]
             [eacl.operator.evaluator :as scalar]
@@ -12,7 +14,9 @@
 
 (def ^:private required-candidate-keys
   #{:direction :subject-type :subject-eid :resource-type :resource-eid})
-(def ^:private optional-candidate-keys #{:true-nodes})
+(def ^:private optional-candidate-keys #{:true-nodes :evidence-witnesses})
+(def maximum-evidence-witnesses 4096)
+(def maximum-evidence-witness-bytes 4194304)
 (def ^:private unresolved ::unresolved)
 
 (def ^:dynamic *vector-stats*
@@ -40,11 +44,12 @@
     (invalid! :invalid-candidate "Vector candidate must be a map."
               {:index index :candidate candidate}))
   ;; Closed key set without allocating one: every required key present and
-  ;; the map holds nothing beyond the required keys plus the one optional key.
+  ;; the map holds nothing beyond the required and optional keys.
   (when-not (and (every? #(contains? candidate %) required-candidate-keys)
                  (case (count candidate)
                    5 true
-                   6 (contains? candidate :true-nodes)
+                   6 (or (contains? candidate :true-nodes) (contains? candidate :evidence-witnesses))
+                   7 (and (contains? candidate :true-nodes) (contains? candidate :evidence-witnesses))
                    false))
     (invalid! :invalid-candidate-fields
               "Vector candidate has unknown or missing fields."
@@ -74,6 +79,9 @@
       (invalid! :invalid-witness
                 "Vector candidate witness nodes must be a set of plan-node keys."
                 {:index index :true-nodes true-nodes})))
+  (when (and (contains? candidate :evidence-witnesses)
+             (not (map? (:evidence-witnesses candidate))))
+    (invalid! :invalid-witness "Evidence witnesses must map exact plan nodes to evidence." {:index index}))
   (if (:true-nodes candidate)
     candidate
     (assoc candidate :true-nodes #{})))
@@ -96,6 +104,38 @@
                     "Vector candidates must have distinct typed identities."
                     {:width (count identities)}))))
     normalized))
+
+(defn- validate-evidence-witnesses!
+  "Exact node evidence produced in this same selected request can discharge
+   predicate work. A derivation's conditional lower bound is not an exact
+   witness; its unresolved alternatives must still be evaluated by the owner.
+   Validate before point-cache lookup as well as before fresh evaluation."
+  [{:keys [plan qualification witness-scope]} candidates]
+  (when (and qualification (some #(seq (:true-nodes %)) candidates))
+    (invalid! :unqualified-witness "Qualified evaluation requires temporal witness evidence." {}))
+  (let [n (reduce #(+ %1 (count (:evidence-witnesses %2))) 0 candidates)]
+    (when (pos? n)
+      (when (> n maximum-evidence-witnesses)
+        (invalid! :witness-limit "Evidence witness count exceeds the vector bound." {:count n}))
+      (when-not qualification
+        (invalid! :qualified-witness-required "Evidence witnesses require a qualified request." {}))
+      (when-not (= witness-scope (qualification/exact-reuse-identity qualification))
+        (invalid! :witness-scope "Evidence witnesses belong to another request scope." {}))
+      (reduce
+       (fn [bytes [node value]]
+         (execution/check! :evidence-witness)
+         (when-not (and (vector? node) (= 2 (count node))
+                       (get-in (:predicate-programs plan) node))
+           (invalid! :invalid-witness-node "Evidence witness is outside the sealed plan." {:node node}))
+         (let [bytes (+ bytes (if (boolean? value) 1
+                                 (caveat-values/utf8-size (evidence/encode value))))]
+           (when (> bytes maximum-evidence-witness-bytes)
+             (invalid! :witness-size "Evidence witnesses exceed the vector byte bound." {:bytes bytes}))
+           (when-not (evidence/before? (:time qualification) (evidence/valid-until value))
+             (invalid! :expired-witness "Evidence witness certificate has already expired." {}))
+           bytes))
+       0 (mapcat :evidence-witnesses candidates))))
+  nil)
 
 (defn- direct-probe [candidate descriptor]
   (when-let [{:keys [relation-id]}
@@ -136,18 +176,31 @@
   (or (evidence/fault? result)
       (if (= :union op) (evidence/has? result) (evidence/no? result))))
 
+(defn- demanded-witness-fault [candidate]
+  ;; These faults have already been encountered by traversal. Neither a
+  ;; cached answer nor a later Boolean absorber may erase that demand.
+  (when-let [proofs (:evidence-witnesses candidate)]
+    (reduce-kv (fn [fault _ value]
+                 (if (evidence/fault? value)
+                   (if fault (evidence/combine :union fault value) value)
+                   fault))
+               nil proofs)))
+
 (defn check-many-eids
   "Evaluates a distinct vector of complete typed candidate contexts and
-  returns one aligned Boolean per candidate, or throws without returning a
+  returns one aligned decision per candidate, or throws without returning a
   partial vector. Direct leaves are regrouped through the bounded backend
-  dispatcher; arrow leaves retain exact scalar semantics."
+  dispatcher; arrow leaves retain exact scalar semantics. Qualified callers
+  may supply :evidence-witnesses per candidate and the complete :witness-scope
+  from qualification/exact-reuse-identity. Only exact node results qualify."
   [{:keys [plan candidates] :as options}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Vector evaluation requires a sealed operator plan."
               {:plan-domain (:domain plan)}))
-  (check-many-normalized
-   (assoc options :candidates (normalize-candidates candidates))))
+  (let [candidates (normalize-candidates candidates)]
+    (validate-evidence-witnesses! options candidates)
+    (check-many-normalized (assoc options :candidates candidates))))
 
 (defn- check-many-normalized
   "Trusted core of `check-many-eids`: the candidate vector is already
@@ -190,11 +243,15 @@
                         witnessed
                         (reduce
                          (fn [values index]
-                           (if (contains? (:true-nodes (nth candidates index)) node-key)
-                             (if qualification
-                               (invalid! :unqualified-witness "Qualified evaluation requires temporal witness evidence." {})
-                             (assoc values index true))
-                             values))
+                           (let [candidate (nth candidates index)
+                                 proofs (:evidence-witnesses candidate)
+                                 fault (when (and proofs (= permission root-permission) (= node-id root-id))
+                                         (demanded-witness-fault candidate))]
+                             (cond
+                               fault (assoc values index fault)
+                               (contains? proofs node-key) (assoc values index (get proofs node-key))
+                               (contains? (:true-nodes candidate) node-key) (assoc values index true)
+                               :else values)))
                          initial indexes)
                         _ (vswap! memo assoc node-key witnessed)
                         pending (filterv #(= unresolved (nth witnessed %))
@@ -358,6 +415,7 @@
               "Vector evaluation requires a sealed operator plan."
               {:plan-domain (:domain plan)}))
   (let [candidates (normalize-candidates candidates)
+        _ (validate-evidence-witnesses! options candidates)
         permission (or permission (:root plan))
         node-id (or node-id
                     (get (operator-plan/expression-roots plan) permission))
@@ -376,7 +434,8 @@
                (let [key (point-cache-key
                           plan permission node-id scope-identity candidate)]
                  (if-let [resolved
-                          (subproblem/lookup-denotation! key)]
+                          (when-not (demanded-witness-fault candidate)
+                            (subproblem/lookup-denotation! key))]
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
