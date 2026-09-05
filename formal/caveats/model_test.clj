@@ -27,6 +27,18 @@
   {:t (m/known :bool true) :f (m/known :bool false)
    :u (m/missing #{"a"} [:param "a"]) :e (m/fault :missing-map-key)})
 
+(deftest peer-repair-preserves-identity-and-qualifier
+  (doseq [direction [:forward :reverse] qid [1 2 3]]
+    (let [identity [:user 10 20 :doc 30]
+          prepared (:state (m/transition m/empty-state [:prepare nil qid {:valid-until-ms 1000} #{}]))
+          published (:state (m/transition prepared [:publish identity qid nil #{7}]))
+          damaged (update published direction dissoc identity)
+          repaired (m/repair-peer damaged identity)]
+      (is (:accepted repaired))
+      (is (= (update published :generation inc) (:state repaired)))
+      (is (false? (:accepted (m/repair-peer (update damaged :qualifiers dissoc qid) identity))))
+      (is (false? (:accepted (m/repair-peer published identity)))))))
+
 (defn classification [r]
   (cond (:fault r) :e (:missing r) :u (:value r) :t :else :f))
 

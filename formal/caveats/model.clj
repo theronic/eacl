@@ -234,6 +234,15 @@
               :cleanup (update s :qualifiers dissoc qid))]
         {:accepted true :state (assoc changed :generation generation)}))))
 
+(defn repair-peer [state identity]
+  (let [forward (get-in state [:forward identity]) reverse (get-in state [:reverse identity])
+        qid (or forward reverse)
+        exactly-one? (not= (contains? (:forward state) identity) (contains? (:reverse state) identity))
+        complete (-> state (assoc-in [:forward identity] qid) (assoc-in [:reverse identity] qid))]
+    (if (and exactly-one? qid (healthy? complete))
+      {:accepted true :state (update complete :generation inc)}
+      {:accepted false :state state})))
+
 (defn valid-definitions? [definitions]
   (and (= (count definitions) (count (set (map :name definitions))))
        (every? (fn [{:keys [name parameters plan profile-version]}]

@@ -14,7 +14,7 @@
               "formal/dafny/CaveatSchema.dfy"
               "formal/dafny/QualifierLifecycle.dfy"]
     :claim :proof-only-typed-profile-partial-outcomes-and-atomic-qualifier-lifecycle
-    :minimum-proof-efforts 78}
+    :minimum-proof-efforts 82}
    :abstract-operator-engine-phase-a
    {:sources
     ["formal/dafny/PermissionSetAlgebra.dfy"

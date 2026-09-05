@@ -119,4 +119,31 @@ module QualifierLifecycle {
     ensures !Healthy(s)
   {
   }
+
+  function DropHalf(s: State, i: Identity, forward: bool): State
+    requires Healthy(s) && i in s.forward && s.forward[i] != 0
+  {
+    State(if forward then s.forward - {i} else s.forward,
+          if forward then s.reverse else s.reverse - {i},
+          s.entities, s.everUsed, s.stamp, s.facts)
+  }
+
+  function RepairPeer(s: State, i: Identity, qid: nat): State
+    requires qid != 0 && qid in s.entities
+  {
+    State(s.forward[i := qid], s.reverse[i := qid], s.entities,
+          s.everUsed, s.stamp + 1, s.facts)
+  }
+
+  lemma PeerRepairPreservesQualifier(s: State, i: Identity, forward: bool)
+    requires Healthy(s) && i in s.forward && s.forward[i] != 0
+    ensures Healthy(RepairPeer(DropHalf(s, i, forward), i, s.forward[i]))
+    ensures RepairPeer(DropHalf(s, i, forward), i, s.forward[i]).forward == s.forward
+    ensures RepairPeer(DropHalf(s, i, forward), i, s.forward[i]).reverse == s.reverse
+    ensures RepairPeer(DropHalf(s, i, forward), i, s.forward[i]).entities == s.entities
+    ensures RepairPeer(DropHalf(s, i, forward), i, s.forward[i]).everUsed == s.everUsed
+    ensures RepairPeer(DropHalf(s, i, forward), i, s.forward[i]).facts == s.facts
+    ensures RepairPeer(DropHalf(s, i, forward), i, s.forward[i]).stamp > s.stamp
+  {
+  }
 }
