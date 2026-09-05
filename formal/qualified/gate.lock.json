@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 480608,
+  "assertions": 545123,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -49,6 +49,8 @@
     "modules/eacl-datascript/test/eacl/datascript/caveat_context_test.cljc": "1a8a992eeca17194fc103bace28480f407aa11b37e37765fed14e904e9d905aa",
     "modules/eacl/test/eacl/authorization/result_test.cljc": "ec4748b0794a1116a9dc62b966e6d101da4d939c3bf3266796bd8eec0e5cf261",
     "modules/eacl/test/eacl/core_test.cljc": "accdddf560023ccbc5138c2013a82e877a9b6ca217f6ff81cfed5a14d6868903",
-    "modules/eacl-datascript/test/eacl/datascript/qualified_check_test.cljc": "18bbe424dfcb741db2fa68be918ffd435651409da7ea9435208beab23be11bde"
+    "modules/eacl-datascript/test/eacl/datascript/qualified_check_test.cljc": "18bbe424dfcb741db2fa68be918ffd435651409da7ea9435208beab23be11bde",
+    "formal/qualified/discovery_model.clj": "40b5217acab3bf5d1fffecf55cfed75c6331e6f8d6cb01105560afd95f194b2a",
+    "formal/qualified/discovery_model_test.clj": "7b8235f04f0348e6b8717167d197266c2d9eae8e86de15f7e09bf16fcb5fb14d"
   }
 }

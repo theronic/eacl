@@ -115,6 +115,10 @@ Composition follows the formal model:
 
 Relationship-bound context overlays request context before evaluation. Final detailed checks expose SpiceDB-style permissionship and missing context. `can?` returns true only for definite true.
 
+For recursive first-discovery enumeration, the existing admission identities and stack remain authoritative. Ordinary admitted work continues to use the existing set. A sparse evidence table records only admissions whose incoming value is not timeless true. A changed union of incoming evidence schedules further propagation; updates to already queued work coalesce at its existing stack position. A scan whose incoming evidence changes must revisit its prefix with a new buffer revision, so a physical buffer from an earlier prefix cannot skip newly possible derivations. Admission, stack, transition, and evidence limits apply before committing these updates.
+
+An emitted conditional path is a lower bound on the complete root result. The existing point evaluator completes that result before public projection, sharing the request's qualifier memo; a definite witness needs no completion probe. Each endpoint is emitted or filtered once. Checkpoints retain the evidence needed for queued work and the complete qualified request scope, and discard physical buffers as before. This extends the current discovery machine while preserving its ordinary path and physical chunk independence.
+
 ### 7. Implement exclusive `valid-until` as native qualifier semantics
 
 A qualifier with no bound is time-unbounded. A finite bound is active exactly when:

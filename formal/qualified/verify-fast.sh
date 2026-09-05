@@ -30,6 +30,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (load-file \"formal/qualified/model.clj\")
      (load-file \"formal/qualified/model_test.clj\")
      (load-file \"formal/qualified/mutation_test.clj\")
+     (load-file \"formal/qualified/discovery_model.clj\")
+     (load-file \"formal/qualified/discovery_model_test.clj\")
      (require 'eacl.authorization.evidence :reload)
      (require 'eacl.authorization.evidence-test :reload)
      (load-file \"formal/qualified/evidence_bridge.clj\")
@@ -79,6 +81,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.datascript.qualified-check-test :reload)
      (load-file \"formal/qualified/production_mutations.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
+                                   'eacl.formal.qualified.discovery-model-test
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge
                                    'eacl.formal.qualified.operator-bridge 'eacl.authorization.evidence-index-test
                                    'eacl.formal.qualified.recursive-bridge 'eacl.formal.qualified.stable-route-bridge
