@@ -53,6 +53,9 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.engine.stable-route :reload)
      (require 'eacl.engine.stable-route-evidence-test :reload)
      (load-file \"formal/qualified/stable_route_bridge.clj\")
+     (require 'eacl.operator.seekable :reload)
+     (require 'eacl.operator.seekable-evidence-test :reload)
+     (load-file \"formal/qualified/seekable_bridge.clj\")
      (require 'eacl.engine.scan-cache :reload)
      (require 'eacl.engine.scan-cache-test :reload)
      (require 'eacl.engine.stable-route-native-evidence-test :reload)
@@ -62,6 +65,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge
                                    'eacl.formal.qualified.operator-bridge 'eacl.authorization.evidence-index-test
                                    'eacl.formal.qualified.recursive-bridge 'eacl.formal.qualified.stable-route-bridge
+                                   'eacl.formal.qualified.seekable-bridge
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Qualified finite gate failed or assertion inventory changed\" r)))

@@ -2,9 +2,12 @@
   "History-free ordered direct-leaf generators. Max-head k-way
   intersection and monotone anti-join refine a certified generic cover path
   without materializing any operand."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.execution :as execution]
+            [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]))
 
 (def ^:dynamic *seek-stats*
@@ -69,7 +72,7 @@
 (defn- scan-values
   [{:keys [scan-invoker traversal subject-type anchor-eid order-direction
            resource-type cut-point! physical-chunk-size max-commands
-           max-values counters]}
+           max-values counters qualification]}
    relation-id bound inclusive?]
   (let [current @counters]
     ;; The routed cut point is the same deadline/cancellation check as the
@@ -84,6 +87,7 @@
       (let [scan-options
             ;; `:limit` lets natively paging adapters stop at the chunk.
             (cond-> {:direction order-direction :limit physical-chunk-size}
+              qualification (assoc :include-qualifier? true)
               (some? bound)
               (assoc :bound-eid bound :inclusive-bound? inclusive?))
             values
@@ -114,21 +118,39 @@
   (let [values (scan-values options (:relation-id cursor) bound inclusive?)
         chunk (:physical-chunk-size options)]
     (assoc cursor :buffer values :index 0
-           :bound (peek values)
+           :bound (edge/endpoint (peek values))
            :done? (< (count values) chunk))))
 
+(defn- head-evidence [cursor]
+  (let [compact (nth (:buffer cursor) (:index cursor))]
+    (if (vector? compact) (:evidence cursor) true)))
+
 (defn- head [options cursor]
-  (cond
-    (< (:index cursor) (count (:buffer cursor)))
-    [(nth (:buffer cursor) (:index cursor)) cursor]
-
-    (:done? cursor) [nil cursor]
-
-    :else
-    (let [cursor (refill options cursor (:bound cursor) false)]
-      (if (seq (:buffer cursor))
-        [(first (:buffer cursor)) cursor]
-        [nil cursor]))))
+  (loop [cursor cursor]
+    (if (< (:index cursor) (count (:buffer cursor)))
+      (let [compact (nth (:buffer cursor) (:index cursor))]
+        (if-not (and (:qualification options) (vector? compact))
+          [(edge/endpoint compact) cursor]
+          (let [cached? (= compact (:qualified-edge cursor))
+                value (if cached? (:evidence cursor)
+                          (qualification/qualify (:qualification options) (:relation-id cursor) compact))
+                cursor (if cached? cursor (assoc cursor :qualified-edge compact :evidence value))]
+            (when (evidence/fault? value)
+              (throw (ex-info "Qualified page evaluation failed."
+                              {:type :eacl.authorization/evaluation-failure
+                               :eacl/error :eacl.authorization/evaluation-failure
+                               :faults (second (evidence/value value))})))
+            (when (and (not cached?) (not (boolean? value)))
+              (vswap! (:examined-certificate options)
+                      #(evidence/combine :intersection %
+                                         (evidence/with-certificate true (evidence/valid-until value)
+                                           (evidence/complete? value)))))
+            (if (evidence/no? value)
+              (recur (update cursor :index inc))
+              [(edge/endpoint compact) cursor]))))
+      (if (:done? cursor)
+        [nil cursor]
+        (recur (refill options cursor (:bound cursor) false))))))
 
 (defn- advance [options cursor]
   (head options (update cursor :index inc)))
@@ -150,15 +172,13 @@
       :else
       (loop [index (inc (:index cursor))]
         (if (< index (count (:buffer cursor)))
-          (let [value (nth (:buffer cursor) index)]
+          (let [value (edge/endpoint (nth (:buffer cursor) index))]
             (if (at-or-beyond? order-direction value target)
-              [value (assoc cursor :index index)]
+              (head options (assoc cursor :index index))
               (recur (inc index))))
           (let [cursor (refill options cursor target true)]
             (add-stat! :inclusive-reseeks 1)
-            (if (seq (:buffer cursor))
-              [(first (:buffer cursor)) cursor]
-              [nil cursor])))))))
+            (head options cursor)))))))
 
 (defn- furthest
   [order-direction values]
@@ -192,10 +212,16 @@
                 (if exhausted?
                   {:emissions emissions :exhausted? true}
                   (if (every? #(= driver-head %) heads)
-                    (let [emissions
-                          (conj emissions
-                                {:value driver-head
-                                 :coords (conj coords-prefix driver-head)})]
+                    (let [value (if (:qualification options)
+                                  (reduce #(evidence/combine :intersection %1 (head-evidence %2))
+                                          (head-evidence driver) operands)
+                                  true)
+                          emissions
+                          (cond-> emissions
+                            (not (evidence/no? value))
+                            (conj (cond-> {:value driver-head
+                                           :coords (conj coords-prefix driver-head)}
+                                    (:qualification options) (assoc :evidence value))))]
                       (if (= width (count emissions))
                         {:emissions emissions :exhausted? false}
                         (let [[_ driver] (advance options driver)
@@ -219,91 +245,69 @@
       (let [[left-head left] (head options left)]
         (if (nil? left-head)
           {:emissions emissions :exhausted? true}
-          (let [[right-head right] (seek options right left-head)]
+          (let [[right-head right] (seek options right left-head)
+                match? (= left-head right-head)
+                value (if (:qualification options)
+                        (evidence/combine :exclusion (head-evidence left)
+                                          (if match? (head-evidence right) false))
+                        (not match?))
+                emissions (cond-> emissions
+                            (not (evidence/no? value))
+                            (conj (cond-> {:value left-head :coords (conj coords-prefix left-head)}
+                                    (:qualification options) (assoc :evidence value))))]
             (add-stat! :anti-join-rounds 1)
-            (if (= left-head right-head)
+            (if (= width (count emissions))
+              {:emissions emissions :exhausted? false}
               (let [[_ left] (advance options left)
-                    [_ right] (advance options right)]
-                (recur left right emissions))
-              (let [emissions
-                    (conj emissions
-                          {:value left-head
-                           :coords (conj coords-prefix left-head)})]
-                (if (= width (count emissions))
-                  {:emissions emissions :exhausted? false}
-                  (let [[_ left] (advance options left)]
-                    (recur left right emissions)))))))))))
+                    right (if match? (second (advance options right)) right)]
+                (recur left right emissions)))))))))
 
 (defn page
   "Returns a raw exact generator page for one certified direct
-  specialization. Its coordinates are exactly the generic cover path."
+   specialization, with the generic cover coordinates and qualified evidence.
+   :examined-certificate covers evaluated heads, not the continuation frontier."
   [{:keys [adapter plan cover-plan specialization-node traversal
-           subject-type width boundary traversal-limits cut-point!]
+           subject-type width boundary traversal-limits cut-point! qualification]
     :as request}]
   (when-not (and (integer? width) (not (neg? width)))
-    (invalid! :invalid-width "Seekable page width must be a natural integer."
-              {:width width}))
+    (invalid! :invalid-width "Seekable page width must be a natural integer." {:width width}))
   (if (zero? width)
     {:emissions [] :has-more? nil :exhausted? false
      :counters {:commands 0 :fetched-values 0 :stream-opens 0 :emissions 0}}
     (let [permission (first (:operator-root-semantic cover-plan))
-          specialization
-          (get-in plan [:specializations permission specialization-node])
+          specialization (get-in plan [:specializations permission specialization-node])
           {:keys [kind typed-partitions driver operands]} specialization
-          partitions (get typed-partitions subject-type)
-          by-node (into {} (map (juxt :node :relation-eid)) partitions)
-          relation-ids (mapv by-node (into [driver] operands))]
-      (when-not (and (contains? #{:direct-k-way-intersection
-                                  :direct-monotone-exclusion} kind)
-                     (= (count relation-ids)
-                        (count (distinct relation-ids)))
-                     (every? some? relation-ids))
-        (invalid! :ineligible "Direct specialization is not eligible."
-                  {:permission permission :node specialization-node
-                   :subject-type subject-type :kind kind}))
-      (let [coords-prefix
-          (relation-path cover-plan specialization-node driver subject-type
-                         (first relation-ids))
-          boundary-eid
-          (when boundary
-            (when-not (and (= coords-prefix (pop (vec boundary)))
-                           (integer? (peek boundary)))
-              (invalid! :invalid-boundary
-                        "Seekable boundary is outside the generic cover path."
-                        {:boundary boundary
-                         :expected-prefix coords-prefix}))
-            (peek boundary))
+          by-node (into {} (map (juxt :node :relation-eid)) (get typed-partitions subject-type))
+          relation-ids (mapv by-node (into [driver] operands))
+          _ (when-not (and (contains? #{:direct-k-way-intersection :direct-monotone-exclusion} kind)
+                           (= (count relation-ids) (count (distinct relation-ids)))
+                           (every? some? relation-ids))
+              (invalid! :ineligible "Direct specialization is not eligible."
+                        {:permission permission :node specialization-node :subject-type subject-type :kind kind}))
+          coords-prefix (relation-path cover-plan specialization-node driver subject-type (first relation-ids))
+          boundary-eid (when boundary
+                         (when-not (and (= coords-prefix (pop (vec boundary))) (integer? (peek boundary)))
+                           (invalid! :invalid-boundary "Seekable boundary is outside the generic cover path."
+                                     {:boundary boundary :expected-prefix coords-prefix}))
+                         (peek boundary))
           limits (or traversal-limits {})
-          counters (volatile!
-                    {:commands 0 :fetched-values 0 :stream-opens 0
-                     :emissions 0})
-          options (assoc request
-                         :resource-type (first permission)
-                         :scan-invoker
-                         (backend/scan-invoker
-                          adapter
-                          (if (= :forward traversal)
-                            :subject->resources
-                            :resource->subjects))
-                         :boundary-eid boundary-eid
-                         :physical-chunk-size
-                         (or (:physical-chunk-size limits)
-                             reducer/default-physical-chunk-size)
-                         :max-commands (or (:max-commands limits)
-                                           reducer/default-max-commands)
-                         :max-values (or (:max-values limits)
-                                         reducer/default-max-values)
-                         :cut-point! cut-point!
-                         :counters counters)
-          result
-          (case kind
-            :direct-k-way-intersection
-            (intersection-emissions options relation-ids width coords-prefix)
-            :direct-monotone-exclusion
-            (exclusion-emissions options relation-ids width coords-prefix))
+          counters (volatile! {:commands 0 :fetched-values 0 :stream-opens 0 :emissions 0})
+          options (cond-> (assoc request
+                                 :resource-type (first permission)
+                                 :scan-invoker (backend/scan-invoker adapter (if (= :forward traversal)
+                                                                              :subject->resources :resource->subjects))
+                                 :boundary-eid boundary-eid
+                                 :physical-chunk-size (or (:physical-chunk-size limits) reducer/default-physical-chunk-size)
+                                 :max-commands (or (:max-commands limits) reducer/default-max-commands)
+                                 :max-values (or (:max-values limits) reducer/default-max-values)
+                                 :cut-point! cut-point!
+                                 :counters counters)
+                    qualification (assoc :examined-certificate (volatile! true)))
+          result (case kind
+                   :direct-k-way-intersection (intersection-emissions options relation-ids width coords-prefix)
+                   :direct-monotone-exclusion (exclusion-emissions options relation-ids width coords-prefix))
           emissions (:emissions result)]
       (vswap! counters assoc :emissions (count emissions))
       (add-stat! :emissions (count emissions))
-        (assoc result
-               :has-more? nil
-               :counters @counters)))))
+      (cond-> (assoc result :has-more? nil :counters @counters)
+        qualification (assoc :examined-certificate @(:examined-certificate options))))))

@@ -14,6 +14,9 @@
             [eacl.datascript.evaluation-clock-test :as clock-test]
             [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
+            [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
+            [eacl.operator.seekable :as seekable]
+            [eacl.operator.seekable-evidence-test :as seekable-test]
             [eacl.operator.recursive :as recursive]
             [eacl.operator.vector-evaluator :as vector]
             [eacl.operator.vector-evaluator-test :as vector-test]))
@@ -29,6 +32,7 @@
   (let [qualify qualification/qualify identity qualification/exact-reuse-identity
         fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
         snapshot-opts @#'orchestration/snapshot-opts
+        head-evidence @#'seekable/head-evidence
         enqueue @#'recursive/enqueue-evidence!]
     {:qualifier-reference-ignored
      {:gate #'qualification-test/exclusive-expiry-precedes-program-work
@@ -82,6 +86,16 @@
      {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
       :redefs {#'orchestration/snapshot-opts (fn [runtime basis]
                                             (dissoc (snapshot-opts runtime basis) :evaluation-time-ms))}}
+     :conditional-seekable-head-becomes-definite
+     {:gate #'seekable-test/direct-specializations-carry-exact-qualified-evidence
+      :redefs {#'seekable/head-evidence (fn [cursor]
+                                        (let [value (head-evidence cursor)]
+                                          (evidence/with-certificate true (evidence/valid-until value)
+                                                                     (evidence/complete? value))))}}
+     :seekable-emission-loses-expiry-certificate
+     {:gate #'seekable-bridge/direct-page-algebra-and-exhaustive-temporal-certificates
+      :redefs {#'seekable/head-evidence (fn [cursor]
+                                        (evidence/with-certificate (head-evidence cursor) nil true))}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -92,7 +106,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 16 (count cases)))
+    (is (= 18 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))
