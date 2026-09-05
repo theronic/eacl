@@ -1,6 +1,8 @@
 (ns eacl.operator.vector-evaluator
   "Aligned mask-driven predicates for bounded acyclic candidate vectors."
-  (:require [eacl.backend.direct-membership :as direct]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.backend.direct-membership :as direct]
             [eacl.backend.v8 :as backend]
             [eacl.exact-integer :as exact-integer]
             [eacl.operator.bitmask :as bitmask]
@@ -123,12 +125,16 @@
   (let [indexes-where (fn [pred]
                         (bitmask/from-indexes
                          width (filter #(pred (nth row %)) (range width))))]
-    {:known-true (bitmask/portable (indexes-where true?))
-     :known-false (bitmask/portable (indexes-where false?))
+    {:known-true (bitmask/portable (indexes-where evidence/has?))
+     :known-false (bitmask/portable (indexes-where evidence/no?))
      :unresolved (bitmask/portable (indexes-where #(= unresolved %)))
-     :failed (bitmask/portable (bitmask/native width))}))
+     :failed (bitmask/portable (indexes-where evidence/fault?))}))
 
 (declare check-many-normalized)
+
+(defn- decisive? [op result]
+  (or (evidence/fault? result)
+      (if (= :union op) (evidence/has? result) (evidence/no? result))))
 
 (defn check-many-eids
   "Evaluates a distinct vector of complete typed candidate contexts and
@@ -147,7 +153,7 @@
   "Trusted core of `check-many-eids`: the candidate vector is already
   normalized (each caller normalizes exactly once at its boundary)."
   [{:keys [adapter plan candidates cache-lookup cache-publish-many!
-           limits permission node-id]}]
+           limits permission node-id qualification]}]
   (let [width (count candidates)]
     (if (zero? width)
       []
@@ -175,7 +181,7 @@
                   (let [current (get @memo node-key unresolved-row)
                         resolved (reduce (fn [result index]
                                            (assoc result index
-                                                  (boolean (nth values index))))
+                                                  (nth values index)))
                                          current indexes)]
                     (vswap! memo assoc node-key resolved)
                     resolved))
@@ -184,9 +190,10 @@
                         witnessed
                         (reduce
                          (fn [values index]
-                           (if (contains? (:true-nodes (nth candidates index))
-                                          node-key)
-                             (assoc values index true)
+                           (if (contains? (:true-nodes (nth candidates index)) node-key)
+                             (if qualification
+                               (invalid! :unqualified-witness "Qualified evaluation requires temporal witness evidence." {})
+                             (assoc values index true))
                              values))
                          initial indexes)
                         _ (vswap! memo assoc node-key witnessed)
@@ -221,8 +228,13 @@
                                       probes (mapv second indexed-probes)
                                       decisions
                                       (if (seq probes)
-                                        (direct/dispatch adapter probes
-                                                         cache-lookup)
+                                        (if qualification
+                                          (mapv (fn [probe compact-edge]
+                                                  (qualification/qualify qualification
+                                                                         (get-in probe [:descriptor :relation-eid])
+                                                                         compact-edge))
+                                                probes (direct/dispatch-edges adapter probes))
+                                          (direct/dispatch adapter probes cache-lookup))
                                         [])]
                                   ;; Retain exact leaf decisions privately until
                                   ;; every demanded subgroup in the vector has
@@ -265,67 +277,37 @@
                                            :subject-eid (:subject-eid candidate)
                                            :resource-eid
                                            (:resource-eid candidate)
-                                           :limits limits})]
+                                           :limits limits :qualification qualification})]
                                      (assoc result index decision)))
                                  witnessed pending)
 
-                                :any-true
-                                (loop [children (:children predicate)
-                                       remaining pending
-                                       result witnessed]
-                                  (if (or (empty? children)
-                                          (empty? remaining))
-                                    (reduce #(assoc %1 %2 false)
-                                            result remaining)
-                                    (let [child (evaluate!
-                                                 [permission (first children)]
-                                                 remaining)
-                                          granted (filterv #(true? (nth child %))
-                                                           remaining)
-                                          remaining (filterv #(false? (nth child %))
-                                                             remaining)
-                                          result (reduce #(assoc %1 %2 true)
-                                                         result granted)]
-                                      (recur (subvec children 1)
-                                             remaining result))))
-
-                                :all-true
-                                (loop [children (:children predicate)
-                                       remaining pending
-                                       result witnessed]
-                                  (if (or (empty? children)
-                                          (empty? remaining))
-                                    (reduce #(assoc %1 %2 true)
-                                            result remaining)
-                                    (let [child (evaluate!
-                                                 [permission (first children)]
-                                                 remaining)
-                                          rejected (filterv #(false? (nth child %))
-                                                            remaining)
-                                          remaining (filterv #(true? (nth child %))
-                                                             remaining)
-                                          result (reduce #(assoc %1 %2 false)
-                                                         result rejected)]
-                                      (recur (subvec children 1)
-                                             remaining result))))
+                                (:any-true :all-true)
+                                (let [op (if (= :any-true instruction) :union :intersection)]
+                                  (loop [children (:children predicate)
+                                         remaining pending
+                                         result (reduce #(assoc %1 %2 (not= op :union)) witnessed pending)]
+                                    (if (or (empty? children) (empty? remaining))
+                                      result
+                                      (let [child (evaluate! [permission (first children)] remaining)
+                                            result (reduce (fn [row index]
+                                                             (assoc row index (evidence/combine op
+                                                                                               (nth row index)
+                                                                                               (nth child index))))
+                                                           result remaining)
+                                            remaining (filterv #(not (decisive? op (nth result %))) remaining)]
+                                        (recur (subvec children 1) remaining result)))))
 
                                 :left-and-not-right
-                                (let [left (evaluate!
-                                            [permission (:left predicate)]
-                                            pending)
-                                      admitted (filterv #(true? (nth left %))
-                                                        pending)
-                                      rejected (filterv #(false? (nth left %))
-                                                        pending)
-                                      result (reduce #(assoc %1 %2 false)
-                                                     witnessed rejected)]
+                                (let [left (evaluate! [permission (:left predicate)] pending)
+                                      admitted (filterv #(not (decisive? :exclusion (nth left %))) pending)
+                                      result (reduce #(assoc %1 %2 (nth left %2)) witnessed pending)]
                                   (if (empty? admitted)
                                     result
-                                    (let [right (evaluate!
-                                                 [permission (:right predicate)]
-                                                 admitted)]
-                                      (reduce #(assoc %1 %2
-                                                      (not (nth right %2)))
+                                    (let [right (evaluate! [permission (:right predicate)] admitted)]
+                                      (reduce (fn [row index]
+                                                (assoc row index (evidence/combine :exclusion
+                                                                                  (nth left index)
+                                                                                  (nth right index))))
                                               result admitted))))
 
                                 (invalid! :unknown-predicate-instruction
@@ -347,15 +329,17 @@
                        :root-masks
                        (root-masks width
                                    (get @memo [root-permission root-id]))))
-              (when cache-publish-many!
+              (when (and cache-publish-many! (not-any? evidence/fault? decisions))
                 (cache-publish-many! @completed-leaves))
-              (mapv boolean decisions))
+              decisions)
             (catch #?(:clj Exception :cljs :default) error
               (add-stat! :failed-vectors 1)
               (throw error))))))))
 
 (def ^:private point-cache-options
   {:valid? boolean?})
+
+(def ^:private qualified-point-cache-options {:valid? string?})
 
 (defn- point-cache-key
   [plan permission node-id scope-identity candidate]
@@ -368,7 +352,7 @@
   reuse. Cache hits only fill already demanded decisions. Point misses remain
   private until the entire demanded vector succeeds; cache-disabled execution
   performs no cache work."
-  [{:keys [plan candidates permission node-id scope-identity] :as options}]
+  [{:keys [plan candidates permission node-id scope-identity qualification] :as options}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Vector evaluation requires a sealed operator plan."
@@ -379,7 +363,11 @@
                     (get (operator-plan/expression-roots plan) permission))
         options (assoc options :candidates candidates
                        :permission permission :node-id node-id)
-        store subproblem/*store*]
+        store subproblem/*store*
+        scope-identity (if (and store qualification)
+                         [:qualified-point evidence/format-version scope-identity
+                          (qualification/exact-reuse-identity qualification)]
+                         scope-identity)]
     (if (or (nil? store) (empty? candidates))
       (check-many-normalized options)
       (let [looked-up
@@ -392,7 +380,8 @@
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
-                      :decision (:value resolved) :cached? true})
+                      :decision (if qualification (evidence/decode (:value resolved)) (:value resolved))
+                      :cached? true})
                    {:candidate candidate :key key :cached? false})))
              candidates)
             miss-records (filterv (complement :cached?) looked-up)
@@ -416,12 +405,14 @@
                                   (nth miss-decisions miss-index)))))))]
         ;; The full miss vector and its leaf subgroups have succeeded before
         ;; any completed point becomes externally reusable.
-        (when subproblem/*populate?*
+        (when (and subproblem/*populate?* (not-any? evidence/fault? miss-decisions))
           (dotimes [miss-index (count miss-records)]
-            (subproblem/publish-denotation!
-             (:key (nth miss-records miss-index))
-             point-cache-options
-             (nth miss-decisions miss-index))))
+            (let [decision (nth miss-decisions miss-index)]
+              (when-not (evidence/fault? decision)
+                (subproblem/publish-denotation!
+                 (:key (nth miss-records miss-index))
+                 (if qualification qualified-point-cache-options point-cache-options)
+                 (if qualification (evidence/encode decision) decision))))))
         (add-stat! :point-cache-hits (- (count looked-up) (count misses)))
         (add-stat! :point-cache-misses (count misses))
         decisions))))

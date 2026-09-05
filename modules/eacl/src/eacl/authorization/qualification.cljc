@@ -42,6 +42,20 @@
          #(let [entity ((:entity request) eid)]
             {:entity entity :header (definition/decode-header entity)})))
 
+(defn exact-reuse-identity
+  "Complete collision-checked semantic scope for same-basis, same-time reuse.
+   Cross-time acceptance additionally requires a certified evidence interval."
+  [request]
+  (memo! request [:reuse-identity]
+         #(vector qualifier/format-version (:basis request) (:time request)
+                  (values/encode-bounded (:context request)
+                                         {:maximum-size (:context-utf8-bytes values/limits)
+                                          :maximum-entries (:context-total-entries values/limits)
+                                          :maximum-depth 8})
+                  (when-let [engine (:evaluator request)]
+                    (select-keys (evaluator/descriptor engine)
+                                 [:profile :profile-fingerprint :fingerprint :capability-version])))))
+
 (defn- decoded [request qid]
   (memo! request [:qualifier qid]
     #(let [key [(:basis request) qid qualifier/format-version]

@@ -2,16 +2,20 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is]]
             [datascript.core :as ds]
+            [eacl.authorization.evidence :as evidence]
             [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as datascript-impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as datascript-schema]
             [eacl.operator.evaluator :as scalar]
+            [eacl.operator.evaluator-test :as scalar-fixtures]
             [eacl.operator.plan :as plan]
             [eacl.operator.vector-evaluator :as vector-evaluator]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.subproblem-cache :as subproblem]
+            [eacl.relationships.staged :as staged]))
 
 (defn- test-exact-key
   [semantic]
@@ -62,7 +66,7 @@
         (ds/db conn) {:operation :touch :relationship relationship})))
     (let [db (ds/db conn)
           eid #(ds/entid db (:id %))]
-      {:adapter (datascript-backend/basis-adapter db {})
+      {:conn conn :db db :adapter (datascript-backend/basis-adapter db {})
        :user (first users)
        :documents documents
        :eid eid})))
@@ -434,3 +438,59 @@
        (is (>= (:calls different) 2))
        (is (zero? (:failures (:stats identical) 0)))
        (is (zero? (:failures (:stats different) 0))))))
+
+(deftest qualified-vectors-retain-alignment-and-exact-cache-scope
+  (let [{:keys [conn user documents eid]} (fixture)
+        documents (vec (take 8 documents))]
+    (datascript-schema/write-schema! conn (str "caveat enabled(flag bool) { flag }\n" schema))
+    (let [relation (fn [name] (ds/entid (ds/db conn)
+                                     [:eacl.relation/resource-type+relation-name+subject-type
+                                      [:document name :user]]))
+          caveat (ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])
+          writer (qualifiers/writer conn)]
+      (ds/transact! conn [{:db/id (relation :a) :eacl.relation/caveats [caveat]
+                          :eacl.relation/allows-unqualified? true}])
+      (doseq [[index document] (map-indexed vector documents)]
+        (staged/write! writer :replace [:user (eid user) (relation :a) :document (eid document)]
+                       {:caveat caveat})
+        (when (zero? (mod index 5))
+          (staged/write! writer :replace [:user (eid user) (relation :banned) :document (eid document)]
+                         {:valid-until-ms 100})))
+      (let [db (ds/db conn)
+            adapter (datascript-backend/basis-adapter db {})
+            sealed (plan/seal-plan adapter [:document :view])
+            candidates (mapv (fn [document]
+                               {:direction :forward :subject-type :user :subject-eid (eid user)
+                                :resource-type :document :resource-eid (eid document)}) documents)
+            store (subproblem/store)
+            run (fn [time context]
+                  (let [stats (atom {})
+                        options {:adapter adapter :plan sealed :candidates candidates :scope-identity :qualified
+                                 :qualification (scalar-fixtures/qualified-request db time context)}
+                        result (binding [subproblem/*store* store
+                                         subproblem/*exact-denotation-key-fn* test-exact-key
+                                         vector-evaluator/*vector-stats* stats]
+                                 (vector-evaluator/check-cached-many-eids options))]
+                    {:result result :stats @stats}))
+            before (run 99 {})
+            warm (run 99 {})
+            after (run 100 {})
+            granted (run 100 {"flag" true})
+            denied (run 100 {"flag" false})
+            prior-entries (get-in (subproblem/stats store) [:tiers :denotation :entries])
+            fault (run 100 {"flag" "wrong-type"})]
+        (is (= (:result before) (:result warm)))
+        (is (= 8 (get-in warm [:stats :point-cache-hits])))
+        (is (= 8 (get-in after [:stats :point-cache-misses])))
+        (is (= [:no-permission :no-permission :conditional-permission :conditional-permission
+                :conditional-permission :no-permission :conditional-permission :no-permission]
+               (mapv evidence/permissionship (:result before))))
+        (is (= :conditional-permission (evidence/permissionship (first (:result after)))))
+        (is (= [true false true true true false true false] (:result granted)))
+        (is (every? false? (:result denied)))
+        (is (every? evidence/fault? (:result fault)))
+        (is (= prior-entries (get-in (subproblem/stats store) [:tiers :denotation :entries])))
+        (let [reverse-options {:adapter adapter :plan sealed
+                               :candidates (mapv #(assoc % :direction :reverse) candidates)
+                               :qualification (scalar-fixtures/qualified-request db 100 {})}]
+          (is (= (:result after) (vector-evaluator/check-many-eids reverse-options))))))))

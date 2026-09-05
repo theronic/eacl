@@ -12,7 +12,8 @@
             [eacl.formal.qualified.model-test :as contract]
             [eacl.operator.evaluator :as scalar]
             [eacl.operator.evaluator-test :as fixtures]
-            [eacl.operator.plan :as plan]))
+            [eacl.operator.plan :as plan]
+            [eacl.operator.vector-evaluator :as vector-evaluator]))
 
 (defn demand [op a b]
   (if (or (= :failure (model/kind contract/universe (:value a)))
@@ -40,6 +41,12 @@
     (is (= (:complete? expected) (:complete? observed)))
     (is (= actual (evidence/decode (evidence/encode actual))))))
 
+(defn vector-result [options]
+  (first
+   (vector-evaluator/check-many-eids
+    (assoc options :candidates [(assoc (select-keys options [:subject-type :subject-eid :resource-eid])
+                                       :direction :forward :resource-type (first (:root (:plan options))))]))))
+
 (deftest scalar-intersection-and-exclusion-refinement
   (let [user (object :user "model/user") doc (object :document "model/doc")
         env (fixture fixtures/direct-schema [user doc]
@@ -55,7 +62,8 @@
                              (demand :intersection (bridge/model-evidence a) (bridge/model-evidence b))
                              (bridge/model-evidence c))]
         (with-redefs [qualification/qualify (fn [_ r e] (if e (get leaf r) false))]
-          (assert-refinement! expected (scalar/check-eids options)))))))
+          (assert-refinement! expected (scalar/check-eids options))
+          (assert-refinement! expected (vector-result options)))))))
 
 (deftest scalar-arrow-refinement
   (let [user (object :user "model/user") group (object :group "model/group") doc (object :document "model/doc")
@@ -76,4 +84,5 @@
             expected (demand :intersection (bridge/model-evidence true)
                              (demand :arrow (bridge/model-evidence via) target))]
         (with-redefs [qualification/qualify (fn [_ r e] (if e (get leaf r) false))]
-          (assert-refinement! expected (scalar/check-eids options)))))))
+          (assert-refinement! expected (scalar/check-eids options))
+          (assert-refinement! expected (vector-result options)))))))

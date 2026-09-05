@@ -7,7 +7,8 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.exact-integer :as exact-integer]
-            [eacl.request.counters :as request-counters]))
+            [eacl.request.counters :as request-counters]
+            [eacl.relationships.edge :as edge]))
 
 (def cache-miss ::cache-miss)
 
@@ -186,20 +187,21 @@
         (direct-match subject-type eid relation-eid
                       resource-type resource-eid)))))
 
-(defn ^:no-doc direct-match-many-checked?
-  [adapter request]
+(defn- match-many-checked
+  [adapter request edges?]
   (let [{:keys [candidates]} request]
     (execution/check! execution/*contract*
                       :direct-membership-batch/before
                       {:candidate-count 0})
     (if (empty? candidates)
       []
-      (let [native? (native-batch? adapter)
+      (let [native? (and (not edges?) (native-batch? adapter))
             result
             (if native?
               (vec (backend/invoke adapter :direct-match-many? request))
               (let [match (scalar-matcher
-                           (backend/direct-match-invoker adapter) request)]
+                           (if edges? (backend/direct-edge-invoker adapter)
+                               (backend/direct-match-invoker adapter)) request)]
                 (loop [index 0
                        result (transient [])]
                   (if (= index (count candidates))
@@ -216,7 +218,7 @@
             matched-count
             (when-not native?
               (reduce (fn [total matched?]
-                        (if (true? matched?) (inc total) total))
+                        (if (if edges? (some? matched?) (true? matched?)) (inc total) total))
                       0
                       result))]
         (when *physical-stats*
@@ -240,9 +242,12 @@
           (contract-violation!
            adapter :aligned-cardinality
            {:expected (count candidates) :actual (count result)}))
-        (when-not (every? boolean? result)
-          (contract-violation! adapter :aligned-boolean-vector :redacted))
+        (when-not (every? (if edges? #(or (nil? %) (edge/valid? %)) boolean?) result)
+          (contract-violation! adapter (if edges? :aligned-compact-edges :aligned-boolean-vector) :redacted))
         result))))
+
+(defn ^:no-doc direct-match-many-checked? [adapter request]
+  (match-many-checked adapter request false))
 
 (defn direct-match-many?
   "Returns one Boolean per input candidate, or throws without returning a
@@ -260,17 +265,8 @@
     [1 (str (:resource-type descriptor)) (:resource-eid descriptor)
      (:relation-eid descriptor) (str (:subject-type descriptor))]))
 
-(defn dispatch
-  "Evaluates an ordered vector of physical leaf probes.
-
-  `cache-lookup` must return a Boolean only for a proof-compatible completed
-  hit and `cache-miss` otherwise. Misses are deterministically grouped by
-  normalized descriptor, sorted and deduplicated for locality, split at the
-  physical cap, then scattered back to the original generator order. No
-  partial result escapes if any group fails."
-  ([adapter probes]
-   (dispatch adapter probes (constantly cache-miss)))
-  ([adapter probes cache-lookup]
+(defn- dispatch-impl
+  [adapter probes cache-lookup edges?]
    (when-not (vector? probes)
      (invalid-request! "Direct-membership probes must be a vector."
                        {:value-type (some-> probes type str)}))
@@ -339,7 +335,8 @@
                  (let [request {:direction direction
                                 :descriptor descriptor
                                 :candidates (vec candidate-chunk)}
-                       decisions (direct-match-many-checked? adapter request)]
+                       decisions (if edges? (match-many-checked adapter request true)
+                                     (direct-match-many-checked? adapter request))]
                    (reduce
                     (fn [results [candidate decision]]
                       (reduce #(assoc %1 %2 decision)
@@ -355,4 +352,17 @@
      (add-stat! :cache-hits cache-hits)
      (when (some #{::unresolved} completed)
        (contract-violation! adapter :complete-scatter :redacted))
-     completed)))
+     completed))
+
+(defn dispatch
+  "Groups, sorts, deduplicates, and scatters bounded physical Boolean probes.
+   Cached values must be proof-compatible Booleans; misses use cache-miss."
+  ([adapter probes] (dispatch-impl adapter probes (constantly cache-miss) false))
+  ([adapter probes cache-lookup] (dispatch-impl adapter probes cache-lookup false)))
+
+(defn dispatch-edges
+  "Runs the same bounded grouping/scatter schedule for compact stored edges.
+   Missing rows remain nil. Permission qualification happens at the consumer,
+   after physical work has been metered, on the same selected request basis."
+  [adapter probes]
+  (dispatch-impl adapter probes (constantly cache-miss) true))

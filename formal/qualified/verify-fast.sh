@@ -40,6 +40,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.backend.v8 :reload)
      (require 'eacl.operator.evaluator :reload)
      (require 'eacl.operator.evaluator-test :reload)
+     (require 'eacl.backend.direct-membership :reload)
+     (require 'eacl.operator.vector-evaluator :reload)
      (load-file \"formal/qualified/operator_bridge.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge
