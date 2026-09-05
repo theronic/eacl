@@ -12,7 +12,7 @@
 - [x] 2.1 Extend the backend scan contract to expose opposite eid plus optional qualifier eid in an allocation-minimal measured representation; verify order, bounds, uniqueness, and public result shape remain unchanged.
 - [x] 2.2 Update Datomic, Datahike, DataScript, and Datalevin forward/reverse/direct scan primitives to return aligned qualifier data from the single v9 stream; verify no adapter reads a second Relationship attribute.
 - [x] 2.3 Add one shared edge-qualification seam and retain the existing nil-eid fast path; verify instrumentation records zero qualifier reads and no per-edge qualifier map allocation for ordinary fixtures.
-- [ ] 2.4 Preserve deadlines, cancellation, dimensional work accounting, scan-response cache scope, and continuation heads with the new compact edge shape; verify filtered qualified candidates count against existing bounds and no fill-to-page loop hides incomplete work.
+- [x] 2.4 Preserve deadlines, cancellation, dimensional work accounting, scan-response cache scope, and continuation heads with the new compact edge shape; verify filtered qualified candidates count against existing bounds and no fill-to-page loop hides incomplete work.
 
 ## 3. Resolve and cache immutable qualifiers
 
@@ -34,7 +34,7 @@
 - [x] 5.1 Add one trusted clock sample plus process-local non-decreasing high-water mark to the top-level request/snapshot context and prohibit per-edge ambient clock reads; verify a request crossing expiry is consistent and a backward raw-clock step cannot revive access.
 - [x] 5.2 Evaluate `evaluation-time-ms < valid-until-ms` before Caveat program work; verify before/equal/after boundaries and expired Caveat compile suppression.
 - [x] 5.3 Apply expiry uniformly to grant, group, arrow, recursion, exclusion, and deny evidence; verify an expiring ban can change denial to grant on a later request.
-- [ ] 5.4 Add stored-versus-active Relationship inspection and renewal/shortening/removal through immutable qualifier `:touch`; verify create still conflicts with retained expired identity.
+- [x] 5.4 Add stored-versus-active Relationship inspection and renewal/shortening/removal through immutable qualifier `:touch`; verify create still conflicts with retained expired identity.
 
 ## 6. Make result and subproblem caches temporally coherent
 

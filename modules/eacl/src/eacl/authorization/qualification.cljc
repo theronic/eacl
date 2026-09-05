@@ -133,6 +133,20 @@
                           (qualifier/relation-allowance relation)))]
     (when-not (contains? allowed caveat-id) (qualifier/error! :caveat-not-allowed))))
 
+(defn inspect
+  "Returns decoded public qualifier metadata without running a Caveat program.
+   The request memo and exact qualifier validation are shared with authorization."
+  [request relation-id qualifier-id]
+  (if-not qualifier-id
+    {}
+    (let [{:keys [qualifier definition]} (decoded request qualifier-id)
+          {:keys [caveat caveat-context valid-until-ms]} qualifier]
+      (allowed! request relation-id caveat)
+      (cond-> {}
+        caveat (assoc :caveat (get-in definition [:header :name]))
+        (seq caveat-context) (assoc :caveat-context caveat-context)
+        valid-until-ms (assoc :valid-until-ms valid-until-ms)))))
+
 (defn- caveat-evidence [request named bound]
   (let [projected (context/project (:prepared-context request) (get-in named [:header :parameters]))
         result (evaluator/evaluate (:evaluator request) (:entity named) projected bound)]

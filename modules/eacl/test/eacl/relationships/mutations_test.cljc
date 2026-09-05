@@ -58,3 +58,14 @@
            (mutations/normalize-updates
             [{:operation :touch :relationship relationship}
              {:operation :touch :relationship (assoc relationship :caveat nil :valid-until-ms nil)}])))))
+
+(deftest cached-qualifier-metadata-must-be-closed-bounded-and-canonical
+  (doseq [metadata [{} {:caveat "enabled"} {:valid-until-ms 100}
+                    {:caveat "enabled" :caveat-context {"flag" false} :valid-until-ms 100}]]
+    (is (mutations/canonical-qualifier-metadata? (merge relationship metadata))))
+  (doseq [metadata [{:caveat nil} {:caveat ""} {:valid-until-ms nil}
+                    {:valid-until-ms 253402300800000} {:valid-until-ms "100"}
+                    {:caveat-context {"flag" true}}
+                    {:caveat "enabled" :caveat-context {}}
+                    {:caveat "enabled" :caveat-context nil}]]
+    (is (false? (mutations/canonical-qualifier-metadata? (merge relationship metadata))))))

@@ -252,9 +252,12 @@
    include-qualifier?)))
 
 (defn checked-global-relationship-datoms
-  [db attr prefix cursor-eid direction]
-  (endpoint-pair/checked-datoms
-   (avet-tuple-prefix db attr storage/value-arity prefix cursor-eid direction)))
+  ([db attr prefix cursor-eid direction]
+   (checked-global-relationship-datoms db attr prefix cursor-eid direction false))
+  ([db attr prefix cursor-eid direction include-qualifier?]
+   (endpoint-pair/checked-datoms
+    (avet-tuple-prefix db attr storage/value-arity prefix cursor-eid direction)
+    include-qualifier?)))
 
 (defn entity-facts [database eid]
   (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)])

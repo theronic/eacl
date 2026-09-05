@@ -4,6 +4,7 @@
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.inspection-contract :as inspection]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.client.orchestration :as orchestration]
             [eacl.caveats.definition-test :as errors]
@@ -56,3 +57,15 @@
             (is (= :eacl/unsupported-capability
                    (errors/error-type #(eacl/write-schema! client {:schema (schemas/source "user with enabled")})))))))
       (finally (d/release conn) (d/delete-database config)))))
+
+(deftest stored-and-active-inspection-preserve-aligned-native-qualifiers
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [{:db/ident :app/flag :db/valueType :db.type/long :db/cardinality :db.cardinality/one}] options)
+          config (:config (d/db conn))
+          now (atom 99)]
+      (try
+        (inspection/check! {:client (api/make-client conn {:clock #(deref now)
+                                                           :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                            :writer #(qualifiers/writer conn) :entid db/entid :now now
+                            :cas-attribute (when (:attribute-refs? options) db/entid)})
+        (finally (d/release conn) (d/delete-database config))))))

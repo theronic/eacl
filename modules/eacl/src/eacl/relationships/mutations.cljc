@@ -151,3 +151,11 @@
              (keep (partial relationship-operation-relation-id operations)))
        sort
        vec))
+
+(defn canonical-qualifier-metadata?
+  "Validates closed canonical Relationship metadata at cache ingress."
+  [relationship]
+  (try
+    (= (select-keys relationship qualifier-keys)
+       (select-keys (normalize-relationship relationship) qualifier-keys))
+    (catch #?(:clj Exception :cljs :default) _ false)))

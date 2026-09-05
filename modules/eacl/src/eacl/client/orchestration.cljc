@@ -48,6 +48,7 @@
             [eacl.causal-token :as causal-token]
             [eacl.caveats.evaluator :as caveat-evaluator]
             [eacl.schema.qualification-admission :as qualification-admission]
+            [eacl.relationships.inspection :as inspection]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
@@ -1411,33 +1412,34 @@
   tier keys by an identity that fixes the schema generation). An unstamped
   database (no schema generation) or an unbound generation reads the schema
   directly."
-  [api db]
-  (let [cache engine/*schema-cache*
-        slot (:parsed-schema cache)
-        catalog-slot (:validation-catalog cache)
-        read-schema (if engine/*qualification*
-                      (or (get-in api [:schema :read-authorization-schema])
-                          (throw (ex-info "Qualified authorization requires structural schema reads."
-                                          {:type :eacl/unsupported-capability
-                                           :eacl/error :eacl/unsupported-capability
-                                           :capability :qualified-authorization-schema})))
-                      (get-in api [:schema :read-schema]))
-        schema
-        (if (and slot (or (some? (:schema-version cache)) (true? (:request-local? cache))))
-          (let [schema (engine/memoized-derived! slot #(read-schema db))
-                names (if catalog-slot
-                        (engine/memoized-derived! catalog-slot #(schema-errors/catalog schema))
-                        (schema-errors/catalog schema))]
-            (schema-errors/with-catalog schema names))
-          (read-schema db))]
+  ([api db] (request-schema api db true))
+  ([api db authorize?]
+   (let [cache engine/*schema-cache*
+         slot (:parsed-schema cache)
+         catalog-slot (:validation-catalog cache)
+         read-schema (if engine/*qualification*
+                       (or (get-in api [:schema :read-authorization-schema])
+                           (throw (ex-info "Qualified authorization requires structural schema reads."
+                                           {:type :eacl/unsupported-capability
+                                            :eacl/error :eacl/unsupported-capability
+                                            :capability :qualified-authorization-schema})))
+                       (get-in api [:schema :read-schema]))
+         schema
+         (if (and slot (or (some? (:schema-version cache)) (true? (:request-local? cache))))
+           (let [schema (engine/memoized-derived! slot #(read-schema db))
+                 names (if catalog-slot
+                         (engine/memoized-derived! catalog-slot #(schema-errors/catalog schema))
+                         (schema-errors/catalog schema))]
+             (schema-errors/with-catalog schema names))
+           (read-schema db))]
     ;; Parsed structure is shared; evaluator availability belongs to this client.
-    (when engine/*qualification*
-      (qualified-schema! api db schema (:evaluator engine/*qualification*)))
-    schema))
+     (when (and authorize? engine/*qualification*)
+       (qualified-schema! api db schema (:evaluator engine/*qualification*)))
+     schema)))
 
 (defn- authorization-scan-page
   [api opts request-context adapter selected-db cursor-opts filters
-  internal-query validate!]
+   internal-query validate!]
   (let [{:keys [subject permission on]} (:authorization filters)
         internal-subject ((:spice-object->internal opts) selected-db subject)
         schema-cache (:request-schema-cache cursor-opts)
@@ -1499,20 +1501,20 @@
     ;; Root/schema validation is selected-snapshot work but precedes the first
     ;; physical relationship candidate.
     (binding [engine/*schema-cache* @schema-cache
-      expression-persistence/*expression-limits*
-      (:expression-limits opts)
-      engine/*proof-frame* request-proof-frame]
+              expression-persistence/*expression-limits*
+              (:expression-limits opts)
+              engine/*proof-frame* request-proof-frame]
       (validate!))
     (let [internal-page
           (binding [engine/*aggregate-work-stats* work-stats
                     relationship-filters/*validated-request?* true]
             ((get-in api [:impl :read-relationships])
              selected-db internal-query (:decision-kernel cursor-opts)
-             {:candidate-window candidate-window
-              :accept? accept?}))]
+             (inspection/window-options engine/*qualification* filters
+                                        {:candidate-window candidate-window :accept? accept?})))]
       (batch/check-aggregate-limits!
        limits (counters (count (:data internal-page))) nil)
-      internal-page)))
+      (inspection/decode-page engine/*qualification* internal-page))))
 
 (defn read-relationships
   [api source {:as opts :keys [object-id->entid]} filters]
@@ -1522,6 +1524,10 @@
     (relationship-filters/validate! filters))
   (when-not authorization-filters/*validated-request?*
     (authorization-filters/validate-scan-authorization! filters))
+  (when (and (not *qualified-authorization-enabled?*) (contains? filters :relationship-state))
+    (throw (ex-info "Qualified Relationship inspection is not enabled."
+                    {:type :eacl/unsupported-capability :eacl/error :eacl/unsupported-capability
+                     :capability :qualified-relationship-inspection})))
   (let [opts (ensure-execution-contract opts :read-relationships filters)
         authorization (:authorization filters)
         authorization-resource-type
@@ -1533,103 +1539,112 @@
     (with-selected-context
       api source opts (:consistency filters)
       (fn [request-context]
-        (if-let [rendered-hit
-                 (selected-rendered-page-hit
-                  request-context opts :read-relationships filters)]
-          rendered-hit
-          (with-page-context
-            request-context opts :read-relationships filters
-            authorization-resource-type authorization-permission
-            (when authorization
-              {:resource-type (:resource/type filters)
-               :relation (:resource/relation filters)
-               :subject-type (:subject/type filters)})
-            (fn [{request-context :request-context
-                  adapter :adapter page-db :db cursor-opts :opts
-                  page-query :query
-                  deferred-boundary?
-                  :deferred-cursor-edge-internalization?}]
-              (let [rendered-cache
-                    (rendered-page-cache-context
-                     adapter cursor-opts :read-relationships filters)
-                    rendered-hit
-                    (lookup-rendered-page cursor-opts rendered-cache)]
-                (if rendered-hit
-                  (public-page-from-rendered
-                   cursor-opts (:value rendered-hit) rendered-hit)
-                  (let [page-query
-                        (if deferred-boundary?
-                          (relay/internalize-prepared-page-query
-                           adapter page-query)
-                          page-query)
+        (inspection/page-info engine/*qualification* filters
+                              (if-let [rendered-hit
+                                       (selected-rendered-page-hit
+                                        request-context opts :read-relationships filters)]
+                                rendered-hit
+                                (with-page-context
+                                  request-context opts :read-relationships filters
+                                  authorization-resource-type authorization-permission
+                                  (when authorization
+                                    {:resource-type (:resource/type filters)
+                                     :relation (:resource/relation filters)
+                                     :subject-type (:subject/type filters)})
+                                  (fn [{request-context :request-context
+                                        adapter :adapter page-db :db cursor-opts :opts
+                                        page-query :query
+                                        deferred-boundary?
+                                        :deferred-cursor-edge-internalization?}]
+                                    (let [rendered-cache
+                                          (rendered-page-cache-context
+                                           adapter cursor-opts :read-relationships filters)
+                                          rendered-hit
+                                          (lookup-rendered-page cursor-opts rendered-cache)]
+                                      (if rendered-hit
+                                        (public-page-from-rendered
+                                         cursor-opts (:value rendered-hit) rendered-hit)
+                                        (let [page-query
+                                              (if deferred-boundary?
+                                                (relay/internalize-prepared-page-query
+                                                 adapter page-query)
+                                                page-query)
                         ;; Schema validation runs on the miss path (inside the
                         ;; bound generation) and on unknown-object short-cuts.
-                        validate!
-                        (fn []
-                          (schema-errors/validate-authorized-relationship-read!
-                           (request-schema api page-db)
-                           filters))
-                        subject-id (:subject/id filters)
-                        resource-id (:resource/id filters)
-                        subject-eid
-                        (when subject-id
-                          (object-id->entid page-db subject-id))
-                        resource-eid
-                        (when resource-id
-                          (object-id->entid page-db resource-id))
-                        internal-query
-                        (-> page-query
-                            (dissoc :consistency :cache? :populate-cache?
-                                    :evaluation :timeout-ms
-                                    :cancellation-token :aggregate-limits
-                                    :authorization)
-                            (cond->
-                             subject-id (assoc :subject/id subject-eid)
-                             resource-id (assoc :resource/id resource-eid)))]
-                    (if (or (and subject-id (nil? subject-eid))
-                            (and resource-id (nil? resource-eid)))
-                      (do
-                        (call-with-request-schema-cache cursor-opts validate!)
-                        (if (cursor-request? filters)
-                          (stale-cursor-anchor! :read-relationships)
-                          (cond->
-                           (assoc relay/empty-page
-                                  :cached? false :cache-basis nil)
-                            (:authorization filters)
-                            (assoc-in [:page-info :bounded?] false))))
-                      (let [answer-opts
-                            (cond-> cursor-opts
-                              rendered-cache
-                              (assoc ::populate-exact-answer? false))
-                            answer
-                            (if authorization
-                              (cached-engine-result
-                               request-context adapter answer-opts
-                               :read-relationships
-                               (cache/lookup-page-query-identity
-                                filters internal-query)
-                               authorization-resource-type
-                               authorization-permission
-                               #(authorization-scan-page
-                                 api opts request-context adapter page-db
-                                 cursor-opts filters internal-query validate!))
-                              (cached-engine-result
-                               request-context adapter answer-opts
-                               :read-relationships
-                               (cache/lookup-page-query-identity
-                                filters internal-query)
-                               nil nil
-                               #(do
-                                  (validate!)
-                                  (binding
-                                   [relationship-filters/*validated-request?*
-                                    true]
-                                    ((get-in api [:impl :read-relationships])
-                                     page-db internal-query
-                                     (:decision-kernel cursor-opts))))))]
-                        (render-and-cache-page
-                         adapter cursor-opts :read-relationships filters
-                         rendered-cache answer)))))))))))))
+                                              validate!
+                                              (fn []
+                                                (schema-errors/validate-authorized-relationship-read!
+                                                 (request-schema api page-db (some? authorization))
+                                                 filters))
+                                              subject-id (:subject/id filters)
+                                              resource-id (:resource/id filters)
+                                              subject-eid
+                                              (when subject-id
+                                                (object-id->entid page-db subject-id))
+                                              resource-eid
+                                              (when resource-id
+                                                (object-id->entid page-db resource-id))
+                                              internal-query
+                                              (-> page-query
+                                                  (dissoc :consistency :cache? :populate-cache?
+                                                          :evaluation :timeout-ms
+                                                          :cancellation-token :aggregate-limits
+                                                          :authorization :relationship-state)
+                                                  (cond->
+                                                   subject-id (assoc :subject/id subject-eid)
+                                                   resource-id (assoc :resource/id resource-eid)))]
+                                          (if (or (and subject-id (nil? subject-eid))
+                                                  (and resource-id (nil? resource-eid)))
+                                            (do
+                                              (call-with-request-schema-cache cursor-opts validate!)
+                                              (if (cursor-request? filters)
+                                                (stale-cursor-anchor! :read-relationships)
+                                                (cond->
+                                                 (assoc relay/empty-page
+                                                        :cached? false :cache-basis nil)
+                                                  (:authorization filters)
+                                                  (assoc-in [:page-info :bounded?] false))))
+                                            (let [answer-opts
+                                                  (cond-> cursor-opts
+                                                    rendered-cache
+                                                    (assoc ::populate-exact-answer? false))
+                                                  answer
+                                                  (if authorization
+                                                    (cached-engine-result
+                                                     request-context adapter answer-opts
+                                                     :read-relationships
+                                                     (cache/lookup-page-query-identity
+                                                      filters internal-query)
+                                                     authorization-resource-type
+                                                     authorization-permission
+                                                     #(authorization-scan-page
+                                                       api opts request-context adapter page-db
+                                                       cursor-opts filters internal-query validate!))
+                                                    (cached-engine-result
+                                                     request-context adapter answer-opts
+                                                     :read-relationships
+                                                     (cache/lookup-page-query-identity
+                                                      filters internal-query)
+                                                     nil nil
+                                                     #(do
+                                                        (validate!)
+                                                        (binding
+                                                         [relationship-filters/*validated-request?*
+                                                          true]
+                                                          (if engine/*qualification*
+                                                            (inspection/decode-page
+                                                             engine/*qualification*
+                                                             ((get-in api [:impl :read-relationships])
+                                                              page-db internal-query (:decision-kernel cursor-opts)
+                                                              (inspection/window-options
+                                                               engine/*qualification* filters
+                                                               (when (= :expiry-active (:relationship-state filters))
+                                                                 {:candidate-window (get-in opts [:execution-contract :aggregate-limits :candidate-window])}))))
+                                                            ((get-in api [:impl :read-relationships])
+                                                             page-db internal-query (:decision-kernel cursor-opts)))))))]
+                                              (render-and-cache-page
+                                               adapter cursor-opts :read-relationships filters
+                                               rendered-cache answer))))))))))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal object-id->lookup-ref]}

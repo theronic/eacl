@@ -14,6 +14,7 @@
             [eacl.exact-integer :as exact-integer]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.secure-format :as secure]
             [eacl.subproblem-cache :as subproblem])
   #?(:clj (:import [java.util.concurrent.atomic LongAdder])))
@@ -933,7 +934,8 @@
 (defn- rendered-relationship-shape?
   [value]
   (and (map? value)
-       (= #{:subject :relation :resource} (set (keys value)))
+       (every? (into #{:subject :relation :resource} relationship-mutations/qualifier-keys) (keys value))
+       (relationship-mutations/canonical-qualifier-metadata? value)
        (rendered-spice-object-shape? (:subject value))
        (unqualified-keyword? (:relation value))
        (rendered-spice-object-shape? (:resource value))))
@@ -1046,7 +1048,9 @@
          :can? (if (:qualification semantic-key)
                  (authorization-result/cache-value? value)
                  (boolean? value))
-         :read-relationships (page-answer? value)
+         :read-relationships (and (page-answer? value)
+                                  (or (nil? (:qualification semantic-key))
+                                      (every? rendered-relationship-shape? (:data value))))
          :lookup-resources (lookup-page-answer? semantic-key value)
          :lookup-subjects (lookup-page-answer? semantic-key value)
          :count-resources (count-answer? semantic-key value)

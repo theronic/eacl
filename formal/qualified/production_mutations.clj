@@ -35,6 +35,10 @@
             [eacl.datascript.qualified-lookup-test :as public-lookup-test]
             [eacl.datascript.qualified-write-test :as public-write-test]
             [eacl.datascript.qualified-schema-test :as public-schema-test]
+            [eacl.datascript.qualified-inspection-test :as inspection-test]
+            [eacl.authorization.inspection-test :as inspection-seam-test]
+            [eacl.relationships.inspection :as inspection]
+            [eacl.relay :as relay]
             [eacl.datascript.schema :as datascript-schema]
             [eacl.schema.qualification-admission :as admission]
             [eacl.schema.relation-allowance :as allowance]
@@ -66,7 +70,9 @@
     (count @events)))
 
 (defn mutation-cases []
-  (let [plan-schema datascript-schema/plan-schema-replacement
+  (let [externalize-relationships relay/externalize-relationship-page
+        inspection-window inspection/window-options
+        plan-schema datascript-schema/plan-schema-replacement
         qualify qualification/qualify identity qualification/exact-reuse-identity
         fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
         snapshot-opts @#'orchestration/snapshot-opts
@@ -381,6 +387,34 @@
                                             (let [[value next-state] (stream-next ctx state)]
                                               (if (and value (evidence/no? (get next-state :evidence true)))
                                                 (recur next-state) [value next-state]))))}}
+     :inspection-expiry-is-inclusive
+     {:gate #'inspection-seam-test/expiry-inspection-is-independent-of-caveat-outcomes
+      :redefs {#'inspection/active? (fn [time relationship]
+                                      (or (nil? (:valid-until-ms relationship))
+                                          (<= time (:valid-until-ms relationship))))}}
+     :inspection-requires-a-definite-caveat
+     {:gate #'inspection-seam-test/expiry-inspection-is-independent-of-caveat-outcomes
+      :redefs {#'inspection/active? (fn [time relationship]
+                                      (and (or (nil? (:valid-until-ms relationship))
+                                               (< time (:valid-until-ms relationship)))
+                                           (or (nil? (:caveat relationship))
+                                               (true? (get-in relationship [:caveat-context "flag"])))))}}
+     :inspection-loses-aligned-qualifier-reference
+     {:gate #'inspection-test/stored-and-expiry-active-inspection-retain-metadata-without-caveat-evaluation
+      :redefs {#'inspection/row (fn [relationship _ _] relationship)}}
+     :inspection-externalizer-discards-metadata
+     {:gate #'inspection-test/stored-and-expiry-active-inspection-retain-metadata-without-caveat-evaluation
+      :redefs {#'relay/externalize-relationship-page
+               (fn [& args] (update (apply externalize-relationships args) :data
+                                    #(mapv (fn [r] (apply dissoc r mutations/qualifier-keys)) %)))}}
+     :inspection-fills-past-candidate-window
+     {:gate #'inspection-test/expiry-filter-keeps-the-existing-candidate-work-bound
+      :redefs {#'inspection/window-options
+               (fn [request filters options]
+                 (assoc (inspection-window request filters options) :candidate-window 1000))}}
+     :inspection-cache-admits-noncanonical-metadata
+     {:gate #'mutations-test/cached-qualifier-metadata-must-be-closed-bounded-and-canonical
+      :redefs {#'mutations/canonical-qualifier-metadata? (constantly true)}}
      :schema-admission-omits-evaluator
      {:gate #'public-schema-test/schema-admission-requires-evaluator-before-writes-or-empty-reads
       :redefs {#'admission/schema! (fn [schema _ publication] (admission/require-publication! publication) schema)}}
@@ -410,7 +444,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 77 (count cases)))
+    (is (= 83 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

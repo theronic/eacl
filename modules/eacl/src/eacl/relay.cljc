@@ -6,6 +6,7 @@
             [eacl.cache :as cache]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
@@ -1119,15 +1120,11 @@
       page
       :data
       (mapv
-       (fn [{:keys [subject relation resource]}]
-         (eacl/->Relationship
-          (eacl/->SpiceObject
-           (:type subject)
-           (get identities (:id subject))
-           (:relation subject))
-          relation
-          (eacl/->SpiceObject
-           (:type resource)
-           (get identities (:id resource))
-           (:relation resource))))
+       (fn [{:keys [subject relation resource] :as relationship}]
+         (merge
+          (eacl/->Relationship
+           (eacl/->SpiceObject (:type subject) (get identities (:id subject)) (:relation subject))
+           relation
+           (eacl/->SpiceObject (:type resource) (get identities (:id resource)) (:relation resource)))
+          (select-keys relationship relationship-mutations/qualifier-keys)))
        relationships)))))

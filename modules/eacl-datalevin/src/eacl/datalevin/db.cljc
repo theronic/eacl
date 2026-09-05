@@ -165,6 +165,8 @@
   ([db attr prefix cursor-eid direction native-limit]
    (avet-endpoint-prefix db attr prefix cursor-eid nil direction native-limit))
   ([db attr prefix cursor-eid cursor-entity direction native-limit]
+   (avet-endpoint-prefix db attr prefix cursor-eid cursor-entity direction native-limit false))
+  ([db attr prefix cursor-eid cursor-entity direction native-limit include-qualifier?]
    (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
                 (or (nil? cursor-entity) (nat-int? cursor-entity))
@@ -183,7 +185,7 @@
               (take-while
                (fn [{:keys [a] :as datom}]
                  (and (= attr a) (endpoint-pair/value-prefix? (:v datom) prefix)))
-               scan)))))))
+               scan) include-qualifier?))))))
 
 (defn qualified-relation-datoms
   "Complete qualified Relation stream in bounded native batches. Callers must

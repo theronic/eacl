@@ -5,6 +5,7 @@
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.inspection-contract :as inspection]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.datalevin.core :as api]
             [eacl.datalevin.db :as db]
@@ -118,4 +119,23 @@
                               result))]
               (outer))))})
       (is (= before (d/active-read-snapshot-info)))
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest stored-and-active-inspection-preserve-aligned-native-qualifiers
+  (let [dir (util/tmp-dir (str "public-qualified-" (random-uuid)))
+        conn (schema/create-conn dir {:app/flag {:db/valueType :db.type/long}})
+        now (atom 99)
+        watermark (atom 0)]
+    (try
+      (inspection/check! {:client (api/make-client conn {:clock #(deref now)
+                                                         :caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                         :source-lifecycle "public-qualified-write"
+                                                         :security-key "01234567890123456789012345678901"
+                                                         :revision-watermark watermark
+                                                         :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})
+                          :writer #(qualifiers/writer conn) :entid d/entid :now now :speculative? false
+                          :allowance-stamps (fn [database]
+                                              (let [eid (d/entid database [:eacl/id "schema-string"])]
+                                                [[:db/add eid :eacl.datalevin/schema-generation :db/current-tx]
+                                                 [:db/add eid :eacl.datalevin/schema-write-fence :db/current-tx]]))})
       (finally (d/close conn) (util/delete-files dir)))))

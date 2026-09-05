@@ -19,7 +19,7 @@
   (into known-anchor-keys
         [:first :last :after :before :cursor :limit
          :page/basis :consistency :cache? :populate-cache?
-         :evaluation :timeout-ms :caveat-context
+         :evaluation :timeout-ms :caveat-context :relationship-state
          :cancellation-token :aggregate-limits :authorization]))
 
 (def ^:dynamic ^:no-doc *validated-request?* false)
@@ -34,6 +34,11 @@
       {:type :eacl.filters/invalid-filter
        :eacl/error :eacl.filters/invalid-filter
        :value filters})))
+  (when (and (contains? filters :relationship-state)
+             (not (#{:stored :expiry-active} (:relationship-state filters))))
+    (throw (ex-info "Relationship state must be :stored or :expiry-active."
+                    {:type :eacl.filters/invalid-filter :eacl/error :eacl.filters/invalid-filter
+                     :filter :relationship-state})))
   (doseq [[unsupported-key hint]
           [[:resource/id-prefix
             "Filter on :resource/id, or filter external ids client-side."]

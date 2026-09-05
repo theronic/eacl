@@ -261,3 +261,26 @@ guard. Datalevin captures validation, qualifier reads, and commit generations
 inside one owned native read snapshot and releases it before transaction
 submission. Its schema scan consumes bounded AVET batches across the complete
 Relation prefix, preserving rows with equal endpoint tails at batch boundaries.
+
+### Implemented physical inspection and work-bound contract
+
+`read-relationships` accepts `:relationship-state :stored` (default) or
+`:relationship-state :expiry-active`. Qualified responses retain canonical public
+qualifier metadata and label their mode and captured `:evaluation-time-ms`.
+Native scan rows carry private aligned Relation/qid fields only until the shared
+bounded decoder externalizes them. Expiry-active acceptance uses the existing
+candidate window and continuation machinery; expired candidates spend that
+window even when no row is emitted. Physical inspection never compiles or
+evaluates a Caveat and therefore does not require an evaluator unless an
+`:authorization` filter also requests a permission decision.
+
+All four native backends retain forward/reverse/partial/exact scan semantics.
+The ordinary Datalevin scan arity retains its numeric native bound. Qualified
+cache ingress validates canonical metadata without narrowing the pre-existing
+ordinary boxed-value contract. Datomic schema publication resolves newly created
+Caveats by their transaction tempids when constructing Relation alternatives.
+Shared tests cover expiry equality, expired identity conflicts, renewal,
+shortening, and expiry removal through immutable touch. Existing compact scan
+cache, weighted reducer, checkpoint/head, dimensional-budget and candidate-window
+conformance is complemented by stopping after a native qualifier read when the
+absolute execution deadline or cancellation token fires.

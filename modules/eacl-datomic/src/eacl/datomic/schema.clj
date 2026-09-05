@@ -763,9 +763,15 @@
         relation-retractions (relation-allowance/entity-deletions relations)
         permission-retractions
         (expression-persistence/entity-deletions permissions)
+        caveat-addition-entities
+        (mapv #(assoc % :db/id (d/tempid :db.part/user)) (:additions caveats))
+        caveat-refs (into {} (map (juxt :eacl.caveat/name :db/id)) caveat-addition-entities)
         relation-addition-entities
         (mapv (fn [relation]
-                (assoc relation :db/id (d/tempid :db.part/user)))
+                (cond-> (assoc relation :db/id (d/tempid :db.part/user))
+                  (contains? relation :eacl.relation/caveats)
+                  (update :eacl.relation/caveats
+                          #(mapv (fn [[_ name :as ref]] (get caveat-refs name ref)) %))))
               (:additions relations))
         relation-initial-stamps
         (mapv (fn [relation]
@@ -784,7 +790,7 @@
         tx-data
         (vec
          (concat
-          (map #(assoc % :db/id (d/tempid :db.part/user)) (:additions caveats))
+          caveat-addition-entities
           (relation-allowance/attribute-retractions relations)
           relation-addition-entities
           relation-initial-stamps

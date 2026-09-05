@@ -4,6 +4,7 @@
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
+            [eacl.caveats.inspection-contract :as inspection]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.datascript.core :as api]
             [eacl.datascript.caveat-schema-test :as schema-races]
@@ -27,3 +28,10 @@
         client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
     (allowance/check! {:client client :writer #(qualifiers/writer conn)
                        :read-schema schema/read-schema :interleave! schema-races/interleave! :entid ds/entid})))
+
+(deftest stored-and-active-inspection-preserve-aligned-native-qualifiers
+  (let [conn (schema/create-conn {:app/flag {}})
+        now (atom 99)
+        client (api/make-client conn {:clock #(deref now)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
+    (inspection/check! {:client client :writer #(qualifiers/writer conn) :entid ds/entid :now now})))

@@ -44,6 +44,8 @@
             [eacl.caveats.schema-admission-test]
             [eacl.schema.relation-allowance-test]
             [eacl.datascript.qualified-schema-test]
+            [eacl.authorization.inspection-test]
+            [eacl.datascript.qualified-inspection-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
             [eacl.datascript.scan-cache-integration-test]
@@ -145,6 +147,8 @@
                'eacl.caveats.schema-admission-test
                'eacl.schema.relation-allowance-test
                'eacl.datascript.qualified-schema-test
+               'eacl.authorization.inspection-test
+               'eacl.datascript.qualified-inspection-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test

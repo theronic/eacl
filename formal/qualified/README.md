@@ -92,3 +92,15 @@ bounded native batches without truncation. Six production controls omit the
 evaluator, schema or request publication admission, retained-data validation,
 Relation identity retention, or the schema replacement's Relation fence. The
 combined gate has 583,204 assertions and 77 detected production mutations.
+
+Physical Relationship inspection shares the bounded qualifier decoder and native
+endpoint scan. Stored pages retain expired rows and canonical qualifier metadata;
+expiry-active pages apply the exclusive boundary without executing Caveat
+programs. The same contract covers all four adapters and both Datahike attribute
+modes, both directions and partial/exact anchors, cache-disabled equality, and
+renewal/shortening/removal through touch. Six production controls make expiry
+inclusive, demand definite Caveat evidence during inspection, drop the aligned
+qid or rendered metadata, remove the candidate-work limit, or admit noncanonical
+cached metadata. Qualification deadline and cancellation tests stop immediately
+after a native data read and preserve the operational error on retry. The combined
+gate has 584,088 assertions and 83 detected production mutations.

@@ -229,3 +229,36 @@ are fenced at commit. Datalevin performs schema validation and generation reads
 inside one owned snapshot, then releases that snapshot before submitting the
 schema transaction. The qualified semantic epoch remains disabled while the
 remaining cache, cursor, integrity, and release obligations are completed.
+
+## Phase 3 physical Relationship inspection
+
+When qualified serving is enabled, `read-relationships` defaults to
+`:relationship-state :stored`. It returns retained rows with their optional
+`:caveat`, `:caveat-context`, and `:valid-until-ms` metadata, including expired
+rows. Select `:relationship-state :expiry-active` to exclude rows whose deadline
+is at or before the request's captured trusted time. Responses label the selected
+state and `:evaluation-time-ms`. Explicit snapshots retain their captured time.
+
+```clojure
+(eacl/read-relationships client
+  {:resource/type :doc :resource/id "report" :first 20
+   :relationship-state :expiry-active})
+```
+
+These modes inspect storage and expiry without evaluating Caveats. A row with
+an unsatisfied or conditional Caveat can therefore appear in either view.
+Use the existing `:authorization` filter or an authorization operation when a
+permission decision is needed. Physical inspection alone does not require a
+Caveat evaluator. Qualifier corruption remains a typed fault.
+
+Expiry-active filtering spends the existing candidate-work budget on every
+examined row, including skipped expired rows. A bounded page may be empty and
+still return continuation state. It does not scan an arbitrarily long expired
+prefix to fill a page. Forward, reverse, exact and partial endpoint queries
+preserve qualifier alignment through public rendering and cache reuse.
+
+Expiry retains Relationship identity. `:create` conflicts with an expired row;
+`:touch` renews or shortens its deadline by replacing the immutable qualifier.
+Omitting `:valid-until-ms` on a replacement removes expiry. Omitting all qualifier
+metadata returns the row to the nil-qid representation when the Relation permits
+plain input. No collection job is required for expiration correctness.

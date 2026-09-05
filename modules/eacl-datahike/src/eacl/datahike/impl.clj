@@ -5,6 +5,7 @@
             [eacl.datahike.schema :as schema]
             [eacl.engine.relationships :as relationship-engine]
             [eacl.relationships.edge :as edge]
+            [eacl.relationships.inspection :as inspection]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
@@ -430,7 +431,8 @@
   ;; no filter validation at all.
    (when-not relationship-filters/*validated-request?*
      (relationship-filters/validate! filters))
-   (let [subject-id'  (when (contains? filters :subject/id)
+   (let [include-qualifier? (true? (:include-qualifier? window-options))
+         subject-id'  (when (contains? filters :subject/id)
                         (internal-id db (:subject/id filters)))
          resource-id' (when (contains? filters :resource/id)
                         (internal-id db (:resource/id filters)))
@@ -440,15 +442,17 @@
      (if (or (and (contains? filters :subject/id) (nil? subject-id'))
              (and (contains? filters :resource/id) (nil? resource-id')))
        {:data [] :cursor nil}
-       (letfn [(relationship-row [spec subject-id resource-id]
+       (letfn [(relationship-row [spec subject-id resource-id qualifier-id]
                  {:spec-idx    (:idx spec)
                   :subject-id  subject-id
                   :resource-id resource-id
                   :relationship
-                  (eacl/->Relationship
-                   (spice-object (:subject-type spec) subject-id)
-                   (:relation-name spec)
-                   (spice-object (:resource-type spec) resource-id))})
+                  (inspection/row
+                   (eacl/->Relationship
+                    (spice-object (:subject-type spec) subject-id)
+                    (:relation-name spec)
+                    (spice-object (:resource-type spec) resource-id))
+                   (:relation-id spec) qualifier-id)})
                (normalized-cursor [cursor]
                  (when cursor
                    (cond->
@@ -466,18 +470,19 @@
                            scan-kind direction cursor %))
                     rows)))
                (exact-match-row [spec cursor direction]
-                 (let [row (when (and (:subject-id spec) (:resource-id spec))
-                             (when (direct-match?
-                                    db
-                                    (:subject-type spec)
-                                    (:subject-id spec)
-                                    (:relation-id spec)
-                                    (:resource-type spec)
-                                    (:resource-id spec))
-                               (relationship-row spec (:subject-id spec) (:resource-id spec))))]
+                 (let [row
+                       (when (and (:subject-id spec) (:resource-id spec))
+                         (when-let [compact
+                                    (if include-qualifier?
+                                      (direct-edge db (:subject-type spec) (:subject-id spec)
+                                                   (:relation-id spec) (:resource-type spec) (:resource-id spec))
+                                      (when (direct-match? db (:subject-type spec) (:subject-id spec)
+                                                           (:relation-id spec) (:resource-type spec) (:resource-id spec))
+                                        (:resource-id spec)))]
+                           (relationship-row spec (:subject-id spec) (:resource-id spec)
+                                             (edge/qualifier-id compact))))]
                    (if row
-                     (drop-until-beyond-cursor
-                      spec cursor direction [row])
+                     (drop-until-beyond-cursor spec cursor direction [row])
                      [])))
                (scan-forward-anchored [spec cursor direction]
                  (if (:resource-id spec)
@@ -491,10 +496,10 @@
                           (:resource-type spec)]
                          (or (:resource-id cursor)
                              (:resource cursor))
-                         direction)
+                         direction include-qualifier?)
                         (map (fn [{:keys [v]}]
                                (relationship-row
-                                spec (:subject-id spec) (nth v 3))))
+                                spec (:subject-id spec) (nth v 3) (nth v 4))))
                         (drop-until-beyond-cursor
                          spec cursor direction))))
                (scan-reverse-anchored [spec cursor direction]
@@ -509,10 +514,10 @@
                           (:subject-type spec)]
                          (or (:subject-id cursor)
                              (:subject cursor))
-                         direction)
+                         direction include-qualifier?)
                         (map (fn [{:keys [v]}]
                                (relationship-row
-                                spec (nth v 3) (:resource-id spec))))
+                                spec (nth v 3) (:resource-id spec) (nth v 4))))
                         (drop-until-beyond-cursor
                          spec cursor direction))))
                (scan-forward-partial [spec cursor direction]
@@ -524,9 +529,9 @@
                         (:resource-type spec)]
                        (or (:resource-id cursor)
                            (:resource cursor))
-                       direction)
+                       direction include-qualifier?)
                       (map (fn [{:keys [e v]}]
-                             (relationship-row spec e (nth v 3))))
+                             (relationship-row spec e (nth v 3) (nth v 4))))
                       (drop-until-beyond-cursor
                        spec cursor direction)))
                (scan-reverse-partial [spec cursor direction]
@@ -538,9 +543,9 @@
                         (:subject-type spec)]
                        (or (:subject-id cursor)
                            (:subject cursor))
-                       direction)
+                       direction include-qualifier?)
                       (map (fn [{:keys [e v]}]
-                             (relationship-row spec (nth v 3) e)))
+                             (relationship-row spec (nth v 3) e (nth v 4))))
                       (drop-until-beyond-cursor
                        spec cursor direction)))
                (scan-spec
@@ -562,7 +567,7 @@
          (let [scan-specs
                (relationship-engine/plan-scans
                 (all-relation-defs db) filters')]
-           (if window-options
+           (if (:accept? window-options)
              (relationship-engine/execute-filtered-window
               scan-specs filters' decision-kernel scan-spec window-options)
              (if-not (or (contains? filters' :limit)

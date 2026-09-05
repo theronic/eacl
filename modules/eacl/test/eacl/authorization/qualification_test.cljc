@@ -241,3 +241,28 @@
   (let [sample (clock/clock (constantly 1.5))]
     (is (= :clock-time (try (sample) nil
                             (catch #?(:clj Exception :cljs :default) error (:reason (ex-data error))))))))
+
+(deftest qualified-resolution-observes-deadline-and-cancellation-after-native-work
+  (doseq [stop [:deadline :cancel]]
+    (let [now (atom 0)
+          token (execution/cancellation-token)
+          reads (atom {})
+          request (data-request fixture reads)
+          expected (if (= stop :deadline) :eacl.execution/deadline-exceeded :eacl.execution/cancelled)]
+      (binding [execution/*monotonic-nanos* #(deref now)
+                execution/*contract* (binding [execution/*monotonic-nanos* #(deref now)]
+                                       (execution/normalize {} :check-permission {:timeout-ms 1 :cancellation-token token}))
+                backend/*invoke-observer*
+                (fn [{:keys [phase operation]}]
+                  (when (and (= phase :after) (= operation :qualification-data))
+                    (if (= stop :deadline) (reset! now 1000000) (execution/cancel! token))))]
+        (is (= expected
+               (try (q/qualify request 1 [10 3]) nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                      (:type (ex-data error))))))
+        (is (= {3 1} @reads) "stop immediately after the first native qualifier read")
+        (is (= expected
+               (try (q/qualify request 1 [11 3]) nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                      (:type (ex-data error))))))
+        (is (= {3 1} @reads) "memoized work cannot bypass an expired or cancelled request")))))
