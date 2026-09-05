@@ -1131,6 +1131,17 @@
                        (:fetched-values before 0))})
   final-state)
 
+(defn checkpoint-scope-valid?
+  "A qualified checkpoint is reusable only in the same complete request
+   scope and result policy. Ordinary checkpoints carry no qualified state."
+  [options checkpoint-state]
+  (let [qualified (:qualified checkpoint-state)]
+    (and (= (boolean qualified) (boolean (:qualification options)))
+         (or (nil? qualified)
+             (and (= (:scope qualified)
+                     (qualification/exact-reuse-identity (:qualification options)))
+                  (= (:result-policy qualified) (:result-policy options :definite)))))))
+
 (defn resume
   "Continues a history-free state to `target` absolute discovered results
   under fresh runtime options. Emissions from before the checkpoint are
@@ -1139,11 +1150,7 @@
    checkpoint-state]
   (let [context {:plan plan :root (:root plan) :subject-type subject-type}
         qualified (:qualified checkpoint-state)
-        _ (when (or (not= (boolean qualified) (boolean (:qualification options)))
-                    (and qualified
-                         (or (not= (:scope qualified)
-                                   (qualification/exact-reuse-identity (:qualification options)))
-                             (not= (:result-policy qualified) (:result-policy options :definite)))))
+        _ (when-not (checkpoint-scope-valid? options checkpoint-state)
             (throw (ex-info "Qualified discovery checkpoint scope changed."
                             {:type :eacl.reducer/checkpoint-scope-mismatch})))
         state (-> (initial-state options)

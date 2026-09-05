@@ -29,6 +29,7 @@
             [eacl.engine.scan-cache-test]
             [eacl.engine.stable-route-evidence-test]
             [eacl.engine.stable-reducer-evidence-test]
+            [eacl.engine.stable-page-evidence-test]
             [eacl.engine.stable-route-native-evidence-test]
             [eacl.engine.least-path-evidence-test]
             [eacl.operator.seekable-evidence-test]
@@ -124,6 +125,7 @@
                'eacl.engine.scan-cache-test
                'eacl.engine.stable-route-evidence-test
                'eacl.engine.stable-reducer-evidence-test
+               'eacl.engine.stable-page-evidence-test
                'eacl.engine.stable-route-native-evidence-test
                'eacl.engine.least-path-evidence-test
                'eacl.operator.seekable-evidence-test

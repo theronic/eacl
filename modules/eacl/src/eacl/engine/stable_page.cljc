@@ -20,6 +20,9 @@
             [eacl.cache.standard-lru :as lru]
             [eacl.engine.physical :as physical]
             [eacl.engine.stable-reducer :as reducer]
+            [eacl.engine.stable-route :as route]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.evidence :as evidence]
             [eacl.execution :as execution]
             [eacl.secure-format :as secure-format]))
 
@@ -50,16 +53,20 @@
   Its `:basis` is intentionally exact. Public EACL Relay cursors validate
   lineage and frame before calling `edge-page`; they do not use this token."
   [{:keys [adapter basis-identity plan direction anchor subject-type
-           page-size]}]
-  {:v token-version
-   :order-abi order-abi
-   :fingerprint (:fingerprint plan)
-   :lifecycle (:source-lifecycle basis-identity)
-   :basis (backend/invoke adapter :native-revision)
-   :direction direction
-   :anchor anchor
-   :subject-type subject-type
-   :page-size page-size})
+           page-size qualification] :as options}]
+  (cond-> {:v token-version
+           :order-abi order-abi
+           :fingerprint (:fingerprint plan)
+           :lifecycle (:source-lifecycle basis-identity)
+           :basis (backend/invoke adapter :native-revision)
+           :direction direction
+           :anchor anchor
+           :subject-type subject-type
+           :page-size page-size}
+    qualification
+    (assoc :qualification (secure-format/canonical-digest token-domain
+                                                          (qualification/exact-reuse-identity qualification))
+           :result-policy (:result-policy options :definite))))
 
 (defn ^:no-doc checkpoint-key
   "Exact checkpoint identity for the standalone token API.
@@ -124,7 +131,7 @@
         (page-error! :eacl.page/expired-cursor "Cursor expired."
                      {:expires-at expires-at})))
     (doseq [field [:v :order-abi :fingerprint :lifecycle :direction
-                   :anchor :subject-type :page-size]]
+                   :anchor :subject-type :page-size :qualification :result-policy]]
       (when (not= (get binding field) (get payload field))
         (page-error! :eacl.page/invalid-cursor
                      "Cursor is bound to an incompatible execution context."
@@ -314,17 +321,38 @@
     (or checkpoint-key ::anonymous-replay)
     #(guard-exhaustion thunk)))
 
+(defn- valid-qualified-checkpoint
+  "Malformed retained evidence is a replay miss. Every pending result has
+   an explicit value, including timeless true; missing annotations cannot
+   silently turn a conditional lookahead into a grant."
+  [options checkpoint]
+  (when (and checkpoint (reducer/checkpoint-scope-valid? options (:state checkpoint)))
+    (if-not (:qualification options)
+      checkpoint
+      (let [annotations (:pending-evidence checkpoint)]
+        (when (and (map? annotations)
+                   (= (set (:pending checkpoint)) (set (keys annotations)))
+                   (every? (fn [value]
+                             (try
+                               (and (not (evidence/no? value)) (not (evidence/fault? value))
+                                    (evidence/before? (:time (:qualification options)) (evidence/valid-until value))
+                                    (string? (evidence/encode value)))
+                               (catch #?(:clj Exception :cljs :default) _ false)))
+                           (vals annotations)))
+          checkpoint)))))
+
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:
   by checkpoint when the exact edge matches, else by governed deterministic
   replay that validates the boundary identity at the already accepted basis
   before continuing. Public cursor acceptance always precedes this lookup."
   [options store key anchor-eid ordinal boundary-eid]
-  (if-let [hit (checkpoint-hit store key ordinal boundary-eid)]
+  (if-let [hit (valid-qualified-checkpoint options (checkpoint-hit store key ordinal boundary-eid))]
     (do
       (when-let [stats reducer/*observer-stats*]
         (swap! stats update :continuation-hits (fnil inc 0)))
-      {:state (:state hit) :pending (:pending hit)})
+      (cond-> {:state (:state hit) :pending (:pending hit)}
+        (:qualification options) (assoc :pending-evidence (:pending-evidence hit))))
     (let [replayed (governed-replay
                     options
                     #(run-fresh (assoc options
@@ -341,6 +369,25 @@
 
 (declare deliver-page deliver-raw-page)
 
+(defn- with-result-evidence [options result evidence]
+  (cond-> result
+    (:qualification options)
+    (assoc :result-evidence
+           (into {} (keep (fn [eid]
+                            (let [value (get evidence eid true)]
+                              (when-not (true? value) [eid value])))) (:eids result)))))
+
+(defn- qualified-page-options [options]
+  (if-let [request (:qualification options)]
+    (let [direction (:direction options)
+          options (assoc options (if (= :forward direction) :subject-eid :resource-eid) (:anchor-eid options))
+          options (if (:candidate-evidence-fn options) options (route/discovery-options options direction))]
+      (cond-> options
+        (:checkpoint-key options)
+        (update :checkpoint-key #(vector % :qualification (qualification/exact-reuse-identity request)
+                                         (:result-policy options :definite)))))
+    options))
+
 (defn edge-page
   "Engine-facing pagination over internal-eid boundaries: `after`/`before`
   are {:ordinal n :eid e} edges (already authenticated by the caller's
@@ -350,90 +397,97 @@
   window of the exhausted sequence. When `:service-admission` names a
   service-edge admission, replays (checkpoint misses, backward runs and last
   windows) run under its replay ledger keyed by `:checkpoint-key`."
-  [{:keys [anchor-eid page-size after before last-window? checkpoints
-           checkpoint-key raw-candidates?]
-    :as options}]
-  (cond
-    (nil? anchor-eid)
-    {:eids [] :start-ordinal 0 :has-next? false :has-previous? false}
+  [options]
+  (let [{:keys [anchor-eid page-size after before last-window? checkpoints
+                checkpoint-key raw-candidates?] :as options} (qualified-page-options options)]
+    (cond
+      (nil? anchor-eid)
+      (with-result-evidence options
+        {:eids [] :start-ordinal 0 :has-next? false :has-previous? false} {})
 
-    before
-    (let [{:keys [ordinal eid]} before
-          start (max 0 (- ordinal 1 page-size))
-          replayed (governed-replay
-                    options
-                    #(run-fresh (assoc options
-                                       :result-sink :window
-                                       :result-window-size (inc page-size))
-                                anchor-eid ordinal))
-          results (:results replayed)]
-      (when (or (< (:discovered replayed) ordinal)
-                (not= eid (peek results)))
-        (page-error! :eacl.page/invalid-cursor
-                     "Backward run could not validate the supplied edge."
-                     {:ordinal ordinal}))
-      {:eids (pop results)
-       :start-ordinal start
-       :has-next? true
-       :has-previous? (pos? start)})
+      before
+      (let [{:keys [ordinal eid]} before
+            start (max 0 (- ordinal 1 page-size))
+            replayed (governed-replay
+                      options
+                      #(run-fresh (assoc options
+                                         :result-sink :window
+                                         :result-window-size (inc page-size))
+                                  anchor-eid ordinal))
+            results (:results replayed)]
+        (when (or (< (:discovered replayed) ordinal)
+                  (not= eid (peek results)))
+          (page-error! :eacl.page/invalid-cursor
+                       "Backward run could not validate the supplied edge."
+                       {:ordinal ordinal}))
+        (with-result-evidence options
+          {:eids (pop results)
+           :start-ordinal start
+           :has-next? true
+           :has-previous? (pos? start)} (:result-evidence replayed)))
 
-    last-window?
-    (let [run (governed-replay
-               options
-               #(run-fresh (assoc options
-                                  :result-sink :window
-                                  :result-window-size page-size)
-                           anchor-eid
-                           reducer/exhaustion-target))
-          results (:results run)]
-      {:eids results
-       :start-ordinal (max 0 (- (:discovered run) (count results)))
-       :has-next? false
-       :has-previous? (> (:discovered run) (count results))})
+      last-window?
+      (let [run (governed-replay
+                 options
+                 #(run-fresh (assoc options
+                                    :result-sink :window
+                                    :result-window-size page-size)
+                             anchor-eid
+                             reducer/exhaustion-target))
+            results (:results run)]
+        (with-result-evidence options
+          {:eids results
+           :start-ordinal (max 0 (- (:discovered run) (count results)))
+           :has-next? false
+           :has-previous? (> (:discovered run) (count results))} (:result-evidence run)))
 
-    :else
-    (let [ordinal (:ordinal after 0)
-          {:keys [state pending]}
-          (if (pos? ordinal)
-            (state-at-boundary options checkpoints checkpoint-key
-                               anchor-eid ordinal (:eid after))
-            {:state nil :pending []})
-          {:keys [page-ids lookahead end-state]}
-          (if state
-            (if raw-candidates?
-              (deliver-raw-page options state pending page-size)
-              (deliver-page options state pending page-size))
-            (let [run (guard-exhaustion
-                       #(run-fresh
-                         options anchor-eid
-                         (if raw-candidates? page-size (inc page-size))))]
-              {:page-ids (let [results (:results run)]
-                           (subvec results 0 (min page-size (count results))))
+      :else
+      (let [ordinal (:ordinal after 0)
+            {:keys [state pending pending-evidence]}
+            (if (pos? ordinal)
+              (state-at-boundary options checkpoints checkpoint-key
+                                 anchor-eid ordinal (:eid after))
+              {:state nil :pending []})
+            {:keys [page-ids lookahead end-state result-evidence]}
+            (if state
+              (if raw-candidates?
+                (deliver-raw-page options state pending pending-evidence page-size)
+                (deliver-page options state pending pending-evidence page-size))
+              (let [run (guard-exhaustion
+                         #(run-fresh
+                           options anchor-eid
+                           (if raw-candidates? page-size (inc page-size))))]
+                {:page-ids (let [results (:results run)]
+                             (subvec results 0 (min page-size (count results))))
                ;; A fresh vector, never a suffix view retained by the
                ;; checkpoint store.
-               :lookahead (if (or raw-candidates?
-                                  (<= (count (:results run)) page-size))
-                            []
-                            (into [] (subvec (:results run) page-size)))
-               :end-state (reducer/history-free run)}))
-          delivered (+ ordinal (count page-ids))]
-      (when (and (seq page-ids) checkpoints checkpoint-key)
-        (checkpoint-put!
-         checkpoints checkpoint-key
-         {:ordinal delivered
-          :boundary (peek page-ids)
-          :pending (vec lookahead)
-          :state end-state}))
-      {:eids page-ids
-       :start-ordinal ordinal
-       :has-next? (boolean (seq lookahead))
-       :has-previous? (pos? ordinal)})))
+                 :lookahead (if (or raw-candidates?
+                                    (<= (count (:results run)) page-size))
+                              []
+                              (into [] (subvec (:results run) page-size)))
+                 :end-state (reducer/history-free run)
+                 :result-evidence (:result-evidence run)}))
+            delivered (+ ordinal (count page-ids))]
+        (when (and (seq page-ids) checkpoints checkpoint-key)
+          (checkpoint-put!
+           checkpoints checkpoint-key
+           (cond-> {:ordinal delivered
+                    :boundary (peek page-ids)
+                    :pending (vec lookahead)
+                    :state end-state}
+             (:qualification options)
+             (assoc :pending-evidence (into {} (map #(vector % (get result-evidence % true))) lookahead)))))
+        (with-result-evidence options
+          {:eids page-ids
+           :start-ordinal ordinal
+           :has-next? (boolean (seq lookahead))
+           :has-previous? (pos? ordinal)} result-evidence)))))
 
 (defn- deliver-raw-page
   "Continues a checkpoint by exactly `page-size` candidates, with no
   lookahead. Filtered lookup orchestration owns its sentinel and budget, so
   fetching an extra authorized candidate here would cross that boundary."
-  [options state pending page-size]
+  [options state pending pending-evidence page-size]
   (let [pending (vec (take page-size pending))
         needed (- page-size (count pending))
         continued
@@ -442,13 +496,14 @@
            #(run-resume options state (+ (:discovered state) needed))))]
     {:page-ids (into pending (when continued (:results continued)))
      :lookahead []
-     :end-state (if continued (reducer/history-free continued) state)}))
+     :end-state (if continued (reducer/history-free continued) state)
+     :result-evidence (when (:qualification options) (merge pending-evidence (:result-evidence continued)))}))
 
 (defn- deliver-page
   "Runs from `state`+`pending` (whose scalar `:discovered` count is the
   absolute delivered ordinal) until `page-size` results plus one lookahead
   are available or the graph exhausts. Returns page internals."
-  [options state pending page-size]
+  [options state pending pending-evidence page-size]
   (let [needed-fresh (- (inc page-size) (count pending))
         continued (when (pos? needed-fresh)
                     (guard-exhaustion
@@ -461,7 +516,8 @@
         lookahead (if (< page-size n) [(nth available page-size)] [])]
     {:page-ids page-ids
      :lookahead lookahead
-     :end-state (if continued (reducer/history-free continued) state)}))
+     :end-state (if continued (reducer/history-free continued) state)
+     :result-evidence (when (:qualification options) (merge pending-evidence (:result-evidence continued)))}))
 
 (defn page
   "Executes one stable-discovery page with self-contained authenticated
@@ -495,15 +551,21 @@
         externals (mapv #(backend/invoke adapter :internal-id->object %)
                         (:eids result))
         start-ordinal (:start-ordinal result)]
-    {:data externals
-     :page-info
-     {:has-next-page? (boolean (and (seq externals) (:has-next? result)))
-      :has-previous-page? (boolean (and (seq externals)
-                                        (:has-previous? result)))
-      :start-cursor (when (seq externals)
-                      (edge-token options binding (inc start-ordinal)
-                                  (first externals)))
-      :end-cursor (when (seq externals)
-                    (edge-token options binding
-                                (+ start-ordinal (count externals))
-                                (peek externals)))}}))
+    (cond-> {:data externals
+             :page-info
+             {:has-next-page? (boolean (and (seq externals) (:has-next? result)))
+              :has-previous-page? (boolean (and (seq externals)
+                                                (:has-previous? result)))
+              :start-cursor (when (seq externals)
+                              (edge-token options binding (inc start-ordinal)
+                                          (first externals)))
+              :end-cursor (when (seq externals)
+                            (edge-token options binding
+                                        (+ start-ordinal (count externals))
+                                        (peek externals)))}}
+      (:qualification options)
+      (assoc :result-evidence (into {}
+                                    (keep (fn [[eid external]]
+                                            (when-let [value (get (:result-evidence result) eid)]
+                                              [external value])))
+                                    (map vector (:eids result) externals))))))

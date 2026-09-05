@@ -119,6 +119,8 @@ For recursive first-discovery enumeration, the existing admission identities and
 
 An emitted conditional path is a lower bound on the complete root result. The existing point evaluator completes that result before public projection, sharing the request's qualifier memo; a definite witness needs no completion probe. Each endpoint is emitted or filtered once. Checkpoints retain the evidence needed for queued work and the complete qualified request scope, and discard physical buffers as before. This extends the current discovery machine while preserving its ordinary path and physical chunk independence.
 
+First-discovery pages retain only sparse delivered evidence and explicit evidence for the single pending lookahead, including timeless true. Incomplete or faulty retained lookahead and mismatched checkpoint scope cause a replay miss. Qualified checkpoint identities include exact request scope and result policy. The standalone page token binds a compact digest of that scope; public Relay live-time intervals remain the separate cursor contract below.
+
 ### 7. Implement exclusive `valid-until` as native qualifier semantics
 
 A qualifier with no bound is time-unbounded. A finite bound is active exactly when:

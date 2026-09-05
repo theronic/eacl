@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 579874,
+  "assertions": 580091,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -26,7 +26,7 @@
     "modules/eacl-datascript/test/eacl/operator/recursive_test.cljc": "ba7994d6834206a02622cecae7105fc889ba10b29b0d04469a9ac0e880f9a0c6",
     "formal/qualified/stable_route_bridge.clj": "79057574de4fa3ee2dc0aba63166037a3648df51f9060b2d3bdb597ee7b85577",
     "modules/eacl/test/eacl/engine/stable_route_evidence_test.cljc": "4e4a1990f3ff461539309919b14fc9bae8df9def37a61fc91085d96ed07c4d84",
-    "formal/qualified/production_mutations.clj": "1124a5a2ad8d0721f537fe8a6db7bf3dbc851cdb80fb677295b156f83f51c0d4",
+    "formal/qualified/production_mutations.clj": "a3fa4436451ef7a6a91aae7f37ea87451cb075421cccb9ef1f74036ccf9013a6",
     "modules/eacl-datascript/test/eacl/engine/stable_route_native_evidence_test.cljc": "bbe7fb3ce769a0abf3c1bc3b471780fad44aa6ec262beb35335da8dfe29d108d",
     "modules/eacl/test/eacl/engine/scan_cache_test.cljc": "59afc0cfe74af16b17801d18b513b86efd4634949f187a2fd58a656333d18925",
     "modules/eacl-datascript/test/eacl/datascript/evaluation_clock_test.cljc": "6a53273d259a534c0feab05d8c5818c7da8685ec7757cfd436804c859cde3435",
@@ -53,6 +53,7 @@
     "formal/qualified/discovery_model.clj": "40b5217acab3bf5d1fffecf55cfed75c6331e6f8d6cb01105560afd95f194b2a",
     "formal/qualified/discovery_model_test.clj": "7b8235f04f0348e6b8717167d197266c2d9eae8e86de15f7e09bf16fcb5fb14d",
     "formal/qualified/discovery_bridge.clj": "f22f144af46ce8017daca9235e6e2c43a4ef15b07593776aef2638ab6ea74bdf",
-    "modules/eacl/test/eacl/engine/stable_reducer_evidence_test.cljc": "885f0c3c9666095fd055eeaa18af089b6a945412795b34fd7d907c3169629f17"
+    "modules/eacl/test/eacl/engine/stable_reducer_evidence_test.cljc": "885f0c3c9666095fd055eeaa18af089b6a945412795b34fd7d907c3169629f17",
+    "modules/eacl/test/eacl/engine/stable_page_evidence_test.cljc": "534c80651fb485c2323799696e9ecdd404a88ba6899402ad292b006ed582e76f"
   }
 }

@@ -22,6 +22,8 @@
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.stable-reducer-evidence-test :as discovery-test]
+            [eacl.engine.stable-page :as stable-page]
+            [eacl.engine.stable-page-evidence-test :as page-test]
             [eacl.engine.stable-route :as stable-route]
             [eacl.engine.stable-route-evidence-test :as stable-route-test]
             [eacl.engine.least-path :as least-path]
@@ -71,9 +73,27 @@
         check-result result/check-result
         discovery-options stable-route/discovery-options
         buffer-id @#'reducer/buffer-id
+        checkpoint-put stable-page/checkpoint-put!
+        page-options @#'stable-page/qualified-page-options
+        page-binding stable-page/execution-binding
         request-schema @#'orchestration/request-schema
         enqueue @#'recursive/enqueue-evidence!]
-    {:discovery-reuses-a-buffer-from-an-earlier-prefix
+    {:qualified-checkpoint-accepts-incomplete-evidence
+     {:gate #'page-test/incomplete-or-faulty-qualified-checkpoints-fall-back-to-replay
+      :redefs {#'stable-page/valid-qualified-checkpoint (fn [_ checkpoint] checkpoint)}}
+     :qualified-lookahead-loses-its-evidence
+     {:gate #'page-test/pending-qualified-lookahead-needs-no-repeat-probe
+      :redefs {#'stable-page/checkpoint-put!
+               (fn [store key checkpoint] (checkpoint-put store key (dissoc checkpoint :pending-evidence)))}}
+     :qualified-checkpoint-key-omits-request-scope
+     {:gate #'page-test/checkpoint-retention-partitions-qualified-request-scope
+      :redefs {#'stable-page/qualified-page-options
+               (fn [options] (assoc (page-options options) :checkpoint-key (:checkpoint-key options)))}}
+     :qualified-standalone-token-omits-request-scope
+     {:gate #'page-test/standalone-qualified-tokens-bind-time-context-and-policy
+      :redefs {#'stable-page/execution-binding
+               (fn [options] (dissoc (page-binding options) :qualification :result-policy))}}
+     :discovery-reuses-a-buffer-from-an-earlier-prefix
      {:gate #'discovery-test/temporal-revisions-replay-a-buffered-prefix
       :redefs {#'reducer/buffer-id (fn [item] (buffer-id (dissoc item :revision)))}}
      :discovery-discards-propagated-prefix-evidence
@@ -284,7 +304,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 50 (count cases)))
+    (is (= 54 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))
