@@ -9,6 +9,8 @@
             [eacl.cache.standard-lru-test]
             [eacl.cache-test]
             [eacl.caveats.values-test]
+            [eacl.caveats.definition-test]
+            [eacl.datascript.caveat-schema-test]
             [eacl.caveats.plan-test]
             [eacl.caveats.partial-test]
             [eacl.relationships.qualifier-test]
@@ -123,6 +125,8 @@
                'eacl.request.counters-test
                'eacl.secure-format-test
                'eacl.caveats.values-test
+               'eacl.caveats.definition-test
+               'eacl.datascript.caveat-schema-test
                'eacl.caveats.plan-test
                'eacl.caveats.partial-test
                'eacl.relationships.qualifier-test

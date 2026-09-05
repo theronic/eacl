@@ -180,6 +180,8 @@
     (let [list? (= :list (first type)) item-type (if list? (second type) (nth type 2))]
       (when-not (and (= 3 (count v)) (= (first type) (first v)) (= item-type (second v))
                      (vector? (nth v 2))) (error! :malformed-payload))
+      (when (> (count (nth v 2)) (:container-entries limits))
+        (error! :resource-limit {:limit :container-entries}))
       (if list?
         (mapv #(decode-value item-type %) (nth v 2))
         (let [pairs (nth v 2)]

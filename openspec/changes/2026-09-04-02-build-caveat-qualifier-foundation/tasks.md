@@ -21,14 +21,14 @@
 - [ ] 3.4 Implement an explicit qualified-writer capability with certified inline-allocation and prepared-reference strategies; verify the latter precreates only an inert qualifier and the final transaction atomically publishes both halves, Relation stamp, and caller-composed datoms.
 - [ ] 3.5 Implement singly owned immutable qualifier create/replace/delete planners behind internal staged APIs; verify every semantic update uses a fresh qid, never embeds an unresolved lookup ref/tempid, and leaves no one-sided serving state.
 - [ ] 3.6 Extend integrity, orphan cleanup, and proof-input tooling to report missing, shared, mutable, malformed, asymmetrically referenced, or unattached qualifiers; verify a missing target never aliases `nil` and each corruption fixture fails closed.
-- [ ] 3.7 Add Caveat definition schema entities, canonical parameter payloads, source/profile fields, and schema-generation integration; verify identical Relationships share one named definition without expression-source duplication.
+- [x] 3.7 Add Caveat definition schema entities, canonical parameter payloads, source/profile fields, and schema-generation integration; verify identical Relationships share one named definition without expression-source duplication.
 
 ## 4. Extend schema parsing and admission
 
-- [ ] 4.1 Parse top-level typed Caveat declarations and Relation `with caveat` branches while preserving existing grammar/error positions; verify valid, duplicate, unresolved, and malformed fixtures.
-- [ ] 4.2 Implement static parameter resolution, Boolean-root checking, selected-profile validation, and schema limits; verify invalid schemas fail before durable replacement.
+- [x] 4.1 Parse top-level typed Caveat declarations and Relation `with caveat` branches while preserving existing grammar/error positions; verify valid, duplicate, unresolved, and malformed fixtures.
+- [x] 4.2 Implement static parameter resolution, Boolean-root checking, selected-profile validation, and schema limits; verify invalid schemas fail before durable replacement.
 - [ ] 4.3 Integrate Caveat additions, updates, and removals with `write-schema!`, schema CAS, historical reads, orphan/reference checks, and speculative schema planning; verify concurrent replacements and retained-reference failures.
-- [ ] 4.4 Keep serving activation disabled for Caveated Relation branches and non-`nil` public Relationship writes; verify Phase 2 cannot silently store or serve a qualified edge through current public APIs.
+- [x] 4.4 Keep serving activation disabled for Caveated Relation branches and non-`nil` public Relationship writes; verify Phase 2 cannot silently store or serve a qualified edge through current public APIs.
 
 ## 5. Implement the bounded evaluator subsystem
 

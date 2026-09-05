@@ -2,6 +2,7 @@
   (:require [clojure.string :as str]
             [datalevin.core :as ds]
             [eacl.caveats.schema :as caveat-schema]
+            [eacl.caveats.definition :as caveat-definition]
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.storage :as target-storage]
@@ -80,7 +81,7 @@
 (defn- definition-attribute?
   [attribute]
   (or (= :eacl/schema-string attribute)
-      (contains? #{"eacl.relation" "eacl.permission"}
+      (contains? #{"eacl.relation" "eacl.permission" "eacl.caveat"}
                  (namespace attribute))))
 
 (defn- expected-write-policy
@@ -316,15 +317,29 @@
         (ddb/avet-datoms
          db :eacl.permission/resource-type+permission-name)))
 
+(defn read-caveats [db]
+  (let [entities (if (contains? (ds/schema db) :eacl.caveat/name) (mapv #(eager-entity db (:e %) caveat-definition/attributes)
+        (ddb/avet-datoms db :eacl.caveat/name)) [])]
+    (doseq [entity entities] (caveat-definition/decode-entity entity))
+    entities))
+
+(defn- caveat-references [db name]
+  (if-let [eid (ds/entid db [:eacl.caveat/name name])]
+    (ds/q '[:find [(pull ?q [:db/id :eacl.relationship-qualifier/caveat-context]) ...]
+               :in $ ?c
+               :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
+    []))
+
 (defn read-schema
   [snapshot-or-db & [_format]]
   (ddb/with-db
    snapshot-or-db
    (fn [db]
-     (let [permissions (read-permissions db)]
+     (let [permissions (read-permissions db)
+           caveats (read-caveats db)]
        (expression-persistence/validate-entities permissions)
-       {:relations (read-relations db)
-        :permissions permissions}))))
+       (cond-> {:relations (read-relations db) :permissions permissions}
+         (seq caveats) (assoc :caveats caveats))))))
 
 (defn prepare-cache-coherence!
   "Initializes missing physical schema/relation generations and the schema
@@ -554,14 +569,16 @@
          _               (when (and (empty? (:definitions new-schema-map))
                                     (not allow-empty-schema?)
                                     (or (seq (:relations existing-schema))
-                                        (seq (:permissions existing-schema))))
+                                        (seq (:permissions existing-schema))
+                       (seq (:caveats existing-schema))))
                            (throw (ex-info (str "Refusing to replace a non-empty schema with zero definitions."
                                                 " Pass {:allow-empty-schema? true} to write-schema! if this is intentional.")
                                            {:type :eacl.schema/empty-schema-guard :eacl/error :eacl.schema/empty-schema-guard
                                             :existing {:relations (count (:relations existing-schema))
                                                        :permissions (count (:permissions existing-schema))}})))
          deltas          (compare-schema existing-schema new-schema-map)
-         {:keys [relations permissions]} deltas
+         {:keys [relations permissions caveats]} deltas
+        _ (caveat-definition/validate-replacements! caveats #(caveat-references db %))
          relation-retractions   (:retractions relations)
          permission-retractions
          (expression-persistence/entity-deletions permissions)]
@@ -610,6 +627,11 @@
              relation-commit-guards
              relation-additions
              (:additions permissions)
+          (:additions caveats)
+          (for [caveat (caveat-definition/entity-deletions caveats)
+                :let [eid (ds/entid db [:eacl.caveat/name (:eacl.caveat/name caveat)])]
+                :when eid]
+            [:db/retractEntity eid])
              (for [rel relation-retractions
                    :let [eid (ds/entid db [:eacl/id (:eacl/id rel)])]
                    :when eid]
@@ -634,7 +656,9 @@
                      [(:additions relations)
                       (:retractions relations)
                       (:additions permissions)
-                      (:retractions permissions)]))
+                      (:retractions permissions)
+                        (:additions caveats)
+                        (:retractions caveats)]))
            report
            (if changed?
              (transact-schema! conn tx-data schema-generation write-token)

@@ -305,13 +305,14 @@
          (resolve-definitions-with-metadata (:definitions transformed) limits)
          dependency-certificate
          (expression-graph/build-certificate expressions)]
-     {:definitions (mapv (comp keyword key)
+     (cond-> {:definitions (mapv (comp keyword key)
                          (sort-by key (:definitions transformed)))
       :expressions expressions
       :relations relations
       :expression-metadata metadata
       :aggregate-expression-metrics aggregate-metrics
-      :dependency-certificate dependency-certificate})))
+      :dependency-certificate dependency-certificate}
+       (seq (:caveats transformed)) (assoc :caveats (:caveats transformed))))))
 
 (defn validate-schema
   "Parses and validates one complete schema under a client-local checked

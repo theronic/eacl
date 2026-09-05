@@ -15,7 +15,9 @@
          {:db/ident :eacl.caveat/name :db/valueType :db.type/string :db/unique :db.unique/identity}
          {:db/ident :eacl.caveat/parameters-payload :db/valueType :db.type/string}
          {:db/ident :eacl.caveat/expression-source :db/valueType :db.type/string}
-         {:db/ident :eacl.caveat/profile-version :db/valueType :db.type/string}]))
+         {:db/ident :eacl.caveat/profile-version :db/valueType :db.type/string}
+         {:db/ident :eacl.relation/caveats :db/valueType :db.type/ref :db/cardinality :db.cardinality/many}
+         {:db/ident :eacl.relation/allows-unqualified? :db/valueType :db.type/boolean}]))
 
 (def datalevin-schema
   (into {} (map (fn [attr] [(:db/ident attr) (dissoc attr :db/ident)])) datom-schema))

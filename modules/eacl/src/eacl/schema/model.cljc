@@ -187,8 +187,12 @@
 (defn compare-schema
   "Compares before & after schema (without DB IDs) and returns set deltas."
   [{before-relations :relations
-    before-permissions :permissions}
+    before-permissions :permissions
+    before-caveats :caveats}
    {after-relations :relations
-    after-permissions :permissions}]
-  {:relations   (calc-set-deltas (set before-relations) (set after-relations))
-   :permissions (calc-set-deltas (set before-permissions) (set after-permissions))})
+    after-permissions :permissions
+    after-caveats :caveats}]
+  (cond-> {:relations   (calc-set-deltas (set before-relations) (set after-relations))
+           :permissions (calc-set-deltas (set before-permissions) (set after-permissions))}
+    (or (seq before-caveats) (seq after-caveats))
+    (assoc :caveats (calc-set-deltas (set before-caveats) (set after-caveats)))))
