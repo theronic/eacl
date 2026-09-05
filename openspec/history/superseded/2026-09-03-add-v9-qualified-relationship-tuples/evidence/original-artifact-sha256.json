@@ -1,0 +1,11 @@
+{
+  "proposal.md": "d11ab371de4e341b2a2925633f72539a987139b146c2a4f669205a087ba95d2a",
+  "design.md": "c25c48b80a3ad71910f15ab7d2d0f9cbdbe2af8123ac58a0944dfe1d221d0abe",
+  "tasks.md": "4b23e4b09a10a77f7c947b93333bd3d9293ec33032982c4413bdd760c52cbb05",
+  "specs/converged-relationship-storage/spec.md": "e4762de7d430165dc7fcb8f95598b64c20145d423ff11494fb8f9f73cae95c01",
+  "specs/cursor-dependency-validity/spec.md": "8919f7dab45f0ed1e0d2840ddbd878f8d022ea8c12c6a486cb56c079a4802c5b",
+  "specs/dependency-validated-authorization-cache/spec.md": "eb41c9a960e8eadaa24e380be2ceff34368019977a56cc1232e366878c186ca7",
+  "specs/public-authorization/spec.md": "2d50a1c04bc6ac1173a3fa98315cf795e1e92d464988df7ef28a87853bd6cbf5",
+  "specs/relationship-caveats/spec.md": "9fc7aeaea3eeb13bc74a76ef8e2d46489a7d22a91f8018242fa2003d50121037",
+  "specs/temporal-relationship-validity/spec.md": "bf1490a6c7ad488a58ad75aade108fd537f1e39cae98e4ab270fc810bfca03b2"
+}

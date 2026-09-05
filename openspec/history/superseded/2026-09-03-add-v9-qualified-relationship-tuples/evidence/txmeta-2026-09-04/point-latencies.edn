@@ -1,0 +1,49 @@
+{:workload :point,
+ :valid-at 1000,
+ :warmup-per-variant 2000,
+ :rounds 7,
+ :per-round 2000,
+ :checksum 93800,
+ :variants
+ {:raw-four
+  {:n 14000,
+   :median-ms 0.004625,
+   :p95-ms 0.006959,
+   :min-ms 0.002833,
+   :max-ms 0.105333},
+  :inline-eight
+  {:n 14000,
+   :median-ms 0.007458,
+   :p95-ms 0.010959,
+   :min-ms 0.004375,
+   :max-ms 1.575417},
+  :filter-inline-eight
+  {:n 14000,
+   :median-ms 0.008625,
+   :p95-ms 0.012625,
+   :min-ms 0.005208,
+   :max-ms 0.115458},
+  :filter-tx-naive
+  {:n 14000,
+   :median-ms 0.005958,
+   :p95-ms 0.00875,
+   :min-ms 0.003958,
+   :max-ms 0.095458},
+  :filter-tx-request-memo
+  {:n 14000,
+   :median-ms 0.005666,
+   :p95-ms 0.008333,
+   :min-ms 0.003792,
+   :max-ms 0.1405},
+  :filter-tx-shared-memo
+  {:n 14000,
+   :median-ms 0.004792,
+   :p95-ms 0.007084,
+   :min-ms 0.003041,
+   :max-ms 0.072791},
+  :filter-tx-sparse-bounds
+  {:n 14000,
+   :median-ms 0.00475,
+   :p95-ms 0.007042,
+   :min-ms 0.002958,
+   :max-ms 0.136667}}}

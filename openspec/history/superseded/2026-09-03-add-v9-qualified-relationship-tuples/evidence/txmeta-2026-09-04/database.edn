@@ -1,0 +1,4 @@
+{:uri
+ "datomic:dev://localhost:4334/v9-txmeta-bench-1412b754-2f6e-4941-8460-29bb6f56e984",
+ :n 1000000,
+ :status :seeding}

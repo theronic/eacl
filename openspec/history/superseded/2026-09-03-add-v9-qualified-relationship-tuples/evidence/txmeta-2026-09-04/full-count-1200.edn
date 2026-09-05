@@ -1,0 +1,53 @@
+{:valid-at 1200,
+ :rounds 1,
+ :raw
+ {:raw-four [94.326291],
+  :inline-eight [103.7245],
+  :filter-inline-eight [130.894125],
+  :filter-tx-naive [863.569416],
+  :filter-tx-request-memo [135.849541],
+  :filter-tx-shared-memo [134.629417],
+  :filter-tx-sparse-bounds [128.526792]},
+ :variants
+ {:raw-four
+  {:n 1,
+   :median-ms 94.326291,
+   :p95-ms 94.326291,
+   :min-ms 94.326291,
+   :max-ms 94.326291},
+  :inline-eight
+  {:n 1,
+   :median-ms 103.7245,
+   :p95-ms 103.7245,
+   :min-ms 103.7245,
+   :max-ms 103.7245},
+  :filter-inline-eight
+  {:n 1,
+   :median-ms 130.894125,
+   :p95-ms 130.894125,
+   :min-ms 130.894125,
+   :max-ms 130.894125},
+  :filter-tx-naive
+  {:n 1,
+   :median-ms 863.569416,
+   :p95-ms 863.569416,
+   :min-ms 863.569416,
+   :max-ms 863.569416},
+  :filter-tx-request-memo
+  {:n 1,
+   :median-ms 135.849541,
+   :p95-ms 135.849541,
+   :min-ms 135.849541,
+   :max-ms 135.849541},
+  :filter-tx-shared-memo
+  {:n 1,
+   :median-ms 134.629417,
+   :p95-ms 134.629417,
+   :min-ms 134.629417,
+   :max-ms 134.629417},
+  :filter-tx-sparse-bounds
+  {:n 1,
+   :median-ms 128.526792,
+   :p95-ms 128.526792,
+   :min-ms 128.526792,
+   :max-ms 128.526792}}}
