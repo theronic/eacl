@@ -80,3 +80,9 @@ the default and release/continuation ABI metadata. Numerical budgets were not
 relaxed. Before activation, the full legacy JVM battery also passed 1,431 tests /
 149,323 assertions; Datalevin's affected concurrent-write and cache contracts
 passed in both epochs.
+
+Activated historical counterexample replay passes 71 tests / 18,228 assertions,
+the registered mutation-control gate passes 3 tests / 176 assertions, and the
+complete generated Java boundary suite passes 52 tests / 18,280 assertions.
+Historical state traces preserve their authorization and structural-reuse
+oracles while selecting exact qualified versus scalar-proof legacy answer reuse.
