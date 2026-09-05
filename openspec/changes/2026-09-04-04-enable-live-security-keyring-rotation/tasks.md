@@ -2,7 +2,7 @@
 
 - [x] 1.1 Inventory every current primary and dedicated Zed-token key option, fallback rule, normalized keyring value, cursor/Zed/cache envelope, derived-key cache, continuation store, cache export/import path, and public documentation location; verify the inventory names the owning source and tests for each path.
 - [x] 1.2 Define the public `SecurityKeyring` controller, safe status shape, typed conflict/error taxonomy, full-state replacement API, and add/activate/retire convenience APIs; verify API review covers CLJ/CLJS portability and secret redaction.
-- [ ] 1.3 Specify compatibility between primary static/controller options and dedicated Zed-token static/controller options, including primary fallback and rejection of mixed sources within one scope; verify construction tests enumerate every accepted and rejected combination.
+- [x] 1.3 Specify compatibility between primary static/controller options and dedicated Zed-token static/controller options, including primary fallback and rejection of mixed sources within one scope; verify construction tests enumerate every accepted and rejected combination.
 
 ## 2. Pure keyring state machine
 
@@ -14,7 +14,7 @@
 
 ## 3. Runtime integration
 
-- [ ] 3.1 Let static primary/Zed options construct private controllers, preserve Zed-to-primary fallback, and let explicit controllers be shared by multiple clients; verify updates reach every sharing client while separate controller scopes remain isolated.
+- [x] 3.1 Let static primary/Zed options construct private controllers, preserve Zed-to-primary fallback, and let explicit controllers be shared by multiple clients; verify updates reach every sharing client while separate controller scopes remain isolated.
 - [ ] 3.2 Capture exactly one controller snapshot per protected encode/decode and select keys by direct id lookup; verify instrumentation detects no second mutable-state read and no ring-wide key trial.
 - [ ] 3.3 Cache domain-separated derived keys by controller generation, key id, domain, and format version and remove retired/unreachable entries; verify rotation never pairs one state's id with another state's key.
 - [ ] 3.4 Add safe keyring status and optional rotation events with closed non-secret fields; verify log, metric, event, exception, and status redaction tests find no raw/encoded key fragments.

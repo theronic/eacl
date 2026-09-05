@@ -440,7 +440,7 @@
         (cursor/cursor->token value (assoc options :current-kid :old))]
     (is (= value (cursor/token->cursor old-token options))
         "the retained old key decrypts a cursor after the current kid rotates")
-    (is (= :authentication-failed
+    (is (= :security-key-unavailable
            (:reason
             (error-data
              #(cursor/token->cursor

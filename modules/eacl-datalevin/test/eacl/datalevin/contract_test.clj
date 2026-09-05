@@ -8,6 +8,7 @@
             [eacl.cache :as cache]
             [eacl.causal-token :as causal-token]
             [eacl.contract-support :as contract]
+            [eacl.security.contract-support :as security-contract]
             [eacl.core :as eacl]
             [eacl.datalevin.backend :as datalevin-backend]
             [eacl.datalevin.core :as datalevin]
@@ -1667,3 +1668,11 @@
         (contract/assert-v8-recursive-contracts! client)
         (is (= {:active 0 :oldest-age-ms nil}
                (d/active-read-snapshot-info)))))))
+
+(deftest live-security-keyring-rotation-contract-test
+  (with-system
+    (fn [{:keys [conn watermark]}]
+      (security-contract/assert-live-rotation!
+       #(datalevin/make-client conn (merge {:source-lifecycle "test-lifecycle" :revision-watermark watermark
+                                            :advance-revision-watermark! (fn [revision] (swap! watermark max revision))} %))
+       #(d/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))))))

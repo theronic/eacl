@@ -212,6 +212,8 @@
   Request execution, schema, proof, cache, and adapter state must not be
   copied into this hot-path options map."
   [:current-kid
+   :keyring-controller
+   :keyring-snapshot
    :keyring
    :maximum-size
    :maximum-depth
@@ -376,47 +378,47 @@
   (str cursor-domain "\n"
        kid-segment "." nonce-segment "." ciphertext-segment))
 
-(defn- encode-context
-  "Resolves the stable key material and visible kid segment once per client.
+(defn- capture-options [options]
+  (assoc options :format-options (secure/capture-keyring (format-options options))))
 
-  These values depend only on the configured key identity. They contain no
-  nonce or payload state and remain inside the bounded client-private codec
-  cache, whose lifecycle is rotated with signing configuration changes."
-  [options format-options]
-  (let [kid (or (:current-kid format-options) :default)
-        keyring (or (:keyring format-options)
-                    {:default secure/default-root-key})
-        identity [kid (get keyring kid)]
+(defn- named-root-key [configured kid]
+  (or (get (or (:keyring configured) {:default secure/default-root-key}) kid)
+      (cursor-error! :security-key-unavailable {})))
+
+(defn- codec-identity [options kid root-key]
+  ;; A controller never reuses an id. Retained keys keep their codec entries
+  ;; across activation; acceptance is checked before any cache lookup.
+  [(if-let [snapshot (:keyring-snapshot (format-options options))]
+     (:controller-id snapshot)
+     root-key)
+   kid (:cursor-ttl-seconds options)])
+
+(defn- encode-context
+  "Derives bounded private encoding state for one captured key identity."
+  [options configured kid root-key]
+  (let [identity [(codec-identity options kid root-key)
+                  (:generation (:keyring-snapshot configured))]
         build
         (fn []
-          (let [{domain-key :key :keys [kid]}
-                (secure/signing-context format-options cursor-domain)
-                {:keys [encryption-key authentication-key]}
-                (aead-keys domain-key)
+          (let [domain-key (secure/domain-key configured kid root-key cursor-domain cursor-version)
+                {:keys [encryption-key authentication-key]} (aead-keys domain-key)
                 authenticate (pooled-authenticator authentication-key)
-                kid-segment
-                (secure/b64url-encode
-                 (secure/utf8-bytes
-                  (secure/encode-canonical
-                   kid
-                   (assoc format-options :maximum-size 1024))))]
-            {:encryption-key encryption-key
-             :authenticate authenticate
-             :kid-segment kid-segment}))]
-    (if-let [cache (or (:cursor-codec-cache options)
-                       (:cursor-construction-cache options))]
-      (memoized-key-context!
-       cache [:cursor-aead-encode-context 1 identity] build)
+                kid-segment (secure/b64url-encode
+                             (secure/utf8-bytes
+                              (secure/encode-canonical kid (assoc configured :maximum-size 1024))))]
+            {:encryption-key encryption-key :authenticate authenticate :kid-segment kid-segment}))]
+    (if-let [cache (or (:cursor-codec-cache options) (:cursor-construction-cache options))]
+      (memoized-key-context! cache [:cursor-aead-encode-context 2 identity] build)
       (build))))
 
 (defn- encode-aead
-  [options payload]
+  [options kid root-key payload]
   (let [format-options (format-options options)
         maximum-size
         (or (:maximum-size format-options)
             secure/default-maximum-size)
         {:keys [encryption-key authenticate kid-segment]}
-        (encode-context options format-options)
+        (encode-context options format-options kid root-key)
         encoded-payload (secure/encode-canonical payload format-options)
         payload-bytes
         #?(:clj (.getBytes ^String encoded-payload StandardCharsets/UTF_8)
@@ -448,107 +450,56 @@
     (record-work! :base64-encode-passes 4)
     token))
 
-(defn- decode-aead
-  [options token]
-  (let [format-options (format-options options)]
-    (when-not (plausible-token? options token)
-      (throw (ex-info "Invalid encrypted cursor."
-                      {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
-                       :reason :malformed-token})))
-    (let [segments
-          (str/split
-           (subs token (count cursor-prefix))
-           #"\."
-           -1)]
-      (when-not (and (= 4 (count segments))
-                     (every? not-empty segments))
-        (throw (ex-info "Invalid encrypted cursor."
-                        {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
-                         :reason :malformed-token})))
-      (let [[kid-segment nonce-segment ciphertext-segment tag-segment]
-            segments
-            _ (when (> (count kid-segment) 1368)
-                (throw (ex-info "Invalid encrypted cursor key id."
-                                {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
-                                 :reason :malformed-token})))
-            kid
-            (secure/decode-canonical
-             (secure/bytes->utf8
-              (secure/b64url-decode kid-segment))
-             {:maximum-size 1024})
-            root-key
-            (get
-             (or (:keyring format-options)
-                 {:default secure/default-root-key})
-             kid)]
-        (when-not root-key
-          (throw (ex-info "Encrypted cursor authentication failed."
-                          {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
-                           :reason :authentication-failed})))
-        (let [domain-key (secure/derive-key root-key cursor-domain)
-              {:keys [encryption-key authentication-key]}
-              (aead-keys domain-key)
-              associated-input
-              (authentication-input
-               kid-segment nonce-segment ciphertext-segment)
-              expected
-              (secure/hmac-sha-256
-               authentication-key associated-input)
-              supplied
-              (secure/b64url-decode tag-segment)]
-          (record-work! :decode-calls 1)
-          (record-work! :authentication-passes 1)
-          (record-work! :authentication-input-bytes
-                        ;; Every component is Base64URL or a fixed ASCII delimiter.
-                        (count associated-input))
-          (when-not (secure/secure-equal? expected supplied)
-            (throw
-             (ex-info "Encrypted cursor authentication failed."
-                      {:type :eacl.format/invalid :eacl/error :eacl.format/invalid
-                       :reason :authentication-failed})))
-          (let [nonce (secure/b64url-decode nonce-segment)
-                ciphertext (secure/b64url-decode ciphertext-segment)
-                payload-bytes
-                (ctr-transform encryption-key nonce ciphertext)
-                payload
-                (secure/decode-canonical
-                 (secure/bytes->utf8 payload-bytes)
-                 (cond-> format-options
-                   payload-keys
-                   (assoc :allowed-keys payload-keys)))]
-            (record-work! :base64-decode-passes 4)
-            (record-work! :decryption-passes 1)
-            (record-work! :payload-canonical-passes 1)
-            (record-work! :payload-input-bytes (count payload-bytes))
-            payload))))))
+(defn- token-context [options token]
+  (when-not (plausible-token? options token) (cursor-error! :malformed-token {}))
+  (let [segments (str/split (subs token (count cursor-prefix)) #"\." -1)]
+    (when-not (and (= 4 (count segments)) (every? not-empty segments)
+                   (<= (count (first segments)) 1368))
+      (cursor-error! :malformed-token {}))
+    (let [kid (secure/decode-canonical
+               (secure/bytes->utf8 (secure/b64url-decode (first segments)))
+               {:maximum-size 1024})]
+      {:kid kid :root-key (named-root-key (format-options options) kid) :segments segments})))
 
-(defn- codec-identity
-  [options]
-  (let [{:keys [current-kid keyring]} (format-options options)
-        kid (or current-kid :default)
-        keyring (or keyring {:default secure/default-root-key})]
-    ;; TTL is part of the issuance policy. Keeping it in the private identity
-    ;; prevents a token minted under one policy from satisfying another
-    ;; policy's encode lookup, while authenticated decode remains compatible
-    ;; with retained keys and reads expiry from the protected payload.
-    [kid (get keyring kid) (:cursor-ttl-seconds options)]))
+(defn- decode-aead
+  [options {:keys [kid root-key segments]}]
+  (let [configured (format-options options)
+        [kid-segment nonce-segment ciphertext-segment tag-segment] segments
+        domain-key (secure/domain-key configured kid root-key cursor-domain cursor-version)
+        {:keys [encryption-key authentication-key]} (aead-keys domain-key)
+        associated-input (authentication-input kid-segment nonce-segment ciphertext-segment)
+        expected (secure/hmac-sha-256 authentication-key associated-input)
+        supplied (secure/b64url-decode tag-segment)]
+    (record-work! :decode-calls 1)
+    (record-work! :authentication-passes 1)
+    (record-work! :authentication-input-bytes (count associated-input))
+    (when-not (secure/secure-equal? expected supplied)
+      (aead-error! :authentication-failed {}))
+    (let [nonce (secure/b64url-decode nonce-segment)
+          ciphertext (secure/b64url-decode ciphertext-segment)
+          payload-bytes (ctr-transform encryption-key nonce ciphertext)
+          payload (secure/decode-canonical
+                   (secure/bytes->utf8 payload-bytes)
+                   (assoc configured :allowed-keys payload-keys))]
+      (record-work! :base64-decode-passes 4)
+      (record-work! :decryption-passes 1)
+      (record-work! :payload-canonical-passes 1)
+      (record-work! :payload-input-bytes (count payload-bytes))
+      payload)))
 
 (defn ^:no-doc cache-policy-identity
-  "Compact identity of every cursor-codec setting that can accept or mint a
-  token. Exact transport-page caching includes this digest so key rotation or
-  key removal cannot reuse a page authenticated under another client policy."
+  "Identity of the captured issuance and acceptance policy for rendered pages."
   [options]
-  (let [configured (format-options options)
-        current-kid (or (:current-kid configured) :default)
-        keyring (or (:keyring configured)
-                    {:default secure/default-root-key})]
-    (secure/canonical-digest
-     "eacl/cursor/cache-policy/v1"
-     [cursor-version
-      (assoc configured
-             :current-kid current-kid
-             :keyring keyring)
-      (:cursor-ttl-seconds options)])))
+  (let [configured (secure/capture-keyring (format-options options))]
+    (if-let [snapshot (:keyring-snapshot configured)]
+      [cursor-version (:controller-id snapshot) (:generation snapshot)
+       (:cursor-ttl-seconds options)]
+      (secure/canonical-digest
+       "eacl/cursor/cache-policy/v1"
+       [cursor-version
+        (assoc configured :current-kid (or (:current-kid configured) :default)
+               :keyring (or (:keyring configured) {:default secure/default-root-key}))
+        (:cursor-ttl-seconds options)]))))
 
 (defn- memoizable-cache
   [{:keys [cursor-codec-cache]}]
@@ -650,8 +601,12 @@
    (when cursor
      (when-not (map? cursor)
        (cursor-error! :malformed {}))
-     (let [cache (memoizable-cache options)
-           identity (when cache (codec-identity options))
+     (let [options (capture-options options)
+           configured (format-options options)
+           kid (or (:current-kid configured) :default)
+           root-key (named-root-key configured kid)
+           cache (memoizable-cache options)
+           identity (when cache (codec-identity options kid root-key))
            ;; A TTL-bearing hit needs one clock read to prove the cached token
            ;; remains inside the expiry protected by its payload. Preserve the
            ;; clock-free non-expiring hit path.
@@ -663,7 +618,7 @@
                               (+ issued-at cursor-ttl-seconds))
                  token
                  (encode-aead
-                  options
+                  options kid root-key
                   {:version cursor-version
                    :cursor cursor
                    :issued-at issued-at
@@ -696,7 +651,7 @@
 (defn token->authenticated-cursor
   "Authenticates and decodes a cursor without enforcing expiry.
 
-  Returns `{:cursor m :authenticated? true :expired? bool :expired-at n}`.
+  Returns the cursor, authenticated `:security-kid`, and expiry facts.
   Authenticity and payload-shape failures still throw; the time-to-live
   check result is returned as data so the caller can thread the computed
   boolean into a verified continuation decision instead of deciding here."
@@ -705,8 +660,13 @@
   ([token options]
    (if (nil? token)
      nil
-     (let [cache (memoizable-cache options)
-           identity (when cache (codec-identity options))]
+     (let [options (capture-options options)
+           context (try (token-context options token)
+                        (catch #?(:clj Exception :cljs :default) error
+                          (cursor-error! (or (:reason (ex-data error)) :undecodable) {})))
+           kid (:kid context)
+           cache (memoizable-cache options)
+           identity (when cache (codec-identity options kid (:root-key context)))]
        (or (when cache
              ;; The codec cache holds only tokens this client minted itself.
              ;; Expiry is protected by the token payload and retained in the
@@ -720,13 +680,14 @@
                            (now-seconds options)))]
                {:cursor cursor
                 :authenticated? true
+                :security-kid kid
                 :expired? (boolean
                            (and expires-at
                                 (>= (now-seconds options) expires-at)))
                 :expired-at expires-at}))
            (let [payload
                  (try
-                   (decode-aead options token)
+                   (decode-aead options context)
                    (catch #?(:clj Exception :cljs :default) error
                      (cursor-error!
                       (or (:reason (ex-data error)) :undecodable)
@@ -740,6 +701,7 @@
                (cursor-error! :undecodable {}))
              {:cursor cursor
               :authenticated? true
+              :security-kid kid
               :expired? (boolean
                          (and expires-at
                               (>= (now-seconds options) expires-at)))

@@ -28,6 +28,8 @@
             [eacl.relationships.mutations-test]
             [eacl.core-test]
             [eacl.security.keyring-test]
+            [eacl.security.format-test]
+            [eacl.security.configuration-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
@@ -137,6 +139,7 @@
                'eacl.cache-test
                'eacl.core-test
                'eacl.security.keyring-test
+               'eacl.security.format-test 'eacl.security.configuration-test
                'eacl.causal-model-test
                'eacl.consistency-test
                'eacl.engine.relationships-test

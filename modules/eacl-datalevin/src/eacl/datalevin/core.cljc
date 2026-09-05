@@ -389,7 +389,8 @@
        :key :source-lifecycle
        :value nil})))
   (when-not (or (contains? config-opts :security-key)
-                (contains? config-opts :security-keyring))
+                (contains? config-opts :security-keyring)
+                (contains? config-opts :security-keyring-controller))
     (throw
      (ex-info
       "Datalevin requires an externally retained token-signing key or keyring."

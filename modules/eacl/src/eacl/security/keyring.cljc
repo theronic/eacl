@@ -19,6 +19,15 @@
 (deftype SecurityKeyring [state]
   protocols/KeyringSource
   (-snapshot [_] @state)
+  (-derive-key [_ snapshot kid root-key domain version]
+    (let [cache (:derived-cache snapshot)
+          key [(:generation snapshot) kid domain version]
+          found (lru/lookup! cache key)]
+      (if (:found? found)
+        (:value found)
+        (let [derived (secure/derive-key root-key domain)]
+          (lru/put-if-absent! cache key derived)
+          derived))))
   Object
   (toString [_] "#<EACL SecurityKeyring>")
   #?@(:cljs [IPrintWithWriter
@@ -108,6 +117,7 @@
         (when-not (= previous identity) (failure! :key-id-reuse))))
     (when (> (count retired) (:max-retired-kids limits)) (failure! :retired-id-count))
     {:generation (if prior (inc (:generation prior)) 0)
+     :controller-id (:controller-id prior)
      :keys key-map :active-kid active-kid :retired-kids retired
      :fingerprints (merge (:fingerprints prior) fingerprints)
      :limits limits}))
@@ -123,7 +133,8 @@
   (let [limits {:max-keys (limit! (get options :max-keys maximum-keys) maximum-keys)
                 :max-retired-kids (limit! (get options :max-retired-kids maximum-retired-kids) maximum-retired-kids)}]
     (->SecurityKeyring (atom (with-derived-cache
-                               (validated-state nil (:keys options) (:active-kid options) limits))))))
+                               (assoc (validated-state nil (:keys options) (:active-kid options) limits)
+                                      :controller-id (str (random-uuid))))))))
 
 (defn- conflict! [current]
   (throw (ex-info "The EACL security keyring generation changed."

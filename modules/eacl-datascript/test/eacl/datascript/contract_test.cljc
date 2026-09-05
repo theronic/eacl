@@ -8,6 +8,7 @@
             [eacl.causal-token :as causal-token]
             [eacl.client.orchestration :as orchestration]
             [eacl.contract-support :as contract]
+            [eacl.security.contract-support :as security-contract]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
@@ -2184,3 +2185,9 @@
                               :subject/type :user
                               :first 1
                               :after cursor-1}))))))))
+
+(deftest live-security-keyring-rotation-contract-test
+  (let [conn (datascript/create-conn)]
+    (security-contract/assert-live-rotation!
+     #(datascript/make-client conn %)
+     #(ds/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects)))))

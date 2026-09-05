@@ -91,6 +91,7 @@
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.secure-format :as secure]
+            [eacl.security.configuration :as security-config]
             [eacl.subproblem-cache :as subproblem]
             [eacl.spicedb.parser :as schema-parser]
             [eacl.spicedb.consistency :as consistency]))
@@ -279,7 +280,7 @@
     (let [contract (:execution-contract opts)
           _ (execution/check! contract :consistency-selection)
           selection-options
-          {:format-options (:format-options opts)
+          {:format-options (:zed-token-format-options opts)
            :decision-kernel (:decision-kernel opts)
            :issue-token? false
            :selection-check!
@@ -1307,8 +1308,7 @@
            {:public normalized-public-query
             :consistency consistency-key
             :cursor-policy
-            (or (:cursor-cache-policy-identity opts)
-                (cursor/cache-policy-identity opts))
+            (cursor/cache-policy-identity opts)
             :render-abi rendered-page-render-abi})
     engine/*qualification*
     (assoc :temporal-mode (relay/temporal-mode opts)
@@ -1728,7 +1728,7 @@
   (let [basis-source (:source opts)]
     (if (source/source? basis-source)
       (causal-token/issue
-       (:format-options opts)
+       (:zed-token-format-options opts)
        (merge
         {:backend (source/backend-id basis-source)
          :source-lifecycle
@@ -2749,8 +2749,7 @@
     :entid->object-id :object-id->entid
     :object-id->lookup-ref :object->entid :internal-object->spice
     :spice-object->internal :internal-cursor->spice
-    :spice-cursor->internal :format-options :cursor-ttl-seconds
-    :cursor-cache-policy-identity
+    :spice-cursor->internal :format-options :zed-token-format-options :cursor-ttl-seconds
     :token-ttl-seconds :managed-cache-enabled?
     :proof-equivalent-cursors? :identity-contract
     :proof-contract-reporter
@@ -2916,7 +2915,8 @@
   (consistency-v3/selected-basis-token
    (or (get-in basis [:speculative :committed-root])
        (:identity basis))
-   (runtime-options runtime)))
+   (let [opts (runtime-options runtime)]
+     (assoc opts :format-options (:zed-token-format-options opts)))))
 
 (defn- basis-token-data
   [runtime basis token source]
@@ -2926,7 +2926,7 @@
                      [:backend :source-id :source-lifecycle :branch])]
     (try
       (causal-token/token-data
-       (:format-options (runtime-options runtime)) expected-scope token)
+       (:zed-token-format-options (runtime-options runtime)) expected-scope token)
       (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
              error
         (if (= :scope-mismatch (:reason (ex-data error)))
@@ -4445,6 +4445,11 @@
     :security-key
     :security-keyring
     :security-kid
+    :security-keyring-controller
+    :zed-token-key
+    :zed-token-keyring
+    :zed-token-kid
+    :zed-token-keyring-controller
     :token-ttl-seconds
     :source-lifecycle
     :adapter-fingerprint
@@ -4459,82 +4464,6 @@
     :range-reuse
     :lookahead
     :io-observer})
-
-(defn- valid-security-kid?
-  [kid]
-  (or (keyword? kid)
-      (and (string? kid) (pos? (count kid)))))
-
-(defn- normalize-security-root-keyring
-  [config-opts security-key security-keyring security-kid]
-  (let [key-present? (contains? config-opts :security-key)
-        keyring-present? (contains? config-opts :security-keyring)
-        kid-present? (contains? config-opts :security-kid)
-        current-kid (if kid-present? security-kid :default)
-        invalid!
-        (fn [message data cause]
-          (throw
-           (ex-info
-            message
-            (merge {:type :eacl/invalid-config
-                    :eacl/error :eacl/invalid-config}
-                   data)
-            cause)))]
-    (when (and key-present? keyring-present?)
-      (invalid!
-       "EACL Config Error: supply only one of :security-key or :security-keyring."
-       {:conflicting-keys [:security-key :security-keyring]}
-       nil))
-    (when (and kid-present? (not (valid-security-kid? current-kid)))
-      (invalid!
-       "EACL Config Error: :security-kid must be a non-empty string or keyword."
-       {:key :security-kid :value current-kid}
-       nil))
-    (let [root-keyring
-          (try
-            (cond
-              keyring-present?
-              (do
-                (when-not (and (map? security-keyring)
-                               (seq security-keyring))
-                  (invalid!
-                   "EACL Config Error: :security-keyring must be a non-empty map."
-                   {:key :security-keyring :value security-keyring}
-                   nil))
-                (reduce-kv
-                 (fn [result kid key-material]
-                   (when-not (valid-security-kid? kid)
-                     (invalid!
-                      "EACL Config Error: security key IDs must be non-empty strings or keywords."
-                      {:key :security-keyring :security-kid kid}
-                      nil))
-                   (assoc result kid (secure/normalize-key key-material)))
-                 {}
-                 security-keyring))
-
-              key-present?
-              {current-kid (secure/normalize-key security-key)}
-
-              :else
-              (do
-                (secure/warn-defaulted-token-key!)
-                {:default secure/default-root-key}))
-            (catch #?(:clj Exception :cljs :default) error
-              (if (= :eacl/invalid-config (:type (ex-data error)))
-                (throw error)
-                (invalid!
-                 "EACL Config Error: security key material is invalid."
-                 {:key (if keyring-present? :security-keyring :security-key)
-                  :format-reason (:reason (ex-data error))}
-                 error))))]
-      (when-not (get root-keyring current-kid)
-        (invalid!
-         "EACL Config Error: :security-kid is absent from :security-keyring."
-         {:key :security-kid
-          :value current-kid}
-         nil))
-      {:current-kid current-kid
-       :root-keyring root-keyring})))
 
 (defn make-client
   "Builds the shared authorization acl over one backend api map.
@@ -4556,9 +4485,6 @@
            recursive-traversal-limits
            expression-limits
            permission-tree-limits
-           security-key
-           security-keyring
-           security-kid
            token-ttl-seconds
            source-lifecycle
            adapter-fingerprint
@@ -4723,14 +4649,11 @@
           (if-let [native-source-id-fn (:native-source-id api)]
             (native-source-id-fn conn)
             (str (random-uuid))))
-        {:keys [current-kid root-keyring]}
-        (normalize-security-root-keyring
-         config-opts security-key security-keyring security-kid)
-        format-options {:current-kid current-kid
-                        :keyring root-keyring
-                        :token-ttl-seconds
-                        (or token-ttl-seconds
-                            causal-token/default-token-ttl-seconds)}
+        {:keys [format-options zed-token-format-options]}
+        (security-config/format-scopes config-opts)
+        zed-token-format-options
+        (assoc zed-token-format-options :token-ttl-seconds
+               (or token-ttl-seconds causal-token/default-token-ttl-seconds))
         object-id->entid (fn [db object-id]
                            ((:entid api) db (object-id->lookup-ref object-id)))
         custom-codec?
@@ -4810,10 +4733,7 @@
           :object-id->entid object-id->entid
           :cursor-ttl-seconds cursor-ttl-seconds
           :format-options format-options
-          :cursor-cache-policy-identity
-          (cursor/cache-policy-identity
-           {:format-options format-options
-            :cursor-ttl-seconds cursor-ttl-seconds})
+          :zed-token-format-options zed-token-format-options
           :source-lifecycle source-lifecycle
           :runtime-lifecycle-state runtime-lifecycle-state
           :native-source-id native-source-id
