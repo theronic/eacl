@@ -28,6 +28,7 @@
                             relation banned: user
                             permission both = reader & writer
                             permission allowed = reader - banned
+                            permission either = both + allowed
                           }")
     (ds/transact! conn (mapv #(hash-map :eacl/id (str %)) (range 5)))
     (let [ids (mapv #(ds/entid (ds/db conn) [:eacl/id (str %)]) (range 5))

@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 321928,
+  "assertions": 358796,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -26,11 +26,13 @@
     "modules/eacl-datascript/test/eacl/operator/recursive_test.cljc": "ba7994d6834206a02622cecae7105fc889ba10b29b0d04469a9ac0e880f9a0c6",
     "formal/qualified/stable_route_bridge.clj": "9ebb7bbf6828c29b2ddef78d985286110444ab34b242f5a601c4b554798aab18",
     "modules/eacl/test/eacl/engine/stable_route_evidence_test.cljc": "a1e2683083c7cd5106a77aca483752324e47dbdb868cf115bca75dac145f2002",
-    "formal/qualified/production_mutations.clj": "f0ec47c2b7c41e6a5063e3146617c38530c79e0ca023cba137e22fb65eb60a0b",
+    "formal/qualified/production_mutations.clj": "6549e6f3f587b28d87c32d9b15b89e2d531eeaf59705695fe28c9df3ea659295",
     "modules/eacl-datascript/test/eacl/engine/stable_route_native_evidence_test.cljc": "bbe7fb3ce769a0abf3c1bc3b471780fad44aa6ec262beb35335da8dfe29d108d",
     "modules/eacl/test/eacl/engine/scan_cache_test.cljc": "59afc0cfe74af16b17801d18b513b86efd4634949f187a2fd58a656333d18925",
     "modules/eacl-datascript/test/eacl/datascript/evaluation_clock_test.cljc": "6a53273d259a534c0feab05d8c5818c7da8685ec7757cfd436804c859cde3435",
     "formal/qualified/seekable_bridge.clj": "3e55bcb6899513421d9e9c0ca58e1b0047d8d2a29ee4dd261f08969db87d5de2",
-    "modules/eacl-datascript/test/eacl/operator/seekable_evidence_test.cljc": "df76329cf7619d3839f731b2d114df073a37bf1b1ab21314bf56aa223f88e412"
+    "modules/eacl-datascript/test/eacl/operator/seekable_evidence_test.cljc": "61311bd1edd97b336149b6d355bc897d576b2cea3020d92627f4ab18111489e6",
+    "formal/qualified/lookup_bridge.clj": "a412922d87e1e23a19f8eea99976de415c7a4f12b7d90b4765129de38f34d999",
+    "modules/eacl-datascript/test/eacl/operator/lookup_evidence_test.cljc": "9837b00bd8b50ac9a327abf2a003e4b3d79ba97799976bb278c107836a2ac8af"
   }
 }

@@ -10,6 +10,7 @@
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
+            [eacl.engine.least-path :as least-path]
             [eacl.engine.stable-route-native-evidence-test :as native-test]
             [eacl.datascript.evaluation-clock-test :as clock-test]
             [eacl.client.orchestration :as orchestration]
@@ -17,6 +18,7 @@
             [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
             [eacl.operator.seekable :as seekable]
             [eacl.operator.lookup :as lookup]
+            [eacl.operator.lookup-evidence-test :as lookup-test]
             [eacl.operator.seekable-evidence-test :as seekable-test]
             [eacl.operator.recursive :as recursive]
             [eacl.operator.vector-evaluator :as vector]
@@ -35,6 +37,8 @@
         snapshot-opts @#'orchestration/snapshot-opts
         head-evidence @#'seekable/head-evidence
         count-categories @#'lookup/count-categories
+        accepted-emission @#'least-path/accepted-emission
+        check-many vector/check-cached-many-eids
         enqueue @#'recursive/enqueue-evidence!]
     {:qualifier-reference-ignored
      {:gate #'qualification-test/exclusive-expiry-precedes-program-work
@@ -106,6 +110,19 @@
       :redefs {#'lookup/count-categories (fn [categories entries remaining]
                                          (count-categories categories entries
                                                            (when remaining (inc remaining))))}}
+     :general-cover-conditional-child-becomes-definite
+     {:gate #'lookup-test/general-cover-completes-conditional-nodes-before-emission
+      :redefs {#'least-path/accepted-emission
+               (fn [env node rule subject resource value coords proof]
+                 (accepted-emission env node rule subject resource value coords
+                                    (evidence/with-certificate true (evidence/valid-until proof)
+                                                               (evidence/complete? proof))))}}
+     :general-cover-discards-proven-node-evidence
+     {:gate #'lookup-test/a-generated-direct-node-is-not-probed-again-by-its-parent
+      :redefs {#'vector/check-cached-many-eids
+               (fn [options]
+                 (check-many (update options :candidates
+                                     #(mapv (fn [candidate] (dissoc candidate :evidence-witnesses)) %))))}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -116,7 +133,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 20 (count cases)))
+    (is (= 22 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

@@ -61,39 +61,72 @@
    :resource-eid resource-eid
    :true-nodes true-nodes})
 
+(def maximum-local-node-evidence
+  "Maximum exact node entries retained during one bounded raw batch."
+  100000)
+
 (defn- local-node-acceptor
-  [{:keys [adapter plan cache-lookup vector-limits scope-identity]} cover-plan]
+  [{:keys [adapter plan cache-lookup vector-limits scope-identity qualification]} cover-plan]
   (let [root-semantic (:operator-root-semantic cover-plan)
-        node-map (:operator-synthetic->semantic cover-plan)]
-    (fn [{:keys [node direction subject-type subject-eid resource-eid]}]
+        node-map (:operator-synthetic->semantic cover-plan)
+        memo (when qualification (volatile! {:points {} :entries 0}))]
+    (fn [{:keys [node direction subject-type subject-eid resource-eid evidence-witness]}]
       (let [[permission node-id :as semantic] (get node-map node)
-            predicate (get-in plan
-                              [:predicate-programs permission node-id])]
+            predicate (get-in plan [:predicate-programs permission node-id])]
         (when-not semantic
           (invalid! :unknown-cover-node
-                    "Least-path requested an unmapped operator cover node."
-                    {:node node}))
-        ;; The public root is filtered in an aligned demand-sized vector.
-        ;; Direct leaves are exact by the certified relation scan itself.
-        (if (or (= semantic root-semantic)
-                (= :direct-membership (:instruction predicate)))
-          true
-          (first
-           (vector-evaluator/check-cached-many-eids
-            (cond->
-             {:adapter adapter :plan plan
-              :permission permission :node-id node-id
-              :candidates
-              [(semantic-candidate permission direction
-                                   subject-type subject-eid resource-eid #{})]
-              :limits vector-limits
-              :scope-identity scope-identity}
-              cache-lookup (assoc :cache-lookup cache-lookup)))))))))
+                    "Least-path requested an unmapped operator cover node." {:node node}))
+        (if qualification
+          (let [point [direction subject-type subject-eid resource-eid]
+                previous (get-in @memo [:points point] {})
+                proof-node (when evidence-witness
+                             (case (get-in evidence-witness [:rule :rule])
+                               :relation semantic
+                               :self-permission (get node-map (get-in evidence-witness [:rule :target-node]))
+                               (invalid! :unsupported-generator-witness
+                                         "Qualified generator witness is not an exact node result." {})))
+                known (if proof-node
+                        (assoc previous proof-node
+                               (evidence/throw-if-fault! (:evidence evidence-witness)))
+                        previous)
+                result
+                (if (contains? known semantic)
+                  (get known semantic)
+                  (first
+                   (vector-evaluator/check-cached-many-eids
+                    (cond->
+                     {:adapter adapter :plan plan :permission permission :node-id node-id
+                      :candidates [(assoc (semantic-candidate permission direction subject-type
+                                                              subject-eid resource-eid #{})
+                                          :evidence-witnesses known)]
+                      :qualification qualification
+                      :witness-scope (qualification/exact-reuse-identity qualification)
+                      :limits vector-limits :scope-identity scope-identity}
+                      cache-lookup (assoc :cache-lookup cache-lookup)))))
+                known (assoc known semantic (evidence/throw-if-fault! result))
+                entries (+ (:entries @memo) (- (count known) (count previous)))]
+            (when (> entries maximum-local-node-evidence)
+              (invalid! :node-evidence-limit "Qualified local node evidence limit exceeded." {}))
+            (vswap! memo #(-> % (assoc-in [:points point] known) (assoc :entries entries)))
+            result)
+          ;; The public root is filtered in an aligned demand-sized vector.
+          ;; Direct leaves are exact by the certified relation scan itself.
+          (if (or (= semantic root-semantic)
+                  (= :direct-membership (:instruction predicate)))
+            true
+            (first
+             (vector-evaluator/check-cached-many-eids
+              (cond->
+               {:adapter adapter :plan plan :permission permission :node-id node-id
+                :candidates [(semantic-candidate permission direction subject-type
+                                                 subject-eid resource-eid #{})]
+                :limits vector-limits :scope-identity scope-identity}
+                cache-lookup (assoc :cache-lookup cache-lookup))))))))))
 
 (defn- raw-options
   [{:keys [adapter cover-plan traversal subject-type anchor-eid width
            order-direction boundary cut-point! traversal-limits
-           candidate-accept?]}]
+           candidate-accept? qualification]}]
   (merge
    traversal-limits
    {:adapter adapter
@@ -102,7 +135,8 @@
     :page-size width
     :raw-candidates? true
     :cut-point! cut-point!
-    :candidate-accept? candidate-accept?}
+    :candidate-accept? candidate-accept?
+    :qualification qualification}
    (if (= :forward traversal)
      {:subject-eid anchor-eid}
      {:resource-eid anchor-eid})
@@ -113,10 +147,14 @@
 (defn- raw-page [options]
   (if (:specialization-node options)
     (seekable/page options)
-    ((if (= :forward (:traversal options))
-       least-path/forward-page
-       least-path/reverse-page)
-     (raw-options options))))
+    (let [options (cond-> options
+                    (:qualification options)
+                    (assoc :candidate-accept?
+                           (local-node-acceptor options (:cover-plan options))))]
+      ((if (= :forward (:traversal options))
+         least-path/forward-page
+         least-path/reverse-page)
+       (raw-options options)))))
 
 (defn- specialization-node [plan permission]
   (let [root-id (get (operator-plan/expression-roots plan) permission)
@@ -176,8 +214,9 @@
    cover-plan emissions]
   (let [permission (or permission (:root plan))
         node-id (get (operator-plan/expression-roots plan) permission)
-        witnesses (mapv (emission-witness-fn plan cover-plan permission
-                                             node-id specialization-node)
+        witnesses (mapv (if (and qualification (nil? specialization-node))
+                          (constantly #{[permission node-id]})
+                          (emission-witness-fn plan cover-plan permission node-id specialization-node))
                         emissions)
         candidates (mapv (fn [witness emission]
                            (let [value (candidate permission traversal subject-type anchor-eid witness emission)]
@@ -256,9 +295,9 @@
         permission (or permission (:root plan))
         cover-plan (or (:cover-plan options)
                        (cover-plan/seal-plan adapter plan permission))
-        candidate-accept? (local-node-acceptor
-                           (assoc options :permission permission)
-                           cover-plan)
+        candidate-accept? (when-not (:qualification options)
+                            (local-node-acceptor
+                             (assoc options :permission permission) cover-plan))
         options (assoc options :permission permission :result-policy result-policy
                        :order-direction order-direction
                        :candidate-accept? candidate-accept?
@@ -395,9 +434,9 @@
         permission (or permission (:root plan))
         cover-plan (or (:cover-plan options)
                        (cover-plan/seal-plan adapter plan permission))
-        candidate-accept? (local-node-acceptor
-                           (assoc options :permission permission)
-                           cover-plan)
+        candidate-accept? (when-not (:qualification options)
+                            (local-node-acceptor
+                             (assoc options :permission permission) cover-plan))
         options (assoc options :permission permission :result-policy result-policy
                        :candidate-accept? candidate-accept?
                        :specialization-node
