@@ -19,16 +19,21 @@
   (when-not (= expected (facts database eid)) (staged/error! :qualifier-changed-at-commit))
   [])
 
-(defn- fence [database relation-id reference-added?]
+(defn- schema-fence [database reference-added?]
   (let [schema-id (d/entid database [:eacl/id "schema-string"])
         expected (:eacl.datalevin/schema-write-fence (entity database schema-id))]
     (when-not expected (staged/error! :schema-unprepared))
     (cond-> [[:db.fn/cas schema-id :eacl.datalevin/schema-write-fence expected expected]]
-      reference-added? (conj [:db/add schema-id :eacl.datalevin/schema-write-fence :db/current-tx])
-      relation-id (into [[:db.fn/cas relation-id :eacl.datalevin/relation-generation
-                          (:eacl.datalevin/relation-generation (entity database relation-id))
-                          (:eacl.datalevin/relation-generation (entity database relation-id))]
-                         [:db/add relation-id :eacl.datalevin/relation-generation :db/current-tx]]))))
+      reference-added? (conj [:db/add schema-id :eacl.datalevin/schema-write-fence :db/current-tx]))))
+
+(defn- relation-fence [database relation-id]
+  (when relation-id
+    (let [expected (:eacl.datalevin/relation-generation (entity database relation-id))]
+      [[:db.fn/cas relation-id :eacl.datalevin/relation-generation expected expected]
+       [:db/add relation-id :eacl.datalevin/relation-generation :db/current-tx]])))
+
+(defn- fence [database relation-id reference-added?]
+  (into (schema-fence database reference-added?) (relation-fence database relation-id)))
 
 (defn read-api
   "Read-only native inputs; constructing this map never prepares or writes a store."
@@ -46,17 +51,29 @@
    :qualifier-cache-scope :exact-only
    :qualifier-version (fn [_database _eid] nil)})
 
+(defn planner-api
+  "Pure native reads and transaction-data construction, safe for snapshots."
+  []
+  (merge (read-api)
+         {:strategy :inline :fence fence
+          :schema-fence schema-fence :relation-fence relation-fence
+          :assert-entity (fn [eid expected] [:db.fn/call assert-entity eid expected])
+          :tempid #(d/tempid :db.part/user)}))
+
+(defn plan
+  "Builds qualified transaction data from one immutable basis without writing."
+  [database entries app-datoms]
+  (db/with-db database
+    (fn [db]
+      (staged/plan-batch (staged/planner (planner-api) db) db entries app-datoms))))
+
 (defn writer [conn]
-  (let [token (:write-token (schema/ensure-physical-schema! conn))
-        tempids (atom -1000000000)]
+  (let [token (:write-token (schema/ensure-physical-schema! conn))]
     (staged/native-writer
-      (merge (read-api)
-      {:strategy :inline :snapshot #(d/db conn)
-       :with-snapshot (fn [f]
-                        (let [snapshot (d/open-read-snapshot conn)]
-                          (try (d/with-read-snapshot snapshot f)
-                               (finally (d/close-read-snapshot! snapshot)))))
-       :fence fence
-       :assert-entity (fn [eid expected] [:db.fn/call assert-entity eid expected])
-       :tempid #(swap! tempids dec)
-       :transact! #(d/transact! conn % {:datalevin/write-token token})}))))
+     (merge (planner-api)
+            {:snapshot #(d/db conn)
+             :with-snapshot (fn [f]
+                              (let [snapshot (d/open-read-snapshot conn)]
+                                (try (d/with-read-snapshot snapshot f)
+                                     (finally (d/close-read-snapshot! snapshot)))))
+             :transact! #(d/transact! conn % {:datalevin/write-token token})}))))

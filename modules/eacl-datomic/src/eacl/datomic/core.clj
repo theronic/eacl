@@ -10,6 +10,7 @@
             [eacl.core :as eacl]
             [eacl.datomic.backend :as datomic-backend]
             [eacl.datomic.impl :as impl]
+            [eacl.datomic.qualifiers :as qualifiers]
             [eacl.datomic.impl.indexed :as indexed]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.storage :as target-storage]
@@ -110,6 +111,8 @@
 
 (def ^:private api
   {:backend-id :datomic
+   :qualified-writer #'qualifiers/writer
+   :qualified-plan #'qualifiers/plan
    :db d/db
    :entid d/entid
    :default-entid->object-id
@@ -147,7 +150,8 @@
    :impl
    {:validate-relationship-operation!
     impl/validate-relationship-operation!
-    :relationship-relation-id impl/relationship-relation-id
+    :relationship-publication-input #'impl/relationship-publication-input
+          :relationship-relation-id impl/relationship-relation-id
     :relation-coordinate relation-coordinate
     :tx-update-relationship impl/tx-update-relationship
     :tx-delete-object impl/tx-delete-object

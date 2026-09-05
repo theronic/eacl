@@ -22,6 +22,7 @@
             [eacl.caveats.plan-test]
             [eacl.caveats.partial-test]
             [eacl.relationships.qualifier-test]
+            [eacl.relationships.mutations-test]
             [eacl.core-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
@@ -39,6 +40,7 @@
             [eacl.datascript.caveat-context-test]
             [eacl.datascript.qualified-check-test]
             [eacl.datascript.qualified-lookup-test]
+            [eacl.datascript.qualified-write-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
             [eacl.datascript.scan-cache-integration-test]
@@ -136,6 +138,7 @@
                'eacl.datascript.caveat-context-test
                'eacl.datascript.qualified-check-test
                'eacl.datascript.qualified-lookup-test
+               'eacl.datascript.qualified-write-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test
@@ -172,6 +175,7 @@
                'eacl.caveats.plan-test
                'eacl.caveats.partial-test
                'eacl.relationships.qualifier-test
+               'eacl.relationships.mutations-test
                'eacl.schema.expression-test
                'eacl.schema.expression-limits-test
                'eacl.schema.expression-resolver-test

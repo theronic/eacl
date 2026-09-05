@@ -12,6 +12,7 @@
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]
+            [eacl.datalevin.qualifiers :as qualifiers]
             [eacl.datalevin.schema :as schema]
             [eacl.datalevin.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]))
@@ -183,6 +184,8 @@
 
 (def ^:private base-api
   {:backend-id :datalevin
+   :qualified-writer #'qualifiers/writer
+   :qualified-plan #'qualifiers/plan
    :writer-max-attempts 8
    :writer-contention? stale-connection-contention?
    :db ds/db
@@ -213,6 +216,7 @@
             :write-schema! nil}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input (fn [db relationship] (ddb/with-db db #(impl/relationship-publication-input % relationship)))
           :relationship-relation-id snapshot-relationship-relation-id
           :relation-coordinate snapshot-relation-coordinate
           :tx-update-relationship snapshot-tx-update-relationship

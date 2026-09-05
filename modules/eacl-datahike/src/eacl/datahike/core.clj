@@ -12,6 +12,7 @@
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
+            [eacl.datahike.qualifiers :as qualifiers]
             [eacl.datahike.migrations.v7-to-v8 :as v7-to-v8]
             [eacl.datahike.schema :as schema]
             [eacl.datahike.storage :as target-storage]
@@ -114,6 +115,8 @@
 
 (def ^:private api
   {:backend-id :datahike
+   :qualified-writer #'qualifiers/writer
+   :qualified-plan #'qualifiers/plan
    :db d/db
    :entid ddb/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))
@@ -144,6 +147,7 @@
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input #'impl/relationship-publication-input
           :relationship-relation-id #'impl/relationship-relation-id
           :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship

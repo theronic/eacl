@@ -28,17 +28,21 @@
                          (vector? v) (= 5 (count v)) (= prefix (subvec v 0 4)))))
                 (ds/seek-datoms database :eavt owner attribute (conj prefix nil)))))
 
-(defn- fence [database relation-id reference-added?]
+(defn- schema-fence [database reference-added?]
   (let [schema-id (ds/entid database [:eacl/id "schema-string"])
         expected (:eacl/schema-write-fence (entity database schema-id))]
     (when-not expected (staged/error! :schema-unprepared))
     (cond-> [[:db.fn/cas schema-id :eacl/schema-write-fence expected expected]]
-      reference-added? (conj [:db/add schema-id :eacl/schema-write-fence :db/current-tx])
-      relation-id
-      (into [[:db.fn/cas relation-id :eacl/relation-version
-              (:eacl/relation-version (entity database relation-id))
-              (:eacl/relation-version (entity database relation-id))]
-             [:db/add relation-id :eacl/relation-version :db/current-tx]]))))
+      reference-added? (conj [:db/add schema-id :eacl/schema-write-fence :db/current-tx]))))
+
+(defn- relation-fence [database relation-id]
+  (when relation-id
+    (let [expected (:eacl/relation-version (entity database relation-id))]
+      [[:db.fn/cas relation-id :eacl/relation-version expected expected]
+       [:db/add relation-id :eacl/relation-version :db/current-tx]])))
+
+(defn- fence [database relation-id reference-added?]
+  (into (schema-fence database reference-added?) (relation-fence database relation-id)))
 
 (defn read-api
   "Read-only native inputs; constructing this map never prepares or writes a store."
@@ -56,11 +60,22 @@
    :qualifier-cache-scope :assertion-version
    :qualifier-version (fn [database eid] (some-> (ds/datoms database :eavt eid :eacl.relationship-qualifier/format-version) first :tx))})
 
+(defn planner-api
+  "Pure native reads and transaction-data construction, safe for snapshots."
+  []
+  (merge (read-api)
+         {:strategy :prepared :fence fence
+          :schema-fence schema-fence :relation-fence relation-fence
+          :assert-entity (fn [eid expected] [:db.fn/call assert-entity eid expected])
+          :tempid #(str "eacl-qualifier-" (random-uuid))}))
+
+(defn plan
+  "Builds qualified transaction data from one immutable basis without writing."
+  [database entries app-datoms]
+  (staged/plan-batch (staged/planner (planner-api) database) database entries app-datoms))
+
 (defn writer [conn]
   (schema/prepare-cache-coherence! conn)
   (staged/native-writer
-      (merge (read-api)
-    {:strategy :prepared :snapshot #(ds/db conn)
-     :fence fence :assert-entity (fn [eid expected] [:db.fn/call assert-entity eid expected])
-     :tempid #(str "eacl-qualifier-" (random-uuid))
-     :transact! #(ds/transact! conn %)})))
+   (merge (planner-api)
+          {:snapshot #(ds/db conn) :transact! #(ds/transact! conn %)})))

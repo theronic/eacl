@@ -1,6 +1,38 @@
 (ns eacl.relationships.mutations
   "Backend-neutral relationship mutation helpers."
-  (:require [eacl.relationships.storage :as storage]))
+  (:require [eacl.authorization.context :as context]
+            [eacl.caveats.values :as values]
+            [eacl.relationships.storage :as storage]))
+
+(def qualifier-keys #{:caveat :caveat-context :valid-until-ms})
+(def ^:private relationship-keys (into #{:subject :relation :resource} qualifier-keys))
+
+(defn- invalid-qualifier! [reason]
+  (throw (ex-info "Invalid Relationship qualifier input."
+                  {:type :eacl/invalid-relationship-qualifier
+                   :eacl/error :eacl/invalid-relationship-qualifier :reason reason})))
+
+(defn normalize-relationship
+  "Admits portable public qualifier input before basis selection. Caveat names
+   resolve at the selected writer basis; declared parameter validation remains
+   at that boundary. Empty optional data canonicalizes to the ordinary shape."
+  [{:keys [caveat caveat-context valid-until-ms] :as relationship}]
+  (when-not (and (map? relationship) (every? relationship-keys (keys relationship)))
+    (invalid-qualifier! :relationship-shape))
+  (when (and (some? caveat) (not (values/parameter-name? caveat)))
+    (invalid-qualifier! :caveat-name))
+  (when (and (contains? relationship :caveat-context) (nil? caveat))
+    (invalid-qualifier! :context-without-caveat))
+  (when (and (some? valid-until-ms) (not (values/valid-time? valid-until-ms)))
+    (invalid-qualifier! :expiry))
+  (if-not (some #(contains? relationship %) qualifier-keys)
+    relationship
+    (let [bound (when (some? caveat-context)
+                  (context/value (context/prepare caveat-context)))]
+      (cond-> (apply dissoc relationship qualifier-keys)
+        caveat (assoc :caveat caveat)
+        (seq bound) (assoc :caveat-context bound)
+        (some? valid-until-ms) (assoc :valid-until-ms valid-until-ms)))))
 
 (defn- relationship-key
   [{:keys [subject relation resource]}]
@@ -40,8 +72,9 @@
              (vector? (nth op 3 nil)))
     (nth (nth op 3) 1 nil)))
 
-(defn validate-batch!
-  "Rejects different operations on one resolved logical relationship.
+(defn coalesce-updates
+  "Rejects different intents on one resolved logical relationship and keeps
+   one identical update before native allocation or transaction planning.
 
   Every backend plans a batch from one immutable calculation snapshot, so
   repeating an operation has the same outcome as one occurrence and may
@@ -50,24 +83,40 @@
   statement-order visibility can make DataScript or Datahike choose a
   different result. Reject them before any transaction is submitted."
   [updates]
-  (reduce
-   (fn [operations-by-relationship
-        {:keys [operation relationship]}]
-     (let [key (relationship-key relationship)]
-       (if-let [previous (get operations-by-relationship key)]
-         (if (= previous operation)
-           operations-by-relationship
-           (throw
-            (ex-info
-             "A relationship mutation batch contains conflicting operations for one relationship."
-             {:type :eacl/invalid-relationship-update-batch
-              :eacl/error :eacl/invalid-relationship-update-batch
-              :reason :conflicting-operations
-              :operations [previous operation]})))
-         (assoc operations-by-relationship key operation))))
-   {}
-   updates)
+  (:updates
+   (reduce
+    (fn [{:keys [seen] :as state} {:keys [operation relationship] :as entry}]
+      (let [key (relationship-key relationship)
+            intent [operation (when-not (= :delete operation) (select-keys relationship qualifier-keys))
+                    (:prepared-qualifier entry)]]
+        (if-let [previous (get seen key)]
+          (if (= previous intent)
+            state
+            (throw
+             (ex-info
+              "A relationship mutation batch contains conflicting updates for one relationship."
+              {:type :eacl/invalid-relationship-update-batch
+               :eacl/error :eacl/invalid-relationship-update-batch
+               :reason (if (= (first previous) operation) :conflicting-qualifiers :conflicting-operations)
+               :operations [(first previous) operation]})))
+          (-> state (assoc-in [:seen key] intent) (update :updates conj entry)))))
+    {:seen {} :updates []}
+    updates)))
+
+(defn validate-batch!
+  "Compatibility predicate for already normalized/resolved update batches."
+  [updates]
+  (coalesce-updates updates)
   true)
+
+(defn normalize-updates
+  "Normalizes and coalesces public input before any inert qualifier allocation."
+  [updates]
+  (coalesce-updates
+   (mapv (fn [{:keys [operation relationship] :as update}]
+           (validate-operation! operation)
+           (assoc update :relationship (normalize-relationship relationship)))
+         updates)))
 
 (defn stamp-relation-generations
   "Adds one idempotent backend-native generation stamp per affected relation.

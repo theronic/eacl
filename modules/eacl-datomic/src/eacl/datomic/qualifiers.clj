@@ -19,15 +19,20 @@
 (defn- generation [database]
   (:eacl/schema-version (d/entity database [:eacl/id "schema-string"])))
 
-(defn- fence [database relation-id reference-added?]
+(defn- schema-fence [database reference-added?]
   (let [schema-id (d/entid database [:eacl/id "schema-string"])
         expected (generation database)]
     (when-not expected (staged/error! :schema-unprepared))
-    ;; Reference creation participates in the existing schema CAS fence. It
-    ;; cannot race a Caveat removal that was checked before the reference existed.
-    (cond-> [[:db.fn/cas schema-id :eacl/schema-version expected (if reference-added? (d/squuid) expected)]]
-      relation-id (conj [:db.fn/cas relation-id :eacl/relation-version
-                         (:eacl/relation-version (entity database relation-id)) "datomic.tx"]))))
+    ;; One schema CAS per batch also serializes concurrent Caveat removal.
+    [[:db.fn/cas schema-id :eacl/schema-version expected (if reference-added? (d/squuid) expected)]]))
+
+(defn- relation-fence [database relation-id]
+  (when relation-id
+    [[:db.fn/cas relation-id :eacl/relation-version
+      (:eacl/relation-version (entity database relation-id)) "datomic.tx"]]))
+
+(defn- fence [database relation-id reference-added?]
+  (into (schema-fence database reference-added?) (relation-fence database relation-id)))
 
 (defn read-api
   "Read-only native inputs; constructing this map never prepares or writes a store."
@@ -41,12 +46,24 @@
    :qualifier-cache-scope :assertion-version
    :qualifier-version (fn [database eid] (some-> (d/datoms database :eavt eid :eacl.relationship-qualifier/format-version) first :tx))})
 
+(defn planner-api
+  "Pure native reads and transaction-data construction, safe for snapshots."
+  []
+  (merge (read-api)
+         {:strategy :inline :fence fence
+          :schema-fence schema-fence :relation-fence relation-fence
+          :assert-entity (fn [eid expected] [:eacl.fn/assert-qualifier-facts eid expected])
+          :tempid #(str "eacl-qualifier-" (random-uuid))}))
+
+(defn plan
+  "Builds qualified transaction data from one immutable basis without writing."
+  [database entries app-datoms]
+  (staged/plan-batch (staged/planner (planner-api) database) database entries app-datoms))
+
 (defn writer [conn]
   (when-not (d/entid (d/db conn) :eacl.fn/assert-qualifier-facts) (staged/error! :schema-unprepared))
   (staged/native-writer
-      (merge (read-api)
-    {:strategy :inline :snapshot #(d/db conn) :fence fence
-     :generation-after-reference #(generation (:db-after %))
-     :assert-entity (fn [eid expected] [:eacl.fn/assert-qualifier-facts eid expected])
-     :tempid #(str "eacl-qualifier-" (random-uuid))
-     :transact! #(deref (d/transact conn %))})))
+   (merge (planner-api)
+          {:snapshot #(d/db conn)
+           :generation-after-reference #(generation (:db-after %))
+           :transact! #(deref (d/transact conn %))})))

@@ -1,0 +1,21 @@
+(ns eacl.datascript.qualified-write-test
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest]]
+            [datascript.core :as ds]
+            [eacl.caveats.publication-batch-contract :as batch]
+            [eacl.caveats.public-write-contract :as public]
+            [eacl.authorization.qualification-test :as fixtures]
+            [eacl.datascript.core :as api]
+            [eacl.datascript.schema :as schema]
+            [eacl.datascript.qualifiers :as qualifiers]))
+
+(deftest qualified-batches-publish-atomically
+  (let [conn (schema/create-conn {:app/flag {}})]
+    (batch/check! {:write-schema! #(schema/write-schema! conn %)
+                   :writer #(qualifiers/writer conn) :entid ds/entid :strategy :prepared})))
+
+(deftest public-qualified-writes-preserve-identity-and-commit-atomically
+  (let [conn (schema/create-conn {:app/flag {}})
+        now (atom 99)
+        client (api/make-client conn {:clock #(deref now)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
+    (public/check! {:client client :writer #(qualifiers/writer conn) :entid ds/entid :now now})))

@@ -484,7 +484,7 @@
            (:forbidden-operation-errors value)))
     (is (empty?
          (set/intersection
-          #{:conn :writer :selected-snapshot
+          #{:conn :writer :qualified-writer :transact! :selected-snapshot
             :acquire-current! :acquire-authoritative!
             :acquire-at-least! :acquire-exact!}
           (set (filter keyword? reachable)))))
@@ -492,7 +492,7 @@
          (fn [value]
            (some #(identical? value %) forbidden-identities))
          reachable))
-    (is (= #{:backend-id :schema :impl
+    (is (= #{:backend-id :schema :impl :entid :qualified-plan
              :basis-adapter :basis-adapter-config-keys
              :native-with :normalize-report-datom
              :schema-storage-datom? :transaction-datom?

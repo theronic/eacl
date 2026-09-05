@@ -33,6 +33,12 @@
             [eacl.datascript.caveat-context-test :as public-context-test]
             [eacl.datascript.qualified-check-test :as public-point-test]
             [eacl.datascript.qualified-lookup-test :as public-lookup-test]
+            [eacl.datascript.qualified-write-test :as public-write-test]
+            [eacl.datomic.qualified-write-test :as datomic-write-test]
+            [eacl.datascript.qualifiers :as datascript-qualifiers]
+            [eacl.relationships.mutations :as mutations]
+            [eacl.relationships.mutations-test :as mutations-test]
+            [eacl.relationships.staged :as staged]
             [eacl.cache :as cache]
             [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
@@ -83,8 +89,41 @@
         inclusive-candidates @#'engine/fetch-inclusive-candidates
         evaluate-emissions @#'lookup/evaluate-emissions
         request-schema @#'orchestration/request-schema
-        enqueue @#'recursive/enqueue-evidence!]
-    {:detailed-lookups-drop-emission-evidence
+        enqueue @#'recursive/enqueue-evidence!
+        normalize-relationship mutations/normalize-relationship
+        coalesce-updates mutations/coalesce-updates
+        plan-entry @#'staged/plan-entry
+        plan-batch staged/plan-batch
+        write-relationship! core/write-relationship!]
+    {:public-write-drops-qualifier-input
+     {:gate #'mutations-test/qualified-write-input-is-one-named-caveat-with-bounded-context-and-expiry
+      :redefs {#'mutations/normalize-relationship
+               (fn [relationship] (select-keys (normalize-relationship relationship) [:subject :relation :resource]))}}
+     :batch-conflict-identity-discards-qualifier-intent
+     {:gate #'mutations-test/batch-identity-excludes-qualifiers-but-update-intent-does-not
+      :redefs {#'mutations/coalesce-updates
+               (fn [updates] (coalesce-updates (mapv #(update % :relationship select-keys [:subject :relation :resource]) updates)))}}
+     :batch-publication-omits-relation-fence
+     {:gate #'public-write-test/qualified-batches-publish-atomically
+      :redefs {#'datascript-qualifiers/relation-fence (fn [_ _] [])}}
+     :batch-publication-shares-qualifiers
+     {:gate #'datomic-write-test/qualified-batches-publish-atomically
+      :redefs {#'staged/unique-qualifiers! (fn [_] nil)}}
+     :prepared-handle-ignores-requested-value
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'staged/plan-entry
+               (fn [writer db entry datoms fences?]
+                 (plan-entry writer db (dissoc entry :expected-value) datoms fences?))}}
+     :qualified-publication-omits-endpoint-guards
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'staged/plan-batch
+               (fn [writer db entries datoms]
+                 (plan-batch writer db (mapv #(dissoc % :identity-guards) entries) datoms))}}
+     :flat-public-write-drops-qualifier-metadata
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'core/write-relationship!
+               (fn [target update] (write-relationship! target (select-keys update [:operation :subject :relation :resource])))}}
+     :detailed-lookups-drop-emission-evidence
      {:gate #'public-lookup-test/public-qualified-lookups-preserve-detailed-results-and-definite-defaults
       :redefs {#'engine/with-emission-evidence (fn [page _] page)}}
      :definite-lookup-omits-final-policy-filter
@@ -347,7 +386,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 64 (count cases)))
+    (is (= 71 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

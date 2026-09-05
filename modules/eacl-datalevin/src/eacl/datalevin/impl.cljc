@@ -288,6 +288,14 @@
      :resource-identity-guard
      (endpoint-identity-guard db :resource resource-id resource)}))
 
+(defn relationship-publication-input
+  "Resolves the same endpoint identities and commit guards as ordinary writes."
+  [db relationship]
+  (let [resolved (resolve-relationship db relationship)]
+    {:relationship (mapv resolved [:subject-type :subject-id :relation-id :resource-type :resource-id])
+     :identity-guards [(:subject-identity-guard resolved)
+                       (:resource-identity-guard resolved)]}))
+
 (defn relationship-relation-id
   [db relationship]
   (:relation-id (resolve-relationship db relationship)))

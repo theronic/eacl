@@ -52,6 +52,8 @@
             [eacl.cursor :as cursor]
             [eacl.core :as eacl :refer [IAuthorizationReader
                                         IAuthorizationWriter
+                                        IRelationshipPreparation
+                                        IRelationshipPlanning
                                         IBatchedAuthorization
                                         ISnapshotSource
                                         IAuthorizationSnapshot
@@ -75,6 +77,7 @@
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
+            [eacl.relationships.staged :as qualified-writes]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
@@ -90,6 +93,7 @@
          speculative-with-snapshot
          speculative-with-schema-snapshot
          snapshot-tx-relationship
+         snapshot-tx-relationships
          attach-runtime-cache-lifecycle)
 
 (def ^:dynamic *qualified-authorization-enabled?*
@@ -1621,7 +1625,7 @@
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal object-id->lookup-ref]}
-   {:keys [subject relation resource]}]
+   {:keys [subject relation resource] :as relationship}]
   (let [internalize
         (fn [object]
           (assoc (spice-object->internal db object)
@@ -1634,9 +1638,10 @@
                  ;; transaction data or a cache key.
                  :eacl.relationship/public-object
                  (select-keys object [:type :id])))]
-    {:subject (internalize subject)
-     :relation relation
-     :resource (internalize resource)}))
+    (merge (select-keys relationship relationship-mutations/qualifier-keys)
+           {:subject (internalize subject)
+            :relation relation
+            :resource (internalize resource)})))
 
 (defn- response-token-for-revision
   [_api native-revision opts]
@@ -2671,6 +2676,8 @@
 (defn- reader-api
   [api]
   {:backend-id (:backend-id api)
+   :entid (:entid api)
+   :qualified-plan (:qualified-plan api)
    :basis-adapter (:basis-adapter api)
    :basis-adapter-config-keys (:basis-adapter-config-keys api)
    :native-with (:native-with api)
@@ -2685,6 +2692,8 @@
             :plan-replacement (get-in api [:schema :plan-replacement])}
    :impl {:validate-relationship-operation!
           (get-in api [:impl :validate-relationship-operation!])
+          :relationship-publication-input
+          (get-in api [:impl :relationship-publication-input])
           :relationship-relation-id
           (get-in api [:impl :relationship-relation-id])
           :relation-coordinate (get-in api [:impl :relation-coordinate])
@@ -3130,6 +3139,10 @@
       (:diagnostics speculative)
       (typed-capability-error! :speculative-diagnostics :ordinary-snapshot)))
 
+  IRelationshipPlanning
+  (-tx-relationships [this request]
+    (snapshot-tx-relationships this request))
+
   IAuthorizationSnapshot
   (-basis [_] (public-basis basis))
   (-basis-token [_] (basis-token* runtime basis))
@@ -3145,7 +3158,8 @@
   (backend-writer/make-writer
    {:id (:backend-id api)
     :state {:conn conn :source source :options options
-            :runtime runtime :api api}
+            :runtime runtime :api api
+            :qualified-writer (delay (when-let [factory (:qualified-writer api)] (factory conn)))}
     :max-attempts (or (:writer-max-attempts api) 1)
     :max-transaction-size
     (or (:writer-max-transaction-size api)
@@ -3211,8 +3225,8 @@
     ((backend-writer/operation writer :transact!)
      conn {:tx-data (vec tx-data)})))
 
-(defn- writer-write-relationships!
-  [writer updates]
+(defn- writer-write-ordinary-relationships!
+  [writer updates app-datoms]
   (let [{:keys [api]} (backend-writer/state writer)
         options (current-writer-options writer)
         validate-operation!
@@ -3262,8 +3276,8 @@
                                    distinct
                                    vec)
                               tx-data
-                              (when (seq raw-tx)
-                                (vec (prepare db raw-tx)))]
+                              (when (or (seq raw-tx) (seq app-datoms))
+                                (vec (prepare db (into raw-tx app-datoms))))]
                           (if (seq tx-data)
                             {:tx-data tx-data}
                             {:no-op-response
@@ -3294,6 +3308,101 @@
               (relationship-contention! writer attempt error))
             (throw error))
           (:value outcome))))))
+
+(defn- qualified-publication-entries
+  [api db options updates]
+  (let [schema ((get-in api [:schema :read-schema]) db)
+        resolve-input (get-in api [:impl :relationship-publication-input])
+        generation ((get-in api [:schema :generation]) db)
+        internal-updates
+        (relationship-mutations/coalesce-updates
+         (mapv (fn [update]
+                 (update-in update [:relationship] #(spice-relationship->internal db options %))) updates))]
+    (when-not (ifn? resolve-input)
+      (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+    (mapv
+     (fn [{:keys [operation relationship] :as update}]
+       (schema-errors/validate-relationship-write!
+        schema :write-relationships
+        {:resource-type (:type (:resource relationship))
+         :subject-type (:type (:subject relationship)) :relation (:relation relationship)})
+       (let [input (resolve-input db relationship)
+             name (:caveat relationship)
+             caveat (when (and name (not= :delete operation))
+                      (or ((:entid api) db [:eacl.caveat/name name])
+                          (throw (ex-info "Relationship names an unknown Caveat."
+                                          {:type :eacl/unknown-caveat :eacl/error :eacl/unknown-caveat
+                                           :caveat name}))))
+             value (when-not (= :delete operation)
+                     (cond-> (select-keys relationship [:caveat-context :valid-until-ms])
+                       caveat (assoc :caveat caveat)))]
+         (cond-> (assoc input :operation operation :value (not-empty value) :schema-generation generation)
+           (contains? update :prepared-qualifier)
+           (assoc :prepared-qualifier (:prepared-qualifier update)))))
+     internal-updates)))
+
+(defn- writer-write-qualified-relationships!
+  [writer updates app-datoms]
+  (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+        native-writer (or (some-> qualified-writer deref)
+                          (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+        options (current-writer-options writer)
+        contention? (backend-writer/operation writer :contention?)]
+    (loop [attempt 1]
+      (let [outcome
+            (try
+              (let [entries (call-with-writer-basis
+                             writer #(qualified-publication-entries api (:db %) options updates))
+                    prepared (qualified-writes/prepare-batch! native-writer entries)
+                    plan (qualified-writes/plan-batch-current native-writer prepared app-datoms)
+                    tx-data (:tx-data plan)]
+                {:value (if (seq tx-data)
+                          (let [report (submit-writer-tx! writer tx-data)]
+                            (committed-write-response api (:db-after report) options))
+                          (call-with-writer-basis
+                           writer #(write-response-for-revision api (get-in % [:selection :native-revision]) options)))})
+              (catch #?(:clj Throwable :cljs :default) error {:error error}))]
+        (if-let [error (:error outcome)]
+          (if (or (contention? error)
+                  (= :prepared-schema-changed (:reason (ex-data error))))
+            (if (< attempt (backend-writer/max-attempts writer))
+              (recur (inc attempt))
+              (relationship-contention! writer attempt error))
+            (if (= :relationship-conflict (:reason (ex-data error)))
+              (relationship-mutations/conflict! nil)
+              (throw error)))
+          (:value outcome))))))
+
+(defn- writer-write-relationships!
+  [writer {:keys [updates tx-data] :or {tx-data []}}]
+  (let [updates (relationship-mutations/normalize-updates (vec updates))
+        app-datoms (qualified-writes/application-datoms tx-data #{})]
+    (when (and (not *qualified-authorization-enabled?*)
+               (some #(seq (select-keys (:relationship %) relationship-mutations/qualifier-keys)) updates))
+      (typed-capability-error! :qualified-relationship-publication (backend-writer/backend-id writer)))
+    (if *qualified-authorization-enabled?*
+      (writer-write-qualified-relationships! writer updates app-datoms)
+      (writer-write-ordinary-relationships! writer updates app-datoms))))
+
+(defn- writer-prepare-relationship! [writer relationship]
+  (let [relationship (relationship-mutations/normalize-relationship relationship)
+        {:keys [api qualified-writer]} (backend-writer/state writer)]
+    (when-not *qualified-authorization-enabled?*
+      (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+    (let [native-writer (or (some-> qualified-writer deref)
+                            (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+          options (current-writer-options writer)
+          entries (call-with-writer-basis
+                   writer #(qualified-publication-entries api (:db %) options
+                                                          [{:operation :touch :relationship relationship}]))]
+      (:value (first (qualified-writes/prepare-batch! native-writer entries true))))))
+
+(defn- writer-discard-prepared-relationship! [writer prepared]
+  (when prepared
+    (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+          native-writer (or (some-> qualified-writer deref)
+                            (typed-capability-error! :qualified-relationship-publication (:backend-id api)))]
+      (qualified-writes/cleanup! native-writer prepared))))
 
 (defn- largest-fitting-prepared-batch
   "Returns a non-empty final transaction no larger than the writer limit.
@@ -3708,46 +3817,63 @@
       (speculative-snapshot-from-report
        snapshot report effects (:diagnostics plan)))))
 
-(defn snapshot-tx-relationship
-  [snapshot update]
-  (let [{:keys [basis api]} snapshot
+(defn- snapshot-tx-ordinary-relationships
+  [snapshot updates app-datoms]
+  (let [{:keys [basis api runtime]} snapshot
         _ (basis-open! basis)
         db (:db (backend/state (:adapter basis)))
-        {:keys [operation relationship]}
-        (if (and (map? update) (contains? update :relationship))
-          update
-          {:operation (:operation update)
-           :relationship
-           (->Relationship (:subject update)
-                           (:relation update)
-                           (:resource update))})
-        validate-operation!
-        (get-in api [:impl :validate-relationship-operation!])
         plan-update (get-in api [:impl :tx-update-relationship])
         prepare (or (:prepare-relationship-tx api)
-                    (fn [_db tx]
-                      (relationship-commit-preconditions-first tx)))]
-    (when-not (and (ifn? validate-operation!)
-                   (ifn? plan-update))
-      (speculative-capability! api :tx-relationship))
-    (validate-operation! operation)
+                    (fn [_db tx] (relationship-commit-preconditions-first tx)))]
+    (when-not (ifn? plan-update) (speculative-capability! api :tx-relationship))
     (let [schema ((get-in api [:schema :read-schema]) db)
-          _
-          (schema-errors/validate-relationship-write!
-           schema :write-relationships
-           {:resource-type (:type (:resource relationship))
-            :subject-type (:type (:subject relationship))
-            :relation (:relation relationship)})
-          internal-relationship
-          (spice-relationship->internal
-           db (runtime-options (:runtime snapshot)) relationship)
-          internal-update
-          (->RelationshipUpdate operation internal-relationship)
-          _ (relationship-mutations/validate-batch! [internal-update])
-          raw (some-> (plan-update db internal-update) vec)]
-      (if (seq raw)
-        (vec (prepare db raw))
-        []))))
+          options (runtime-options runtime)
+          _ (doseq [{:keys [relationship]} updates]
+              (schema-errors/validate-relationship-write!
+               schema :write-relationships
+               {:resource-type (:type (:resource relationship))
+                :subject-type (:type (:subject relationship)) :relation (:relation relationship)}))
+          internal-updates
+          (relationship-mutations/coalesce-updates
+           (mapv (fn [update]
+                   (update-in update [:relationship] #(spice-relationship->internal db options %))) updates))
+          raw (into (vec (distinct (mapcat #(plan-update db %) internal-updates))) app-datoms)]
+      (if (seq raw) (vec (prepare db raw)) []))))
+
+(defn snapshot-tx-relationships
+  [snapshot {:keys [updates tx-data] :or {tx-data []}}]
+  (let [{:keys [basis api runtime]} snapshot
+        _ (basis-open! basis)
+        updates (relationship-mutations/normalize-updates (vec updates))
+        app-datoms (qualified-writes/application-datoms tx-data #{})]
+    (if *qualified-authorization-enabled?*
+      (let [plan (or (:qualified-plan api)
+                     (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+            db (:db (backend/state (:adapter basis)))
+            entries (qualified-publication-entries api db (runtime-options runtime) updates)
+            entries (mapv (fn [entry]
+                            (if (contains? entry :prepared-qualifier)
+                              (let [prepared (:prepared-qualifier entry)]
+                                (when-not (or (nil? prepared) (qualified-writes/prepared? prepared))
+                                  (qualified-writes/error! :prepared-qualifier-required))
+                                (assoc entry :value prepared :expected-value (:value entry)))
+                              entry)) entries)]
+        (:tx-data (plan db entries app-datoms)))
+      (do
+        (when (some #(or (contains? % :prepared-qualifier)
+                         (seq (select-keys (:relationship %) relationship-mutations/qualifier-keys))) updates)
+          (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+        (snapshot-tx-ordinary-relationships snapshot updates app-datoms)))))
+
+(defn snapshot-tx-relationship
+  [snapshot update]
+  (snapshot-tx-relationships
+   snapshot {:updates [(if (contains? update :relationship)
+                         update
+                         (cond-> {:operation (:operation update)
+                                  :relationship (dissoc update :operation :prepared-qualifier)}
+                           (contains? update :prepared-qualifier)
+                           (assoc :prepared-qualifier (:prepared-qualifier update))))]}))
 
 (defn- with-page-lookahead
   "Runs the client-level page operation `thunk` and, when the client has
@@ -3907,11 +4033,17 @@
   (-speculative-diagnostics [_]
     (typed-capability-error! :speculative-diagnostics :acl))
 
+  IRelationshipPreparation
+  (-prepare-relationship! [_ relationship]
+    (writer-prepare-relationship! (writable! writer) relationship))
+  (-discard-prepared-relationship! [_ prepared]
+    (writer-discard-prepared-relationship! (writable! writer) prepared))
+
   IAuthorizationWriter
   (-write-schema! [_ request]
     (write-schema-through! (writable! writer) request))
-  (-write-relationships! [_ {:keys [updates]}]
-    (writer-write-relationships! (writable! writer) updates))
+  (-write-relationships! [_ request]
+    (writer-write-relationships! (writable! writer) request))
   (-delete-object! [_ {:keys [object]}]
     (writer-delete-object! (writable! writer) object)))
 

@@ -10,6 +10,7 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as schema]
             [eacl.datascript.storage :as target-storage]
             [eacl.relationships.upgrade :as storage-upgrade]
@@ -80,6 +81,8 @@
 
 (def ^:private api
   {:backend-id :datascript
+   :qualified-writer #'qualifiers/writer
+   :qualified-plan #'qualifiers/plan
    :db ds/db
    :entid ds/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (ds/entity db eid)))
@@ -110,6 +113,7 @@
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input #'impl/relationship-publication-input
           :relationship-relation-id #'impl/relationship-relation-id
           :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship

@@ -197,6 +197,12 @@ Qualified writes are enabled only when the adapter advertises one Phase 2 public
 
 No two Relationships differing only by Caveat, context, or expiry may coexist, matching SpiceDB's Relationship identity behavior. If independent grants are required later, that is a grant-assertion entity feature, not tuple duplication.
 
+The public Relationship map uses `:caveat` (one declared string name), `:caveat-context` (bound portable context), and `:valid-until-ms` (exclusive UTC milliseconds). Identical batch intents coalesce before native allocation; different qualifiers on the same identity conflict. `write-relationships!` also accepts `{:updates [...] :tx-data [...]}` to commit application datoms with the final endpoint publication. Application datoms cannot alter EACL state or allocated qualifier entities. Both endpoint identity guards, one schema fence, and one generation fence per affected Relation protect the final batch.
+
+For caller-managed transaction composition, `prepare-relationship!` creates an inert qualifier and returns an opaque handle. The caller obtains a snapshot after preparation and supplies the handle as `:prepared-qualifier` on the update passed to `tx-relationship`. The pure snapshot planner validates source, Relationship identity, schema generation, exact immutable facts, and equality with the requested qualifier value. Snapshots retain pure planning functions and never a connection or writer. `discard-prepared-relationship!` removes an unchanged, unattached handle through its original writer; attached or altered entities cannot be removed through this API. An ordinary Relationship needs no preparation and returns `nil`.
+
+`tx-relationships` plans multiple updates together against one snapshot, coalesces identical intents, and emits one fence per schema/Relation alongside all endpoint guards and optional application datoms. Callers use this batch planner when composing multiple mutations. Inline backends accept semantic qualifier values directly; prepared backends use the individual preparation handles. Datalevin uses its native unique temporary-ID allocator so independent pure plans cannot accidentally share an entity.
+
 ### 12. Keep physical collection out of correctness and out of this phase
 
 Expired Relationships remain stored and visible to administrative stored-state reads, create conflicts, deletion, history, and integrity inspection. Authorization treats them inactive at the captured time.
