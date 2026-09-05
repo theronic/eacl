@@ -128,14 +128,24 @@
                       :consistency consistency})))
 
 (defn can?
-  "Returns the `:allowed?` projection of `check-permission`."
+  "Returns true only for a definite grant. Authoritative qualified evaluation
+   failures become false here; check-permission preserves their typed error.
+   Cancellation, resource limits, invalid requests, and backend errors propagate."
   ([target request]
-   (:allowed? (check-permission target request)))
+   (try
+     (let [decision (check-permission target request)]
+       (and (true? (:allowed? decision))
+            (or (not (contains? decision :permissionship))
+                (= :has-permission (:permissionship decision)))))
+     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+       (if (= :eacl.authorization/evaluation-failure (:type (ex-data error)))
+         false
+         (throw error)))))
   ([target subject permission resource]
-   (:allowed? (check-permission target subject permission resource)))
+   (can? target {:subject subject :permission permission :resource resource}))
   ([target subject permission resource consistency]
-   (:allowed?
-    (check-permission target subject permission resource consistency))))
+   (can? target {:subject subject :permission permission :resource resource
+                 :consistency consistency})))
 
 (defn read-schema
   ([target]

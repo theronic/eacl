@@ -35,6 +35,9 @@
             [eacl.authorization.batch :as batch]
             [eacl.authorization.clock :as authorization-clock]
             [eacl.authorization.context :as caveat-context]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.result :as authorization-result]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
@@ -43,6 +46,7 @@
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.cache-identity :as cache-identity]
             [eacl.causal-token :as causal-token]
+            [eacl.caveats.evaluator :as caveat-evaluator]
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
             [eacl.cursor :as cursor]
@@ -87,6 +91,17 @@
          speculative-with-schema-snapshot
          snapshot-tx-relationship
          attach-runtime-cache-lifecycle)
+
+(def ^:dynamic *qualified-authorization-enabled?*
+  "Release gate for qualified serving. Enabled only after every Phase 3
+   traversal, publication, cache, cursor, and release obligation is complete."
+  false)
+
+(defn- qualification-options [opts]
+  (when *qualified-authorization-enabled?*
+    {:time (:evaluation-time-ms opts)
+     :prepared-context (::caveat-context opts)
+     :evaluator (:caveat-evaluator opts)}))
 
 (def ^:dynamic *operator-expression-writes-enabled?*
   "Public schema-write gate for intersection or exclusion expressions.
@@ -333,6 +348,7 @@
       :basis-identity semantic-identity
       :contract (:execution-contract runtime)
       :caveat-context (::caveat-context runtime)
+      :qualification-options (qualification-options runtime)
       :derived-registry (:derived-schema-caches runtime)
       :counter-ledger (:request-counter-ledger runtime)
       :proof-diagnostic-fn
@@ -465,6 +481,7 @@
                      :basis-identity identity
                      :contract (:execution-contract opts)
                      :caveat-context (::caveat-context opts)
+                     :qualification-options (qualification-options opts)
                      :derived-registry (:derived-schema-caches opts)
                      :counter-ledger ledger
                      :proof-diagnostic-fn
@@ -879,7 +896,7 @@
 (defn- completed-answer-semantic-key
   [opts operation query]
   (let [contract (:execution-contract opts)]
-    {:operation operation
+    (cond-> {:operation operation
      :query query
      :evaluation (:evaluation contract)
      :demand (:demand contract)
@@ -894,7 +911,9 @@
      :identity-contract (:identity-contract opts)
      :recursive-traversal-limits (:recursive-traversal-limits opts)
      :expression-limits (:expression-limits opts)
-     :permission-tree-limits (:permission-tree-limits opts)}))
+     :permission-tree-limits (:permission-tree-limits opts)}
+      engine/*qualification*
+      (assoc :qualification (qualification/exact-reuse-identity engine/*qualification*)))))
 
 (defn- continuation-compute-fn
   "The engine call for a range-composition remainder or a segment-end
@@ -917,6 +936,9 @@
   (let [contract (:execution-contract opts)
         managed-reuse?
         (and (:managed-cache-enabled? opts)
+             ;; Qualified managed proofs are a separate release obligation.
+             ;; The current exact scope fixes source, basis, context, and time.
+             (nil? engine/*qualification*)
              (not (:historical-basis? opts)))
         context-state (or (::request-context-state opts)
                           (request-context/active-state request-context))
@@ -990,7 +1012,9 @@
                            (:decision-kernel opts)]
                    (thunk))]
              (execution/check! contract :semantic-evaluation)
-             value))
+             (if (and engine/*qualification* (= :can? operation))
+               (evidence/encode (evidence/throw-if-fault! value))
+               value)))
         evaluate #(evaluate-with compute)
         cacheable?
         (and (:basis-cache-store opts)
@@ -1369,7 +1393,13 @@
   (let [cache engine/*schema-cache*
         slot (:parsed-schema cache)
         catalog-slot (:validation-catalog cache)
-        read-schema (get-in api [:schema :read-schema])]
+        read-schema (if engine/*qualification*
+                      (or (get-in api [:schema :read-authorization-schema])
+                          (throw (ex-info "Qualified authorization requires structural schema reads."
+                                          {:type :eacl/unsupported-capability
+                                           :eacl/error :eacl/unsupported-capability
+                                           :capability :qualified-authorization-schema})))
+                      (get-in api [:schema :read-schema]))]
     (if (and slot
              (or (some? (:schema-version cache))
                  (true? (:request-local? cache))))
@@ -1699,11 +1729,13 @@
              (public-answer-key-eligible? adapter))
         response
         (fn [answer]
-          {:allowed? (:value answer)
-           :cached? (:cached? answer)
-           :cache-basis (:cache-basis answer)
-           :evaluation
-           (get-in opts [:execution-contract :evaluation])})]
+          (cond-> {:allowed? (:value answer)
+                   :cached? (:cached? answer)
+                   :cache-basis (:cache-basis answer)
+                   :evaluation (get-in opts [:execution-contract :evaluation])}
+            engine/*qualification*
+            (merge (authorization-result/check-result (evidence/decode (:value answer))))))
+        check-point (if engine/*qualification* engine/check-evidence engine/can?)]
     (if public-key?
       ;; Exact lookup precedes the compute closure, so a warm point decision
       ;; performs no Datomic/Dynamo identity lookup. Managed reuse is safe only
@@ -1720,7 +1752,7 @@
                (spice-object->internal selected-db resource)]
            (validate!)
            (if (and (:id internal-subject) (:id internal-resource))
-             (engine/can?
+             (check-point
               adapter internal-subject permission internal-resource)
              false))))
       (let [internal-subject
@@ -1730,11 +1762,11 @@
         (if-not (and (:id internal-subject) (:id internal-resource))
           (do
             (call-with-request-schema-cache opts validate!)
-            {:allowed? false
-             :cached? false
-             :cache-basis nil
-             :evaluation
-             (get-in opts [:execution-contract :evaluation])})
+            (cond-> {:allowed? false
+                     :cached? false
+                     :cache-basis nil
+                     :evaluation (get-in opts [:execution-contract :evaluation])}
+              engine/*qualification* (merge (authorization-result/check-result false))))
           (response
            (cached-engine-result
             request-context adapter opts :can?
@@ -1745,7 +1777,7 @@
             permission
             #(do
                (validate!)
-               (engine/can?
+               (check-point
                 adapter internal-subject permission internal-resource)))))))))
 
 (defn check-permission
@@ -2606,7 +2638,7 @@
 
 (def ^:private runtime-option-keys
   #{:adapter-fingerprint :adapter-deterministic? :aggregate-limits
-    ::evaluation-clock
+    ::evaluation-clock :caveat-evaluator
     :continuation-cache-store :basis-cache-store
     :cursor-codec-cache :cursor-construction-cache :decision-kernel
     :derived-schema-caches :expression-limits
@@ -2635,6 +2667,7 @@
    :relation-version-attribute (:relation-version-attribute api)
    :prepare-relationship-tx (:prepare-relationship-tx api)
    :schema {:read-schema (get-in api [:schema :read-schema])
+            :read-authorization-schema (get-in api [:schema :read-authorization-schema])
             :generation (get-in api [:schema :generation])
             :plan-replacement (get-in api [:schema :plan-replacement])}
    :impl {:validate-relationship-operation!
@@ -4142,6 +4175,7 @@
   api's :extra-client-opt-keys and documented on the backend's make-client."
   #{:entid->object-id
     :clock
+    :caveat-evaluator
     :object-id->lookup-ref
     :internal-cursor->spice
     :spice-cursor->internal
@@ -4300,6 +4334,9 @@
     (throw (ex-info "EACL Config Error: :clock must be a zero-argument millisecond clock function."
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config :key :clock})))
   (lookahead/validate-option! (:lookahead config-opts))
+  (when (some? (:caveat-evaluator config-opts))
+    (caveat-evaluator/require-matching!
+     (:caveat-evaluator config-opts) caveat-evaluator/profile-fingerprint))
   (when-let [scan-cache-option (:scan-cache config-opts)]
     (when-not (or (false? scan-cache-option)
                   (and (map? scan-cache-option)
@@ -4479,6 +4516,9 @@
          (select-keys config-opts
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
+          :caveat-evaluator (if (contains? config-opts :caveat-evaluator)
+                             (:caveat-evaluator config-opts)
+                             (caveat-evaluator/default-evaluator))
           ::evaluation-clock (if (contains? config-opts :clock)
                                (authorization-clock/clock (:clock config-opts))
                                authorization-clock/system-clock)

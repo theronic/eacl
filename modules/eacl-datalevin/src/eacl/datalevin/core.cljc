@@ -208,6 +208,7 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation snapshot-schema-generation
             :write-schema! nil}
    :impl {:validate-relationship-operation!

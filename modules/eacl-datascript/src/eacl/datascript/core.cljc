@@ -104,6 +104,7 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation #'schema/current-schema-generation
             :plan-replacement #'schema/plan-schema-replacement
             :write-schema! #'schema/write-schema!}

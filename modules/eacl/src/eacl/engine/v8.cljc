@@ -1,5 +1,6 @@
 (ns eacl.engine.v8
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.core :refer [spice-object]]
             [eacl.engine.least-path :as least-path]
@@ -25,6 +26,10 @@
             [eacl.verified-kernel :as verified]))
 
 (def engine-version 8)
+
+(def ^:dynamic *qualification*
+  "The one selected-basis qualification request, bound by public orchestration."
+  nil)
 
 (def ^:dynamic *evaluation-mode*
   "Normalized public evaluation mode. Cache state never changes this value."
@@ -2075,7 +2080,7 @@
       :has-next? (:has-next? result)
       :has-previous? (:has-previous? result)})))
 
-(defn can?
+(defn check-evidence
   [db subject permission resource]
   (let [subject-type (:type subject)
         subject-eid (object-eid db (:id subject))
@@ -2096,6 +2101,7 @@
                (if (operator-recursive/recursive-plan? plan)
                  (operator-recursive/check-cached-eids
                   {:adapter db :plan plan
+                   :qualification *qualification*
                    :subject-type subject-type
                    :subject-eid subject-eid
                    :resource-eid resource-eid
@@ -2106,6 +2112,7 @@
                  (first
                   (operator-vector/check-cached-many-eids
                    {:adapter db :plan plan
+                    :qualification *qualification*
                     :scope-identity scope-identity
                     :candidates
                     [{:direction :forward
@@ -2120,6 +2127,7 @@
                    (stable-route/check-eids
                     (merge (stable-limits)
                            {:adapter db
+                            :qualification *qualification*
                             :fetch-fn fetch-fn
                             :plan plan
                             :subject-type subject-type
@@ -2129,6 +2137,11 @@
             (report-adapter-attempts! attempts)
             allowed?)))
       false)))
+
+(defn can? [db subject permission resource]
+  (evidence/has?
+   (evidence/throw-if-fault! (check-evidence db subject permission resource))))
+
 (defn lookup-resources
   "Stable-discovery forward pagination.
 

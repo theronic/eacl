@@ -4,7 +4,8 @@
   Exact and managed reuse are semantic key construction concerns. Storage is
   only a bounded partial map of opaque keys to immutable completed values;
   misses compute independently and publication never owns computation."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.result :as authorization-result]
+            [eacl.backend.v8 :as backend]
             [eacl.cache-identity :as cache-identity]
             [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
@@ -1023,7 +1024,9 @@
   (and (map? semantic-key)
        (= operation (:operation semantic-key))
        (case operation
-         :can? (boolean? value)
+         :can? (if (:qualification semantic-key)
+                 (authorization-result/cache-value? value)
+                 (boolean? value))
          :read-relationships (page-answer? value)
          :lookup-resources (page-answer? value)
          :lookup-subjects (page-answer? value)

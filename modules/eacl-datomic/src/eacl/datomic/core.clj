@@ -140,6 +140,7 @@
       db (impl/stamp-relation-versions tx-data)))
    :schema
    {:read-schema schema/read-schema
+    :read-authorization-schema schema/read-authorization-schema
     :generation indexed/schema-version
     :plan-replacement schema/plan-schema-replacement
     :write-schema! write-schema!}

@@ -330,15 +330,24 @@
                :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
     []))
 
+(defn read-authorization-schema
+  "Reads permission structure without compiling undemanded Caveat programs."
+  [snapshot-or-db]
+  (ddb/with-db
+   snapshot-or-db
+   (fn [db]
+     (let [permissions (read-permissions db)]
+       (expression-persistence/validate-entities permissions)
+       {:relations (read-relations db) :permissions permissions}))))
+
 (defn read-schema
   [snapshot-or-db & [_format]]
   (ddb/with-db
    snapshot-or-db
    (fn [db]
-     (let [permissions (read-permissions db)
+     (let [schema (read-authorization-schema db)
            caveats (read-caveats db)]
-       (expression-persistence/validate-entities permissions)
-       (cond-> {:relations (read-relations db) :permissions permissions}
+       (cond-> schema
          (seq caveats) (assoc :caveats caveats))))))
 
 (defn prepare-cache-coherence!

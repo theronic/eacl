@@ -17,7 +17,7 @@
 ## 3. Resolve and cache immutable qualifiers
 
 - [x] 3.1 Implement exact qualifier fetch/decode/validation across bundled backends, including format, certified creation `t`/version, Caveat allowance, context, and expiry; verify malformed/dangling fixtures fault while managed hot-path instrumentation performs no reverse graph scan for writer-certified ownership.
-- [ ] 3.2 Add one bounded request-local qid cache shared by recursive/operator paths; verify one distinct non-`nil` qid causes at most one qualifier fetch per top-level operation.
+- [x] 3.2 Add one bounded request-local qid cache shared by recursive/operator paths; verify one distinct non-`nil` qid causes at most one qualifier fetch per top-level operation.
 - [ ] 3.3 Add optional longer-lived qualifier decode caching keyed by source lifecycle, qid, certified creation `t`/version, and format, conditioned on owning Relation/supported-writer proof with exact/content-proof fallback for unknown writers; verify eid reuse/reset, deletion, and in-place mutation traces cannot reuse stale data.
 - [x] 3.4 Ensure qualifier-cache values are decoded data only and perform expiry/Caveat evaluation per request; verify different times/contexts reuse structure but not final authorization.
 
@@ -57,7 +57,7 @@
 - [ ] 8.1 Extend public Relationship update normalization with optional Caveat/context/`valid-until` and first-four conflict identity; verify SpiceDB-like create/touch/delete cases and one-Caveat maximum.
 - [ ] 8.2 Implement the Phase 2 certified inline and prepared-reference publication paths: atomically attach/swap both exact tuple refs, Relation stamp, old qualifier cleanup, and caller-composed datoms at the semantic commit point; verify concurrent touch/delete, failed prepared publication, orphan cleanup, and one-sided repair cannot grant, leak a half-edge, or share qualifiers.
 - [ ] 8.3 Extend object deletion, schema orphan checks, integrity reports, and unknown-writer content proofs through qualifier and Caveat dependencies; verify faults on subtracting evidence propagate.
-- [ ] 8.4 Keep expired Relationship collection absent from the authorization contract; verify no test or runtime requires a scheduler/GC write for expiry correctness.
+- [x] 8.4 Keep expired Relationship collection absent from the authorization contract; verify no test or runtime requires a scheduler/GC write for expiry correctness.
 
 ## 9. Certify and qualify before activation
 

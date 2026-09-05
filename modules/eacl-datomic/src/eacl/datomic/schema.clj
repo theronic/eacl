@@ -472,15 +472,20 @@
                :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
     []))
 
+(defn read-authorization-schema
+  "Reads permission structure without compiling undemanded Caveat programs."
+  [db]
+  (let [permissions (read-permissions db)]
+    (expression-persistence/validate-entities permissions)
+    {:relations (read-relations db) :permissions permissions}))
+
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
   ; todo: unparse into SpiceDB string schema if desired.
   [db & [_format]]
-  (let [permissions (read-permissions db)]
-    (expression-persistence/validate-entities permissions)
-    (let [caveats (read-caveats db)]
-      (cond-> {:relations (read-relations db) :permissions permissions}
-        (seq caveats) (assoc :caveats caveats)))))
+  (let [schema (read-authorization-schema db)
+        caveats (read-caveats db)]
+    (cond-> schema (seq caveats) (assoc :caveats caveats))))
 
 (defn- read-schema-unchecked
   "Migration-only physical schema read. Normal readers must use read-schema so

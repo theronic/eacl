@@ -4,6 +4,7 @@
   The context owns snapshot cleanup and request-invariant state. It is never a
   portable value and must not escape its constructing thread or request."
   (:require [eacl.authorization.context :as caveat-context]
+            [eacl.authorization.qualification :as qualification]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
@@ -21,6 +22,7 @@
     :basis-identity
     :contract
     :caveat-context
+    :qualification-options
     :derived-registry
     :counter-ledger
     :proof-diagnostic-fn
@@ -196,7 +198,7 @@
   them; they share one schema-generation resolution."
   [{:keys [runtime adapter selected-snapshot basis-identity contract
            derived-registry counter-ledger proof-diagnostic-fn
-           maximum-proof-relation-count caveat-context]
+           maximum-proof-relation-count caveat-context qualification-options]
     :as input}]
   (let [selected
         (when (and (map? input)
@@ -255,6 +257,10 @@
                {:basis-identity basis-identity
                 :selected-basis-identity selected-identity}))
             lineage (lineage-for-validated-basis basis-identity)
+            qualification
+            (when qualification-options
+              (qualification/request-from-adapter
+               adapter (assoc qualification-options :basis basis-identity)))
             registry
             (or derived-registry
                 (:derived-schema-caches runtime)
@@ -299,6 +305,7 @@
               :schema-generation-delay schema-generation-delay
               :contract contract
               :caveat-context caveat-context
+              :qualification qualification
               :proof-frame-delay proof-frame-delay
               :derived-delay derived-delay
               :memos-delay (delay (atom {}))
@@ -392,11 +399,13 @@
         ledger (:counter-ledger state)
         contract (:contract state)]
     (if (identical? ledger counters/*ledger*)
-      (binding [execution/*contract* contract]
+      (binding [execution/*contract* contract
+                engine/*qualification* (:qualification state)]
         (f context))
       (counters/call-with-ledger
        ledger
-       #(binding [execution/*contract* contract]
+       #(binding [execution/*contract* contract
+                  engine/*qualification* (:qualification state)]
           (f context))))))
 
 (defn close!

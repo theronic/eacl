@@ -6,6 +6,11 @@
             [eacl.authorization.data :as data]
             [eacl.authorization.context :as context]
             [eacl.authorization.context-test :as context-test]
+            [eacl.authorization.result :as result]
+            [eacl.authorization.result-test :as result-test]
+            [eacl.core :as core]
+            [eacl.core-test :as core-test]
+            [eacl.engine.v8 :as engine]
             [eacl.authorization.batch :as batch]
             [eacl.authorization.data-test :as data-test]
             [eacl.request.counters :as counters]
@@ -23,6 +28,7 @@
             [eacl.engine.stable-route-native-evidence-test :as native-test]
             [eacl.datascript.evaluation-clock-test :as clock-test]
             [eacl.datascript.caveat-context-test :as public-context-test]
+            [eacl.datascript.qualified-check-test :as public-point-test]
             [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
             [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
@@ -59,8 +65,31 @@
         validate-stable @#'stable-route/validate-known-witness!
         aggregate batch/aggregate-counters
         collect data/collect
+        can? core/can?
+        check-evidence engine/check-evidence
+        check-result result/check-result
+        request-schema @#'orchestration/request-schema
         enqueue @#'recursive/enqueue-evidence!]
-    {:legacy-inactive-stream-path-becomes-active
+    {:expired-public-request-compiles-all-caveats
+     {:gate #'public-point-test/expired-public-points-never-compile-undemanded-caveats
+      :redefs {#'orchestration/request-schema
+               (fn [& args]
+                 (binding [engine/*qualification* nil] (apply request-schema args)))}}
+     :public-conditional-result-becomes-a-grant
+     {:gate #'result-test/detailed-results-preserve-membership-and-residuals
+      :redefs {#'result/check-result (fn [value]
+                                     (let [answer (check-result value)]
+                                       (if (= :conditional-permission (:permissionship answer))
+                                         (assoc answer :allowed? true) answer)))}}
+     :boolean-compatibility-erases-operational-errors
+     {:gate #'core-test/boolean-compatibility-requires-definite-grants-and-preserves-operational-errors
+      :redefs {#'core/can? (fn [& args] (try (apply can? args) (catch Throwable _ false)))}}
+     :public-point-routing-omits-qualification
+     {:gate #'public-point-test/public-point-routes-preserve-conditional-evidence-and-expiring-bans
+      :redefs {#'engine/check-evidence (fn [& args]
+                                       (binding [engine/*qualification* nil]
+                                         (apply check-evidence args)))}}
+     :legacy-inactive-stream-path-becomes-active
      {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
       :redefs {#'least-path/stream-next
                (fn [ctx state]
@@ -229,7 +258,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 41 (count cases)))
+    (is (= 45 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))
