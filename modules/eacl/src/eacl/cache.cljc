@@ -987,8 +987,13 @@
                       (and (string? candidate)
                            (pos? (count candidate)))))]
      (and (map? value)
-          (= (cond-> rendered-page-entry-fields qualified? (conj :qualification-certificate))
+          (= (cond-> rendered-page-entry-fields
+               qualified? (conj :qualification-certificate)
+               (if semantic-key (get-in semantic-key [:query :security-kid]) (:security-kid value))
+               (conj :security-kid))
              (set (keys value)))
+          (or (nil? semantic-key)
+              (= (get-in semantic-key [:query :security-kid]) (:security-kid value)))
           (or (not qualified?)
               (and (or (nil? semantic-key)
                        (= temporal/collection-format (:qualification-certificate-format semantic-key)))
@@ -1327,6 +1332,7 @@
               (record-metrics! store update :rendered-page-store-errors inc)
               nil))]
       (if (and (:found? resident)
+               (= (get-in semantic-key [:query :security-kid]) (:security-kid (:value resident)))
                (or (nil? (:qualification semantic-key))
                    (temporal/answer-reusable? (:value resident) evaluation-time-ms true)))
         (do

@@ -824,7 +824,8 @@
 (defn- page-context
   [request-context opts operation query resource-type permission
    relationship-dependency]
-  (let [opts (selected-cache-options opts request-context)
+  (let [opts (-> (selected-cache-options opts request-context)
+                 (update :format-options secure/capture-keyring))
         ;; Low-level raw-DB entry points may receive a client's opts map. They
         ;; must remain bound to that caller-owned DB and must not reach through
         ;; the client's live source during cursor recovery.
@@ -881,6 +882,7 @@
              :snapshot-semantic-identity page-semantic-identity
              :cursor-dependency-context continuation-context
              :cursor-qualification-certificate (:qualification-certificate prepared)
+             :cursor-security-kid (:security-kid prepared)
              :accepted-cursor-frame accepted-cursor-frame
              :transport-page-input-expiring?
              (:expiring-cursor-input? prepared)
@@ -1195,7 +1197,9 @@
                   exact-basis-key))
             walk-key
             (when range-scope
-              (range-reuse/walk-key range-scope semantic-key))
+              (range-reuse/walk-key
+               [range-scope (or (:cursor-security-kid opts) (get-in opts [:format-options :current-kid]))]
+               semantic-key))
             window
             (when walk-key
               (range-reuse/window semantic-key engine/max-page-size))
@@ -1309,6 +1313,7 @@
             :consistency consistency-key
             :cursor-policy
             (cursor/cache-policy-identity opts)
+            :security-kid (get-in opts [:format-options :current-kid])
             :render-abi rendered-page-render-abi})
     engine/*qualification*
     (assoc :temporal-mode (relay/temporal-mode opts)
@@ -1325,7 +1330,8 @@
   ;; using internal answers.
   (when (rendered-page-request-eligible?
          adapter opts operation public-query)
-    (let [candidate-public-query
+    (let [opts (update opts :format-options secure/capture-keyring)
+          candidate-public-query
           (-> (cache-identity/successful-result-query public-query)
               relay/plain-page-query
               ;; The exact raw after/before token is intentionally retained.
@@ -1398,6 +1404,8 @@
         rendered
         (cond-> {:format cache/rendered-page-entry-format
                  :page public-page}
+          (get-in opts [:format-options :current-kid])
+          (assoc :security-kid (get-in opts [:format-options :current-kid]))
           engine/*qualification*
           (assoc :qualification-certificate
                  (let [current (:qualification-certificate (:value answer))
@@ -1449,6 +1457,8 @@
       :recursive-traversal-limits
       (:recursive-traversal-limits opts)}
      {:request-proof-frame (request-proof-frame opts)
+      :security-kid (or (:cursor-security-kid opts) (get-in opts [:format-options :current-kid]))
+      :minting-security-kid (get-in opts [:format-options :current-kid])
       :request-lineage (:request-lineage opts)
       :populate-cache? (:populate-cache-request? opts true)})))
 

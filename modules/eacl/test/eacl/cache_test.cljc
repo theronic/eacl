@@ -3,6 +3,7 @@
              :refer [deftest is testing]]
             [clojure.string :as str]
             [eacl.cache :as cache]
+            [eacl.cache.standard-lru :as lru]
             [eacl.cache-identity :as cache-identity]
             [eacl.core :as eacl]
             [eacl.exact-integer :as exact-integer]
@@ -1408,3 +1409,16 @@
              (is (not= ::timeout (deref call 5000 ::timeout))))))
        (is (= [diagnostic] @reports))
        (is (= #{:concurrent-first-sighting} @claimed)))))
+
+(deftest rendered-page-key-tags-are-checked-on-ingress-and-reuse
+  (let [store (cache/basis-cache {:max-entries 8})
+        query (assoc (semantic-key :rendered) :operation :lookup-resources :query {:security-kid :old})
+        context (basis-context 1)
+        value (assoc (rendered-page 1) :security-kid :old)]
+    (is (false? (:published? (cache/publish-rendered-page! store context query (assoc value :security-kid :new)))))
+    (is (:published? (cache/publish-rendered-page! store context query value)))
+    (is (= value (:value (cache/lookup-rendered-page! store context query))))
+    (let [resident (:rendered-pages (cache/capture-cache-lifecycle store))
+          [key original] (first (lru/entries resident))]
+      (lru/replace-if! resident key original (assoc original :security-kid :new)))
+    (is (nil? (cache/lookup-rendered-page! store context query)))))

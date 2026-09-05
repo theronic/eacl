@@ -1027,3 +1027,25 @@
         "keyset pages compose exactly with no server-side state")
     (is (= puts-before (:puts (continuation/stats store)))
         "acyclic pagination publishes nothing to the continuation store")))
+
+(deftest checkpoint-state-is-partitioned-and-validated-by-series-key
+  (let [{:keys [conn]} (seed-fixture-client! (fixture-for :explorer-acyclic))
+        adapter (datascript-backend/basis-adapter (ds/db conn) (adapter-opts conn {}))
+        store (continuation/make-store {})
+        context (fn [read-kid mint-kid]
+                  (continuation/private-context
+                   store adapter :lookup-resources {:query {:q 1}}
+                   {:request-lineage test-lineage :security-kid read-kid :minting-security-kid mint-kid}))
+        old (context :old :old) new (context :new :new) transition (context :old :new)
+        checkpoint {:ordinal 2 :boundary 42 :pending [7] :state {:transitions 10 :admitted #{1 2} :stack []}}]
+    ((:put! old) [:k] checkpoint)
+    (is (= checkpoint (dissoc ((:get old) [:k]) :security-kid)))
+    (is (nil? ((:get new) [:k])))
+    (is (= checkpoint (dissoc ((:get transition) [:k]) :security-kid)))
+    ((:put! transition) [:k] checkpoint)
+    (is (= checkpoint (dissoc ((:get new) [:k]) :security-kid)))
+    (is (= #{:old :new} (set (map (comp :security-kid second) (lru/entries (:storage store))))))
+    (let [[key value] (first (filter #(= :old (:security-kid (second %))) (lru/entries (:storage store))))]
+      (lru/replace-if! (:storage store) key value (assoc value :security-kid :new))
+      (is (nil? ((:get old) [:k]))))
+    (is (= 1 (get-in (continuation/stats store) [:miss-reasons :security-key-mismatch])))))

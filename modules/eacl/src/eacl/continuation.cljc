@@ -9,7 +9,7 @@
             [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]))
 
-(def ^:private context-version 3)
+(def ^:private context-version 4)
 (def ^:private default-max-entries 1024)
 
 (defrecord BoundedContinuationStore
@@ -232,7 +232,8 @@
   ([store adapter operation query-identity]
    (private-context store adapter operation query-identity {}))
   ([store adapter operation query-identity
-    {:keys [request-lineage request-proof-frame populate-cache?]
+    {:keys [request-lineage request-proof-frame populate-cache?
+            security-kid minting-security-kid]
      :or {populate-cache? true}}]
    (when store
      (let [basis-identity (:basis-identity request-proof-frame)
@@ -264,19 +265,24 @@
               (backend/identity-contract adapter)
               operation
               query-identity])
-          key-for (fn [key] [scope key])]
+           key-for (fn [kid key] [scope kid key])
+           minting-kid (or minting-security-kid security-kid)
+           tagged (fn [kid value] (cond-> value kid (assoc :security-kid kid)))]
        (when scope
          (validate-context!
           {:required? false
            :opaque-values? true
            :get
-           #(lookup! store :recursive-continuation
-                     (key-for %))
+           (fn [edge]
+             (when-let [value (lookup! store :recursive-continuation (key-for security-kid edge))]
+               (if (= security-kid (:security-kid value))
+                 value
+                 (do (miss! store :recursive-continuation :security-key-mismatch) nil))))
            :hit!
            (fn [edge expected-value]
              (checkpoint-hit!
               store :recursive-continuation
-              (key-for edge) expected-value))
+              (key-for security-kid edge) expected-value))
            :miss!
            (fn [reason]
              (miss!
@@ -286,5 +292,5 @@
              (and populate-cache?
                   (put-latest-checkpoint!
                    store :recursive-continuation
-                   (key-for edge)
-                   value)))}))))))
+                   (key-for minting-kid edge)
+                   (tagged minting-kid value))))}))))))
