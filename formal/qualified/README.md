@@ -40,6 +40,14 @@ certificates, scope changes, and cursor skipped/frontier evidence. Recursive
 membership is checked against a separate per-completion reachability closure.
 The Phase 2 lifecycle model supplies preparation/publication transitions.
 
+The production evidence bridge compares reduced ordered decision diagrams with
+the independent completion sets across all four operators, all 16 residuals,
+two authoritative faults, and complete/incomplete temporal certificates. Its
+46,726 assertions cover denotation, deadlines, completeness, missing fields,
+and canonical wire round trips. The combined finite gate has 95,186 assertions.
+Portable evidence tests additionally reject malformed/noncanonical encodings
+and enforce node, depth, work, missing-field, and serialized-size bounds.
+
 The lock records 15 seconds and 5,000,000 resources per proof effort, the exact
 proof/assertion inventories, and SHA-256 pins for the oracle and mutation
 inputs. The whole-tree formal gate retains its stronger existing reporting

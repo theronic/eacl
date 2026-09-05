@@ -30,7 +30,11 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (load-file \"formal/qualified/model.clj\")
      (load-file \"formal/qualified/model_test.clj\")
      (load-file \"formal/qualified/mutation_test.clj\")
-     (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test)]
+     (require 'eacl.authorization.evidence :reload)
+     (require 'eacl.authorization.evidence-test :reload)
+     (load-file \"formal/qualified/evidence_bridge.clj\")
+     (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
+                                   'eacl.formal.qualified.evidence-bridge)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Qualified finite gate failed or assertion inventory changed\" r)))
        r))" > "$output/finite.log" 2>&1 || { cat "$output/finite.log"; exit 1; }

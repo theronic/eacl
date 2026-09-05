@@ -4,6 +4,7 @@
             [eacl.backend.v8-test]
             [eacl.backend.direct-membership-test]
             [eacl.authorization.batch-test]
+            [eacl.authorization.evidence-test]
             [eacl.cache.derived-schema-test]
             [eacl.cache.key-test]
             [eacl.cache.standard-lru-test]
@@ -91,6 +92,7 @@
   (t/run-tests 'eacl.backend.v8-test
                'eacl.backend.direct-membership-test
                'eacl.authorization.batch-test
+               'eacl.authorization.evidence-test
                'eacl.cache.derived-schema-test
                'eacl.cache.key-test
                'eacl.cache.standard-lru-test
