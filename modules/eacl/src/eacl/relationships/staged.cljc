@@ -354,6 +354,77 @@
                            app-datoms))
      :plans (mapv #(dissoc % :tx-data :old-qualifier-eid :adds-caveat-reference?) plans)}))
 
+(defn relationship-retraction?
+  "Selects physical endpoint retractions from an adapter's deletion stream."
+  [op]
+  (and (vector? op) (= :db/retract (first op))
+       (contains? storage/attributes (nth op 2 nil))))
+
+(defn- retraction-identity [op]
+  (when-not (and (relationship-retraction? op) (= 4 (count op)))
+    (error! :relationship-retraction))
+  (let [[_ owner attribute value] op
+        decoded ((if (= storage/forward-attribute attribute) pair/decode-forward pair/decode-reverse) owner value)]
+    (when-not decoded (error! :relationship-retraction))
+    (let [identity (mapv decoded [:subject-type :subject-eid :relation-eid :resource-type :resource-eid])
+          qid (:qualifier-eid decoded)]
+      (when-not (and (every? concrete-eid? (map #(nth identity %) [1 2 4]))
+                     (or (nil? qid) (concrete-eid? qid)))
+        (error! :relationship-retraction))
+      [identity qid])))
+
+(defn- plan-native-retractions
+  "Expands a bounded slice of object-deletion halves to whole exact pairs.
+   Cleanup permits an already missing endpoint/peer, but never a conflicting
+   qualifier or duplicate logical identity. A native basis assertion and
+   schema/Relation fences protect the same transaction as qualifier removal."
+  [writer db retractions]
+  (assert-source! writer db)
+  (let [native (:native writer)
+        entries (vec (distinct (map retraction-identity retractions)))
+        identities (mapv first entries)
+        _ (when-not (= (count identities) (count (set identities)))
+            (error! :asymmetric-or-duplicate-relationship))
+        _ (unique-qualifiers! (keep second entries))
+        plans
+        (mapv (fn [[identity qid]]
+                (let [[st subject rid rt resource] identity
+                      relation ((:entity native) db rid)
+                      [forward reverse] (values-for identity qid)]
+                  (when-not (and (= st (:eacl.relation/subject-type relation))
+                                 (= rt (:eacl.relation/resource-type relation))
+                                 (keyword? (:eacl.relation/relation-name relation)))
+                    (error! :missing-relation))
+                  (let [halves [[subject storage/forward-attribute forward]
+                                [resource storage/reverse-attribute reverse]]
+                        actuals (mapv (fn [[owner attribute value]]
+                                        (vec (take 2 ((:rows native) db owner attribute value)))) halves)]
+                    (when (every? empty? actuals) (error! :missing-relationship))
+                    (doseq [[[_ _ value] actual] (map vector halves actuals)]
+                      (when-not (or (empty? actual) (= [value] (mapv :v actual)))
+                        (error! :asymmetric-or-duplicate-relationship))))
+                  (stored-qualifier native db qid)
+                  (vec (concat
+                        (when qid [((:assert-entity native) qid ((:facts native) db qid))])
+                        (pair/retractions st subject rid rt resource qid)
+                        (when qid [[:db/retractEntity qid]])))))
+              entries)
+        relations (sort (set (map #(nth % 2) identities)))]
+    (if (empty? entries)
+      []
+      (vec (concat [((:head-guard native) db)]
+                   ((:schema-fence native) db false)
+                   (mapcat #((:relation-fence native) db %) relations)
+                   (mapcat identity plans))))))
+
+(defn plan-retraction-batch
+  "Plans pair and qualifier cleanup within the caller's selected native basis.
+   Snapshot-owning backends unwrap that same selection for native reads."
+  [writer selected retractions]
+  (if-let [with-selected (get-in writer [:native :with-selected-snapshot])]
+    (with-selected selected #(plan-native-retractions writer % retractions))
+    (plan-native-retractions writer selected retractions)))
+
 (defn plan-batch-current [writer entries app-datoms]
   ((get-in writer [:native :with-snapshot]) #(plan-batch writer % entries app-datoms)))
 

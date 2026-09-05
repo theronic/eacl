@@ -148,3 +148,14 @@ fault. Unknown-writer subtracting faults and restored DataScript identities
 have a separate trace. Two controls omit shared-denotation time or whole request
 context; both fail only their mutated runs. The combined qualified gate now has
 598,592 assertions and 101 detected production mutations.
+
+Qualified object deletion is checked after every transaction with a forced
+12-operation cap, on all native backends and both Datahike attribute modes.
+The contract includes expired edges, self-edges, inert preparation preservation,
+and stale-plan rejection after an unstamped identity change or qualifier touch.
+DataScript additionally checks surviving-peer cleanup and schema orphan release.
+Three controls remove qualifier cleanup, split peer retractions, or omit the
+native selected-basis guard. Each passes its unmodified gate and fails mutated.
+
+The combined qualified gate now has 598,713 assertions and 104 detected
+production mutations, with 71 verified model obligations.

@@ -5,6 +5,7 @@
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.client.orchestration :as orchestration]
@@ -78,4 +79,13 @@
         (cache-trace/check! {:client (api/make-client conn {:clock #(deref now)
                                                             :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                              :writer #(qualifiers/writer conn) :now now :expire-cache! api/expire-cache!})
+        (finally (d/release conn) (d/delete-database config))))))
+
+(deftest qualified-object-deletion-is-atomic-and-bounded
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options) config (:config (d/db conn))]
+      (try
+        (deletion/check! {:client (api/make-client conn {:clock (constantly 200)
+                                                         :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                          :writer #(qualifiers/writer conn)})
         (finally (d/release conn) (d/delete-database config))))))

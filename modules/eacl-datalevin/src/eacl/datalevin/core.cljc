@@ -174,6 +174,9 @@
   [snapshot-or-db object-eid]
   (ddb/with-db snapshot-or-db #(impl/tx-delete-object % object-eid)))
 
+(defn- snapshot-object-relationship-retractions [snapshot-or-db object-eid]
+  (ddb/with-db snapshot-or-db #(impl/selected-object-relationship-retractions % object-eid)))
+
 (defn- snapshot-read-relationships
   ([snapshot-or-db query kernel]
    (snapshot-read-relationships snapshot-or-db query kernel nil))
@@ -222,6 +225,7 @@
           :relation-coordinate snapshot-relation-coordinate
           :tx-update-relationship snapshot-tx-update-relationship
           :tx-delete-object snapshot-tx-delete-object
+          :object-relationship-retractions snapshot-object-relationship-retractions
           :affected-relation-ids #'impl/affected-relation-ids
           :read-relationships snapshot-read-relationships}
    :extra-client-opt-keys

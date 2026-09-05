@@ -56,6 +56,7 @@
             [eacl.relationships.mutations :as mutations]
             [eacl.relationships.mutations-test :as mutations-test]
             [eacl.relationships.staged :as staged]
+            [eacl.relationships.storage :as storage]
             [eacl.cache :as cache]
             [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
@@ -122,8 +123,18 @@
         coalesce-updates mutations/coalesce-updates
         plan-entry @#'staged/plan-entry
         plan-batch staged/plan-batch
+        plan-retractions staged/plan-retraction-batch
         write-relationship! core/write-relationship!]
-    {:qualified-shared-denotation-identity-omits-time
+    {:qualified-object-delete-leaves-owned-qualifiers
+     {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
+      :redefs {#'staged/plan-retraction-batch (fn [& args] (filterv #(not= :db/retractEntity (first %)) (apply plan-retractions args)))}}
+     :qualified-object-delete-splits-endpoint-pairs
+     {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
+      :redefs {#'staged/plan-retraction-batch (fn [& args] (filterv #(not (and (= :db/retract (first %)) (= storage/reverse-attribute (nth % 2 nil)))) (apply plan-retractions args)))}}
+     :qualified-object-delete-loses-selected-basis-guard
+     {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
+      :redefs {#'staged/plan-retraction-batch (fn [& args] (let [tx (apply plan-retractions args)] (if (seq tx) (subvec tx 1) tx)))}}
+     :qualified-shared-denotation-identity-omits-time
      {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
       :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 99))}}
      :qualified-answer-identity-omits-request-context
@@ -520,7 +531,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 101 (count cases)))
+    (is (= 104 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

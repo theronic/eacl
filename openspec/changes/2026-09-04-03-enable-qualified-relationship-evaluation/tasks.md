@@ -56,7 +56,7 @@
 
 - [x] 8.1 Extend public Relationship update normalization with optional Caveat/context/`valid-until` and first-four conflict identity; verify SpiceDB-like create/touch/delete cases and one-Caveat maximum.
 - [x] 8.2 Implement the Phase 2 certified inline and prepared-reference publication paths: atomically attach/swap both exact tuple refs, Relation stamp, old qualifier cleanup, and caller-composed datoms at the semantic commit point; verify concurrent touch/delete, failed prepared publication, orphan cleanup, and one-sided repair cannot grant, leak a half-edge, or share qualifiers.
-- [ ] 8.3 Extend object deletion, schema orphan checks, integrity reports, and unknown-writer content proofs through qualifier and Caveat dependencies; verify faults on subtracting evidence propagate.
+- [x] 8.3 Extend object deletion, schema orphan checks, integrity reports, and unknown-writer content proofs through qualifier and Caveat dependencies; verify faults on subtracting evidence propagate.
 - [x] 8.4 Keep expired Relationship collection absent from the authorization contract; verify no test or runtime requires a scheduler/GC write for expiry correctness.
 
 ## 9. Certify and qualify before activation

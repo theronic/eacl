@@ -375,3 +375,32 @@ qualifier mutation/deletion faults and restored entity identities after explicit
 lifecycle rotation. Datalevin persists a lifecycle replacement and recreates its
 client. Controls omitting time from shared denotation identity or context from
 answer identity fail these same public traces.
+
+### Qualified deletion and existing integrity dependencies
+
+Qualified object deletion now consumes exact native half-retractions and fits
+whole pairs plus owned qualifier cleanup into the final transaction limit.
+Selected-basis validation, schema and Relation fences, and exact qualifier facts
+precede all removals. Conflicting or duplicate identities and missing/malformed
+qualifiers fail before submission; an already missing endpoint or peer can be
+cleaned from the surviving exact half. Unattached preparations are preserved.
+
+Datalevin's ordinary deletion operation is a commit-time rescan function, so it
+cannot be treated as a half-retraction stream. Its qualified data adapter exposes
+selected-snapshot pair retractions and unwraps that same owned selection for the
+shared native cleanup planner. It does not select a second basis. Submission
+occurs after releasing the read, and the native basis assertion rejects drift.
+Transaction sizing includes all guards, expanded peers and qualifier cleanup.
+Native adapters that already materialize object retractions continue to do so;
+this change does not claim a new bounded-memory scan implementation for them.
+
+The existing integrity proof captures qualifier facts/version, Caveat definition
+content, Relation definition/generation and source/schema identity. Cache traces
+exercise the corresponding exact/content fallback against unknown native writers.
+The new deletion contract checks integrity after every bounded native commit on
+all backends, including both Datahike modes, preserves inert orphans and rejects
+stale plans after unstamped identity changes and qualifier replacement. Additional
+DataScript coverage removes an endpoint out of band, cleans its surviving peer,
+and verifies that referenced expired qualifiers block Caveat removal until their
+owned Relationship cleanup completes. Subtracting qualifier faults remain covered
+by the cross-cache conformance traces.

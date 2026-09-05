@@ -367,3 +367,25 @@ and limited/unlimited counts. DataScript additionally checks authoritative fault
 on subtracting qualifiers, unstamped native changes, and restored entity IDs.
 Datalevin persists its new lifecycle and recreates the client; its process-local
 cache-clear operation is not a substitute for that recovery procedure.
+
+## Qualified object deletion
+
+`delete-object!` removes Relationship state, including expired Relationships.
+Each transaction removes both exact endpoint values and their owned qualifier,
+with native basis, schema and Relation guards. Transaction limits apply after
+pair expansion and guard construction. A batch boundary cannot leave a live
+half-pair pointing at an already removed qualifier. Self-relationships and a
+surviving peer of an already removed native object use the same cleanup path.
+
+A stale deletion plan is rejected if the selected native basis changes before
+submission, including an unstamped identity change or a qualifier replacement.
+Other unattached preparations remain inert and are not collected by this API.
+A referenced expired qualifier continues to protect its Caveat from schema
+removal; removing the relationship and owned qualifier releases that dependency.
+
+Datalevin supplies exact retractions from the selected owned read snapshot for
+qualified deletion, then releases that selection before submitting a guarded
+batch. Its existing ordinary commit-time deletion path remains available while
+the qualified semantic epoch is disabled. This change bounds submitted
+transactions; adapters that materialize object retractions retain that existing
+planning behavior.

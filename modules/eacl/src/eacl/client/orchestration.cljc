@@ -3237,8 +3237,11 @@
      :plan-relationship-update
      (get-in api [:impl :tx-update-relationship])
      :plan-delete-object
-     (or (get-in api [:impl :tx-delete-object-stream])
-         (get-in api [:impl :tx-delete-object]))
+     (fn [db object-eid]
+       ((or (when *qualified-authorization-enabled?*
+              (get-in api [:impl :object-relationship-retractions]))
+            (get-in api [:impl :tx-delete-object-stream])
+            (get-in api [:impl :tx-delete-object])) db object-eid))
      :prepare-relationship-tx
      (or (:prepare-relationship-tx api)
          (fn [_db tx-data]
@@ -3477,9 +3480,12 @@
   `raw-ops` may be a lazy native scan. At most limit+1 raw operations are
   realized, and preparation is binary-searched because schema/relation guards
   can make the final transaction larger than its raw slice."
-  [writer db raw-ops]
-  (let [limit (backend-writer/max-transaction-size writer)
-        prepare (backend-writer/operation writer :prepare-relationship-tx)
+  [writer db raw-ops qualified-writer]
+  (let [raw-ops (if qualified-writer (filter qualified-writes/relationship-retraction? raw-ops) raw-ops)
+        limit (backend-writer/max-transaction-size writer)
+        prepare (if qualified-writer
+                  #(qualified-writes/plan-retraction-batch qualified-writer %1 %2)
+                  (backend-writer/operation writer :prepare-relationship-tx))
         sampled (if (counted? raw-ops)
                   (let [raw-count (count raw-ops)]
                     (vec (if (<= raw-count limit)
@@ -3516,7 +3522,10 @@
   "Removes every relationship touching object in final-transaction-bounded
   batches. Each contention retry reacquires and replans from a fresh basis."
   [writer object]
-  (let [{:keys [api]} (backend-writer/state writer)
+  (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+        native-writer (when *qualified-authorization-enabled?*
+                        (or (some-> qualified-writer deref)
+                            (typed-capability-error! :qualified-relationship-publication (:backend-id api))))
         options (current-writer-options writer)
         plan-delete
         (backend-writer/operation writer :plan-delete-object)
@@ -3547,7 +3556,7 @@
                                       fitted
                                       (largest-fitting-prepared-batch
                                        writer db
-                                       (plan-delete db object-eid))]
+                                       (plan-delete db object-eid) native-writer)]
                                   (if-not fitted
                                     {:done? true
                                      :response

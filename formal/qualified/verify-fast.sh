@@ -93,6 +93,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.datascript.qualified-cache-trace-test :reload)
      (require 'eacl.client.range-reuse-test :reload)
      (require 'eacl.relationships.mutations-test :reload)
+     (require 'eacl.caveats.deletion-contract :reload)
      (require 'eacl.datascript.qualified-write-test :reload)
      (require 'eacl.caveats.schema-admission-test :reload)
      (require 'eacl.schema.relation-allowance-test :reload)

@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 598592,
+  "assertions": 598713,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -26,7 +26,7 @@
     "modules/eacl-datascript/test/eacl/operator/recursive_test.cljc": "ba7994d6834206a02622cecae7105fc889ba10b29b0d04469a9ac0e880f9a0c6",
     "formal/qualified/stable_route_bridge.clj": "79057574de4fa3ee2dc0aba63166037a3648df51f9060b2d3bdb597ee7b85577",
     "modules/eacl/test/eacl/engine/stable_route_evidence_test.cljc": "4e4a1990f3ff461539309919b14fc9bae8df9def37a61fc91085d96ed07c4d84",
-    "formal/qualified/production_mutations.clj": "6a5e0249306076efcd87329761d18f23eeb1a04d0d55dd7905a72bc4f4bd4326",
+    "formal/qualified/production_mutations.clj": "3db16fbfad9a68d6b2fea8335b897dacd07821e7cda63921d399b5973dbabd24",
     "modules/eacl-datascript/test/eacl/engine/stable_route_native_evidence_test.cljc": "bbe7fb3ce769a0abf3c1bc3b471780fad44aa6ec262beb35335da8dfe29d108d",
     "modules/eacl/test/eacl/engine/scan_cache_test.cljc": "59afc0cfe74af16b17801d18b513b86efd4634949f187a2fd58a656333d18925",
     "modules/eacl-datascript/test/eacl/datascript/evaluation_clock_test.cljc": "6a53273d259a534c0feab05d8c5818c7da8685ec7757cfd436804c859cde3435",
@@ -59,9 +59,9 @@
     "modules/eacl/test/eacl/relationships/mutations_test.cljc": "50ee4f3e2094924e51bc269db80fc1e284d8c97519640f8e329a1e7dc350a903",
     "modules/eacl/test/eacl/caveats/public_write_contract.cljc": "06d9a47a14fcd5f9f2cfabd8cbfdedde64a6de56f84d448098f3d96d1b875892",
     "modules/eacl/test/eacl/caveats/publication_batch_contract.cljc": "b13b03269d2e57853fe23d8540ab352378ee0c7cea977cd96624b0d624599a1f",
-    "modules/eacl-datascript/test/eacl/datascript/qualified_write_test.cljc": "c45982d9ff901c0f27c87cde9777898824b8cb39563c04d12c52bb6fae6935e9",
-    "modules/eacl-datomic/test/eacl/datomic/qualified_write_test.clj": "d51714d8d57a2a7f1d5ef7953fb56a30c2858177a32a4d11b6facd3977e8ed18",
-    "modules/eacl-datahike/test/eacl/datahike/qualified_write_test.clj": "73ed005352589c2915199adf508ed3466ba8cad0993cd6249922523020e8a0c3",
+    "modules/eacl-datascript/test/eacl/datascript/qualified_write_test.cljc": "2d66f3c8f1adc8028c007424def1ed972800d98c0ed7e1cdef4918bc09beea86",
+    "modules/eacl-datomic/test/eacl/datomic/qualified_write_test.clj": "0a2e6f643e12cc265d338296e1337b196a57f74f70fbf642ea274e1f14847362",
+    "modules/eacl-datahike/test/eacl/datahike/qualified_write_test.clj": "380d450b45c3d1408256ac146cf0c564095419ec70d27cd425492ab5dd9602e5",
     "modules/eacl/src/eacl/schema/qualification_admission.cljc": "f525a0d7faed752753c254df2de19548ff5c9b5dd55326c97a1db7af5963a34d",
     "modules/eacl/test/eacl/caveats/schema_admission_test.cljc": "a9ed3898800f418fd583c45ae6776285aa47ec4f8b3362360b0c6d23def04e83",
     "modules/eacl/test/eacl/caveats/schema_allowance_contract.cljc": "d20a2026260dbc9ec833fd106baa5e2342aadf8caee6ef148f50d732110117c4",
@@ -80,6 +80,8 @@
     "modules/eacl-datascript/test/eacl/datascript/qualified_cursor_test.cljc": "bbf6aa6a013b1b51ba1e333a8efdc274e3ab0da77c34aaef2f5d831bb3273285",
     "modules/eacl/test/eacl/client/range_reuse_test.cljc": "9d4467fba8e2ce79ce71368f4d0c559a4c32860861d511c27436d58ee647bde7",
     "modules/eacl-datascript/test/eacl/datascript/qualified_cache_trace_test.cljc": "a9ac9815bf5ad7780a7c67857d484198a7c5d168eb449d23b652e29b9e2006e8",
-    "modules/eacl/test/eacl/caveats/cache_trace_contract.cljc": "0b2aa2b41a4cbbd1756a80f9b4e965d3a51d3909cf08f7af5b8cd83248593a0d"
+    "modules/eacl/test/eacl/caveats/cache_trace_contract.cljc": "0b2aa2b41a4cbbd1756a80f9b4e965d3a51d3909cf08f7af5b8cd83248593a0d",
+    "modules/eacl/test/eacl/caveats/deletion_contract.cljc": "7d1d262a531fcb35351f7d0031816b25142c4991ba1c63aeee58c3faa21447e5",
+    "modules/eacl/src/eacl/relationships/staged.cljc": "b7a77fd8e17044e09e3980cb3df8e0a85d787da8b08053fa8c7c1f5ca7013da2"
   }
 }

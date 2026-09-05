@@ -664,6 +664,13 @@
   [db object-eid]
   (object-relationship-retractions db object-eid))
 
+(defn selected-object-relationship-retractions
+  "Materializes exact halves on an owned selected snapshot. Qualified deletion
+   fits whole pairs and qualifier cleanup into bounded transactions, each with
+   a native basis assertion; no lazy native rows escape the selected read."
+  [db object-id]
+  (object-relationship-retractions db (internal-id db object-id)))
+
 (defn tx-delete-object
   "Returns a commit-time transaction function removing both physical halves
   of every relationship touching `object-id`. The object entity itself is

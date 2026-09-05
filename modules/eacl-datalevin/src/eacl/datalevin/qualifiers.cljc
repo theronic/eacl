@@ -68,6 +68,7 @@
     (staged/native-writer
      (merge (planner-api)
             {:snapshot #(d/db conn)
+             :with-selected-snapshot db/with-db
              :with-snapshot (fn [f]
                               (let [snapshot (d/open-read-snapshot conn)]
                                 (try (d/with-read-snapshot snapshot f)

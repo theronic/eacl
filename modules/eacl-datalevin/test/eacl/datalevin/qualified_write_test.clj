@@ -6,6 +6,7 @@
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.deletion-contract :as deletion]
             [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.datalevin.core :as api]
@@ -155,4 +156,17 @@
     (try
       (cache-trace/check! {:client (make-client) :writer #(qualifiers/writer conn) :now now
                            :rotate-client! (fn [_ lifecycle] (spit lifecycle-file lifecycle) (make-client))})
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest qualified-object-deletion-is-atomic-and-bounded
+  (let [dir (util/tmp-dir (str "qualified-deletion-" (random-uuid)))
+        conn (schema/create-conn dir {}) watermark (atom 0)]
+    (try
+      (deletion/check! {:client (api/make-client conn {:clock (constantly 200)
+                                                       :caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                                       :source-lifecycle "qualified-deletion"
+                                                       :security-key "01234567890123456789012345678901"
+                                                       :revision-watermark watermark
+                                                       :advance-revision-watermark! #(swap! watermark max %)})
+                        :writer #(qualifiers/writer conn)})
       (finally (d/close conn) (util/delete-files dir)))))
