@@ -536,6 +536,7 @@
         historical-basis? (::historical-basis? runtime)]
     (assoc runtime
            ::request-context-state context-state
+           :qualification (:qualification context-state)
            ;; Nested operations (notably one scalar decision inside a batch)
            ;; refine the selected request's contract without selecting a new
            ;; basis. Preserve that operation-local semantic demand instead of
@@ -875,6 +876,7 @@
               resource-type permission relationship-dependency)
              :snapshot-semantic-identity page-semantic-identity
              :cursor-dependency-context continuation-context
+             :cursor-qualification-certificate (:qualification-certificate prepared)
              :accepted-cursor-frame accepted-cursor-frame
              :transport-page-input-expiring?
              (:expiring-cursor-input? prepared)
@@ -909,7 +911,10 @@
                    (assoc (qualification-options (:opts page))
                           :basis (:snapshot-semantic-identity page)))
                   engine/*qualification*)]
-        (f page))
+        (when (and engine/*qualification* (get-in page [:opts :cursor-qualification-certificate]))
+          (qualification/observe-interval! engine/*qualification*
+                                           (select-keys (get-in page [:opts :cursor-qualification-certificate]) [:start-ms :valid-until-ms :complete?])))
+        (f (assoc-in page [:opts :qualification] engine/*qualification*)))
       (finally
         (when-let [selected (:selected-snapshot page)]
           (source/release! selected))))))
@@ -1033,9 +1038,17 @@
                           (:decision-kernel opts)]
                   (thunk))]
             (execution/check! contract :semantic-evaluation)
-            (if (and engine/*qualification* (= :can? operation))
-              (temporal/point-answer (:time engine/*qualification*) value)
-              value)))
+            (cond
+              (nil? engine/*qualification*) value
+              (= :can? operation) (temporal/point-answer (:time engine/*qualification*) value)
+              (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation)
+              (assoc value :qualification-certificate
+                     (if (and (= :read-relationships operation)
+                              (nil? (get-in query [:public :authorization]))
+                              (not= :expiry-active (get-in query [:public :relationship-state])))
+                       (temporal/interval (:time engine/*qualification*) nil true)
+                       (qualification/certificate engine/*qualification*)))
+              :else value)))
         evaluate #(evaluate-with compute)
         cacheable?
         (and (:basis-cache-store opts)
@@ -1142,6 +1155,8 @@
                  frame (:relation-ids @dependencies))))
             semantic-key
             (cond-> (completed-answer-semantic-key opts operation query)
+              (and engine/*qualification* (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation))
+              (assoc :qualification-certificate-format temporal/collection-format)
               (and engine/*qualification* (= :can? operation))
               ;; Keep exact source/basis, context and evaluator while removing
               ;; time from this answer key. Its value now certifies time reuse.
@@ -1185,6 +1200,12 @@
               evaluate
               (fn []
                 (let [hit (range-reuse/lookup! range-tier walk-key window)
+                      hit (if engine/*qualification*
+                            (when (and (temporal/interval-valid? (:qualification-certificate hit))
+                                       (temporal/reusable? (:qualification-certificate hit) (:time engine/*qualification*) true))
+                              (qualification/observe-interval! engine/*qualification* (:qualification-certificate hit))
+                              hit)
+                            hit)
                       compute-and-publish
                       (fn []
                         (let [page (evaluate)]
@@ -1254,6 +1275,8 @@
                     #(proof-frame/descriptor @complete-proof))}
                  semantic-key evaluate))]
           (execution/check! contract :cache-publication)
+          (when (and engine/*qualification* (get-in answer [:value :qualification-certificate]))
+            (qualification/observe-interval! engine/*qualification* (get-in answer [:value :qualification-certificate])))
           (cond
             @derived? (assoc answer :cached? true :cache-tier :range)
             @composed? (assoc answer :cache-tier :range-composition)
@@ -1262,7 +1285,7 @@
 (defn- with-cache-info
   [value {:keys [cached? cache-basis]}]
   (if (map? value)
-    (assoc value :cached? cached? :cache-basis cache-basis)
+    (assoc (dissoc value :qualification-certificate) :cached? cached? :cache-basis cache-basis)
     value))
 
 (def ^:private rendered-page-render-abi
@@ -1272,14 +1295,15 @@
 
 (defn- rendered-page-semantic-key
   [opts operation normalized-public-query consistency-key]
-  (completed-answer-semantic-key
-   opts operation
-   {:public normalized-public-query
-    :consistency consistency-key
-    :cursor-policy
-    (or (:cursor-cache-policy-identity opts)
-        (cursor/cache-policy-identity opts))
-    :render-abi rendered-page-render-abi}))
+  (cond-> (completed-answer-semantic-key
+           opts operation
+           {:public normalized-public-query
+            :consistency consistency-key
+            :cursor-policy
+            (or (:cursor-cache-policy-identity opts)
+                (cursor/cache-policy-identity opts))
+            :render-abi rendered-page-render-abi})
+    engine/*qualification* (assoc :temporal-mode (relay/temporal-mode opts))))
 
 (defn- rendered-page-cache-context
   [adapter opts operation public-query]

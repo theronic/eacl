@@ -22,6 +22,7 @@
             [eacl.engine.stable-reducer :as reducer]
             [eacl.engine.stable-route :as route]
             [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.temporal :as temporal]
             [eacl.authorization.evidence :as evidence]
             [eacl.execution :as execution]
             [eacl.secure-format :as secure-format]))
@@ -330,7 +331,9 @@
     (if-not (:qualification options)
       checkpoint
       (let [annotations (:pending-evidence checkpoint)]
-        (when (and (map? annotations)
+        (when (and (temporal/interval-valid? (:qualification-certificate checkpoint))
+                   (temporal/reusable? (:qualification-certificate checkpoint) (:time (:qualification options)) true)
+                   (map? annotations)
                    (= (set (:pending checkpoint)) (set (keys annotations)))
                    (every? (fn [value]
                              (try
@@ -349,6 +352,8 @@
   [options store key anchor-eid ordinal boundary-eid]
   (if-let [hit (valid-qualified-checkpoint options (checkpoint-hit store key ordinal boundary-eid))]
     (do
+      (when-let [request (:qualification options)]
+        (qualification/observe-interval! request (:qualification-certificate hit)))
       (when-let [stats reducer/*observer-stats*]
         (swap! stats update :continuation-hits (fnil inc 0)))
       (cond-> {:state (:state hit) :pending (:pending hit)}
@@ -476,7 +481,8 @@
                     :pending (vec lookahead)
                     :state end-state}
              (:qualification options)
-             (assoc :pending-evidence (into {} (map #(vector % (get result-evidence % true))) lookahead)))))
+             (assoc :pending-evidence (into {} (map #(vector % (get result-evidence % true))) lookahead)
+                    :qualification-certificate (qualification/certificate (:qualification options))))))
         (with-result-evidence options
           {:eids page-ids
            :start-ordinal ordinal

@@ -46,11 +46,11 @@
 
 ## 7. Certify qualified pagination scope
 
-- [ ] 7.1 Extend cursor envelopes/scopes with pinned/live temporal mode, original evaluation time, complete exclusive reuse interval, canonical Caveat context identity, evaluator/profile, result policy, and qualified storage/order ABI; verify tampering and mismatches fail before traversal.
-- [ ] 7.2 Make explicit-snapshot cursors preserve their pinned basis/time and make client-targeted live cursors capture fresh time on resume; verify live reuse succeeds only inside the certified interval and equality with its deadline returns a typed restart requirement.
-- [ ] 7.3 Cover examined emitted/skipped conditional/expired/subtracting evidence, frontier, lookahead, and residual state in continuation certificates; verify an expired ban before the boundary cannot cause silent omission.
-- [ ] 7.4 Refuse cross-time continuation when a complete certificate is unavailable without scanning the remaining graph solely to create one; verify bounded-work outcomes remain honest.
-- [ ] 7.5 Document and test the explicit “start a new lookup for now/new context” workflow; verify old cursor use never silently restarts or rebases.
+- [x] 7.1 Extend cursor envelopes/scopes with pinned/live temporal mode, original evaluation time, complete exclusive reuse interval, canonical Caveat context identity, evaluator/profile, result policy, and qualified storage/order ABI; verify tampering and mismatches fail before traversal.
+- [x] 7.2 Make explicit-snapshot cursors preserve their pinned basis/time and make client-targeted live cursors capture fresh time on resume; verify live reuse succeeds only inside the certified interval and equality with its deadline returns a typed restart requirement.
+- [x] 7.3 Cover examined emitted/skipped conditional/expired/subtracting evidence, frontier, lookahead, and residual state in continuation certificates; verify an expired ban before the boundary cannot cause silent omission.
+- [x] 7.4 Refuse cross-time continuation when a complete certificate is unavailable without scanning the remaining graph solely to create one; verify bounded-work outcomes remain honest.
+- [x] 7.5 Document and test the explicit “start a new lookup for now/new context” workflow; verify old cursor use never silently restarts or rebases.
 
 ## 8. Complete write, delete, integrity, and proof integration
 

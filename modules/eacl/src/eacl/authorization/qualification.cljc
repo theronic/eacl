@@ -5,6 +5,7 @@
             [eacl.authorization.data :as data]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualifier-cache :as qualifier-cache]
+            [eacl.authorization.temporal :as temporal]
             [eacl.backend.v8 :as backend]
             [eacl.cache.standard-lru :as lru]
             [eacl.caveats.definition :as definition]
@@ -16,7 +17,7 @@
             [eacl.request.counters :as counters]))
 
 (def maximum-request-entries 100000)
-(defrecord Qualification [time context evaluator entity version basis cache memos lookup prepared-context populate-cache?])
+(defrecord Qualification [time context evaluator entity version basis cache memos lookup prepared-context populate-cache? temporal-state])
 
 (defn request
   "Captures trusted time and exact source/basis identity supplied by request
@@ -37,7 +38,8 @@
                    prepared-context
                    (context/prepare (or context {})))]
     (->Qualification time (context/value prepared) evaluator entity version basis cache
-                     (delay (volatile! {})) lookup prepared (not (false? (:populate-cache? options))))))
+                     (delay (volatile! {})) lookup prepared (not (false? (:populate-cache? options)))
+                     (delay (volatile! nil)))))
 
 (defn require-publication! [adapter]
   ;; Check before any answer/cache route, including empty or ordinary edges.
@@ -144,18 +146,51 @@
           (qualifier-cache/publish! cache exact content result)
           result)))))
 
+(defn observe-interval!
+  "Imports a certificate for already accepted retained work. Ordinary timeless
+   evidence leaves the sparse request ledger unrealized."
+  [request interval]
+  (when request
+    (when-not (and (temporal/interval-valid? interval)
+                   (temporal/reusable? interval (:time request) true))
+      (evidence/error! :retained-temporal-certificate))
+    (when (or (:valid-until-ms interval) (not (:complete? interval)))
+      (let [state (force (:temporal-state request))
+            previous @state
+            end (evidence/meet (:valid-until-ms previous) (:valid-until-ms interval))
+            complete? (and (:complete? interval) (get previous :complete? true))]
+        (when (or (not= end (:valid-until-ms previous))
+                  (not= complete? (get previous :complete? true)))
+          (vreset! state {:valid-until-ms end :complete? complete?})))))
+  interval)
+
+(defn observe-evidence! [request value]
+  (when request
+    (observe-interval! request (temporal/interval (:time request) (evidence/valid-until value)
+                                                  (and (not (evidence/fault? value)) (evidence/complete? value)))))
+  value)
+
+(defn certificate [request]
+  (let [state (when (realized? (:temporal-state request)) @(force (:temporal-state request)))]
+    (temporal/interval (:time request) (:valid-until-ms state) (get state :complete? true))))
+
 (defn- decoded [request relation-id qid]
   (memo! request [:qualifier qid]
-         #(let [cache (:cache request)]
-            (if (qualifier-cache/cache? cache)
-              (cached-decoded request relation-id qid cache)
-              (let [key [(:basis request) qid qualifier/format-version]
-                    cached (when cache (lru/lookup! cache key))]
-                (if (:found? cached)
-                  (:value cached)
-                  (let [result (decode-input (qualifier-input request qid))]
-                    (when (and cache (:populate-cache? request)) (lru/put-if-absent! cache key result))
-                    result)))))))
+         #(let [cache (:cache request)
+                result
+                (if (qualifier-cache/cache? cache)
+                  (cached-decoded request relation-id qid cache)
+                  (let [key [(:basis request) qid qualifier/format-version]
+                        cached (when cache (lru/lookup! cache key))]
+                    (if (:found? cached)
+                      (:value cached)
+                      (let [result (decode-input (qualifier-input request qid))]
+                        (when (and cache (:populate-cache? request)) (lru/put-if-absent! cache key result))
+                        result))))
+                end (get-in result [:qualifier :valid-until-ms])]
+            (when (and end (< (:time request) end))
+              (observe-interval! request (temporal/interval (:time request) end true)))
+            result)))
 
 (defn inspect
   "Returns decoded public qualifier metadata without running a Caveat program.

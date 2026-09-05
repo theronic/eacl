@@ -302,6 +302,32 @@ recompute its original answer but cannot displace a newer interval under the
 same cache key. Token lifetimes and cursor continuation remain separate checks.
 
 Cross-basis qualified answer reuse remains disabled pending its complete writer
-and dependency proofs. Lookup, count, range, and checkpoint caches retain their
-existing exact-time scope until their temporal continuation certificates are
-integrated. The release gate remains disabled throughout these steps.
+and dependency proofs. Lookup, count, range, and checkpoint caches keep their conservative
+exact-time scope. Their retained certificates support the live continuation
+checks described below. The release gate remains disabled throughout these steps.
+
+## Phase 3 qualified cursors
+
+A lookup on a client uses live time. Each resumed request captures a fresh trusted
+sample and checks it against the cursor's complete exclusive validity interval.
+At the deadline, or after it, EACL returns `:eacl.pagination/restart-required`.
+Start a new lookup without `:after` or `:before` to obtain the current view. Keep
+the desired filters and context; the new result sequence can include an object
+that an expiring ban previously hid before the old boundary. EACL never silently
+restarts or applies that old boundary to the changed temporal view.
+
+A lookup on an explicit `eacl/snapshot` uses its pinned basis and captured time.
+Its cursors continue that historical view even after wall-clock expiry. A pinned
+snapshot can therefore preserve a past grant; use client-targeted lookups for
+current access-control decisions. Live and pinned cursor modes are distinct.
+Changing the complete Caveat context, evaluator identity, result policy, or mode
+requires a new lookup. Cursor authentication and token TTL apply independently.
+
+Certificates cover examined candidates, including skipped rows, conditional
+results and subtracting evidence, together with retained frontier, lookahead and
+checkpoint state. Cache and range reuse preserve those certificates. A missing
+or incomplete retained proof allows continuation only at its original evaluation
+time; a later live request returns `:temporal-certificate-incomplete` as the
+restart reason. EACL does not scan an unseen suffix merely to manufacture a proof.
+Stored physical Relationship inspection is timeless; expiry-active inspection
+and authorization-filtered inspection retain their observed expiry deadlines.

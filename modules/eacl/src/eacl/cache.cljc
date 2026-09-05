@@ -1043,23 +1043,31 @@
   snapshot restore. Exact resident lookup is ordinary membership by a complete
   semantic key, so an already accepted value is not validated again per hit."
   [operation semantic-key value]
-  (and (map? semantic-key)
-       (= operation (:operation semantic-key))
-       (case operation
-         :can? (cond
-                 (= temporal/point-format (:temporal-answer-format semantic-key))
-                 (and (:qualification semantic-key) (temporal/point-answer-valid? value))
-                 (:qualification semantic-key) (authorization-result/cache-value? value)
-                 :else (boolean? value))
-         :read-relationships (and (page-answer? value)
-                                  (or (nil? (:qualification semantic-key))
-                                      (every? rendered-relationship-shape? (:data value))))
-         :lookup-resources (lookup-page-answer? semantic-key value)
-         :lookup-subjects (lookup-page-answer? semantic-key value)
-         :count-resources (count-answer? semantic-key value)
-         :count-subjects (count-answer? semantic-key value)
-         :expand-permission-tree (permission-tree-answer? value)
-         false)))
+  (let [qualified-result? (and (:qualification semantic-key)
+                               (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation))
+        certificate (:qualification-certificate value)
+        value (if qualified-result? (dissoc value :qualification-certificate) value)]
+    (and (or (not qualified-result?)
+             (and (= temporal/collection-format (:qualification-certificate-format semantic-key))
+                  (temporal/interval-valid? certificate)
+                  (temporal/reusable? certificate (nth (:qualification semantic-key) 2) true)))
+         (map? semantic-key)
+         (= operation (:operation semantic-key))
+         (case operation
+           :can? (cond
+                   (= temporal/point-format (:temporal-answer-format semantic-key))
+                   (and (:qualification semantic-key) (temporal/point-answer-valid? value))
+                   (:qualification semantic-key) (authorization-result/cache-value? value)
+                   :else (boolean? value))
+           :read-relationships (and (page-answer? value)
+                                    (or (nil? (:qualification semantic-key))
+                                        (every? rendered-relationship-shape? (:data value))))
+           :lookup-resources (lookup-page-answer? semantic-key value)
+           :lookup-subjects (lookup-page-answer? semantic-key value)
+           :count-resources (count-answer? semantic-key value)
+           :count-subjects (count-answer? semantic-key value)
+           :expand-permission-tree (permission-tree-answer? value)
+           false))))
 
 (defn- answer-snapshot-entry-valid?
   [key entry]

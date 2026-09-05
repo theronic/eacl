@@ -67,3 +67,37 @@
     (is (:cached? (resolve! store 99 unknown {})))
     (is (false? (:cached? (resolve! store 100 unknown {}))))
     (is (false? (:cached? (resolve! store 101 unknown {}))))))
+
+(deftest cursor-certificates-are-closed-and-never-extend-prior-deadlines
+  (doseq [mode [:live :pinned] start [98 99] end [100 nil] complete? [true false]]
+    (let [certificate (temporal/cursor-certificate mode start nil (temporal/interval start end complete?))]
+      (is (temporal/cursor-certificate-valid? certificate))
+      (doseq [time [97 98 99 100 101]]
+        (is (= (if (= :pinned mode) (= time start)
+                   (and (<= start time) (or (nil? end) (< time end)) (or complete? (= time start))))
+               (temporal/cursor-time-valid? certificate time))))))
+  (let [prior (temporal/cursor-certificate :live 98 nil (temporal/interval 98 100 true))
+        resumed (temporal/cursor-certificate :live 99 prior (temporal/interval 99 nil true))]
+    (is (= {:mode :live :original-time-ms 98 :start-ms 99 :valid-until-ms 100 :complete? true} resumed))
+    (doseq [bad [(assoc resumed :mode :unknown) (assoc resumed :mode :pinned)
+                 (assoc resumed :start-ms 100) (assoc resumed :original-time-ms 100)
+                 (assoc resumed :complete? nil) (assoc resumed :extra true)
+                 (dissoc resumed :valid-until-ms) (dissoc resumed :complete?)]]
+      (is (false? (temporal/cursor-certificate-valid? bad))))))
+
+(deftest qualified-collection-ingress-requires-a-certificate-for-its-exact-time
+  (let [key {:operation :count-resources :query {:public {}}
+             :qualification [1 :basis 99 :context :evaluator]
+             :qualification-certificate-format temporal/collection-format}
+        answer {:count 2 :limit -1 :qualification-certificate (temporal/interval 99 100 true)}
+        valid? #(cache/completed-answer-value-valid? :count-resources key %)]
+    (is (valid? answer))
+    (is (valid? (assoc-in answer [:qualification-certificate :complete?] false)))
+    (doseq [bad [(dissoc answer :qualification-certificate)
+                 (assoc-in answer [:qualification-certificate :start-ms] 100)
+                 (assoc-in answer [:qualification-certificate :valid-until-ms] 99)
+                 (assoc-in answer [:qualification-certificate :extra] true)
+                 (assoc answer :extra true)]]
+      (is (false? (valid? bad))))
+    (is (false? (cache/completed-answer-value-valid? :count-resources
+                                                     (dissoc key :qualification-certificate-format) answer)))))

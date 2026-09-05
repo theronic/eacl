@@ -111,7 +111,10 @@
     (is (empty? (:result-evidence cached)))))
 
 (def corruptions
-  [#(dissoc % :pending-evidence)
+  [#(dissoc % :qualification-certificate)
+   #(assoc % :qualification-certificate {:start-ms 99 :valid-until-ms 99 :complete? true})
+   #(assoc % :qualification-certificate {:start-ms 98 :valid-until-ms nil :complete? false})
+   #(dissoc % :pending-evidence)
    #(assoc % :pending-evidence {})
    #(assoc % :pending-evidence {300 false})
    #(assoc % :pending-evidence {300 (evidence/fault :test/failure :corrupt)})

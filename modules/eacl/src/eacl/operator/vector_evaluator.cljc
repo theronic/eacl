@@ -439,7 +439,7 @@
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
-                      :decision (if qualification (evidence/decode (:value resolved)) (:value resolved))
+                      :decision (if qualification (qualification/observe-evidence! qualification (evidence/decode (:value resolved))) (:value resolved))
                       :cached? true})
                    {:candidate candidate :key key :cached? false})))
              candidates)

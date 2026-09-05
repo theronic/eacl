@@ -38,6 +38,9 @@
             [eacl.datascript.caveat-context-test :as public-context-test]
             [eacl.datascript.qualified-check-test :as public-point-test]
             [eacl.datascript.qualified-lookup-test :as public-lookup-test]
+            [eacl.datascript.qualified-cursor-test :as public-cursor-test]
+            [eacl.client.range-reuse-test :as range-test]
+            [eacl.client.range-reuse :as range-reuse]
             [eacl.datascript.qualified-write-test :as public-write-test]
             [eacl.datascript.qualified-schema-test :as public-schema-test]
             [eacl.datascript.qualified-inspection-test :as inspection-test]
@@ -75,7 +78,10 @@
     (count @events)))
 
 (defn mutation-cases []
-  (let [externalize-relationships relay/externalize-relationship-page
+  (let [cursor-certificate temporal/cursor-certificate
+        certificate qualification/certificate
+        retain-certificate @#'range-reuse/retain-certificate
+        externalize-relationships relay/externalize-relationship-page
         inspection-window inspection/window-options
         plan-schema datascript-schema/plan-schema-replacement
         qualify qualification/qualify identity qualification/exact-reuse-identity
@@ -116,7 +122,25 @@
         plan-entry @#'staged/plan-entry
         plan-batch staged/plan-batch
         write-relationship! core/write-relationship!]
-    {:temporal-point-resident-lookup-ignores-interval
+    {:qualified-cursor-loses-skipped-ban-deadline
+     {:gate #'public-cursor-test/an-expiring-ban-before-the-boundary-requires-a-new-lookup
+      :redefs {#'qualification/certificate (fn [request] (assoc (certificate request) :valid-until-ms nil))}}
+     :qualified-cursor-does-not-enforce-live-time
+     {:gate #'public-cursor-test/live-cursors-stop-at-expiry-and-pinned-cursors-retain-their-time
+      :redefs {#'temporal/cursor-time-valid? (constantly true)}}
+     :qualified-cursor-incomplete-certificate-becomes-complete
+     {:gate #'public-cursor-test/incomplete-certificates-allow-only-the-original-time-without-proof-building
+      :redefs {#'temporal/cursor-certificate (fn [mode time prior current] (assoc (cursor-certificate mode time prior current) :complete? true))}}
+     :qualified-cursor-loses-context-scope
+     {:gate #'public-cursor-test/context-and-result-policy-mismatches-fail-before-qualification
+      :redefs {#'relay/qualification-scope (constantly nil)}}
+     :qualified-range-drops-retained-certificate
+     {:gate #'range-test/qualified-range-slices-and-composition-preserve-the-entire-retained-certificate
+      :redefs {#'range-reuse/retain-certificate (fn [value source] (dissoc (retain-certificate value source) :qualification-certificate))}}
+     :qualified-cursor-accepts-malformed-certificate
+     {:gate #'temporal-test/cursor-certificates-are-closed-and-never-extend-prior-deadlines
+      :redefs {#'temporal/cursor-certificate-valid? (constantly true)}}
+     :temporal-point-resident-lookup-ignores-interval
      {:gate #'temporal-test/resident-expiration-is-a-miss-and-later-publication-replaces-the-interval
       :redefs {#'cache/lookup-answer (fn [store key _] (lookup-answer store key nil))}}
      :temporal-point-incomplete-certificate-becomes-complete
@@ -489,7 +513,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 93 (count cases)))
+    (is (= 99 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

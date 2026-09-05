@@ -43,6 +43,7 @@
             [eacl.datascript.caveat-context-test]
             [eacl.datascript.qualified-check-test]
             [eacl.datascript.qualified-lookup-test]
+            [eacl.datascript.qualified-cursor-test]
             [eacl.datascript.qualified-write-test]
             [eacl.caveats.schema-admission-test]
             [eacl.schema.relation-allowance-test]
@@ -149,6 +150,7 @@
                'eacl.datascript.caveat-context-test
                'eacl.datascript.qualified-check-test
                'eacl.datascript.qualified-lookup-test
+               'eacl.datascript.qualified-cursor-test
                'eacl.datascript.qualified-write-test
                'eacl.caveats.schema-admission-test
                'eacl.schema.relation-allowance-test

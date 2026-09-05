@@ -1190,7 +1190,9 @@
                                       (qualification/exact-reuse-identity qualification)]
                                      scope-identity))]
     (if checkpoint
-      (replay-checkpoint checkpoint identity root-questions)
+      (let [result (replay-checkpoint checkpoint identity root-questions)]
+        (when qualification (doseq [value (:decisions result)] (qualification/observe-evidence! qualification value)))
+        result)
       (if (empty? candidates)
         {:decisions [] :checkpoint nil :counters {} :replayed? false}
         (let [counters
@@ -1375,7 +1377,7 @@
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
-                      :decision (if qualification (evidence/decode (:value resolved)) (:value resolved))
+                      :decision (if qualification (qualification/observe-evidence! qualification (evidence/decode (:value resolved))) (:value resolved))
                       :cached? true})
                    {:candidate candidate :key key :cached? false})))
              candidates)

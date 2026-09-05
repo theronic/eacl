@@ -126,5 +126,15 @@ adds 432 comparisons; portable acceptance/retention tests add 886 assertions.
 Native checks cover ban expiry, a permanent decisive witness, unchanged context
 scope and pinned evaluation. A cache publication race test verifies conditional
 replacement cannot overwrite a concurrent winner. The combined qualified gate
-has 585,532 assertions and 93 detected production mutations. Public page/cursor
-intervals and managed qualified result proof integration remain pending.
+has 586,029 assertions and 99 detected production mutations. Cross-basis
+managed qualified result proof integration remains pending.
+
+Public qualified cursors now refine the pinned/live time model through the
+production temporal bridge. The request ledger observes examined expiry bounds
+and imports accepted retained proofs. Internal collection values, range
+segments and stable checkpoints preserve their certificates; six additional
+mutation controls cover skipped-ban deadlines, live time acceptance, incomplete
+proof, context/evaluator scope, range retention and closed cursor envelopes.
+Public tests include forward/backward continuation, both lookup directions and
+evaluation modes, pinned historical time, active/stored inspection and typed
+restart without extra qualification work.

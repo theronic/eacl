@@ -323,5 +323,33 @@ atomic storage operations; a concurrent publisher changes the expected identity
 and wins. Older pinned computations do not replace newer intervals. This keeps
 expired-but-resident entries harmless and allows an expired ban to grant on a
 later request without a write. Qualified managed answers remain disabled, and
-page/count/range/checkpoint reuse remains partitioned by exact time pending the
-remaining cache and continuation work.
+page/count/range/checkpoint reuse remains partitioned by exact time. Public
+continuations use the certificate rules described below.
+
+### Implemented public continuation certificates
+
+Qualified cursor scopes bind canonical whole-context and evaluator/profile
+identity, pinned/live mode, result policy and adapter ABI. An authenticated
+closed temporal envelope carries original and current interval start times,
+exclusive deadline and completeness. It is checked before traversal and exact
+basis recovery cannot rebase the captured live time. Ordinary cursor scope and
+encoding stay unchanged; qualified tokens without the certificate are rejected.
+
+A sparse request ledger records active qualifier deadlines during existing
+bounded fetch/evaluation work. Expired qualifiers are stable going forward.
+Accepted denotation evidence and complete recursive replay decisions import
+their witness certificates. Stable first-discovery checkpoints store and validate
+a certificate for their whole retained state before importing it. Page/count
+answers use a versioned certificate-bearing cache shape, and range slices,
+compositions and continuation-only hits retain the combined certificate. The
+existing exact-time cache scope remains conservative while live cursor resumption
+can cross time within the certified interval. Incoming prefix certificates are
+intersected with each resumed page and never extended. No extra graph traversal
+or all-qualifier pass constructs these proofs.
+
+Stored physical inspection has an unbounded temporal interval. Other producers
+without a complete proof explicitly emit an incomplete certificate; future-time
+resume returns a typed restart rather than silently restarting. Public results
+strip internal certificate fields. Tests cover both directions, forward/backward
+pages, demand/complete evaluation, expired bans before a boundary, changed
+context/evaluator/policy/mode, incomplete proof, range and checkpoint retention.

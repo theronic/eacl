@@ -266,3 +266,24 @@
                     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
                       (:type (ex-data error))))))
         (is (= {3 1} @reads) "memoized work cannot bypass an expired or cancelled request")))))
+
+(deftest request-certificates-include-inspected-expiry-and-retained-evidence
+  (let [request (request)]
+    (is (= {:start-ms 99 :valid-until-ms nil :complete? true} (q/certificate request)))
+    (is (true? (q/qualify request 1 10)))
+    (is (not (realized? (:temporal-state request))))
+    (q/inspect request 1 5)
+    (is (= {:start-ms 99 :valid-until-ms 100 :complete? true} (q/certificate request)))
+    (q/observe-evidence! request (evidence/with-certificate false 101 true))
+    (is (= 100 (:valid-until-ms (q/certificate request))))
+    (q/observe-evidence! request (evidence/with-certificate true nil false))
+    (is (false? (:complete? (q/certificate request)))))
+  (let [request (request {:time 100})]
+    (q/inspect request 1 5)
+    (is (= {:start-ms 100 :valid-until-ms nil :complete? true} (q/certificate request)))
+    (doseq [invalid [{:start-ms 99 :valid-until-ms 100 :complete? true}
+                     {:start-ms 101 :valid-until-ms nil :complete? true}
+                     {:start-ms 99 :valid-until-ms nil :complete? false}
+                     {:start-ms 100 :valid-until-ms nil}]]
+      (is (some? (try (q/observe-interval! request invalid) nil
+                      (catch #?(:clj Exception :cljs :default) e (ex-data e))))))))
