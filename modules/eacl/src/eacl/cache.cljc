@@ -85,7 +85,7 @@
 (def ^:private answer-entry-format :eacl.cache/completed-answer-v2)
 (def rendered-page-entry-format
   "Version identifier for exact public transport-page values."
-  :eacl.cache/rendered-page-v4)
+  :eacl.cache/rendered-page-v5)
 
 (defn- metadata-free-portable-data?
   [value allow-records? {:keys [maximum-depth maximum-entries
@@ -941,6 +941,18 @@
        (unqualified-keyword? (:relation value))
        (rendered-spice-object-shape? (:resource value))))
 
+(defn- internal-relationship-shape?
+  "Native eids may be Integer or Long. Their representation is an adapter
+  detail; public transport IDs retain the stricter canonical shape check."
+  [value]
+  (and (every? #(let [id (get-in value [% :id])]
+                  (and (integer? id) (pos? id)
+                       (<= id #?(:clj Long/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER))))
+               [:subject :resource])
+       (rendered-relationship-shape?
+        #?(:clj (-> value (update-in [:subject :id] long) (update-in [:resource :id] long))
+           :cljs value))))
+
 (defn rendered-page-entry-valid?
   "True for one exact public page with its already-authenticated cursor tokens.
 
@@ -952,43 +964,50 @@
    (rendered-page-entry-valid? nil value))
   ([semantic-key value]
    (let [page (:page value)
-        page-info (:page-info page)
-        page-info-fields (when (map? page-info) (set (keys page-info)))
-        operation (:operation semantic-key)
-        detailed? (= :detailed (get-in semantic-key [:query :public :result-policy]))
-        rendered-item?
-        (case operation
-          :read-relationships rendered-relationship-shape?
-          (:lookup-resources :lookup-subjects)
-          (if detailed?
-            #(authorization-result/lookup-result-valid? rendered-spice-object-shape? %)
-            rendered-spice-object-shape?)
+         page-info (:page-info page)
+         page-info-fields (when (map? page-info) (set (keys page-info)))
+         operation (:operation semantic-key)
+         qualified? (if semantic-key (some? (:qualification semantic-key))
+                        (contains? value :qualification-certificate))
+         detailed? (= :detailed (get-in semantic-key [:query :public :result-policy]))
+         rendered-item?
+         (case operation
+           :read-relationships rendered-relationship-shape?
+           (:lookup-resources :lookup-subjects)
+           (if detailed?
+             #(authorization-result/lookup-result-valid? rendered-spice-object-shape? %)
+             rendered-spice-object-shape?)
           ;; The one-argument public predicate accepts either supported page
           ;; shape; publication always supplies the operation-specific key.
-          (fn [item]
-            (or (rendered-spice-object-shape? item)
-                (rendered-relationship-shape? item))))
-        token? (fn [candidate]
-                 (or (nil? candidate)
-                     (and (string? candidate)
-                          (pos? (count candidate)))))]
-    (and (map? value)
-         (= rendered-page-entry-fields (set (keys value)))
-         (= rendered-page-entry-format (:format value))
-         (map? page)
-         (= page-answer-fields (set (keys page)))
-         (vector? (:data page))
-         (<= (count (:data page)) 1000)
-         (every? rendered-item? (:data page))
-         (map? page-info)
-         (every? page-info-fields required-page-info-fields)
-         (every? allowed-page-info-fields page-info-fields)
-         (token? (:start-cursor page-info))
-         (token? (:end-cursor page-info))
-         (boolean? (:has-next-page? page-info))
-         (boolean? (:has-previous-page? page-info))
-         (or (not (contains? page-info :bounded?))
-             (boolean? (:bounded? page-info)))))))
+           (fn [item]
+             (or (rendered-spice-object-shape? item)
+                 (rendered-relationship-shape? item))))
+         token? (fn [candidate]
+                  (or (nil? candidate)
+                      (and (string? candidate)
+                           (pos? (count candidate)))))]
+     (and (map? value)
+          (= (cond-> rendered-page-entry-fields qualified? (conj :qualification-certificate))
+             (set (keys value)))
+          (or (not qualified?)
+              (and (or (nil? semantic-key)
+                       (= temporal/collection-format (:qualification-certificate-format semantic-key)))
+                   (temporal/interval-valid? (:qualification-certificate value))))
+          (= rendered-page-entry-format (:format value))
+          (map? page)
+          (= page-answer-fields (set (keys page)))
+          (vector? (:data page))
+          (<= (count (:data page)) 1000)
+          (every? rendered-item? (:data page))
+          (map? page-info)
+          (every? page-info-fields required-page-info-fields)
+          (every? allowed-page-info-fields page-info-fields)
+          (token? (:start-cursor page-info))
+          (token? (:end-cursor page-info))
+          (boolean? (:has-next-page? page-info))
+          (boolean? (:has-previous-page? page-info))
+          (or (not (contains? page-info :bounded?))
+              (boolean? (:bounded? page-info)))))))
 
 (defn- permission-tree-answer?
   [value]
@@ -1049,8 +1068,7 @@
         value (if qualified-result? (dissoc value :qualification-certificate) value)]
     (and (or (not qualified-result?)
              (and (= temporal/collection-format (:qualification-certificate-format semantic-key))
-                  (temporal/interval-valid? certificate)
-                  (temporal/reusable? certificate (nth (:qualification semantic-key) 2) true)))
+                  (temporal/interval-valid? certificate)))
          (map? semantic-key)
          (= operation (:operation semantic-key))
          (case operation
@@ -1061,7 +1079,7 @@
                    :else (boolean? value))
            :read-relationships (and (page-answer? value)
                                     (or (nil? (:qualification semantic-key))
-                                        (every? rendered-relationship-shape? (:data value))))
+                                        (every? internal-relationship-shape? (:data value))))
            :lookup-resources (lookup-page-answer? semantic-key value)
            :lookup-subjects (lookup-page-answer? semantic-key value)
            :count-resources (count-answer? semantic-key value)
@@ -1254,7 +1272,7 @@
   (some-> (subproblem/lookup-eligible!
            subproblem-store :answer key
            #(and (managed-answer-causally-eligible? requested-revision %)
-                 (or (not temporal?) (temporal/reusable? (:value %) evaluation-time-ms false))))
+                 (or (not temporal?) (temporal/answer-reusable? (:value %) evaluation-time-ms false))))
           :value))
 
 (defn- record-publication!
@@ -1273,7 +1291,7 @@
    (subproblem/publish!
     subproblem-store :answer key
     (cond-> {:valid? answer-entry-valid?}
-      (= temporal/point-format (get-in entry [:value :format]))
+      (some? (temporal/answer-interval (:value entry)))
       (assoc :replace? (fn [prior next]
                          (and (= (:computed-revision prior) (:computed-revision next))
                               (= (:computed-exact-locator prior) (:computed-exact-locator next))
@@ -1294,7 +1312,7 @@
   The caller supplies the captured lifecycle so an expiry racing this request
   cannot mix an old answer store with a new rendered store. Cache failures are
   ordinary misses and never affect authorization."
-  [store {:keys [exact-basis-key cache-lifecycle]} semantic-key]
+  [store {:keys [exact-basis-key cache-lifecycle evaluation-time-ms]} semantic-key]
   (when (and (basis-cache? store)
              (valid-exact-basis-key? exact-basis-key)
              (map? semantic-key)
@@ -1308,7 +1326,9 @@
             (catch #?(:clj Throwable :cljs :default) _
               (record-metrics! store update :rendered-page-store-errors inc)
               nil))]
-      (if (:found? resident)
+      (if (and (:found? resident)
+               (or (nil? (:qualification semantic-key))
+                   (temporal/answer-reusable? (:value resident) evaluation-time-ms true)))
         (do
           ;; JVM hits use a striped LongAdder instead of serializing on the
           ;; ordinary metrics atom. CLJS remains single-threaded.
@@ -1358,8 +1378,10 @@
     (let [lifecycle (or cache-lifecycle @(:lifecycle store))
           storage-key (exact-rendered-page-key exact-basis-key semantic-key)]
       (try
-        (if (lru/put-if-absent!
-             (:rendered-pages lifecycle) storage-key value)
+        (if (or (lru/put-if-absent! (:rendered-pages lifecycle) storage-key value)
+                (let [prior (lru/lookup! (:rendered-pages lifecycle) storage-key)]
+                  (and (:found? prior) (temporal/supersedes? (:value prior) value)
+                       (lru/replace-if! (:rendered-pages lifecycle) storage-key (:value prior) value))))
           (do
             (record-metrics! store update :rendered-page-puts inc)
             {:published? true :reason :published})
@@ -1413,10 +1435,11 @@
           lifecycle (or cache-lifecycle @(:lifecycle store))
           subproblem-store (:subproblems lifecycle)
           exact-key (exact-answer-key exact-basis-key semantic-key)
-          temporal? (= temporal/point-format (:temporal-answer-format semantic-key))
+          temporal? (or (= temporal/point-format (:temporal-answer-format semantic-key))
+                        (= temporal/collection-format (:qualification-certificate-format semantic-key)))
           exact-entry (lookup-answer subproblem-store exact-key
                                      (when temporal?
-                                       #(temporal/reusable? (:value %) evaluation-time-ms true)))]
+                                       #(temporal/answer-reusable? (:value %) evaluation-time-ms true)))]
       (if exact-entry
         (cache-hit-result store :exact-basis exact-entry)
         (if-not (execution/cache-stage-available?)

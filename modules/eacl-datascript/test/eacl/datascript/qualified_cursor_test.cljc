@@ -122,3 +122,31 @@
               (is (seq (:data (eacl/read-relationships client next-query))))
               (is (= :eacl.pagination/restart-required
                      (:type (errors/error-data #(eacl/read-relationships client next-query))))))))))))
+
+(deftest live-pages-and-counts-reuse-only-their-certified-time-interval
+  (doseq [direction [:forward :reverse] evaluation [:demand :complete-denotation]]
+    (let [{:keys [client check now]} (fixtures/mixed-fixture direction 6)]
+      (binding [orchestration/*qualified-authorization-enabled?* true]
+        (let [query (assoc (query check direction :direct) :evaluation evaluation)
+              count-query (dissoc query :first)
+              first-page (fixtures/lookup! client direction query)
+              first-count (fixtures/count! client direction count-query)]
+          (reset! now 150)
+          (with-redefs [qualification/qualify (fn [& _] (throw (ex-info "Unexpected repeated traversal" {})))]
+            (let [page (fixtures/lookup! client direction query)
+                  count (fixtures/count! client direction count-query)]
+              (is (:cached? page))
+              (is (:cached? count))
+              (is (= (:data first-page) (:data page)))
+              (is (= (:page-info first-page) (:page-info page)))
+              (is (= (:count first-count) (:count count)))))
+          (reset! now 200)
+          (let [page (fixtures/lookup! client direction query)
+                count (fixtures/count! client direction count-query)]
+            (is (false? (:cached? page)))
+            (is (false? (:cached? count)))
+            (is (empty? (:data page)))
+            (is (zero? (:count count))))
+          (reset! now 201)
+          (is (:cached? (fixtures/lookup! client direction query)))
+          (is (:cached? (fixtures/count! client direction count-query))))))))

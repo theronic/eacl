@@ -6,6 +6,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
+            [eacl.client.orchestration :as orchestration]
             [eacl.datalevin.core :as datalevin]
             [eacl.proof-frame :as proof-frame]
             [eacl.spicedb.consistency :as consistency]))
@@ -64,7 +65,7 @@
                             (ex-info "unexpected schema identity lookup"
                                      {:type :test/unexpected-entid})))]
              (is (integer? (backend/invoke adapter
-                                            :schema-generation)))))))
+                                           :schema-generation)))))))
       (let [alice (eacl/spice-object :user "alice")
             bob (eacl/spice-object :user "bob")
             document-1 (eacl/spice-object :document "document-1")
@@ -83,16 +84,16 @@
             (is (true? (:cached? response)))
             (is (zero? (get @operations :proof-frame 0)))))
 
-        (testing "an unrelated relation commit is a managed hit"
+        (testing "an unrelated commit uses the epoch's certified cache path"
           (let [before (:managed-hits (datalevin/cache-stats client))]
             (eacl/create-relationship! client editor)
             (let [operations (atom {})
                   response
                   (binding [backend/*backend-op-stats* operations]
                     (eacl/check-permission client demand))]
-              (is (true? (:cached? response)))
-              (is (= 1 (get @operations :proof-frame 0)))
-              (is (= (inc before)
+              (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? response)))
+              (is (= (if orchestration/*qualified-authorization-enabled?* 0 1) (get @operations :proof-frame 0)))
+              (is (= (if orchestration/*qualified-authorization-enabled?* before (inc before))
                      (:managed-hits (datalevin/cache-stats client)))))))
 
         (testing "a relevant relation commit invalidates the answer"
@@ -214,13 +215,13 @@
                     :first-page first-page
                     :oracle-stream oracle-stream
                     :durability :durable}))
-                (testing "managed reuse remains enabled after reopen"
+                (testing "reopened sources preserve the epoch's cache policy"
                   (eacl/create-relationship! second-client editor)
                   (let [before (:managed-hits
                                 (datalevin/cache-stats second-client))
                         response (eacl/check-permission second-client demand)]
-                    (is (true? (:cached? response)))
-                    (is (= (inc before)
+                    (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? response)))
+                    (is (= (if orchestration/*qualified-authorization-enabled?* before (inc before))
                            (:managed-hits
                             (datalevin/cache-stats second-client)))))))
               (finally

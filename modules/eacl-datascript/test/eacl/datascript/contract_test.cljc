@@ -6,6 +6,7 @@
             [eacl.cache :as cache]
             [eacl.cache.standard-lru :as lru]
             [eacl.causal-token :as causal-token]
+            [eacl.client.orchestration :as orchestration]
             [eacl.contract-support :as contract]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
@@ -59,7 +60,7 @@
         missing-user (contract/->user "missing")
         missing-server (contract/->server "missing")
         reads (atom 0)
-        original-read-schema schema/read-schema
+        original-read-schema schema/read-authorization-schema
         exercise!
         (fn []
           (is (= []
@@ -84,7 +85,7 @@
                                   :cache? false}))))]
     (eacl/write-schema! client contract/smoke-schema)
     #?(:clj
-       (with-redefs [schema/read-schema
+       (with-redefs [schema/read-authorization-schema
                      (fn [db & format]
                        (swap! reads inc)
                        (apply original-read-schema db format))]
@@ -479,13 +480,16 @@
       (is (false? (:changed?
                    (datascript/prepare-cache-coherence! conn))))
       (eacl/write-schema! client-a custom-codec-cache-schema)
-      (is (true? (eacl/can? client-a user :view document)))
-      (is (true? (eacl/can? client-b user :view document))))
+      (is (= (not orchestration/*qualified-authorization-enabled?*)
+             (eacl/can? client-a user :view document)))
+      (is (= (not orchestration/*qualified-authorization-enabled?*)
+             (eacl/can? client-b user :view document))))
 
     (testing "every process-local client must rotate after quiescence"
       (datascript/expire-cache! client-a)
       (is (false? (eacl/can? client-a user :view document)))
-      (is (true? (eacl/can? client-b user :view document)))
+      (is (= (not orchestration/*qualified-authorization-enabled?*)
+             (eacl/can? client-b user :view document)))
       (datascript/expire-cache! client-b)
       (is (false? (eacl/can? client-b user :view document))))
 
@@ -617,7 +621,9 @@
               second-page (eacl/lookup-resources stable-client query)
               after (datascript/cache-stats stable-client)]
           (is (= (:data first-page) (:data second-page)))
-          (is (= (inc (:managed-hits before)) (:managed-hits after)))
+          (is (= (cond-> (:managed-hits before)
+                   (not orchestration/*qualified-authorization-enabled?*) inc)
+                 (:managed-hits after)))
           (is (seq @stable-observations))
           (is (every? #{selected-basis} @stable-observations)
               "managed semantic results are externalized from the selected DB"))))
@@ -1639,14 +1645,14 @@
            :consistency (consistency/at-least-as-fresh lower-floor)}
           first-page (eacl/lookup-resources client first-query)
           raw-cursor (get-in first-page [:page-info :end-cursor])
+          lower-request (assoc first-query :after raw-cursor :first 2)
+          lower-page (eacl/lookup-resources client lower-request)
           higher-floor
           (:zed/token
            (eacl/create-relationship!
             client
             (eacl/->Relationship
              unrelated-user :owner unrelated-document)))
-          lower-request (assoc first-query :after raw-cursor :first 2)
-          lower-page (eacl/lookup-resources client lower-request)
           before-high (datascript/cache-stats client)
           error
           (try

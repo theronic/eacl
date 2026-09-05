@@ -46,7 +46,7 @@
   (let [store (page/make-checkpoint-store)
         env (fixture/environment fixture/rows fixture/leaves {})
         _ (page! env {:checkpoints store})
-        request (qualification/request (assoc (get-in env [:options :qualification]) :time 100))
+        request (qualification/request (assoc (get-in env [:options :qualification]) :context {"changed" true}))
         changed (fixture/environment fixture/rows (assoc fixture/leaves 101 true 102 true)
                                      {:qualification request})
         options {:after {:ordinal 1 :eid 100}}
@@ -99,6 +99,25 @@
     (is (= [300] (:eids result)))
     (is (= #{300} (set (keys (:result-evidence result)))))
     (is (empty? @(:commands env)))))
+
+(deftest qualified-checkpoints-reuse-only-inside-the-certified-interval
+  (doseq [start [99 120] time [150 200]]
+    (let [env (fixture/environment fixture/rows fixture/leaves {})
+          store (page/make-checkpoint-store)
+          put page/checkpoint-put!
+          _ (with-redefs [page/checkpoint-put!
+                          (fn [store key checkpoint]
+                            (put store key (assoc checkpoint :qualification-certificate
+                                                  {:start-ms start :valid-until-ms 200 :complete? true})))]
+              (page! env {:checkpoints store}))
+          current (assoc-in env [:options :qualification]
+                            (qualification/request (assoc (get-in env [:options :qualification]) :time time)))
+          options {:after {:ordinal 1 :eid 100} :raw-candidates? true}
+          _ (reset! (:commands env) [])
+          cached (page! current (assoc options :checkpoints store))]
+      (is (= (and (= start 99) (< time 200)) (empty? @(:commands env))))
+      (is (= [300] (:eids cached)))
+      (is (= cached (page! current options))))))
 
 (deftest definite-lookahead-has-the-same-sparse-shape-as-replay
   (let [env (fixture/environment (mapv #(assoc % 3 nil) fixture/rows) {} {})

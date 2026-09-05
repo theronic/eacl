@@ -120,10 +120,14 @@
 (defn- faults [e] (if (fault? e) (second (value e)) []))
 
 (defn- combine-value [op a b]
-  (if (or (fault? a) (fault? b))
+  (cond
+    (and (boolean? (value a)) (boolean? (value b)))
+    (boolean-result op (value a) (value b))
+    (or (fault? a) (fault? b))
     (let [reasons (vec (sort-by pr-str (set/union (set (faults a)) (set (faults b)))))]
       (when (> (count reasons) (:faults limits)) (error! :fault-limit))
       [:fault reasons])
+    :else
     (let [result (apply-node op (value a) (value b) 0 (volatile! 0))]
       (check-node-budget! result)
       result)))
@@ -194,20 +198,41 @@
               (recur (conj (pop pending) [low key (inc depth)] [high key (inc depth)]) (inc n))))))))
   v)
 
+(def ^:private true-wire
+  (values/encode-bounded [:eacl.authorization/evidence format-version true nil true] wire-limits))
+(def ^:private false-wire
+  (values/encode-bounded [:eacl.authorization/evidence format-version false nil true] wire-limits))
+
 (defn encode [e]
-  (when-not (or (boolean? e) (instance? Evidence e)) (error! :evidence-shape))
-  (validate-value! (value e))
-  (with-certificate e (valid-until e) (complete? e))
-  (missing-fields e)
-  (values/encode-bounded [:eacl.authorization/evidence format-version (value e)
-                          (valid-until e) (complete? e)] wire-limits))
+  (cond
+    (true? e) true-wire
+    (false? e) false-wire
+    :else
+    (do
+      (when-not (or (boolean? e) (instance? Evidence e)) (error! :evidence-shape))
+      (when-not (boolean? (value e)) (validate-value! (value e)))
+      (with-certificate e (valid-until e) (complete? e))
+      (if (boolean? (value e))
+        ;; This closed scalar envelope has a fixed small wire bound. It is
+        ;; byte-identical to the generic encoder without a BDD walk or a
+        ;; reconstructed canonical collection for every witnessed edge.
+        (str "[:eacl.authorization/evidence " format-version " " (value e) " "
+             (if-some [end (valid-until e)] end "nil") " " (complete? e) "]")
+        (do
+          (missing-fields e)
+          (values/encode-bounded [:eacl.authorization/evidence format-version (value e)
+                                  (valid-until e) (complete? e)] wire-limits))))))
 
 (defn decode [payload]
-  (let [wire (values/decode-bounded payload wire-limits)]
-    (when-not (and (vector? wire) (= 5 (count wire))
-                  (= :eacl.authorization/evidence (first wire)) (= format-version (second wire)))
-      (error! :wire-shape))
-    (let [[_ _ v end complete] wire
-          result (with-certificate (->Evidence (validate-value! v) nil true) end complete)]
-      (when-not (= payload (encode result)) (error! :noncanonical-wire))
-      result)))
+  (cond
+    (= true-wire payload) true
+    (= false-wire payload) false
+    :else
+    (let [wire (values/decode-bounded payload wire-limits)]
+      (when-not (and (vector? wire) (= 5 (count wire))
+                     (= :eacl.authorization/evidence (first wire)) (= format-version (second wire)))
+        (error! :wire-shape))
+      (let [[_ _ v end complete] wire
+            result (with-certificate (->Evidence (validate-value! v) nil true) end complete)]
+        (when-not (= payload (encode result)) (error! :noncanonical-wire))
+        result))))

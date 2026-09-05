@@ -61,14 +61,20 @@
 
 (defn plan
   "Builds qualified transaction data from one immutable basis without writing."
-  [database entries app-datoms]
-  (staged/plan-batch (staged/planner (planner-api) database) database entries app-datoms))
+  ([database entries app-datoms]
+   (plan database entries app-datoms (backend/database-source-scope database)))
+  ([database entries app-datoms source-scope]
+   (let [native (assoc (planner-api) :source #(or (backend/database-source-scope %) source-scope))]
+     (staged/plan-batch (staged/planner native database) database entries app-datoms))))
 
 (defn writer [conn]
   (when-not (db/direct-writer? (d/db conn)) (staged/error! :unsupported-backend))
   (schema/prepare-cache-coherence! conn)
   (staged/native-writer
-   (merge (planner-api) {:snapshot #(d/db conn) :transact! #(d/transact conn %)})))
+   (merge (planner-api)
+          (let [scope (backend/connection-source-scope conn)]
+            {:source #(or (backend/database-source-scope %) scope)})
+          {:snapshot #(d/db conn) :transact! #(d/transact conn %)})))
 
 (defn publication-capability [database]
   (when (db/direct-writer? database)

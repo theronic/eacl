@@ -76,9 +76,9 @@ Authorization schema readers in every bundled adapter validate permission struct
 
 Weighted first-discovery propagation is modeled independently as completion-set reachability. Across 9,216 graph/seed traces it checks closure, bounded evidence growth, unique discoveries, and exact prefix/resume order. Targeted controls omit revisits or path conjunction. These 64,515 assertions precede changes to the production reducer.
 
-The production first-discovery bridge adds 34,432 assertions across 3,072 graph cases in both directions, independently checking emitted completion sets, physical-width invariance, and resumed prefixes. Portable conformance adds 309 assertions for cyclic conditional paths, exact root completion, nil-eid fast paths, definite/detailed counts and windows, lookahead exclusion, bounded skipped prefixes, staged memory/work limits, and checkpoint scope. A temporal cycle can change a queued scan's certificate while a physical buffer remains active; its revision must rewind the prefix independently of chunk width. Five controls discard propagated evidence, claim a partial root, omit the evidence bound, repeat a known direct tuple, or reuse an earlier buffer revision. Qualified checkpoints currently require identical basis/time/context/evaluator scope; public temporal pagination remains pending.
+The production first-discovery bridge adds 34,432 assertions across 3,072 graph cases in both directions, independently checking emitted completion sets, physical-width invariance, and resumed prefixes. Portable conformance adds 309 assertions for cyclic conditional paths, exact root completion, nil-eid fast paths, definite/detailed counts and windows, lookahead exclusion, bounded skipped prefixes, staged memory/work limits, and checkpoint scope. A temporal cycle can change a queued scan's certificate while a physical buffer remains active; its revision must rewind the prefix independently of chunk width. Five controls discard propagated evidence, claim a partial root, omit the evidence bound, repeat a known direct tuple, or reuse an earlier buffer revision. Qualified checkpoints preserve basis/context/evaluator scope; the page boundary can rebind time only when a complete certificate covers both the original and current observation. Direct reducer resume remains exact.
 
-First-discovery pages retain sparse result evidence through lookahead, replay, backward windows, and last windows. Pending lookahead has explicit evidence even for timeless true. Missing, faulty, or scope-incompatible checkpoint data becomes a replay miss. Checkpoint keys partition complete qualified request scope and result policy; standalone tokens bind a compact digest of the same scope. The 209 portable page assertions cover retained versus replayed equality, scope isolation, no-repeat lookahead, and malformed retained state. Four controls remove pending evidence, bypass its validation, omit checkpoint scope, or omit standalone token scope. These internal exact-scope tokens do not yet implement the public Relay live-time certificate contract.
+First-discovery pages retain sparse result evidence through lookahead, replay, backward windows, and last windows. Pending lookahead has explicit evidence even for timeless true. Missing, faulty, or scope-incompatible checkpoint data becomes a replay miss. Checkpoint keys partition complete qualified request scope and result policy; standalone tokens bind a compact digest of the same scope. The 209 portable page assertions cover retained versus replayed equality, scope isolation, no-repeat lookahead, and malformed retained state. Four controls remove pending evidence, bypass its validation, omit checkpoint scope, or omit standalone token scope. These internal exact-scope tokens remain distinct from the public Relay live-time certificate contract.
 
 Schema admission now checks a matching evaluator for every Caveated Relation,
 including empty and unvisited Relations, and a certified native publication
@@ -159,3 +159,11 @@ native selected-basis guard. Each passes its unmodified gate and fails mutated.
 
 The combined qualified gate now has 598,713 assertions and 104 detected
 production mutations, with 71 verified model obligations.
+
+The final acceptance crosswalk is in `acceptance.md`. The compound-expression
+campaign adds 8,000 assertions with seed 20260905, and an unresolved-qid
+publication control, collection/rendered interval controls, and checkpoint interval
+control bring the qualified inventory to 108 detected production mutations and
+607,000 assertions. The foundation gate separately retains its
+82 verified obligations and 35,148 assertions. Performance qualification checks
+the actual public backend matrix against pre-recorded numerical budgets.

@@ -2,6 +2,7 @@
   (:require [clojure.test :refer [deftest is testing]]
             [datomic.api :as d]
             [eacl.cache :as shared-cache]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn
@@ -57,6 +58,11 @@
   []
   {})
 
+(defn- calls-after-basis-change [legacy-count]
+  ;; Qualified reuse requires an exact basis until a proof also covers raw
+  ;; qualifier and Caveat mutations. An unrelated write is one extra miss.
+  (if orchestration/*qualified-authorization-enabled?* (inc legacy-count) legacy-count))
+
 (deftest live-non-recursive-pages-survive-unrelated-transactions-test
   (with-mem-conn [conn schema/v8-schema]
     (let [client (core/make-client conn {:cache (live-cache-context)})
@@ -89,8 +95,8 @@
 
         (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources client forward-query)))))
         (is (= ["alice"] (mapv :id (:data (eacl/lookup-subjects client reverse-query)))))
-        (is (= 1 @forward-calls) "basis changes do not invalidate EACL results")
-        (is (= 1 @reverse-calls) "reverse lookup uses the same logical generation")))))
+        (is (= (calls-after-basis-change 1) @forward-calls) "basis changes do not invalidate EACL results")
+        (is (= (calls-after-basis-change 1) @reverse-calls) "reverse lookup uses the same logical generation")))))
 
 (deftest relationship-write-invalidates-live-pages-but-no-op-does-not-test
   (with-mem-conn [conn schema/v8-schema]
@@ -118,13 +124,13 @@
                          :auditor
                          (spice-object :account "a-2")))
         (is (= ["a-1"] (mapv :id (:data (eacl/lookup-resources client query)))))
-        (is (= 1 @calls)
+        (is (= (calls-after-basis-change 1) @calls)
             "a relationship outside the permission dependency set keeps the page hot")
 
         (eacl/create-relationship! client second-rel)
         (is (= #{"a-1" "a-2"}
                (set (map :id (:data (eacl/lookup-resources client query))))))
-        (is (= 2 @calls) "an actual relationship write selects a new generation")
+        (is (= (calls-after-basis-change 2) @calls) "an actual relationship write selects a new generation")
 
         (eacl/write-relationship!
          client
@@ -134,7 +140,7 @@
           :resource (:resource second-rel)})
         (is (= #{"a-1" "a-2"}
                (set (map :id (:data (eacl/lookup-resources client query))))))
-        (is (= 2 @calls) "a relationship no-op keeps the hot generation")))))
+        (is (= (calls-after-basis-change 2) @calls) "a relationship no-op keeps the hot generation")))))
 
 (deftest direct-relationship-writes-are-observed-test
   ;; This test used to assert the OPPOSITE: a raw d/transact of
@@ -193,12 +199,12 @@
          (->Relationship bob :auditor account))
         (is (= ["server"]
                (mapv :id (:data (eacl/lookup-resources client query)))))
-        (is (= 1 @calls)
+        (is (= (calls-after-basis-change 1) @calls)
             "an unrelated relation leaves the arrow permission page hot")
 
         (eacl/delete-relationship! client owner-rel)
         (is (empty? (:data (eacl/lookup-resources client query))))
-        (is (= 2 @calls)
+        (is (= (calls-after-basis-change 2) @calls)
             "a target-permission relation invalidates the arrow lookup")
 
         (eacl/create-relationship! client owner-rel)
@@ -206,7 +212,7 @@
                (mapv :id (:data (eacl/lookup-resources client query)))))
         (eacl/delete-relationship! client account-rel)
         (is (empty? (:data (eacl/lookup-resources client query))))
-        (is (= 4 @calls)
+        (is (= (calls-after-basis-change 4) @calls)
             "the arrow's source relation is also a dependency")))))
 
 (deftest cached-pages-store-eids-and-reapply-current-id-coercion-test
@@ -319,8 +325,8 @@
                          (spice-object :account "a-2")))
         (is (= 1 (:count (eacl/count-resources client forward-query))))
         (is (= 1 (:count (eacl/count-subjects client reverse-query))))
-        (is (= 1 @forward-calls))
-        (is (= 1 @reverse-calls))
+        (is (= (calls-after-basis-change 1) @forward-calls))
+        (is (= (calls-after-basis-change 1) @reverse-calls))
 
         (eacl/create-relationship!
          client
@@ -329,8 +335,8 @@
                          (spice-object :account "a-2")))
         (is (= 2 (:count (eacl/count-resources client forward-query))))
         (is (= 1 (:count (eacl/count-subjects client reverse-query))))
-        (is (= 2 @forward-calls))
-        (is (= 2 @reverse-calls)
+        (is (= (calls-after-basis-change 2) @forward-calls))
+        (is (= (calls-after-basis-change 2) @reverse-calls)
             "a relevant relation epoch invalidates both count directions")))))
 
 (deftest recursive-cursors-replay-across-independent-client-proofs-test
@@ -595,12 +601,12 @@
           account (spice-object :account "a-1")
           query {:subject alice :permission :admin :resource/type :account}
           calls (atom 0)
-          original engine/can?
+          original engine/check-evidence
           lookups (atom 0)
           original-lookup engine/lookup-resources]
-      (with-redefs [engine/can? (fn [db s p r]
-                                  (swap! calls inc)
-                                  (original db s p r))
+      (with-redefs [engine/check-evidence (fn [db s p r]
+                                            (swap! calls inc)
+                                            (original db s p r))
                     engine/lookup-resources
                     (fn [db q cc]
                       (swap! lookups inc)

@@ -58,10 +58,12 @@
 
 (defn plan
   "Builds qualified transaction data from one immutable basis without writing."
-  [database entries app-datoms]
-  (db/with-db database
-    (fn [db]
-      (staged/plan-batch (staged/planner (planner-api) db) db entries app-datoms))))
+  ([database entries app-datoms]
+   (db/with-db database
+     (fn [db]
+       (staged/plan-batch (staged/planner (planner-api) db) db entries app-datoms))))
+  ([database entries app-datoms _source-scope]
+   (plan database entries app-datoms)))
 
 (defn writer [conn]
   (let [token (:write-token (schema/ensure-physical-schema! conn))]

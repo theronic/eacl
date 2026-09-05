@@ -61,9 +61,9 @@
 
 ## 9. Certify and qualify before activation
 
-- [ ] 9.1 Add production refinement bridges for edge qualification, Caveat algebra, expiry boundary, temporal certificate, cache acceptance, and cursor scope; verify exhaustive finite and randomized comparisons are green.
-- [ ] 9.2 Add mutation controls for omitted q lookup, missing-q-to-`nil`, non-atomic pair publication, unresolved qid publication, `<=` expiry, reversed context precedence, conditional-as-true, fault-as-absence, unsafe q cache, missing Relation stamp, and expired-ban reuse; verify every mutant is killed.
+- [x] 9.1 Add production refinement bridges for edge qualification, Caveat algebra, expiry boundary, temporal certificate, cache acceptance, and cursor scope; verify exhaustive finite and randomized comparisons are green.
+- [x] 9.2 Add mutation controls for omitted q lookup, missing-q-to-`nil`, non-atomic pair publication, unresolved qid publication, `<=` expiry, reversed context precedence, conditional-as-true, fault-as-absence, unsafe q cache, missing Relation stamp, and expired-ban reuse; verify every mutant is killed.
 - [ ] 9.3 Benchmark 0%, 5%, and 10% qualified distributions plus concentrated qualified/expired endpoint prefixes across direct, arrow, recursive, page, count, cache-hit, and cold/warm workloads; verify recorded numerical release budgets.
-- [ ] 9.4 Audit hot paths for runtime model calls, shadow authorization, redundant full traversals, unconditional qualifier pulls, and excess allocations; verify none were introduced to satisfy formal/CI gates.
-- [ ] 9.5 Update public docs, schema examples, error/result reference, cache/cursor semantics, monotonic-clock/Peer-skew guidance, pinned-versus-live snapshot warning, CLJS evaluator boundary, and rollout instructions; verify examples execute against the qualified implementation.
+- [x] 9.4 Audit hot paths for runtime model calls, shadow authorization, redundant full traversals, unconditional qualifier pulls, and excess allocations; verify none were introduced to satisfy formal/CI gates.
+- [x] 9.5 Update public docs, schema examples, error/result reference, cache/cursor semantics, monotonic-clock/Peer-skew guidance, pinned-versus-live snapshot warning, CLJS evaluator boundary, and rollout instructions; verify examples execute against the qualified implementation.
 - [ ] 9.6 Run CI-equivalent nREPL tests, CLJS suites, all affected formal gates, source-closure, performance gates, dependency audit, and strict OpenSpec validation; verify everything is green before enabling the qualified semantic epoch.

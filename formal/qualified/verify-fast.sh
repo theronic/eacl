@@ -106,6 +106,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
                                    'eacl.formal.qualified.discovery-model-test 'eacl.formal.qualified.discovery-bridge
                                    'eacl.engine.stable-reducer-evidence-test 'eacl.engine.stable-page-evidence-test
+                                   'eacl.authorization.evidence-test
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge
                                    'eacl.formal.qualified.operator-bridge 'eacl.authorization.evidence-index-test
                                    'eacl.formal.qualified.recursive-bridge 'eacl.formal.qualified.stable-route-bridge

@@ -42,3 +42,26 @@
       (is (= (:end expected) (e/valid-until actual)))
       (is (= (:complete? expected) (e/complete? actual)))
       (is (= (set (map ["x" "y"] missing)) (set (e/missing-fields actual)))))))
+
+(deftest reproducible-compound-evidence-campaign
+  ;; Independent oracle values are carried through the generated expression
+  ;; graph; they are never reconstructed from a production intermediate.
+  (let [seed 20260905
+        random (java.util.Random. seed)
+        initial (mapv (fn [production] [production (model-evidence production)]) (inputs))]
+    (loop [step 0 pool initial]
+      (when (< step 2000)
+        (let [pick (fn [] (let [choices (if (.nextBoolean random) initial pool)]
+                            (nth choices (.nextInt random (count choices)))))
+              [left expected-left] (pick)
+              [right expected-right] (pick)
+              op (nth contract/operators (.nextInt random (count contract/operators)))
+              expected (model/combine contract/universe op expected-left expected-right)
+              actual (e/combine op left right)
+              label (pr-str {:seed seed :step step :operation op})]
+          (is (= (:value expected) (model-value actual)) label)
+          (is (= (:end expected) (e/valid-until actual)) label)
+          (is (= (:complete? expected) (e/complete? actual)) label)
+          (is (= actual (e/decode (e/encode actual))) label)
+          (recur (inc step) (conj (if (< (count pool) 128) pool (subvec pool 1))
+                                  [actual expected])))))))

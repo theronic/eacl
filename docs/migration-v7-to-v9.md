@@ -2,9 +2,11 @@
 
 EACL **v8** uses permission storage **8** and Relationship storage **9**.
 Storage 9 adds a fifth, nullable qualifier reference to each endpoint tuple.
-This release writes `nil` qualifiers. Caveat and expiry evaluation arrive in
-later phases; a non-`nil` qualifier encountered by an authorization or public
-Relationship read raises `:eacl/unsupported-qualifier`.
+V8 writes `nil` qualifiers; a non-`nil` qualifier encountered by a v8
+authorization or public Relationship read raises `:eacl/unsupported-qualifier`.
+V9 [Caveats and expiring Relationships](caveats.md) build on this completed
+storage migration with a separate coordinated serving activation. Complete this
+migration before allowing any qualified writes.
 
 Every logical Relationship remains exactly two datoms:
 

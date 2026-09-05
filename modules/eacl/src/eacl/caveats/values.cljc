@@ -28,7 +28,7 @@
                    (merge data {:type :eacl.caveat/invalid :eacl/error :eacl.caveat/invalid
                                 :reason reason})))))
 
-(defn utf8-size [s] (count (secure/utf8-bytes s)))
+(defn utf8-size [s] (secure/utf8-size s))
 
 (defn parameter-name? [s]
   (and (string? s) (<= (count s) (:identifier-ascii-bytes limits))
@@ -201,7 +201,11 @@
       context)))
 
 (defn normalize-context [parameters context]
-  (decode-context parameters (encode-context parameters context)))
+  ;; Host values already have their portable representation. The encoder
+  ;; validates every type and aggregate wire bound; reading that freshly
+  ;; produced payload adds no admission check and needlessly rebuilds it.
+  (encode-context parameters context)
+  context)
 
 (defn normalize-value [type value]
   (get (normalize-context [["value" type]] {"value" value}) "value"))
@@ -219,5 +223,12 @@
     value))
 
 (defn merge-context [parameters request bound]
-  (normalize-context parameters (merge (normalize-context parameters request)
-                                       (normalize-context parameters bound))))
+  (let [request (normalize-context parameters request)
+        bound (normalize-context parameters bound)
+        merged (merge request bound)]
+    ;; Both supplied inputs must be admitted, even when bound values win.
+    ;; An unchanged admitted map already satisfies the aggregate bounds.
+    (cond
+      (= merged request) request
+      (= merged bound) bound
+      :else (normalize-context parameters merged))))

@@ -19,6 +19,7 @@
     :prepared-native-source-id-key optional private config key populated by
                                   a backend bootstrap wrapper
     :relationship-retraction-count (fn [db tx-data] n)
+    :qualified-plan             (fn [db entries app-datoms source-scope] plan)
     :schema  {:read-schema    (fn [db] ...)
               :write-schema!  (fn [conn schema-string opts] ...)}
     :transact!                  (fn [conn native-tx] tx-report)
@@ -440,14 +441,16 @@
                 scopes (volatile! {})]
             (fn [relation-eid]
               (or (get @scopes relation-eid)
-                  (when-let [resolved
-                             (proof-frame/resolved-generation
-                              (force (:proof-frame-delay state))
-                              relation-eid)]
-                    (let [scope (conj @base
-                                      (:schema-generation resolved)
-                                      relation-eid
-                                      (:generation resolved))]
+                  (let [resolved (when-not (:qualification state)
+                                   (proof-frame/resolved-generation
+                                    (force (:proof-frame-delay state)) relation-eid))]
+                    ;; Compact rows contain data, never a qualification result.
+                    ;; Exact basis scope remains safe when no managed qualifier
+                    ;; proof is available, including raw qualifier mutations.
+                    (let [scope (if resolved
+                                  (conj @base (:schema-generation resolved)
+                                        relation-eid (:generation resolved))
+                                  (conj @base :exact identity relation-eid))]
                       (vswap! scopes assoc relation-eid scope)
                       scope))))))]
     {:memo (scan-cache/memo)
@@ -1156,7 +1159,11 @@
             semantic-key
             (cond-> (completed-answer-semantic-key opts operation query)
               (and engine/*qualification* (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation))
-              (assoc :qualification-certificate-format temporal/collection-format)
+              (-> (assoc :qualification-certificate-format temporal/collection-format)
+                  (update :qualification (fn [[format basis _ context evaluator]]
+                                           [format basis context evaluator])))
+              (= :expand-permission-tree operation)
+              (dissoc :qualification)
               (and engine/*qualification* (= :can? operation))
               ;; Keep exact source/basis, context and evaluator while removing
               ;; time from this answer key. Its value now certifies time reuse.
@@ -1303,7 +1310,12 @@
             (or (:cursor-cache-policy-identity opts)
                 (cursor/cache-policy-identity opts))
             :render-abi rendered-page-render-abi})
-    engine/*qualification* (assoc :temporal-mode (relay/temporal-mode opts))))
+    engine/*qualification*
+    (assoc :temporal-mode (relay/temporal-mode opts)
+           :qualification-certificate-format temporal/collection-format)
+    (and engine/*qualification* (= :live (relay/temporal-mode opts)))
+    (update :qualification (fn [[format basis _ context evaluator]]
+                             [format basis context evaluator]))))
 
 (defn- rendered-page-cache-context
   [adapter opts operation public-query]
@@ -1337,6 +1349,7 @@
             {:store (:basis-cache-store opts)
              :lookup-options
              {:cache-lifecycle (:cache-lifecycle opts)
+              :evaluation-time-ms (:time engine/*qualification*)
               :exact-basis-key exact-basis-key}
              :publication-options
              {:cache-lifecycle (:cache-lifecycle opts)
@@ -1358,6 +1371,8 @@
 (defn- public-page-from-rendered
   [opts rendered provenance]
   (execution/check! (:execution-contract opts) :rendered-page-return)
+  (when (and engine/*qualification* (:qualification-certificate rendered))
+    (qualification/observe-interval! engine/*qualification* (:qualification-certificate rendered)))
   (with-cache-info (:page rendered) provenance))
 
 (defn- selected-rendered-page-hit
@@ -1381,8 +1396,15 @@
           (relay/externalize-page
            adapter opts operation query (:value answer)))
         rendered
-        {:format cache/rendered-page-entry-format
-         :page public-page}]
+        (cond-> {:format cache/rendered-page-entry-format
+                 :page public-page}
+          engine/*qualification*
+          (assoc :qualification-certificate
+                 (let [current (:qualification-certificate (:value answer))
+                       prior (:cursor-qualification-certificate opts)]
+                   (if prior
+                     (temporal/intersect-intervals current (select-keys prior [:start-ms :valid-until-ms :complete?]))
+                     current))))]
     (when cache-context
       (cache/publish-rendered-page!
        (:store cache-context)
@@ -3944,7 +3966,8 @@
                                   (qualified-writes/error! :prepared-qualifier-required))
                                 (assoc entry :value prepared :expected-value (:value entry)))
                               entry)) entries)]
-        (:tx-data (plan db entries app-datoms)))
+        (:tx-data (plan db entries app-datoms
+                        (select-keys (:identity basis) [:source-id :branch]))))
       (do
         (when (some #(or (contains? % :prepared-qualifier)
                          (seq (select-keys (:relationship %) relationship-mutations/qualifier-keys))) updates)
@@ -3967,15 +3990,17 @@
   same public operation on `client` after the response is complete."
   [client runtime operation request thunk]
   (let [page (thunk)
-        options (runtime-options runtime)]
+        options (runtime-options runtime)
+        qualified? *qualified-authorization-enabled?*]
     (when-let [state (:lookahead-state options)]
       (lookahead/submit!
        state operation request page
        (fn [continuation]
-         (case operation
-           :lookup-resources (eacl/lookup-resources client continuation)
-           :lookup-subjects (eacl/lookup-subjects client continuation)
-           :read-relationships (eacl/read-relationships client continuation)))
+         (binding [*qualified-authorization-enabled?* qualified?]
+           (case operation
+             :lookup-resources (eacl/lookup-resources client continuation)
+             :lookup-subjects (eacl/lookup-subjects client continuation)
+             :read-relationships (eacl/read-relationships client continuation))))
        (:io-observer options)))
     page))
 

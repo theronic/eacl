@@ -44,7 +44,10 @@
 (defn- without-cache-provenance
   [value]
   (if (map? value)
-    (dissoc value :cached? :cache-basis)
+    ;; Separate live requests may mint different time-scoped cursor bytes.
+    ;; Compare authorization and page bounds; cursor validity has its own suite.
+    (cond-> (dissoc value :cached? :cache-basis)
+      (:page-info value) (update :page-info dissoc :start-cursor :end-cursor))
     value))
 
 (defn- assert-same-answers!

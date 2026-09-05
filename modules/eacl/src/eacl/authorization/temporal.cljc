@@ -4,7 +4,7 @@
             [eacl.caveats.values :as values]))
 
 (def point-format :eacl.authorization/temporal-point-v1)
-(def collection-format :eacl.authorization/temporal-collection-v1)
+(def collection-format :eacl.authorization/temporal-collection-v2)
 
 (defn point-answer [time proof]
   (evidence/throw-if-fault! proof)
@@ -37,13 +37,23 @@
        (evidence/before? time (:valid-until-ms answer))
        (or (:complete? answer) (and exact-basis? (= time (:start-ms answer))))))
 
+(defn answer-interval
+  "Extracts the interval of an admitted point, collection, or rendered answer."
+  [answer]
+  (if (= point-format (:format answer)) answer (:qualification-certificate answer)))
+
+(defn answer-reusable? [answer time exact-basis?]
+  (when-let [certificate (answer-interval answer)]
+    (reusable? certificate time exact-basis?)))
+
 (defn supersedes?
   "A later computation can replace a resident interval it could not reuse.
    Older pinned computations never evict a newer answer under the same key."
   [prior next]
-  (and (= point-format (:format prior) (:format next))
-       (< (:start-ms prior) (:start-ms next))
-       (not (reusable? prior (:start-ms next) true))))
+  (let [before (answer-interval prior) after (answer-interval next)]
+    (and (= (:format prior) (:format next)) before after
+         (< (:start-ms before) (:start-ms after))
+         (not (reusable? before (:start-ms after) true)))))
 
 (defn interval [time end complete?]
   {:start-ms time :valid-until-ms end :complete? complete?})

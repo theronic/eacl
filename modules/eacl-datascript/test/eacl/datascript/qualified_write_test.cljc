@@ -14,6 +14,7 @@
             [eacl.datascript.core :as api]
             [eacl.datascript.caveat-schema-test :as schema-races]
             [eacl.datascript.schema :as schema]
+            [eacl.datascript.storage :as admission]
             [eacl.datascript.qualifiers :as qualifiers]))
 
 (deftest qualified-batches-publish-atomically
@@ -33,6 +34,15 @@
         client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
     (allowance/check! {:client client :writer #(qualifiers/writer conn)
                        :read-schema schema/read-schema :interleave! schema-races/interleave! :entid ds/entid})))
+
+(deftest externally-created-connection-supports-qualified-preparation-and-snapshot-publication
+  (let [conn (ds/create-conn (schema/merge-schema {:app/flag {}}))
+        _ (admission/bootstrap! conn)
+        now (atom 99)
+        client (api/make-client conn {:clock #(deref now)
+                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})]
+    (is (nil? (:eacl.datascript/source-id (ds/entity (ds/db conn) [:eacl/id "datascript-metadata"]))))
+    (public/check! {:client client :writer #(qualifiers/writer conn) :entid ds/entid :now now})))
 
 (deftest stored-and-active-inspection-preserve-aligned-native-qualifiers
   (let [conn (schema/create-conn {:app/flag {}})

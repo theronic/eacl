@@ -25,7 +25,9 @@
   [native db]
   (when (some #(contains? native %) [:snapshot :with-snapshot :transact!])
     (error! :mutable-planner))
-  (->NativePlanner native ((:source native) db)))
+  (let [source ((:source native) db)]
+    (when-not source (error! :missing-source-identity))
+    (->NativePlanner native source)))
 
 (defn native-writer
   "Backend implementation boundary. The factory supplies native, certified
@@ -102,13 +104,18 @@
         b (vec (take 2 (rows db resource-id storage/reverse-attribute reverse)))]
     (cond
       (and (empty? a) (empty? b)) {:present? false}
-      (not= 1 (count a) (count b)) (error! :asymmetric-or-duplicate-relationship)
+      (or (> (count a) 1) (> (count b) 1)) (error! :asymmetric-or-duplicate-relationship)
       :else
-      (let [av (:v (first a)) bv (:v (first b)) qid (nth av 4 nil)]
-        (when-not (and (pair/endpoint-value? av) (pair/endpoint-value? bv)
-                       (= [av bv] (values-for identity qid)))
+      (let [av (:v (first a)) bv (:v (first b)) qid (nth (or av bv) 4 nil)
+            [expected-a expected-b] (values-for identity qid)]
+        ;; Preserve ordinary one-sided repair. A qualified half-pair has lost
+        ;; its atomic ownership proof and remains a corruption fault.
+        (when (and qid (or (nil? av) (nil? bv)))
           (error! :asymmetric-or-duplicate-relationship))
-        {:present? true :qid qid}))))
+        (when-not (and (or (nil? av) (and (pair/endpoint-value? av) (= av expected-a)))
+                       (or (nil? bv) (and (pair/endpoint-value? bv) (= bv expected-b))))
+          (error! :asymmetric-or-duplicate-relationship))
+        {:present? true :qid qid :forward? (some? av) :reverse? (some? bv)}))))
 
 (defn- stored-qualifier [native db qid]
   (when qid
@@ -237,9 +244,10 @@
              (when (and (:present? prior) (not retain-pair?))
                (pair/retractions subject-type subject-id relation-id resource-type resource-id old-qid))
              (when old-qid [[:db/retractEntity old-qid]])
-             (when-not (or (= :delete operation) retain-pair?)
-               [[:db/add subject-id storage/forward-attribute forward]
-                [:db/add resource-id storage/reverse-attribute reverse]])
+             (when (and (not= :delete operation) (or (not retain-pair?) (not (:forward? prior))))
+               [[:db/add subject-id storage/forward-attribute forward]])
+             (when (and (not= :delete operation) (or (not retain-pair?) (not (:reverse? prior))))
+               [[:db/add resource-id storage/reverse-attribute reverse]])
              app-datoms))]
     {:tx-data tx :operation operation :relationship relationship :qualifier-eid qid
      :old-qualifier-eid old-qid :adds-caveat-reference? (boolean (and inline? (:caveat semantic)))}))
@@ -345,11 +353,12 @@
         _ (unique-qualifiers! (mapcat (juxt :qualifier-eid :old-qualifier-eid) plans))
         qids (into #{} (remove nil?) (mapcat (juxt :qualifier-eid :old-qualifier-eid) plans))
         app-datoms (application-datoms app-datoms qids)
-        relations (sort (set (map #(nth (:relationship %) 2) plans)))]
-    {:tx-data (vec (concat (when (seq entries)
+        changed? (or (seq app-datoms) (some (comp seq :tx-data) plans))
+        relations (when changed? (sort (set (map #(nth (:relationship %) 2) plans))))]
+    {:tx-data (vec (concat (when (and changed? (seq entries))
                              ((:schema-fence native) db (boolean (some :adds-caveat-reference? plans))))
                            (mapcat #((:relation-fence native) db %) relations)
-                           (distinct (mapcat :identity-guards entries))
+                           (when changed? (distinct (mapcat :identity-guards entries)))
                            (mapcat :tx-data plans)
                            app-datoms))
      :plans (mapv #(dissoc % :tx-data :old-qualifier-eid :adds-caveat-reference?) plans)}))

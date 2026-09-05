@@ -5,6 +5,7 @@
             [datascript.core :as ds]
             [eacl.authorization.evidence :as evidence]
             [eacl.cache.key :as cache-key]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -818,7 +819,7 @@
         (is (true? (:allowed? cold)))
         (is (false? (:cached? cold)))
         (is (true? (:cached? warm)))
-        (is (pos? (:managed-entries before)))
+        (is (= (not orchestration/*qualified-authorization-enabled?*) (pos? (:managed-entries before))))
         (is (zero? (:stamp-failures before)))
 
         (eacl/create-relationship!
@@ -826,10 +827,10 @@
         (let [lifted (eacl/check-permission client f0-query)
               after-unrelated (datascript/cache-stats client)]
           (is (true? (:allowed? lifted)))
-          (is (true? (:cached? lifted)))
-          (is (= (inc (:managed-hits before))
+          (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? lifted)))
+          (is (= (cond-> (:managed-hits before) (not orchestration/*qualified-authorization-enabled?*) inc)
                  (:managed-hits after-unrelated)))
-          (is (= (:misses before) (:misses after-unrelated)))
+          (is (= (cond-> (:misses before) orchestration/*qualified-authorization-enabled?* inc) (:misses after-unrelated)))
           (is (= (:stamp-failures before)
                  (:stamp-failures after-unrelated))))
 

@@ -87,3 +87,13 @@
     (is (= :node-limit (:reason (error-data #(e/combine :union x false))))))
   (with-redefs [e/limits (assoc e/limits :depth 0)]
     (is (= :depth-limit (:reason (error-data #(e/combine :intersection x y)))))))
+
+(deftest definite-certificates-retain-the-canonical-wire-format
+  (doseq [value [false true]
+          end [nil -62135596800000 -1 0 100 253402300799999]
+          complete? [false true]]
+    (let [proof (e/with-certificate value end complete?)
+          expected (values/encode-bounded [:eacl.authorization/evidence e/format-version value end complete?]
+                                          {:maximum-size 4194304 :maximum-entries 16384 :maximum-depth 80})]
+      (is (= expected (e/encode proof)))
+      (is (= proof (e/decode expected))))))

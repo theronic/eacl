@@ -42,3 +42,29 @@
   (is (= {"region" "za" "active" false}
          (values/merge-context parameters {"region" "us" "active" false} {"region" "za"})))
   (is (= :context-type (reason #(values/merge-context parameters {"active" "bad"} {"active" true})))))
+
+(deftest host-context-normalization-refines-the-wire-round-trip
+  (let [scalars [[:bool [false true]]
+                 [:int [-9007199254740991 0 9007199254740991]]
+                 [:string ["" "za" "hé😀中"]]
+                 [:timestamp [[:timestamp -62135596800000] [:timestamp 0] [:timestamp 253402300799999]]]]]
+    (doseq [[type examples] scalars
+            [type examples] [[type examples]
+                             [[:list type] [[] (vec examples)]]
+                             [[:map :string type] [{} (zipmap ["a" "😀" "￿"] examples)]]]
+            value examples
+            context [{} {"value" value}]
+            parameters [[["value" type]] {"value" type}]]
+      (is (= (values/decode-context parameters (values/encode-context parameters context))
+             (values/normalize-context parameters context))))
+    (doseq [[type examples] scalars
+            :let [parameters [["a" type] ["b" type]]
+                  contexts [{} {"a" (first examples)} {"a" (last examples)} {"b" (first examples)}]]
+            request contexts bound contexts]
+      (is (= (values/decode-context parameters (values/encode-context parameters (merge request bound)))
+             (values/merge-context parameters request bound))))
+    (doseq [[type examples] scalars
+            invalid [nil [] {"unknown" (first examples)} {"value" #{}}]]
+      (let [parameters [["value" type]]]
+        (is (= (reason #(values/decode-context parameters (values/encode-context parameters invalid)))
+               (reason #(values/normalize-context parameters invalid))))))))

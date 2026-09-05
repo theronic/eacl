@@ -59,7 +59,8 @@
         (testing "the caller's continuation is an exact hit with identical content"
           (is (true? (:cached? continuation)))
           (is (= (:data oracle) (:data continuation)))
-          (is (= (:page-info oracle) (:page-info continuation)))))
+          (is (= (dissoc (:page-info oracle) :start-cursor :end-cursor)
+                 (dissoc (:page-info continuation) :start-cursor :end-cursor)))))
       (testing "observer events carry provenance and exact meters"
         (let [foreground (first (filter #(= :request (:provenance %)) @events))
               background (first (filter #(= :lookahead (:provenance %)) @events))]

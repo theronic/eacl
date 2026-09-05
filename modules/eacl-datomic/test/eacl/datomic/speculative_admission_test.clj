@@ -157,7 +157,7 @@
                           :after speculative-cursor}))]
                   (is (= :eacl.pagination/invalid-cursor
                          (:type cursor-error)))
-                  (is (= :speculative-provenance
+                  (is (= (if orchestration/*qualified-authorization-enabled?* :query-mismatch :speculative-provenance)
                          (:reason cursor-error)))
                   (is (not (nil? cursor-error))
                       "a speculative cursor cannot cross to a colliding commit"))))
@@ -207,9 +207,9 @@
                   decision (eacl/check-permission prospective report-demand)
                   after (datomic/cache-stats client)]
               (is (true? (:allowed? decision)))
-              (is (true? (:cached? decision))
+              (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? decision))
                   "the disjoint proof reads through the committed managed tier")
-              (is (= (inc (:managed-hits before))
+              (is (= (cond-> (:managed-hits before) (not orchestration/*qualified-authorization-enabled?*) inc)
                      (:managed-hits after)))
               (is (= (:puts before) (:puts after))
                   "speculative read-through never promotes or publishes"))))))))
@@ -276,13 +276,13 @@
         (eacl/with-snapshot
           [prospective
            (eacl/with-schema
-            base schema-without-ban {:orphan-policy :retain-inert})]
+             base schema-without-ban {:orphan-policy :retain-inert})]
           (let [before (datomic/cache-stats client)
                 decision (eacl/check-permission prospective report-demand)
                 after (datomic/cache-stats client)]
             (is (true? (:allowed? decision)))
-            (is (true? (:cached? decision)))
-            (is (= (inc (:managed-hits before)) (:managed-hits after)))
+            (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? decision)))
+            (is (= (cond-> (:managed-hits before) (not orchestration/*qualified-authorization-enabled?*) inc) (:managed-hits after)))
             (is (= (:puts before) (:puts after)))))))))
 
 (deftest transaction-function-expanded-datoms-drive-effects-test

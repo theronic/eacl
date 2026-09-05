@@ -1,0 +1,20 @@
+{:version 1
+ :recorded-before-measurement true
+ :documents 1000
+ :backends [:datascript :datomic :datahike :datalevin]
+ :cases [:ordinary :sparse-5 :sparse-10 :qualified-prefix-10 :expired-prefix-10]
+ :samples 100
+ :relative-budgets
+ {:ordinary {:latency-factor 1.5 :latency-slack-ns 100000
+             :allocation-factor 1.5 :allocation-slack-bytes 32768}
+  :sparse-5 {:latency-factor 2.0 :latency-slack-ns 250000
+             :allocation-factor 2.0 :allocation-slack-bytes 65536}
+  :sparse-10 {:latency-factor 3.0 :latency-slack-ns 500000
+              :allocation-factor 3.0 :allocation-slack-bytes 131072}
+  :qualified-prefix-10 {:latency-factor 5.0 :latency-slack-ns 2000000
+                        :allocation-factor 5.0 :allocation-slack-bytes 524288}
+  :expired-prefix-10 {:latency-factor 5.0 :latency-slack-ns 2000000
+                      :allocation-factor 5.0 :allocation-slack-bytes 524288}}
+ :absolute-p95-ns {:point 5000000 :cache-hit 250000 :page 250000000 :count 2000000000}
+ :data-read-budgets {:ordinary 0 :cache-hit 0 :maximum-per-qualifier 1
+                     :maximum-per-shared-definition 1 :maximum-per-relation 1}}

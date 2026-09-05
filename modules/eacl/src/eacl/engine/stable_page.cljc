@@ -327,11 +327,18 @@
    an explicit value, including timeless true; missing annotations cannot
    silently turn a conditional lookahead into a grant."
   [options checkpoint]
-  (when (and checkpoint (reducer/checkpoint-scope-valid? options (:state checkpoint)))
+  (when checkpoint
     (if-not (:qualification options)
-      checkpoint
-      (let [annotations (:pending-evidence checkpoint)]
-        (when (and (temporal/interval-valid? (:qualification-certificate checkpoint))
+      (when (reducer/checkpoint-scope-valid? options (:state checkpoint)) checkpoint)
+      (let [annotations (:pending-evidence checkpoint)
+            prior-scope (get-in checkpoint [:state :qualified :scope])
+            scope (qualification/exact-reuse-identity (:qualification options))]
+        (when (and (vector? prior-scope) (= 5 (count prior-scope))
+                   (= scope (assoc prior-scope 2 (:time (:qualification options))))
+                   (= (:result-policy options :definite)
+                      (get-in checkpoint [:state :qualified :result-policy]))
+                   (temporal/interval-valid? (:qualification-certificate checkpoint))
+                   (temporal/reusable? (:qualification-certificate checkpoint) (nth prior-scope 2) true)
                    (temporal/reusable? (:qualification-certificate checkpoint) (:time (:qualification options)) true)
                    (map? annotations)
                    (= (set (:pending checkpoint)) (set (keys annotations)))
@@ -342,7 +349,9 @@
                                     (string? (evidence/encode value)))
                                (catch #?(:clj Exception :cljs :default) _ false)))
                            (vals annotations)))
-          checkpoint)))))
+          ;; Only this interval-checked boundary may rebind retained reducer
+          ;; state to a later request. Direct reducer resume remains exact.
+          (assoc-in checkpoint [:state :qualified :scope] scope))))))
 
 (defn- state-at-boundary
   "Reconstructs semantic state and pending lookahead at boundary `ordinal`:
@@ -389,7 +398,8 @@
           options (if (:candidate-evidence-fn options) options (route/discovery-options options direction))]
       (cond-> options
         (:checkpoint-key options)
-        (update :checkpoint-key #(vector % :qualification (qualification/exact-reuse-identity request)
+        (update :checkpoint-key #(vector % :qualification-v2
+                                         (assoc (qualification/exact-reuse-identity request) 2 nil)
                                          (:result-policy options :definite)))))
     options))
 

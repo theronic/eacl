@@ -16,6 +16,7 @@
             [eacl.datahike.caveat-schema-test :as schema-races]
             [eacl.datahike.db :as db]
             [eacl.datahike.schema :as schema]
+            [eacl.datahike.storage :as admission]
             [eacl.datahike.qualifiers :as qualifiers]))
 
 (deftest qualified-batches-publish-atomically
@@ -48,6 +49,21 @@
                            :writer #(qualifiers/writer conn)
                            :read-schema schema/read-schema :interleave! schema-races/interleave! :entid db/entid})
         (finally (d/release conn) (d/delete-database config))))))
+
+(deftest externally-created-connection-supports-qualified-preparation-and-snapshot-publication
+  (let [config (update schema/default-config :store assoc :id (random-uuid))
+        _ (d/create-database config)
+        conn (d/connect config)
+        now (atom 99)]
+    (try
+      (d/transact conn (schema/merge-schema [{:db/ident :app/flag :db/valueType :db.type/long
+                                              :db/cardinality :db.cardinality/one}]))
+      (admission/bootstrap! conn)
+      (is (nil? (get (:config (d/db conn)) schema/live-source-id-key)))
+      (public/check! {:client (api/make-client conn {:clock #(deref now)
+                                                     :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                      :writer #(qualifiers/writer conn) :entid db/entid :now now})
+      (finally (d/release conn) (d/delete-database config)))))
 
 (deftest remote-writer-cannot-admit-a-qualified-schema
   (let [conn (schema/create-conn) config (:config (d/db conn))]

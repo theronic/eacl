@@ -3,6 +3,7 @@
             [datomic.api :as d]
             [eacl.backend.source :as source]
             [eacl.causal-token :as causal-token]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.datomic-helpers
@@ -309,9 +310,9 @@
         [{:db/id (d/tempid :db.part/user)
           :db/doc "unrelated application data"}])
       (testing "an unrelated basis advance lifts the authenticated answer"
-        (is (true?
-             (:cached?
-              (eacl/lookup-resources authorization query)))))
+        (is (= (not orchestration/*qualified-authorization-enabled?*)
+               (:cached?
+                (eacl/lookup-resources authorization query)))))
       (eacl/delete-relationship! authorization relationship)
       (let [after-revocation
             (eacl/lookup-resources authorization query)]

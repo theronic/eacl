@@ -31,43 +31,45 @@
   (when directory
     (reduce + 0 (map #(.length %) (filter #(.isFile %) (file-seq (io/file directory)))))))
 
-(defn open-system [backend]
-  (let [directory (u/tmp-dir (str "eacl-qualifier-bench-" (random-uuid)))
-        uri (str "datomic:mem://qualifier-bench-" (random-uuid))
-        watermark (atom 0)
-        config {:security-key "01234567890123456789012345678901"
-                :source-lifecycle "qualifier-benchmark"}
-        [conn api db transact! rows close!]
-        (case backend
-          :datomic
-          (do (dt/create-database uri)
-              (let [conn (dt/connect uri)]
-                (if-let [install! (ns-resolve 'eacl.datomic.schema 'install!)]
-                  (install! conn)
-                  @(dt/transact conn dt-schema/v8-schema))
-                [conn dt-api/make-client dt/db #(deref (dt/transact %1 %2))
-                 #(dt/datoms %1 :aevt %2)
-                 #(do (dt/release conn) (dt/delete-database uri))]))
-          :datahike
-          (let [conn (dh-api/create-conn nil {:store {:backend :file :path (str directory "/db")}})
-                config (:config (dh/db conn))]
-            [conn dh-api/make-client dh/db dh/transact
-             #(dh/datoms %1 {:index :aevt :components [%2]})
-             #(do (dh/release conn) (dh/delete-database config))])
-          :datascript
-          (let [conn (ds-api/create-conn)]
-            [conn ds-api/make-client ds/db ds/transact! #(ds/datoms %1 :aevt %2) (fn [])])
-          :datalevin
-          (let [conn (dl-api/create-conn directory)]
-            [conn dl-api/make-client dl/db dl/transact! #(dl/datoms %1 :ave %2) #(dl/close conn)]))
-        config (cond-> config
-                 (= :datalevin backend)
-                 (assoc :revision-watermark watermark
-                        :advance-revision-watermark! #(swap! watermark max %)))]
-    {:client (api conn config) :snapshot #(db conn)
-     :transact! #(transact! conn %) :rows rows
-     :durable-bytes #(when (#{:datahike :datalevin} backend) (directory-bytes directory))
-     :close! #(do (close!) (when (.exists (io/file directory)) (u/delete-files directory)))}))
+(defn open-system
+  ([backend] (open-system backend {}))
+  ([backend options]
+   (let [directory (u/tmp-dir (str "eacl-qualifier-bench-" (random-uuid)))
+         uri (str "datomic:mem://qualifier-bench-" (random-uuid))
+         watermark (atom 0)
+         config {:security-key "01234567890123456789012345678901"
+                 :source-lifecycle "qualifier-benchmark"}
+         [conn api db transact! rows close!]
+         (case backend
+           :datomic
+           (do (dt/create-database uri)
+               (let [conn (dt/connect uri)]
+                 (if-let [install! (ns-resolve 'eacl.datomic.schema 'install!)]
+                   (install! conn)
+                   @(dt/transact conn dt-schema/v8-schema))
+                 [conn dt-api/make-client dt/db #(deref (dt/transact %1 %2))
+                  #(dt/datoms %1 :aevt %2)
+                  #(do (dt/release conn) (dt/delete-database uri))]))
+           :datahike
+           (let [conn (dh-api/create-conn nil {:store {:backend :file :path (str directory "/db")}})
+                 config (:config (dh/db conn))]
+             [conn dh-api/make-client dh/db dh/transact
+              #(dh/datoms %1 {:index :aevt :components [%2]})
+              #(do (dh/release conn) (dh/delete-database config))])
+           :datascript
+           (let [conn (ds-api/create-conn)]
+             [conn ds-api/make-client ds/db ds/transact! #(ds/datoms %1 :aevt %2) (fn [])])
+           :datalevin
+           (let [conn (dl-api/create-conn directory)]
+             [conn dl-api/make-client dl/db dl/transact! #(dl/datoms %1 :ave %2) #(dl/close conn)]))
+         config (cond-> config
+                  (= :datalevin backend)
+                  (assoc :revision-watermark watermark
+                         :advance-revision-watermark! #(swap! watermark max %)))]
+     {:client (api conn (merge config options)) :snapshot #(db conn)
+      :transact! #(transact! conn %) :rows rows
+      :durable-bytes #(when (#{:datahike :datalevin} backend) (directory-bytes directory))
+      :close! #(do (close!) (when (.exists (io/file directory)) (u/delete-files directory)))})))
 
 (defn- percentile [values p]
   (nth (vec (sort values)) (min (dec (count values)) (long (* p (count values))))))

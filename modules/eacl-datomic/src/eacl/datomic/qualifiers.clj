@@ -51,8 +51,10 @@
 
 (defn plan
   "Builds qualified transaction data from one immutable basis without writing."
-  [database entries app-datoms]
-  (staged/plan-batch (staged/planner (planner-api) database) database entries app-datoms))
+  ([database entries app-datoms]
+   (staged/plan-batch (staged/planner (planner-api) database) database entries app-datoms))
+  ([database entries app-datoms _source-scope]
+   (plan database entries app-datoms)))
 
 (defn writer [conn]
   (when-not (d/entid (d/db conn) :eacl.fn/assert-qualifier-facts) (staged/error! :schema-unprepared))

@@ -64,8 +64,10 @@
 
 (defn- stale-connection-contention?
   [throwable]
-  (= :eacl.datalevin/stale-connection-generation
-     (:type (ex-data throwable))))
+  (or (= :eacl.datalevin/stale-connection-generation
+         (:type (ex-data throwable)))
+      (= :cleanup-source-changed
+         (:reason (datalevin-failure-data throwable :eacl.qualifier/staged-write)))))
 
 (defn- transact-native!
   [write-token conn {:keys [tx-data]}]

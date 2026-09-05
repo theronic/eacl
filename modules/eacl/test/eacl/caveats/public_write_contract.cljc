@@ -28,7 +28,8 @@
           qids #(with-db (fn [db] (set (map :e ((:all-rows native) db :eacl.relationship-qualifier/format-version)))))
           error-data publication/error-data]
       (is (= :eacl/unsupported-capability
-             (:type (error-data #(eacl/write-relationships! client [{:operation :create :relationship relationship}])))))
+             (:type (error-data #(binding [orchestration/*qualified-authorization-enabled?* false]
+                                   (eacl/write-relationships! client [{:operation :create :relationship relationship}]))))))
       (is (empty? (rows)))
       (binding [orchestration/*qualified-authorization-enabled?* true]
         (eacl/write-relationships! client [{:operation :create :relationship relationship}

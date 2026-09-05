@@ -2,6 +2,7 @@
   "Certified prepared-reference publication for explicitly non-serving data."
   (:require [eacl.datascript.db :as native-db]
             [datascript.core :as ds]
+            [eacl.datascript.backend :as backend]
             [eacl.datascript.schema :as schema]
             [eacl.relationships.staged :as staged]
             [eacl.schema.qualification-admission :as admission]))
@@ -44,7 +45,7 @@
   "Read-only native inputs; constructing this map never prepares or writes a store."
   []
   {:backend :datascript :entity entity :facts facts :rows identity-rows
-   :source (fn [database] (get (ds/entity database [:eacl/id "datascript-metadata"]) :eacl.datascript/source-id)) :generation schema/current-schema-generation
+   :source backend/database-source-scope :generation schema/current-schema-generation
    :all-rows (fn [database attribute] (ds/datoms database :aevt attribute))
    :relation-version-attribute :eacl/relation-version
    :revision :max-tx
@@ -67,13 +68,18 @@
 
 (defn plan
   "Builds qualified transaction data from one immutable basis without writing."
-  [database entries app-datoms]
-  (staged/plan-batch (staged/planner (planner-api) database) database entries app-datoms))
+  ([database entries app-datoms]
+   (plan database entries app-datoms (backend/database-source-scope database)))
+  ([database entries app-datoms source-scope]
+   (let [native (assoc (planner-api) :source #(or (backend/database-source-scope %) source-scope))]
+     (staged/plan-batch (staged/planner native database) database entries app-datoms))))
 
 (defn writer [conn]
   (schema/prepare-cache-coherence! conn)
   (staged/native-writer
    (merge (planner-api)
+          (let [scope {:source-id {:connection-id (backend/connection-source-id conn)} :branch nil}]
+            {:source #(or (backend/database-source-scope %) scope)})
           {:snapshot #(ds/db conn) :transact! #(ds/transact! conn %)})))
 
 (defn publication-capability [database]

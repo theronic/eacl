@@ -102,8 +102,10 @@
         reusable? temporal/reusable?
         point-answer temporal/point-answer
         lookup-answer @#'cache/lookup-answer
+        lookup-rendered cache/lookup-rendered-page!
         content-key qualifier-cache/content-key
         exact-key qualifier-cache/exact-key
+        values-for @#'staged/values-for
         collect data/collect
         can? core/can?
         check-evidence engine/check-evidence
@@ -125,7 +127,14 @@
         plan-batch staged/plan-batch
         plan-retractions staged/plan-retraction-batch
         write-relationship! core/write-relationship!]
-    {:qualified-object-delete-leaves-owned-qualifiers
+    {:temporal-collection-resident-lookup-ignores-interval
+     {:gate #'temporal-test/collection-certificates-guard-resident-answers-and-replacement
+      :redefs {#'cache/lookup-answer (fn [store key _] (lookup-answer store key nil))}}
+     :temporal-rendered-page-ignores-captured-time
+     {:gate #'public-cursor-test/live-pages-and-counts-reuse-only-their-certified-time-interval
+      :redefs {#'cache/lookup-rendered-page! (fn [store options key]
+                                               (lookup-rendered store (assoc options :evaluation-time-ms 99) key))}}
+     :qualified-object-delete-leaves-owned-qualifiers
      {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
       :redefs {#'staged/plan-retraction-batch (fn [& args] (filterv #(not= :db/retractEntity (first %)) (apply plan-retractions args)))}}
      :qualified-object-delete-splits-endpoint-pairs
@@ -204,6 +213,9 @@
      :batch-publication-omits-relation-fence
      {:gate #'public-write-test/qualified-batches-publish-atomically
       :redefs {#'datascript-qualifiers/relation-fence (fn [_ _] [])}}
+     :prepared-publication-leaks-unresolved-qid
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'staged/values-for (fn [identity qid] (values-for identity (when qid -404)))}}
      :batch-publication-shares-qualifiers
      {:gate #'datomic-write-test/qualified-batches-publish-atomically
       :redefs {#'staged/unique-qualifiers! (fn [_] nil)}}
@@ -261,6 +273,9 @@
      :qualified-checkpoint-accepts-incomplete-evidence
      {:gate #'page-test/incomplete-or-faulty-qualified-checkpoints-fall-back-to-replay
       :redefs {#'stable-page/valid-qualified-checkpoint (fn [_ checkpoint] checkpoint)}}
+     :qualified-checkpoint-reuses-after-its-interval
+     {:gate #'page-test/qualified-checkpoints-reuse-only-inside-the-certified-interval
+      :redefs {#'temporal/reusable? (constantly true)}}
      :qualified-lookahead-loses-its-evidence
      {:gate #'page-test/pending-qualified-lookahead-needs-no-repeat-probe
       :redefs {#'stable-page/checkpoint-put!
@@ -531,7 +546,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 104 (count cases)))
+    (is (= 108 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

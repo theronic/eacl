@@ -853,8 +853,9 @@
               scan ddb/avet-endpoint-prefix]
           (with-redefs [ddb/avet-endpoint-prefix
                         (fn [& args]
-                          (when (number? (last args))
-                            (swap! native-limits conj (last args)))
+                          (let [limit (if (boolean? (last args)) (nth args (- (count args) 2)) (last args))]
+                            (when (number? limit)
+                              (swap! native-limits conj limit)))
                           (apply scan args))]
             (let [relationships
                   (loop [after nil
@@ -927,47 +928,47 @@
               schema-reads (atom 0)
               ledger (request-counters/make-ledger)
               open-read-snapshot d/open-read-snapshot
-              read-schema datalevin-schema/read-schema
+              read-schema datalevin-schema/read-authorization-schema
               escaped (atom nil)]
           (with-redefs [d/open-read-snapshot
                         (fn [connection]
                           (swap! opens inc)
                           (open-read-snapshot connection))
-                        datalevin-schema/read-schema
+                        datalevin-schema/read-authorization-schema
                         (fn [db]
                           (swap! schema-reads inc)
                           (read-schema db))]
             (binding [request-counters/*ledger* ledger]
               (eacl/with-snapshot [snapshot (eacl/snapshot client)]
-                 (reset! escaped snapshot)
-                 (is (= 1 (count (:relations (eacl/read-schema snapshot)))))
-                 (is (= 1
-                        (count
-                         (:data
-                          (eacl/read-relationships
-                           snapshot {:subject/type :user
-                                     :subject/id "alice"
-                                     :resource/type :document
-                                     :resource/relation :viewer
-                                     :first 10
-                                     :cache? false})))))
-                 (dotimes [_ 4]
-                   (is (:allowed?
-                        (eacl/check-permission
-                         snapshot {:subject alice
-                                   :permission :view
-                                   :resource document
-                                   :cache? false}))))
-                 (is (= :eacl/unsupported-capability
-                        (:type
-                         (error-data
-                          #(eacl/delete-relationship!
-                            snapshot alice :viewer document)))))
-                 (is (= :eacl/snapshot-thread-violation
-                        (:type
-                         @(future
-                            (error-data
-                             #(eacl/can? snapshot alice :view document))))))))
+                (reset! escaped snapshot)
+                (is (= 1 (count (:relations (eacl/read-schema snapshot)))))
+                (is (= 1
+                       (count
+                        (:data
+                         (eacl/read-relationships
+                          snapshot {:subject/type :user
+                                    :subject/id "alice"
+                                    :resource/type :document
+                                    :resource/relation :viewer
+                                    :first 10
+                                    :cache? false})))))
+                (dotimes [_ 4]
+                  (is (:allowed?
+                       (eacl/check-permission
+                        snapshot {:subject alice
+                                  :permission :view
+                                  :resource document
+                                  :cache? false}))))
+                (is (= :eacl/unsupported-capability
+                       (:type
+                        (error-data
+                         #(eacl/delete-relationship!
+                           snapshot alice :viewer document)))))
+                (is (= :eacl/snapshot-thread-violation
+                       (:type
+                        @(future
+                           (error-data
+                            #(eacl/can? snapshot alice :view document))))))))
             (is (= 1 @opens))
             (is (= 2 @schema-reads)
                 "one public schema read plus one shared request-local parse")

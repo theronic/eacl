@@ -18,6 +18,24 @@
   (cache/resolve-basis! store (merge {:exact-basis-key basis-key :evaluation-time-ms time} options)
                         semantic-key #(temporal/point-answer time proof)))
 
+(deftest collection-certificates-guard-resident-answers-and-replacement
+  (let [store (cache/basis-cache {:max-entries 8})
+        key {:operation :count-resources :query {:public {}}
+             :qualification [1 :basis :context :evaluator]
+             :qualification-certificate-format temporal/collection-format}
+        resolve (fn [time n end complete? options]
+                  (cache/resolve-basis! store (merge {:exact-basis-key basis-key :evaluation-time-ms time} options)
+                                        key #(hash-map :count n :limit -1
+                                                       :qualification-certificate (temporal/interval time end complete?))))]
+    (is (false? (:cached? (resolve 99 1 100 true {}))))
+    (is (:cached? (resolve 99 1 100 true {})))
+    (is (= 0 (get-in (resolve 100 0 nil true {:populate-cache? false}) [:value :count])))
+    (is (false? (:cached? (resolve 100 0 nil true {:populate-cache? false}))))
+    (is (false? (:cached? (resolve 101 0 nil true {}))))
+    (is (:cached? (resolve 102 0 nil true {})))
+    (is (false? (:cached? (resolve 99 1 100 true {}))))
+    (is (:cached? (resolve 103 0 nil true {})))))
+
 (deftest certificate-boundaries-and-completeness-are-independent-of-retention
   (doseq [value [true false (evidence/conditional [:test] ["field"])]
           start [98 99 100] end [101 nil] complete? [true false]

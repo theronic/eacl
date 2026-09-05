@@ -1,11 +1,14 @@
-# Caveat and qualifier foundation
+# Caveats and expiring Relationships (v9)
 
-This foundation follows the v8 qualifier-eid storage change (storage ABI 9).
-It persists named Caveat definitions and provides portable validation, partial
-evaluation, an optional JVM evaluator, and explicitly staged qualifier writers.
-Qualified authorization and expiration take effect only in the subsequent
-Phase 3 serving change. A Phase 2 client rejects non-nil qualifier references;
-never seed them into a serving Phase 2 database.
+V9 adds named Caveats, conditional permissions, and an exclusive expiration time
+on each Relationship. It uses the qualifier-eid storage ABI 9 landed in v8.
+This branch's serving switch remains gated until the final activation checks
+complete; the examples below describe the v9 contract. V8 and foundation-only
+readers reject non-nil qualifier references and cannot serve an activated store.
+
+The [executable example](examples/caveats.clj) covers conditional checks,
+expiring grants and bans, pinned time, live-cursor restart, renewal, composed
+writes, and deletion using DataScript and the optional JVM evaluator.
 
 ## Named definitions and schema admission
 
@@ -18,17 +21,17 @@ caveat in_region(region string, accepted list<string>) {
 
 definition user {}
 definition doc {
-  relation viewer: user
+  relation viewer: user | user with in_region
   permission view = viewer
 }
 ```
 
-This complete schema is accepted by Phase 2 `write-schema!`; the unused named
-Caveat does not affect ordinary authorization. The parser also understands
-`relation viewer: user with in_region`, but public schema admission rejects
-that branch until Phase 3. `user with in_region` requires the Caveat;
-`user | user with in_region` permits either plain or Caveated input. An
-expiry-only qualifier requires a plain alternative.
+Use `eacl/write-schema!` to install this schema. `user with in_region` requires
+that named Caveat; `user | user with in_region` permits either plain or Caveated
+input. An expiry-only qualifier requires a plain alternative. Admission checks
+an evaluator matching `eacl-cel/1` whenever any Relation names a Caveat, including
+empty and unvisited Relations. Unused named definitions and expiry-only schemas
+do not require an evaluator.
 
 Names and typed parameter names use ASCII identifiers, up to 64 bytes. CEL
 keywords/type names and the `__eacl_` prefix are reserved. Definitions have
@@ -45,6 +48,86 @@ generation. Removal is rejected while any retained qualifier references it,
 including an unattached preparation. A parameter change must remain compatible
 with every retained bound context. Native schema/reference fences reject
 competing writes; historical schema reads retain the selected definition.
+
+## Write and check a qualified Relationship
+
+Create native endpoint entities using the backend's normal transaction API,
+then pass public Relationship values to EACL:
+
+```clojure
+(def alice (eacl/spice-object :user "alice"))
+(def report (eacl/spice-object :doc "report"))
+(def grant
+  (assoc (eacl/->Relationship alice :viewer report)
+         :caveat "in_region"
+         :caveat-context {"accepted" ["za"]}
+         :valid-until-ms deadline-ms)) ; exclusive UTC epoch milliseconds
+(eacl/create-relationship! client grant)
+
+(eacl/check-permission client
+  {:subject alice :resource report :permission :view
+   :caveat-context {"region" "za"}})
+;; includes {:allowed? true :permissionship :has-permission}
+```
+
+Omitting `region` produces `:conditional-permission`, `:allowed? false`,
+`:missing-fields ["region"]`, and a canonical `:residual`. Supply the missing
+context in a new request. `can?` returns true only for a definite grant.
+At `deadline-ms`, this grant is inactive without a database write or collector.
+An expiring ban in `viewer - banned` can conversely turn denial into permission.
+
+Each Relationship has at most one named Caveat. Identity is still subject,
+Relation and resource; differing context or expiry does not create an independent
+grant. `:create` conflicts with an existing identity even after expiry. Use
+`:touch` to renew, shorten, change context, or remove qualification:
+
+```clojure
+(eacl/write-relationship! client
+  (assoc grant :operation :touch :valid-until-ms renewed-deadline-ms))
+(eacl/write-relationship! client
+  {:operation :touch :subject alice :relation :viewer :resource report})
+(eacl/delete-relationship! client grant)
+```
+
+Batch updates use `{:operation :touch :relationship grant}` entries. Pass
+`{:updates [...] :tx-data [...]}` to `write-relationships!` to commit application
+datoms with the final publication. Identical intents coalesce; conflicting
+qualifier values on one identity fail before allocation. Application datoms
+cannot alter EACL's protected state.
+
+For caller-managed native transaction composition, prepare each qualified value
+with `prepare-relationship!`, acquire a snapshot **after** preparation, and pass
+its opaque `:prepared-qualifier` handle alongside the corresponding update to
+`tx-relationships`. Submit the returned native tx-data, then release the
+snapshot. Preparation is inert; `discard-prepared-relationship!` removes an
+unchanged, unattached preparation. The executable example shows this sequence.
+
+## Public results and errors
+
+Default lookups return definite `SpiceObject` results. `:result-policy :detailed`
+returns `{:object ... :allowed? ... :permissionship ...}` items, including
+conditional results and their missing fields/residuals. Detailed counts add
+`:definite-count` and `:conditional-count`; they sum to `:count` and exclude
+lookahead. A conditional interior edge may still compose into a definite result.
+
+| Outcome or error | Meaning / caller action |
+| --- | --- |
+| `:has-permission` / `:no-permission` | Completed decision at the captured basis and time |
+| `:conditional-permission` | Supply missing context in a new request; do not treat as a grant |
+| `:eacl.caveat/invalid` | Invalid context, definition, profile, or resource bound; inspect the typed reason |
+| `:eacl/invalid-relationship-qualifier` | Invalid public Caveat/context/expiry input |
+| `:eacl/relationship-conflict` | Identity already exists for create, or is absent for replace |
+| `:eacl.caveat/evaluator-unavailable` | Install/supply a matching evaluator before serving the schema |
+| `:eacl/unsupported-capability` | The backend/writer lacks the required certified operation |
+| `:eacl.authorization/evaluation-failure` | Encountered authoritative qualifier/Caveat fault; detailed reads fail |
+| `:eacl.schema/relationship-qualifier-in-use` | A schema change would invalidate retained Relationships, including expired ones |
+| `:eacl.pagination/restart-required` | Live temporal certificate ended; begin a new lookup without the cursor |
+| `:eacl.pagination/invalid-cursor` | Authentication, scope, or envelope mismatch; do not silently reuse its boundary |
+
+`can?` converts authoritative qualified evaluation failures to false for Boolean
+compatibility. Invalid requests, cancellation, execution limits and backend
+errors still propagate. Detailed checks and collections expose faults; they
+never erase a malformed subtracting edge into an absent ban.
 
 ## Profile 1 values and operations
 
@@ -78,7 +161,7 @@ These are explicit profile limits, not full CEL or SpiceDB compatibility.
 | Entries in each list or map | 128 |
 | Total context entries / canonical payload bytes | 1024 / 16384 |
 | Conservative evaluation work units | 1048576 |
-| Cached programs / simultaneous program builds | 256 / 4 |
+| Cached portable/native artifacts (shared capacity) / simultaneous builds | 256 / 4 |
 
 Time values use exact epoch milliseconds from -62135596800000 through
 253402300799999. Input, encoded payload and plan limits are checked before
@@ -152,14 +235,10 @@ the owned qualifier. A missing non-nil target is corruption, never nil.
 | Datahike, including attribute refs | Prepared reference | Native assertion transaction |
 | Datalevin maintained EACL fork | Inline allocation | Exact snapshot; no creation-version claim |
 
-`eacl.<backend>.qualifiers/writer` constructs an internal staged writer.
-`eacl.relationships.staged/prepare!` creates an inert qualifier and opaque handle
-bound to one writer, source, Relationship identity, schema generation and exact
-qualifier facts. `plan-current` returns composable fenced transaction data while
-releasing its owned snapshot before commit. `write!` prepares automatically on
-backends that require it. Caller datoms cannot bypass protected EACL attributes
-or execute arbitrary transaction functions. These APIs are for non-serving
-fixtures and staged preparation only in Phase 2.
+Public `write-relationships!` chooses the certified publication strategy. The
+internal staged writers enforce native schema/Relation fences, endpoint identity,
+immutable qualifier facts and caller-datom restrictions. Use the public
+preparation/planning APIs above for transaction composition.
 
 An unattached preparation cannot authorize. Publishing it must use its concrete
 native qid and atomically attach both halves. Native commit-time facts and
@@ -203,18 +282,12 @@ lifecycle/security/watermark configuration, and an admitted write token from
 physical schema preparation. Reuse the normal backend upgrade procedure when
 opening an existing protected store; do not bypass its write policy.
 
-`valid-until-ms` is typed and immutable in this phase but entirely inert for
-authorization. Time-aware checks, conditional permissionship, request context,
-qualified schema activation, and cache/cursor validity enter together in Phase 3.
+## Schema replacement and backend admission
 
-## Phase 3 schema admission implementation
-
-The Phase 3 branch implements committed and speculative Caveated schema
-admission behind the disabled qualified semantic epoch. When enabled, any
-Caveated Relation requires an evaluator matching `eacl-cel/1`, including empty
-or unvisited Relations. The optional JVM module registers its matching default;
-CLJS requires an explicitly supplied matching evaluator. Unused named Caveats
-and expiry-only schemas remain evaluator-independent.
+Committed and speculative schema replacement use the same qualified admission
+checks. The optional JVM module registers its matching default; CLJS requires
+an explicitly supplied, independently certified matching evaluator for Caveated
+Relations. Expiry-only Relationships remain portable without an evaluator.
 
 Datomic and Datalevin advertise certified inline publication. DataScript and
 direct-writer Datahike advertise certified prepared-reference publication.
@@ -227,10 +300,9 @@ otherwise replacement fails with
 `:eacl.schema/relationship-qualifier-in-use`. Concurrent Relationship changes
 are fenced at commit. Datalevin performs schema validation and generation reads
 inside one owned snapshot, then releases that snapshot before submitting the
-schema transaction. The qualified semantic epoch remains disabled while the
-remaining cache, cursor, integrity, and release obligations are completed.
+schema transaction.
 
-## Phase 3 physical Relationship inspection
+## Physical Relationship inspection
 
 When qualified serving is enabled, `read-relationships` defaults to
 `:relationship-state :stored`. It returns retained rows with their optional
@@ -263,7 +335,7 @@ Omitting `:valid-until-ms` on a replacement removes expiry. Omitting all qualifi
 metadata returns the row to the nil-qid representation when the Relation permits
 plain input. No collection job is required for expiration correctness.
 
-## Phase 3 decoded qualifier cache
+## Decoded qualifier cache
 
 Qualified clients have an optional bounded local decode cache. Configure
 `:qualifier-cache {:max-entries 256}` or disable it with `:qualifier-cache false`.
@@ -284,7 +356,7 @@ unstamped in-place mutations, deletion and entity reuse without scanning the
 graph for reverse ownership. Expiry and Caveat evaluation run for each request;
 neither Boolean decisions nor conditional evidence enter this decode cache.
 
-## Phase 3 point-answer validity intervals
+## Point-answer validity intervals
 
 Point checks retain their completed evidence with its original evaluation time,
 exclusive deadline, completeness and permissionship. On the same immutable
@@ -301,12 +373,36 @@ compares the expected immutable entry atomically. An older pinned snapshot may
 recompute its original answer but cannot displace a newer interval under the
 same cache key. Token lifetimes and cursor continuation remain separate checks.
 
-Cross-basis qualified answer reuse remains disabled pending its complete writer
-and dependency proofs. Lookup, count, range, and checkpoint caches keep their conservative
+Bundled backends use exact-basis qualified answer reuse because their raw-writer
+interfaces do not provide a complete immutable-writer dependency proof. Lookup, count, range, and checkpoint caches keep their conservative
 exact-time scope. Their retained certificates support the live continuation
-checks described below. The release gate remains disabled throughout these steps.
+checks described below.
 
-## Phase 3 qualified cursors
+## Trusted clocks and Peer skew
+
+Each top-level operation captures one trusted evaluation time and uses it for
+all traversed edges, batches and retained evidence. Request Caveat context cannot
+override this time. The default uses wall-clock UTC epoch milliseconds with a
+process-local non-decreasing high-water mark. A configured client `:clock`
+function gets its own high-water wrapper. On a backward clock step, time holds
+at the previous accepted value until the clock catches up; an already expired
+grant cannot revive within that clock's lifetime.
+
+The high-water mark is not durable and does not synchronize Peers. A slow Peer
+can expire a grant late, and a fast Peer can expire it early. Keep serving clocks
+synchronized, monitor offset and backward steps, and reject operations through
+your trusted clock/service health policy when skew exceeds your application's
+acceptable uncertainty. EACL adds no hidden grace period or distributed clock
+agreement. A process restart or a newly configured clock must not be treated as
+proof of temporal continuity. Causal tokens certify data visibility, not equal
+wall time between Peers.
+
+Explicit snapshots pin both database basis and evaluation time. They deliberately
+support historical/simulation decisions, including a grant whose wall-clock
+expiry has since passed. Use client-targeted checks and lookups for current
+access control. A pinned snapshot is not a live authorization lease.
+
+## Qualified cursors
 
 A lookup on a client uses live time. Each resumed request captures a fresh trusted
 sample and checks it against the cursor's complete exclusive validity interval.
@@ -389,3 +485,39 @@ batch. Its existing ordinary commit-time deletion path remains available while
 the qualified semantic epoch is disabled. This change bounds submitted
 transactions; adapters that materialize object retractions retain that existing
 planning behavior.
+
+## Coordinated rollout and rollback
+
+1. Complete the v8 qualifier-eid storage migration and take a recoverable
+   database/schema checkpoint. Install the additive Caveat and qualifier
+   attributes through the backend's normal explicit preparation API. Startup
+   does not migrate or scan every Relationship.
+2. Upgrade every serving Peer to the v9-capable implementation before permitting
+   non-nil qualifier writes. Drain older readers. Install and explicitly require
+   the optional JVM evaluator, or supply an independently certified evaluator
+   with the matching profile. Expiry-only schemas need no evaluator.
+3. Verify each writer advertises its certified publication strategy, clock
+   health is acceptable, and live read paths select a fresh operation time.
+   Apply Caveated Relation alternatives using `write-schema!`; retained-data
+   validation must succeed before allowing qualified writes.
+4. Enable qualified writes as a coordinated application rollout. Exercise
+   grant/ban expiry without writes, missing-context outcomes, and live cursor
+   restart. Monitor typed faults and resource limits through the usual request
+   diagnostics; never substitute an ordinary edge for a missing qualifier.
+
+Rollback after qualified writes requires stopping those writes and restoring the
+pre-activation data/schema checkpoint before returning to older readers. Merely
+disabling a serving switch or removing the evaluator does not make qualified
+stored data safe for v8 readers. Already issued qualified cursors are scoped to
+the v9 semantic contract and must not be silently rebased onto an older reader.
+
+Datomic, DataScript, direct Datahike, and the optional JVM evaluator remain in the
+coordinated release set. The local Datalevin implementation is also tested, but
+its Maven adapter stays excluded while
+`dev.eacl/datalevin-embedded-eacl:1.0.2-eacl.2` is unpublished. Its local fork is
+pinned at `a7e29c25a3034b54814e58a2d317e8c6877d1933`; a deployment needing that
+adapter must resolve the publication and cold-consumer audit before release.
+
+The [acceptance crosswalk](../formal/qualified/acceptance.md) maps production
+refinement and killed controls. The [performance qualification](benchmarks/qualified-authorization.md)
+records the numerical budgets, exact workload and measurement limits.

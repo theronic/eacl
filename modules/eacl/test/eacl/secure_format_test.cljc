@@ -1045,3 +1045,21 @@
       (is (= (sign (reference left right)) (sign (comparator left right)))
           (str "ordering differs for " left " and " right)))
     (is (= (sort reference corpus) (sort comparator corpus)))))
+
+(deftest utf8-size-matches-every-bmp-scalar-and-surrogate-boundaries
+  (doseq [code (range 65536)
+          :when (or (< code 0xD800) (> code 0xDFFF))]
+    (let [s #?(:clj (str (char code)) :cljs (.fromCharCode js/String code))]
+      (is (= (count (secure/utf8-bytes s)) (secure/utf8-size s)) (str code))))
+  (doseq [high [0xD800 0xD801 0xDBFE 0xDBFF]
+          low [0xDC00 0xDC01 0xDFFE 0xDFFF]]
+    (let [s #?(:clj (str (char high) (char low)) :cljs (.fromCharCode js/String high low))]
+      (is (= 4 (secure/utf8-size s)))
+      (is (= (count (secure/utf8-bytes (str "aé" s "中")))
+             (secure/utf8-size (str "aé" s "中"))))))
+  (doseq [units [[0xD800] [0xDBFF] [0xDC00] [0xDFFF] [0xD800 0x61]
+                 [0xD800 0xD800] [0xDC00 0xD800] [0x61 0xDFFF]]]
+    (let [s #?(:clj (apply str (map char units)) :cljs (.apply (.-fromCharCode js/String) nil (to-array units)))]
+      (is (= :invalid-unicode
+             (:reason (try (secure/utf8-size s) nil
+                           (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error (ex-data error)))))))))

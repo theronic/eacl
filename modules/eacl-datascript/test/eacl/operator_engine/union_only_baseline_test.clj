@@ -9,6 +9,8 @@
             [datascript.core :as ds]
             [eacl.baseline.capture :as baseline]
             [eacl.cache :as cache]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
@@ -171,10 +173,21 @@
         (:behavior (read-baseline-index))]
     (doseq [[fixture-key expected-digest] fixture-digests]
       (testing (name fixture-key)
-        (is (= expected-digest
-               (secure/canonical-digest
-                digest-domain
-                (baseline/capture-fixture fixture-key))))))))
+        (let [captured (baseline/capture-fixture fixture-key)
+              legacy-stale (:stale-basis (baseline/read-snapshot fixture-key))]
+          (when orchestration/*qualified-authorization-enabled?*
+            (is (= (if (= :no-cursor (:outcome legacy-stale))
+                     legacy-stale
+                     {:outcome :error :resumed-page-size nil
+                      :detail {:outcome :error :error-keys [:eacl.pagination/stale-cursor :eacl.pagination/stale-cursor]}})
+                   (:stale-basis captured))))
+          ;; Preserve the frozen order/denotation/error digest. The qualified
+          ;; epoch's exact-basis continuation change is asserted separately.
+          (is (= expected-digest
+                 (secure/canonical-digest
+                  digest-domain
+                  (cond-> captured orchestration/*qualified-authorization-enabled?*
+                          (assoc :stale-basis legacy-stale))))))))))
 
 (defn- storage-nine-baseline
   "The frozen fixture predates one bootstrap transaction and the explicit ABI
@@ -198,9 +211,30 @@
 
 (deftest decoded-union-only-cursor-semantics-test
   (let [expected (storage-nine-baseline (read-cursor-snapshot))
-        actual (capture-cursor-payloads)]
-    (is (= (remove-basis-local-coordinates expected)
-           (remove-basis-local-coordinates actual)))
+        actual (capture-cursor-payloads)
+        comparison
+        (fn [snapshot]
+          (cond-> (remove-basis-local-coordinates snapshot)
+            orchestration/*qualified-authorization-enabled?*
+            (update :fixtures
+                    (fn [fixtures]
+                      (into {} (for [[fixture directions] fixtures]
+                                 [fixture (into {} (for [[direction payload] directions]
+                                                     [direction (update payload :cursor-common dissoc
+                                                                        :scope :frame :closure-digest :qualification-temporal)]))]))))))]
+    (when orchestration/*qualified-authorization-enabled?*
+      (doseq [[fixture directions] (:fixtures actual)
+              [direction payload] directions
+              :let [common (:cursor-common payload)
+                    certificate (:qualification-temporal common)]]
+        (is (= :exact-basis (get-in common [:frame :mode])))
+        (is (= (:native-revision common) (get-in common [:frame :native-revision])))
+        (is (temporal/cursor-certificate-valid? certificate))
+        (is (= :live (:mode certificate)))
+        (is (true? (:complete? certificate)))
+        (is (nil? (:valid-until-ms certificate)))
+        (is (not= (:scope common) (get-in expected [:fixtures fixture direction :cursor-common :scope])))))
+    (is (= (comparison expected) (comparison actual)))
     (is (= (coordinate-shapes expected)
            (coordinate-shapes actual)))))
 

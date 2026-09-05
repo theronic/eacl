@@ -9,6 +9,7 @@
             [eacl.caveats.jvm :as jvm]
             [eacl.schema.qualification-admission :as admission]
             [eacl.caveats.partial :as partial]
+            [eacl.caveats.values :as values]
             [eacl.relationships.qualifier :as qualifier]
             [exoscale.cel.expr :as expr]
             [exoscale.cel.parser :as cel]))
@@ -121,7 +122,7 @@
     (is (= {:outcome :true} (evaluator/evaluate engine a {"x" true} nil)))
     (is (= {:outcome :false} (evaluator/evaluate engine b {"x" true} nil)))
     (is (= {:outcome :true} (evaluator/evaluate engine (assoc a :db/id 456) {"x" true} nil)))
-    (is (= 2 (:builds (jvm/cache-stats engine))))))
+    (is (= 4 (:builds (jvm/cache-stats engine))))))
 
 (deftest concurrent-native-program-is-binding-local
   (let [engine (jvm/evaluator)
@@ -129,7 +130,37 @@
         jobs (mapv (fn [n] (future (evaluator/evaluate engine entity {"a" n "b" 12} {}))) (range 24))]
     (is (= (mapv #(hash-map :outcome (if (< % 12) :true :false)) (range 24))
            (mapv #(deref % 10000 :timeout) jobs)))
-    (is (= 1 (:builds (jvm/cache-stats engine))))))
+    (is (= 2 (:builds (jvm/cache-stats engine))))))
+
+(deftest compiled-plan-reuse-validates-current-content-and-shares-the-bound
+  (let [engine (jvm/evaluator {:max-entries 2})
+        entity (definition/entity "cached" {"flag" :bool} "flag")]
+    (is (= {:outcome :true} (evaluator/evaluate engine entity {"flag" true} {})))
+    (is (= {:outcome :error :reason :definition-shape}
+           (evaluator/evaluate engine (assoc entity :unexpected true) {"flag" true} {})))
+    (is (= {:outcome :false}
+           (evaluator/evaluate engine (assoc entity :eacl.caveat/expression-source "!flag")
+                               {"flag" true} {})))
+    (is (<= (:entries (jvm/cache-stats engine)) 2))
+    (is (= {:outcome :true} (evaluator/evaluate engine entity {"flag" true} {})))))
+
+(deftest retained-plans-reuse-only-complete-validated-definition-content
+  (let [engine (jvm/evaluator)
+        entity (definition/entity "cached" {"flag" :bool} "flag")]
+    (is (= {:outcome :true} (evaluator/evaluate engine entity {"flag" true} {})))
+    (with-redefs [values/decode-parameters (fn [& _] (throw (AssertionError. "redecoded retained parameters")))]
+      (is (= {:outcome :false} (evaluator/evaluate engine (assoc entity :db/id 456) {"flag" false} {}))))
+    (doseq [changed [(dissoc entity :eacl.caveat/parameters-payload)
+                     (assoc entity :eacl.caveat/parameters-payload "[:eacl.caveat/parameters 1 []]")
+                     (assoc entity :eacl.caveat/parameters-payload "malformed")
+                     (assoc entity :eacl.caveat/parameters-payload (apply str (repeat 16385 "x")))
+                     (assoc entity :eacl.caveat/profile-version "unknown")
+                     (assoc entity :eacl.caveat/name "not a name")
+                     (assoc entity :eacl.caveat/expression-source "missing")]]
+      (is (= :error (:outcome (evaluator/evaluate engine changed {"flag" true} {})))))
+    (is (= {:outcome :true}
+           (evaluator/evaluate engine (definition/entity "cached" {"flag" :int} "flag >= 0")
+                               {"flag" 1} {})))))
 
 (deftest composed-map-errors-retain-their-category
   (let [engine (jvm/evaluator)]

@@ -157,10 +157,12 @@ mutation, or opening the directory with upstream Datalevin are outside it.
 
 ## Relationship storage 9
 
-This EACL v8 adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. This phase writes `nil` and raises `:eacl/unsupported-qualifier`
-when serving encounters a qualifier. Upgrades are explicit and restartable;
-ordinary client construction requires a completed target store. Follow the
-[7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before starting clients.
+This adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. V8 writes only `nil` and rejects non-nil qualifiers. V9 adds
+[Caveats and expiring Relationships](../../docs/caveats.md) through coordinated
+qualified activation; older readers must be drained first. Upgrades are explicit
+and restartable, and client construction requires a completed target store.
+Follow the [7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before
+starting clients, then the v9 serving rollout guide before qualified writes.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.

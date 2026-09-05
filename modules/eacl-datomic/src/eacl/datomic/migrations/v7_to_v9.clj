@@ -8,8 +8,11 @@
 
 (defn- install! [conn]
   (let [db (d/db conn)
-        definitions (concat upgrade/metadata-schema [admission/basis-guard]
-                            (filter #(contains? storage/attributes (:db/ident %)) schema/v8-schema))]
+        ;; The target runtime also needs the Caveat fields and native guarded
+        ;; publication function. Install missing definitions during migration,
+        ;; before the completed target storage marker can admit that runtime.
+        definitions (vals (into {} (map (juxt :db/ident identity))
+                                (concat upgrade/metadata-schema schema/v8-schema)))]
     (doseq [attr storage/attributes
             :when (and (d/entid db attr) (not (admission/schema-compatible? db attr)))]
       (upgrade/fail! :incompatible-schema {:attribute attr}))
