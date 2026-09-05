@@ -1,0 +1,19 @@
+{:clock-only-change
+ {:basis-t 1003003,
+  :assertion-tx 13194140534818,
+  :forward-at-1000 false,
+  :forward-at-1200 true,
+  :reverse-at-1000 false,
+  :reverse-at-1200 true},
+ :amend-original-tx
+ {:method :speculative-d-with,
+  :first-edge-visible true,
+  :other-edge-same-tx-visible true,
+  :original-db-still-inactive true},
+ :inline-replacement
+ {:method :speculative-d-with,
+  :old-forward-absent true,
+  :old-reverse-absent true,
+  :new-forward-present true,
+  :new-reverse-present true},
+ :status :passed}

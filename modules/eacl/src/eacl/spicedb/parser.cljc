@@ -413,7 +413,7 @@
 (defn- collect-relation-issues
   "Check relations for EACL compatibility issues.
    Takes the transformed schema definitions map."
-  [definitions]
+  [definitions allow-caveats?]
   (let [issues (atom [])]
     (doseq [[res-type {:keys [relations]}] definitions
             [rel-name type-refs] relations
@@ -421,31 +421,31 @@
       ;; Check for wildcards
       (when (:wildcard? type-ref)
         (swap! issues conj
-          {:type          :wildcard-relation
-           :resource-type res-type
-           :relation      rel-name
-           :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
-                            res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
+               {:type          :wildcard-relation
+                :resource-type res-type
+                :relation      rel-name
+                :message       (str "Unsupported feature: Wildcard relation '" (:type type-ref) ":*' in "
+                                    res-type "/" rel-name ". EACL does not support public/wildcard access.")}))
 
       ;; Check for subject relations
       (when (:subject-relation type-ref)
         (swap! issues conj
-          {:type             :subject-relation
-           :resource-type    res-type
-           :relation         rel-name
-           :subject-relation (:subject-relation type-ref)
-           :message          (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
-                               "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
+               {:type             :subject-relation
+                :resource-type    res-type
+                :relation         rel-name
+                :subject-relation (:subject-relation type-ref)
+                :message          (str "Unsupported feature: Subject relation '" (:type type-ref) "#" (:subject-relation type-ref)
+                                       "' in " res-type "/" rel-name ". EACL does not support nested subject relations.")}))
 
       ;; Check for caveats
-      (when (:caveat type-ref)
+      (when (and (:caveat type-ref) (not allow-caveats?))
         (swap! issues conj
-          {:type          :caveat
-           :resource-type res-type
-           :relation      rel-name
-           :caveat        (:caveat type-ref)
-           :message       (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
-                            res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
+               {:type          :caveat
+                :resource-type res-type
+                :relation      rel-name
+                :caveat        (:caveat type-ref)
+                :message       (str "Unsupported feature: Caveat 'with " (:caveat type-ref) "' in "
+                                    res-type "/" rel-name ". EACL does not support conditional access via caveats.")})))
     @issues))
 
 (defn validate-eacl-restrictions
@@ -461,25 +461,27 @@
    - No namespaced type paths (docs/document)
    - No wildcards (user:*)
    - No subject relations (group#member)
-   - No caveats (with caveatname)
+   - Caveated branches require explicit qualified schema admission
 
    Returns nil if valid, throws ex-info with :issues vector if invalid."
-  [parse-tree transformed-schema]
-  (let [parse-issues    (collect-parse-tree-issues parse-tree)
-        relation-issues (collect-relation-issues (:definitions transformed-schema))
-        all-issues      (vec (concat parse-issues relation-issues))]
-    (when (seq all-issues)
-      (let [first-msg (:message (first all-issues))
-            total     (count all-issues)
-            summary   (if (= 1 total)
-                        first-msg
-                        (str first-msg " (and " (dec total) " more issue(s))"))]
-        (throw (ex-info summary
-                 {:type        :eacl.schema/unsupported-feature
-                  :eacl/error  :eacl.schema/unsupported-feature
-                  :issues      all-issues
-                  :issue-count total}))))
-    nil))
+  ([parse-tree transformed-schema]
+   (validate-eacl-restrictions parse-tree transformed-schema {}))
+  ([parse-tree transformed-schema {:keys [allow-caveats?]}]
+   (let [parse-issues    (collect-parse-tree-issues parse-tree)
+         relation-issues (collect-relation-issues (:definitions transformed-schema) (true? allow-caveats?))
+         all-issues      (vec (concat parse-issues relation-issues))]
+     (when (seq all-issues)
+       (let [first-msg (:message (first all-issues))
+             total     (count all-issues)
+             summary   (if (= 1 total)
+                         first-msg
+                         (str first-msg " (and " (dec total) " more issue(s))"))]
+         (throw (ex-info summary
+                         {:type        :eacl.schema/unsupported-feature
+                          :eacl/error  :eacl.schema/unsupported-feature
+                          :issues      all-issues
+                          :issue-count total}))))
+     nil)))
 
 ;; ============================================================================
 ;; Permission Expression Transformation

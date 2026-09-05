@@ -2,6 +2,7 @@
   "Owned explicit-snapshot storage operations for the EACL v8 engine."
   (:require [clojure.set :as set]
             [datalevin.core :as d]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datalevin.db :as ddb]
@@ -10,7 +11,9 @@
             [eacl.schema.expression-persistence :as expression-persistence]))
 
 (def adapter-capabilities
-  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+  {:qualification #{qualification-data/capability}
+   :qualified-publication #{:atomic-inline-v1}
+   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
@@ -274,6 +277,22 @@
            #(impl/direct-match?
              % subject-type subject-id relation-id
              resource-type resource-id)))
+
+       :direct-edge
+       (fn [subject-type subject-id relation-id resource-type resource-id]
+         (exact-natural! :subject-id subject-id)
+         (exact-natural! :relation-id relation-id)
+         (exact-natural! :resource-id resource-id)
+         (ddb/with-db snapshot
+           #(impl/direct-edge % subject-type subject-id relation-id resource-type resource-id)))
+
+       :qualification-data
+       (fn [eid]
+         (exact-natural! :qualification-entity-id eid)
+         (ddb/with-db snapshot
+           #(qualification-data/collect eid
+                                        (d/datoms % :eav eid nil nil (inc qualification-data/maximum-entity-facts))
+                                        identity false)))
 
        :all-permission-nodes
        (fn []

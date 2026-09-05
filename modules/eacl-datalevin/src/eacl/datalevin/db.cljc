@@ -99,7 +99,7 @@
   the list crossed the threshold and the caller must use the bounded native
   seek. The threshold+1 sample makes that choice without ever mistaking a
   truncated sample for a complete adjacency list."
-  [db entity attr prefix cursor-eid direction native-limit]
+  [db entity attr prefix cursor-eid direction native-limit include-qualifier?]
   (let [sample
         (into []
               (take (inc small-endpoint-scan-threshold))
@@ -114,7 +114,7 @@
             ordered (if (= :desc direction)
                       (rseq matching)
                       matching)]
-        (into [] (take native-limit) (endpoint-pair/checked-datoms ordered))))))
+        (into [] (take native-limit) (endpoint-pair/checked-datoms ordered include-qualifier?))))))
 
 (defn eavt-endpoint-prefix
   "Endpoint datoms for an exact three-component value prefix.
@@ -128,6 +128,8 @@
    (eavt-endpoint-prefix db entity attr prefix cursor-eid direction
                          maximum-unpaged-scan-results))
   ([db entity attr prefix cursor-eid direction native-limit]
+   (eavt-endpoint-prefix db entity attr prefix cursor-eid direction native-limit false))
+  ([db entity attr prefix cursor-eid direction native-limit include-qualifier?]
    (if-not (and (nat-int? entity)
                 (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
@@ -135,7 +137,7 @@
      []
      (or
       (small-endpoint-prefix
-       db entity attr prefix cursor-eid direction native-limit)
+       db entity attr prefix cursor-eid direction native-limit include-qualifier?)
       (let [tail  (or cursor-eid
                       (if (= :desc direction) max-eid min-eid))
             bound (endpoint-pair/seek-bound prefix tail direction max-eid)
@@ -148,7 +150,8 @@
                 (fn [{:keys [e a] :as datom}]
                   (and (= entity e) (= attr a)
                        (endpoint-pair/value-prefix? (:v datom) prefix)))
-                scan))))))))
+                scan)
+               include-qualifier?)))))))
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,
@@ -162,6 +165,8 @@
   ([db attr prefix cursor-eid direction native-limit]
    (avet-endpoint-prefix db attr prefix cursor-eid nil direction native-limit))
   ([db attr prefix cursor-eid cursor-entity direction native-limit]
+   (avet-endpoint-prefix db attr prefix cursor-eid cursor-entity direction native-limit false))
+  ([db attr prefix cursor-eid cursor-entity direction native-limit include-qualifier?]
    (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
                 (or (nil? cursor-entity) (nat-int? cursor-entity))
@@ -180,4 +185,34 @@
               (take-while
                (fn [{:keys [a] :as datom}]
                  (and (= attr a) (endpoint-pair/value-prefix? (:v datom) prefix)))
-               scan)))))))
+               scan) include-qualifier?))))))
+
+(defn qualified-relation-datoms
+  "Complete qualified Relation stream in bounded native batches. Callers must
+   consume the stream inside the selected snapshot's ownership scope."
+  [db attr prefix]
+  (letfn [(step [boundary]
+            (lazy-seq
+             (let [rows (ds/seek-datoms db :ave attr
+                                        (if boundary (:v boundary) (into prefix [0 nil]))
+                                        (:e boundary) 1025)
+                   rows (if (and boundary (= [(:e boundary) (:v boundary)]
+                                             [(:e (first rows)) (:v (first rows))]))
+                          (rest rows) rows)
+                   chunk (vec (take-while #(and (= attr (:a %))
+                                                (endpoint-pair/value-prefix? (:v %) prefix)) rows))]
+               (when (seq chunk)
+                 (concat (endpoint-pair/checked-datoms chunk true)
+                         (when (= (count chunk) (count rows))
+                           (step (peek chunk))))))))]
+    (step nil)))
+
+(defn entity-facts [database eid]
+  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (ds/datoms database :eav eid)))
+
+(defn entity-data [database eid]
+  (let [rows (entity-facts database eid)]
+    (when (seq rows)
+      (reduce (fn [result [a v]]
+                (if (= :eacl.relation/caveats a) (update result a (fnil conj #{}) v) (assoc result a v)))
+              {:db/id eid} rows))))

@@ -8,7 +8,13 @@
   are generated under target/formal and are deliberately absent here.")
 
 (def theorem-policies
-  {:caveat-qualifier-foundation
+  {:qualified-relationship-evaluation
+   {:sources ["formal/dafny/QualifiedEvidence.dfy"
+              "formal/dafny/QualifiedTemporal.dfy"
+              "formal/dafny/QualifiedReuse.dfy"]
+    :claim :proof-only-conditional-denotation-exclusive-expiry-and-witness-scoped-reuse
+    :minimum-proof-efforts 71}
+   :caveat-qualifier-foundation
    {:sources ["formal/dafny/CaveatOutcomes.dfy"
               "formal/dafny/CaveatProfile.dfy"
               "formal/dafny/CaveatSchema.dfy"
@@ -129,7 +135,29 @@
     :minimum-proof-efforts 73}})
 
 (def operation-contracts
-  [{:operation :staged-caveat-qualifier-foundation
+  [{:operation :qualified-evaluation-model-gate
+    :entry-points ["formal/qualified/model.clj"
+                   "formal/qualified/model_test.clj"
+                   "formal/qualified/mutation_test.clj"]
+    :theorems [:pointwise-residual-and-authoritative-fault-algebra
+               :finite-positive-least-fixed-point
+               :inert-preparation-and-atomic-temporal-publication
+               :exclusive-expiry-and-non-monotonic-permission
+               :decisive-witness-stability-intervals
+               :context-evaluator-proof-and-result-kind-scoped-cache
+               :pinned-and-live-continuation-validity]
+    :dafny ["formal/dafny/QualifiedEvidence.dfy"
+            "formal/dafny/QualifiedTemporal.dfy"
+            "formal/dafny/QualifiedReuse.dfy"]
+    :adapter-obligations [:canonical-residual-refinement
+                          :complete-recursive-and-cursor-evidence
+                          :trusted-clock-and-native-qualifier-proof]
+    :runtime-targets [:clj-java :cljs-javascript]
+    :remaining [:production-refinement-and-mutations
+                :performance-and-cross-backend-qualification
+                :semantic-epoch-activation
+                :independent-review]}
+   {:operation :staged-caveat-qualifier-foundation
     :entry-points ['eacl.relationships.qualifier/normalize
                    'eacl.relationships.qualifier/decode
                    'eacl.caveats.values/encode-context

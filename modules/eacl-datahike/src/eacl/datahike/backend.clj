@@ -1,6 +1,7 @@
 (ns eacl.datahike.backend
   "Datahike storage operations for the shared v8 authorization engine."
   (:require [datahike.api :as d]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
@@ -12,7 +13,9 @@
            [java.util UUID]))
 
 (def adapter-capabilities
-  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+  {:qualification #{qualification-data/capability}
+   :qualified-publication #{:atomic-prepared-v1}
+   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :direct-membership-batch #{backend/direct-membership-batch-capability}
    :runtime #{:clj}})
@@ -248,7 +251,8 @@
       :identity-contract
       (:identity-contract opts
                           :selected-internal/current-external-injective-v2)
-      :capabilities adapter-capabilities
+      :capabilities (cond-> adapter-capabilities
+                      (not (ddb/direct-writer? db)) (dissoc :qualified-publication))
       :state {:db db
               :commit-id (commit-locator db)
               :parent-commit-ids (parent-locators db)}
@@ -323,6 +327,15 @@
        (fn [request]
          (direct-membership/direct-match-many? db request))
 
+       :direct-edge
+       (fn [subject-type subject-id relation-id resource-type resource-id]
+         (impl/direct-edge db subject-type subject-id relation-id resource-type resource-id))
+
+       :qualification-data
+       (fn [eid]
+         (qualification-data/collect eid (d/datoms db {:index :eavt :components [eid]})
+                                     #(if (keyword? %) % (get (d/entity db %) :db/ident)) true))
+
        :all-permission-nodes
        (fn []
          (->> (ddb/avet-datoms db schema/permission-key-attr)
@@ -333,6 +346,18 @@
        (fn [relation-ids]
          (ordered-generation-frame db relation-ids))}})))
 
+(defn connection-source-scope
+  "The native source identity of a live connection, including externally
+  created memory connections whose DB values have no standalone identity."
+  [conn]
+  (let [database @conn
+        {:keys [backend id]} (store-identity database)]
+    {:source-id {:store-backend backend
+                 :store-id (if (= :memory backend)
+                             (some-> (connection-live-source-id conn database) str)
+                             id)}
+     :branch (:branch (db-config database))}))
+
 (defn source
   "Builds the borrowed immutable-basis source for one Datahike conn."
   [conn opts]
@@ -340,13 +365,8 @@
         ;; immutable value without a branch-head store operation. Construction
         ;; consumes only configuration needed for the source's static profile.
         static-db @conn
-        {:keys [backend id]} (store-identity static-db)
-        id (if (= :memory backend)
-             (some-> (connection-live-source-id conn static-db) str)
-             id)
         source-scope
-        {:source-id {:store-backend backend :store-id id}
-         :branch (:branch (db-config static-db))}
+        (connection-source-scope conn)
         source-lifecycle
         (fn []
           (or (some-> (:runtime-lifecycle-state opts)

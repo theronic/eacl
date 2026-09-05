@@ -162,7 +162,8 @@ command=${1:-}
 case "$command" in
   fast)
     need_tools
-    exec sh "$repo_root/formal/caveats/verify-fast.sh"
+    sh "$repo_root/formal/caveats/verify-fast.sh"
+    exec sh "$repo_root/formal/qualified/verify-fast.sh"
     ;;
   bootstrap)
     exec "$repo_root/bin/bootstrap-formal-tools"

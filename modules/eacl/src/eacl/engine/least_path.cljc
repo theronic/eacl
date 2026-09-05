@@ -28,9 +28,13 @@
   telemetry); the caller's cut-point runs before every adapter command;
   `:max-commands`/`:max-values` budgets mirror the probe check's and fail
   typed as `:eacl.reducer/limit-exceeded`."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.result :as authorization-result]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]
-            [eacl.engine.stable-route :as route]))
+            [eacl.engine.stable-route :as route]
+            [eacl.relationships.edge :as edge]))
 
 (defn adapter-fetch-fn
   "Direction-aware width-one read seam: realizes one read-demand
@@ -43,6 +47,7 @@
         resource->subjects (backend/scan-invoker adapter :resource->subjects)]
     (fn [{:keys [operation bound-eid direction] :as descriptor}]
       (let [options (cond-> {:direction (or direction :asc)}
+                      (:include-qualifier? descriptor) (assoc :include-qualifier? true)
                       (:limit descriptor) (assoc :limit (:limit descriptor))
                       bound-eid (assoc :bound-eid bound-eid
                                        :inclusive-bound? false))]
@@ -77,7 +82,7 @@
   (or `:adapter` for the direct path); budgets and the cut-point mirror
   the probe check's semantics."
   [{:keys [adapter fetch-fn cut-point! physical-chunk-size
-           max-commands max-values]
+           max-commands max-values qualification]
     :or {physical-chunk-size reducer/default-physical-chunk-size
          max-commands reducer/default-max-commands
          max-values reducer/default-max-values}}]
@@ -85,6 +90,7 @@
         counters (volatile! {:commands 0 :fetched-values 0
                              :stream-opens 0 :emissions 0})]
     {:counters counters
+     :qualification qualification
      ;; Request-local witness-child prefixes (task 3.2's memoization):
      ;; every arrow-permission witness on this request alternates against
      ;; the SAME ascending child enumeration, so its emission prefix is
@@ -99,7 +105,8 @@
        (when (>= (:commands @counters) max-commands)
          (limit-failure! :max-commands @counters
                          {:max-commands max-commands}))
-       (let [values (reducer/bounded-vector (fetch-fn descriptor)
+       (let [descriptor (cond-> descriptor qualification (assoc :include-qualifier? true))
+             values (reducer/bounded-vector (fetch-fn descriptor)
                                             (:limit descriptor))]
          (when (> (+ (:fetched-values @counters) (count values))
                   max-values)
@@ -140,11 +147,19 @@
   {:mk mk-desc :buf [] :idx 0 :bound bound :done? false})
 
 (defn- stream-next
-  "[value stream'] or [nil stream'] on exhaustion."
+  "[value stream'] or [nil stream'] on exhaustion. Qualified false rows
+   advance physical bounds and consume the same command/value budgets."
   [ctx {:keys [mk buf idx bound done?] :as s}]
   (cond
     (< idx (count buf))
-    [(nth buf idx) (assoc s :idx (inc idx) :bound (nth buf idx))]
+    (let [value (nth buf idx) eid (edge/endpoint value)
+          result (if (and (:qualification ctx) (vector? value))
+                   (evidence/throw-if-fault!
+                    (qualification/qualify (:qualification ctx) (:relation-eid (mk bound 1)) value))
+                   true)
+          next-stream (cond-> (assoc s :idx (inc idx) :bound eid)
+                        (:qualification ctx) (assoc :evidence result))]
+      [eid next-stream])
 
     done? [nil s]
 
@@ -152,67 +167,94 @@
     (let [chunk ((:fetch! ctx) (mk bound (:chunk ctx)))]
       (if (empty? chunk)
         [nil (assoc s :done? true)]
-        [(nth chunk 0)
-         (assoc s :buf chunk :idx 1 :bound (nth chunk 0)
-                :done? (< (count chunk) (:chunk ctx)))]))))
+        (recur ctx (assoc s :buf chunk :idx 0
+                          :done? (< (count chunk) (:chunk ctx))))))))
+
+(defn- stream-next-active
+  "Only enumeration skips inactive prefixes here. Witness intersections
+   retain one physical row per side per step to preserve shorter-side work."
+  [ctx s]
+  (loop [s s]
+    (let [[value next-stream] (stream-next ctx s)]
+      (if (and value (evidence/no? (get next-stream :evidence true)))
+        (recur next-stream)
+        [value next-stream]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Exact-bound probes and bounded intersections (witness primitives)
 ;; ---------------------------------------------------------------------------
 
-(defn- probe-fwd?
-  "Does (subject, relation, candidate) exist? One exact-bound forward scan."
+(defn- probe-fwd-evidence
   [ctx subject-type subject-eid relation-eid resource-type candidate]
-  (= candidate
-     (first ((:fetch! ctx)
-             (fwd-scan subject-type subject-eid relation-eid resource-type
-                       (dec candidate) 1 false)))))
+  (let [value (first ((:fetch! ctx)
+                      (fwd-scan subject-type subject-eid relation-eid resource-type
+                                (dec candidate) 1 false)))]
+    (if (= candidate (edge/endpoint value))
+      (if (:qualification ctx)
+        (evidence/throw-if-fault!
+         (qualification/qualify (:qualification ctx) relation-eid value))
+        true)
+      false)))
 
-(defn- probe-rev?
-  "Does (candidate, relation, resource) exist? One exact-bound reverse scan."
+(defn- probe-rev-evidence
   [ctx resource-type resource-eid relation-eid subject-type candidate]
-  (= candidate
-     (first ((:fetch! ctx)
-             (rev-scan resource-type resource-eid relation-eid subject-type
-                       (dec candidate) 1 false)))))
+  (let [value (first ((:fetch! ctx)
+                      (rev-scan resource-type resource-eid relation-eid subject-type
+                                (dec candidate) 1 false)))]
+    (if (= candidate (edge/endpoint value))
+      (if (:qualification ctx)
+        (evidence/throw-if-fault!
+         (qualification/qualify (:qualification ctx) relation-eid value))
+        true)
+      false)))
+
+(defn- probe-fwd? [ctx subject-type subject-eid relation-eid resource-type candidate]
+  (not (evidence/no? (probe-fwd-evidence ctx subject-type subject-eid relation-eid resource-type candidate))))
+
+(defn- probe-rev? [ctx resource-type resource-eid relation-eid subject-type candidate]
+  (not (evidence/no? (probe-rev-evidence ctx resource-type resource-eid relation-eid subject-type candidate))))
+
+(defn- path-active? [ctx state]
+  (or (nil? (:qualification ctx)) (not (evidence/no? (get state :evidence true)))))
+
+(defn- path-hit? [ctx state other]
+  (if (:qualification ctx)
+    (not (evidence/no? (evidence/throw-if-fault!
+                       (evidence/combine :arrow (get state :evidence true)
+                                         (if (nil? other) false other)))))
+    (boolean other)))
 
 (defn- isect2?
-  "Interleaved min-side intersection of two ascending streams, each side
-  decided by the opposite side's exact probe
-  (BidirectionalArrowIntersection.dfy `Decide`): stops at the first hit
-  or the first exhausted side. `below` (exclusive) bounds both sides."
+  "Shorter-side intersection witness. A qualified hit requires the two
+   endpoint conditions to be jointly possible, including their residuals."
   [ctx a-stream a-member? b-stream b-member? below]
   (let [beyond? (fn [v] (and below (>= v below)))]
     (loop [a a-stream b b-stream]
       (let [[av a'] (stream-next ctx a)]
         (cond
           (or (nil? av) (beyond? av)) false
-          (a-member? av) true
+          (and (path-active? ctx a') (path-hit? ctx a' (a-member? av))) true
           :else
           (let [[bv b'] (stream-next ctx b)]
             (cond
               (or (nil? bv) (beyond? bv)) false
-              (b-member? bv) true
+              (and (path-active? ctx b') (path-hit? ctx b' (b-member? bv))) true
               :else (recur a' b'))))))))
 
 (defn- least-common
-  "The LEAST element of the intersection of two ascending streams, or nil
-  when it is empty — strict alternation with the opposite side's exact
-  membership probe. Both streams are ascending, so the first common
-  element either side reaches IS the least common element; cost is
-  bounded by the SMALLER side's prefix, never one side's total fan-in
-  (the same min-side property `isect2?` has for the decision form)."
+  "Least jointly possible intermediate, decided by alternating exact probes
+   on the two ascending sides. Exhaustion of either side ends the search."
   [ctx a-stream a-member? b-stream b-member?]
   (loop [a a-stream b b-stream]
     (let [[av a'] (stream-next ctx a)]
       (cond
         (nil? av) nil
-        (a-member? av) av
+        (and (path-active? ctx a') (path-hit? ctx a' (a-member? av))) av
         :else
         (let [[bv b'] (stream-next ctx b)]
           (cond
             (nil? bv) nil
-            (b-member? bv) bv
+            (and (path-active? ctx b') (path-hit? ctx b' (b-member? bv))) bv
             :else (recur a' b')))))))
 
 (defn- shared-child-pull
@@ -256,7 +298,7 @@
   (loop [es entity-stream pos 0 child-done? false]
     (let [[cand es'] (stream-next ctx es)]
       (cond
-        (and cand (entity-hit? cand)) true
+        (and cand (path-active? ctx es') (path-hit? ctx es' (entity-hit? cand))) true
         (nil? cand) false
         :else
         (if child-done?
@@ -265,7 +307,7 @@
             (cond
               (nil? emission) (recur es' pos true)
               (and child-stop? (child-stop? emission)) (recur es' pos true)
-              (child-hit? emission) true
+              (path-hit? ctx emission (child-hit? emission)) true
               :else (recur es' pos' false))))))))
 
 (defn- candidate-accepted?
@@ -273,26 +315,72 @@
   a zero-work true branch so existing union-only plans retain their trace."
   [env node subject-eid resource-eid]
   (if-let [accept? (:candidate-accept? env)]
-    (boolean
-     (accept? {:node node
-               :direction (:traversal env)
-               :subject-type (:subject-type env)
-               :subject-eid subject-eid
-               :resource-eid resource-eid}))
+    (let [result (accept? {:node node
+                          :direction (:traversal env)
+                          :subject-type (:subject-type env)
+                          :subject-eid subject-eid
+                          :resource-eid resource-eid})]
+      (if (:qualification env)
+        (not (evidence/no? (evidence/throw-if-fault! result)))
+        (boolean result)))
     true))
 
-(defn- derives?
+(defn- accepted-emission
+  "Complete only an active generated path. Legacy union paths that already
+   prove Has need no extra point proof or qualification context work."
+  [env node rule subject-eid resource-eid value coords path-evidence]
+  (if (:qualification env)
+    (when-not (evidence/no? path-evidence)
+      (let [result (if (and (:legacy-qualified? env) (evidence/has? path-evidence))
+                     path-evidence
+                     ((:candidate-accept? env)
+                      {:node node :direction (:traversal env)
+                       :subject-type (:subject-type env)
+                       :subject-eid subject-eid :resource-eid resource-eid
+                       :evidence-witness {:rule rule :evidence path-evidence}}))]
+        (when-not (evidence/no? (evidence/throw-if-fault! result))
+          {:value value :coords coords :evidence result})))
+    (when (candidate-accepted? env node subject-eid resource-eid)
+      {:value value :coords coords})))
+
+(defn- accepted-arrow-emission
+  [env node rule subject-eid resource-eid value coords intermediate path-evidence]
+  (if (:qualification env)
+    (when-not (evidence/no? path-evidence)
+      (let [result (if (and (:legacy-qualified? env) (evidence/has? path-evidence))
+                     path-evidence
+                     ((:candidate-accept? env)
+                      {:node node :direction (:traversal env)
+                       :subject-type (:subject-type env)
+                       :subject-eid subject-eid :resource-eid resource-eid
+                       :evidence-witness {:rule rule :intermediate intermediate :evidence path-evidence}}))]
+        (when-not (evidence/no? (evidence/throw-if-fault! result))
+          {:value value :coords coords :evidence result})))
+    (accepted-emission env node rule subject-eid resource-eid value coords true)))
+
+(defn- node-evidence
   "Does `subject-eid` reach `node`'s permission on `resource-eid`? The
   certified membership-probe check anchored at `node`
   (`eacl.engine.stable-route/derives-from-node?`)."
   [{:keys [route-opts] :as env} node subject-eid resource-eid]
-  (and
-   (route/derives-from-node?
-    (assoc route-opts
-           :start-node node
-           :subject-eid subject-eid
-           :resource-eid resource-eid))
-   (candidate-accepted? env node subject-eid resource-eid)))
+  (if (:qualification env)
+    ;; The qualified local predicate proves the actual node. Running the
+    ;; structural cover's point traversal first would duplicate that work.
+    (evidence/throw-if-fault!
+     ((:candidate-accept? env)
+      {:node node :direction (:traversal env) :subject-type (:subject-type env)
+       :subject-eid subject-eid :resource-eid resource-eid}))
+    (boolean
+     (and
+      (route/derives-from-node?
+       (assoc route-opts
+              :start-node node
+              :subject-eid subject-eid
+              :resource-eid resource-eid))
+      (candidate-accepted? env node subject-eid resource-eid)))))
+
+(defn- derives? [env node subject-eid resource-eid]
+  (not (evidence/no? (node-evidence env node subject-eid resource-eid))))
 
 ;; ---------------------------------------------------------------------------
 ;; Coordinates
@@ -410,7 +498,7 @@
                                        (:target-relation-eid rule)
                                        (:intermediate-type rule) %1 %2 false)
                             nil)
-                    #(probe-rev? ctx (:resource-type rule) v
+                    #(probe-rev-evidence ctx (:resource-type rule) v
                                  (:via-relation-eid rule)
                                  (:intermediate-type rule) %)
                     ;; V's via-set
@@ -418,7 +506,7 @@
                                        (:via-relation-eid rule)
                                        (:intermediate-type rule) %1 %2 false)
                             nil)
-                    #(probe-fwd? ctx subject-type subject-eid
+                    #(probe-fwd-evidence ctx subject-type subject-eid
                                  (:target-relation-eid rule)
                                  (:intermediate-type rule) %)
                     nil))
@@ -436,12 +524,12 @@
                             (:via-relation-eid rule)
                             (:intermediate-type rule) %1 %2 false)
                  nil)
-         #(derives? env node subject-eid %)
+         #(node-evidence env node subject-eid %)
          (fn [pos]
            (shared-child-pull ctx asc-env [node subject-eid]
                               #(fwd-mk-level asc-env node)
                               fwd-level-next pos))
-         #(probe-rev? ctx (:resource-type rule) v
+         #(probe-rev-evidence ctx (:resource-type rule) v
                       (:via-relation-eid rule)
                       (:intermediate-type rule) (:value %))
          nil)))))
@@ -488,7 +576,7 @@
                                            (:intermediate-type rule)
                                            %1 %2 false)
                                 nil)
-                        #(probe-rev? ctx (:resource-type rule) v
+                        #(probe-rev-evidence ctx (:resource-type rule) v
                                      (:via-relation-eid rule)
                                      (:intermediate-type rule) %)
                         (stream #(rev-scan (:resource-type rule) v
@@ -496,7 +584,7 @@
                                            (:intermediate-type rule)
                                            %1 %2 false)
                                 nil)
-                        #(probe-fwd? ctx subject-type subject-eid
+                        #(probe-fwd-evidence ctx subject-type subject-eid
                                      (:target-relation-eid rule)
                                      (:intermediate-type rule) %))]
                  (when i [(:ordinal rule) i v])))
@@ -513,8 +601,10 @@
                      (let [[i s'] (stream-next ctx s)]
                        (if (nil? i)
                          best
-                         (let [sub (fwd-least-coords
-                                    env (:target-node rule) i)]
+                         (let [sub (when (and (path-active? ctx s')
+                                              (or (nil? (:qualification env))
+                                                  (path-hit? ctx s' (node-evidence env (:target-node rule) subject-eid i))))
+                                     (fwd-least-coords env (:target-node rule) i))]
                            (recur s'
                                   (if (and sub
                                            (or (nil? best)
@@ -547,12 +637,15 @@
              nil)
      (fn [cand]
        (when-let [least (fwd-least-coords asc-env node cand)]
-         (neg? (compare-coords least i-coords))))
+         (when (neg? (compare-coords least i-coords))
+           (if (:qualification env)
+             (node-evidence env node (:subject-eid env) cand)
+             true))))
      (fn [pos]
        (shared-child-pull ctx asc-env [node (:subject-eid env)]
                           #(fwd-mk-level asc-env node)
                           fwd-level-next pos))
-     #(probe-rev? ctx (:resource-type rule) v
+     #(probe-rev-evidence ctx (:resource-type rule) v
                   (:via-relation-eid rule)
                   (:intermediate-type rule) (:value %))
      #(>= (compare-coords (:coords %) i-coords) 0))))
@@ -573,14 +666,14 @@
                                   (:target-relation-eid rule)
                                   (:intermediate-type rule) %1 %2 false)
                        nil)
-               #(probe-rev? ctx (:resource-type rule) v
+               #(probe-rev-evidence ctx (:resource-type rule) v
                             (:via-relation-eid rule)
                             (:intermediate-type rule) %)
                (stream #(rev-scan (:resource-type rule) v
                                   (:via-relation-eid rule)
                                   (:intermediate-type rule) %1 %2 false)
                        nil)
-               #(probe-fwd? ctx subject-type subject-eid
+               #(probe-fwd-evidence ctx subject-type subject-eid
                             (:target-relation-eid rule)
                             (:intermediate-type rule) %)
                i))
@@ -623,10 +716,13 @@
             (if (nil? v)
               (recur env (advance))
               (let [level' (assoc level :sub {:scan scan'})]
-                (if (and (fwd-emit2? env level rule nil v)
-                         (candidate-accepted?
-                          env (:node level) (:subject-eid env) v))
-                  [{:value v :coords [(:ordinal rule) v]} level']
+                (if-let [emission (when (and (path-active? (:ctx env) scan')
+                                                (fwd-emit2? env level rule nil v))
+                                    (accepted-emission env (:node level) rule
+                                                       (:subject-eid env) v v
+                                                       [(:ordinal rule) v]
+                                                       (get scan' :evidence true)))]
+                  [emission level']
                   (recur env level')))))
 
           :self-permission
@@ -637,19 +733,21 @@
                     v (:value emission)]
                 ;; earlier-rule witness only: the child already emits
                 ;; least-only within the target node.
-                (if (and
-                     (not-any? #(fwd-rule-derives? env (nth rules %) v)
-                               (earlier-in-sealed-order level))
-                     (candidate-accepted?
-                      env (:node level) (:subject-eid env) v))
-                  [{:value v
-                    :coords (into [(:ordinal rule)] (:coords emission))}
-                   level']
+                (if-let [result
+                         (when (not-any? #(fwd-rule-derives? env (nth rules %) v)
+                                         (earlier-in-sealed-order level))
+                           (accepted-emission env (:node level) rule
+                                              (:subject-eid env) v v
+                                              (into [(:ordinal rule)] (:coords emission))
+                                              (get emission :evidence true)))]
+                  [result level']
                   (recur env level')))))
 
           :arrow-relation
           (if (nil? (:i sub))
-            (let [[i outer'] (stream-next (:ctx env) (:outer sub))]
+            (let [[i outer'] (if (:qualification env)
+                               (stream-next-active (:ctx env) (:outer sub))
+                               (stream-next (:ctx env) (:outer sub)))]
               (if (nil? i)
                 (recur env (advance))
                 (recur env (assoc level :sub
@@ -660,12 +758,17 @@
                 (recur env (assoc level :sub
                                   (assoc sub :i nil :inner nil)))
                 (let [level' (assoc level :sub (assoc sub :inner inner'))]
-                  (if (and (fwd-emit2? env level rule {:i (:i sub)} v)
-                           (candidate-accepted?
-                            env (:node level) (:subject-eid env) v))
-                    [{:value v
-                      :coords [(:ordinal rule) (:i sub) v]} level']
-                    (recur env level'))))))
+                  (let [path (if (:qualification env)
+                               (evidence/combine :arrow (get (:outer sub) :evidence true)
+                                                 (get inner' :evidence true)) true)]
+                    (if-let [result (when (and (not (evidence/no? path))
+                                              (fwd-emit2? env level rule {:i (:i sub)} v))
+                                      (accepted-arrow-emission env (:node level) rule
+                                                                (:subject-eid env) v v
+                                                                [(:ordinal rule) (:i sub) v]
+                                                                (:i sub) path))]
+                      [result level']
+                      (recur env level')))))))
 
           :arrow-permission
           (if (nil? (:i sub))
@@ -681,15 +784,19 @@
                 (recur env (assoc level :sub
                                   (assoc sub :i nil :inner nil)))
                 (let [level' (assoc level :sub (assoc sub :inner inner'))]
-                  (if (and (fwd-emit2? env level rule {:i (:i sub)} v)
-                           (candidate-accepted?
-                            env (:node level) (:subject-eid env) v))
-                    [{:value v
-                      :coords (-> [(:ordinal rule)]
-                                  (into (:coords (:i sub)))
-                                  (conj v))}
-                     level']
-                    (recur env level')))))))))))
+                  (let [path (if (:qualification env)
+                               (evidence/combine :arrow (get (:i sub) :evidence true)
+                                                 (get inner' :evidence true)) true)]
+                    (if-let [result (when (and (not (evidence/no? path))
+                                              (fwd-emit2? env level rule {:i (:i sub)} v))
+                                      (accepted-arrow-emission env (:node level) rule
+                                                                (:subject-eid env) v v
+                                                                (-> [(:ordinal rule)]
+                                                                    (into (:coords (:i sub)))
+                                                                    (conj v))
+                                                                (:value (:i sub)) path))]
+                      [result level']
+                      (recur env level'))))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Reverse enumeration (lookup-subjects): subjects for one entity
@@ -753,14 +860,14 @@
                                        (:via-relation-eid rule)
                                        (:intermediate-type rule) %1 %2 false)
                             nil)
-                    #(probe-fwd? ctx subject-type s
+                    #(probe-fwd-evidence ctx subject-type s
                                  (:target-relation-eid rule)
                                  (:intermediate-type rule) %)
                     (stream #(fwd-scan subject-type s
                                        (:target-relation-eid rule)
                                        (:intermediate-type rule) %1 %2 false)
                             nil)
-                    #(probe-rev? ctx (:resource-type rule) entity
+                    #(probe-rev-evidence ctx (:resource-type rule) entity
                                  (:via-relation-eid rule)
                                  (:intermediate-type rule) %)
                     nil))
@@ -774,12 +881,12 @@
                             (:via-relation-eid rule)
                             (:intermediate-type rule) %1 %2 false)
                  nil)
-         #(derives? env node s %)
+         #(node-evidence env node s %)
          (fn [pos]
            (shared-child-pull ctx child-env [node s]
                               #(fwd-mk-level child-env node)
                               fwd-level-next pos))
-         #(probe-rev? ctx (:resource-type rule) entity
+         #(probe-rev-evidence ctx (:resource-type rule) entity
                       (:via-relation-eid rule)
                       (:intermediate-type rule) (:value %))
          nil)))))
@@ -797,14 +904,14 @@
                                   (:via-relation-eid rule)
                                   (:intermediate-type rule) %1 %2 false)
                        nil)
-               #(probe-fwd? ctx subject-type s
+               #(probe-fwd-evidence ctx subject-type s
                             (:target-relation-eid rule)
                             (:intermediate-type rule) %)
                (stream #(fwd-scan subject-type s
                                   (:target-relation-eid rule)
                                   (:intermediate-type rule) %1 %2 false)
                        nil)
-               #(probe-rev? ctx (:resource-type rule) entity
+               #(probe-rev-evidence ctx (:resource-type rule) entity
                             (:via-relation-eid rule)
                             (:intermediate-type rule) %)
                i)
@@ -817,13 +924,13 @@
                             (:via-relation-eid rule)
                             (:intermediate-type rule) %1 %2 false)
                  nil)
-         #(and (< % i) (derives? env node s %))
+         #(and (< % i) (node-evidence env node s %))
          (fn [pos]
            (shared-child-pull ctx child-env [node s]
                               #(fwd-mk-level child-env node)
                               fwd-level-next pos))
          #(and (< (:value %) i)
-               (probe-rev? ctx (:resource-type rule) entity
+               (probe-rev-evidence ctx (:resource-type rule) entity
                            (:via-relation-eid rule)
                            (:intermediate-type rule) (:value %)))
          nil)))))
@@ -851,10 +958,13 @@
             (if (nil? s)
               (recur env (advance))
               (let [level' (assoc level :sub {:scan scan'})]
-                (if (and (rev-emit? env level rule nil s)
-                         (candidate-accepted?
-                          env (:node level) s (:entity level)))
-                  [{:value s :coords [(:ordinal rule) s]} level']
+                (if-let [emission (when (and (path-active? (:ctx env) scan')
+                                                (rev-emit? env level rule nil s))
+                                    (accepted-emission env (:node level) rule
+                                                       s (:entity level) s
+                                                       [(:ordinal rule) s]
+                                                       (get scan' :evidence true)))]
+                  [emission level']
                   (recur env level')))))
 
           :self-permission
@@ -863,19 +973,21 @@
               (recur env (advance))
               (let [level' (assoc level :sub {:child child'})
                     s (:value emission)]
-                (if (and
-                     (not-any? #(rev-rule-derives? env (nth rules %) entity s)
-                               (earlier-in-sealed-order level))
-                     (candidate-accepted?
-                      env (:node level) s (:entity level)))
-                  [{:value s
-                    :coords (into [(:ordinal rule)] (:coords emission))}
-                   level']
+                (if-let [result
+                         (when (not-any? #(rev-rule-derives? env (nth rules %) entity s)
+                                         (earlier-in-sealed-order level))
+                           (accepted-emission env (:node level) rule
+                                              s (:entity level) s
+                                              (into [(:ordinal rule)] (:coords emission))
+                                              (get emission :evidence true)))]
+                  [result level']
                   (recur env level')))))
 
           :arrow-relation
           (if (nil? (:i sub))
-            (let [[i outer'] (stream-next (:ctx env) (:outer sub))]
+            (let [[i outer'] (if (:qualification env)
+                               (stream-next-active (:ctx env) (:outer sub))
+                               (stream-next (:ctx env) (:outer sub)))]
               (if (nil? i)
                 (recur env (advance))
                 (recur env
@@ -891,16 +1003,23 @@
               (if (nil? s)
                 (recur env (assoc level :sub (assoc sub :i nil :inner nil)))
                 (let [level' (assoc level :sub (assoc sub :inner inner'))]
-                  (if (and (rev-emit? env level rule (:i sub) s)
-                           (candidate-accepted?
-                            env (:node level) s (:entity level)))
-                    [{:value s :coords [(:ordinal rule) (:i sub) s]}
-                     level']
-                    (recur env level'))))))
+                  (let [path (if (:qualification env)
+                               (evidence/combine :arrow (get (:outer sub) :evidence true)
+                                                 (get inner' :evidence true)) true)]
+                    (if-let [result (when (and (not (evidence/no? path))
+                                              (rev-emit? env level rule (:i sub) s))
+                                      (accepted-arrow-emission env (:node level) rule
+                                                                s (:entity level) s
+                                                                [(:ordinal rule) (:i sub) s]
+                                                                (:i sub) path))]
+                      [result level']
+                      (recur env level')))))))
 
           :arrow-permission
           (if (nil? (:i sub))
-            (let [[i outer'] (stream-next (:ctx env) (:outer sub))]
+            (let [[i outer'] (if (:qualification env)
+                               (stream-next-active (:ctx env) (:outer sub))
+                               (stream-next (:ctx env) (:outer sub)))]
               (if (nil? i)
                 (recur env (advance))
                 (recur env
@@ -913,14 +1032,18 @@
                 (recur env (assoc level :sub (assoc sub :i nil :child nil)))
                 (let [level' (assoc level :sub (assoc sub :child child'))
                       s (:value emission)]
-                  (if (and (rev-emit? env level rule (:i sub) s)
-                           (candidate-accepted?
-                            env (:node level) s (:entity level)))
-                    [{:value s
-                      :coords (-> [(:ordinal rule) (:i sub)]
-                                  (into (:coords emission)))}
-                     level']
-                    (recur env level')))))))))))
+                  (let [path (if (:qualification env)
+                               (evidence/combine :arrow (get (:outer sub) :evidence true)
+                                                 (get emission :evidence true)) true)]
+                    (if-let [result (when (and (not (evidence/no? path))
+                                              (rev-emit? env level rule (:i sub) s))
+                                      (accepted-arrow-emission env (:node level) rule
+                                                                s (:entity level) s
+                                                                (-> [(:ordinal rule) (:i sub)]
+                                                                    (into (:coords emission)))
+                                                                (:i sub) path))]
+                      [result level']
+                      (recur env level'))))))))))))
 
 ;; ---------------------------------------------------------------------------
 ;; Resume: rebuild a level positioned strictly past boundary coordinates
@@ -941,6 +1064,11 @@
   (throw (ex-info "Least-path cursor coordinates are not reproducible."
                   (assoc data :eacl/error :eacl.page/invalid-cursor
                          :reason reason))))
+
+(defn- resume-evidence! [value]
+  (when (evidence/no? value)
+    (invalid-coords! :inactive-qualified-binding {}))
+  value)
 
 (defn- check-arity!
   "Coordinate arity is a function of the rule kind; a mismatch must fail
@@ -985,10 +1113,14 @@
 
           :arrow-relation
           (let [i (nth coords 1) v (nth coords 2)]
-            {:outer (stream #(fwd-scan subject-type subject-eid
-                                       (:target-relation-eid rule)
-                                       (:intermediate-type rule) %1 %2 desc?)
-                            i)
+            {:outer (cond-> (stream #(fwd-scan subject-type subject-eid
+                                               (:target-relation-eid rule)
+                                               (:intermediate-type rule) %1 %2 desc?) i)
+                      (:qualification env)
+                      (assoc :evidence (resume-evidence!
+                                        (probe-fwd-evidence (:ctx env) subject-type subject-eid
+                                                            (:target-relation-eid rule)
+                                                            (:intermediate-type rule) i))))
              :i i
              :inner (stream #(fwd-scan (:intermediate-type rule) i
                                        (:via-relation-eid rule)
@@ -1003,7 +1135,10 @@
             ;; The intermediate value is the sub-derivation's own leaf:
             ;; the deepest coordinate of the sub-path.
             {:child child
-             :i {:value i :coords (vec subcoords)}
+             :i (cond-> {:value i :coords (vec subcoords)}
+                  (:qualification env)
+                  (assoc :evidence (resume-evidence!
+                                    (node-evidence env (:target-node rule) subject-eid i))))
              :inner (stream #(fwd-scan (:intermediate-type rule) i
                                        (:via-relation-eid rule)
                                        (:resource-type rule) %1 %2 desc?)
@@ -1036,10 +1171,14 @@
 
           :arrow-relation
           (let [i (nth coords 1) s (nth coords 2)]
-            {:outer (stream #(rev-scan (:resource-type rule) entity
-                                       (:via-relation-eid rule)
-                                       (:intermediate-type rule) %1 %2 desc?)
-                            i)
+            {:outer (cond-> (stream #(rev-scan (:resource-type rule) entity
+                                               (:via-relation-eid rule)
+                                               (:intermediate-type rule) %1 %2 desc?) i)
+                      (:qualification env)
+                      (assoc :evidence (resume-evidence!
+                                        (probe-rev-evidence (:ctx env) (:resource-type rule) entity
+                                                            (:via-relation-eid rule)
+                                                            (:intermediate-type rule) i))))
              :i i
              :inner (stream #(rev-scan (:intermediate-type rule) i
                                        (:target-relation-eid rule)
@@ -1049,10 +1188,14 @@
           :arrow-permission
           (let [i (nth coords 1)
                 subcoords (subvec coords 2)]
-            {:outer (stream #(rev-scan (:resource-type rule) entity
-                                       (:via-relation-eid rule)
-                                       (:intermediate-type rule) %1 %2 desc?)
-                            i)
+            {:outer (cond-> (stream #(rev-scan (:resource-type rule) entity
+                                               (:via-relation-eid rule)
+                                               (:intermediate-type rule) %1 %2 desc?) i)
+                      (:qualification env)
+                      (assoc :evidence (resume-evidence!
+                                        (probe-rev-evidence (:ctx env) (:resource-type rule) entity
+                                                            (:via-relation-eid rule)
+                                                            (:intermediate-type rule) i))))
              :i i
              :child (rev-resume-level env (:target-node rule) i subcoords)}))]
     {:node node :entity entity :rules rules :order order :oi oi :sub sub}))
@@ -1061,20 +1204,63 @@
 ;; Public pagination API
 ;; ---------------------------------------------------------------------------
 
+(def maximum-qualified-node-evidence 100000)
+
+(defn- legacy-node-acceptor [options]
+  (let [request (:qualification options)
+        route-options (assoc (select-keys options reducer/run-option-keys) :qualification request)
+        scope (delay (qualification/exact-reuse-identity request))
+        memo (volatile! {})]
+    (fn [{:keys [node subject-type subject-eid resource-eid evidence-witness]}]
+      (when evidence-witness (evidence/throw-if-fault! (:evidence evidence-witness)))
+      (if (and evidence-witness (evidence/has? (:evidence evidence-witness)))
+        (:evidence evidence-witness)
+        (let [point [node subject-type subject-eid resource-eid]]
+          (if (contains? @memo point)
+            (get @memo point)
+            (do
+              (when (>= (count @memo) maximum-qualified-node-evidence)
+                (throw (ex-info "Qualified local node evidence limit exceeded."
+                                {:type :eacl.operator/invalid-lookup :eacl/error :eacl.operator/invalid-lookup
+                                 :reason :node-evidence-limit})))
+              (let [result
+                    (evidence/throw-if-fault!
+                     (route/derives-from-node?
+                      (cond-> (assoc route-options :start-node node :subject-type subject-type
+                                     :subject-eid subject-eid :resource-eid resource-eid)
+                        evidence-witness
+                        (assoc :known-witness (assoc evidence-witness :point point :scope (force scope))))))]
+                (vswap! memo assoc point result)
+                result))))))))
+
 (defn- make-env
   [{:keys [plan subject-type subject-eid desc? traversal
-           candidate-accept?]
+           candidate-accept? qualification]
     :as options} ctx]
-  {:plan plan
-   :ctx ctx
-   :subject-type subject-type
-   :subject-eid subject-eid
-   :desc? (boolean desc?)
-   :traversal traversal
-   :candidate-accept? candidate-accept?
-   ;; Probe options are invariant per page: plan, subject type, budgets and
-   ;; the cut point are selected once here, never re-attached per witness.
-   :route-opts (select-keys options reducer/run-option-keys)})
+  (let [legacy-qualified? (and qualification (not (fn? candidate-accept?))
+                               (not (:operator-synthetic->semantic plan)))]
+    (when (and qualification (not legacy-qualified?) (not (fn? candidate-accept?)))
+      (throw (ex-info "Qualified operator cover requires supported exact local predicates."
+                      {:eacl/error :eacl.operator/invalid-lookup
+                       :type :eacl.operator/invalid-lookup
+                       :reason :unsupported-qualified-cover})))
+    {:plan plan
+     :ctx ctx
+     :subject-type subject-type
+     :subject-eid subject-eid
+     :desc? (boolean desc?)
+     :traversal traversal
+     :candidate-accept? (if legacy-qualified? (legacy-node-acceptor options) candidate-accept?)
+     :qualification qualification
+     ;; Internal positive covers preserve possible candidates. Public callers
+     ;; supply their policy explicitly; apply it only to complete root results.
+     :result-policy (if (contains? options :result-policy)
+                      (authorization-result/result-policy options)
+                      :detailed)
+     :legacy-qualified? legacy-qualified?
+     ;; Probe options are invariant per page: plan, subject type, budgets and
+     ;; the cut point are selected once here, never re-attached per witness.
+     :route-opts (select-keys options reducer/run-option-keys)}))
 
 (defn- run-page
   [env level next-fn page-size raw-candidates?]
@@ -1093,7 +1279,12 @@
         (if (nil? emission)
           {:emissions emissions :has-more? false :exhausted? true}
           (do (vswap! (:counters (:ctx env)) update :emissions inc)
-              (recur level' (conj emissions emission))))))))
+              (recur level'
+                     (if (and (:qualification env)
+                              (= :definite (:result-policy env))
+                              (not (evidence/has? (get emission :evidence true))))
+                       emissions
+                       (conj emissions emission)))))))))
 
 (defn forward-page
   "One least-path page of root entities for the subject.

@@ -361,7 +361,7 @@
             ;; The public three-arity delegates to the new window-aware
             ;; four-arity. Count the public engine invocation, not that local
             ;; arity dispatch, as a second backend query.
-            (when (= 3 (count args))
+            (when (= (if (:include-qualifier? (nth args 3 nil)) 4 3) (count args))
               (swap! internal-queries conj (second args)))
             (apply read-relationships args))))
         page (eacl/read-relationships counting-client

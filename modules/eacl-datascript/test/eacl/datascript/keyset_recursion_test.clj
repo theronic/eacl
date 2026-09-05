@@ -10,6 +10,7 @@
             [datascript.core :as ds]
             [eacl.bench.recursive-fixture :as rf]
             [eacl.core :as eacl]
+            [eacl.client.orchestration :as orchestration]
             [eacl.datascript.core :as dsc]))
 
 (def ^:private config {:shape :star :accounts 60})
@@ -80,12 +81,12 @@
            client
            [(eacl/->Relationship rf/stranger :reader
                                  (rf/object :account (rf/account-id 3)))])
-        page-2 (lookup client {:after (end-cursor page-1)})]
-    (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
-    (is (empty?
-         (set/intersection
-          (set (page-ids page-1))
-          (set (page-ids page-2)))))))
+        request {:after (end-cursor page-1)}]
+    (if orchestration/*qualified-authorization-enabled?*
+      (is (= :eacl.pagination/stale-cursor (:type (error-data #(lookup client request)))))
+      (let [page-2 (lookup client request)]
+        (is (nil? (get-in page-2 [:page-info :cursor-recovery])))
+        (is (empty? (set/intersection (set (page-ids page-1)) (set (page-ids page-2)))))))))
 
 (deftest bare-last-requires-explicit-completion-and-preserves-logical-order-test
   (let [{:keys [client]} (seed!)

@@ -1,0 +1,552 @@
+(ns eacl.formal.qualified.production-mutations
+  "Mutation controls at actual implementation seams, mapped to independent
+   conformance tests. Every control first checks its unmodified gate."
+  (:require [clojure.test :as t :refer [deftest is]]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.data :as data]
+            [eacl.authorization.context :as context]
+            [eacl.authorization.context-test :as context-test]
+            [eacl.authorization.result :as result]
+            [eacl.authorization.result-test :as result-test]
+            [eacl.core :as core]
+            [eacl.core-test :as core-test]
+            [eacl.engine.v8 :as engine]
+            [eacl.authorization.batch :as batch]
+            [eacl.authorization.data-test :as data-test]
+            [eacl.request.counters :as counters]
+            [eacl.authorization.clock :as clock]
+            [eacl.authorization.evidence-test :as evidence-test]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualifier-cache :as qualifier-cache]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.authorization.temporal-test :as temporal-test]
+            [eacl.authorization.qualifier-cache-test :as qualifier-cache-test]
+            [eacl.datascript.qualifier-cache-test :as public-qualifier-cache-test]
+            [eacl.authorization.qualification-test :as qualification-test]
+            [eacl.engine.scan-cache :as scan-cache]
+            [eacl.engine.scan-cache-test :as scan-test]
+            [eacl.engine.stable-reducer :as reducer]
+            [eacl.engine.stable-reducer-evidence-test :as discovery-test]
+            [eacl.engine.stable-page :as stable-page]
+            [eacl.engine.stable-page-evidence-test :as page-test]
+            [eacl.engine.stable-route :as stable-route]
+            [eacl.engine.stable-route-evidence-test :as stable-route-test]
+            [eacl.engine.least-path :as least-path]
+            [eacl.engine.least-path-evidence-test :as legacy-lookup-test]
+            [eacl.engine.stable-route-native-evidence-test :as native-test]
+            [eacl.datascript.evaluation-clock-test :as clock-test]
+            [eacl.datascript.caveat-context-test :as public-context-test]
+            [eacl.datascript.qualified-check-test :as public-point-test]
+            [eacl.datascript.qualified-lookup-test :as public-lookup-test]
+            [eacl.datascript.qualified-cursor-test :as public-cursor-test]
+            [eacl.datascript.qualified-cache-trace-test :as cache-trace-test]
+            [eacl.client.range-reuse-test :as range-test]
+            [eacl.client.range-reuse :as range-reuse]
+            [eacl.datascript.qualified-write-test :as public-write-test]
+            [eacl.datascript.qualified-schema-test :as public-schema-test]
+            [eacl.datascript.qualified-inspection-test :as inspection-test]
+            [eacl.authorization.inspection-test :as inspection-seam-test]
+            [eacl.relationships.inspection :as inspection]
+            [eacl.relay :as relay]
+            [eacl.datascript.schema :as datascript-schema]
+            [eacl.schema.qualification-admission :as admission]
+            [eacl.schema.relation-allowance :as allowance]
+            [eacl.datomic.qualified-write-test :as datomic-write-test]
+            [eacl.datascript.qualifiers :as datascript-qualifiers]
+            [eacl.relationships.mutations :as mutations]
+            [eacl.relationships.mutations-test :as mutations-test]
+            [eacl.relationships.staged :as staged]
+            [eacl.relationships.storage :as storage]
+            [eacl.cache :as cache]
+            [eacl.client.orchestration :as orchestration]
+            [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
+            [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
+            [eacl.formal.qualified.arrow-bridge :as arrow-bridge]
+            [eacl.operator.seekable :as seekable]
+            [eacl.operator.lookup :as lookup]
+            [eacl.operator.lookup-evidence-test :as lookup-test]
+            [eacl.operator.evaluator :as scalar]
+            [eacl.operator.arrow-evidence-test :as arrow-test]
+            [eacl.operator.seekable-evidence-test :as seekable-test]
+            [eacl.operator.recursive :as recursive]
+            [eacl.operator.vector-evaluator :as vector]
+            [eacl.operator.vector-evaluator-test :as vector-test]))
+
+(defn failures [gate]
+  (let [events (atom [])]
+    (with-redefs [t/report (fn [event] (when (#{:fail :error} (:type event)) (swap! events conj event)))]
+      (try (gate)
+           (catch Throwable error (swap! events conj {:type :error :actual error}))))
+    (count @events)))
+
+(defn mutation-cases []
+  (let [cursor-certificate temporal/cursor-certificate
+        certificate qualification/certificate
+        retain-certificate @#'range-reuse/retain-certificate
+        externalize-relationships relay/externalize-relationship-page
+        inspection-window inspection/window-options
+        plan-schema datascript-schema/plan-schema-replacement
+        qualify qualification/qualify identity qualification/exact-reuse-identity
+        fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
+        snapshot-opts @#'orchestration/snapshot-opts
+        head-evidence @#'seekable/head-evidence
+        count-categories @#'lookup/count-categories
+        accepted-emission @#'least-path/accepted-emission
+        stream-next @#'least-path/stream-next
+        legacy-acceptor @#'least-path/legacy-node-acceptor
+        least-env @#'least-path/make-env
+        check-many vector/check-cached-many-eids
+        check-stable stable-route/check-eids
+        validate-stable @#'stable-route/validate-known-witness!
+        aggregate batch/aggregate-counters
+        reusable? temporal/reusable?
+        point-answer temporal/point-answer
+        lookup-answer @#'cache/lookup-answer
+        lookup-rendered cache/lookup-rendered-page!
+        content-key qualifier-cache/content-key
+        exact-key qualifier-cache/exact-key
+        values-for @#'staged/values-for
+        collect data/collect
+        can? core/can?
+        check-evidence engine/check-evidence
+        check-result result/check-result
+        discovery-options stable-route/discovery-options
+        buffer-id @#'reducer/buffer-id
+        checkpoint-put stable-page/checkpoint-put!
+        page-options @#'stable-page/qualified-page-options
+        page-binding stable-page/execution-binding
+        count-page-categories @#'engine/count-page-categories
+        count-result result/count-result
+        inclusive-candidates @#'engine/fetch-inclusive-candidates
+        evaluate-emissions @#'lookup/evaluate-emissions
+        request-schema @#'orchestration/request-schema
+        enqueue @#'recursive/enqueue-evidence!
+        normalize-relationship mutations/normalize-relationship
+        coalesce-updates mutations/coalesce-updates
+        plan-entry @#'staged/plan-entry
+        plan-batch staged/plan-batch
+        plan-retractions staged/plan-retraction-batch
+        write-relationship! core/write-relationship!]
+    {:temporal-collection-resident-lookup-ignores-interval
+     {:gate #'temporal-test/collection-certificates-guard-resident-answers-and-replacement
+      :redefs {#'cache/lookup-answer (fn [store key _] (lookup-answer store key nil))}}
+     :temporal-rendered-page-ignores-captured-time
+     {:gate #'public-cursor-test/live-pages-and-counts-reuse-only-their-certified-time-interval
+      :redefs {#'cache/lookup-rendered-page! (fn [store options key]
+                                               (lookup-rendered store (assoc options :evaluation-time-ms 99) key))}}
+     :qualified-object-delete-leaves-owned-qualifiers
+     {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
+      :redefs {#'staged/plan-retraction-batch (fn [& args] (filterv #(not= :db/retractEntity (first %)) (apply plan-retractions args)))}}
+     :qualified-object-delete-splits-endpoint-pairs
+     {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
+      :redefs {#'staged/plan-retraction-batch (fn [& args] (filterv #(not (and (= :db/retract (first %)) (= storage/reverse-attribute (nth % 2 nil)))) (apply plan-retractions args)))}}
+     :qualified-object-delete-loses-selected-basis-guard
+     {:gate #'public-write-test/qualified-object-deletion-is-atomic-and-bounded
+      :redefs {#'staged/plan-retraction-batch (fn [& args] (let [tx (apply plan-retractions args)] (if (seq tx) (subvec tx 1) tx)))}}
+     :qualified-shared-denotation-identity-omits-time
+     {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
+      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 99))}}
+     :qualified-answer-identity-omits-request-context
+     {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
+      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 3 :omitted))}}
+     :qualified-cursor-loses-skipped-ban-deadline
+     {:gate #'public-cursor-test/an-expiring-ban-before-the-boundary-requires-a-new-lookup
+      :redefs {#'qualification/certificate (fn [request] (assoc (certificate request) :valid-until-ms nil))}}
+     :qualified-cursor-does-not-enforce-live-time
+     {:gate #'public-cursor-test/live-cursors-stop-at-expiry-and-pinned-cursors-retain-their-time
+      :redefs {#'temporal/cursor-time-valid? (constantly true)}}
+     :qualified-cursor-incomplete-certificate-becomes-complete
+     {:gate #'public-cursor-test/incomplete-certificates-allow-only-the-original-time-without-proof-building
+      :redefs {#'temporal/cursor-certificate (fn [mode time prior current] (assoc (cursor-certificate mode time prior current) :complete? true))}}
+     :qualified-cursor-loses-context-scope
+     {:gate #'public-cursor-test/context-and-result-policy-mismatches-fail-before-qualification
+      :redefs {#'relay/qualification-scope (constantly nil)}}
+     :qualified-range-drops-retained-certificate
+     {:gate #'range-test/qualified-range-slices-and-composition-preserve-the-entire-retained-certificate
+      :redefs {#'range-reuse/retain-certificate (fn [value source] (dissoc (retain-certificate value source) :qualification-certificate))}}
+     :qualified-cursor-accepts-malformed-certificate
+     {:gate #'temporal-test/cursor-certificates-are-closed-and-never-extend-prior-deadlines
+      :redefs {#'temporal/cursor-certificate-valid? (constantly true)}}
+     :temporal-point-resident-lookup-ignores-interval
+     {:gate #'temporal-test/resident-expiration-is-a-miss-and-later-publication-replaces-the-interval
+      :redefs {#'cache/lookup-answer (fn [store key _] (lookup-answer store key nil))}}
+     :temporal-point-incomplete-certificate-becomes-complete
+     {:gate #'temporal-test/expired-bans-and-incomplete-certificates-never-reuse-a-stale-decision
+      :redefs {#'temporal/reusable? (fn [answer time exact?] (reusable? (assoc answer :complete? true) time exact?))}}
+     :temporal-point-certificate-detaches-from-evidence
+     {:gate #'temporal-test/certificate-boundaries-and-completeness-are-independent-of-retention
+      :redefs {#'temporal/point-answer-valid? (constantly true)}}
+     :temporal-point-older-publication-displaces-newer-interval
+     {:gate #'temporal-test/resident-expiration-is-a-miss-and-later-publication-replaces-the-interval
+      :redefs {#'temporal/supersedes? (constantly true)}}
+     :temporal-point-loses-expiring-ban-witness
+     {:gate #'public-point-test/temporal-point-cache-expires-denials-and-retains-permanent-witnesses
+      :redefs {#'temporal/point-answer (fn [time value] (point-answer time (evidence/with-certificate value nil true)))}}
+     :qualifier-cache-omits-native-content
+     {:gate #'qualifier-cache-test/complete-content-proofs-detect-unstamped-mutations-and-deletion
+      :redefs {#'qualifier-cache/content-key (fn [basis rid qid version _ named relation]
+                                               (content-key basis rid qid version nil named relation))}}
+     :qualifier-cache-omits-definition-content
+     {:gate #'qualifier-cache-test/complete-content-proofs-detect-unstamped-mutations-and-deletion
+      :redefs {#'qualifier-cache/content-key (fn [basis rid qid version entity _ relation]
+                                               (content-key basis rid qid version entity nil relation))}}
+     :qualifier-cache-omits-source-lifecycle
+     {:gate #'qualifier-cache-test/exact-and-content-reuse-retain-data-and-reevaluate-each-request
+      :redefs {#'qualifier-cache/content-key (fn [basis & args]
+                                               (apply content-key (dissoc basis :source-lifecycle) args))}}
+     :qualifier-cache-omits-owning-relation-proof
+     {:gate #'qualifier-cache-test/exact-and-content-reuse-retain-data-and-reevaluate-each-request
+      :redefs {#'qualifier-cache/content-key (fn [basis rid qid version entity named _]
+                                               (content-key basis rid qid version entity named nil))}}
+     :qualifier-cache-exact-scope-omits-native-basis
+     {:gate #'public-qualifier-cache-test/public-decode-reuse-rechecks-unknown-native-writers
+      :redefs {#'qualifier-cache/exact-key (fn [basis & args]
+                                             (apply exact-key (dissoc basis :revision :exact-locator :backend-snapshot-id) args))}}
+     :public-write-drops-qualifier-input
+     {:gate #'mutations-test/qualified-write-input-is-one-named-caveat-with-bounded-context-and-expiry
+      :redefs {#'mutations/normalize-relationship
+               (fn [relationship] (select-keys (normalize-relationship relationship) [:subject :relation :resource]))}}
+     :batch-conflict-identity-discards-qualifier-intent
+     {:gate #'mutations-test/batch-identity-excludes-qualifiers-but-update-intent-does-not
+      :redefs {#'mutations/coalesce-updates
+               (fn [updates] (coalesce-updates (mapv #(update % :relationship select-keys [:subject :relation :resource]) updates)))}}
+     :batch-publication-omits-relation-fence
+     {:gate #'public-write-test/qualified-batches-publish-atomically
+      :redefs {#'datascript-qualifiers/relation-fence (fn [_ _] [])}}
+     :prepared-publication-leaks-unresolved-qid
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'staged/values-for (fn [identity qid] (values-for identity (when qid -404)))}}
+     :batch-publication-shares-qualifiers
+     {:gate #'datomic-write-test/qualified-batches-publish-atomically
+      :redefs {#'staged/unique-qualifiers! (fn [_] nil)}}
+     :prepared-handle-ignores-requested-value
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'staged/plan-entry
+               (fn [writer db entry datoms fences?]
+                 (plan-entry writer db (dissoc entry :expected-value) datoms fences?))}}
+     :qualified-publication-omits-endpoint-guards
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'staged/plan-batch
+               (fn [writer db entries datoms]
+                 (plan-batch writer db (mapv #(dissoc % :identity-guards) entries) datoms))}}
+     :flat-public-write-drops-qualifier-metadata
+     {:gate #'public-write-test/public-qualified-writes-preserve-identity-and-commit-atomically
+      :redefs {#'core/write-relationship!
+               (fn [target update] (write-relationship! target (select-keys update [:operation :subject :relation :resource])))}}
+     :detailed-lookups-drop-emission-evidence
+     {:gate #'public-lookup-test/public-qualified-lookups-preserve-detailed-results-and-definite-defaults
+      :redefs {#'engine/with-emission-evidence (fn [page _] page)}}
+     :definite-lookup-omits-final-policy-filter
+     {:gate #'public-lookup-test/public-qualified-lookups-preserve-detailed-results-and-definite-defaults
+      :redefs {#'least-path/make-env
+               (fn [options ctx] (assoc (least-env options ctx) :result-policy :detailed))}}
+     :filtered-lookahead-drops-recovered-root-evidence
+     {:gate #'public-lookup-test/public-qualified-pages-retain-evidence-through-cursors-filters-and-ranges
+      :redefs {#'engine/fetch-inclusive-candidates
+               (fn [rtype fetch bound limit _] (inclusive-candidates rtype fetch bound limit nil))}}
+     :qualified-filter-evidence-is-treated-as-boolean
+     {:gate #'public-lookup-test/qualified-relationship-filters-compose-with-whole-permission-evidence
+      :redefs {#'lookup/evaluate-emissions
+               (fn [options cover emissions]
+                 (evaluate-emissions (dissoc options :accept-result-evidence) cover emissions))}}
+     :rendered-lookup-cache-accepts-inconsistent-residuals
+     {:gate #'public-lookup-test/detailed-lookup-cache-ingress-is-policy-and-residual-aware
+      :redefs {#'cache/rendered-page-entry-valid? (constantly true)}}
+     :public-counts-ignore-requested-policy
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'result/result-policy (constantly :detailed)}}
+     :public-counts-drop-conditional-category
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'result/count-result
+               (fn [value limit policy]
+                 (dissoc (count-result value limit policy) :conditional-count))}}
+     :recursive-cover-does-not-read-qualified-edges
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'engine/structural-cover-fetch clojure.core/identity}}
+     :recursive-count-includes-lookahead-category
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'engine/count-page-categories
+               (fn [categories page _] (count-page-categories categories page nil))}}
+     :detailed-count-cache-accepts-inconsistent-categories
+     {:gate #'public-lookup-test/detailed-count-cache-ingress-requires-consistent-closed-categories
+      :redefs {#'cache/count-answer? (constantly true)}}
+     :qualified-checkpoint-accepts-incomplete-evidence
+     {:gate #'page-test/incomplete-or-faulty-qualified-checkpoints-fall-back-to-replay
+      :redefs {#'stable-page/valid-qualified-checkpoint (fn [_ checkpoint] checkpoint)}}
+     :qualified-checkpoint-reuses-after-its-interval
+     {:gate #'page-test/qualified-checkpoints-reuse-only-inside-the-certified-interval
+      :redefs {#'temporal/reusable? (constantly true)}}
+     :qualified-lookahead-loses-its-evidence
+     {:gate #'page-test/pending-qualified-lookahead-needs-no-repeat-probe
+      :redefs {#'stable-page/checkpoint-put!
+               (fn [store key checkpoint] (checkpoint-put store key (dissoc checkpoint :pending-evidence)))}}
+     :qualified-checkpoint-key-omits-request-scope
+     {:gate #'page-test/checkpoint-retention-partitions-qualified-request-scope
+      :redefs {#'stable-page/qualified-page-options
+               (fn [options] (assoc (page-options options) :checkpoint-key (:checkpoint-key options)))}}
+     :qualified-standalone-token-omits-request-scope
+     {:gate #'page-test/standalone-qualified-tokens-bind-time-context-and-policy
+      :redefs {#'stable-page/execution-binding
+               (fn [options] (dissoc (page-binding options) :qualification :result-policy))}}
+     :discovery-reuses-a-buffer-from-an-earlier-prefix
+     {:gate #'discovery-test/temporal-revisions-replay-a-buffered-prefix
+      :redefs {#'reducer/buffer-id (fn [item] (buffer-id (dissoc item :revision)))}}
+     :discovery-discards-propagated-prefix-evidence
+     {:gate #'discovery-test/conditional-prefixes-revisit-cycles-without-duplicate-discoveries
+      :redefs {#'reducer/inherit-evidence (fn [_ successors] successors)}}
+     :discovery-partial-path-claims-the-whole-root
+     {:gate #'discovery-test/conditional-prefixes-revisit-cycles-without-duplicate-discoveries
+      :redefs {#'stable-route/discovery-options
+               (fn [options direction]
+                 (assoc (discovery-options options direction) :candidate-evidence-fn
+                        (fn [_ item] (:evidence item true))))}}
+     :discovery-omits-retained-evidence-bounds
+     {:gate #'discovery-test/weighted-admission-and-resume-keep-operational-bounds
+      :redefs {#'reducer/evidence-size (constantly 0)}}
+     :discovery-repeats-a-known-direct-tuple
+     {:gate #'discovery-test/direct-discovery-witnesses-avoid-repeating-the-known-tuple
+      :redefs {#'stable-route/discovery-options
+               (fn [options direction]
+                 (let [configured (discovery-options options direction)
+                       complete (:candidate-evidence-fn configured)]
+                   (assoc configured :candidate-evidence-fn
+                          (fn [eid item] (complete eid (dissoc item :direct-evidence))))))}}
+     :expired-public-request-compiles-all-caveats
+     {:gate #'public-point-test/expired-public-points-never-compile-undemanded-caveats
+      :redefs {#'orchestration/request-schema
+               (fn [& args]
+                 (binding [engine/*qualification* nil] (apply request-schema args)))}}
+     :public-conditional-result-becomes-a-grant
+     {:gate #'result-test/detailed-results-preserve-membership-and-residuals
+      :redefs {#'result/check-result (fn [value]
+                                       (let [answer (check-result value)]
+                                         (if (= :conditional-permission (:permissionship answer))
+                                           (assoc answer :allowed? true) answer)))}}
+     :boolean-compatibility-erases-operational-errors
+     {:gate #'core-test/boolean-compatibility-requires-definite-grants-and-preserves-operational-errors
+      :redefs {#'core/can? (fn [& args] (try (apply can? args) (catch Throwable _ false)))}}
+     :public-point-routing-omits-qualification
+     {:gate #'public-point-test/public-point-routes-preserve-conditional-evidence-and-expiring-bans
+      :redefs {#'engine/check-evidence (fn [& args]
+                                         (binding [engine/*qualification* nil]
+                                           (apply check-evidence args)))}}
+     :legacy-inactive-stream-path-becomes-active
+     {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
+      :redefs {#'least-path/stream-next
+               (fn [ctx state]
+                 (let [[value next-state] (stream-next ctx state)]
+                   [value (cond-> next-state
+                            (and value (:qualification ctx) (evidence/no? (:evidence next-state)))
+                            (assoc :evidence true))]))}}
+     :legacy-partial-path-claims-whole-node
+     {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
+      :redefs {#'least-path/legacy-node-acceptor
+               (fn [options]
+                 (let [accept (legacy-acceptor options)]
+                   (fn [candidate]
+                     (if-let [witness (:evidence-witness candidate)] (:evidence witness) (accept candidate)))))}}
+     :legacy-nil-path-forces-qualified-context
+     {:gate #'legacy-lookup-test/nil-qualifier-unions-retain-existing-coordinates-without-context-work
+      :redefs {#'least-path/make-env
+               (fn [options ctx]
+                 (when (:qualification options) (qualification/exact-reuse-identity (:qualification options)))
+                 (least-env options ctx))}}
+     :stable-known-witness-scope-ignored
+     {:gate #'stable-route-test/known-witness-scope-is-validated-before-a-definite-shortcut
+      :redefs {#'stable-route/validate-known-witness! :known-witness}}
+     :stable-known-path-is-reprobed
+     {:gate #'stable-route-test/known-direct-and-child-witnesses-complete-only-remaining-alternatives
+      :redefs {#'stable-route/check-eids (fn [options] (check-stable (dissoc options :known-witness)))}}
+     :stable-known-arrow-binding-is-reprobed
+     {:gate #'stable-route-test/known-arrow-binding-is-not-requalified-or-reprobed
+      :redefs {#'stable-route/validate-known-witness!
+               (fn [options] (some-> (validate-stable options) (assoc :intermediate -1)))}}
+     :qualification-data-outside-aggregate-budget
+     {:gate #'qualification-test/qualifier-data-consumes-aggregate-command-and-fact-budgets
+      :redefs {#'batch/aggregate-counters
+               (fn [& args] (assoc (apply aggregate args)
+                                   :commands 0 :fetched-values 0 :allocation-proxy 1))}}
+     :qualification-data-drops-assertion-version
+     {:gate #'data-test/bounded-data-preserves-unknown-fields-and-same-read-version
+      :redefs {#'data/collect (fn [& args] (assoc (apply collect args) :version nil))}}
+     :qualification-data-hides-unknown-field
+     {:gate #'data-test/bounded-data-preserves-unknown-fields-and-same-read-version
+      :redefs {#'data/collect (fn [& args] (update (apply collect args) :entity dissoc :unexpected/field))}}
+     :qualification-data-unmetered
+     {:gate #'qualification-test/adapter-data-is-shared-and-metered-within-one-request
+      :redefs {#'counters/add-fetched-values! (fn ([] nil) ([_] nil))}}
+     :qualification-data-refetched-across-roles
+     {:gate #'qualification-test/adapter-data-faults-remain-visible-and-do-not-refetch
+      :redefs {#'qualification/entity-data (fn [request eid] ((:lookup request) eid))}}
+     :qualifier-reference-ignored
+     {:gate #'qualification-test/exclusive-expiry-precedes-program-work
+      :redefs {#'qualification/qualify (fn [_ _ value] (some? value))}}
+     :expiry-boundary-retains-permission
+     {:gate #'qualification-test/exclusive-expiry-precedes-program-work
+      :redefs {#'qualification/qualify (fn [request relation value]
+                                         (qualify (update request :time dec) relation value))}}
+     :authoritative-failure-becomes-plain
+     {:gate #'qualification-test/authoritative-errors-survive-expiry-and-exclusion
+      :redefs {#'qualification/qualify (fn [& args]
+                                         (let [result (apply qualify args)]
+                                           (if (evidence/fault? result) true result)))}}
+     :conditional-becomes-truthy
+     {:gate #'native-test/native-compact-scans-and-memos-preserve-qualified-point-evidence
+      :redefs {#'evidence/has? (fn [value] (boolean (evidence/value value)))}}
+     :fault-becomes-absence
+     {:gate #'qualification-test/authoritative-errors-survive-expiry-and-exclusion
+      :redefs {#'evidence/fault (fn [_ _] false)}}
+     :latest-expiry-replaces-earliest
+     {:gate #'evidence-test/temporal-certificate-uses-decisive-evidence
+      :redefs {#'evidence/meet (fn [a b] (if (and a b) (max a b) (or a b)))}}
+     :expired-evidence-reused
+     {:gate #'evidence-test/temporal-certificate-uses-decisive-evidence
+      :redefs {#'evidence/reusable? (fn [value start time]
+                                      (and (evidence/complete? value) (not (evidence/fault? value)) (<= start time)))}}
+     :scan-shape-omitted-from-cache
+     {:gate #'scan-test/compact-and-ordinary-responses-never-share-memo-or-resident-prefixes-test
+      :redefs {#'scan-cache/descriptor-key (fn [d] (descriptor (dissoc d :include-qualifier?)))}}
+     :compact-flag-dropped-before-native-scan
+     {:gate #'native-test/native-compact-scans-and-memos-preserve-qualified-point-evidence
+      :redefs {#'reducer/adapter-fetch-fn (fn [adapter]
+                                            (let [inner (fetch adapter)]
+                                              (fn [d] (inner (dissoc d :include-qualifier?)))))}}
+     :context-omitted-from-exact-point-scope
+     {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
+      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 3 nil))}}
+     :unprojected-request-reaches-each-caveat
+     {:gate #'qualification-test/each-caveat-projects-request-fields-without-weakening-bound-context
+      :redefs {#'context/project (fn [prepared _] (context/value prepared))}}
+     :unused-context-fields-omitted-from-identity
+     {:gate #'context-test/whole-context-is-canonical-and-independent-of-one-parameter-set
+      :redefs {#'context/identity (constantly "omitted")}}
+     :public-context-validation-bypassed
+     {:gate #'public-context-test/invalid-context-fails-before-selection-even-on-warm-or-empty-requests
+      :redefs {#'context/prepare (let [empty-context (context/prepare {})] (constantly empty-context))}}
+     :time-omitted-from-exact-point-scope
+     {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
+      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 nil))}}
+     :evidence-witness-validation-bypassed
+     {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
+      :redefs {#'vector/validate-evidence-witnesses! (fn [& _] nil)}}
+     :cached-grant-hides-encountered-witness-fault
+     {:gate #'vector-test/exact-evidence-witnesses-avoid-rechecking-proven-nodes
+      :redefs {#'vector/demanded-witness-fault (constantly nil)}}
+     :raw-clock-regresses
+     {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
+      :redefs {#'clock/clock clojure.core/identity}}
+     :snapshot-resamples-time
+     {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
+      :redefs {#'orchestration/snapshot-opts (fn [runtime basis]
+                                               (dissoc (snapshot-opts runtime basis) :evaluation-time-ms))}}
+     :conditional-seekable-head-becomes-definite
+     {:gate #'seekable-test/direct-specializations-carry-exact-qualified-evidence
+      :redefs {#'seekable/head-evidence (fn [cursor]
+                                          (let [value (head-evidence cursor)]
+                                            (evidence/with-certificate true (evidence/valid-until value)
+                                              (evidence/complete? value))))}}
+     :seekable-emission-loses-expiry-certificate
+     {:gate #'seekable-bridge/direct-page-algebra-and-exhaustive-temporal-certificates
+      :redefs {#'seekable/head-evidence (fn [cursor]
+                                          (evidence/with-certificate (head-evidence cursor) nil true))}}
+     :definite-lookup-includes-conditional-results
+     {:gate #'seekable-test/lookup-and-count-project-exact-generator-evidence-without-rechecking
+      :redefs {#'lookup/result-policy (constantly :detailed)}}
+     :count-categories-include-lookahead-sentinel
+     {:gate #'seekable-test/detailed-count-cap-excludes-the-sentinel-from-category-counts
+      :redefs {#'lookup/count-categories (fn [categories entries remaining]
+                                           (count-categories categories entries
+                                                             (when remaining (inc remaining))))}}
+     :general-cover-conditional-child-becomes-definite
+     {:gate #'lookup-test/general-cover-completes-conditional-nodes-before-emission
+      :redefs {#'least-path/accepted-emission
+               (fn [env node rule subject resource value coords proof]
+                 (accepted-emission env node rule subject resource value coords
+                                    (evidence/with-certificate true (evidence/valid-until proof)
+                                      (evidence/complete? proof))))}}
+     :general-cover-discards-proven-node-evidence
+     {:gate #'lookup-test/a-generated-direct-node-is-not-probed-again-by-its-parent
+      :redefs {#'vector/check-cached-many-eids
+               (fn [options]
+                 (check-many (update options :candidates
+                                     #(mapv (fn [candidate] (dissoc candidate :evidence-witnesses)) %))))}}
+     :arrow-witness-scope-validation-bypassed
+     {:gate #'arrow-test/a-known-arrow-binding-is-completed-without-rechecking-its-target
+      :redefs {#'scalar/validate-arrow-witness! (fn [_ _ _ witness] witness)}}
+     :arrow-rechecks-already-proven-binding
+     {:gate #'arrow-test/a-known-arrow-binding-is-completed-without-rechecking-its-target
+      :redefs {#'scalar/known-arrow-binding? (constantly false)}}
+     :arrow-witness-ignores-joint-residual
+     {:gate #'arrow-test/ordered-arrows-compose-whole-child-evidence-and-resume-bindings
+      :redefs {#'least-path/path-hit? (fn [_ _ other] (and (some? other) (not (evidence/no? other))))}}
+     :arrow-resume-drops-binding-evidence
+     {:gate #'arrow-test/ordered-arrows-compose-whole-child-evidence-and-resume-bindings
+      :redefs {#'least-path/resume-evidence! (constantly true)}}
+     :witness-skips-expired-prefix-before-alternating
+     {:gate #'arrow-bridge/expired-prefix-witness-work-is-bounded-by-the-physical-shorter-side
+      :redefs {#'least-path/stream-next (fn [ctx state]
+                                          (loop [state state]
+                                            (let [[value next-state] (stream-next ctx state)]
+                                              (if (and value (evidence/no? (get next-state :evidence true)))
+                                                (recur next-state) [value next-state]))))}}
+     :inspection-expiry-is-inclusive
+     {:gate #'inspection-seam-test/expiry-inspection-is-independent-of-caveat-outcomes
+      :redefs {#'inspection/active? (fn [time relationship]
+                                      (or (nil? (:valid-until-ms relationship))
+                                          (<= time (:valid-until-ms relationship))))}}
+     :inspection-requires-a-definite-caveat
+     {:gate #'inspection-seam-test/expiry-inspection-is-independent-of-caveat-outcomes
+      :redefs {#'inspection/active? (fn [time relationship]
+                                      (and (or (nil? (:valid-until-ms relationship))
+                                               (< time (:valid-until-ms relationship)))
+                                           (or (nil? (:caveat relationship))
+                                               (true? (get-in relationship [:caveat-context "flag"])))))}}
+     :inspection-loses-aligned-qualifier-reference
+     {:gate #'inspection-test/stored-and-expiry-active-inspection-retain-metadata-without-caveat-evaluation
+      :redefs {#'inspection/row (fn [relationship _ _] relationship)}}
+     :inspection-externalizer-discards-metadata
+     {:gate #'inspection-test/stored-and-expiry-active-inspection-retain-metadata-without-caveat-evaluation
+      :redefs {#'relay/externalize-relationship-page
+               (fn [& args] (update (apply externalize-relationships args) :data
+                                    #(mapv (fn [r] (apply dissoc r mutations/qualifier-keys)) %)))}}
+     :inspection-fills-past-candidate-window
+     {:gate #'inspection-test/expiry-filter-keeps-the-existing-candidate-work-bound
+      :redefs {#'inspection/window-options
+               (fn [request filters options]
+                 (assoc (inspection-window request filters options) :candidate-window 1000))}}
+     :inspection-cache-admits-noncanonical-metadata
+     {:gate #'mutations-test/cached-qualifier-metadata-must-be-closed-bounded-and-canonical
+      :redefs {#'mutations/canonical-qualifier-metadata? (constantly true)}}
+     :schema-admission-omits-evaluator
+     {:gate #'public-schema-test/schema-admission-requires-evaluator-before-writes-or-empty-reads
+      :redefs {#'admission/schema! (fn [schema _ publication] (admission/require-publication! publication) schema)}}
+     :schema-admission-omits-publication-capability
+     {:gate #'public-schema-test/qualified-publication-capability-is-required-at-schema-boundaries
+      :redefs {#'admission/require-publication! clojure.core/identity}}
+     :warm-answer-bypasses-publication-capability
+     {:gate #'public-schema-test/unsupported-publication-is-rejected-before-a-warm-answer
+      :redefs {#'qualification/require-publication! (constantly true)}}
+     :schema-tightening-ignores-stored-qualifiers
+     {:gate #'public-write-test/schema-alternatives-preserve-relation-identities-and-retained-data
+      :redefs {#'allowance/validate-existing! (constantly true)}}
+     :schema-alternatives-retract-retained-relation
+     {:gate #'public-write-test/schema-alternatives-preserve-relation-identities-and-retained-data
+      :redefs {#'allowance/entity-deletions :retractions}}
+     :schema-tightening-omits-relation-commit-fence
+     {:gate #'public-write-test/schema-alternatives-preserve-relation-identities-and-retained-data
+      :redefs {#'datascript-schema/plan-schema-replacement
+               (fn [db source options] (assoc (plan-schema db source options) :relation-commit-guards []))}}
+     :recursive-membership-stops-before-certificate-convergence
+     {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
+      :redefs {#'recursive/enqueue-evidence!
+               (fn [state head value limits counters]
+                 (if (= (evidence/value value) (evidence/value (get (:facts state) head false)))
+                   state
+                   (enqueue state head value limits counters)))}}}))
+
+(deftest production-mutations-are-killed-by-conformance-gates
+  (let [cases (mutation-cases)]
+    (is (= 108 (count cases)))
+    (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
+      (is (zero? (failures gate)) (str id " unmodified gate must pass"))
+      (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

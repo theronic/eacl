@@ -17,7 +17,8 @@
   Derived and composed pages are returned to the ordinary path, which
   renders and publishes them under their exact keys like computed pages.
   Bounded candidate-window routes carry no marker and never participate."
-  (:require [eacl.cache.standard-lru :as lru]))
+  (:require [eacl.cache.standard-lru :as lru]
+            [eacl.authorization.temporal :as temporal]))
 
 (def default-max-entries 512)
 (def default-max-results-per-walk 4096)
@@ -148,6 +149,17 @@
            (transient {})
            (range (count edges)))))
 
+(defn- retain-certificate [value source]
+  (cond-> value
+    (and value (contains? source :qualification-certificate))
+    (assoc :qualification-certificate (:qualification-certificate source))))
+
+(defn- combine-certificates [value left right]
+  (cond-> value
+    (or (contains? left :qualification-certificate) (contains? right :qualification-certificate))
+    (assoc :qualification-certificate
+           (temporal/intersect-intervals (:qualification-certificate left) (:qualification-certificate right)))))
+
 (defn- segment-of
   "A segment from a computed page and the window that produced it. The
   page's data and edges are in canonical forward order for both kinds. The
@@ -156,14 +168,14 @@
   [{:keys [kind boundary size]} page]
   (let [info (:page-info page)
         edges (:edges page)]
-    {:data (:data page)
-     :edges edges
-     :index (index-edges edges)
-     :series-size size
-     :start-boundary (when (= :first kind) (edge-key boundary))
-     :end-boundary (when (= :last kind) (edge-key boundary))
-     :has-previous? (boolean (:has-previous-page? info))
-     :has-next? (boolean (:has-next-page? info))}))
+    (retain-certificate {:data (:data page)
+                         :edges edges
+                         :index (index-edges edges)
+                         :series-size size
+                         :start-boundary (when (= :first kind) (edge-key boundary))
+                         :end-boundary (when (= :last kind) (edge-key boundary))
+                         :has-previous? (boolean (:has-previous-page? info))
+                         :has-next? (boolean (:has-next-page? info))} page)))
 
 (defn- slice-page
   "The internal page for results `[from, to)` of `segment`."
@@ -171,16 +183,16 @@
   (let [data (subvec (:data segment) from to)
         edges (subvec (:edges segment) from to)
         n (count (:data segment))]
-    {:data data
-     :edges edges
-     :range-reusable? true
-     :page-info {:start-cursor (when (seq edges) (nth edges 0))
-                 :end-cursor (when (seq edges) (peek edges))
-                 :has-next-page? (boolean (and (seq data)
-                                               (or (< to n) (:has-next? segment))))
-                 :has-previous-page? (boolean (and (seq data)
-                                                   (or (pos? from)
-                                                       (:has-previous? segment))))}}))
+    (retain-certificate {:data data
+                         :edges edges
+                         :range-reusable? true
+                         :page-info {:start-cursor (when (seq edges) (nth edges 0))
+                                     :end-cursor (when (seq edges) (peek edges))
+                                     :has-next-page? (boolean (and (seq data)
+                                                                   (or (< to n) (:has-next? segment))))
+                                     :has-previous-page? (boolean (and (seq data)
+                                                                       (or (pos? from)
+                                                                           (:has-previous? segment))))}} segment)))
 
 (defn ^:no-doc forward-position
   "The index in `segment` of the first result after `boundary`, or nil
@@ -211,34 +223,35 @@
   nil."
   [{:keys [kind size boundary]} segment]
   (let [n (count (:data segment))]
-    (case kind
-      :first
-      (when-let [from (forward-position segment boundary)]
-        (let [held (- n from)
-              continuation (fn [remaining]
-                             (cond-> {:kind :first
-                                      :size remaining
-                                      :boundary (peek (:edges segment))}
-                               (:series-size segment)
-                               (assoc :checkpoint-size (:series-size segment))))]
-          (cond
-            (>= held size) {:page (slice-page segment from (+ from size))}
-            (not (:has-next? segment)) {:page (slice-page segment from n)}
-            (pos? held) {:partial (slice-page segment from n)
-                         :continuation (continuation (- size held))}
-            (and (pos? n) (:series-size segment)) {:continuation (continuation size)}
-            :else nil)))
-      :last
-      (when-let [to (backward-position segment boundary)]
-        (cond
-          (>= to size) {:page (slice-page segment (- to size) to)}
-          (not (:has-previous? segment)) {:page (slice-page segment 0 to)}
-          (pos? to) {:partial (slice-page segment 0 to)
-                     :continuation {:kind :last
-                                    :size (- size to)
-                                    :boundary (nth (:edges segment) 0)}}
-          :else nil))
-      nil)))
+    (retain-certificate
+     (case kind
+       :first
+       (when-let [from (forward-position segment boundary)]
+         (let [held (- n from)
+               continuation (fn [remaining]
+                              (cond-> {:kind :first
+                                       :size remaining
+                                       :boundary (peek (:edges segment))}
+                                (:series-size segment)
+                                (assoc :checkpoint-size (:series-size segment))))]
+           (cond
+             (>= held size) {:page (slice-page segment from (+ from size))}
+             (not (:has-next? segment)) {:page (slice-page segment from n)}
+             (pos? held) {:partial (slice-page segment from n)
+                          :continuation (continuation (- size held))}
+             (and (pos? n) (:series-size segment)) {:continuation (continuation size)}
+             :else nil)))
+       :last
+       (when-let [to (backward-position segment boundary)]
+         (cond
+           (>= to size) {:page (slice-page segment (- to size) to)}
+           (not (:has-previous? segment)) {:page (slice-page segment 0 to)}
+           (pos? to) {:partial (slice-page segment 0 to)
+                      :continuation {:kind :last
+                                     :size (- size to)
+                                     :boundary (nth (:edges segment) 0)}}
+           :else nil))
+       nil) segment)))
 
 (defn- best
   [candidates]
@@ -286,19 +299,19 @@
           edges (into (:edges left) (:edges right))
           left-info (:page-info left)
           right-info (:page-info right)]
-      {:data data
-       :edges edges
-       :range-reusable? true
-       :page-info {:start-cursor (when (seq edges) (nth edges 0))
-                   :end-cursor (when (seq edges) (peek edges))
-                   :has-next-page? (boolean
-                                    (if (seq (:data right))
-                                      (:has-next-page? right-info)
-                                      (:has-next-page? left-info)))
-                   :has-previous-page? (boolean
-                                        (if (seq (:data left))
-                                          (:has-previous-page? left-info)
-                                          (:has-previous-page? right-info)))}})))
+      (combine-certificates {:data data
+                             :edges edges
+                             :range-reusable? true
+                             :page-info {:start-cursor (when (seq edges) (nth edges 0))
+                                         :end-cursor (when (seq edges) (peek edges))
+                                         :has-next-page? (boolean
+                                                          (if (seq (:data right))
+                                                            (:has-next-page? right-info)
+                                                            (:has-next-page? left-info)))
+                                         :has-previous-page? (boolean
+                                                              (if (seq (:data left))
+                                                                (:has-previous-page? left-info)
+                                                                (:has-previous-page? right-info)))}} left right))))
 
 ;; ---------------------------------------------------------------------------
 ;; Publication: merging and bounds
@@ -308,14 +321,14 @@
   "The series at the merged segment's end is the right part's series."
   [left right]
   (let [edges (into (:edges left) (:edges right))]
-    {:data (into (:data left) (:data right))
-     :edges edges
-     :index (index-edges edges)
-     :series-size (:series-size right)
-     :start-boundary (:start-boundary left)
-     :end-boundary (:end-boundary right)
-     :has-previous? (:has-previous? left)
-     :has-next? (:has-next? right)}))
+    (combine-certificates {:data (into (:data left) (:data right))
+                           :edges edges
+                           :index (index-edges edges)
+                           :series-size (:series-size right)
+                           :start-boundary (:start-boundary left)
+                           :end-boundary (:end-boundary right)
+                           :has-previous? (:has-previous? left)
+                           :has-next? (:has-next? right)} left right)))
 
 (defn- covers?
   "True when `segment` already holds every result of `candidate` at the

@@ -15,12 +15,12 @@ This module must not depend on Datomic or a logging backend.
 ## Dependency and runtime
 
 ```clojure
-{:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 The published JAR includes all generated JVM kernel/Dafny runtime classes,
 `deps.cljs`, and `EaclKernel.browser.js`. Generated kernel classes target Java
-26 by default and an explicit source/custom build may compile those classes for
+25 by default and an explicit source/custom build may compile those classes for
 Java 8 through 26. The complete JVM module requires Java 11 or newer because
 Caffeine 3.2.4 is its manual cache implementation; Java 17 is the supported
 production runtime floor. CLJS/DataScript uses the separate theronic

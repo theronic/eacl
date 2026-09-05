@@ -3,7 +3,9 @@
 
   This is the sole production backend boundary for recursive traversal, Relay
   pagination, deletion, consistency selection, and ordered-generation proofs."
-  (:require [eacl.exact-integer :as exact-integer]
+  (:require [eacl.authorization.data :as qualification-data]
+            [eacl.exact-integer :as exact-integer]
+            [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
@@ -16,6 +18,8 @@
   adapter. Its version is fixed by the required operation rather than an
   optional capability declaration."
   :canonical-expression-v1)
+
+(def qualified-publication-capabilities #{:atomic-inline-v1 :atomic-prepared-v1})
 
 (def direct-membership-batch-capability :bounded-aligned-v1)
 (def maximum-direct-membership-batch-width 256)
@@ -61,7 +65,7 @@
 (def optional-snapshot-operations
   "Snapshot operations with fail-closed defaults. They remain visible to the
   certification boundary without making an uncertified snapshot invalid."
-  #{:schema-generation :direct-match-many?})
+  #{:schema-generation :direct-match-many? :direct-edge :qualification-data})
 
 (def ^:private source-authority-operation-keys
   #{:select-current :select-authoritative :select-at-least :select-exact
@@ -105,12 +109,19 @@
    :direct-match?
    #{:iff-forward-scan-membership :iff-reverse-scan-membership
      :snapshot-bound}
+   :direct-edge
+   #{:optional-capability-paired :stored-eid-or-qualified-pair-or-nil
+     :iff-forward-scan-membership :iff-reverse-scan-membership
+     :no-authorization-before-qualification :snapshot-bound}
    :direct-match-many?
    #{:optional-capability-paired :immutable-basis
      :normalized-direct-relation-descriptor
      :distinct-typed-input :maximum-width-256
      :aligned-boolean-result :scalar-equivalent
      :cooperative-cancellation :atomic-failure :snapshot-bound}
+   :qualification-data
+   #{:optional-capability-paired :bounded-entity-facts :unknown-fields-preserved
+     :snapshot-bound :same-basis-assertion-version-or-nil :physical-facts-metered}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
    :schema-generation
@@ -154,7 +165,7 @@
    :runtime #{}})
 
 (def ^:private known-capability-groups
-  (conj (set (keys empty-capabilities)) :direct-membership-batch))
+  (conj (set (keys empty-capabilities)) :direct-membership-batch :qualification :qualified-publication))
 
 (def ^:private scan-contract-keys
   #{:strict-order? :unique? :replayable? :strict-progress? :atomic-chunk?})
@@ -301,6 +312,11 @@
         (vec unknown-batch-contracts)
         :known-direct-membership-batch-contracts
         #{direct-membership-batch-capability}}))
+    (when (seq (remove #{qualification-data/capability} (:qualification normalized)))
+      (invalid-adapter! "Backend declares an unknown qualification data contract." {:backend backend-id}))
+    (when (or (> (count (:qualified-publication normalized)) 1)
+              (seq (remove qualified-publication-capabilities (:qualified-publication normalized))))
+      (invalid-adapter! "Backend declares an unknown or ambiguous qualified publication contract." {:backend backend-id}))
     normalized))
 
 (defn normalize-traversal-execution
@@ -439,6 +455,10 @@
       (invalid-adapter!
        "Backend advertises ordered generations without a proof-frame operation."
        {:backend id :capability :ordered-generations}))
+    (when-not (= (contains? (:qualification normalized) qualification-data/capability)
+                 (fn? (:qualification-data operations)))
+      (invalid-adapter! "Qualification data capability and operation must be declared together."
+                        {:backend id :operation :qualification-data}))
     (let [batch-capability?
           (contains? (:direct-membership-batch normalized)
                      direct-membership-batch-capability)
@@ -663,7 +683,8 @@
   (let [backend-id (::id adapter)
         direction (or (:direction options) :asc)
         bound (:bound-eid options)
-        inclusive? (true? (:inclusive-bound? options))]
+        inclusive? (true? (:inclusive-bound? options))
+        compact? (true? (:include-qualifier? options))]
     (when-not (sequential? value)
       (contract-violation!
        backend-id operation-key :finite-sequential-result value))
@@ -675,10 +696,12 @@
            first? true]
       (if-not remaining
         value
-        (let [item (first remaining)]
+        (let [raw-item (first remaining)
+              valid-item? (if compact? (edge/valid? raw-item) (exact-integer/natural? raw-item))
+              item (if (and compact? valid-item?) (edge/endpoint raw-item) raw-item)]
           ;; One combined predicate on the hot path; the failed obligation
           ;; is classified only on the cold violation branch.
-          (when-not (exact-integer/natural? item)
+          (when-not valid-item?
             (contract-violation!
              backend-id operation-key
              (if (exact-integer/exact? item) :nonnegative :exact-integer)
@@ -770,11 +793,27 @@
            backend-id operation-key :finite-node-set value))
         value)
 
+      :qualification-data
+      (do
+        (when-not (and (map? value) (= #{:entity :version :fact-count} (set (keys value)))
+                       (or (nil? (:entity value)) (map? (:entity value)))
+                       (or (nil? (:version value)) (exact-integer/natural? (:version value)))
+                       (exact-integer/natural? (:fact-count value))
+                       (<= (:fact-count value) qualification-data/maximum-entity-facts))
+          (contract-violation! backend-id operation-key :bounded-qualification-data :redacted))
+        value)
+
       :direct-match?
       (do
         (when-not (boolean? value)
           (contract-violation!
            backend-id operation-key :boolean-result value))
+        value)
+
+      :direct-edge
+      (do
+        (when-not (or (nil? value) (edge/valid? value))
+          (contract-violation! backend-id operation-key :compact-edge-or-nil value))
         value)
 
       :direct-match-many?
@@ -832,11 +871,11 @@
             (observe-invocation! :failed adapter operation-key)
             (throw error)))))))
 
-(defn ^:no-doc direct-match-invoker
-  "Captures the immutable scalar direct-membership implementation while
-  preserving the complete adapter invocation boundary for every candidate."
-  [adapter]
-  (let [operation-key :direct-match?]
+(defn- direct-invoker
+  [adapter operation-key]
+  (when-not (contains? #{:direct-match? :direct-edge} operation-key)
+    (invalid-adapter! "A direct invoker requires a direct membership operation."
+                      {:operation operation-key}))
     (if-not (adapter? adapter)
       (fn [subject-type subject-eid relation-eid resource-type resource-eid]
         (invoke adapter operation-key subject-type subject-eid relation-eid
@@ -852,13 +891,18 @@
             (let [value (implementation subject-type subject-eid relation-eid
                                         resource-type resource-eid)]
               (observe-invocation! :after adapter operation-key)
-              (if (and guarded? (not (boolean? value)))
-                (contract-violation!
-                 (::id adapter) operation-key :boolean-result value)
-                value))
+              (if guarded? (guard-output! adapter operation-key nil value) value))
             (catch #?(:clj Throwable :cljs :default) error
               (observe-invocation! :failed adapter operation-key)
-              (throw error))))))))
+              (throw error)))))))
+
+(defn ^:no-doc direct-match-invoker
+  "Captures immutable direct membership with complete metering and guards."
+  [adapter] (direct-invoker adapter :direct-match?))
+
+(defn ^:no-doc direct-edge-invoker
+  "Captures compact direct edges with complete metering and guards."
+  [adapter] (direct-invoker adapter :direct-edge))
 
 (defn- invoke-completed
   [adapter operation-key guarded? options value]
@@ -1022,12 +1066,14 @@
           options (or (last args) {})
           direction (or (:direction options) :asc)
           bound (:bound-eid options)
-          inclusive? (true? (:inclusive-bound? options))]
+          inclusive? (true? (:inclusive-bound? options))
+          compact? (true? (:include-qualifier? options))
+          guarded? (runtime-guards? adapter)]
       (observe-invocation! :after adapter operation-key)
       (when-not (sequential? value)
         (contract-violation!
          (::id adapter) operation-key :finite-sequential-result :redacted))
-      (when (and (runtime-guards? adapter)
+      (when (and guarded?
                  (not (contains? #{:asc :desc} direction)))
         (contract-violation!
          (::id adapter) operation-key :known-direction :redacted))
@@ -1039,23 +1085,26 @@
           (after-realize!)
           (if-not items
             accumulator
-            (let [item (first items)]
-              (when (runtime-guards? adapter)
-                (when-not (exact-integer/natural? item)
+            (let [item (first items)
+                  valid-item? (or (not guarded?)
+                                  (if compact? (edge/valid? item) (exact-integer/natural? item)))
+                  eid (if (and compact? valid-item?) (edge/endpoint item) item)]
+              (when guarded?
+                (when-not valid-item?
                   (contract-violation!
                    (::id adapter) operation-key :exact-natural :redacted))
                 (when (and (some? previous)
                            (not ((if (= :desc direction) > <)
-                                 previous item)))
+                                 previous eid)))
                   (contract-violation!
                    (::id adapter) operation-key :strict-order :redacted))
                 (when (and (some? bound)
                            (not (within-bound?
-                                 direction bound inclusive? item)))
+                                 direction bound inclusive? eid)))
                   (contract-violation!
                    (::id adapter) operation-key
                    :inclusive-exclusive-bound :redacted)))
-              (recur (rest items) item (step accumulator item)))))))
+              (recur (rest items) eid (step accumulator item)))))))
     (catch #?(:clj Throwable :cljs :default) error
       (observe-invocation! :failed adapter operation-key)
       (throw error))))

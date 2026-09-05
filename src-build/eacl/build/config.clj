@@ -2,7 +2,7 @@
   "Single source of truth for EACL Maven module identity and release metadata."
   (:require [clojure.string :as string]))
 
-(def default-version "8.0.0-SNAPSHOT")
+(def default-version "9.0.0-SNAPSHOT")
 (def default-java-release 25)
 (def minimum-java-release 8)
 (def maximum-java-release 26)

@@ -36,12 +36,14 @@ candidate library's string-unescaping divergences. Caller parameter names are
 also lowered. Operand errors are preserved by a fixed overload adapter, and
 unary `!` lowers to a reserved internal call because the native unary visitor
 otherwise changes missing-map-key errors into overload errors. Bindings and timestamp wrappers are constructed per invocation;
-only successful parsed programs are shared. Native error values are detected
+only successful portable plans and parsed programs are shared. Native error values are detected
 before Boolean extraction. Error messages and library objects never appear in
 portable outcomes.
 
-The default retains at most 256 programs and builds at most four distinct
-programs concurrently. Same-key misses share construction, failures wake all
+The default retains at most 256 compiled artifacts and builds at most four
+distinct artifacts concurrently. Portable plans and native programs share that
+capacity; a fully compiled definition occupies two entries. Partial inputs
+retain only the portable plan and never construct a native program. Same-key misses share construction, failures wake all
 waiters and are not retained, and distinct misses wait for capacity. Cache
 entries include canonical name, typed parameters, source, and implementation
 fingerprint; database entity IDs and request values are excluded. Schema edits

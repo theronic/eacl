@@ -13,6 +13,7 @@
             [eacl.cache.standard-lru :as lru]
             [eacl.backend.v8 :as backend]
             [eacl.continuation :as continuation]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl :refer [->Relationship spice-object]]
             [eacl.datomic.core :as core]
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
@@ -603,9 +604,9 @@
                 (binding [engine/*recursive-traversal-stats* fresh-stats]
                   (eacl/lookup-resources client query))]
             (is (= (:data page1) (:data fresh-page1)))
-            (is (true? (:cached? fresh-page1))
+            (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? fresh-page1))
                 "the completed demand answer is reusable under the unchanged scalar proof")
-            (is (zero? (get @fresh-stats :derived-grants 0))
+            (is (= (not orchestration/*qualified-authorization-enabled?*) (zero? (get @fresh-stats :derived-grants 0)))
                 "a managed answer hit performs no recursive traversal")))))))
 
 (deftest recursive-denotations-are-client-private-across-clients-test

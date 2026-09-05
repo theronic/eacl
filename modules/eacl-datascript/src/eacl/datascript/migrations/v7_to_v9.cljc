@@ -15,7 +15,7 @@
             :let [present (get actual attr)]
             :when (and present (not= present expected))]
       (upgrade/fail! :incompatible-schema {:attribute attr}))
-    (let [next-schema (merge actual admission/metadata-schema target)]
+    (let [next-schema (merge schema/datascript-schema actual admission/metadata-schema target)]
       (when-not (= actual next-schema) (d/reset-schema! conn next-schema)))))
 
 (defn- commit! [conn before operations]

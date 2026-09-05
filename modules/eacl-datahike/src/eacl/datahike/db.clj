@@ -244,11 +244,30 @@
                      (endpoint-pair/identity-prefix value)))
 
 (defn checked-relationship-datoms
-  [db entity attr prefix cursor-eid direction]
+  ([db entity attr prefix cursor-eid direction]
+   (checked-relationship-datoms db entity attr prefix cursor-eid direction false))
+  ([db entity attr prefix cursor-eid direction include-qualifier?]
   (endpoint-pair/checked-datoms
-   (eavt-tuple-prefix db entity attr storage/value-arity prefix cursor-eid direction)))
+   (eavt-tuple-prefix db entity attr storage/value-arity prefix cursor-eid direction)
+   include-qualifier?)))
 
 (defn checked-global-relationship-datoms
-  [db attr prefix cursor-eid direction]
-  (endpoint-pair/checked-datoms
-   (avet-tuple-prefix db attr storage/value-arity prefix cursor-eid direction)))
+  ([db attr prefix cursor-eid direction]
+   (checked-global-relationship-datoms db attr prefix cursor-eid direction false))
+  ([db attr prefix cursor-eid direction include-qualifier?]
+   (endpoint-pair/checked-datoms
+    (avet-tuple-prefix db attr storage/value-arity prefix cursor-eid direction)
+    include-qualifier?)))
+
+(defn entity-facts [database eid]
+  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)])
+        (d/datoms database {:index :eavt :components [eid]})))
+
+(defn entity-data [database eid]
+  (let [rows (entity-facts database eid)]
+    (when (seq rows)
+      (reduce (fn [result [a v]]
+                (let [attribute (if (keyword? a) a (:db/ident (d/entity database a)))]
+                  (if (= :eacl.relation/caveats attribute)
+                    (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
+              {:db/id eid} rows))))

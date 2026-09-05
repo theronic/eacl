@@ -1,0 +1,124 @@
+{:uri-prefix "datomic:dev://localhost:4334/",
+ :java "26.0.2",
+ :cases
+ [{:mode :reassert,
+   :before
+   {:basis-t 1005,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534317,
+    :reverse-tx 13194139534317,
+    :until 100,
+    :visible-at-150 false},
+   :gap nil,
+   :after
+   {:basis-t 1006,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534317,
+    :reverse-tx 13194139534317,
+    :until 100,
+    :visible-at-150 false},
+   :new-transaction-until 200,
+   :same-assertion-tx true,
+   :relationship-changes []}
+  {:mode :retract-then-assert,
+   :before
+   {:basis-t 1005,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534317,
+    :reverse-tx 13194139534317,
+    :until 100,
+    :visible-at-150 false},
+   :error
+   {:class "datomic.impl.Exceptions$IllegalArgumentExceptionInfo",
+    :message
+    ":db.error/datoms-conflict Two datoms in the same transaction conflict\n{:d1\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  false],\n :d2\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  true]}\n",
+    :data
+    {:cognitect.anomalies/category :cognitect.anomalies/incorrect,
+     :cognitect.anomalies/message
+     "Two datoms in the same transaction conflict\n{:d1\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  false],\n :d2\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  true]}\n",
+     :d1
+     [17592186045418 :probe/f [:user 17592186045420 :resource 17592186045419] 13194139534318 false],
+     :d2
+     [17592186045418 :probe/f [:user 17592186045420 :resource 17592186045419] 13194139534318 true],
+     :db/error :db.error/datoms-conflict,
+     :tempids {"datomic.tx" 13194139534318}}},
+   :after
+   {:basis-t 1005,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534317,
+    :reverse-tx 13194139534317,
+    :until 100,
+    :visible-at-150 false}}
+  {:mode :assert-then-retract,
+   :before
+   {:basis-t 1005,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534317,
+    :reverse-tx 13194139534317,
+    :until 100,
+    :visible-at-150 false},
+   :error
+   {:class "datomic.impl.Exceptions$IllegalArgumentExceptionInfo",
+    :message
+    ":db.error/datoms-conflict Two datoms in the same transaction conflict\n{:d1\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  true],\n :d2\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  false]}\n",
+    :data
+    {:cognitect.anomalies/category :cognitect.anomalies/incorrect,
+     :cognitect.anomalies/message
+     "Two datoms in the same transaction conflict\n{:d1\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  true],\n :d2\n [17592186045418\n  :probe/f\n  [:user 17592186045420 :resource 17592186045419]\n  13194139534318\n  false]}\n",
+     :d1
+     [17592186045418 :probe/f [:user 17592186045420 :resource 17592186045419] 13194139534318 true],
+     :d2
+     [17592186045418 :probe/f [:user 17592186045420 :resource 17592186045419] 13194139534318 false],
+     :db/error :db.error/datoms-conflict,
+     :tempids {"datomic.tx" 13194139534318}}},
+   :after
+   {:basis-t 1005,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534317,
+    :reverse-tx 13194139534317,
+    :until 100,
+    :visible-at-150 false}}
+  {:mode :two-transactions,
+   :before
+   {:basis-t 1005,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534317,
+    :reverse-tx 13194139534317,
+    :until 100,
+    :visible-at-150 false},
+   :gap
+   {:basis-t 1006,
+    :forward-present false,
+    :reverse-present false,
+    :forward-tx nil,
+    :reverse-tx nil,
+    :until nil,
+    :visible-at-150 false},
+   :after
+   {:basis-t 1007,
+    :forward-present true,
+    :reverse-present true,
+    :forward-tx 13194139534319,
+    :reverse-tx 13194139534319,
+    :until 200,
+    :visible-at-150 true},
+   :new-transaction-until 200,
+   :same-assertion-tx false,
+   :relationship-changes
+   [{:e 17592186045418,
+     :a 73,
+     :v [:user 17592186045420 :resource 17592186045419],
+     :tx 13194139534319,
+     :added true}
+    {:e 17592186045419,
+     :a 74,
+     :v [:resource 17592186045420 :user 17592186045418],
+     :tx 13194139534319,
+     :added true}]}]}

@@ -19,6 +19,7 @@
     :prepared-native-source-id-key optional private config key populated by
                                   a backend bootstrap wrapper
     :relationship-retraction-count (fn [db tx-data] n)
+    :qualified-plan             (fn [db entries app-datoms source-scope] plan)
     :schema  {:read-schema    (fn [db] ...)
               :write-schema!  (fn [conn schema-string opts] ...)}
     :transact!                  (fn [conn native-tx] tx-report)
@@ -33,6 +34,13 @@
   (:require [clojure.set :as set]
             [com.rpl.specter :as S]
             [eacl.authorization.batch :as batch]
+            [eacl.authorization.clock :as authorization-clock]
+            [eacl.authorization.context :as caveat-context]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualifier-cache :as qualifier-cache]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.authorization.result :as authorization-result]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
@@ -41,11 +49,17 @@
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.cache-identity :as cache-identity]
             [eacl.causal-token :as causal-token]
+            [eacl.caveats.evaluator :as caveat-evaluator]
+            [eacl.schema.qualification-admission :as qualification-admission]
+            [eacl.relationships.inspection :as inspection]
+            [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
             [eacl.cursor :as cursor]
             [eacl.core :as eacl :refer [IAuthorizationReader
                                         IAuthorizationWriter
+                                        IRelationshipPreparation
+                                        IRelationshipPlanning
                                         IBatchedAuthorization
                                         ISnapshotSource
                                         IAuthorizationSnapshot
@@ -69,6 +83,7 @@
             [eacl.relay :as relay]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
+            [eacl.relationships.staged :as qualified-writes]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.request.context :as request-context]
             [eacl.request.counters :as request-counters]
@@ -84,7 +99,21 @@
          speculative-with-snapshot
          speculative-with-schema-snapshot
          snapshot-tx-relationship
+         snapshot-tx-relationships
          attach-runtime-cache-lifecycle)
+
+(def ^:dynamic *qualified-authorization-enabled?*
+  "V9 qualified serving. The legacy binding is retained for compatibility
+   qualification; public clients use the activated semantic epoch."
+  true)
+
+(defn- qualification-options [opts]
+  (when *qualified-authorization-enabled?*
+    {:time (:evaluation-time-ms opts)
+     :prepared-context (::caveat-context opts)
+     :evaluator (:caveat-evaluator opts)
+     :cache (when (not (false? (:completed-cache-request? opts))) (:qualifier-decode-cache opts))
+     :populate-cache? (:populate-cache-request? opts true)}))
 
 (def ^:dynamic *operator-expression-writes-enabled?*
   "Public schema-write gate for intersection or exclusion expressions.
@@ -128,10 +157,19 @@
 
 (defn- ensure-execution-contract
   [opts operation request]
-  (let [opts
+  (when (#{:lookup-resources :lookup-subjects :count-resources :count-subjects} operation)
+    (authorization-result/result-policy request))
+  (let [context (get request :caveat-context {})
+        prepared (::caveat-context opts)
+        opts (if (and prepared (identical? context (caveat-context/value prepared)))
+               opts
+               (assoc opts ::caveat-context (caveat-context/prepare context)))
+        opts
         ;; The public operation name for observation only: `:request-operation`
         ;; is reserved for batch endpoints and changes scalar decision keys.
         (cond-> (assoc opts ::observed-operation operation)
+          (not (contains? opts :evaluation-time-ms))
+          (assoc :evaluation-time-ms ((or (::evaluation-clock opts) authorization-clock/system-clock)))
           (nil? (:cache-lifecycle opts))
           (assoc :cache-lifecycle
                  (cache/capture-cache-lifecycle
@@ -323,6 +361,8 @@
       :selected-snapshot selected-snapshot
       :basis-identity semantic-identity
       :contract (:execution-contract runtime)
+      :caveat-context (::caveat-context runtime)
+      :qualification-options (qualification-options runtime)
       :derived-registry (:derived-schema-caches runtime)
       :counter-ledger (:request-counter-ledger runtime)
       :proof-diagnostic-fn
@@ -401,14 +441,16 @@
                 scopes (volatile! {})]
             (fn [relation-eid]
               (or (get @scopes relation-eid)
-                  (when-let [resolved
-                             (proof-frame/resolved-generation
-                              (force (:proof-frame-delay state))
-                              relation-eid)]
-                    (let [scope (conj @base
-                                      (:schema-generation resolved)
-                                      relation-eid
-                                      (:generation resolved))]
+                  (let [resolved (when-not (:qualification state)
+                                   (proof-frame/resolved-generation
+                                    (force (:proof-frame-delay state)) relation-eid))]
+                    ;; Compact rows contain data, never a qualification result.
+                    ;; Exact basis scope remains safe when no managed qualifier
+                    ;; proof is available, including raw qualifier mutations.
+                    (let [scope (if resolved
+                                  (conj @base (:schema-generation resolved)
+                                        relation-eid (:generation resolved))
+                                  (conj @base :exact identity relation-eid))]
                       (vswap! scopes assoc relation-eid scope)
                       scope))))))]
     {:memo (scan-cache/memo)
@@ -454,6 +496,8 @@
                      :selected-snapshot nil
                      :basis-identity identity
                      :contract (:execution-contract opts)
+                     :caveat-context (::caveat-context opts)
+                     :qualification-options (qualification-options opts)
                      :derived-registry (:derived-schema-caches opts)
                      :counter-ledger ledger
                      :proof-diagnostic-fn
@@ -495,6 +539,7 @@
         historical-basis? (::historical-basis? runtime)]
     (assoc runtime
            ::request-context-state context-state
+           :qualification (:qualification context-state)
            ;; Nested operations (notably one scalar decision inside a batch)
            ;; refine the selected request's contract without selecting a new
            ;; basis. Preserve that operation-local semantic demand instead of
@@ -834,6 +879,7 @@
               resource-type permission relationship-dependency)
              :snapshot-semantic-identity page-semantic-identity
              :cursor-dependency-context continuation-context
+             :cursor-qualification-certificate (:qualification-certificate prepared)
              :accepted-cursor-frame accepted-cursor-frame
              :transport-page-input-expiring?
              (:expiring-cursor-input? prepared)
@@ -860,7 +906,18 @@
          request-context opts operation query resource-type permission
          relationship-dependency)]
     (try
-      (f page)
+      (binding [engine/*qualification*
+                (if (and engine/*qualification*
+                         (not (identical? (:adapter page) (request-context/adapter request-context))))
+                  (qualification/request-from-adapter
+                   (:adapter page)
+                   (assoc (qualification-options (:opts page))
+                          :basis (:snapshot-semantic-identity page)))
+                  engine/*qualification*)]
+        (when (and engine/*qualification* (get-in page [:opts :cursor-qualification-certificate]))
+          (qualification/observe-interval! engine/*qualification*
+                                           (select-keys (get-in page [:opts :cursor-qualification-certificate]) [:start-ms :valid-until-ms :complete?])))
+        (f (assoc-in page [:opts :qualification] engine/*qualification*)))
       (finally
         (when-let [selected (:selected-snapshot page)]
           (source/release! selected))))))
@@ -868,7 +925,7 @@
 (defn- completed-answer-semantic-key
   [opts operation query]
   (let [contract (:execution-contract opts)]
-    {:operation operation
+    (cond-> {:operation operation
      :query query
      :evaluation (:evaluation contract)
      :demand (:demand contract)
@@ -883,7 +940,9 @@
      :identity-contract (:identity-contract opts)
      :recursive-traversal-limits (:recursive-traversal-limits opts)
      :expression-limits (:expression-limits opts)
-     :permission-tree-limits (:permission-tree-limits opts)}))
+     :permission-tree-limits (:permission-tree-limits opts)}
+      engine/*qualification*
+      (assoc :qualification (qualification/exact-reuse-identity engine/*qualification*)))))
 
 (defn- continuation-compute-fn
   "The engine call for a range-composition remainder or a segment-end
@@ -906,6 +965,9 @@
   (let [contract (:execution-contract opts)
         managed-reuse?
         (and (:managed-cache-enabled? opts)
+             ;; Qualified managed proofs are a separate release obligation.
+             ;; The current exact scope fixes source, basis, context, and time.
+             (nil? engine/*qualification*)
              (not (:historical-basis? opts)))
         context-state (or (::request-context-state opts)
                           (request-context/active-state request-context))
@@ -956,30 +1018,40 @@
                   @request-proof-frame-delay relation-ids)))))
         evaluate-with
         (fn [thunk]
-           (execution/check! contract :schema-plan)
-           (let [value
-                 (binding [engine/*schema-cache* @schema-cache
-                           expression-persistence/*structural-cache*
-                           (:expression-metrics @schema-cache)
-                           expression-persistence/*expression-limits*
-                           (:expression-limits opts)
-                           engine/*proof-frame* @request-proof-frame-delay
-                           engine/*request-lineage*
-                           (:request-lineage opts)
-                           engine/*request-frame*
-                           request-frame-descriptor
-                           engine/*recursive-traversal-limits*
-                           (:recursive-traversal-limits opts)
-                           engine/*service-admission*
-                           (:service-admission opts)
-                           engine/*evaluation-mode*
-                           (:evaluation contract)
-                           execution/*contract* contract
-                           subproblem/*decision-kernel*
-                           (:decision-kernel opts)]
-                   (thunk))]
-             (execution/check! contract :semantic-evaluation)
-             value))
+          (execution/check! contract :schema-plan)
+          (let [value
+                (binding [engine/*schema-cache* @schema-cache
+                          expression-persistence/*structural-cache*
+                          (:expression-metrics @schema-cache)
+                          expression-persistence/*expression-limits*
+                          (:expression-limits opts)
+                          engine/*proof-frame* @request-proof-frame-delay
+                          engine/*request-lineage*
+                          (:request-lineage opts)
+                          engine/*request-frame*
+                          request-frame-descriptor
+                          engine/*recursive-traversal-limits*
+                          (:recursive-traversal-limits opts)
+                          engine/*service-admission*
+                          (:service-admission opts)
+                          engine/*evaluation-mode*
+                          (:evaluation contract)
+                          execution/*contract* contract
+                          subproblem/*decision-kernel*
+                          (:decision-kernel opts)]
+                  (thunk))]
+            (execution/check! contract :semantic-evaluation)
+            (cond
+              (nil? engine/*qualification*) value
+              (= :can? operation) (temporal/point-answer (:time engine/*qualification*) value)
+              (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation)
+              (assoc value :qualification-certificate
+                     (if (and (= :read-relationships operation)
+                              (nil? (get-in query [:public :authorization]))
+                              (not= :expiry-active (get-in query [:public :relationship-state])))
+                       (temporal/interval (:time engine/*qualification*) nil true)
+                       (qualification/certificate engine/*qualification*)))
+              :else value)))
         evaluate #(evaluate-with compute)
         cacheable?
         (and (:basis-cache-store opts)
@@ -1085,7 +1157,19 @@
                 (proof-frame/resolve!
                  frame (:relation-ids @dependencies))))
             semantic-key
-            (completed-answer-semantic-key opts operation query)
+            (cond-> (completed-answer-semantic-key opts operation query)
+              (and engine/*qualification* (contains? #{:lookup-resources :lookup-subjects :count-resources :count-subjects :read-relationships} operation))
+              (-> (assoc :qualification-certificate-format temporal/collection-format)
+                  (update :qualification (fn [[format basis _ context evaluator]]
+                                           [format basis context evaluator])))
+              (= :expand-permission-tree operation)
+              (dissoc :qualification)
+              (and engine/*qualification* (= :can? operation))
+              ;; Keep exact source/basis, context and evaluator while removing
+              ;; time from this answer key. Its value now certifies time reuse.
+              (-> (assoc :temporal-answer-format temporal/point-format)
+                  (update :qualification (fn [[format basis _ context evaluator]]
+                                           [format basis context evaluator]))))
             ;; Range reuse: on an exact and managed miss, any window of the
             ;; same walk is served from the retained segments; a window that
             ;; runs past a segment composes its tail with one continuation;
@@ -1123,6 +1207,12 @@
               evaluate
               (fn []
                 (let [hit (range-reuse/lookup! range-tier walk-key window)
+                      hit (if engine/*qualification*
+                            (when (and (temporal/interval-valid? (:qualification-certificate hit))
+                                       (temporal/reusable? (:qualification-certificate hit) (:time engine/*qualification*) true))
+                              (qualification/observe-interval! engine/*qualification* (:qualification-certificate hit))
+                              hit)
+                            hit)
                       compute-and-publish
                       (fn []
                         (let [page (evaluate)]
@@ -1181,6 +1271,7 @@
                  (:basis-cache-store opts)
                  {:cache-lifecycle (:cache-lifecycle opts)
                   :exact-basis-key exact-basis-key
+                  :evaluation-time-ms (:time engine/*qualification*)
                   :populate-cache?
                   (:populate-cache-request? opts true)
                   :populate-exact?
@@ -1191,6 +1282,8 @@
                     #(proof-frame/descriptor @complete-proof))}
                  semantic-key evaluate))]
           (execution/check! contract :cache-publication)
+          (when (and engine/*qualification* (get-in answer [:value :qualification-certificate]))
+            (qualification/observe-interval! engine/*qualification* (get-in answer [:value :qualification-certificate])))
           (cond
             @derived? (assoc answer :cached? true :cache-tier :range)
             @composed? (assoc answer :cache-tier :range-composition)
@@ -1199,7 +1292,7 @@
 (defn- with-cache-info
   [value {:keys [cached? cache-basis]}]
   (if (map? value)
-    (assoc value :cached? cached? :cache-basis cache-basis)
+    (assoc (dissoc value :qualification-certificate) :cached? cached? :cache-basis cache-basis)
     value))
 
 (def ^:private rendered-page-render-abi
@@ -1209,14 +1302,20 @@
 
 (defn- rendered-page-semantic-key
   [opts operation normalized-public-query consistency-key]
-  (completed-answer-semantic-key
-   opts operation
-   {:public normalized-public-query
-    :consistency consistency-key
-    :cursor-policy
-    (or (:cursor-cache-policy-identity opts)
-        (cursor/cache-policy-identity opts))
-    :render-abi rendered-page-render-abi}))
+  (cond-> (completed-answer-semantic-key
+           opts operation
+           {:public normalized-public-query
+            :consistency consistency-key
+            :cursor-policy
+            (or (:cursor-cache-policy-identity opts)
+                (cursor/cache-policy-identity opts))
+            :render-abi rendered-page-render-abi})
+    engine/*qualification*
+    (assoc :temporal-mode (relay/temporal-mode opts)
+           :qualification-certificate-format temporal/collection-format)
+    (and engine/*qualification* (= :live (relay/temporal-mode opts)))
+    (update :qualification (fn [[format basis _ context evaluator]]
+                             [format basis context evaluator]))))
 
 (defn- rendered-page-cache-context
   [adapter opts operation public-query]
@@ -1250,6 +1349,7 @@
             {:store (:basis-cache-store opts)
              :lookup-options
              {:cache-lifecycle (:cache-lifecycle opts)
+              :evaluation-time-ms (:time engine/*qualification*)
               :exact-basis-key exact-basis-key}
              :publication-options
              {:cache-lifecycle (:cache-lifecycle opts)
@@ -1271,6 +1371,8 @@
 (defn- public-page-from-rendered
   [opts rendered provenance]
   (execution/check! (:execution-contract opts) :rendered-page-return)
+  (when (and engine/*qualification* (:qualification-certificate rendered))
+    (qualification/observe-interval! engine/*qualification* (:qualification-certificate rendered)))
   (with-cache-info (:page rendered) provenance))
 
 (defn- selected-rendered-page-hit
@@ -1294,8 +1396,15 @@
           (relay/externalize-page
            adapter opts operation query (:value answer)))
         rendered
-        {:format cache/rendered-page-entry-format
-         :page public-page}]
+        (cond-> {:format cache/rendered-page-entry-format
+                 :page public-page}
+          engine/*qualification*
+          (assoc :qualification-certificate
+                 (let [current (:qualification-certificate (:value answer))
+                       prior (:cursor-qualification-certificate opts)]
+                   (if prior
+                     (temporal/intersect-intervals current (select-keys prior [:start-ms :valid-until-ms :complete?]))
+                     current))))]
     (when cache-context
       (cache/publish-rendered-page!
        (:store cache-context)
@@ -1343,6 +1452,12 @@
       :request-lineage (:request-lineage opts)
       :populate-cache? (:populate-cache-request? opts true)})))
 
+(defn- qualified-schema! [api db schema evaluator]
+  (qualification-admission/schema!
+   schema evaluator
+   (when-let [capability (:qualified-publication-capability api)]
+     (capability db))))
+
 (defn- request-schema
   "The parsed public schema visible in `db`, for validating one request.
 
@@ -1354,27 +1469,34 @@
   tier keys by an identity that fixes the schema generation). An unstamped
   database (no schema generation) or an unbound generation reads the schema
   directly."
-  [api db]
-  (let [cache engine/*schema-cache*
-        slot (:parsed-schema cache)
-        catalog-slot (:validation-catalog cache)
-        read-schema (get-in api [:schema :read-schema])]
-    (if (and slot
-             (or (some? (:schema-version cache))
-                 (true? (:request-local? cache))))
-      (let [schema
-            (engine/memoized-derived! slot #(read-schema db))
-            names
-            (if catalog-slot
-              (engine/memoized-derived!
-               catalog-slot #(schema-errors/catalog schema))
-              (schema-errors/catalog schema))]
-        (schema-errors/with-catalog schema names))
-      (read-schema db))))
+  ([api db] (request-schema api db true))
+  ([api db authorize?]
+   (let [cache engine/*schema-cache*
+         slot (:parsed-schema cache)
+         catalog-slot (:validation-catalog cache)
+         read-schema (if engine/*qualification*
+                       (or (get-in api [:schema :read-authorization-schema])
+                           (throw (ex-info "Qualified authorization requires structural schema reads."
+                                           {:type :eacl/unsupported-capability
+                                            :eacl/error :eacl/unsupported-capability
+                                            :capability :qualified-authorization-schema})))
+                       (get-in api [:schema :read-schema]))
+         schema
+         (if (and slot (or (some? (:schema-version cache)) (true? (:request-local? cache))))
+           (let [schema (engine/memoized-derived! slot #(read-schema db))
+                 names (if catalog-slot
+                         (engine/memoized-derived! catalog-slot #(schema-errors/catalog schema))
+                         (schema-errors/catalog schema))]
+             (schema-errors/with-catalog schema names))
+           (read-schema db))]
+    ;; Parsed structure is shared; evaluator availability belongs to this client.
+     (when (and authorize? engine/*qualification*)
+       (qualified-schema! api db schema (:evaluator engine/*qualification*)))
+     schema)))
 
 (defn- authorization-scan-page
   [api opts request-context adapter selected-db cursor-opts filters
-  internal-query validate!]
+   internal-query validate!]
   (let [{:keys [subject permission on]} (:authorization filters)
         internal-subject ((:spice-object->internal opts) selected-db subject)
         schema-cache (:request-schema-cache cursor-opts)
@@ -1436,20 +1558,20 @@
     ;; Root/schema validation is selected-snapshot work but precedes the first
     ;; physical relationship candidate.
     (binding [engine/*schema-cache* @schema-cache
-      expression-persistence/*expression-limits*
-      (:expression-limits opts)
-      engine/*proof-frame* request-proof-frame]
+              expression-persistence/*expression-limits*
+              (:expression-limits opts)
+              engine/*proof-frame* request-proof-frame]
       (validate!))
     (let [internal-page
           (binding [engine/*aggregate-work-stats* work-stats
                     relationship-filters/*validated-request?* true]
             ((get-in api [:impl :read-relationships])
              selected-db internal-query (:decision-kernel cursor-opts)
-             {:candidate-window candidate-window
-              :accept? accept?}))]
+             (inspection/window-options engine/*qualification* filters
+                                        {:candidate-window candidate-window :accept? accept?})))]
       (batch/check-aggregate-limits!
        limits (counters (count (:data internal-page))) nil)
-      internal-page)))
+      (inspection/decode-page engine/*qualification* internal-page))))
 
 (defn read-relationships
   [api source {:as opts :keys [object-id->entid]} filters]
@@ -1459,6 +1581,10 @@
     (relationship-filters/validate! filters))
   (when-not authorization-filters/*validated-request?*
     (authorization-filters/validate-scan-authorization! filters))
+  (when (and (not *qualified-authorization-enabled?*) (contains? filters :relationship-state))
+    (throw (ex-info "Qualified Relationship inspection is not enabled."
+                    {:type :eacl/unsupported-capability :eacl/error :eacl/unsupported-capability
+                     :capability :qualified-relationship-inspection})))
   (let [opts (ensure-execution-contract opts :read-relationships filters)
         authorization (:authorization filters)
         authorization-resource-type
@@ -1470,107 +1596,116 @@
     (with-selected-context
       api source opts (:consistency filters)
       (fn [request-context]
-        (if-let [rendered-hit
-                 (selected-rendered-page-hit
-                  request-context opts :read-relationships filters)]
-          rendered-hit
-          (with-page-context
-            request-context opts :read-relationships filters
-            authorization-resource-type authorization-permission
-            (when authorization
-              {:resource-type (:resource/type filters)
-               :relation (:resource/relation filters)
-               :subject-type (:subject/type filters)})
-            (fn [{request-context :request-context
-                  adapter :adapter page-db :db cursor-opts :opts
-                  page-query :query
-                  deferred-boundary?
-                  :deferred-cursor-edge-internalization?}]
-              (let [rendered-cache
-                    (rendered-page-cache-context
-                     adapter cursor-opts :read-relationships filters)
-                    rendered-hit
-                    (lookup-rendered-page cursor-opts rendered-cache)]
-                (if rendered-hit
-                  (public-page-from-rendered
-                   cursor-opts (:value rendered-hit) rendered-hit)
-                  (let [page-query
-                        (if deferred-boundary?
-                          (relay/internalize-prepared-page-query
-                           adapter page-query)
-                          page-query)
+        (inspection/page-info engine/*qualification* filters
+                              (if-let [rendered-hit
+                                       (selected-rendered-page-hit
+                                        request-context opts :read-relationships filters)]
+                                rendered-hit
+                                (with-page-context
+                                  request-context opts :read-relationships filters
+                                  authorization-resource-type authorization-permission
+                                  (when authorization
+                                    {:resource-type (:resource/type filters)
+                                     :relation (:resource/relation filters)
+                                     :subject-type (:subject/type filters)})
+                                  (fn [{request-context :request-context
+                                        adapter :adapter page-db :db cursor-opts :opts
+                                        page-query :query
+                                        deferred-boundary?
+                                        :deferred-cursor-edge-internalization?}]
+                                    (let [rendered-cache
+                                          (rendered-page-cache-context
+                                           adapter cursor-opts :read-relationships filters)
+                                          rendered-hit
+                                          (lookup-rendered-page cursor-opts rendered-cache)]
+                                      (if rendered-hit
+                                        (public-page-from-rendered
+                                         cursor-opts (:value rendered-hit) rendered-hit)
+                                        (let [page-query
+                                              (if deferred-boundary?
+                                                (relay/internalize-prepared-page-query
+                                                 adapter page-query)
+                                                page-query)
                         ;; Schema validation runs on the miss path (inside the
                         ;; bound generation) and on unknown-object short-cuts.
-                        validate!
-                        (fn []
-                          (schema-errors/validate-authorized-relationship-read!
-                           (request-schema api page-db)
-                           filters))
-                        subject-id (:subject/id filters)
-                        resource-id (:resource/id filters)
-                        subject-eid
-                        (when subject-id
-                          (object-id->entid page-db subject-id))
-                        resource-eid
-                        (when resource-id
-                          (object-id->entid page-db resource-id))
-                        internal-query
-                        (-> page-query
-                            (dissoc :consistency :cache? :populate-cache?
-                                    :evaluation :timeout-ms
-                                    :cancellation-token :aggregate-limits
-                                    :authorization)
-                            (cond->
-                             subject-id (assoc :subject/id subject-eid)
-                             resource-id (assoc :resource/id resource-eid)))]
-                    (if (or (and subject-id (nil? subject-eid))
-                            (and resource-id (nil? resource-eid)))
-                      (do
-                        (call-with-request-schema-cache cursor-opts validate!)
-                        (if (cursor-request? filters)
-                          (stale-cursor-anchor! :read-relationships)
-                          (cond->
-                           (assoc relay/empty-page
-                                  :cached? false :cache-basis nil)
-                            (:authorization filters)
-                            (assoc-in [:page-info :bounded?] false))))
-                      (let [answer-opts
-                            (cond-> cursor-opts
-                              rendered-cache
-                              (assoc ::populate-exact-answer? false))
-                            answer
-                            (if authorization
-                              (cached-engine-result
-                               request-context adapter answer-opts
-                               :read-relationships
-                               (cache/lookup-page-query-identity
-                                filters internal-query)
-                               authorization-resource-type
-                               authorization-permission
-                               #(authorization-scan-page
-                                 api opts request-context adapter page-db
-                                 cursor-opts filters internal-query validate!))
-                              (cached-engine-result
-                               request-context adapter answer-opts
-                               :read-relationships
-                               (cache/lookup-page-query-identity
-                                filters internal-query)
-                               nil nil
-                               #(do
-                                  (validate!)
-                                  (binding
-                                   [relationship-filters/*validated-request?*
-                                    true]
-                                    ((get-in api [:impl :read-relationships])
-                                     page-db internal-query
-                                     (:decision-kernel cursor-opts))))))]
-                        (render-and-cache-page
-                         adapter cursor-opts :read-relationships filters
-                         rendered-cache answer)))))))))))))
+                                              validate!
+                                              (fn []
+                                                (schema-errors/validate-authorized-relationship-read!
+                                                 (request-schema api page-db (some? authorization))
+                                                 filters))
+                                              subject-id (:subject/id filters)
+                                              resource-id (:resource/id filters)
+                                              subject-eid
+                                              (when subject-id
+                                                (object-id->entid page-db subject-id))
+                                              resource-eid
+                                              (when resource-id
+                                                (object-id->entid page-db resource-id))
+                                              internal-query
+                                              (-> page-query
+                                                  (dissoc :consistency :cache? :populate-cache?
+                                                          :evaluation :timeout-ms
+                                                          :cancellation-token :aggregate-limits
+                                                          :authorization :relationship-state)
+                                                  (cond->
+                                                   subject-id (assoc :subject/id subject-eid)
+                                                   resource-id (assoc :resource/id resource-eid)))]
+                                          (if (or (and subject-id (nil? subject-eid))
+                                                  (and resource-id (nil? resource-eid)))
+                                            (do
+                                              (call-with-request-schema-cache cursor-opts validate!)
+                                              (if (cursor-request? filters)
+                                                (stale-cursor-anchor! :read-relationships)
+                                                (cond->
+                                                 (assoc relay/empty-page
+                                                        :cached? false :cache-basis nil)
+                                                  (:authorization filters)
+                                                  (assoc-in [:page-info :bounded?] false))))
+                                            (let [answer-opts
+                                                  (cond-> cursor-opts
+                                                    rendered-cache
+                                                    (assoc ::populate-exact-answer? false))
+                                                  answer
+                                                  (if authorization
+                                                    (cached-engine-result
+                                                     request-context adapter answer-opts
+                                                     :read-relationships
+                                                     (cache/lookup-page-query-identity
+                                                      filters internal-query)
+                                                     authorization-resource-type
+                                                     authorization-permission
+                                                     #(authorization-scan-page
+                                                       api opts request-context adapter page-db
+                                                       cursor-opts filters internal-query validate!))
+                                                    (cached-engine-result
+                                                     request-context adapter answer-opts
+                                                     :read-relationships
+                                                     (cache/lookup-page-query-identity
+                                                      filters internal-query)
+                                                     nil nil
+                                                     #(do
+                                                        (validate!)
+                                                        (binding
+                                                         [relationship-filters/*validated-request?*
+                                                          true]
+                                                          (if engine/*qualification*
+                                                            (inspection/decode-page
+                                                             engine/*qualification*
+                                                             ((get-in api [:impl :read-relationships])
+                                                              page-db internal-query (:decision-kernel cursor-opts)
+                                                              (inspection/window-options
+                                                               engine/*qualification* filters
+                                                               (when (= :expiry-active (:relationship-state filters))
+                                                                 {:candidate-window (get-in opts [:execution-contract :aggregate-limits :candidate-window])}))))
+                                                            ((get-in api [:impl :read-relationships])
+                                                             page-db internal-query (:decision-kernel cursor-opts)))))))]
+                                              (render-and-cache-page
+                                               adapter cursor-opts :read-relationships filters
+                                               rendered-cache answer))))))))))))))
 
 (defn spice-relationship->internal
   [db {:keys [spice-object->internal object-id->lookup-ref]}
-   {:keys [subject relation resource]}]
+   {:keys [subject relation resource] :as relationship}]
   (let [internalize
         (fn [object]
           (assoc (spice-object->internal db object)
@@ -1583,9 +1718,10 @@
                  ;; transaction data or a cache key.
                  :eacl.relationship/public-object
                  (select-keys object [:type :id])))]
-    {:subject (internalize subject)
-     :relation relation
-     :resource (internalize resource)}))
+    (merge (select-keys relationship relationship-mutations/qualifier-keys)
+           {:subject (internalize subject)
+            :relation relation
+            :resource (internalize resource)})))
 
 (defn- response-token-for-revision
   [_api native-revision opts]
@@ -1688,11 +1824,13 @@
              (public-answer-key-eligible? adapter))
         response
         (fn [answer]
-          {:allowed? (:value answer)
-           :cached? (:cached? answer)
-           :cache-basis (:cache-basis answer)
-           :evaluation
-           (get-in opts [:execution-contract :evaluation])})]
+          (cond-> {:allowed? (:value answer)
+                   :cached? (:cached? answer)
+                   :cache-basis (:cache-basis answer)
+                   :evaluation (get-in opts [:execution-contract :evaluation])}
+            engine/*qualification*
+            (merge (authorization-result/check-result (evidence/decode (get-in answer [:value :value]))))))
+        check-point (if engine/*qualification* engine/check-evidence engine/can?)]
     (if public-key?
       ;; Exact lookup precedes the compute closure, so a warm point decision
       ;; performs no Datomic/Dynamo identity lookup. Managed reuse is safe only
@@ -1709,7 +1847,7 @@
                (spice-object->internal selected-db resource)]
            (validate!)
            (if (and (:id internal-subject) (:id internal-resource))
-             (engine/can?
+             (check-point
               adapter internal-subject permission internal-resource)
              false))))
       (let [internal-subject
@@ -1719,11 +1857,11 @@
         (if-not (and (:id internal-subject) (:id internal-resource))
           (do
             (call-with-request-schema-cache opts validate!)
-            {:allowed? false
-             :cached? false
-             :cache-basis nil
-             :evaluation
-             (get-in opts [:execution-contract :evaluation])})
+            (cond-> {:allowed? false
+                     :cached? false
+                     :cache-basis nil
+                     :evaluation (get-in opts [:execution-contract :evaluation])}
+              engine/*qualification* (merge (authorization-result/check-result false))))
           (response
            (cached-engine-result
             request-context adapter opts :can?
@@ -1734,7 +1872,7 @@
             permission
             #(do
                (validate!)
-               (engine/can?
+               (check-point
                 adapter internal-subject permission internal-resource)))))))))
 
 (defn check-permission
@@ -1768,6 +1906,7 @@
       (do
         ;; Validate every request-wide control without capturing cache state or
         ;; acquiring a snapshot.
+        (caveat-context/prepare (get request :caveat-context {}))
         (execution/normalize opts :check-permissions request)
         [])
       (let [opts
@@ -1910,7 +2049,8 @@
                     engine/*proof-frame* request-proof-frame]
             (required-direct-relation-id
              adapter relation-resource-type relation relation-subject-type))
-          direct-match! (backend/direct-match-invoker adapter)
+          direct-match! ((if engine/*qualification*
+                           backend/direct-edge-invoker backend/direct-match-invoker) adapter)
           accept?
           (fn [candidate]
             (execution/check!
@@ -1934,15 +2074,17 @@
                 (execution/check!
                  contract :authorization-probe-complete consumed)
                 (batch/check-aggregate-limits! limits consumed nil))
-              matches?))
+              (if engine/*qualification*
+                (if matches? (qualification/qualify engine/*qualification* relation-id matches?) false)
+                matches?)))
           engine-options
           {:continuation-cache-fn
            (fn []
              (continuation-context
               adapter cursor-opts operation query))
            :candidate-filter
-           {:candidate-window candidate-window
-            :accept? accept?}}
+           (assoc {:candidate-window candidate-window}
+                  (if engine/*qualification* :accept-evidence :accept?) accept?)}
           internal-page
           (binding [engine/*schema-cache* @schema-cache
                     expression-persistence/*expression-limits*
@@ -2098,9 +2240,9 @@
               public-key?
               (and public-subject (public-answer-key-eligible? adapter))
               empty-answer
-              #(cond-> {:count 0 :limit (or (:count-limit query) -1)}
-                 (contains? query :count-limit)
-                 (assoc :truncated? false))
+              #(authorization-result/count-result
+                {:count 0 :truncated? false} (:count-limit query)
+                (authorization-result/result-policy query))
               compute
               (fn [internal-subject]
                 (validate!)
@@ -2285,9 +2427,9 @@
               public-key?
               (and public-resource (public-answer-key-eligible? adapter))
               empty-answer
-              #(cond-> {:count 0 :limit (or (:count-limit query) -1)}
-                 (contains? query :count-limit)
-                 (assoc :truncated? false))
+              #(authorization-result/count-result
+                {:count 0 :truncated? false} (:count-limit query)
+                (authorization-result/result-policy query))
               compute
               (fn [internal-resource]
                 (validate!)
@@ -2409,16 +2551,16 @@
            [token source-incarnation source-lifecycle basis-cache-store
             continuation-cache-store cursor-codec-cache
             cursor-construction-cache derived-schema-caches scan-tier
-            range-tier content-revision])
+            range-tier qualifier-decode-cache content-revision])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
-                  source-incarnation speculative])
+                  source-incarnation speculative evaluation-time-ms])
 
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
     :cursor-codec-cache :cursor-construction-cache :derived-schema-caches
-    :scan-tier :range-tier})
+    :scan-tier :range-tier :qualifier-decode-cache})
 
 ;; A transient Acl read has already captured and attached one immutable
 ;; lifecycle options map before selecting its basis. Keep that map opaque
@@ -2479,6 +2621,10 @@
   (when (and basis-cache-store (not (false? range-reuse-option)))
     (range-reuse/tier (if (map? range-reuse-option) range-reuse-option {}))))
 
+(defn- qualifier-tier-for
+  [{:keys [qualifier-cache-option]} basis-cache-store]
+  (when basis-cache-store (qualifier-cache/cache qualifier-cache-option)))
+
 (defn- fresh-runtime-cache-lifecycle
   [{:keys [cache-option derived-schema-store-factory]
     :as config}
@@ -2504,6 +2650,7 @@
      (derived-schema-store-factory)
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
+     (qualifier-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- narrow-runtime-cache-lifecycle
@@ -2535,6 +2682,7 @@
      (:derived-schema-caches current)
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
+     (qualifier-tier-for config basis-cache-store)
      content-revision)))
 
 (defn- lifecycle-content-revision
@@ -2594,6 +2742,7 @@
 
 (def ^:private runtime-option-keys
   #{:adapter-fingerprint :adapter-deterministic? :aggregate-limits
+    ::evaluation-clock :caveat-evaluator :qualifier-decode-cache
     :continuation-cache-store :basis-cache-store
     :cursor-codec-cache :cursor-construction-cache :decision-kernel
     :derived-schema-caches :expression-limits
@@ -2613,6 +2762,9 @@
 (defn- reader-api
   [api]
   {:backend-id (:backend-id api)
+   :entid (:entid api)
+   :qualified-plan (:qualified-plan api)
+   :qualified-publication-capability (:qualified-publication-capability api)
    :basis-adapter (:basis-adapter api)
    :basis-adapter-config-keys (:basis-adapter-config-keys api)
    :native-with (:native-with api)
@@ -2622,10 +2774,13 @@
    :relation-version-attribute (:relation-version-attribute api)
    :prepare-relationship-tx (:prepare-relationship-tx api)
    :schema {:read-schema (get-in api [:schema :read-schema])
+            :read-authorization-schema (get-in api [:schema :read-authorization-schema])
             :generation (get-in api [:schema :generation])
             :plan-replacement (get-in api [:schema :plan-replacement])}
    :impl {:validate-relationship-operation!
           (get-in api [:impl :validate-relationship-operation!])
+          :relationship-publication-input
+          (get-in api [:impl :relationship-publication-input])
           :relationship-relation-id
           (get-in api [:impl :relationship-relation-id])
           :relation-coordinate (get-in api [:impl :relation-coordinate])
@@ -2883,6 +3038,7 @@
           opts)]
     (cond-> (assoc opts
                    ::retained-basis basis
+                   :evaluation-time-ms (:evaluation-time-ms basis)
                    :authorization-target-kind
                    (if (::transient-acl-selection? opts)
                      :acl
@@ -2905,6 +3061,7 @@
       ;; it must not repopulate the cleared runtime under its old lineage.
       (assoc :basis-cache-store nil
              :cache-lifecycle nil
+             :qualifier-decode-cache nil
              :continuation-cache-store nil
              :cursor-codec-cache nil
              :cursor-construction-cache nil
@@ -2933,7 +3090,7 @@
   [{:keys [adapter selected-snapshot semantic-identity selection
            historical-basis? execution-constraints
            maximum-snapshot-retention-ms runtime-options
-           source-incarnation speculative]}]
+           source-incarnation speculative evaluation-time-ms]}]
   (->Basis adapter selected-snapshot semantic-identity selection
            (if speculative :speculative (:basis-kind semantic-identity))
            historical-basis?
@@ -2946,7 +3103,8 @@
            (or source-incarnation
                (get-in runtime-options
                        [:runtime-cache-lifecycle :source-incarnation]))
-           speculative))
+           speculative
+           (or evaluation-time-ms (:evaluation-time-ms runtime-options))))
 
 (defn- snapshot-populate-cache?
   [basis requested?]
@@ -3069,6 +3227,10 @@
       (:diagnostics speculative)
       (typed-capability-error! :speculative-diagnostics :ordinary-snapshot)))
 
+  IRelationshipPlanning
+  (-tx-relationships [this request]
+    (snapshot-tx-relationships this request))
+
   IAuthorizationSnapshot
   (-basis [_] (public-basis basis))
   (-basis-token [_] (basis-token* runtime basis))
@@ -3084,7 +3246,8 @@
   (backend-writer/make-writer
    {:id (:backend-id api)
     :state {:conn conn :source source :options options
-            :runtime runtime :api api}
+            :runtime runtime :api api
+            :qualified-writer (delay (when-let [factory (:qualified-writer api)] (factory conn)))}
     :max-attempts (or (:writer-max-attempts api) 1)
     :max-transaction-size
     (or (:writer-max-transaction-size api)
@@ -3096,8 +3259,11 @@
      :plan-relationship-update
      (get-in api [:impl :tx-update-relationship])
      :plan-delete-object
-     (or (get-in api [:impl :tx-delete-object-stream])
-         (get-in api [:impl :tx-delete-object]))
+     (fn [db object-eid]
+       ((or (when *qualified-authorization-enabled?*
+              (get-in api [:impl :object-relationship-retractions]))
+            (get-in api [:impl :tx-delete-object-stream])
+            (get-in api [:impl :tx-delete-object])) db object-eid))
      :prepare-relationship-tx
      (or (:prepare-relationship-tx api)
          (fn [_db tx-data]
@@ -3150,8 +3316,8 @@
     ((backend-writer/operation writer :transact!)
      conn {:tx-data (vec tx-data)})))
 
-(defn- writer-write-relationships!
-  [writer updates]
+(defn- writer-write-ordinary-relationships!
+  [writer updates app-datoms]
   (let [{:keys [api]} (backend-writer/state writer)
         options (current-writer-options writer)
         validate-operation!
@@ -3201,8 +3367,8 @@
                                    distinct
                                    vec)
                               tx-data
-                              (when (seq raw-tx)
-                                (vec (prepare db raw-tx)))]
+                              (when (or (seq raw-tx) (seq app-datoms))
+                                (vec (prepare db (into raw-tx app-datoms))))]
                           (if (seq tx-data)
                             {:tx-data tx-data}
                             {:no-op-response
@@ -3234,15 +3400,114 @@
             (throw error))
           (:value outcome))))))
 
+(defn- qualified-publication-entries
+  [api db options updates]
+  (let [schema (qualified-schema! api db ((get-in api [:schema :read-authorization-schema]) db)
+                                  (:caveat-evaluator options))
+        resolve-input (get-in api [:impl :relationship-publication-input])
+        generation ((get-in api [:schema :generation]) db)
+        internal-updates
+        (relationship-mutations/coalesce-updates
+         (mapv (fn [update]
+                 (update-in update [:relationship] #(spice-relationship->internal db options %))) updates))]
+    (when-not (ifn? resolve-input)
+      (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+    (mapv
+     (fn [{:keys [operation relationship] :as update}]
+       (schema-errors/validate-relationship-write!
+        schema :write-relationships
+        {:resource-type (:type (:resource relationship))
+         :subject-type (:type (:subject relationship)) :relation (:relation relationship)})
+       (let [input (resolve-input db relationship)
+             name (:caveat relationship)
+             caveat (when (and name (not= :delete operation))
+                      (or ((:entid api) db [:eacl.caveat/name name])
+                          (throw (ex-info "Relationship names an unknown Caveat."
+                                          {:type :eacl/unknown-caveat :eacl/error :eacl/unknown-caveat
+                                           :caveat name}))))
+             value (when-not (= :delete operation)
+                     (cond-> (select-keys relationship [:caveat-context :valid-until-ms])
+                       caveat (assoc :caveat caveat)))]
+         (cond-> (assoc input :operation operation :value (not-empty value) :schema-generation generation)
+           (contains? update :prepared-qualifier)
+           (assoc :prepared-qualifier (:prepared-qualifier update)))))
+     internal-updates)))
+
+(defn- writer-write-qualified-relationships!
+  [writer updates app-datoms]
+  (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+        native-writer (or (some-> qualified-writer deref)
+                          (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+        options (current-writer-options writer)
+        contention? (backend-writer/operation writer :contention?)]
+    (loop [attempt 1]
+      (let [outcome
+            (try
+              (let [entries (call-with-writer-basis
+                             writer #(qualified-publication-entries api (:db %) options updates))
+                    prepared (qualified-writes/prepare-batch! native-writer entries)
+                    plan (qualified-writes/plan-batch-current native-writer prepared app-datoms)
+                    tx-data (:tx-data plan)]
+                {:value (if (seq tx-data)
+                          (let [report (submit-writer-tx! writer tx-data)]
+                            (committed-write-response api (:db-after report) options))
+                          (call-with-writer-basis
+                           writer #(write-response-for-revision api (get-in % [:selection :native-revision]) options)))})
+              (catch #?(:clj Throwable :cljs :default) error {:error error}))]
+        (if-let [error (:error outcome)]
+          (if (or (contention? error)
+                  (= :prepared-schema-changed (:reason (ex-data error))))
+            (if (< attempt (backend-writer/max-attempts writer))
+              (recur (inc attempt))
+              (relationship-contention! writer attempt error))
+            (if (= :relationship-conflict (:reason (ex-data error)))
+              (relationship-mutations/conflict! nil)
+              (throw error)))
+          (:value outcome))))))
+
+(defn- writer-write-relationships!
+  [writer {:keys [updates tx-data] :or {tx-data []}}]
+  (let [updates (relationship-mutations/normalize-updates (vec updates))
+        app-datoms (qualified-writes/application-datoms tx-data #{})]
+    (when (and (not *qualified-authorization-enabled?*)
+               (some #(seq (select-keys (:relationship %) relationship-mutations/qualifier-keys)) updates))
+      (typed-capability-error! :qualified-relationship-publication (backend-writer/backend-id writer)))
+    (if *qualified-authorization-enabled?*
+      (writer-write-qualified-relationships! writer updates app-datoms)
+      (writer-write-ordinary-relationships! writer updates app-datoms))))
+
+(defn- writer-prepare-relationship! [writer relationship]
+  (let [relationship (relationship-mutations/normalize-relationship relationship)
+        {:keys [api qualified-writer]} (backend-writer/state writer)]
+    (when-not *qualified-authorization-enabled?*
+      (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+    (let [native-writer (or (some-> qualified-writer deref)
+                            (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+          options (current-writer-options writer)
+          entries (call-with-writer-basis
+                   writer #(qualified-publication-entries api (:db %) options
+                                                          [{:operation :touch :relationship relationship}]))]
+      (:value (first (qualified-writes/prepare-batch! native-writer entries true))))))
+
+(defn- writer-discard-prepared-relationship! [writer prepared]
+  (when prepared
+    (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+          native-writer (or (some-> qualified-writer deref)
+                            (typed-capability-error! :qualified-relationship-publication (:backend-id api)))]
+      (qualified-writes/cleanup! native-writer prepared))))
+
 (defn- largest-fitting-prepared-batch
   "Returns a non-empty final transaction no larger than the writer limit.
 
   `raw-ops` may be a lazy native scan. At most limit+1 raw operations are
   realized, and preparation is binary-searched because schema/relation guards
   can make the final transaction larger than its raw slice."
-  [writer db raw-ops]
-  (let [limit (backend-writer/max-transaction-size writer)
-        prepare (backend-writer/operation writer :prepare-relationship-tx)
+  [writer db raw-ops qualified-writer]
+  (let [raw-ops (if qualified-writer (filter qualified-writes/relationship-retraction? raw-ops) raw-ops)
+        limit (backend-writer/max-transaction-size writer)
+        prepare (if qualified-writer
+                  #(qualified-writes/plan-retraction-batch qualified-writer %1 %2)
+                  (backend-writer/operation writer :prepare-relationship-tx))
         sampled (if (counted? raw-ops)
                   (let [raw-count (count raw-ops)]
                     (vec (if (<= raw-count limit)
@@ -3279,7 +3544,10 @@
   "Removes every relationship touching object in final-transaction-bounded
   batches. Each contention retry reacquires and replans from a fresh basis."
   [writer object]
-  (let [{:keys [api]} (backend-writer/state writer)
+  (let [{:keys [api qualified-writer]} (backend-writer/state writer)
+        native-writer (when *qualified-authorization-enabled?*
+                        (or (some-> qualified-writer deref)
+                            (typed-capability-error! :qualified-relationship-publication (:backend-id api))))
         options (current-writer-options writer)
         plan-delete
         (backend-writer/operation writer :plan-delete-object)
@@ -3310,7 +3578,7 @@
                                       fitted
                                       (largest-fitting-prepared-batch
                                        writer db
-                                       (plan-delete db object-eid))]
+                                       (plan-delete db object-eid) native-writer)]
                                   (if-not fitted
                                     {:done? true
                                      :response
@@ -3347,6 +3615,16 @@
           (assoc response :retracted-datoms retracted)
           (recur retracted response))))))
 
+(defn- qualified-schema-options [api db source options]
+  (if *qualified-authorization-enabled?*
+    (do
+      (qualified-schema!
+       api db
+       (expression-resolver/validate-schema source (:expression-limits options) {:allow-caveats? true})
+       (:caveat-evaluator options))
+      {:allow-caveats? true})
+    {:allow-caveats? false}))
+
 (defn- write-schema-through!
   [writer {:keys [schema] :as request}]
   (when (= :retain-inert (:orphan-policy request))
@@ -3358,50 +3636,49 @@
        :orphan-policy :retain-inert
        :operation :write-schema!})))
   (let [schema-string schema]
-  (require-operator-expression-writes-enabled! schema-string)
-  (let [{:keys [conn api]} (backend-writer/state writer)
-        options (current-writer-options writer)
-        write-schema! (backend-writer/operation writer :write-schema!)
-        contention? (backend-writer/operation writer :contention?)
-        result
-        (loop [attempt 1]
-          (let [outcome
-                (try
-                  (let [expected-generation
-                        (call-with-writer-basis
-                         writer
-                         (fn [{:keys [db]}]
-                           ((backend-writer/operation
-                             writer :schema-generation)
-                            db)))]
-                    {:value
-                    (write-schema!
-                      conn schema-string
-                      (merge
-                       (select-keys options
-                                    [:token-ttl-seconds :expression-limits])
-                       (select-keys request
-                                    [:allow-empty-schema? :orphan-policy]))
-                      expected-generation)})
-                  (catch #?(:clj Throwable :cljs :default) error
-                    {:error error}))]
-            (if-let [error (:error outcome)]
-              (if (contention? error)
-                (if (< attempt (backend-writer/max-attempts writer))
-                  (recur (inc attempt))
-                  (relationship-contention! writer attempt error))
-                (throw error))
-              (:value outcome))))]
-    (when-not (:eacl.schema/no-op? result)
+    (require-operator-expression-writes-enabled! schema-string)
+    (let [{:keys [conn api]} (backend-writer/state writer)
+          options (current-writer-options writer)
+          write-schema! (backend-writer/operation writer :write-schema!)
+          contention? (backend-writer/operation writer :contention?)
+          result
+          (loop [attempt 1]
+            (let [outcome
+                  (try
+                    (let [{:keys [expected-generation admission]}
+                          (call-with-writer-basis
+                           writer
+                           (fn [{:keys [db]}]
+                             {:expected-generation ((backend-writer/operation writer :schema-generation) db)
+                              :admission (qualified-schema-options api db schema-string options)}))]
+                      {:value
+                       (write-schema!
+                        conn schema-string
+                        (merge
+                         (select-keys options
+                                      [:token-ttl-seconds :expression-limits])
+                         (select-keys request
+                                      [:allow-empty-schema? :orphan-policy]) admission)
+                        expected-generation)})
+                    (catch #?(:clj Throwable :cljs :default) error
+                      {:error error}))]
+              (if-let [error (:error outcome)]
+                (if (contention? error)
+                  (if (< attempt (backend-writer/max-attempts writer))
+                    (recur (inc attempt))
+                    (relationship-contention! writer attempt error))
+                  (throw error))
+                (:value outcome))))]
+      (when-not (:eacl.schema/no-op? result)
       ;; Exact keys already include the new immutable basis and managed keys
       ;; include the certified schema generation. Retaining bounded historical
       ;; entries is safe and avoids an obsolete whole-cache flush.
-      (request-counters/add! :writer-submissions))
-    (merge result
-           (if (:eacl.schema/no-op? result)
-             (write-response api (:eacl.schema/db-after result) options)
-             (committed-write-response
-              api (:eacl.schema/db-after result) options))))))
+        (request-counters/add! :writer-submissions))
+      (merge result
+             (if (:eacl.schema/no-op? result)
+               (write-response api (:eacl.schema/db-after result) options)
+               (committed-write-response
+                api (:eacl.schema/db-after result) options))))))
 
 (defn- speculative-capability!
   [api capability]
@@ -3584,6 +3861,7 @@
        :maximum-snapshot-retention-ms (:maximum-retention-ms basis)
        :historical-basis? false
        :source-incarnation (:source-incarnation basis)
+       :evaluation-time-ms (:evaluation-time-ms basis)
        :speculative speculative})
      api)))
 
@@ -3618,7 +3896,8 @@
            db-before schema
            (merge
             (select-keys (runtime-options runtime) [:expression-limits])
-            (or options {})))
+            (or options {})
+            (qualified-schema-options api db-before schema (runtime-options runtime))))
           tx-data (:speculative-tx-data plan)
           _
           (when-not (and (map? plan)
@@ -3646,46 +3925,64 @@
       (speculative-snapshot-from-report
        snapshot report effects (:diagnostics plan)))))
 
-(defn snapshot-tx-relationship
-  [snapshot update]
-  (let [{:keys [basis api]} snapshot
+(defn- snapshot-tx-ordinary-relationships
+  [snapshot updates app-datoms]
+  (let [{:keys [basis api runtime]} snapshot
         _ (basis-open! basis)
         db (:db (backend/state (:adapter basis)))
-        {:keys [operation relationship]}
-        (if (and (map? update) (contains? update :relationship))
-          update
-          {:operation (:operation update)
-           :relationship
-           (->Relationship (:subject update)
-                           (:relation update)
-                           (:resource update))})
-        validate-operation!
-        (get-in api [:impl :validate-relationship-operation!])
         plan-update (get-in api [:impl :tx-update-relationship])
         prepare (or (:prepare-relationship-tx api)
-                    (fn [_db tx]
-                      (relationship-commit-preconditions-first tx)))]
-    (when-not (and (ifn? validate-operation!)
-                   (ifn? plan-update))
-      (speculative-capability! api :tx-relationship))
-    (validate-operation! operation)
+                    (fn [_db tx] (relationship-commit-preconditions-first tx)))]
+    (when-not (ifn? plan-update) (speculative-capability! api :tx-relationship))
     (let [schema ((get-in api [:schema :read-schema]) db)
-          _
-          (schema-errors/validate-relationship-write!
-           schema :write-relationships
-           {:resource-type (:type (:resource relationship))
-            :subject-type (:type (:subject relationship))
-            :relation (:relation relationship)})
-          internal-relationship
-          (spice-relationship->internal
-           db (runtime-options (:runtime snapshot)) relationship)
-          internal-update
-          (->RelationshipUpdate operation internal-relationship)
-          _ (relationship-mutations/validate-batch! [internal-update])
-          raw (some-> (plan-update db internal-update) vec)]
-      (if (seq raw)
-        (vec (prepare db raw))
-        []))))
+          options (runtime-options runtime)
+          _ (doseq [{:keys [relationship]} updates]
+              (schema-errors/validate-relationship-write!
+               schema :write-relationships
+               {:resource-type (:type (:resource relationship))
+                :subject-type (:type (:subject relationship)) :relation (:relation relationship)}))
+          internal-updates
+          (relationship-mutations/coalesce-updates
+           (mapv (fn [update]
+                   (update-in update [:relationship] #(spice-relationship->internal db options %))) updates))
+          raw (into (vec (distinct (mapcat #(plan-update db %) internal-updates))) app-datoms)]
+      (if (seq raw) (vec (prepare db raw)) []))))
+
+(defn snapshot-tx-relationships
+  [snapshot {:keys [updates tx-data] :or {tx-data []}}]
+  (let [{:keys [basis api runtime]} snapshot
+        _ (basis-open! basis)
+        updates (relationship-mutations/normalize-updates (vec updates))
+        app-datoms (qualified-writes/application-datoms tx-data #{})]
+    (if *qualified-authorization-enabled?*
+      (let [plan (or (:qualified-plan api)
+                     (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+            db (:db (backend/state (:adapter basis)))
+            entries (qualified-publication-entries api db (runtime-options runtime) updates)
+            entries (mapv (fn [entry]
+                            (if (contains? entry :prepared-qualifier)
+                              (let [prepared (:prepared-qualifier entry)]
+                                (when-not (or (nil? prepared) (qualified-writes/prepared? prepared))
+                                  (qualified-writes/error! :prepared-qualifier-required))
+                                (assoc entry :value prepared :expected-value (:value entry)))
+                              entry)) entries)]
+        (:tx-data (plan db entries app-datoms
+                        (select-keys (:identity basis) [:source-id :branch]))))
+      (do
+        (when (some #(or (contains? % :prepared-qualifier)
+                         (seq (select-keys (:relationship %) relationship-mutations/qualifier-keys))) updates)
+          (typed-capability-error! :qualified-relationship-publication (:backend-id api)))
+        (snapshot-tx-ordinary-relationships snapshot updates app-datoms)))))
+
+(defn snapshot-tx-relationship
+  [snapshot update]
+  (snapshot-tx-relationships
+   snapshot {:updates [(if (contains? update :relationship)
+                         update
+                         (cond-> {:operation (:operation update)
+                                  :relationship (dissoc update :operation :prepared-qualifier)}
+                           (contains? update :prepared-qualifier)
+                           (assoc :prepared-qualifier (:prepared-qualifier update))))]}))
 
 (defn- with-page-lookahead
   "Runs the client-level page operation `thunk` and, when the client has
@@ -3693,15 +3990,17 @@
   same public operation on `client` after the response is complete."
   [client runtime operation request thunk]
   (let [page (thunk)
-        options (runtime-options runtime)]
+        options (runtime-options runtime)
+        qualified? *qualified-authorization-enabled?*]
     (when-let [state (:lookahead-state options)]
       (lookahead/submit!
        state operation request page
        (fn [continuation]
-         (case operation
-           :lookup-resources (eacl/lookup-resources client continuation)
-           :lookup-subjects (eacl/lookup-subjects client continuation)
-           :read-relationships (eacl/read-relationships client continuation)))
+         (binding [*qualified-authorization-enabled?* qualified?]
+           (case operation
+             :lookup-resources (eacl/lookup-resources client continuation)
+             :lookup-subjects (eacl/lookup-subjects client continuation)
+             :read-relationships (eacl/read-relationships client continuation))))
        (:io-observer options)))
     page))
 
@@ -3794,6 +4093,7 @@
           _ (request-cache-controls request)]
       (if (empty? (:checks request))
         (do
+          (caveat-context/prepare (get request :caveat-context {}))
           (execution/normalize
            (runtime-options runtime) :check-permissions request)
           [])
@@ -3844,11 +4144,17 @@
   (-speculative-diagnostics [_]
     (typed-capability-error! :speculative-diagnostics :acl))
 
+  IRelationshipPreparation
+  (-prepare-relationship! [_ relationship]
+    (writer-prepare-relationship! (writable! writer) relationship))
+  (-discard-prepared-relationship! [_ prepared]
+    (writer-discard-prepared-relationship! (writable! writer) prepared))
+
   IAuthorizationWriter
   (-write-schema! [_ request]
     (write-schema-through! (writable! writer) request))
-  (-write-relationships! [_ {:keys [updates]}]
-    (writer-write-relationships! (writable! writer) updates))
+  (-write-relationships! [_ request]
+    (writer-write-relationships! (writable! writer) request))
   (-delete-object! [_ {:keys [object]}]
     (writer-delete-object! (writable! writer) object)))
 
@@ -4124,6 +4430,9 @@
   (backend-unification, D-7). Per-backend extensions are declared via the
   api's :extra-client-opt-keys and documented on the backend's make-client."
   #{:entid->object-id
+    :clock
+    :caveat-evaluator
+    :qualifier-cache
     :object-id->lookup-ref
     :internal-cursor->spice
     :spice-cursor->internal
@@ -4278,7 +4587,14 @@
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :io-observer
                      :value (:io-observer config-opts)})))
+  (when (and (contains? config-opts :clock) (not (fn? (:clock config-opts))))
+    (throw (ex-info "EACL Config Error: :clock must be a zero-argument millisecond clock function."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config :key :clock})))
   (lookahead/validate-option! (:lookahead config-opts))
+  (when (some? (:caveat-evaluator config-opts))
+    (caveat-evaluator/require-matching!
+     (:caveat-evaluator config-opts) caveat-evaluator/profile-fingerprint))
+  (qualifier-cache/normalize-option (:qualifier-cache config-opts))
   (when-let [scan-cache-option (:scan-cache config-opts)]
     (when-not (or (false? scan-cache-option)
                   (and (map? scan-cache-option)
@@ -4436,6 +4752,7 @@
         runtime-cache-lifecycle-config
         {:cache-option cache
          :scan-cache-option (:scan-cache config-opts)
+         :qualifier-cache-option (:qualifier-cache config-opts)
          :range-reuse-option (:range-reuse config-opts)
          :proof-contract-reporter proof-contract-reporter
          :derived-schema-store-factory derived-schema/store
@@ -4458,6 +4775,12 @@
          (select-keys config-opts
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
+          :caveat-evaluator (if (contains? config-opts :caveat-evaluator)
+                              (:caveat-evaluator config-opts)
+                              (caveat-evaluator/default-evaluator))
+          ::evaluation-clock (if (contains? config-opts :clock)
+                               (authorization-clock/clock (:clock config-opts))
+                               authorization-clock/system-clock)
           :io-observer (:io-observer config-opts)
           :lookahead-state
           (lookahead/state (lookahead/validate-option! (:lookahead config-opts)))

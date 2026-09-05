@@ -1,0 +1,4 @@
+{:physical-counts
+ #:bench{:f4 1000000, :r4 1000000, :f8 1000000, :r8 1000000},
+ :page-and-point-assertions 2016,
+ :status :passed}

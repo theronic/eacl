@@ -1,6 +1,7 @@
 (ns eacl.backend.v8-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
             :refer [deftest is testing]]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.cache.key :as cache-key]
@@ -80,6 +81,51 @@
     nil
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
+
+(deftest compact-scan-and-direct-guards-preserve-endpoint-order
+  (let [make (fn [values]
+               (backend/make-adapter
+                {:id :test :runtime-guards? true :capabilities {}
+                 :operations (assoc (operation-map)
+                                    :subject->resources (fn [& _] values)
+                                    :direct-edge (fn [& _] [2 100]))}))
+        values [1 [2 100] 3]
+        adapter (make values)
+        options {:direction :asc :include-qualifier? true}
+        scan! (backend/scan-invoker adapter :subject->resources)]
+    (is (= values (scan! :user 10 20 :doc options)))
+    (is (= values (backend/reduce-scan adapter :subject->resources
+                                         [:user 10 20 :doc options] [] {:step conj})))
+    (is (= [2 100] (backend/invoke adapter :direct-edge :user 10 20 :doc 2)))
+    (is (= :eacl/backend-contract-violation
+           (:eacl/error (error-data #(scan! :user 10 20 :doc {})))))
+    (doseq [bad [[[2 100] [2 101]] [[3 100] 1] [[]] [[2 nil]]]]
+      (is (= :eacl/backend-contract-violation
+             (:eacl/error (error-data #((backend/scan-invoker (make bad) :subject->resources)
+                                        :user 10 20 :doc options)))))
+      (is (= :eacl/backend-contract-violation
+             (:eacl/error (error-data #(backend/reduce-scan (make bad) :subject->resources
+                                                               [:user 10 20 :doc options] [] {:step conj}))))))))
+
+(deftest qualification-data-capability-is-paired-and-guarded
+  (let [make (fn [capabilities operation guards?]
+               (backend/make-adapter
+                {:id :test :runtime-guards? guards? :capabilities capabilities
+                 :operations (cond-> (operation-map)
+                               operation (assoc :qualification-data operation))}))
+        capabilities {:qualification #{qualification-data/capability}}
+        packet {:entity {:db/id 1 :private/field "secret"} :version 7 :fact-count 1}]
+    (doseq [guards? [true false]]
+      (is (some? (error-data #(make capabilities nil guards?))))
+      (is (some? (error-data #(make {} (constantly packet) guards?)))))
+    (is (some? (error-data #(make {:qualification #{:unknown-contract}} (constantly packet) true))))
+    (is (= packet (backend/invoke (make capabilities (constantly packet) true) :qualification-data 1)))
+    (doseq [invalid [(assoc packet :extra true) (assoc packet :fact-count 4097)
+                    (assoc packet :version -1) (assoc packet :entity [])]]
+      (let [error (error-data #(backend/invoke (make capabilities (constantly invalid) true)
+                                              :qualification-data 1))]
+        (is (= :eacl/backend-contract-violation (:eacl/error error)))
+        (is (not (re-find #"secret" (pr-str error))))))))
 
 #?(:clj
    (deftest default-schema-warning-dedupe-is-concurrent-and-bounded-test
@@ -326,7 +372,7 @@
        (backend/certification-obligations
         :subject->resources)
        :strict-order))
-  (is (= #{:schema-generation :direct-match-many?}
+  (is (= #{:schema-generation :direct-match-many? :direct-edge :qualification-data}
          backend/optional-snapshot-operations))
   (is (every?
        (backend/certification-obligations :schema-generation)
@@ -1040,3 +1086,9 @@
                          (update :reverse inc))
                      @calls)
                   "direct projection helpers do not retain host-owned scan chunks"))))))))
+
+(deftest qualified-publication-contract-is-closed-and-unambiguous
+  (doseq [contract [#{:atomic-inline-v1} #{:atomic-prepared-v1} #{}]]
+    (is (= contract (:qualified-publication (backend/normalize-capabilities :test {:qualified-publication contract})))))
+  (doseq [contract [#{:unknown} #{:atomic-inline-v1 :atomic-prepared-v1} [:atomic-inline-v1]]]
+    (is (some? (error-data #(backend/normalize-capabilities :test {:qualified-publication contract}))))))

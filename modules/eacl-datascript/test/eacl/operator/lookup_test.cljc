@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
@@ -502,10 +503,10 @@
         (let [lifted (eacl/check-permission client query)
               after-unrelated (datascript/cache-stats client)]
           (is (true? (:allowed? lifted)))
-          (is (true? (:cached? lifted)))
-          (is (= (inc (:managed-hits before))
+          (is (= (not orchestration/*qualified-authorization-enabled?*) (:cached? lifted)))
+          (is (= (cond-> (:managed-hits before) (not orchestration/*qualified-authorization-enabled?*) inc)
                  (:managed-hits after-unrelated)))
-          (is (= (:misses before) (:misses after-unrelated)))
+          (is (= (cond-> (:misses before) orchestration/*qualified-authorization-enabled?* inc) (:misses after-unrelated)))
           (is (= (:stamp-failures before)
                  (:stamp-failures after-unrelated))))
         (eacl/create-relationship!

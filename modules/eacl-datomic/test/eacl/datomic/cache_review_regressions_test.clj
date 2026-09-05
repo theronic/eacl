@@ -385,10 +385,10 @@
           alice (spice-object :user "alice")
           account (spice-object :account "acct0")
           calls (atom 0)
-          original engine/can?]
-      (with-redefs [engine/can? (fn [& args]
-                                  (swap! calls inc)
-                                  (apply original args))]
+          original engine/check-evidence]
+      (with-redefs [engine/check-evidence (fn [& args]
+                                            (swap! calls inc)
+                                            (apply original args))]
         (dotimes [_ 3] (is (true? (eacl/can? acl alice :admin account))))
         (is (= 1 @calls) "identical fully-consistent reads at one basis compute once")
 

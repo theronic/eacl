@@ -31,7 +31,9 @@
 (defn- fixture
   []
   (let [conn (datascript/create-conn)
-        client (datascript/make-client conn {:cache cache/no-cache})
+        ;; These contracts isolate basis/lifecycle changes. Dedicated qualified
+        ;; cursor tests exercise differing captured times.
+        client (datascript/make-client conn {:cache cache/no-cache :clock (constantly 100)})
         user (eacl/spice-object :user "user")
         account (eacl/spice-object :account "account")]
     (eacl/write-schema! client schema)
@@ -256,10 +258,11 @@
                           :permission :admin
                           :cache? false})})))
         counts (request-counters/snapshot ledger)]
-    (is (= {:allowed? true
-            :cached? false
-            :cache-basis nil
-            :evaluation :demand}
+    (is (= (cond-> {:allowed? true
+                    :cached? false
+                    :cache-basis nil
+                    :evaluation :demand}
+             orchestration/*qualified-authorization-enabled?* (assoc :permissionship :has-permission))
            (:uncached-decision value)))
     (is (= [false true]
            (mapv :cached? (:cached-decisions value))))
@@ -484,7 +487,7 @@
            (:forbidden-operation-errors value)))
     (is (empty?
          (set/intersection
-          #{:conn :writer :selected-snapshot
+          #{:conn :writer :qualified-writer :transact! :selected-snapshot
             :acquire-current! :acquire-authoritative!
             :acquire-at-least! :acquire-exact!}
           (set (filter keyword? reachable)))))
@@ -492,7 +495,7 @@
          (fn [value]
            (some #(identical? value %) forbidden-identities))
          reachable))
-    (is (= #{:backend-id :schema :impl
+    (is (= #{:backend-id :schema :impl :entid :qualified-plan :qualified-publication-capability
              :basis-adapter :basis-adapter-config-keys
              :native-with :normalize-report-datom
              :schema-storage-datom? :transaction-datom?
@@ -966,11 +969,13 @@
         (datascript/make-client
          conn
          {:cache {:max-entries 32}
+          :cursor-ttl-seconds 3600
           :aggregate-limits {:candidate-window 10}})
         strict
         (datascript/make-client
          conn
          {:cache {:max-entries 32}
+          :cursor-ttl-seconds 3600
           :aggregate-limits {:candidate-window 2}})
         query
         {:resource/type :document
@@ -1457,7 +1462,7 @@
       (let [error (ex-info "injected foreign failure"
                            {:type :test/foreign-failure})]
         (with-redefs
-         [engine/can? (fn [& _] (throw error))]
+         [engine/check-evidence (fn [& _] (throw error))]
           (assert-one-release!
            (observed-failure
             conn #(eacl/can? client user :admin account))
@@ -1466,7 +1471,7 @@
       (let [token (eacl/cancellation-token)]
         (with-redefs
          [execution/check!
-         (fail-execution-stage
+          (fail-execution-stage
            :consistency-selected
            (ex-info
             "EACL authorization execution was cancelled."
@@ -1501,7 +1506,7 @@
             (datascript/make-client conn {:cache {}})]
         (with-redefs
          [execution/check!
-         (fail-execution-stage
+          (fail-execution-stage
            :cache-publication
            (ex-info "injected cache publication failure"
                     {:type :test/cache-publication-failure}))]

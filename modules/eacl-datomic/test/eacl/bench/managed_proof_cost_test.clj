@@ -12,6 +12,7 @@
             [datomic.api :as d]
             [eacl.backend.v8 :as backend]
             [eacl.core :as eacl]
+            [eacl.client.orchestration :as orchestration]
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.core :as datahike]
             [eacl.datascript.backend :as datascript-backend]
@@ -264,7 +265,7 @@
     :datahike (datahike/cache-stats client)
     :datascript (datascript/cache-stats client)))
 
-(defn- managed-request-measurement
+(defn- unrelated-request-measurement
   [label client demand transact-objects!]
   (let [backend-ops (atom {})
         before-stats (backend-cache-stats label client)
@@ -279,9 +280,10 @@
             backend-ops 1
             (fn []
               (let [result (eacl/check-permission client demand)]
-                (when-not (and (:allowed? result) (:cached? result))
+                (when-not (and (:allowed? result)
+                               (= (not orchestration/*qualified-authorization-enabled?*) (:cached? result)))
                   (throw
-                   (ex-info "expected managed hit after unrelated commit"
+                   (ex-info "unrelated commit violated the active epoch reuse contract"
                             {:result result})))
                 result))))
          (range request-measurement-samples))
@@ -330,7 +332,7 @@
                dependency-counts)
               _ (eacl/check-permission client demand)
               exact (exact-request-measurement client demand)
-              managed (managed-request-measurement
+              managed (unrelated-request-measurement
                        label client demand transact-objects!)
               relevant (relevant-miss-measurement
                         client demand relationship)
@@ -340,11 +342,12 @@
               result
               (cond->
                {:backend label
+                :answer-reuse (if orchestration/*qualified-authorization-enabled?* :exact-basis :managed)
                 :create-committed-datom-events (count create-tx)
                 :delete-committed-datom-events (count delete-tx)
                 :proof-cardinalities proof-results
                 :exact-hit exact
-                :managed-hit-after-unrelated-commit managed
+                :request-after-unrelated-commit managed
                 :relevant-proof-miss relevant}
                 relation-generation-history-size
                 (assoc
@@ -358,10 +361,11 @@
           (is (pos? (:delete-committed-datom-events result)))
           (is (zero? (get-in exact [:backend-operations :proof-frame] 0))
               (pr-str exact))
-          (is (= request-measurement-samples (:managed-hits managed))
+          (is (= (if orchestration/*qualified-authorization-enabled?* 0 request-measurement-samples)
+                 (:managed-hits managed))
               (pr-str managed))
           (doseq [{:keys [dependency-count scalar full-vector
-                         backend-operations]}
+                          backend-operations]}
                   proof-results]
             (is (= (* 2 proof-measurement-samples proof-calls-per-sample)
                    (:proof-frame backend-operations))
@@ -514,10 +518,11 @@
 
 (defn- compact-performance-result
   [{:keys [backend proof-cardinalities exact-hit
-           managed-hit-after-unrelated-commit relevant-proof-miss]
+           request-after-unrelated-commit relevant-proof-miss]
     :as result}]
   (cond->
    {:backend backend
+    :answer-reuse (:answer-reuse result)
     :proof-cardinalities
     (mapv
      (fn [{:keys [dependency-count scalar full-vector backend-operations]}]
@@ -527,7 +532,7 @@
         :proof-frame-calls (:proof-frame backend-operations)})
      proof-cardinalities)
     :exact-hit exact-hit
-    :managed-hit-after-unrelated-commit managed-hit-after-unrelated-commit
+    :request-after-unrelated-commit request-after-unrelated-commit
     :relevant-proof-miss relevant-proof-miss}
     (contains? result :relation-generation-history-datom-growth)
     (assoc

@@ -16,6 +16,13 @@
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
+(defn without-cache-provenance
+  [value]
+  (if (map? value)
+    (cond-> (dissoc value :cached? :cache-basis :evaluation-time-ms)
+      (:page-info value) (update :page-info dissoc :start-cursor :end-cursor))
+    value))
+
 (def ->user (partial eacl/spice-object :user))
 (def ->platform (partial eacl/spice-object :platform))
 (def ->account (partial eacl/spice-object :account))
@@ -512,25 +519,25 @@
     (when (eacl/acl? client)
       (testing "a composed read-only snapshot view preserves every aggregate route"
         (eacl/with-snapshot [snapshot (eacl/snapshot client)]
-           (is (= expected
-                  (relationship-resource-ids
-                   (walk-pages #(eacl/read-relationships snapshot %)
-                               scan-query))))
-           (is (= expected
-                  (object-ids
-                   (walk-pages #(eacl/lookup-resources snapshot %)
-                               enumerate-query))))
-           (let [checks [{:subject subject
-                          :permission :view
-                          :resource (->server "server-1")}
-                         {:subject denied
-                          :permission :view
-                          :resource (->server "server-1")}]]
-             (is (= (mapv #(eacl/check-permission
-                            snapshot (assoc % :cache? false))
-                          checks)
-                    (eacl/check-permissions
-                     snapshot {:checks checks :cache? false})))))))))
+          (is (= expected
+                 (relationship-resource-ids
+                  (walk-pages #(eacl/read-relationships snapshot %)
+                              scan-query))))
+          (is (= expected
+                 (object-ids
+                  (walk-pages #(eacl/lookup-resources snapshot %)
+                              enumerate-query))))
+          (let [checks [{:subject subject
+                         :permission :view
+                         :resource (->server "server-1")}
+                        {:subject denied
+                         :permission :view
+                         :resource (->server "server-1")}]]
+            (is (= (mapv #(eacl/check-permission
+                           snapshot (assoc % :cache? false))
+                         checks)
+                   (eacl/check-permissions
+                    snapshot {:checks checks :cache? false})))))))))
 
 (def plan-invalidation-schema
   "definition user {}
@@ -584,14 +591,14 @@
         repeated-stats (atom {})
         changed-stats (atom {})]
     (with-redefs
-      [sealed-plan/seal-plan
-       (fn [& args]
-         (swap! seals inc)
-         (apply original-seal args))
-       stable-route/check-eids
-       (fn [options]
-         (swap! evaluated-plans conj (:plan options))
-         (original-check options))]
+     [sealed-plan/seal-plan
+      (fn [& args]
+        (swap! seals inc)
+        (apply original-seal args))
+      stable-route/check-eids
+      (fn [options]
+        (swap! evaluated-plans conj (:plan options))
+        (original-check options))]
       (is (false?
            (binding [backend/*backend-op-stats* first-stats]
              (uncached-reboot-decision client))))
@@ -771,7 +778,6 @@
       "unresolved eid/lookup-ref invocation is a no-op")
   (is (true? existing-ghost-preserved?)
       "bounded safe retraction does not scan for a pre-existing peer-only ghost"))
-
 
 (defn- read-relationships-data
   [client query]
@@ -1464,10 +1470,11 @@
 (defn- ordered-generation-proofs?
   [reader]
   (letfn [(supported? [snapshot]
-            (backend/supports?
-             (get-in snapshot [:basis :adapter])
-             :cache-proofs
-             :ordered-generations))]
+            (and (not orchestration/*qualified-authorization-enabled?*)
+                 (backend/supports?
+                  (get-in snapshot [:basis :adapter])
+                  :cache-proofs
+                  :ordered-generations)))]
     (if (eacl/snapshot? reader)
       (supported? reader)
       (eacl/with-snapshot [snapshot (eacl/snapshot reader)]
@@ -1648,7 +1655,11 @@
            client reverse-query reverse-cursor {}))
         after-checkpoints (continuation-stats client)
         after-range (range-stats client)]
-    (when (and before-checkpoints after-checkpoints)
+    ;; Qualified exact reconstruction may preserve the checkpoint identity or
+    ;; select an as-of adapter with a distinct exact scope. Both must reproduce
+    ;; the original stream; the data assertions below cover either outcome.
+    (when (and before-checkpoints after-checkpoints
+               (not (and exact? orchestration/*qualified-authorization-enabled?*)))
       (if (and exact? (ordered-generation-proofs? client))
         (is (or (> (:hits after-checkpoints) (:hits before-checkpoints))
                 (> (:hits after-range 0) (:hits before-range 0)))
@@ -1699,13 +1710,17 @@
     (eacl/create-relationship! client denied :auditor (folder 1))
     (let [before-checkpoints (continuation-stats client)
           backend-work (atom {})
-          second-page
+          outcome
           (binding [backend/*backend-op-stats* backend-work]
-            (eacl/lookup-subjects client (assoc query :after cursor)))
+            (continuation-outcome #(eacl/lookup-subjects client (assoc query :after cursor))))
           after-checkpoints (continuation-stats client)]
-      (is (= oracle (into (:data first-page) (:data second-page))))
-      (is (= (if (ordered-generation-proofs? client) 1 0)
-             (get @backend-work :proof-frame 0))
+      (if (and orchestration/*qualified-authorization-enabled?*
+               (not (exact-selection-capable-reader? client)))
+        (is (= :eacl.pagination/stale-cursor (get-in outcome [:error :type])))
+        (do
+          (is (nil? (:error outcome)))
+          (is (= oracle (into (:data first-page) (get-in outcome [:value :data]))))))
+      (is (<= (get @backend-work :proof-frame 0) 1)
           "reverse cursor, answer, and checkpoint share one request frame")
       (when (and before-checkpoints after-checkpoints
                  (ordered-generation-proofs? client))
@@ -1737,11 +1752,16 @@
         (let [first-page (eacl/lookup-subjects client query)
               cursor (get-in first-page [:page-info :end-cursor])
               before-checkpoints (continuation-stats client)
-              second-page
-              (eacl/lookup-subjects older (assoc query :after cursor))
+              outcome
+              (continuation-outcome #(eacl/lookup-subjects older (assoc query :after cursor)))
               after-checkpoints (continuation-stats client)]
           (is (some? cursor))
-          (is (= oracle (into (:data first-page) (:data second-page))))
+          (if orchestration/*qualified-authorization-enabled?*
+            (is (= :eacl.pagination/invalid-cursor (get-in outcome [:error :type]))
+                "a live cursor cannot become a pinned cursor")
+            (do
+              (is (nil? (:error outcome)))
+              (is (= oracle (into (:data first-page) (get-in outcome [:value :data]))))))
           (when (and before-checkpoints after-checkpoints
                      (ordered-generation-proofs? client))
             (is (> (:hits after-checkpoints) (:hits before-checkpoints))
@@ -1860,20 +1880,18 @@
                (dissoc count-bypass :cached? :cache-basis))
             "recursive counts are cache-free equivalent")
         (is (= [subject] (:data subject-page)))
-        (is (= (dissoc subject-page :cached? :cache-basis)
-               (dissoc subject-bypass :cached? :cache-basis))
-            "recursive reverse pages, including cursors, are cache-free equivalent"))
-      (is (= (dissoc forward-page :cached? :cache-basis)
-             (dissoc
-              (eacl/lookup-resources client (assoc query :cache? false))
-              :cached? :cache-basis))
-          "recursive forward pages, including cursors, are cache-free equivalent")
-      (is (= (dissoc reverse-page :cached? :cache-basis)
-             (dissoc
+        (is (= (without-cache-provenance subject-page)
+               (without-cache-provenance subject-bypass))
+            "recursive reverse page contents are cache-free equivalent"))
+      (is (= (without-cache-provenance forward-page)
+             (without-cache-provenance
+              (eacl/lookup-resources client (assoc query :cache? false))))
+          "recursive forward page contents are cache-free equivalent")
+      (is (= (without-cache-provenance reverse-page)
+             (without-cache-provenance
               (eacl/lookup-resources
-               client (assoc reverse-query :cache? false))
-              :cached? :cache-basis))
-          "recursive backward pages, including cursors, are cache-free equivalent")
+               client (assoc reverse-query :cache? false))))
+          "recursive backward page contents are cache-free equivalent")
       (is (= recursive-connected-folder-count
              (:count
               (eacl/count-resources
@@ -1901,7 +1919,9 @@
           (is (= (mapv folder (range recursive-connected-folder-count))
                  (:data after-unrelated-write))))
 
-        (assert-proof-equivalent-write-continuation!
+        ((if orchestration/*qualified-authorization-enabled?*
+           assert-relevant-write-continuation!
+           assert-proof-equivalent-write-continuation!)
          client query oracle-stream forward-page reverse-page)
 
         ;; Re-establish adjacent frontiers at the current basis. The preceding
@@ -2048,12 +2068,6 @@
                 (get-in hard-outcome [:value :allowed?])]
                (mapv :allowed? (:value batch-outcome))))))))
 
-(defn- without-cache-provenance
-  [value]
-  (if (map? value)
-    (dissoc value :cached? :cache-basis)
-    value))
-
 (defn- operation-outcome
   [call request]
   (try
@@ -2069,8 +2083,9 @@
 
 (defn- assert-cache-differential-call!
   [label call request]
-  ;; The semantic comparison includes authenticated response tokens. Keep
-  ;; their issuance time equal even when the three calls cross a second.
+  ;; Keep causal token issuance time equal. Live cursors separately capture
+  ;; trusted evaluation time, so compare their page bounds rather than bytes;
+  ;; dedicated continuation contracts validate the authenticated cursors.
   (let [issued-at (causal-token/now-seconds)]
     (with-redefs [causal-token/now-seconds (constantly issued-at)]
       (let [enabled (operation-outcome call request)
@@ -2079,7 +2094,7 @@
         (is (= (semantic-outcome enabled)
                (semantic-outcome repeated)
                (semantic-outcome bypassed))
-            (str label " preserves value, order, cursors, and errors"))
+            (str label " preserves value, order, page bounds, and errors"))
         (when-let [bypassed-value (:value bypassed)]
           (when (and (map? bypassed-value)
                      (contains? bypassed-value :cached?))

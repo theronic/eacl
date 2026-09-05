@@ -4,6 +4,15 @@
             [eacl.backend.v8-test]
             [eacl.backend.direct-membership-test]
             [eacl.authorization.batch-test]
+            [eacl.authorization.evidence-test]
+            [eacl.authorization.evidence-index-test]
+            [eacl.authorization.data-test]
+            [eacl.authorization.context-test]
+            [eacl.authorization.result-test]
+            [eacl.authorization.qualification-test]
+            [eacl.authorization.qualifier-cache-test]
+            [eacl.authorization.temporal-test]
+            [eacl.datascript.qualifier-cache-test]
             [eacl.cache.derived-schema-test]
             [eacl.cache.key-test]
             [eacl.cache.standard-lru-test]
@@ -16,11 +25,32 @@
             [eacl.caveats.plan-test]
             [eacl.caveats.partial-test]
             [eacl.relationships.qualifier-test]
+            [eacl.relationships.mutations-test]
             [eacl.core-test]
             [eacl.causal-model-test]
             [eacl.consistency-test]
             [eacl.engine.relationships-test]
             [eacl.engine.scan-cache-test]
+            [eacl.engine.stable-route-evidence-test]
+            [eacl.engine.stable-reducer-evidence-test]
+            [eacl.engine.stable-page-evidence-test]
+            [eacl.engine.stable-route-native-evidence-test]
+            [eacl.engine.least-path-evidence-test]
+            [eacl.operator.seekable-evidence-test]
+            [eacl.operator.lookup-evidence-test]
+            [eacl.operator.arrow-evidence-test]
+            [eacl.datascript.evaluation-clock-test]
+            [eacl.datascript.caveat-context-test]
+            [eacl.datascript.qualified-check-test]
+            [eacl.datascript.qualified-lookup-test]
+            [eacl.datascript.qualified-cursor-test]
+            [eacl.datascript.qualified-cache-trace-test]
+            [eacl.datascript.qualified-write-test]
+            [eacl.caveats.schema-admission-test]
+            [eacl.schema.relation-allowance-test]
+            [eacl.datascript.qualified-schema-test]
+            [eacl.authorization.inspection-test]
+            [eacl.datascript.qualified-inspection-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
             [eacl.datascript.scan-cache-integration-test]
@@ -41,6 +71,7 @@
             [eacl.operator.feature-gate-test]
             [eacl.operator.recursive-test]
             [eacl.relationships.endpoint-pair-test]
+            [eacl.relationships.edge-test]
             [eacl.relationships.upgrade-test]
             [eacl.datascript.qualifier-storage-test]
             [eacl.datascript.migrations.v7-to-v9-test]
@@ -90,6 +121,15 @@
   (t/run-tests 'eacl.backend.v8-test
                'eacl.backend.direct-membership-test
                'eacl.authorization.batch-test
+               'eacl.authorization.evidence-test
+               'eacl.authorization.evidence-index-test
+               'eacl.authorization.data-test
+               'eacl.authorization.context-test
+               'eacl.authorization.result-test
+               'eacl.authorization.qualification-test
+               'eacl.authorization.qualifier-cache-test
+               'eacl.authorization.temporal-test
+               'eacl.datascript.qualifier-cache-test
                'eacl.cache.derived-schema-test
                'eacl.cache.key-test
                'eacl.cache.standard-lru-test
@@ -99,6 +139,26 @@
                'eacl.consistency-test
                'eacl.engine.relationships-test
                'eacl.engine.scan-cache-test
+               'eacl.engine.stable-route-evidence-test
+               'eacl.engine.stable-reducer-evidence-test
+               'eacl.engine.stable-page-evidence-test
+               'eacl.engine.stable-route-native-evidence-test
+               'eacl.engine.least-path-evidence-test
+               'eacl.operator.seekable-evidence-test
+               'eacl.operator.lookup-evidence-test
+               'eacl.operator.arrow-evidence-test
+               'eacl.datascript.evaluation-clock-test
+               'eacl.datascript.caveat-context-test
+               'eacl.datascript.qualified-check-test
+               'eacl.datascript.qualified-lookup-test
+               'eacl.datascript.qualified-cursor-test
+               'eacl.datascript.qualified-cache-trace-test
+               'eacl.datascript.qualified-write-test
+               'eacl.caveats.schema-admission-test
+               'eacl.schema.relation-allowance-test
+               'eacl.datascript.qualified-schema-test
+               'eacl.authorization.inspection-test
+               'eacl.datascript.qualified-inspection-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test
@@ -119,6 +179,7 @@
                'eacl.operator.feature-gate-test
                'eacl.operator.recursive-test
                'eacl.relationships.endpoint-pair-test
+               'eacl.relationships.edge-test
                'eacl.relationships.upgrade-test
                'eacl.datascript.qualifier-storage-test
                'eacl.datascript.migrations.v7-to-v9-test
@@ -134,6 +195,7 @@
                'eacl.caveats.plan-test
                'eacl.caveats.partial-test
                'eacl.relationships.qualifier-test
+               'eacl.relationships.mutations-test
                'eacl.schema.expression-test
                'eacl.schema.expression-limits-test
                'eacl.schema.expression-resolver-test

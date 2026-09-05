@@ -44,25 +44,34 @@
   #?(:clj (int (.charAt ^String value index))
      :cljs (.charCodeAt value index)))
 
-(defn- well-formed-unicode?
+(defn- unicode-utf8-size
+  "Counts UTF-8 bytes directly from UTF-16, rejecting unpaired surrogates."
   [value]
-  (loop [index 0]
-    (if (= index (count value))
-      true
-      (let [code (string-code-unit-at value index)]
-        (cond
-          (<= 0xD800 code 0xDBFF)
-          (and (< (inc index) (count value))
-               (<= 0xDC00
-                   (string-code-unit-at value (inc index))
-                   0xDFFF)
-               (recur (+ index 2)))
+  (let [length (count value)]
+    (loop [index 0 size 0]
+      (if (= index length)
+        size
+        (let [code (long (string-code-unit-at value index))]
+          (cond
+            (< code 0x80) (recur (inc index) (inc size))
+            (< code 0x800) (recur (inc index) (+ size 2))
+            (< code 0xD800) (recur (inc index) (+ size 3))
+            (<= code 0xDBFF)
+            (when (< (inc index) length)
+              (let [next-code (long (string-code-unit-at value (inc index)))]
+                (when (and (<= 0xDC00 next-code) (<= next-code 0xDFFF))
+                  (recur (+ index 2) (+ size 4)))))
+            (<= code 0xDFFF) nil
+            :else (recur (inc index) (+ size 3))))))))
 
-          (<= 0xDC00 code 0xDFFF)
-          false
+(defn- well-formed-unicode? [value]
+  (some? (unicode-utf8-size value)))
 
-          :else
-          (recur (inc index)))))))
+(defn utf8-size
+  "Returns the exact UTF-8 byte count without allocating a byte collection."
+  [value]
+  (or (unicode-utf8-size (str value))
+      (format-error! :invalid-unicode {})))
 
 (defn- hidden-reader-input?
   [value]

@@ -62,24 +62,27 @@
 
 (defn assert-supported!
   "Checks a value at a serving boundary; integrity and migration decoders may
-  inspect structurally valid future qualifiers without authorizing them."
-  [value]
+  inspect structurally valid future qualifiers without authorizing them. The
+  explicit compact-scan mode exposes refs for qualification, never membership."
+  ([value] (assert-supported! value false))
+  ([value include-qualifier?]
   (when-not (endpoint-value? value)
     (throw (ex-info "Malformed EACL Relationship endpoint value."
                     {:type :eacl/invalid-relationship-storage
                      :eacl/error :eacl/invalid-relationship-storage
                      :value value})))
-  (when (some? (nth value 4))
+  (when (and (some? (nth value 4)) (not (true? include-qualifier?)))
     (throw (ex-info "Relationship qualifiers are not enabled in this release."
                     {:type :eacl/unsupported-qualifier
                      :eacl/error :eacl/unsupported-qualifier
                      :qualifier-eid (nth value 4)})))
-  value)
+  value))
 
 (defn checked-datoms
   "Validates one ordered stream before publishing each row. A single-row
   lookahead detects competing qualifier variants before either can authorize."
-  [datoms]
+  ([datoms] (checked-datoms datoms false))
+  ([datoms include-qualifier?]
   (lazy-seq
    (when-let [rows (seq datoms)]
      (let [row (first rows)
@@ -94,8 +97,8 @@
                           :reason :duplicate-identity
                           :endpoint-eid (:e row)
                           :identity (identity-prefix value)})))
-       (assert-supported! value)
-       (cons row (checked-datoms (rest rows)))))))
+       (assert-supported! value include-qualifier?)
+       (cons row (checked-datoms (rest rows) include-qualifier?)))))))
 
 (defn valid-prefix?
   "True for the complete typed three-component endpoint index prefix."

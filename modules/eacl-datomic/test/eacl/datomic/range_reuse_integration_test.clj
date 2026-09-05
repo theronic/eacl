@@ -30,7 +30,8 @@
 
 (defn- public-shape
   [page]
-  (select-keys page [:data :page-info]))
+  (-> (select-keys page [:data :page-info])
+      (update :page-info dissoc :start-cursor :end-cursor)))
 
 (deftest shorter-page-is-derived-from-the-longer-resident-page-test
   (with-mem-conn [conn datomic-schema/v8-schema]

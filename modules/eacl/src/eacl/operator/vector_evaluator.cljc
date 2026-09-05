@@ -1,7 +1,11 @@
 (ns eacl.operator.vector-evaluator
   "Aligned mask-driven predicates for bounded acyclic candidate vectors."
-  (:require [eacl.backend.direct-membership :as direct]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.backend.direct-membership :as direct]
             [eacl.backend.v8 :as backend]
+            [eacl.caveats.values :as caveat-values]
+            [eacl.execution :as execution]
             [eacl.exact-integer :as exact-integer]
             [eacl.operator.bitmask :as bitmask]
             [eacl.operator.evaluator :as scalar]
@@ -10,7 +14,9 @@
 
 (def ^:private required-candidate-keys
   #{:direction :subject-type :subject-eid :resource-type :resource-eid})
-(def ^:private optional-candidate-keys #{:true-nodes})
+(def ^:private optional-candidate-keys #{:true-nodes :evidence-witnesses})
+(def maximum-evidence-witnesses 4096)
+(def maximum-evidence-witness-bytes 4194304)
 (def ^:private unresolved ::unresolved)
 
 (def ^:dynamic *vector-stats*
@@ -38,11 +44,12 @@
     (invalid! :invalid-candidate "Vector candidate must be a map."
               {:index index :candidate candidate}))
   ;; Closed key set without allocating one: every required key present and
-  ;; the map holds nothing beyond the required keys plus the one optional key.
+  ;; the map holds nothing beyond the required and optional keys.
   (when-not (and (every? #(contains? candidate %) required-candidate-keys)
                  (case (count candidate)
                    5 true
-                   6 (contains? candidate :true-nodes)
+                   6 (or (contains? candidate :true-nodes) (contains? candidate :evidence-witnesses))
+                   7 (and (contains? candidate :true-nodes) (contains? candidate :evidence-witnesses))
                    false))
     (invalid! :invalid-candidate-fields
               "Vector candidate has unknown or missing fields."
@@ -72,6 +79,9 @@
       (invalid! :invalid-witness
                 "Vector candidate witness nodes must be a set of plan-node keys."
                 {:index index :true-nodes true-nodes})))
+  (when (and (contains? candidate :evidence-witnesses)
+             (not (map? (:evidence-witnesses candidate))))
+    (invalid! :invalid-witness "Evidence witnesses must map exact plan nodes to evidence." {:index index}))
   (if (:true-nodes candidate)
     candidate
     (assoc candidate :true-nodes #{})))
@@ -94,6 +104,38 @@
                     "Vector candidates must have distinct typed identities."
                     {:width (count identities)}))))
     normalized))
+
+(defn- validate-evidence-witnesses!
+  "Exact node evidence produced in this same selected request can discharge
+   predicate work. A derivation's conditional lower bound is not an exact
+   witness; its unresolved alternatives must still be evaluated by the owner.
+   Validate before point-cache lookup as well as before fresh evaluation."
+  [{:keys [plan qualification witness-scope]} candidates]
+  (when (and qualification (some #(seq (:true-nodes %)) candidates))
+    (invalid! :unqualified-witness "Qualified evaluation requires temporal witness evidence." {}))
+  (let [n (reduce #(+ %1 (count (:evidence-witnesses %2))) 0 candidates)]
+    (when (pos? n)
+      (when (> n maximum-evidence-witnesses)
+        (invalid! :witness-limit "Evidence witness count exceeds the vector bound." {:count n}))
+      (when-not qualification
+        (invalid! :qualified-witness-required "Evidence witnesses require a qualified request." {}))
+      (when-not (= witness-scope (qualification/exact-reuse-identity qualification))
+        (invalid! :witness-scope "Evidence witnesses belong to another request scope." {}))
+      (reduce
+       (fn [bytes [node value]]
+         (execution/check! :evidence-witness)
+         (when-not (and (vector? node) (= 2 (count node))
+                       (get-in (:predicate-programs plan) node))
+           (invalid! :invalid-witness-node "Evidence witness is outside the sealed plan." {:node node}))
+         (let [bytes (+ bytes (if (boolean? value) 1
+                                 (caveat-values/utf8-size (evidence/encode value))))]
+           (when (> bytes maximum-evidence-witness-bytes)
+             (invalid! :witness-size "Evidence witnesses exceed the vector byte bound." {:bytes bytes}))
+           (when-not (evidence/before? (:time qualification) (evidence/valid-until value))
+             (invalid! :expired-witness "Evidence witness certificate has already expired." {}))
+           bytes))
+       0 (mapcat :evidence-witnesses candidates))))
+  nil)
 
 (defn- direct-probe [candidate descriptor]
   (when-let [{:keys [relation-id]}
@@ -123,31 +165,48 @@
   (let [indexes-where (fn [pred]
                         (bitmask/from-indexes
                          width (filter #(pred (nth row %)) (range width))))]
-    {:known-true (bitmask/portable (indexes-where true?))
-     :known-false (bitmask/portable (indexes-where false?))
+    {:known-true (bitmask/portable (indexes-where evidence/has?))
+     :known-false (bitmask/portable (indexes-where evidence/no?))
      :unresolved (bitmask/portable (indexes-where #(= unresolved %)))
-     :failed (bitmask/portable (bitmask/native width))}))
+     :failed (bitmask/portable (indexes-where evidence/fault?))}))
 
 (declare check-many-normalized)
 
+(defn- decisive? [op result]
+  (or (evidence/fault? result)
+      (if (= :union op) (evidence/has? result) (evidence/no? result))))
+
+(defn- demanded-witness-fault [candidate]
+  ;; These faults have already been encountered by traversal. Neither a
+  ;; cached answer nor a later Boolean absorber may erase that demand.
+  (when-let [proofs (:evidence-witnesses candidate)]
+    (reduce-kv (fn [fault _ value]
+                 (if (evidence/fault? value)
+                   (if fault (evidence/combine :union fault value) value)
+                   fault))
+               nil proofs)))
+
 (defn check-many-eids
   "Evaluates a distinct vector of complete typed candidate contexts and
-  returns one aligned Boolean per candidate, or throws without returning a
+  returns one aligned decision per candidate, or throws without returning a
   partial vector. Direct leaves are regrouped through the bounded backend
-  dispatcher; arrow leaves retain exact scalar semantics."
+  dispatcher; arrow leaves retain exact scalar semantics. Qualified callers
+  may supply :evidence-witnesses per candidate and the complete :witness-scope
+  from qualification/exact-reuse-identity. Only exact node results qualify."
   [{:keys [plan candidates] :as options}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Vector evaluation requires a sealed operator plan."
               {:plan-domain (:domain plan)}))
-  (check-many-normalized
-   (assoc options :candidates (normalize-candidates candidates))))
+  (let [candidates (normalize-candidates candidates)]
+    (validate-evidence-witnesses! options candidates)
+    (check-many-normalized (assoc options :candidates candidates))))
 
 (defn- check-many-normalized
   "Trusted core of `check-many-eids`: the candidate vector is already
   normalized (each caller normalizes exactly once at its boundary)."
   [{:keys [adapter plan candidates cache-lookup cache-publish-many!
-           limits permission node-id]}]
+           limits permission node-id qualification]}]
   (let [width (count candidates)]
     (if (zero? width)
       []
@@ -175,7 +234,7 @@
                   (let [current (get @memo node-key unresolved-row)
                         resolved (reduce (fn [result index]
                                            (assoc result index
-                                                  (boolean (nth values index))))
+                                                  (nth values index)))
                                          current indexes)]
                     (vswap! memo assoc node-key resolved)
                     resolved))
@@ -184,10 +243,15 @@
                         witnessed
                         (reduce
                          (fn [values index]
-                           (if (contains? (:true-nodes (nth candidates index))
-                                          node-key)
-                             (assoc values index true)
-                             values))
+                           (let [candidate (nth candidates index)
+                                 proofs (:evidence-witnesses candidate)
+                                 fault (when (and proofs (= permission root-permission) (= node-id root-id))
+                                         (demanded-witness-fault candidate))]
+                             (cond
+                               fault (assoc values index fault)
+                               (contains? proofs node-key) (assoc values index (get proofs node-key))
+                               (contains? (:true-nodes candidate) node-key) (assoc values index true)
+                               :else values)))
                          initial indexes)
                         _ (vswap! memo assoc node-key witnessed)
                         pending (filterv #(= unresolved (nth witnessed %))
@@ -221,8 +285,13 @@
                                       probes (mapv second indexed-probes)
                                       decisions
                                       (if (seq probes)
-                                        (direct/dispatch adapter probes
-                                                         cache-lookup)
+                                        (if qualification
+                                          (mapv (fn [probe compact-edge]
+                                                  (qualification/qualify qualification
+                                                                         (get-in probe [:descriptor :relation-eid])
+                                                                         compact-edge))
+                                                probes (direct/dispatch-edges adapter probes))
+                                          (direct/dispatch adapter probes cache-lookup))
                                         [])]
                                   ;; Retain exact leaf decisions privately until
                                   ;; every demanded subgroup in the vector has
@@ -265,67 +334,37 @@
                                            :subject-eid (:subject-eid candidate)
                                            :resource-eid
                                            (:resource-eid candidate)
-                                           :limits limits})]
+                                           :limits limits :qualification qualification})]
                                      (assoc result index decision)))
                                  witnessed pending)
 
-                                :any-true
-                                (loop [children (:children predicate)
-                                       remaining pending
-                                       result witnessed]
-                                  (if (or (empty? children)
-                                          (empty? remaining))
-                                    (reduce #(assoc %1 %2 false)
-                                            result remaining)
-                                    (let [child (evaluate!
-                                                 [permission (first children)]
-                                                 remaining)
-                                          granted (filterv #(true? (nth child %))
-                                                           remaining)
-                                          remaining (filterv #(false? (nth child %))
-                                                             remaining)
-                                          result (reduce #(assoc %1 %2 true)
-                                                         result granted)]
-                                      (recur (subvec children 1)
-                                             remaining result))))
-
-                                :all-true
-                                (loop [children (:children predicate)
-                                       remaining pending
-                                       result witnessed]
-                                  (if (or (empty? children)
-                                          (empty? remaining))
-                                    (reduce #(assoc %1 %2 true)
-                                            result remaining)
-                                    (let [child (evaluate!
-                                                 [permission (first children)]
-                                                 remaining)
-                                          rejected (filterv #(false? (nth child %))
-                                                            remaining)
-                                          remaining (filterv #(true? (nth child %))
-                                                             remaining)
-                                          result (reduce #(assoc %1 %2 false)
-                                                         result rejected)]
-                                      (recur (subvec children 1)
-                                             remaining result))))
+                                (:any-true :all-true)
+                                (let [op (if (= :any-true instruction) :union :intersection)]
+                                  (loop [children (:children predicate)
+                                         remaining pending
+                                         result (reduce #(assoc %1 %2 (not= op :union)) witnessed pending)]
+                                    (if (or (empty? children) (empty? remaining))
+                                      result
+                                      (let [child (evaluate! [permission (first children)] remaining)
+                                            result (reduce (fn [row index]
+                                                             (assoc row index (evidence/combine op
+                                                                                               (nth row index)
+                                                                                               (nth child index))))
+                                                           result remaining)
+                                            remaining (filterv #(not (decisive? op (nth result %))) remaining)]
+                                        (recur (subvec children 1) remaining result)))))
 
                                 :left-and-not-right
-                                (let [left (evaluate!
-                                            [permission (:left predicate)]
-                                            pending)
-                                      admitted (filterv #(true? (nth left %))
-                                                        pending)
-                                      rejected (filterv #(false? (nth left %))
-                                                        pending)
-                                      result (reduce #(assoc %1 %2 false)
-                                                     witnessed rejected)]
+                                (let [left (evaluate! [permission (:left predicate)] pending)
+                                      admitted (filterv #(not (decisive? :exclusion (nth left %))) pending)
+                                      result (reduce #(assoc %1 %2 (nth left %2)) witnessed pending)]
                                   (if (empty? admitted)
                                     result
-                                    (let [right (evaluate!
-                                                 [permission (:right predicate)]
-                                                 admitted)]
-                                      (reduce #(assoc %1 %2
-                                                      (not (nth right %2)))
+                                    (let [right (evaluate! [permission (:right predicate)] admitted)]
+                                      (reduce (fn [row index]
+                                                (assoc row index (evidence/combine :exclusion
+                                                                                  (nth left index)
+                                                                                  (nth right index))))
                                               result admitted))))
 
                                 (invalid! :unknown-predicate-instruction
@@ -347,15 +386,17 @@
                        :root-masks
                        (root-masks width
                                    (get @memo [root-permission root-id]))))
-              (when cache-publish-many!
+              (when (and cache-publish-many! (not-any? evidence/fault? decisions))
                 (cache-publish-many! @completed-leaves))
-              (mapv boolean decisions))
+              decisions)
             (catch #?(:clj Exception :cljs :default) error
               (add-stat! :failed-vectors 1)
               (throw error))))))))
 
 (def ^:private point-cache-options
   {:valid? boolean?})
+
+(def ^:private qualified-point-cache-options {:valid? string?})
 
 (defn- point-cache-key
   [plan permission node-id scope-identity candidate]
@@ -368,18 +409,23 @@
   reuse. Cache hits only fill already demanded decisions. Point misses remain
   private until the entire demanded vector succeeds; cache-disabled execution
   performs no cache work."
-  [{:keys [plan candidates permission node-id scope-identity] :as options}]
+  [{:keys [plan candidates permission node-id scope-identity qualification] :as options}]
   (when-not (operator-plan/operator-plan? plan)
     (invalid! :operator-plan-required
               "Vector evaluation requires a sealed operator plan."
               {:plan-domain (:domain plan)}))
   (let [candidates (normalize-candidates candidates)
+        _ (validate-evidence-witnesses! options candidates)
         permission (or permission (:root plan))
         node-id (or node-id
                     (get (operator-plan/expression-roots plan) permission))
         options (assoc options :candidates candidates
                        :permission permission :node-id node-id)
-        store subproblem/*store*]
+        store subproblem/*store*
+        scope-identity (if (and store qualification)
+                         [:qualified-point evidence/format-version scope-identity
+                          (qualification/exact-reuse-identity qualification)]
+                         scope-identity)]
     (if (or (nil? store) (empty? candidates))
       (check-many-normalized options)
       (let [looked-up
@@ -388,11 +434,13 @@
                (let [key (point-cache-key
                           plan permission node-id scope-identity candidate)]
                  (if-let [resolved
-                          (subproblem/lookup-denotation! key)]
+                          (when-not (demanded-witness-fault candidate)
+                            (subproblem/lookup-denotation! key))]
                    (do
                      (subproblem/record-avoided-backend-operation! store)
                      {:candidate candidate :key key
-                      :decision (:value resolved) :cached? true})
+                      :decision (if qualification (qualification/observe-evidence! qualification (evidence/decode (:value resolved))) (:value resolved))
+                      :cached? true})
                    {:candidate candidate :key key :cached? false})))
              candidates)
             miss-records (filterv (complement :cached?) looked-up)
@@ -416,12 +464,14 @@
                                   (nth miss-decisions miss-index)))))))]
         ;; The full miss vector and its leaf subgroups have succeeded before
         ;; any completed point becomes externally reusable.
-        (when subproblem/*populate?*
+        (when (and subproblem/*populate?* (not-any? evidence/fault? miss-decisions))
           (dotimes [miss-index (count miss-records)]
-            (subproblem/publish-denotation!
-             (:key (nth miss-records miss-index))
-             point-cache-options
-             (nth miss-decisions miss-index))))
+            (let [decision (nth miss-decisions miss-index)]
+              (when-not (evidence/fault? decision)
+                (subproblem/publish-denotation!
+                 (:key (nth miss-records miss-index))
+                 (if qualification qualified-point-cache-options point-cache-options)
+                 (if qualification (evidence/encode decision) decision))))))
         (add-stat! :point-cache-hits (- (count looked-up) (count misses)))
         (add-stat! :point-cache-misses (count misses))
         decisions))))

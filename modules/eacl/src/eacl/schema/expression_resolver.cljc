@@ -21,7 +21,7 @@
             (into {}
                   (for [[relation-name type-refs] relations]
                     [(keyword relation-name)
-                     (mapv (comp keyword :type) type-refs)]))
+                     (vec (distinct (map (comp keyword :type) type-refs)))]))
             :permissions (set (map (comp keyword :name) permissions))}])))
 
 (defn- issue
@@ -52,10 +52,10 @@
   (doseq [[resource-type {:keys [relations]}] (sort-by key definitions)
           [relation-name type-refs] (sort-by key relations)
           :let [_ (expression-limits/check-dimension!
-                    :type-partition-count
-                    :maximum-type-partitions
-                    (count type-refs)
-                    limits)]
+                   :type-partition-count
+                   :maximum-type-partitions
+                   (count (distinct (map :type type-refs)))
+                   limits)]
           {:keys [type]} (sort-by :type type-refs)
           :let [resource-type (keyword resource-type)
                 relation-name (keyword relation-name)
@@ -290,28 +290,32 @@
   ([parse-tree]
    (resolve-parse-tree parse-tree {}))
   ([parse-tree limits]
+   (resolve-parse-tree parse-tree limits {}))
+  ([parse-tree limits admission]
    (let [transformed (parser/transform-schema parse-tree)
-         _ (parser/validate-eacl-restrictions parse-tree transformed)
+         _ (parser/validate-eacl-restrictions parse-tree transformed admission)
          relations
-         (vec
-           (for [[resource-type {:keys [relations]}]
-                 (sort-by key (:definitions transformed))
-                 [relation-name type-refs] (sort-by key relations)
-                 {:keys [type]} (sort-by :type type-refs)]
-             (model/Relation (keyword resource-type)
-                             (keyword relation-name)
-                             (keyword type))))
+         (if (true? (:allow-caveats? admission))
+           (parser/staged-relation-entities transformed)
+           (vec
+            (for [[resource-type {:keys [relations]}]
+                  (sort-by key (:definitions transformed))
+                  [relation-name type-refs] (sort-by key relations)
+                  {:keys [type]} (sort-by :type type-refs)]
+              (model/Relation (keyword resource-type)
+                              (keyword relation-name)
+                              (keyword type)))))
          {:keys [expressions metadata aggregate-metrics]}
          (resolve-definitions-with-metadata (:definitions transformed) limits)
          dependency-certificate
          (expression-graph/build-certificate expressions)]
      (cond-> {:definitions (mapv (comp keyword key)
-                         (sort-by key (:definitions transformed)))
-      :expressions expressions
-      :relations relations
-      :expression-metadata metadata
-      :aggregate-expression-metrics aggregate-metrics
-      :dependency-certificate dependency-certificate}
+                                 (sort-by key (:definitions transformed)))
+              :expressions expressions
+              :relations relations
+              :expression-metadata metadata
+              :aggregate-expression-metrics aggregate-metrics
+              :dependency-certificate dependency-certificate}
        (seq (:caveats transformed)) (assoc :caveats (:caveats transformed))))))
 
 (defn validate-schema
@@ -321,6 +325,8 @@
   ([schema-source]
    (validate-schema schema-source nil))
   ([schema-source expression-limits]
+   (validate-schema schema-source expression-limits {}))
+  ([schema-source expression-limits admission]
    (let [expression-limits
          (expression-policy/normalize-client-limits expression-limits)]
      (assoc
@@ -329,5 +335,5 @@
         schema-source
         (select-keys expression-limits
                      (keys expression-policy/schema-limits)))
-       expression-limits)
+       expression-limits admission)
       :expression-limits expression-limits))))

@@ -4,6 +4,7 @@
             [eacl.caveats.schema :as caveat-schema]
             [eacl.caveats.definition :as caveat-definition]
             [eacl.datomic.impl.indexed :as impl.indexed]
+            [eacl.datomic.db :as ddb]
             [eacl.datomic.storage :as target-storage]
             [eacl.datomic.qualifier-functions :as qualifier-functions]
             [eacl.relationships.upgrade :as upgrade]
@@ -16,6 +17,7 @@
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.schema.model :as model]
+            [eacl.schema.relation-allowance :as relation-allowance]
             [eacl.schema.replacement-plan :as replacement-plan]))
 
 ; should these Malli specs be in a separate namespace, e.g. specs?
@@ -434,15 +436,17 @@
                       (endpoint-pair/reverse-value resource-type relation-eid subject-type Long/MAX_VALUE Long/MAX_VALUE)))))))
 
 (defn read-relations
-  "Enumerates all EACL Relation schema entities in DB and returns pull maps."
+  "Canonical Relation definitions, including named Caveat alternatives."
   [db]
-  (d/q '[:find [(pull ?relation [:eacl/id
-                                 :eacl.relation/subject-type
-                                 :eacl.relation/resource-type
-                                 :eacl.relation/relation-name]) ...]
-         :where
-         [?relation :eacl.relation/relation-name ?relation-name]]
-       db))
+  (let [pattern (cond-> [:eacl/id :eacl.relation/subject-type
+                         :eacl.relation/resource-type :eacl.relation/relation-name]
+                  (d/entid db :eacl.relation/caveats)
+                  (into [:eacl.relation/allows-unqualified?
+                         {:eacl.relation/caveats [:eacl.caveat/name]}]))]
+    (mapv relation-allowance/canonicalize
+          (d/q '[:find [(pull ?relation pattern) ...]
+                 :in $ pattern
+                 :where [?relation :eacl.relation/relation-name]] db pattern))))
 
 (defn read-permissions
   "Enumerates all EACL permission schema entities in DB and returns maps."
@@ -472,15 +476,20 @@
                :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
     []))
 
+(defn read-authorization-schema
+  "Reads permission structure without compiling undemanded Caveat programs."
+  [db]
+  (let [permissions (read-permissions db)]
+    (expression-persistence/validate-entities permissions)
+    {:relations (read-relations db) :permissions permissions}))
+
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
   ; todo: unparse into SpiceDB string schema if desired.
   [db & [_format]]
-  (let [permissions (read-permissions db)]
-    (expression-persistence/validate-entities permissions)
-    (let [caveats (read-caveats db)]
-      (cond-> {:relations (read-relations db) :permissions permissions}
-        (seq caveats) (assoc :caveats caveats)))))
+  (let [schema (read-authorization-schema db)
+        caveats (read-caveats db)]
+    (cond-> schema (seq caveats) (assoc :caveats caveats))))
 
 (defn- read-schema-unchecked
   "Migration-only physical schema read. Normal readers must use read-schema so
@@ -709,6 +718,12 @@
       :expressions expressions
       :expression-metadata metadata})))
 
+(defn- stored-relation-caveats [db relation]
+  (relation-allowance/stored-caveats
+   {:entid #(d/entid db %) :entity #(ddb/entity-data db %)
+    :rows #(ddb/relationship-identity-datoms db %1 %2 %3)
+    :scan #(ddb/avet-tuple-prefix db %1 %2)} relation))
+
 (defn- plan-schema-candidate
   [db schema-string new-schema-map
    {:keys [allow-empty-schema? validate-existing? orphan-policy]
@@ -723,7 +738,7 @@
                 (not allow-empty-schema?)
                 (or (seq (:relations existing-schema))
                     (seq (:permissions existing-schema))
-                       (seq (:caveats existing-schema))))
+                    (seq (:caveats existing-schema))))
             (throw
              (ex-info
               (str "Refusing to replace a non-empty schema with zero definitions."
@@ -734,6 +749,7 @@
                {:relations (count (:relations existing-schema))
                 :permissions (count (:permissions existing-schema))}})))
         deltas (compare-schema existing-schema new-schema-map)
+        _ (relation-allowance/validate-existing! (:relations deltas) #(stored-relation-caveats db %))
         semantic
         (replacement-plan/plan
          {:deltas deltas
@@ -744,12 +760,18 @@
           #(relationship-present-for-relation? db %)})
         {:keys [relations permissions caveats]} deltas
         _ (caveat-definition/validate-replacements! caveats #(caveat-references db %))
-        relation-retractions (:retractions relations)
+        relation-retractions (relation-allowance/entity-deletions relations)
         permission-retractions
         (expression-persistence/entity-deletions permissions)
+        caveat-addition-entities
+        (mapv #(assoc % :db/id (d/tempid :db.part/user)) (:additions caveats))
+        caveat-refs (into {} (map (juxt :eacl.caveat/name :db/id)) caveat-addition-entities)
         relation-addition-entities
         (mapv (fn [relation]
-                (assoc relation :db/id (d/tempid :db.part/user)))
+                (cond-> (assoc relation :db/id (d/tempid :db.part/user))
+                  (contains? relation :eacl.relation/caveats)
+                  (update :eacl.relation/caveats
+                          #(mapv (fn [[_ name :as ref]] (get caveat-refs name ref)) %))))
               (:additions relations))
         relation-initial-stamps
         (mapv (fn [relation]
@@ -768,10 +790,11 @@
         tx-data
         (vec
          (concat
+          caveat-addition-entities
+          (relation-allowance/attribute-retractions relations)
           relation-addition-entities
           relation-initial-stamps
           (:additions permissions)
-          (map #(assoc % :db/id (d/tempid :db.part/user)) (:additions caveats))
           (for [caveat (caveat-definition/entity-deletions caveats)]
             [:db.fn/retractEntity [:eacl.caveat/name (:eacl.caveat/name caveat)]])
           (for [relation relation-retractions]
@@ -780,20 +803,24 @@
             [:db.fn/retractEntity [:eacl/id (:eacl/id permission)]])
           [schema-stamp-entity]))
         relation-commit-guards
-        (mapv
-         (fn [relation]
-           [:eacl.fn/assert-relation-unused
-            (:eacl.relation/resource-type relation)
-            (d/entid db [:eacl/id (:eacl/id relation)])
-            (:eacl.relation/subject-type relation)])
-         relation-retractions)
+        (into
+         (mapv (fn [relation]
+                 [:eacl.fn/assert-relation-unused
+                  (:eacl.relation/resource-type relation)
+                  (d/entid db [:eacl/id (:eacl/id relation)])
+                  (:eacl.relation/subject-type relation)]) relation-retractions)
+         (map (fn [{:keys [before]}]
+                (let [eid (d/entid db [:eacl/id (:eacl/id before)])]
+                  [:db.fn/cas eid :eacl/relation-version
+                   (:eacl/relation-version (ddb/entity-data db eid)) "datomic.tx"])))
+         (relation-allowance/changes relations))
         no-op? (not (some seq
                           [(:additions relations)
                            (:retractions relations)
                            (:additions permissions)
                            (:retractions permissions)
-                        (:additions caveats)
-                        (:retractions caveats)]))
+                           (:additions caveats)
+                           (:retractions caveats)]))
         effective-tx-data (if no-op? [] tx-data)]
     (assoc semantic
            :tx-data effective-tx-data
@@ -818,7 +845,7 @@
          (:expression-limits options))
         new-schema-map
         (expression-persistence/candidate-schema
-         (expression-resolver/validate-schema schema-string expression-limits))]
+         (expression-resolver/validate-schema schema-string expression-limits (select-keys options [:allow-caveats?])))]
     (binding [expression-persistence/*expression-limits* expression-limits]
       (plan-schema-candidate db schema-string new-schema-map options))))
 
@@ -923,7 +950,7 @@
        (let [new-schema-map
              (expression-persistence/candidate-schema
               (expression-resolver/validate-schema
-               schema-string expression-limits))]
+               schema-string expression-limits (select-keys opts [:allow-caveats?])))]
          (write-schema-candidate!
           conn schema-string new-schema-map opts known-schema-version))))))
 

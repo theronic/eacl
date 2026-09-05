@@ -15,17 +15,42 @@
      :eacl.caveat/expression-source (:source compiled)
      :eacl.caveat/profile-version values/profile-id}))
 
-(defn decode-entity [entity]
-  (when-not (and (map? entity) (= (set attributes) (set (keys (dissoc entity :db/id)))))
+(defn content-identity
+  "Bounded, complete native content for a validated-definition cache. A miss
+   must decode the header/plan before publication. No database id or digest
+   substitutes for these exact bytes; changed or malformed content cannot hit."
+  [entity]
+  (when-not (and (map? entity)
+                 (= (count entity) (+ (count attributes) (if (contains? entity :db/id) 1 0)))
+                 (every? #(contains? entity %) attributes))
     (values/error! :definition-shape))
   (when-not (= values/profile-id (:eacl.caveat/profile-version entity))
     (values/error! :unsupported-profile))
   (let [name (:eacl.caveat/name entity)
-        parameters (values/decode-parameters (:eacl.caveat/parameters-payload entity))
-        compiled (plan/compile-plan (:eacl.caveat/expression-source entity) parameters)]
+        payload (:eacl.caveat/parameters-payload entity)
+        source (:eacl.caveat/expression-source entity)]
+    (when-not (and (string? payload) (<= (count payload) (:context-utf8-bytes values/limits)))
+      (values/error! :resource-limit {:limit :payload-bytes}))
     (when-not (and (values/parameter-name? name)
-                  (= (:source compiled) (:eacl.caveat/expression-source entity)))
+                   (string? source) (seq source)
+                   (<= (count source) (:source-utf8-bytes values/limits))
+                   (<= (values/utf8-size source) (:source-utf8-bytes values/limits)))
       (values/error! :definition-shape))
+    (dissoc entity :db/id)))
+
+(defn decode-header
+  "Validates the named definition's structural envelope and parameter types
+   without compiling a program. Expired relationships need no program work."
+  [entity]
+  (let [content (content-identity entity)]
+    {:name (:eacl.caveat/name content)
+     :parameters (values/decode-parameters (:eacl.caveat/parameters-payload content))
+     :source (:eacl.caveat/expression-source content)}))
+
+(defn decode-entity [entity]
+  (let [{:keys [name parameters source]} (decode-header entity)
+        compiled (plan/compile-plan source parameters)]
+    (when-not (= (:source compiled) source) (values/error! :definition-shape))
     (assoc compiled :name name)))
 
 (defn entity-deletions [{:keys [additions retractions]}]

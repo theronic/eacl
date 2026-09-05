@@ -12,6 +12,7 @@
             [eacl.datalevin.db :as ddb]
             [eacl.datalevin.fork :as fork]
             [eacl.datalevin.impl :as impl]
+            [eacl.datalevin.qualifiers :as qualifiers]
             [eacl.datalevin.schema :as schema]
             [eacl.datalevin.storage :as target-storage]
             [eacl.relationships.storage :as relationship-storage]))
@@ -63,8 +64,10 @@
 
 (defn- stale-connection-contention?
   [throwable]
-  (= :eacl.datalevin/stale-connection-generation
-     (:type (ex-data throwable))))
+  (or (= :eacl.datalevin/stale-connection-generation
+         (:type (ex-data throwable)))
+      (= :cleanup-source-changed
+         (:reason (datalevin-failure-data throwable :eacl.qualifier/staged-write)))))
 
 (defn- transact-native!
   [write-token conn {:keys [tx-data]}]
@@ -173,6 +176,9 @@
   [snapshot-or-db object-eid]
   (ddb/with-db snapshot-or-db #(impl/tx-delete-object % object-eid)))
 
+(defn- snapshot-object-relationship-retractions [snapshot-or-db object-eid]
+  (ddb/with-db snapshot-or-db #(impl/selected-object-relationship-retractions % object-eid)))
+
 (defn- snapshot-read-relationships
   ([snapshot-or-db query kernel]
    (snapshot-read-relationships snapshot-or-db query kernel nil))
@@ -183,6 +189,9 @@
 
 (def ^:private base-api
   {:backend-id :datalevin
+   :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
+   :qualified-plan #'qualifiers/plan
    :writer-max-attempts 8
    :writer-contention? stale-connection-contention?
    :db ds/db
@@ -208,14 +217,17 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation snapshot-schema-generation
             :write-schema! nil}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input (fn [db relationship] (ddb/with-db db #(impl/relationship-publication-input % relationship)))
           :relationship-relation-id snapshot-relationship-relation-id
           :relation-coordinate snapshot-relation-coordinate
           :tx-update-relationship snapshot-tx-update-relationship
           :tx-delete-object snapshot-tx-delete-object
+          :object-relationship-retractions snapshot-object-relationship-retractions
           :affected-relation-ids #'impl/affected-relation-ids
           :read-relationships snapshot-read-relationships}
    :extra-client-opt-keys

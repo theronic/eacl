@@ -1,6 +1,7 @@
 (ns eacl.relationships.storage-contract
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is testing]]
             [eacl.core :as eacl]
+            [eacl.client.orchestration :as orchestration]
             [eacl.relationships.endpoint-pair :as pair]
             [eacl.relationships.storage :as storage]
             [eacl.relationships.upgrade-test :refer [error-data]]))
@@ -12,7 +13,7 @@
      permission view = viewer
    }")
 
-(defn exercise-qualified-corruption!
+(defn- exercise-v8-qualified-corruption!
   "One native graph exercises unsupported data, duplicate identity, exact
   identity-only deletion, and qualifier-preserving object cleanup."
   [{:keys [client snapshot transact! entid rows safe-retract! stamp direct-probe plan-create read-identity]}]
@@ -32,7 +33,7 @@
           q (entid db [:eacl/id "qualifier"])
           q2 (entid db [:eacl/id "qualifier-2"])
           native-relationship (eacl/->Relationship (eacl/spice-object :user a) :viewer
-                                                    (eacl/spice-object :document doc))
+                                                   (eacl/spice-object :document doc))
           forward (:v (first (rows db storage/forward-attribute)))
           relation (nth forward 1)
           reverse (pair/reverse-value :document relation :user a)
@@ -92,3 +93,10 @@
       (safe-retract! a)
       (is (empty? (rows (snapshot) storage/forward-attribute)))
       (is (empty? (rows (snapshot) storage/reverse-attribute))))))
+
+(defn exercise-qualified-corruption!
+  "The v8 storage-9 compatibility contract rejects non-nil qualifier refs.
+   Qualified serving is covered separately by the v9 native contracts."
+  [system]
+  (binding [orchestration/*qualified-authorization-enabled?* false]
+    (exercise-v8-qualified-corruption! system)))

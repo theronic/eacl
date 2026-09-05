@@ -77,10 +77,16 @@
                 (contains? entity caveat-attribute) (assoc :caveat (get entity caveat-attribute))
                 (contains? entity expiration-attribute) (assoc :valid-until-ms (get entity expiration-attribute))
                 (contains? entity context-attribute) (assoc :caveat-context context))
-        normalized (normalize input parameters)]
+        normalized (normalize input parameters)
+        canonical (cond-> {marker-attribute format-version}
+                    (some? (:caveat normalized)) (assoc caveat-attribute (:caveat normalized))
+                    (seq (:caveat-context normalized)) (assoc context-attribute (get entity context-attribute))
+                    (some? (:valid-until-ms normalized)) (assoc expiration-attribute (:valid-until-ms normalized)))]
     (when-not normalized (error! :empty-qualifier))
     (when (and (contains? entity context-attribute) (empty? context)) (error! :nonsparse-context))
-    (when-not (= (dissoc entity :db/id)
-                 (dissoc (entity-data (:db/id entity) normalized parameters) :db/id))
+    ;; decode-context already checked the original payload's canonical bytes
+    ;; and types. Preserve those bytes when checking sparse field presence;
+    ;; rebuilding an entity would normalize and encode the same context again.
+    (when-not (= (dissoc entity :db/id) canonical)
       (error! :noncanonical-qualifier))
     normalized))

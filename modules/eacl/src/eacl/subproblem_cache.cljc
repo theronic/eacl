@@ -47,7 +47,7 @@
   #{:denotation-max-entries
     :answer-max-entries
     :telemetry?})
-(def ^:private publication-option-keys #{:valid?})
+(def ^:private publication-option-keys #{:valid? :replace?})
 
 (def snapshot-format
   "Version identifier for flat process-neutral subproblem snapshots."
@@ -264,6 +264,8 @@
   (when-not (ifn? (:valid? options))
     (invalid-config! "Subproblem cache publication :valid? must be callable."
                      {:valid? (:valid? options)}))
+  (when (and (contains? options :replace?) (not (ifn? (:replace? options))))
+    (invalid-config! "Subproblem replacement requires an explicit predicate." {:key :replace?}))
   options)
 
 (defn- valid-value?
@@ -411,7 +413,8 @@
   "Publishes one already-computed value under an opaque storage key.
 
   Validation and page eligibility run once before the absent-key cache
-  insertion. A concurrent same-key publisher wins, while this request
+  insertion. An optional replacement predicate runs outside atomic scopes and
+  replaces only the same expected immutable mapping. Otherwise a concurrent same-key publisher wins, while this request
   still returns its own completed value."
   [store tier storage-key options value]
   (validate-tier! store tier)
@@ -443,9 +446,16 @@
       (if-let [final-rejection (request-publication-rejection)]
         (reject-publication! store final-rejection)
         (try
-          (let [published?
-                (lru/put-if-absent! (get (:tiers store) tier)
-                                    storage-key value)]
+          (let [tier-store (get (:tiers store) tier)
+                published?
+                (or (lru/put-if-absent! tier-store storage-key value)
+                    (when-let [replace? (:replace? options)]
+                      (let [prior (lru/peek-entry tier-store storage-key)]
+                        ;; Compare eligibility outside the atomic data replacement.
+                        ;; A concurrent publisher changes the expected identity.
+                        (and (:found? prior)
+                             (replace? (:value prior) value)
+                             (lru/replace-if! tier-store storage-key (:value prior) value)))))]
             (if published?
               (do
                 (record-metrics! store update :puts inc)

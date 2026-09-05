@@ -3,6 +3,8 @@
             [datalevin.core :as d]
             [datalevin.util :as u]
             [eacl.core :as eacl]
+            [eacl.client.orchestration :as orchestration]
+            [eacl.relationships.staged :as staged]
             [eacl.datalevin.backend :as backend]
             [eacl.datalevin.core :as datalevin]
             [eacl.datalevin.schema :as physical-schema]
@@ -132,20 +134,30 @@
 (defn- run-at-same-commit-boundary
   [intercept? left right]
   (let [ready (CountDownLatch. 2)
-        intercepted (atom 0)
+        intercepted (atom #{})
         original d/transact!
-        transact
-        (fn [& args]
-          (let [tx-data (second args)
-                slot (when (intercept? tx-data)
-                       (swap! intercepted inc))]
-            (when (and slot (<= slot 2))
-              (.countDown ready)
-              (when-not (.await ready 5 TimeUnit/SECONDS)
-                (throw (ex-info "race barrier timed out"
-                                {:type :test/barrier-timeout}))))
-            (apply original args)))]
-    (with-redefs [d/transact! transact]
+        original-plan staged/plan-batch
+        rendezvous!
+        (fn [tx-data]
+          (when (or (intercept? tx-data) (empty? tx-data))
+            (let [thread (Thread/currentThread)
+                  [before _] (swap-vals! intercepted conj thread)]
+              (when-not (contains? before thread)
+                (.countDown ready)
+                (when-not (.await ready 5 TimeUnit/SECONDS)
+                  (throw (ex-info "race barrier timed out"
+                                  {:type :test/barrier-timeout})))))))]
+    ;; Qualified no-op deletes need no transaction. Synchronize their completed
+    ;; plans too, so both operations have selected the same pre-commit state.
+    (with-redefs [d/transact! (fn [& args]
+                                (rendezvous! (second args))
+                                (apply original args))
+                  staged/plan-batch
+                  (fn [& args]
+                    (let [plan (apply original-plan args)]
+                      (when orchestration/*qualified-authorization-enabled?*
+                        (rendezvous! (:tx-data plan)))
+                      plan))]
       (let [left-result (future (error-data left))
             right-result (future (error-data right))]
         [(deref left-result 10000 {:type :test/future-timeout})
@@ -170,8 +182,9 @@
                #(eacl/create-relationship! client rel)
                #(eacl/create-relationship! client rel))]
           (is (= 1 (count (filter nil? results))))
-          (is (= [:eacl/relationship-conflict]
-                 (keep :type results)))
+          (is (= 1 (count (keep :type results))))
+          (is (every? #{:eacl/relationship-conflict :eacl/relationship-concurrent-write}
+                      (keep :type results)))
           (assert-paired! conn)))))
   (doseq [left-operation [:create :touch]]
     (testing (str (name left-operation) "/delete")
@@ -211,8 +224,9 @@
                  #(eacl/create-relationship! client rel)
                  #(eacl/create-relationship! second-client rel))]
             (is (= 1 (count (filter nil? results))))
-            (is (= [:eacl/relationship-conflict]
-                   (keep :type results)))
+            (is (= 1 (count (keep :type results))))
+            (is (every? #{:eacl/relationship-conflict :eacl/relationship-concurrent-write}
+                        (keep :type results)))
             (assert-paired! conn)
             (is (= (:max-tx (d/db conn))
                    (:viewer-version (coherence-state conn)))))
@@ -251,6 +265,9 @@
 (deftest object-delete-rescans-at-commit-after-intervening-create-test
   (with-system
     (fn [{:keys [conn client alice] :as system}]
+      (d/transact! conn [{:eacl/id "document-2"}])
+      (eacl/create-relationship! client alice :viewer
+                                 (eacl/spice-object :document "document-2"))
       (let [rel (relationship system)
             injected? (atom false)
             original d/transact!
@@ -262,7 +279,7 @@
                     tx-data))]
         (with-redefs
          [d/transact!
-         (fn [& args]
+          (fn [& args]
             (when (and (delete-function-call? (second args))
                        (compare-and-set! injected? false true))
               (eacl/create-relationship! client rel))

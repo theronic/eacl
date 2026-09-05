@@ -12,11 +12,13 @@
             [eacl.datahike.backend :as datahike-backend]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.impl :as impl]
+            [eacl.datahike.qualifiers :as qualifiers]
             [eacl.datahike.migrations.v7-to-v8 :as v7-to-v8]
             [eacl.datahike.schema :as schema]
             [eacl.datahike.storage :as target-storage]
             [eacl.relationships.upgrade :as storage-upgrade]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.staged :as staged]
             [eacl.schema.expression-policy :as expression-policy]))
 
 (def cursor->token cursor/cursor->token)
@@ -114,6 +116,11 @@
 
 (def ^:private api
   {:backend-id :datahike
+   :writer-max-attempts 8
+   :writer-contention? staged/prepared-contention?
+   :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
+   :qualified-plan #'qualifiers/plan
    :db d/db
    :entid ddb/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (d/entity db eid)))
@@ -138,11 +145,13 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation #'schema/current-schema-generation
             :plan-replacement #'schema/plan-schema-replacement
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input #'impl/relationship-publication-input
           :relationship-relation-id #'impl/relationship-relation-id
           :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship

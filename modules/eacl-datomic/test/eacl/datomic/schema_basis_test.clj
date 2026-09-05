@@ -278,14 +278,15 @@
           before-version (idx/schema-version (d/db conn))
           entered (promise)
           release-read (promise)
-          original-can? engine/can?]
-      (with-redefs [engine/can?
+          original-check engine/check-evidence]
+      (with-redefs [engine/check-evidence
                     (fn [& args]
                       (deliver entered true)
                       @release-read
-                      (apply original-can? args))]
+                      (apply original-check args))]
         (let [read-work (future (eacl/can? acl user :admin account))
-              _ @entered
+              _ (is (= true (deref entered 5000 ::timed-out))
+                    "the selected-snapshot read reaches the shared evidence check")
               write-work (future (eacl/write-schema! acl schema-v2))
               write-result (deref write-work 2000 ::timed-out)]
           (try

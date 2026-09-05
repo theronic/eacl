@@ -10,10 +10,12 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.impl :as impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as schema]
             [eacl.datascript.storage :as target-storage]
             [eacl.relationships.upgrade :as storage-upgrade]
-            [eacl.relationships.storage :as relationship-storage]))
+            [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.staged :as staged]))
 
 (def cursor->token cursor/cursor->token)
 (def token->cursor cursor/token->cursor)
@@ -80,6 +82,11 @@
 
 (def ^:private api
   {:backend-id :datascript
+   :writer-max-attempts 8
+   :writer-contention? staged/prepared-contention?
+   :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
+   :qualified-plan #'qualifiers/plan
    :db ds/db
    :entid ds/entid
    :default-entid->object-id (fn [db eid] (:eacl/id (ds/entity db eid)))
@@ -104,11 +111,13 @@
    ;; the impl suites) and REPL redefinition visible through the shared
    ;; orchestration.
    :schema {:read-schema #'schema/read-schema
+            :read-authorization-schema #'schema/read-authorization-schema
             :generation #'schema/current-schema-generation
             :plan-replacement #'schema/plan-schema-replacement
             :write-schema! #'schema/write-schema!}
    :impl {:validate-relationship-operation!
           #'impl/validate-relationship-operation!
+          :relationship-publication-input #'impl/relationship-publication-input
           :relationship-relation-id #'impl/relationship-relation-id
           :relation-coordinate relation-coordinate
           :tx-update-relationship #'impl/tx-update-relationship

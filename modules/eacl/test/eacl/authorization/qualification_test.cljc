@@ -1,0 +1,289 @@
+(ns eacl.authorization.qualification-test
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
+            [eacl.authorization.clock :as clock]
+            [eacl.authorization.data :as data]
+            [eacl.authorization.batch :as batch]
+            [eacl.backend.v8 :as backend]
+            [eacl.request.counters :as counters]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as q]
+            [eacl.cache.standard-lru :as lru]
+            [eacl.caveats.definition :as definition]
+            [eacl.caveats.evaluator :as evaluator]
+            [eacl.caveats.partial :as partial]
+            [eacl.caveats.plan :as plan]
+            [eacl.caveats.values :as values]
+            [eacl.execution :as execution]
+            [eacl.relationships.qualifier :as qualifier]))
+
+(def parameters [["flag" :bool]])
+(def named (definition/entity "enabled" parameters "flag"))
+(def fixture
+  {1 {:db/id 1 :eacl.relation/caveats #{2} :eacl.relation/allows-unqualified? true}
+   2 (assoc named :db/id 2)
+   3 (qualifier/entity-data 3 {:caveat 2 :valid-until-ms 100} parameters)
+   4 (qualifier/entity-data 4 {:caveat 2 :caveat-context {"flag" true} :valid-until-ms 100} parameters)
+   5 (qualifier/entity-data 5 {:valid-until-ms 100} [])})
+
+(defn portable-evaluator [calls]
+  (reify evaluator/Evaluator
+    (descriptor [_] {:profile values/profile-id :profile-fingerprint evaluator/profile-fingerprint
+                     :capability-version 1 :fingerprint "test/portable-qualified-v1"})
+    (-evaluate [_ entity request bound]
+      (swap! calls inc)
+      (let [{:keys [parameters plan]} (definition/decode-entity entity)]
+        (partial/evaluate parameters plan request (or bound {}))))))
+
+(defn request
+  ([] (request {}))
+  ([{:keys [db reads calls] :as options}]
+   (let [read-entity (fn [eid]
+                       (when reads (swap! reads update eid (fnil inc 0)))
+                       (get (or db fixture) eid))
+         defaults {:time 99 :context {}
+                   :evaluator (portable-evaluator (or calls (atom 0)))
+                   :entity read-entity :version (constantly 7)
+                   :basis {:source "s" :lifecycle "l" :revision 1}}]
+     (q/request (merge defaults (dissoc options :db :reads :calls))))))
+
+(defn data-adapter [db reads]
+  (backend/make-adapter
+   {:id :qualification-test :runtime-guards? true
+    :capabilities {:qualification #{data/capability}
+                   :qualified-publication #{:atomic-prepared-v1}}
+    :operations
+    (assoc (zipmap backend/required-snapshot-operations (repeat (constantly nil)))
+           :qualification-data
+           (fn [eid]
+             (swap! reads update eid (fnil inc 0))
+             (data/collect
+              eid
+              (for [[attribute value] (dissoc (get db eid) :db/id)
+                    item (if (set? value) value [value])]
+                {:e eid :a attribute :v item :tx 7})
+              identity true)))}))
+
+(defn data-request [db reads]
+  (q/request-from-adapter
+   (data-adapter db reads)
+   {:time 99 :basis {:source "native-data" :revision 1}
+    :evaluator (portable-evaluator (atom 0))}))
+
+(deftest adapter-data-is-shared-and-metered-within-one-request
+  (let [reads (atom {}) ledger (counters/make-ledger) request (data-request fixture reads)]
+    (counters/call-with-ledger
+     ledger
+     (fn []
+       (is (= {} @reads))
+       (is (true? (q/qualify request 1 10)))
+       (is (every? zero? (vals (counters/snapshot ledger))))
+       (is (= :conditional-permission (evidence/permissionship (q/qualify request 1 [10 3]))))
+       (let [before (counters/snapshot ledger)]
+         (is (= :conditional-permission (evidence/permissionship (q/qualify request 1 [11 3]))))
+         (is (= before (counters/snapshot ledger))))
+       (is (= {1 1, 2 1, 3 1} @reads))
+       (is (= 3 (:commands (counters/snapshot ledger))))
+       (is (= 3 (:adapter-reads (counters/snapshot ledger))))
+       (is (= (reduce + (map #(count (dissoc (get fixture %) :db/id)) [1 2 3]))
+              (:fetched-values (counters/snapshot ledger))))))))
+
+(deftest adapter-data-faults-remain-visible-and-do-not-refetch
+  (doseq [db [(assoc-in fixture [3 :unknown/field] "private value")
+              (assoc-in fixture [3 qualifier/caveat-attribute] 3)
+              (dissoc fixture 3)]]
+    (let [reads (atom {}) request (data-request db reads)]
+      (is (evidence/fault? (q/qualify request 1 [10 3])))
+      (let [before @reads]
+        (is (evidence/fault? (q/qualify request 1 [11 3])))
+        (is (= before @reads)))
+      (is (= 1 (get @reads 3)))))
+  (let [reads (atom {}) request (data-request fixture reads)
+        token (execution/cancellation-token)
+        contract (execution/normalize {} :check-permission {:cancellation-token token})]
+    (execution/cancel! token)
+    (binding [execution/*contract* contract]
+      (is (= :eacl.execution/cancelled
+             (try (q/qualify request 1 [10 3]) nil
+                  (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                    (:type (ex-data error)))))))
+    (is (= {} @reads))))
+
+(deftest qualifier-data-consumes-aggregate-command-and-fact-budgets
+  (let [request (data-request fixture (atom {})) ledger (counters/make-ledger)
+        before (counters/snapshot ledger)]
+    (counters/call-with-ledger ledger #(q/qualify request 1 [10 3]))
+    (let [after (counters/snapshot ledger)
+          ;; Data resolution has no traversal queue or observer event. Its
+          ;; physical work still belongs to the public operation's budget.
+          consumed (batch/aggregate-counters {} {} before after 1)]
+      (is (= 3 (:commands consumed)))
+      (is (= (:fetched-values after) (:fetched-values consumed)))
+      (is (= (+ 3 (:fetched-values after) 1) (:allocation-proxy consumed)))
+      (doseq [[limit maximum kind] [[:max-commands 2 :commands]
+                                   [:max-fetched-values 1 :fetched-values]
+                                   [:max-allocation-proxy 3 :allocation-proxy]]]
+        (is (= kind
+               (try (batch/check-aggregate-limits! (batch/normalize-client-limits {limit maximum}) consumed 0) nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                      (:limit-kind (ex-data error))))))))))
+
+(deftest ordinary-edges-touch-no-request-state
+  (is (true? (q/qualify nil nil 123)))
+  (is (false? (q/qualify nil nil nil)))
+  (let [r (request)]
+    (dotimes [i 100] (is (true? (q/qualify r 1 i))))
+    (is (not (realized? (:memos r))))))
+
+(deftest request-cache-resolves-once-and-retains-faults
+  (let [reads (atom {}) calls (atom 0) r (request {:reads reads :calls calls})]
+    (dotimes [_ 5]
+      (is (= :conditional-permission (evidence/permissionship (q/qualify r 1 [10 3]))))
+      (is (= ["flag"] (evidence/missing-fields (q/qualify r 1 [10 3])))))
+    (is (= {1 1 2 1 3 1} @reads))
+    (is (= 10 @calls)))
+  (let [reads (atom {}) r (request {:reads reads})]
+    (dotimes [_ 5] (is (evidence/fault? (q/qualify r 1 [10 999]))))
+    (is (= {999 1} @reads)))
+  (with-redefs [q/maximum-request-entries 1]
+    (is (evidence/fault? (q/qualify (request) 1 [10 3])))))
+
+(deftest exclusive-expiry-precedes-program-work
+  (doseq [time [99 100 101] qid [3 4 5]]
+    (let [calls (atom 0) r (request {:time time :context {"flag" true} :calls calls})
+          result (q/qualify r 1 [10 qid])]
+      (is (= (< time 100) (evidence/has? result)))
+      (is (= (when (< time 100) 100) (evidence/valid-until result)))
+      (is (= (if (and (< time 100) (not= qid 5)) 1 0) @calls))))
+  (with-redefs [plan/compile-plan (fn [& _] (throw (ex-info "Compilation must not run" {})))]
+    (is (false? (q/qualify (request {:time 100}) 1 [10 3])))))
+
+(deftest contextual-results-do-not-enter-the-decode-cache
+  (let [cache (lru/store 16)
+        reads (atom {})
+        cases [[99 {"flag" true} :has-permission]
+               [99 {"flag" false} :no-permission]
+               [99 {} :conditional-permission]
+               [100 {"flag" true} :no-permission]]]
+    (doseq [[time context expected] cases]
+      (let [r (request {:time time :context context :cache cache :reads reads})]
+        (is (= expected (evidence/permissionship (q/qualify r 1 [10 3]))))))
+    (is (= 1 (get @reads 3)))
+    (is (= 1 (lru/entry-count cache)))
+    (doseq [basis [{:source "s" :lifecycle "reset" :revision 1}
+                  {:source "s" :lifecycle "l" :revision 2}]]
+      (let [db (assoc-in fixture [3 :eacl.relationship-qualifier/valid-until-ms] 98)
+            r (request {:db db :basis basis :cache cache :reads reads})]
+        (is (false? (q/qualify r 1 [10 3])))))
+    (is (= 3 (get @reads 3))))
+  (let [bound-wins (request {:context {"flag" false}})
+        invalid-request (request {:context {"flag" "wrong-type"}})]
+    (is (evidence/has? (q/qualify bound-wins 1 [10 4])))
+    (is (evidence/fault? (q/qualify invalid-request 1 [10 4])))))
+
+(deftest each-caveat-projects-request-fields-without-weakening-bound-context
+  (let [db (-> fixture
+               (assoc-in [1 :eacl.relation/caveats] #{2 6})
+               (assoc 6 (assoc (definition/entity "adult" [["age" :int]] "age >= 18") :db/id 6)
+                      7 (qualifier/entity-data 7 {:caveat 6} [["age" :int]])))
+        r (request {:db db :context {"flag" true "age" 20 "unused" "kept in identity"}})]
+    (is (evidence/has? (q/qualify r 1 [10 3])))
+    (is (evidence/has? (q/qualify r 1 [10 7])))
+    (let [missing (request {:db db :context {"flag" true "unused" false}})]
+      (is (evidence/has? (q/qualify missing 1 [10 3])))
+      (is (= ["age"] (evidence/missing-fields (q/qualify missing 1 [10 7])))))
+    (let [wrong (request {:db db :context {"flag" true "age" "twenty"}})]
+      (is (evidence/has? (q/qualify wrong 1 [10 3])))
+      (is (evidence/fault? (q/qualify wrong 1 [10 7]))))
+    (is (not= (q/exact-reuse-identity r)
+              (q/exact-reuse-identity
+               (request {:db db :context {"flag" true "age" 20 "unused" "different"}}))))
+    (let [bad-bound (assoc-in db [3 qualifier/context-attribute]
+                              (values/encode-context [["unused" :bool]] {"unused" true}))]
+      (is (evidence/fault? (q/qualify (request {:db bad-bound}) 1 [10 3]))))))
+
+(deftest reconstructed-request-does-not-retain-stale-prepared-context
+  (let [original (request {:context {"flag" true}})
+        later (q/request (assoc original :time 98))
+        changed (q/request (assoc original :context {"flag" false}))
+        missing (q/request (assoc original :context nil))]
+    (is (identical? (:prepared-context original) (:prepared-context later)))
+    (is (evidence/has? (q/qualify later 1 [10 3])))
+    (is (evidence/no? (q/qualify changed 1 [10 3])))
+    (is (= ["flag"] (evidence/missing-fields (q/qualify missing 1 [10 3]))))
+    (is (not= (q/exact-reuse-identity original) (q/exact-reuse-identity changed)))))
+
+(deftest authoritative-errors-survive-expiry-and-exclusion
+  (doseq [db [(dissoc fixture 3)
+              (assoc-in fixture [3 qualifier/marker-attribute] 99)
+              (assoc-in fixture [3 qualifier/expiration-attribute] 1.5)
+              (assoc-in fixture [1 :eacl.relation/caveats] #{77})
+              (dissoc fixture 2)]]
+    (let [result (q/qualify (request {:time 100 :db db}) 1 [10 3])]
+      (is (evidence/fault? result))
+      (is (evidence/fault? (evidence/combine :exclusion true result)))))
+  (is (evidence/fault? (q/qualify (request {:evaluator nil}) 1 [10 3])))
+  (is (false? (q/qualify (request {:time 100 :evaluator nil}) 1 [10 3])))
+  (is (evidence/has? (q/qualify (request {:evaluator nil}) 1 [10 5]))))
+
+(deftest cancellation-is-never-converted-to-absence
+  (let [token (execution/cancellation-token)]
+    (execution/cancel! token)
+    (binding [execution/*contract* (execution/normalize {} :check-permission {:cancellation-token token})]
+      (is (= :eacl.execution/cancelled
+             (try (q/qualify (request) 1 [10 3]) nil
+                  (catch #?(:clj Exception :cljs :default) error (:type (ex-data error)))))))))
+
+(deftest trusted-clock-captures-a-nondecreasing-time
+  (let [samples (atom [90 100 95 101]) calls (atom 0)
+        sample (clock/clock #(let [v (first @samples)] (swap! calls inc) (swap! samples subvec 1) v))]
+    (is (= [90 100 100 101] (vec (repeatedly 4 sample))))
+    (is (= 4 @calls)))
+  (let [sample (clock/clock (constantly 1.5))]
+    (is (= :clock-time (try (sample) nil
+                            (catch #?(:clj Exception :cljs :default) error (:reason (ex-data error))))))))
+
+(deftest qualified-resolution-observes-deadline-and-cancellation-after-native-work
+  (doseq [stop [:deadline :cancel]]
+    (let [now (atom 0)
+          token (execution/cancellation-token)
+          reads (atom {})
+          request (data-request fixture reads)
+          expected (if (= stop :deadline) :eacl.execution/deadline-exceeded :eacl.execution/cancelled)]
+      (binding [execution/*monotonic-nanos* #(deref now)
+                execution/*contract* (binding [execution/*monotonic-nanos* #(deref now)]
+                                       (execution/normalize {} :check-permission {:timeout-ms 1 :cancellation-token token}))
+                backend/*invoke-observer*
+                (fn [{:keys [phase operation]}]
+                  (when (and (= phase :after) (= operation :qualification-data))
+                    (if (= stop :deadline) (reset! now 1000000) (execution/cancel! token))))]
+        (is (= expected
+               (try (q/qualify request 1 [10 3]) nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                      (:type (ex-data error))))))
+        (is (= {3 1} @reads) "stop immediately after the first native qualifier read")
+        (is (= expected
+               (try (q/qualify request 1 [11 3]) nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                      (:type (ex-data error))))))
+        (is (= {3 1} @reads) "memoized work cannot bypass an expired or cancelled request")))))
+
+(deftest request-certificates-include-inspected-expiry-and-retained-evidence
+  (let [request (request)]
+    (is (= {:start-ms 99 :valid-until-ms nil :complete? true} (q/certificate request)))
+    (is (true? (q/qualify request 1 10)))
+    (is (not (realized? (:temporal-state request))))
+    (q/inspect request 1 5)
+    (is (= {:start-ms 99 :valid-until-ms 100 :complete? true} (q/certificate request)))
+    (q/observe-evidence! request (evidence/with-certificate false 101 true))
+    (is (= 100 (:valid-until-ms (q/certificate request))))
+    (q/observe-evidence! request (evidence/with-certificate true nil false))
+    (is (false? (:complete? (q/certificate request)))))
+  (let [request (request {:time 100})]
+    (q/inspect request 1 5)
+    (is (= {:start-ms 100 :valid-until-ms nil :complete? true} (q/certificate request)))
+    (doseq [invalid [{:start-ms 99 :valid-until-ms 100 :complete? true}
+                     {:start-ms 101 :valid-until-ms nil :complete? true}
+                     {:start-ms 99 :valid-until-ms nil :complete? false}
+                     {:start-ms 100 :valid-until-ms nil}]]
+      (is (some? (try (q/observe-interval! request invalid) nil
+                      (catch #?(:clj Exception :cljs :default) e (ex-data e))))))))

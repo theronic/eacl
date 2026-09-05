@@ -8,6 +8,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.cache :as cache]
+            [eacl.client.orchestration :as orchestration]
             [eacl.core :as eacl]
             [eacl.datascript.core :as datascript]
             [eacl.execution :as execution]
@@ -781,7 +782,7 @@
          client
          (scan-query dense {:first 2
                             :aggregate-limits {:candidate-window 10}})))
-      (is (= 1 (:proof-frame @backend-stats 0)))))
+      (is (= (if orchestration/*qualified-authorization-enabled?* 0 1) (:proof-frame @backend-stats 0)))))
 
   (testing "candidate-stream mutation invalidates continuation"
     (let [{:keys [client dense marker documents]} (scan-fixture)

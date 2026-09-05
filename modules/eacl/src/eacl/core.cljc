@@ -41,6 +41,16 @@
   (-write-relationships! [this request])
   (-delete-object! [this request]))
 
+(defprotocol IRelationshipPreparation
+  "Explicit writer-owned preparation for caller-composed qualified transactions."
+  (-prepare-relationship! [this relationship])
+  (-discard-prepared-relationship! [this prepared]))
+
+(defprotocol IRelationshipPlanning
+  "Atomic batch planning on one immutable snapshot."
+  (-tx-relationships [this request]))
+
+
 (defprotocol ISnapshotSource
   "Selects one immutable authorization snapshot."
   (-snapshot [this consistency options]))
@@ -128,14 +138,24 @@
                       :consistency consistency})))
 
 (defn can?
-  "Returns the `:allowed?` projection of `check-permission`."
+  "Returns true only for a definite grant. Authoritative qualified evaluation
+   failures become false here; check-permission preserves their typed error.
+   Cancellation, resource limits, invalid requests, and backend errors propagate."
   ([target request]
-   (:allowed? (check-permission target request)))
+   (try
+     (let [decision (check-permission target request)]
+       (and (true? (:allowed? decision))
+            (or (not (contains? decision :permissionship))
+                (= :has-permission (:permissionship decision)))))
+     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+       (if (= :eacl.authorization/evaluation-failure (:type (ex-data error)))
+         false
+         (throw error)))))
   ([target subject permission resource]
-   (:allowed? (check-permission target subject permission resource)))
+   (can? target {:subject subject :permission permission :resource resource}))
   ([target subject permission resource consistency]
-   (:allowed?
-    (check-permission target subject permission resource consistency))))
+   (can? target {:subject subject :permission permission :resource resource
+                 :consistency consistency})))
 
 (defn read-schema
   ([target]
@@ -181,6 +201,27 @@
                            updates
                            {:updates updates})))
 
+(defn prepare-relationship!
+  "Creates an inert qualifier for a Relationship and returns an opaque handle
+   (nil for an ordinary Relationship). Pass it as :prepared-qualifier on the
+   update supplied to tx-relationship. Preparation never grants access."
+  [target relationship]
+  (if (satisfies? IRelationshipPreparation target)
+    (-prepare-relationship! target relationship)
+    (throw (typed-error :eacl/unsupported-capability
+                        "Target cannot prepare a qualified Relationship."
+                        {:capability :prepare-relationship :target (target-kind target)}))))
+
+(defn discard-prepared-relationship!
+  "Removes an unchanged, unattached preparation through its original writer.
+   Attached or altered qualifiers are rejected."
+  [target prepared]
+  (if (satisfies? IRelationshipPreparation target)
+    (-discard-prepared-relationship! target prepared)
+    (throw (typed-error :eacl/unsupported-capability
+                        "Target cannot discard a Relationship preparation."
+                        {:capability :discard-prepared-relationship :target (target-kind target)}))))
+
 (defn delete-object!
   [target object]
   (-delete-object! (writer! target)
@@ -195,12 +236,13 @@
             :subject subject
             :relation relation
             :resource resource}))
-  ([target {:keys [operation subject relation resource]}]
+  ([target {:keys [operation subject relation resource] :as update}]
    (write-relationships!
     target
     [(->RelationshipUpdate
       operation
-      (->Relationship subject relation resource))])))
+      (merge (->Relationship subject relation resource)
+             (select-keys update [:caveat :caveat-context :valid-until-ms])))])))
 
 (defn with
   "Applies native transaction data in memory and returns an immutable,
@@ -229,6 +271,17 @@
        "Authorization target cannot create a speculative schema snapshot."
        {:capability :with-schema
         :target (target-kind target)})))))
+
+(defn tx-relationships
+  "Plans an atomic batch on one snapshot. Accepts updates or
+   {:updates [...] :tx-data [...]} for application composition. Prepared
+   backends require :prepared-qualifier handles on qualified updates."
+  [snapshot request]
+  (if (and (snapshot? snapshot) (satisfies? IRelationshipPlanning snapshot))
+    (-tx-relationships snapshot (if (map? request) request {:updates request}))
+    (throw (typed-error :eacl/unsupported-capability
+                        "Target cannot plan a Relationship batch."
+                        {:capability :tx-relationships :target (target-kind snapshot)}))))
 
 (defn tx-relationship
   "Plans one relationship mutation against an immutable EACL snapshot.

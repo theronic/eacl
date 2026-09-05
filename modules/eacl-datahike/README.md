@@ -158,7 +158,7 @@ native child/subject order is not semantic. Configure structural ceilings with
 client-level `:permission-tree-limits`.
 
 ```clojure
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
@@ -185,10 +185,12 @@ statistics can be captured.
 
 ## Relationship storage 9
 
-This EACL v8 adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. This phase writes `nil` and raises `:eacl/unsupported-qualifier`
-when serving encounters a qualifier. Upgrades are explicit and restartable;
-ordinary client construction requires a completed target store. Follow the
-[7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before starting clients.
+This adapter uses five-slot endpoint pairs with a trailing nullable
+`qualifier-eid`. V8 writes only `nil` and rejects non-nil qualifiers. V9 adds
+[Caveats and expiring Relationships](../../docs/caveats.md) through coordinated
+qualified activation; older readers must be drained first. Upgrades are explicit
+and restartable, and client construction requires a completed target store.
+Follow the [7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before
+starting clients, then the v9 serving rollout guide before qualified writes.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.

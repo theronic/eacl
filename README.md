@@ -135,8 +135,7 @@ This README is too long & too technical, so I am working to simplify it and brea
 
 > [!WARNING]
 > EACL is used in production, but under active development.
-> EACL is [available on Clojars](https://clojars.org/dev.eacl/). Use the `8.0.0-SNAPSHOT`.
-> An official v8.0.0 release should be available by end-August 2026.
+> This branch targets `9.0.0-SNAPSHOT`. Build it locally until the coordinated release is published; see [Clojars](https://clojars.org/dev.eacl/) for published versions.
 
 ## Real-Time UI Maintenance
 
@@ -653,19 +652,19 @@ EACL supports multiple backends. Each adapter will bring in the shared EACL engi
 
 ```clojure
 ;; Datomic Pro
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "9.0.0-SNAPSHOT"}}}
 
 ;; Datahike
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "9.0.0-SNAPSHOT"}}}
 
 ;; DataScript
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "9.0.0-SNAPSHOT"}}}
 
 ;; Datalevin (coordinate reserved; publication remains gated)
-{:deps {dev.eacl/eacl-datalevin {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datalevin {:mvn/version "9.0.0-SNAPSHOT"}}}
 
 ;; Core-only consumers and backend authors (you typically won't need this)
-{:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 ### Development from source
@@ -987,7 +986,7 @@ order.
 Add the Datomic adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -1086,7 +1085,7 @@ Add the Datomic adapter dependency to your `deps.edn` file:
 For Clojure/JVM applications backed by Datahike, add the Datahike adapter dependency to your `deps.edn` file:
 
 ```clojure
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -1140,7 +1139,7 @@ commit records.
 For server-side or browser demos, use the DataScript adapter:
 
 ```clojure
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 ```clojure
@@ -1917,9 +1916,10 @@ but it is not a byte-for-byte or operational clone:
   sets unless your application explicitly sorts them; never compare EACL and
   SpiceDB page membership or cursor bytes.
 - EACL cursors bind the selected native revision and its dependency/order
-  proof. A cursor walk stays on that exact snapshot. If the backend cannot
-  reconstruct it, EACL fails closed. A relevant write does not silently change
-  page membership midway through a cursor walk.
+  proof. A cursor walk stays on that database snapshot. Qualified client-targeted
+  cursors capture fresh time and require restart when their temporal certificate
+  ends; explicit snapshots pin historical time. Neither mode silently rebases
+  its page boundary. Unavailable native history fails closed.
 - Omitted consistency means `:minimize-latency`. EACL selects the current
   immutable database value visible to the local backend connection. SpiceDB may use
   an optimized cached revision, so freshness can differ. Use each backend's
@@ -1927,12 +1927,14 @@ but it is not a byte-for-byte or operational clone:
   distinction matters; tokens and cursors are backend-local.
 - EACL provides `count-resources`, `count-subjects`, a controllable EACL result
   cache, and `delete-object!`, which removes both stored Relationship halves.
-  Datomic commits high-degree deletion in batches of 1,000; Datahike and
-  DataScript use one atomic transaction. These do not have direct SpiceDB API
-  equivalents.
-- EACL currently supports a smaller schema subset: unions, intersections,
-  exclusions, and its documented arrow forms, but not caveats, wildcard
-  subjects, expiration, or subject relations.
+  Qualified deletion uses bounded native transactions; each transaction removes
+  both endpoint values and their owned qualifier together. These operations do
+  not have direct SpiceDB API equivalents.
+- V9 supports [Caveats and expiring Relationships](docs/caveats.md), including
+  conditional results and an exclusive UTC-millisecond expiry. Its bounded CEL
+  profile is a subset of SpiceDB's expression language; wildcard subjects and
+  subject relations remain unsupported. Qualified activation requires upgrading
+  every serving Peer first.
 - EACL evaluates relationship cycles as a fixed point and has no separate
   dispatch-depth limit for checks, lookups, and counts. These operations remain
   subject to configured traversal work limits. SpiceDB uses a configurable
@@ -1960,4 +1962,4 @@ Some of this open-source work was generously funded by my former employer, [Clou
 
 - EACL is free and open-source, licensed under the Eclipse Public License v2.0.
 
-See [Caveat and qualifier foundation](docs/caveats.md) for the staged profile, optional JVM evaluator, and Phase 3 serving boundary.
+See [Caveats and expiring Relationships](docs/caveats.md) for the v9 public APIs, optional JVM evaluator, trusted-clock and cursor semantics, and coordinated rollout.

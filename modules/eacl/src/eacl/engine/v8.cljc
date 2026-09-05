@@ -1,5 +1,7 @@
 (ns eacl.engine.v8
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.result :as authorization-result]
+            [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.core :refer [spice-object]]
             [eacl.engine.least-path :as least-path]
@@ -19,12 +21,36 @@
             [eacl.operator.recursive :as operator-recursive]
             [eacl.operator.vector-evaluator :as operator-vector]
             [eacl.request.counters :as request-counters]
+            [eacl.relationships.edge :as relationship-edge]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.secure-format :as secure-format]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
-(def engine-version 8)
+(def engine-version 9)
+
+(def ^:dynamic *qualification*
+  "The one selected-basis qualification request, bound by public orchestration."
+  nil)
+
+(def ^:dynamic ^:private *lookup-result-policy* :definite)
+
+(defn- with-emission-evidence [page emissions]
+  (if (and *qualification* (= :detailed *lookup-result-policy*))
+    (assoc page :result-evidence
+           (into {} (keep (fn [emission]
+                            (let [value (get emission :evidence true)]
+                              (when-not (true? value) [(:value emission) value]))))
+                 emissions))
+    page))
+
+(defn- project-lookup-page [page]
+  (let [values (:result-evidence page)]
+    (cond-> (dissoc page :result-evidence)
+      (= :detailed *lookup-result-policy*)
+      (update :data (fn [objects]
+                      (mapv #(authorization-result/lookup-result % (get values (:id %) true))
+                            objects))))))
 
 (def ^:dynamic *evaluation-mode*
   "Normalized public evaluation mode. Cache state never changes this value."
@@ -257,9 +283,13 @@
   [cursor-or-opts]
   (if (and (map? cursor-or-opts)
            (contains? cursor-or-opts :direction))
-    {:direction (:direction cursor-or-opts)
-     :bound-eid (:bound-eid cursor-or-opts)
-     :inclusive-bound? (boolean (:inclusive-bound? cursor-or-opts))}
+    (cond-> {:direction (:direction cursor-or-opts)
+             :bound-eid (:bound-eid cursor-or-opts)
+             :inclusive-bound? (boolean (:inclusive-bound? cursor-or-opts))}
+      (true? (:include-qualifier? cursor-or-opts))
+      (assoc :include-qualifier? true)
+      (:limit cursor-or-opts)
+      (assoc :limit (:limit cursor-or-opts)))
     {:direction :asc
      :bound-eid cursor-or-opts
      :inclusive-bound? false}))
@@ -1498,7 +1528,7 @@
   The encrypted progress edge still names the last examined candidate; the
   inclusive marker tells this layer to present that candidate once before it
   resumes the ordinary exclusive authorized stream."
-  [result-type fetch-exclusive bound limit]
+  [result-type fetch-exclusive bound limit inclusive-evidence-fn]
   (if (:resume-inclusive? bound)
     (let [exclusive-bound (dissoc bound :resume-inclusive?)
           boundary-eid (bound-result-eid exclusive-bound)]
@@ -1508,15 +1538,18 @@
          {:type :eacl.pagination/invalid-cursor
           :eacl/error :eacl.pagination/invalid-cursor
           :reason :malformed-inclusive-boundary}))
-      (into [{:node (spice-object result-type boundary-eid)
-              :cursor exclusive-bound}]
+      (into [(cond-> {:node (spice-object result-type boundary-eid)
+                      :cursor exclusive-bound}
+               inclusive-evidence-fn
+               (assoc :evidence (inclusive-evidence-fn boundary-eid)))]
             (when (> limit 1)
               (fetch-exclusive exclusive-bound (dec limit)))))
     (fetch-exclusive bound limit)))
 
 (defn- execute-filtered-lookup-window
   [result-type {:keys [direction size bound]}
-   {:keys [candidate-window accept? accept-many? maximum-batch-width]}
+   {:keys [candidate-window accept? accept-many? accept-evidence maximum-batch-width
+           evidence-decisions? result-policy inclusive-evidence-fn]}
    fetch-exclusive]
   (when-not (and (integer? candidate-window) (pos? candidate-window))
     (page-error!
@@ -1525,7 +1558,7 @@
       :eacl/error :eacl.execution/resource-limit-exceeded
       :limit-kind :candidate-window
       :value candidate-window}))
-  (when-not (or (fn? accept?) (fn? accept-many?))
+  (when-not (or (fn? accept?) (fn? accept-many?) (fn? accept-evidence))
     (page-error!
      "A filtered lookup window requires an accept predicate."
      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config}))
@@ -1539,7 +1572,7 @@
       :limit-kind :maximum-batch-width
       :value maximum-batch-width}))
   (let [fetch-candidates
-        #(fetch-inclusive-candidates result-type fetch-exclusive %1 %2)
+        #(fetch-inclusive-candidates result-type fetch-exclusive %1 %2 inclusive-evidence-fn)
         result
         (loop [cursor bound
                examined 0
@@ -1581,23 +1614,39 @@
                   (if accept-many?
                     (let [values (vec (accept-many? (mapv :node chunk)))]
                       (when-not (and (= (count chunk) (count values))
-                                     (every? boolean? values))
+                                     (or evidence-decisions?
+                                         (every? boolean? values)))
                         (page-error!
                          "A filtered lookup batch returned malformed decisions."
                          {:type :eacl/backend-contract-violation
                           :eacl/error :eacl/backend-contract-violation
                           :obligation :aligned-filter-decisions}))
                       values)
-                    (mapv #(boolean (accept? (:node %))) chunk))
+                    (if accept-evidence
+                      (mapv #(accept-evidence (:node %)) chunk)
+                      (mapv #(boolean (accept? (:node %))) chunk)))
                   [accepted examined last-examined]
                   (reduce
-                   (fn [[accepted examined _] [candidate accepted?]]
+                   (fn [[accepted examined _] [candidate decision]]
                      (request-counters/add-candidates-examined!)
-                     [(cond-> accepted
-                        accepted?
-                        (conj candidate))
-                      (inc examined)
-                      candidate])
+                     (let [qualified? (or evidence-decisions? *qualification*)
+                           decision (if (and (not evidence-decisions?) *qualification*
+                                             (contains? candidate :evidence))
+                                      (evidence/combine :intersection (:evidence candidate) decision)
+                                      decision)
+                           _ (when qualified? (evidence/throw-if-fault! decision))
+                           accepted? (if qualified?
+                                       (if (= :detailed (or result-policy *lookup-result-policy*))
+                                         (not (evidence/no? decision))
+                                         (evidence/has? decision))
+                                       decision)]
+                       [(cond-> accepted
+                          accepted?
+                          (conj (cond-> candidate
+                                  (and qualified? (not (true? decision)))
+                                  (assoc :evidence decision))))
+                        (inc examined)
+                        candidate]))
                    [accepted examined last-examined]
                    (map vector chunk decisions))
                   last-cursor (some-> last-examined :cursor)]
@@ -1618,7 +1667,7 @@
         end-cursor (case direction
                      :asc progress
                      :desc (or last-selected progress))]
-    {:data (mapv :node selected)
+    (cond-> {:data (mapv :node selected)
      :page-info
      {:start-cursor start-cursor
       :end-cursor end-cursor
@@ -1630,7 +1679,14 @@
       (case direction
         :asc (boolean bound)
         :desc (boolean (:more? result)))
-      :bounded? (boolean (:bounded? result))}}))
+      :bounded? (boolean (:bounded? result))}}
+      (and (or evidence-decisions? *qualification*)
+           (= :detailed (or result-policy *lookup-result-policy*)))
+      (assoc :result-evidence
+             (into {} (keep (fn [candidate]
+                              (when (contains? candidate :evidence)
+                                [(get-in candidate [:node :id]) (:evidence candidate)])))
+                   selected)))))
 
 (defn- with-stale-boundary-errors
   "A well-formed authenticated boundary that replay cannot validate means
@@ -1677,6 +1733,8 @@
     :fetch-fn fetch-fn
     :subject-type subject-type
     :page-size page-size
+    :qualification *qualification*
+    :result-policy *lookup-result-policy*
     :cut-point! (stable-cut-point)}
    (when raw? {:raw-candidates? true})
    (if (= :forward traversal)
@@ -1717,6 +1775,8 @@
       :subject-type subject-type
       :cut-point! (stable-cut-point)
       :page-size page-size
+      :qualification *qualification*
+      :result-policy *lookup-result-policy*
       :after (when (= :asc direction) edge)
       :before (when (= :desc direction) edge)
       :last-window? (and (= :desc direction) (nil? edge))
@@ -1747,6 +1807,7 @@
             :plan plan
             :candidates candidates
             :scope-identity proof-identity
+            :qualification *qualification*
             :limits (recursive-operator-limits)
             ;; The engine reads only the decisions; skip the portable
             ;; checkpoint's sorts and digest.
@@ -1770,6 +1831,7 @@
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [accept? (:accept? candidate-filter)
+            accept-evidence (:accept-evidence candidate-filter)
             candidate-window (or (:candidate-window candidate-filter)
                                  operator-lookup/default-candidate-window)
             run
@@ -1784,6 +1846,8 @@
                  :subject-type subject-type
                  :anchor-eid anchor-eid
                  :page-size size
+                 :qualification *qualification*
+                 :result-policy *lookup-result-policy*
                  :candidate-window candidate-window
                  :order-direction direction
                  :boundary (:coords bound)
@@ -1792,6 +1856,9 @@
                  (when accept?
                    (fn [eid]
                      (accept? (spice-object result-type eid))))
+                 :accept-result-evidence
+                 (when accept-evidence
+                   (fn [eid] (accept-evidence (spice-object result-type eid))))
                  :cut-point! (stable-cut-point)
                  :traversal-limits (stable-limits)})))
             emissions (:emissions run)
@@ -1813,6 +1880,7 @@
                          progress
                          (or last-selected progress))]
         (report-least-path-run! run)
+        (with-emission-evidence
         {:data (mapv :node items)
          :page-info
          {:start-cursor start-cursor
@@ -1825,7 +1893,8 @@
           (if (= :asc direction)
             (boolean bound)
             (boolean (:has-more? run)))
-          :bounded? (boolean (:bounded? run))}}))))
+          :bounded? (boolean (:bounded? run))}}
+         ordered)))))
 
 (defn- least-path-lookup-page
   "Keyset pagination for an acyclic plan: ascending pages resume strictly
@@ -1859,6 +1928,7 @@
                         ordered)]
         (report-least-path-run! run)
         (report-adapter-attempts! attempts)
+        (with-emission-evidence
         (page-response
          {:items items
           :range-reusable? true
@@ -1867,7 +1937,20 @@
                        (boolean (:has-more? run)))
           :has-previous? (if descending?
                            (boolean (:has-more? run))
-                           (boolean bound))})))))
+                           (boolean bound))})
+         ordered)))))
+
+(defn- structural-cover-fetch
+  "Enumerates the positive structural cover from the same compact scan/cache.
+   Only the exact candidate evaluator decides authorization. Projection keeps
+   qualified candidates, including expired rows, and leaves ordinary chunks
+   untouched. It is never used for an authorization decision."
+  [fetch-fn]
+  (fn [descriptor]
+    (let [rows (fetch-fn (assoc descriptor :include-qualifier? true))]
+      (if (some vector? rows)
+        (mapv relationship-edge/endpoint rows)
+        rows))))
 
 (defn- filtered-lookup-page
   [db plan traversal query {:keys [direction size bound] :as page-req}
@@ -1887,6 +1970,9 @@
       empty-bounded-page
       (let [{:keys [fetch-fn attempts]}
             ((if least-path? least-path-fetch-fn stable-fetch-fn) db)
+            fetch-fn (if (:structural-cover? candidate-filter)
+                       (structural-cover-fetch fetch-fn)
+                       fetch-fn)
             cache (when-not least-path?
                     (when cache-fn (cache-fn)))
             checkpoints (stable-checkpoints cache)
@@ -1896,6 +1982,7 @@
                (checkpoint-series-size query size)))
             fetch-exclusive
             (fn [candidate-bound limit]
+              (binding [*qualification* (when-not (:structural-cover? candidate-filter) *qualification*)]
               (if least-path?
                 (let [run-options (least-path-run-options
                                    plan fetch-fn traversal subject-type
@@ -1906,9 +1993,10 @@
                            #(run-least-path-page run-options traversal))
                       items
                       (mapv
-                       (fn [{:keys [value coords]}]
-                         {:node (spice-object result-type value)
-                          :cursor (least-path-edge plan traversal coords)})
+                       (fn [{:keys [value coords evidence]}]
+                         (cond-> {:node (spice-object result-type value)
+                                  :cursor (least-path-edge plan traversal coords)}
+                           (some? evidence) (assoc :evidence evidence)))
                        (:emissions run))]
                   (report-least-path-run! run)
                   ;; Raw descending least-path emissions are already in
@@ -1924,16 +2012,36 @@
                            limit direction candidate-bound checkpoints
                            checkpoint-key true))))
                       items
-                      (stable-items plan traversal result-type
-                                    (:start-ordinal result) (:eids result))]
+                      (cond->> (stable-items plan traversal result-type
+                                            (:start-ordinal result) (:eids result))
+                        *qualification*
+                        (mapv (fn [item]
+                                (let [value (get (:result-evidence result) (get-in item [:node :id]) true)]
+                                  (cond-> item (not (true? value)) (assoc :evidence value))))))]
                   ;; Stable-page returns canonical order for both directions;
                   ;; filtering examines backward windows in reverse order.
                   (if (= :desc direction)
                     (vec (reverse items))
-                    items))))
+                    items)))))
             page
             (execute-filtered-lookup-window
-             result-type page-req candidate-filter fetch-exclusive)]
+             result-type page-req
+             (cond-> candidate-filter
+               (and *qualification* (not (:structural-cover? candidate-filter)))
+               ;; A filtered cursor carries a structural inclusive sentinel.
+               ;; If its evidence was not retained, recover the complete root
+               ;; decision at this same selected basis before exposing it.
+               (assoc :inclusive-evidence-fn
+                      (fn [eid]
+                        (stable-route/check-eids
+                         (merge (stable-limits)
+                                {:adapter db :fetch-fn fetch-fn :plan plan
+                                 :qualification *qualification*
+                                 :subject-type subject-type
+                                 :subject-eid (if (= :forward traversal) anchor-eid eid)
+                                 :resource-eid (if (= :forward traversal) eid anchor-eid)
+                                 :cut-point! (stable-cut-point)})))))
+             fetch-exclusive)]
         (report-adapter-attempts! attempts)
         page))))
 
@@ -1958,6 +2066,7 @@
     (if (nil? anchor-eid)
       empty-bounded-page
       (let [external-accept? (:accept? candidate-filter)
+            external-accept-evidence (:accept-evidence candidate-filter)
             external-accept-many? (:accept-many? candidate-filter)
             recursive-decisions
             (recursive-batch-evaluator
@@ -1967,6 +2076,9 @@
               (let [decisions (recursive-decisions nodes)
                     external-decisions
                     (cond
+                      external-accept-evidence
+                      (mapv external-accept-evidence nodes)
+
                       external-accept-many?
                       (vec (external-accept-many? nodes))
 
@@ -1975,7 +2087,11 @@
 
                       :else
                       (vec (repeat (count nodes) true)))]
-                (mapv #(and %1 %2) decisions external-decisions)))
+                (mapv (fn [decision external]
+                        (if *qualification*
+                          (evidence/combine :intersection decision external)
+                          (and decision external)))
+                      decisions external-decisions)))
             cover-page
             (filtered-lookup-page
              db cover-plan traversal query
@@ -1985,6 +2101,9 @@
               (or (:candidate-window candidate-filter)
                   operator-lookup/default-candidate-window)
               :maximum-batch-width operator-batch-schedule/maximum-width
+              :structural-cover? (some? *qualification*)
+              :evidence-decisions? (some? *qualification*)
+              :result-policy (authorization-result/result-policy query)
               :accept-many? evaluate-batch})]
         (update
          cover-page :page-info
@@ -2064,14 +2183,16 @@
                (checkpoint-series-size query size)))
                     false))))]
     (report-adapter-attempts! attempts)
-    (page-response
+    (cond-> (page-response
      {:items (stable-items plan traversal result-type
                            (:start-ordinal result) (:eids result))
       :range-reusable? true
       :has-next? (:has-next? result)
-      :has-previous? (:has-previous? result)})))
+      :has-previous? (:has-previous? result)})
+      (and *qualification* (= :detailed *lookup-result-policy*))
+      (assoc :result-evidence (:result-evidence result)))))
 
-(defn can?
+(defn check-evidence
   [db subject permission resource]
   (let [subject-type (:type subject)
         subject-eid (object-eid db (:id subject))
@@ -2092,6 +2213,7 @@
                (if (operator-recursive/recursive-plan? plan)
                  (operator-recursive/check-cached-eids
                   {:adapter db :plan plan
+                   :qualification *qualification*
                    :subject-type subject-type
                    :subject-eid subject-eid
                    :resource-eid resource-eid
@@ -2102,6 +2224,7 @@
                  (first
                   (operator-vector/check-cached-many-eids
                    {:adapter db :plan plan
+                    :qualification *qualification*
                     :scope-identity scope-identity
                     :candidates
                     [{:direction :forward
@@ -2116,6 +2239,7 @@
                    (stable-route/check-eids
                     (merge (stable-limits)
                            {:adapter db
+                            :qualification *qualification*
                             :fetch-fn fetch-fn
                             :plan plan
                             :subject-type subject-type
@@ -2125,6 +2249,11 @@
             (report-adapter-attempts! attempts)
             allowed?)))
       false)))
+
+(defn can? [db subject permission resource]
+  (evidence/has?
+   (evidence/throw-if-fault! (check-evidence db subject permission resource))))
+
 (defn lookup-resources
   "Stable-discovery forward pagination.
 
@@ -2139,7 +2268,8 @@
    (let [cache-fn (fn [] (or continuation-cache
                              (when continuation-cache-fn
                                (continuation-cache-fn))))]
-     (stable-lookup-page db :forward query cache-fn candidate-filter))))
+     (binding [*lookup-result-policy* (authorization-result/result-policy query)]
+       (project-lookup-page (stable-lookup-page db :forward query cache-fn candidate-filter))))))
 
 (defn lookup-subjects
   "Stable-discovery reverse pagination; cursors are only valid against the
@@ -2157,7 +2287,8 @@
    (let [cache-fn (fn [] (or continuation-cache
                              (when continuation-cache-fn
                                (continuation-cache-fn))))]
-     (stable-lookup-page db :reverse query cache-fn candidate-filter))))
+     (binding [*lookup-result-policy* (authorization-result/result-policy query)]
+       (project-lookup-page (stable-lookup-page db :reverse query cache-fn candidate-filter))))))
 
 (def ^:private count-pagination-keys
   [:cursor :limit :first :last :before :after])
@@ -2178,11 +2309,18 @@
                       :count-limit limit}))
       limit)))
 
-(defn- count-response
-  [{:keys [count truncated?]} limit]
-  (cond-> {:count count
-           :limit (or limit -1)}
-    (some? limit) (assoc :truncated? truncated?)))
+(defn- count-page-categories
+  [categories page remaining]
+  (when categories
+    (reduce (fn [counts node]
+              (update counts
+                      (if (evidence/has? (get (:result-evidence page) (:id node) true))
+                        :definite-count :conditional-count)
+                      inc))
+            categories
+            (if (some? remaining)
+              (take (max 0 remaining) (:data page))
+              (:data page)))))
 
 (defn- recursive-operator-count
   "Streams exact recursive operator pages with bounded retained continuation
@@ -2205,11 +2343,14 @@
         evaluate-batch (recursive-batch-evaluator
                         db plan traversal subject-type anchor-eid
                         proof-identity)
-        target (when (some? count-limit) (inc count-limit))]
+        target (when (some? count-limit) (inc count-limit))
+        policy (authorization-result/result-policy query)]
     (if (nil? anchor-eid)
       {:count 0 :truncated? false}
       (loop [cover-bound nil
-             accumulated 0]
+             accumulated 0
+             categories (when (= :detailed policy)
+                          {:definite-count 0 :conditional-count 0})]
         (execution/check! execution/*contract*
                           :operator-recursive/count-page
                           {:count accumulated})
@@ -2224,13 +2365,20 @@
                cache-fn result-type anchor subject-type
                {:candidate-window operator-lookup/default-candidate-window
                 :maximum-batch-width operator-batch-schedule/maximum-width
+                :structural-cover? (some? *qualification*)
+                :evidence-decisions? (some? *qualification*)
+                :result-policy policy
                 :accept-many? evaluate-batch})
               next-count (+ accumulated (count (:data page)))
+              categories
+              (count-page-categories categories page
+                                     (when (some? count-limit)
+                                       (- count-limit accumulated)))
               more? (get-in page [:page-info :has-next-page?])
               next-bound (get-in page [:page-info :end-cursor])]
           (cond
             (and target (>= next-count target))
-            {:count count-limit :truncated? true}
+            (merge {:count count-limit :truncated? true} categories)
 
             more?
             (do
@@ -2239,10 +2387,10 @@
                  "Recursive count continuation made no cursor progress."
                  {:type :eacl.page/invalid-cursor
                   :eacl/error :eacl.page/invalid-cursor}))
-              (recur next-bound next-count))
+              (recur next-bound next-count categories))
 
             :else
-            {:count next-count :truncated? false}))))))
+            (merge {:count next-count :truncated? false} categories)))))))
 
 (defn- operator-count
   [db plan traversal query anchor subject-type result-type count-limit]
@@ -2258,10 +2406,12 @@
             :cover-plan (stable-cover-plan db plan)
             :subject-type subject-type
             :anchor-eid anchor-eid :count-limit count-limit
+            :qualification *qualification*
+            :result-policy (authorization-result/result-policy query)
             :scope-identity (operator-snapshot-proof-identity db)
             :cut-point! (stable-cut-point)
             :traversal-limits (stable-limits)})))
-       [:count :truncated?]))
+       [:count :truncated? :definite-count :conditional-count]))
     {:count 0 :truncated? false}))
 
 (defn- stable-count
@@ -2274,10 +2424,11 @@
                            {:adapter db
                             :fetch-fn fetch-fn
                             :plan plan
+                            :qualification *qualification*
                             :cut-point! (stable-cut-point)}
                            options))))]
     (report-adapter-attempts! attempts)
-    (select-keys counted [:count :truncated?])))
+    (select-keys counted [:count :truncated? :definite-count :conditional-count])))
 
 (defn- count-route
   "The count pipeline shared by both traversal directions: limit
@@ -2286,8 +2437,9 @@
   [db query {:keys [traversal root-type anchor subject-type result-type
                     stable-count-fn anchor-id-key]}]
   (let [limit (query-count-limit query)
+        policy (authorization-result/result-policy query)
         permission (:permission query)]
-    (count-response
+    (authorization-result/count-result
      (if-not (permission-root-defined? db root-type permission)
        {:count 0 :truncated? false}
        (let [plan (stable-plan
@@ -2298,8 +2450,9 @@
            (stable-count db plan stable-count-fn
                          {:subject-type subject-type
                           anchor-id-key (:id anchor)
+                          :result-policy policy
                           :count-limit limit}))))
-     limit)))
+     limit policy)))
 
 (defn count-resources
   [db {:keys [subject] :as query}]

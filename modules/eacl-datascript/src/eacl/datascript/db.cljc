@@ -66,6 +66,8 @@
   ([db entity attr prefix]
    (eavt-endpoint-prefix db entity attr prefix nil :asc))
   ([db entity attr prefix cursor-eid direction]
+   (eavt-endpoint-prefix db entity attr prefix cursor-eid direction false))
+  ([db entity attr prefix cursor-eid direction include-qualifier?]
    (if-not (and (nat-int? entity)
                 (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
@@ -83,7 +85,8 @@
        (if (and first-datom
                 (matching-eavt-prefix? entity attr prefix first-datom))
          (endpoint-pair/checked-datoms
-          (take-while #(matching-eavt-prefix? entity attr prefix %) scan))
+          (take-while #(matching-eavt-prefix? entity attr prefix %) scan)
+          include-qualifier?)
          [])))))
 
 (defn avet-endpoint-prefix
@@ -92,6 +95,8 @@
   ([db attr prefix]
    (avet-endpoint-prefix db attr prefix nil :asc))
   ([db attr prefix cursor-eid direction]
+   (avet-endpoint-prefix db attr prefix cursor-eid direction false))
+  ([db attr prefix cursor-eid direction include-qualifier?]
    (if-not (and (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
      []
@@ -105,5 +110,15 @@
        (if (and first-datom
                 (matching-avet-prefix? attr prefix first-datom))
          (endpoint-pair/checked-datoms
-          (take-while #(matching-avet-prefix? attr prefix %) scan))
+          (take-while #(matching-avet-prefix? attr prefix %) scan) include-qualifier?)
          [])))))
+
+(defn entity-facts [database eid]
+  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (ds/datoms database :eavt eid)))
+
+(defn entity-data [database eid]
+  (let [rows (entity-facts database eid)]
+    (when (seq rows)
+      (reduce (fn [result [a v]]
+                (if (= :eacl.relation/caveats a) (update result a (fnil conj #{}) v) (assoc result a v)))
+              {:db/id eid} rows))))

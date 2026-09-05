@@ -1,10 +1,15 @@
 (ns eacl.relay
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
   (:require [eacl.backend.source :as source]
+            [eacl.authorization.result :as authorization-result]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.temporal :as temporal]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
+            [eacl.relationships.mutations :as relationship-mutations]
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
@@ -55,7 +60,7 @@
   Change this value whenever edge identity, dependency-closure construction,
   or traversal boundary semantics change. Exact database identity alone does
   not make a boundary produced by a different evaluator ABI composable."
-  {:version 2
+  {:version 3
    :envelope 13
    :edge-identity :external-object-id-v1
    :dependency-context :relation-closure-v1
@@ -163,6 +168,14 @@
   [query]
   (plain-page-query (normalized-cursor-query query)))
 
+(defn temporal-mode [opts]
+  (if (= :snapshot (:authorization-target-kind opts)) :pinned :live))
+
+(defn- qualification-scope [opts]
+  (when-let [request (:qualification opts)]
+    (let [[format _ _ context evaluator] (qualification/exact-reuse-identity request)]
+      [format context evaluator (temporal-mode opts) backend/adapter-version])))
+
 (defn- cursor-scope
   "Digest of immutable operation/query/principal/configuration identity.
 
@@ -187,10 +200,8 @@
            (get-in opts [:execution-contract :aggregate-limits])
            :page-demand (select-keys query [:first :last])))
         scope-input
-         [cursor-continuation-semantic-abi
-          operation
-          execution-scope
-         scoped-query]]
+        (cond-> [cursor-continuation-semantic-abi operation execution-scope scoped-query]
+          (:qualification opts) (conj [:qualification (qualification-scope opts)]))]
     (cursor/memoized-context!
      (or (:cursor-codec-cache opts)
          (:cursor-construction-cache opts))
@@ -330,7 +341,7 @@
 
 (defn- request-dependency-context
   [adapter opts]
-  (if-let [relation-ids (request-relation-ids adapter opts)]
+  (if-let [relation-ids (when-not (:qualification opts) (request-relation-ids adapter opts))]
     (let [candidate (or (:request-proof-frame opts)
                         (some-> (:request-proof-frame-delay opts) force))
           frame
@@ -449,7 +460,10 @@
           envelope (:cursor decoded)
           _ (execution/check! (:execution-contract opts) :cursor-decoded)]
       (when-not (and (= 13 (:v envelope))
-                     (map? (:edge envelope)))
+                     (map? (:edge envelope))
+                     (if (:qualification opts)
+                       (temporal/cursor-certificate-valid? (:qualification-temporal envelope))
+                       (not (contains? envelope :qualification-temporal))))
         (invalid-cursor! "Invalid Relay cursor envelope."
                          {:reason :invalid-envelope}
                          nil))
@@ -659,8 +673,21 @@
     :cursor-graph 0
     :exact nil}))
 
+(defn- ensure-qualified-time! [opts envelope]
+  (when-let [request (:qualification opts)]
+    (let [certificate (:qualification-temporal envelope)
+          time (:time request)]
+      (when-not (and (= (temporal-mode opts) (:mode certificate))
+                     (temporal/cursor-time-valid? certificate time))
+        (throw (ex-info "This cursor no longer describes the requested temporal view. Start a new lookup without the cursor."
+                        {:type :eacl.pagination/restart-required :eacl/error :eacl.pagination/restart-required
+                         :reason (if (and (= :live (:mode certificate)) (not (:complete? certificate))
+                                          (not= time (:start-ms certificate)))
+                                   :temporal-certificate-incomplete :temporal-interval-exceeded)}))))))
+
 (defn- ensure-cursor-satisfies-request!
   [opts envelope]
+  (ensure-qualified-time! opts envelope)
   (when-let [floor (:cursor-freshness-floor opts)]
     (let [cursor-order (get-in envelope [:native-revision :revision])
           floor-order (:revision floor)]
@@ -948,6 +975,15 @@
         {:adapter page-adapter
          :selected-snapshot selected
          :continuation-context (:continuation-context page-context)
+         :qualification-certificate
+         (reduce (fn [prior [_ envelope]]
+                   (if-let [certificate (:qualification-temporal envelope)]
+                     (if prior
+                       (-> prior
+                           (update :valid-until-ms evidence/meet (:valid-until-ms certificate))
+                           (update :complete? #(and % (:complete? certificate))))
+                       certificate)
+                     prior)) nil envelopes)
          ;; A token can carry an expiry even when the receiving client's
          ;; current minting policy has no TTL. Such a request must never become
          ;; a pre-decode transport hit after that authenticated input expires.
@@ -984,13 +1020,32 @@
     (contains? query :before)
     (update :before #(decode-page-edge adapter opts operation query %))))
 
+(defn- outgoing-qualified-certificate [opts operation query page]
+  (when-let [request (:qualification opts)]
+    (let [time (:time request)
+          ;; Stored physical inspection has no time-dependent denotation.
+          ;; Other paths must supply a certificate covering their retained work.
+          current (or (:page-qualification-certificate opts) (:qualification-certificate page)
+                      (temporal/interval time nil
+                                         (and (= :read-relationships operation)
+                                              (nil? (:authorization query))
+                                              (not= :expiry-active (:relationship-state query)))))
+          prior (:cursor-qualification-certificate opts)]
+      (when-not (and (temporal/interval-valid? current)
+                     (temporal/reusable? current time true))
+        (throw (ex-info "Invalid qualification interval on a completed page."
+                        {:type :eacl.pagination/invalid-certificate :eacl/error :eacl.pagination/invalid-certificate})))
+      (temporal/cursor-certificate (temporal-mode opts) time prior current))))
+
 (defn- externalize-page-cursors
   [adapter opts operation query page]
   (let [context
         (delay
-          (or (::retained-cursor-dependency-context opts)
-              (:cursor-dependency-context opts)
-              (request-dependency-context adapter opts)))
+          (cond-> (or (::retained-cursor-dependency-context opts)
+                      (:cursor-dependency-context opts)
+                      (request-dependency-context adapter opts))
+            (:qualification opts)
+            (assoc :qualification-temporal (outgoing-qualified-certificate opts operation query page))))
         scope
         (delay
           (or (::retained-cursor-scope opts)
@@ -1003,6 +1058,7 @@
               (encode-page-edge
                adapter opts @scope @context edge))))]
     (-> page
+        (dissoc :qualification-certificate)
         (update-in [:page-info :start-cursor] encode-edge)
         (update-in [:page-info :end-cursor] encode-edge))))
 
@@ -1045,7 +1101,8 @@
 
 (defn externalize-page
   [adapter opts operation query page]
-  (let [objects (:data page)
+  (let [detailed? (= :detailed (authorization-result/result-policy query))
+        objects (if detailed? (mapv :object (:data page)) (:data page))
         identities
         (resolve-external-identities!
          adapter opts operation (map :id objects))
@@ -1083,6 +1140,7 @@
         (externalize-page-cursors
          adapter
          (assoc opts
+                :page-qualification-certificate (:qualification-certificate page)
                 ::retained-cursor-dependency-context
                 context
                 ::retained-cursor-scope
@@ -1091,9 +1149,11 @@
          operation query
          {:data
           (mapv
-           (fn [{:keys [type id]}]
-             (spice-object type (get identities id)))
-           objects)
+           (fn [item]
+             (let [{:keys [type id]} (if detailed? (:object item) item)
+                   object (spice-object type (get identities id))]
+               (if detailed? (assoc item :object object) object)))
+           (:data page))
           :page-info page-info})]
     (execution/check! (:execution-contract opts) :rendered-page-return)
     public-page))
@@ -1115,15 +1175,11 @@
       page
       :data
       (mapv
-       (fn [{:keys [subject relation resource]}]
-         (eacl/->Relationship
-          (eacl/->SpiceObject
-           (:type subject)
-           (get identities (:id subject))
-           (:relation subject))
-          relation
-          (eacl/->SpiceObject
-           (:type resource)
-           (get identities (:id resource))
-           (:relation resource))))
+       (fn [{:keys [subject relation resource] :as relationship}]
+         (merge
+          (eacl/->Relationship
+           (eacl/->SpiceObject (:type subject) (get identities (:id subject)) (:relation subject))
+           relation
+           (eacl/->SpiceObject (:type resource) (get identities (:id resource)) (:relation resource)))
+          (select-keys relationship relationship-mutations/qualifier-keys)))
        relationships)))))

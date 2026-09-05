@@ -11,7 +11,7 @@
             [exoscale.cel.parser :as cel]))
 
 (def implementation
-  {:adapter "eacl.caveats.jvm/2" :literal-lowering "bindings/1" :error-propagation "overloads-and-not/1"
+  {:adapter "eacl.caveats.jvm/3" :literal-lowering "bindings/1" :error-propagation "overloads-and-not/1"
    :artifacts [["com.exoscale/cel-parser" "0.1.8" "2554b657e335524115c29f45f9f2b45d1a868a495ddb24d5ac8758acf2aa982d"]
                ["com.exoscale/antlr-cel" "0.1.1" "d8f3012b5f24d89d87dea9e1de826dd578d7b3a47e2b9038256af6e821929d99"]
                ["org.antlr/antlr4-runtime" "4.9.2" "120053628dd598d43cb7ac6b9ecc72529dfa5a5fd3292d37cf638a81cc0075f6"]]})
@@ -83,7 +83,13 @@
 
 (defn- evaluate-definition [program-cache entity request bound]
   (try
-    (let [{:keys [parameters plan] :as compiled} (definition/decode-entity entity)
+    (let [content (definition/content-identity entity)
+          ;; Validate the complete current entity before using content identity.
+          ;; Portable plans and native programs share one bounded capacity;
+          ;; partial requests build only the portable plan.
+          {:keys [parameters plan] :as compiled}
+          (cache/get-or-build! program-cache [::portable-plan (:fingerprint capability) content]
+                               #(definition/decode-entity entity))
           prepared (partial/prepare-evaluation parameters plan
                                                (if (nil? request) {} request)
                                                (if (nil? bound) {} bound))]

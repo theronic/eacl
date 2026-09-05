@@ -9,8 +9,8 @@
 
 (defn- install! [conn]
   (let [database (d/db conn)
-        definitions (concat upgrade/metadata-schema
-                            (filter #(contains? storage/attributes (:db/ident %)) schema/datahike-schema))]
+        definitions (vals (into {} (map (juxt :db/ident identity))
+                                (concat upgrade/metadata-schema schema/datahike-schema)))]
     (doseq [attr storage/attributes
             :when (and (db/entid database attr) (not (admission/schema-compatible? database attr)))]
       (upgrade/fail! :incompatible-schema {:attribute attr}))
