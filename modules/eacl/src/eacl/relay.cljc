@@ -60,7 +60,7 @@
   Change this value whenever edge identity, dependency-closure construction,
   or traversal boundary semantics change. Exact database identity alone does
   not make a boundary produced by a different evaluator ABI composable."
-  {:version 2
+  {:version 3
    :envelope 13
    :edge-identity :external-object-id-v1
    :dependency-context :relation-closure-v1

@@ -120,7 +120,7 @@ endpoint identity CAS. For high-degree targets, prefer batched
 `repair-tx-batches` for existing damage.
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do

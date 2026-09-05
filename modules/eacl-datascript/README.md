@@ -129,7 +129,7 @@ repairs old peer-only ghosts by enumerating relation definitions and making
 exact index probes. Use the integrity report when the old eid is unknown.
 
 ```clojure
-{:deps {dev.eacl/eacl-datascript {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datascript {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do

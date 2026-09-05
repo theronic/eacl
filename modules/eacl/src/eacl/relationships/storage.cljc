@@ -9,7 +9,7 @@
 (def identity-arity 4)
 (def tuple-types
   [:db.type/keyword :db.type/ref :db.type/keyword :db.type/ref :db.type/ref])
-(def qualifier-capability :nil-only)
+(def qualifier-capability :qualified)
 (def format-id :eacl.relationship/endpoint-pair-v9-qualifier-ref)
 
 (def forward-attribute

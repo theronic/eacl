@@ -57,13 +57,26 @@ of freshly encoded host contexts. Their removal preserves canonical bytes and
 input admission. BMP/surrogate conformance and host-context differential tests
 check the changed boundaries, alongside the existing adversarial format suites.
 
-The fresh pre-activation JVM battery passes in both epochs: 1,431 tests /
-149,290 assertions with qualified authorization enabled and 149,323 assertions
-in legacy mode. The advanced ClojureScript battery passes 782 tests / 110,324
-assertions. The foundation gate verifies 82 obligations and 35,148 assertions;
-the qualified gate verifies 71 obligations and 607,000 assertions across 392
-tests, including 108 killed production controls. Source-closure reports 115
-public roots, 2,939 reachable definitions, and no forbidden match. The qualified
-checkpoint checks include rejecting a certificate that excludes the original
-observation time even when it includes the later request time.
-These counts describe the candidate before the default-epoch activation check.
+The activated v9 default passes the fresh JVM battery: 1,431 tests / 149,296
+assertions, plus 67 Datalevin tests / 8,172 assertions and 782 advanced
+ClojureScript tests / 110,313 assertions. All have zero failures and errors.
+The executable Caveat/expiry guide runs without an internal feature binding.
+The coordinated five-module 9.0.0-SNAPSHOT build, dependency audit, cold local
+Maven installation, and consumer smoke tests also pass. Datalevin remains
+excluded from Maven release eligibility until its fork artifact is published.
+
+The foundation gate verifies 82 obligations and 35,148 assertions; the qualified
+gate verifies 71 obligations and 607,000 assertions across 392 tests, including
+108 killed production controls. Source-closure reports 115 public roots, 2,939
+reachable definitions, and no forbidden match. Qualified checkpoint checks
+reject a certificate that excludes the original observation time even when it
+includes the later request time. Strict OpenSpec validation passes.
+
+The four-backend performance gate passes all 24 reports and 1,440 fixed budget
+comparisons. Raw samples, source hashes, the checker result, and the full metric
+matrix are retained in `docs/benchmarks/results/qualified-authorization-2026-09-05/`.
+The benchmark explicitly selected legacy and qualified epochs before changing
+the default and release/continuation ABI metadata. Numerical budgets were not
+relaxed. Before activation, the full legacy JVM battery also passed 1,431 tests /
+149,323 assertions; Datalevin's affected concurrent-write and cache contracts
+passed in both epochs.

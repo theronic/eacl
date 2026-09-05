@@ -27,7 +27,7 @@
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
 
-(def engine-version 8)
+(def engine-version 9)
 
 (def ^:dynamic *qualification*
   "The one selected-basis qualification request, bound by public orchestration."

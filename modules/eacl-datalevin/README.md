@@ -35,7 +35,7 @@ For a source checkout with the expected sibling layout, use:
 ```
 
 The reserved release coordinate is
-`dev.eacl/eacl-datalevin:8.0.0-SNAPSHOT`, depending on
+`dev.eacl/eacl-datalevin:9.0.0-SNAPSHOT`, depending on
 `dev.eacl/datalevin-embedded-eacl:1.0.2-eacl.2`. Neither is a usable published
 dependency until the release and clean remote-consumer gates pass.
 

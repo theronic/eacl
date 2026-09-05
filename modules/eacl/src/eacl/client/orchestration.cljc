@@ -103,9 +103,9 @@
          attach-runtime-cache-lifecycle)
 
 (def ^:dynamic *qualified-authorization-enabled?*
-  "Release gate for qualified serving. Enabled only after every Phase 3
-   traversal, publication, cache, cursor, and release obligation is complete."
-  false)
+  "V9 qualified serving. The legacy binding is retained for compatibility
+   qualification; public clients use the activated semantic epoch."
+  true)
 
 (defn- qualification-options [opts]
   (when *qualified-authorization-enabled?*

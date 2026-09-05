@@ -141,7 +141,7 @@ jobs:
             "(do
                (require '[eacl.build.release :as release] :reload)
                (release/build-install-smoke
-                {:version \"8.0.0-SNAPSHOT\"}))"
+                {:version \"9.0.0-SNAPSHOT\"}))"
 
       - name: Run DataScript ClojureScript tests
         run: |

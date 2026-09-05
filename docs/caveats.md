@@ -2,9 +2,8 @@
 
 V9 adds named Caveats, conditional permissions, and an exclusive expiration time
 on each Relationship. It uses the qualifier-eid storage ABI 9 landed in v8.
-This branch's serving switch remains gated until the final activation checks
-complete; the examples below describe the v9 contract. V8 and foundation-only
-readers reject non-nil qualifier references and cannot serve an activated store.
+Qualified serving is enabled by default in v9. V8 and foundation-only readers
+reject non-nil qualifier references and cannot serve an activated store.
 
 The [executable example](examples/caveats.clj) covers conditional checks,
 expiring grants and bans, pinned time, live-cursor restart, renewal, composed

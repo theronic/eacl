@@ -158,7 +158,7 @@ native child/subject order is not semantic. Configure structural ceilings with
 client-level `:permission-tree-limits`.
 
 ```clojure
-{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "9.0.0-SNAPSHOT"}}}
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
