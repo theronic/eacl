@@ -890,7 +890,15 @@
          request-context opts operation query resource-type permission
          relationship-dependency)]
     (try
-      (f page)
+      (binding [engine/*qualification*
+                (if (and engine/*qualification*
+                         (not (identical? (:adapter page) (request-context/adapter request-context))))
+                  (qualification/request-from-adapter
+                   (:adapter page)
+                   (assoc (qualification-options (:opts page))
+                          :basis (:snapshot-semantic-identity page)))
+                  engine/*qualification*)]
+        (f page))
       (finally
         (when-let [selected (:selected-snapshot page)]
           (source/release! selected))))))
@@ -1956,7 +1964,8 @@
                     engine/*proof-frame* request-proof-frame]
             (required-direct-relation-id
              adapter relation-resource-type relation relation-subject-type))
-          direct-match! (backend/direct-match-invoker adapter)
+          direct-match! ((if engine/*qualification*
+                           backend/direct-edge-invoker backend/direct-match-invoker) adapter)
           accept?
           (fn [candidate]
             (execution/check!
@@ -1980,15 +1989,17 @@
                 (execution/check!
                  contract :authorization-probe-complete consumed)
                 (batch/check-aggregate-limits! limits consumed nil))
-              matches?))
+              (if engine/*qualification*
+                (if matches? (qualification/qualify engine/*qualification* relation-id matches?) false)
+                matches?)))
           engine-options
           {:continuation-cache-fn
            (fn []
              (continuation-context
               adapter cursor-opts operation query))
            :candidate-filter
-           {:candidate-window candidate-window
-            :accept? accept?}}
+           (assoc {:candidate-window candidate-window}
+                  (if engine/*qualification* :accept-evidence :accept?) accept?)}
           internal-page
           (binding [engine/*schema-cache* @schema-cache
                     expression-persistence/*expression-limits*

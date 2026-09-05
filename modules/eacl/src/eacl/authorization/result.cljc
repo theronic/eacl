@@ -39,3 +39,24 @@
   (try
     (and (string? value) (not (evidence/fault? (evidence/decode value))))
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) _ false)))
+
+(defn lookup-result
+  "Keeps the reusable object identity separate from its detailed decision."
+  [object value]
+  (assoc (check-result value) :object object))
+
+(defn lookup-result-valid?
+  "Closed detailed lookup transport; no denials, faults, or inconsistent residuals."
+  [object? item]
+  (try
+    (and (map? item)
+         (object? (:object item))
+         (case (:permissionship item)
+           :has-permission
+           (= item (lookup-result (:object item) true))
+           :conditional-permission
+           (let [value (evidence/decode (:residual item))]
+             (and (= :conditional-permission (evidence/permissionship value))
+                  (= item (lookup-result (:object item) value))))
+           false))
+    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) _ false)))

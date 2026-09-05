@@ -80,9 +80,30 @@
         page-binding stable-page/execution-binding
         count-page-categories @#'engine/count-page-categories
         count-result result/count-result
+        inclusive-candidates @#'engine/fetch-inclusive-candidates
+        evaluate-emissions @#'lookup/evaluate-emissions
         request-schema @#'orchestration/request-schema
         enqueue @#'recursive/enqueue-evidence!]
-    {:public-counts-ignore-requested-policy
+    {:detailed-lookups-drop-emission-evidence
+     {:gate #'public-lookup-test/public-qualified-lookups-preserve-detailed-results-and-definite-defaults
+      :redefs {#'engine/with-emission-evidence (fn [page _] page)}}
+     :definite-lookup-omits-final-policy-filter
+     {:gate #'public-lookup-test/public-qualified-lookups-preserve-detailed-results-and-definite-defaults
+      :redefs {#'least-path/make-env
+               (fn [options ctx] (assoc (least-env options ctx) :result-policy :detailed))}}
+     :filtered-lookahead-drops-recovered-root-evidence
+     {:gate #'public-lookup-test/public-qualified-pages-retain-evidence-through-cursors-filters-and-ranges
+      :redefs {#'engine/fetch-inclusive-candidates
+               (fn [rtype fetch bound limit _] (inclusive-candidates rtype fetch bound limit nil))}}
+     :qualified-filter-evidence-is-treated-as-boolean
+     {:gate #'public-lookup-test/qualified-relationship-filters-compose-with-whole-permission-evidence
+      :redefs {#'lookup/evaluate-emissions
+               (fn [options cover emissions]
+                 (evaluate-emissions (dissoc options :accept-result-evidence) cover emissions))}}
+     :rendered-lookup-cache-accepts-inconsistent-residuals
+     {:gate #'public-lookup-test/detailed-lookup-cache-ingress-is-policy-and-residual-aware
+      :redefs {#'cache/rendered-page-entry-valid? (constantly true)}}
+     :public-counts-ignore-requested-policy
      {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
       :redefs {#'result/result-policy (constantly :detailed)}}
      :public-counts-drop-conditional-category
@@ -326,7 +347,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 59 (count cases)))
+    (is (= 64 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

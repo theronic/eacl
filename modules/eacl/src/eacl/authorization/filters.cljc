@@ -5,7 +5,7 @@
 (def ^:private page-control-keys
   #{:first :last :after :before :cursor :limit :page/basis
     :consistency :cache? :populate-cache? :evaluation
-    :timeout-ms :cancellation-token :caveat-context
+    :timeout-ms :cancellation-token :caveat-context :result-policy
     :aggregate-limits})
 (def ^:private lookup-resource-keys
   (into page-control-keys

@@ -1,6 +1,7 @@
 (ns eacl.relay
   "Portable opaque Relay cursor handling for synchronous v8 adapters."
   (:require [eacl.backend.source :as source]
+            [eacl.authorization.result :as authorization-result]
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.consistency :as consistency]
@@ -1045,7 +1046,8 @@
 
 (defn externalize-page
   [adapter opts operation query page]
-  (let [objects (:data page)
+  (let [detailed? (= :detailed (authorization-result/result-policy query))
+        objects (if detailed? (mapv :object (:data page)) (:data page))
         identities
         (resolve-external-identities!
          adapter opts operation (map :id objects))
@@ -1091,9 +1093,11 @@
          operation query
          {:data
           (mapv
-           (fn [{:keys [type id]}]
-             (spice-object type (get identities id)))
-           objects)
+           (fn [item]
+             (let [{:keys [type id]} (if detailed? (:object item) item)
+                   object (spice-object type (get identities id))]
+               (if detailed? (assoc item :object object) object)))
+           (:data page))
           :page-info page-info})]
     (execution/check! (:execution-contract opts) :rendered-page-return)
     public-page))

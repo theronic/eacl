@@ -952,11 +952,14 @@
         page-info (:page-info page)
         page-info-fields (when (map? page-info) (set (keys page-info)))
         operation (:operation semantic-key)
+        detailed? (= :detailed (get-in semantic-key [:query :public :result-policy]))
         rendered-item?
         (case operation
           :read-relationships rendered-relationship-shape?
           (:lookup-resources :lookup-subjects)
-          rendered-spice-object-shape?
+          (if detailed?
+            #(authorization-result/lookup-result-valid? rendered-spice-object-shape? %)
+            rendered-spice-object-shape?)
           ;; The one-argument public predicate accepts either supported page
           ;; shape; publication always supplies the operation-specific key.
           (fn [item]
@@ -1020,6 +1023,16 @@
           :else false))
       true)))
 
+(defn- lookup-page-answer?
+  [semantic-key value]
+  (let [query (:query semantic-key)
+        detailed? (= :detailed (:result-policy (or (:internal query) (:public query))))]
+    (and (page-answer? value)
+         (if detailed?
+           (every? #(authorization-result/lookup-result-valid? rendered-spice-object-shape? %)
+                   (:data value))
+           (not-any? #(and (map? %) (contains? % :object)) (:data value))))))
+
 (defn completed-answer-value-valid?
   "Validates one completed authorization answer against its semantic key.
 
@@ -1034,8 +1047,8 @@
                  (authorization-result/cache-value? value)
                  (boolean? value))
          :read-relationships (page-answer? value)
-         :lookup-resources (page-answer? value)
-         :lookup-subjects (page-answer? value)
+         :lookup-resources (lookup-page-answer? semantic-key value)
+         :lookup-subjects (lookup-page-answer? semantic-key value)
          :count-resources (count-answer? semantic-key value)
          :count-subjects (count-answer? semantic-key value)
          :expand-permission-tree (permission-tree-answer? value)

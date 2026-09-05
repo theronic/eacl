@@ -244,7 +244,7 @@
 (defn- evaluate-emissions
   [{:keys [adapter plan traversal subject-type anchor-eid
            cache-lookup vector-limits permission specialization-node
-           accept-result? scope-identity qualification result-policy]}
+           accept-result? accept-result-evidence scope-identity qualification result-policy]}
    cover-plan emissions]
   (let [permission (or permission (:root plan))
         node-id (get (operator-plan/expression-roots plan) permission)
@@ -273,6 +273,14 @@
            cache-lookup (assoc :cache-lookup cache-lookup)))]
     (mapv (fn [emission witness decision]
             (when qualification (evidence/throw-if-fault! decision))
+            (let [decision (if (and accept-result-evidence
+                                    (if (= result-policy :detailed)
+                                      (not (evidence/no? decision))
+                                      (evidence/has? decision)))
+                             (evidence/throw-if-fault!
+                              (evidence/combine :intersection decision
+                                                (accept-result-evidence (:value emission))))
+                             decision)]
             (cond-> (assoc emission
                            :accepted?
                            (boolean
@@ -282,7 +290,7 @@
                                  (or (nil? accept-result?)
                                      (accept-result? (:value emission))))))
               qualification (assoc :evidence decision)
-              (not qualification) (assoc :true-nodes witness)))
+              (not qualification) (assoc :true-nodes witness))))
           emissions witnesses decisions)))
 
 (defn- add-counters [total delta]

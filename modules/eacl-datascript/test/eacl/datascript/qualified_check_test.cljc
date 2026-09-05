@@ -30,6 +30,10 @@
                           permission either = member + writer
                           permission both = (member & writer) - banned
                           permission recursive = member + (parent->recursive & writer)
+                          permission walk = member + parent->walk
+                          permission via = parent->direct
+                          permission delegated = direct
+                          permission united = (member + writer) & writer
                         }")
     (ds/transact! conn [{:eacl/id "user"} {:eacl/id "folder"}])
     (doseq [relation [:member :writer :banned]]

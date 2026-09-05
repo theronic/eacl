@@ -29,6 +29,7 @@
   `:max-commands`/`:max-values` budgets mirror the probe check's and fail
   typed as `:eacl.reducer/limit-exceeded`."
   (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.result :as authorization-result]
             [eacl.authorization.qualification :as qualification]
             [eacl.backend.v8 :as backend]
             [eacl.engine.stable-reducer :as reducer]
@@ -1251,6 +1252,11 @@
      :traversal traversal
      :candidate-accept? (if legacy-qualified? (legacy-node-acceptor options) candidate-accept?)
      :qualification qualification
+     ;; Internal positive covers preserve possible candidates. Public callers
+     ;; supply their policy explicitly; apply it only to complete root results.
+     :result-policy (if (contains? options :result-policy)
+                      (authorization-result/result-policy options)
+                      :detailed)
      :legacy-qualified? legacy-qualified?
      ;; Probe options are invariant per page: plan, subject type, budgets and
      ;; the cut point are selected once here, never re-attached per witness.
@@ -1273,7 +1279,12 @@
         (if (nil? emission)
           {:emissions emissions :has-more? false :exhausted? true}
           (do (vswap! (:counters (:ctx env)) update :emissions inc)
-              (recur level' (conj emissions emission))))))))
+              (recur level'
+                     (if (and (:qualification env)
+                              (= :definite (:result-policy env))
+                              (not (evidence/has? (get emission :evidence true))))
+                       emissions
+                       (conj emissions emission)))))))))
 
 (defn forward-page
   "One least-path page of root entities for the subject.

@@ -2,6 +2,8 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [datascript.core :as ds]
             [eacl.authorization.context-test :as errors]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.result :as result]
             [eacl.core :as eacl]
             [eacl.cache :as cache]
             [eacl.client.orchestration :as orchestration]
@@ -17,6 +19,52 @@
 
 (defn count! [client direction query]
   ((if (= :forward direction) eacl/count-resources eacl/count-subjects) client query))
+
+(defn lookup! [client direction query]
+  ((if (= :forward direction) eacl/lookup-resources eacl/lookup-subjects) client query))
+
+(defn drain-lookup [client direction order query]
+  (loop [boundary nil pages 0 collected []]
+    (when (> pages 30) (throw (ex-info "Qualified lookup failed to progress" {})))
+    (let [page (lookup! client direction
+                        (cond-> query boundary (assoc (if (= order :asc) :after :before) boundary)))
+          data (:data page)
+          collected (if (= order :asc) (into collected data) (into data collected))
+          more? (get-in page [:page-info (if (= order :asc) :has-next-page? :has-previous-page?)])
+          next-boundary (get-in page [:page-info (if (= order :asc) :end-cursor :start-cursor)])]
+      (if more?
+        (do (is (and next-boundary (not= boundary next-boundary)))
+            (recur next-boundary (inc pages) collected))
+        collected))))
+
+(deftest public-qualified-lookups-preserve-detailed-results-and-definite-defaults
+  (let [{:keys [client now check]} (fixture/fixture)]
+    (binding [orchestration/*qualified-authorization-enabled?* true]
+      (doseq [time [99 100 200]]
+        (reset! now time)
+        (doseq [context [{} {"flag" true} {"flag" false}]
+                permission [:direct :either :both :recursive :walk :via :delegated :united]
+                direction [:forward :reverse]
+                policy [:definite :detailed]]
+          (let [check (assoc check :permission permission :caveat-context context)
+                decision (dissoc (eacl/check-permission client check) :cached? :cache-basis :evaluation)
+                membership (:permissionship decision)
+                object (get check (if (= :forward direction) :resource :subject))
+                selected? (if (= :detailed policy)
+                            (not= :no-permission membership)
+                            (= :has-permission membership))
+                expected (if selected?
+                           [(if (= :detailed policy) (assoc decision :object object) object)]
+                           [])
+                query (assoc (count-query check direction policy context) :first 1)
+                cold (lookup! client direction query)
+                warm (lookup! client direction query)
+                uncached (lookup! client direction (assoc query :cache? false))]
+            (is (= expected (:data cold) (:data warm) (:data uncached)))
+            (is (:cached? warm)))
+          (let [query (assoc (count-query (assoc check :permission permission) direction :definite context) :first 1)]
+            (is (= (:data (lookup! client direction query))
+                   (:data (lookup! client direction (dissoc query :result-policy)))))))))))
 
 (deftest public-qualified-counts-distinguish-conditional-results-and-expiring-bans
   (let [{:keys [client now check]} (fixture/fixture)]
@@ -63,10 +111,11 @@
   (let [conn (datascript/create-conn)
         ticks (atom 0)
         client (datascript/make-client conn {:clock #(swap! ticks inc)})]
-    (doseq [direction [:forward :reverse]
+    (doseq [operation [count! lookup!]
+            direction [:forward :reverse]
             policy [nil false "detailed" :unknown]]
       (is (= :eacl.authorization/invalid-result-policy
-             (:type (errors/error-data #(count! client direction {:result-policy policy}))))))
+             (:type (errors/error-data #(operation client direction {:result-policy policy}))))))
     (is (zero? @ticks))))
 
 (deftest detailed-count-cache-ingress-requires-consistent-closed-categories
@@ -94,34 +143,42 @@
     (binding [orchestration/*qualified-authorization-enabled?* true]
       (doseq [direction [:forward :reverse]
               policy [:definite :detailed]
+              operation [count! lookup!]
               permission [:direct :recursive]]
         (is (= :eacl.authorization/evaluation-failure
                (:type (errors/error-data
-                       #(count! client direction (count-query (assoc check :permission permission)
-                                                              direction policy {}))))))))))
+                       #(operation client direction (count-query (assoc check :permission permission)
+                                                                 direction policy {}))))))))))
+
+(defn mixed-fixture [direction n]
+  (let [{:keys [conn client check writer] :as env} (fixture/fixture)
+        candidates (into [(get check (if (= :forward direction) :resource :subject))]
+                         (map #(eacl/spice-object (if (= :forward direction) :folder :user)
+                                                  (str "candidate-" %)))
+                         (range (dec n)))
+        db (ds/db conn)
+        relation (ds/entid db [:eacl.relation/resource-type+relation-name+subject-type [:folder :member :user]])
+        caveat (ds/entid db [:eacl.caveat/name "enabled"])]
+    (doseq [[index candidate] (map-indexed vector (next candidates))]
+      (let [subject (if (= :forward direction) (:subject check) candidate)
+            resource (if (= :forward direction) candidate (:resource check))]
+        (ds/transact! conn [{:eacl/id (:id candidate)}])
+        (eacl/create-relationship! client (eacl/->Relationship subject :member resource))
+        (eacl/create-relationship! client (eacl/->Relationship subject :writer resource))
+        (when (= :forward direction)
+          (eacl/create-relationship! client (eacl/->Relationship resource :parent resource)))
+        (let [db (ds/db conn)]
+          (staged/write! writer :replace
+                         [:user (ds/entid db [:eacl/id (:id subject)]) relation
+                          :folder (ds/entid db [:eacl/id (:id resource)])]
+                         (cond-> {:caveat caveat :valid-until-ms 200}
+                           (not= 0 (mod index 3))
+                           (assoc :caveat-context {"flag" (= 1 (mod index 3))}))))))
+    (assoc env :candidates candidates)))
 
 (deftest qualified-counts-cross-recursive-batch-boundaries-with-mixed-categories
   (doseq [direction [:forward :reverse]]
-    (let [{:keys [conn client check writer]} (fixture/fixture)
-          candidates (into [(get check (if (= :forward direction) :resource :subject))]
-                           (map #(eacl/spice-object (if (= :forward direction) :folder :user)
-                                                    (str "candidate-" %)))
-                           (range 99))
-          db (ds/db conn)
-          relation (ds/entid db [:eacl.relation/resource-type+relation-name+subject-type [:folder :member :user]])
-          caveat (ds/entid db [:eacl.caveat/name "enabled"])]
-      (doseq [[index candidate] (map-indexed vector (next candidates))]
-        (let [subject (if (= :forward direction) (:subject check) candidate)
-              resource (if (= :forward direction) candidate (:resource check))]
-          (ds/transact! conn [{:eacl/id (:id candidate)}])
-          (eacl/create-relationship! client (eacl/->Relationship subject :member resource))
-          (let [db (ds/db conn)]
-            (staged/write! writer :replace
-                           [:user (ds/entid db [:eacl/id (:id subject)]) relation
-                            :folder (ds/entid db [:eacl/id (:id resource)])]
-                           (cond-> {:caveat caveat :valid-until-ms 200}
-                             (not= 0 (mod index 3))
-                             (assoc :caveat-context {"flag" (= 1 (mod index 3))}))))))
+    (let [{:keys [client check candidates]} (mixed-fixture direction 100)]
       (binding [orchestration/*qualified-authorization-enabled?* true]
         (doseq [permission [:direct :recursive]
                 policy [:definite :detailed]]
@@ -149,3 +206,76 @@
                   (is (<= 0 (:definite-count capped) definite)))
                 (when (= :detailed policy)
                   (is (<= 0 (:conditional-count capped) conditional)))))))))))
+
+(deftest public-qualified-pages-retain-evidence-through-cursors-filters-and-ranges
+  (doseq [direction [:forward :reverse]]
+    (let [{:keys [client check candidates]} (mixed-fixture direction 5)]
+      (binding [orchestration/*qualified-authorization-enabled?* true]
+        (doseq [permission [:direct :recursive :walk :via]
+                policy [:definite :detailed]]
+          (let [check (assoc check :permission permission)
+                point-for (fn [object]
+                            (dissoc (eacl/check-permission
+                                     client (assoc check (if (= :forward direction) :resource :subject) object))
+                                    :cached? :cache-basis :evaluation))
+                expected (into {} (keep (fn [object]
+                                          (let [decision (point-for object)]
+                                            (when (if (= :detailed policy)
+                                                    (not= :no-permission (:permissionship decision))
+                                                    (:allowed? decision))
+                                              [(:id object) (if (= :detailed policy)
+                                                              (assoc decision :object object) object)]))))
+                               candidates)
+                query (assoc (count-query check direction policy {}) :evaluation :complete-denotation)
+                id-of (if (= :detailed policy) #(get-in % [:object :id]) :id)]
+            (doseq [size [1 3]
+                    cached? [true false]
+                    filtered? [false true]]
+              (let [query (cond-> (assoc query :cache? cached?)
+                            filtered? (assoc (if (= :forward direction) :resource/relationship :subject/relationship)
+                                             (if (= :forward direction)
+                                               {:relation :writer :subject (:subject check)}
+                                               {:relation :writer :resource (:resource check)})))
+                    forward (drain-lookup client direction :asc (assoc query :first size))
+                    backward (drain-lookup client direction :desc (assoc query :last size))]
+                (is (= [expected (count expected) forward]
+                       [(into {} (map (juxt id-of identity)) forward) (count forward) backward]))))))))))
+
+(deftest qualified-relationship-filters-compose-with-whole-permission-evidence
+  (let [{:keys [client now check]} (fixture/fixture)]
+    (binding [orchestration/*qualified-authorization-enabled?* true]
+      (doseq [time [99 200]]
+        (reset! now time)
+        (doseq [direction [:forward :reverse]
+                permission [:either :direct :walk :recursive :united]
+                policy [:definite :detailed]
+                context [{} {"flag" true} {"flag" false}]]
+          (let [query (assoc (count-query (assoc check :permission permission) direction policy context) :first 1)
+                filtered (assoc query (if (= :forward direction) :resource/relationship :subject/relationship)
+                                (if (= :forward direction)
+                                  {:relation :member :subject (:subject check)}
+                                  {:relation :member :resource (:resource check)}))
+                expected (:data (lookup! client direction
+                                         (assoc query :permission :direct)))]
+            (is (= expected (:data (lookup! client direction filtered))))))))))
+
+(deftest detailed-lookup-cache-ingress-is-policy-and-residual-aware
+  (doseq [operation [:lookup-resources :lookup-subjects]]
+    (let [object (eacl/spice-object :folder "folder")
+          conditional (result/lookup-result object (evidence/conditional [:a] ["flag"]))
+          info {:start-cursor nil :end-cursor nil :has-next-page? false :has-previous-page? false}
+          key {:operation operation :query {:public {:result-policy :detailed}}}
+          valid {:data [conditional] :page-info info}
+          validate (fn [key page]
+                     [(cache/completed-answer-value-valid? operation key page)
+                      (cache/rendered-page-entry-valid?
+                       key {:format cache/rendered-page-entry-format :page page})])]
+      (is (= [true true] (validate key valid)))
+      (is (= [false false] (validate (assoc-in key [:query :public :result-policy] :definite) valid)))
+      (doseq [item [object
+                    (assoc conditional :allowed? true)
+                    (assoc conditional :missing-fields ["other"])
+                    (assoc conditional :residual (evidence/encode true))
+                    (assoc conditional :residual (evidence/encode false))
+                    (assoc conditional :residual (evidence/encode (evidence/fault :invalid :qualifier)))]]
+        (is (= [false false] (validate key (assoc valid :data [item]))))))))
