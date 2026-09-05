@@ -28,6 +28,7 @@ const roots = [
   "eacl.caveats.jvm/evaluate-definition",
   "eacl.relationships.qualifier-integrity/proof-input",
   "eacl.relationships.qualifier-integrity/report",
+  "eacl.relationships.qualifier-integrity/repair-pair!",
   "eacl.relationships.qualifier-integrity/cleanup-orphans!",
   "eacl.relationships.staged/prepare!",
   "eacl.relationships.staged/plan-current",

@@ -54,7 +54,7 @@
                (:reason (error-data #(staged/plan-current w :create identity semantic))))))
       (let [before (entity (snapshot) relation)
             invalid (staged/plan-current w :create identity prepared
-                                 [[:db.fn/cas subject :app/flag 42 1]])]
+                                         [[:db.fn/cas subject :app/flag 42 1]])]
         (is (some? (error-data #(tx! (:tx-data invalid)))))
         (is (empty? (forward)))
         (is (= before (entity (snapshot) relation)) "failed publication leaves Relation stamps unchanged"))
@@ -96,8 +96,8 @@
         (let [pending (atom nil)]
           (is (= :eacl.schema/concurrent-write
                  (:type (error-data #(interleave!
-                                       (fn [] (reset! pending (staged/prepare! w identity semantic)))
-                                       (fn [] (write-schema! persistence/base-schema)))))))
+                                      (fn [] (reset! pending (staged/prepare! w identity semantic)))
+                                      (fn [] (write-schema! persistence/base-schema)))))))
           (is (some? (entid (snapshot) [:eacl.caveat/name "enabled"])))
           (staged/cleanup! w @pending)))
       (let [tempid ((:tempid native))
@@ -115,4 +115,35 @@
         (let [collected (integrity/cleanup-orphans! (writer))]
           (is (= 1 (count (:qualifiers collected))))
           (is (= 1 (count (forward))) "orphan cleanup never retracts the attached qualifier"))
-        (staged/write! w :delete identity nil)))))
+        (staged/write! w :delete identity nil))
+      (doseq [direction [:forward :reverse]]
+        (staged/write! w :create identity {:valid-until-ms 7000})
+        (let [qid (current-qid) before (proof)
+              attribute (if (= :forward direction) storage/forward-attribute storage/reverse-attribute)
+              owner (if (= :forward direction) subject resource)
+              value (if (= :forward direction) (first (forward)) (first (reverse)))
+              damage (fn []
+                       (tx! ((:with-snapshot native)
+                             (fn [db] (conj (vec ((:fence native) db relation false)) [:db/retract owner attribute value])))))]
+          (damage)
+          (let [plan ((:with-snapshot native) #(integrity/repair-pair-plan native % identity))]
+            (is (= qid (:qualifier plan)))
+            (is (= direction (:direction plan)))
+            (tx! [[:db/add subject :app/flag 71]])
+            (is (some? (error-data #(tx! (:tx-data plan)))))
+            (is (empty? (if (= direction :forward) (forward) (reverse)))))
+          (integrity/repair-pair! w identity)
+          (is (= qid (current-qid)))
+          (is (= qid (nth (first (reverse)) 4)))
+          (is (= (get-in before [:qualifiers qid]) (get-in (proof) [:qualifiers qid]))
+              "repair retains qualifier facts and assertion version")
+          (is (= :healthy (:status (integrity/report (proof)))))
+          (damage)
+          (tx! [[:db/retractEntity qid]])
+          (is (= :eacl.integrity/not-repairable
+                 (:type (error-data #(integrity/repair-pair! w identity)))))
+          (tx! ((:with-snapshot native)
+                (fn [db]
+                  (into ((:fence native) db relation false)
+                        [[:db/retract subject storage/forward-attribute [:user relation :doc resource qid]]
+                         [:db/retract resource storage/reverse-attribute [:doc relation :user subject qid]]])))))))))

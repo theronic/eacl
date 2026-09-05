@@ -7,8 +7,8 @@ the repository root with a project `:dev:caveats-jvm` nREPL:
 EACL_NREPL_PORT=7788 bin/formal fast
 ```
 
-The gate verifies four independent Dafny modules (78 obligations), executes
-34,856 assertions through nREPL, and requires all eleven registered mutation
+The gate verifies four independent Dafny modules (82 obligations), executes
+35,148 assertions through nREPL, and requires all eleven registered mutation
 controls to be exercised and killed. `gate.lock.json` locks the profile and
 mutation inventory hashes, proof count, assertion count, and per-proof resource
 limits. Reports are generated under ignored `target/formal/caveats/`. The
@@ -76,12 +76,12 @@ The focused portable suite passes 101 assertions on JVM and Node/CLJS.
 
 ## Production refinement gate
 
-The fast gate now checks 34,856 assertions: the original 19,847 finite/model
-and portable-plan assertions, 9,666 native lifecycle assertions (Datomic,
+The fast gate now checks 35,148 assertions: the original 19,847 plus 24 peer-repair model finite/model
+and portable-plan assertions, 9,934 native lifecycle assertions (Datomic,
 DataScript, both Datahike layouts), 5,320 complete/partial JVM evaluator model
 comparisons, and 23 inventory/baseline/mutation checks for all eleven registered
 production mutations. Run with the `:caveats-jvm` alias in the dev nREPL.
-Datalevin's separately pinned local-fork campaign adds 2,500 assertions through
+Datalevin's separately pinned local-fork campaign adds 2,557 assertions through
 `native_datalevin_bridge.clj`; it is excluded from public CI until that runtime
 artifact is published. All native campaigns own and dispose their stores.
 

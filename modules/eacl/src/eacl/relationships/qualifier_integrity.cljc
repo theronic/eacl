@@ -41,8 +41,8 @@
                               :let [entity ((:entity native) db rid)]]
                           [rid {:generation (get entity (:relation-version-attribute native))
                                 :definition (select-keys entity [:eacl.relation/resource-type :eacl.relation/subject-type
-                                                                  :eacl.relation/relation-name :eacl.relation/caveats
-                                                                  :eacl.relation/allows-unqualified?])}]))
+                                                                 :eacl.relation/relation-name :eacl.relation/caveats
+                                                                 :eacl.relation/allows-unqualified?])}]))
         duplicates
         (into #{}
               (filter (fn [[st s r rt o]]
@@ -95,27 +95,27 @@
                      {:type :eacl.integrity/source-mismatch :eacl/error :eacl.integrity/source-mismatch})))
    (let [events
          (mapcat
-           (fn [[qid {:keys [entity version] :as captured}]]
-             (let [{:keys [forward reverse]} (get-in frame [:references qid])
-                   owners (set (concat forward reverse))
-                   prior (get-in before [:qualifiers qid])
-                   reason (when entity (malformed-reason frame entity))
-                   mutable? (and (:entity prior) entity
-                                 (or (not= (:entity prior) entity)
-                                     (and version (:version prior) (not= version (:version prior)))))
-                   referenced? (seq owners)]
-               (cond-> []
-                 (and referenced? (nil? entity)) (conj {:kind :missing-qualifier :qualifier qid})
-                 (> (count owners) 1) (conj {:kind :shared-qualifier :qualifier qid})
-                 (and referenced? (not= (frequencies forward) (frequencies reverse)))
-                 (conj {:kind :asymmetric-qualifier :qualifier qid})
-                 reason (conj {:kind :malformed-qualifier :qualifier qid :reason reason})
-                 mutable? (conj {:kind :mutable-qualifier :qualifier qid})
-                 (and entity (some #(not (valid-relation-proof? frame entity %)) owners))
-                 (conj {:kind :invalid-relation-proof :qualifier qid})
-                 (and entity (not referenced?)) (conj {:kind :unattached-qualifier :qualifier qid
-                                                     :cleanup-eligible? (and (nil? reason) (not mutable?))}))))
-           (sort-by key (:qualifiers frame)))
+          (fn [[qid {:keys [entity version] :as captured}]]
+            (let [{:keys [forward reverse]} (get-in frame [:references qid])
+                  owners (set (concat forward reverse))
+                  prior (get-in before [:qualifiers qid])
+                  reason (when entity (malformed-reason frame entity))
+                  mutable? (and (:entity prior) entity
+                                (or (not= (:entity prior) entity)
+                                    (and version (:version prior) (not= version (:version prior)))))
+                  referenced? (seq owners)]
+              (cond-> []
+                (and referenced? (nil? entity)) (conj {:kind :missing-qualifier :qualifier qid})
+                (> (count owners) 1) (conj {:kind :shared-qualifier :qualifier qid})
+                (and referenced? (not= (frequencies forward) (frequencies reverse)))
+                (conj {:kind :asymmetric-qualifier :qualifier qid})
+                reason (conj {:kind :malformed-qualifier :qualifier qid :reason reason})
+                mutable? (conj {:kind :mutable-qualifier :qualifier qid})
+                (and entity (some #(not (valid-relation-proof? frame entity %)) owners))
+                (conj {:kind :invalid-relation-proof :qualifier qid})
+                (and entity (not referenced?)) (conj {:kind :unattached-qualifier :qualifier qid
+                                                      :cleanup-eligible? (and (nil? reason) (not mutable?))}))))
+          (sort-by key (:qualifiers frame)))
          events (concat events (map #(hash-map :kind :duplicate-relationship-identity :identity %)
                                     (sort (:duplicate-identities frame))))
          summary
@@ -171,3 +171,47 @@
                  (cleanup-plan native db options)))]
      (when (seq (:tx-data plan)) ((:transact! native) (:tx-data plan)))
      (dissoc plan :tx-data))))
+
+(defn repair-pair-plan
+  "Offline repair of exactly one missing qualified endpoint half. Requires a
+   valid, singly owned qualifier and no other corruption in the captured frame.
+   An exact head guard serializes the ownership scan with publication."
+  [native db relationship]
+  (let [frame (proof-input native db)
+        report (report frame)
+        candidates (filter (fn [[_ {:keys [forward reverse]}]]
+                             (some #{relationship} (concat forward reverse))) (:references frame))
+        [qid {:keys [forward reverse]}] (first candidates)
+        one-half? (or (and (= [relationship] forward) (empty? reverse))
+                      (and (empty? forward) (= [relationship] reverse)))]
+    (when-not (and (= 1 (count candidates)) one-half?
+                   (= {:asymmetric-qualifier 1} (dissoc (:counts report) :unattached-qualifier)))
+      (throw (ex-info "Peer repair requires one valid, singly owned qualified half."
+                      {:type :eacl.integrity/not-repairable :eacl/error :eacl.integrity/not-repairable
+                       :counts (:counts report)})))
+    (let [[st subject relation rt resource] relationship
+          _ (when-not (every? #(seq (dissoc ((:entity native) db %) :db/id)) [subject resource])
+              (throw (ex-info "Peer repair cannot recreate a deleted endpoint."
+                              {:type :eacl.integrity/not-repairable :eacl/error :eacl.integrity/not-repairable
+                               :reason :missing-endpoint})))
+          missing-direction (if (seq forward) :reverse :forward)
+          datom (if (= :reverse missing-direction)
+                  [:db/add resource storage/reverse-attribute (pair/reverse-value rt relation st subject qid)]
+                  [:db/add subject storage/forward-attribute (pair/forward-value st relation rt resource qid)])]
+      {:source (:source frame) :revision (:revision frame) :relationship relationship
+       :qualifier qid :direction missing-direction
+       :tx-data (into [((:head-guard native) db)]
+                      (concat ((:fence native) db relation false)
+                              [((:assert-entity native) qid (get-in frame [:qualifiers qid :facts])) datom]))})))
+
+(defn repair-pair!
+  "Restores one missing peer while preserving the existing qualifier. This is
+   an explicit offline staged operation, never a serving read-side repair."
+  [writer relationship]
+  (let [native (:native writer)
+        plan ((:with-snapshot native) #(repair-pair-plan native % relationship))]
+    (when-not (= {:backend (:backend native) :id (:source writer)} (:source plan))
+      (throw (ex-info "Qualifier repair source changed."
+                      {:type :eacl.integrity/source-mismatch :eacl/error :eacl.integrity/source-mismatch})))
+    ((:transact! native) (:tx-data plan))
+    (dissoc plan :tx-data)))

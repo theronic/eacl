@@ -180,6 +180,13 @@ schema generation, owning Relation stamps and available assertion versions.
 Before/after comparison must use the same source. A single snapshot does not
 prove historical immutability, especially on an exact-only backend.
 
+`eacl.relationships.qualifier-integrity/repair-pair!` restores one missing
+qualified endpoint half after validating the remaining half, qualifier, native
+endpoints, Relation allowance and global ownership evidence. It preserves the
+qid and qualifier facts, advances the Relation stamp, and requires an exact
+native head guard. Other corruption must be resolved before this operation.
+It never creates a qualifier or repairs data during a serving read.
+
 `staged/cleanup!` removes an unchanged unattached preparation through its handle.
 After restart, `eacl.relationships.qualifier-integrity/cleanup-orphans!` can
 collect one bounded batch (default 100, maximum 1000). This is an explicit

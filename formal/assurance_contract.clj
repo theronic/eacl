@@ -141,6 +141,7 @@
                    'eacl.caveats.jvm/evaluator
                    'eacl.relationships.qualifier-integrity/proof-input
                    'eacl.relationships.qualifier-integrity/report
+                   'eacl.relationships.qualifier-integrity/repair-pair!
                    'eacl.relationships.staged/prepare!
                    'eacl.relationships.staged/plan-current
                    'eacl.relationships.staged/cleanup!]
@@ -161,8 +162,7 @@
                           :canonical-context-and-plan-encoding
                           :bounded-cel-value-and-error-conversion]
     :runtime-targets [:clj-java :cljs-javascript]
-    :remaining [:phase-2-production-refinement
-                :phase-3-serving-activation
+    :remaining [:phase-3-serving-activation
                 :independent-review]}
    {:operation :execution-contract
     :entry-points

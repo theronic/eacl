@@ -14,6 +14,7 @@
             [eacl.datahike.qualifiers :as dh-qualifiers]
             [eacl.datahike.db :as dh-db]
             [eacl.formal.caveats.model :as model]
+            [eacl.relationships.qualifier-integrity :as integrity]
             [eacl.relationships.staged :as staged]))
 
 (def schema-source "definition user {}\ndefinition doc {\n  relation viewer: user\n}\n")
@@ -56,6 +57,25 @@
     (is (= (get-in prior [:assertions qid]) (get-in observed [:assertions qid]))
         "retained qualifier facts and native assertion versions never mutate")))
 
+(defn run-peer-repair! [writer state]
+  (let [native (:native writer) [identity qid] (first (sort-by key (filter val (:forward state))))
+        [st subject relation rt resource] identity]
+    (is (some? qid))
+    (reduce
+      (fn [state direction]
+        (let [prior (observe native)
+              datom (if (= direction :forward)
+                      [:db/retract subject forward-attribute [st relation rt resource qid]]
+                      [:db/retract resource reverse-attribute [rt relation st subject qid]])
+              damage ((:with-snapshot native) #(conj (vec ((:fence native) % relation false)) datom))]
+          ((:transact! native) damage)
+          (let [expected (model/repair-peer (update state direction dissoc identity) identity)]
+            (is (:accepted expected))
+            (is (= qid (:qualifier (integrity/repair-pair! writer identity))))
+            (assert-refines! (:state expected) (observe native) prior)
+            (:state expected))))
+      state [:forward :reverse])))
+
 (defn run-lifecycle!
   "One reproducible 96-step campaign. Also used by the separately pinned
    Datalevin conformance run, without putting its unpublished fork in core CI."
@@ -70,7 +90,8 @@
                            (fn [db] (get ((:entity native) db relation) (:relation-version-attribute native))))]
     (loop [step 0 state model/empty-state handles {} prior (observe native)]
       (if (= 96 step)
-        (do (is (pos? (count (:allocated state)))) (is (seq (:facts state))) state)
+        (do (is (pos? (count (:allocated state)))) (is (seq (:facts state)))
+            (run-peer-repair! writer state))
         (let [choice (.nextInt random 8) identity (nth identities (.nextInt random 4))
               orphan (first (sort-by key handles))
               operation (cond (= choice 0) :prepare

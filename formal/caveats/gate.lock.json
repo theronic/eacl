@@ -9,7 +9,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 82,
-  "assertions": 34880,
+  "assertions": 35148,
   "resourceInputs": {
     "formal/caveats/profile.edn": "6becf9a420fbcce2e5d3afd844e0a64430a8a57cf649d013b68923b39f345850",
     "formal/caveats/mutations.edn": "62a57aec9b4260ba8cb47db4469a1751f61cb0ee8fe84bd86481fb9b3c49baa5"
