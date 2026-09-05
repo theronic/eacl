@@ -16,6 +16,7 @@
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
             [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
             [eacl.operator.seekable :as seekable]
+            [eacl.operator.lookup :as lookup]
             [eacl.operator.seekable-evidence-test :as seekable-test]
             [eacl.operator.recursive :as recursive]
             [eacl.operator.vector-evaluator :as vector]
@@ -33,6 +34,7 @@
         fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
         snapshot-opts @#'orchestration/snapshot-opts
         head-evidence @#'seekable/head-evidence
+        count-categories @#'lookup/count-categories
         enqueue @#'recursive/enqueue-evidence!]
     {:qualifier-reference-ignored
      {:gate #'qualification-test/exclusive-expiry-precedes-program-work
@@ -96,6 +98,14 @@
      {:gate #'seekable-bridge/direct-page-algebra-and-exhaustive-temporal-certificates
       :redefs {#'seekable/head-evidence (fn [cursor]
                                         (evidence/with-certificate (head-evidence cursor) nil true))}}
+     :definite-lookup-includes-conditional-results
+     {:gate #'seekable-test/lookup-and-count-project-exact-generator-evidence-without-rechecking
+      :redefs {#'lookup/result-policy (constantly :detailed)}}
+     :count-categories-include-lookahead-sentinel
+     {:gate #'seekable-test/detailed-count-cap-excludes-the-sentinel-from-category-counts
+      :redefs {#'lookup/count-categories (fn [categories entries remaining]
+                                         (count-categories categories entries
+                                                           (when remaining (inc remaining))))}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -106,7 +116,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 18 (count cases)))
+    (is (= 20 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

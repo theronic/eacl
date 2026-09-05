@@ -3,6 +3,7 @@
             [datascript.core :as ds]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
+            [eacl.backend.direct-membership :as direct]
             [eacl.datascript.backend :as backend]
             [eacl.datascript.impl :as impl]
             [eacl.datascript.qualifiers :as qualifiers]
@@ -10,6 +11,7 @@
             [eacl.operator.cover-plan :as cover]
             [eacl.operator.evaluator :as scalar]
             [eacl.operator.evaluator-test :as fixtures]
+            [eacl.operator.lookup :as lookup]
             [eacl.operator.plan :as plan]
             [eacl.operator.seekable :as seekable]
             [eacl.relationships.edge :as edge]
@@ -109,3 +111,53 @@
     (let [db (ds/db conn) env (assoc env :db db :adapter (backend/basis-adapter db {}))]
       (is (= :eacl.authorization/evaluation-failure
              (:type (error-data #(seekable/page (options env :both 100 {} :asc)))))))))
+
+(deftest lookup-and-count-project-exact-generator-evidence-without-rechecking
+  (let [env (fixture)]
+    (doseq [permission [:both :allowed] time [99 100] traversal [:forward :reverse]]
+      (let [base (assoc (options env permission time {} :asc) :traversal traversal
+                        :page-size 10 :candidate-window 16)
+            raw (drain base)
+            definite (filterv #(evidence/has? (:evidence %)) raw)
+            conditional (- (count raw) (count definite))]
+        (with-redefs [direct/dispatch-edges (fn [& _] (throw (ex-info "Generator already proved its node" {})))]
+          (is (= (mapv :value definite) (mapv :value (:emissions (lookup/lookup-page base)))))
+          (is (= (mapv :value raw) (mapv :value (:emissions (lookup/lookup-page (assoc base :result-policy :detailed))))))
+          (is (= (count definite) (:count (lookup/count-results base))))
+          (let [counted (lookup/count-results (assoc base :result-policy :detailed))]
+            (is (= (count raw) (:count counted)))
+            (is (= (count definite) (:definite-count counted)))
+            (is (= conditional (:conditional-count counted)))))))))
+
+(deftest detailed-count-cap-excludes-the-sentinel-from-category-counts
+  (let [env (fixture) base (assoc (options env :both 99 {} :asc) :result-policy :detailed)
+        one (lookup/count-results (assoc base :count-limit 1))
+        zero (lookup/count-results (assoc base :count-limit 0))]
+    (is (= {:count 1 :truncated? true :definite-count 0 :conditional-count 1}
+           (select-keys one [:count :truncated? :definite-count :conditional-count])))
+    (is (= {:count 0 :truncated? true :definite-count 0 :conditional-count 0}
+           (select-keys zero [:count :truncated? :definite-count :conditional-count])))))
+
+(deftest conditional-filtering-preserves-bounded-empty-page-progress
+  (let [env (fixture)]
+    (doseq [policy [:definite :detailed] direction [:asc :desc] traversal [:forward :reverse]]
+      (let [base (assoc (options env :both 99 {} direction)
+                        :result-policy policy :traversal traversal
+                        :page-size 1 :candidate-window 1)
+            expected (filterv #(or (= policy :detailed) (evidence/has? (:evidence %)))
+                              (drain base))
+            actual (loop [boundary nil pages 0 results []]
+                     (when (> pages 8) (throw (ex-info "Bounded lookup did not progress" {})))
+                     (let [page (lookup/lookup-page (assoc base :boundary boundary))
+                           results (into results (:emissions page))]
+                       (if (:has-more? page)
+                         (recur (:resume-coords page) (inc pages) results)
+                         results)))]
+        (is (= (mapv :value expected) (mapv :value actual)))
+        (is (= (mapv (comp evidence/value :evidence) expected)
+               (mapv (comp evidence/value :evidence) actual)))))))
+
+(deftest invalid-result-policy-fails-before-scanning
+  (let [base (assoc (options (fixture) :both 99 {} :asc) :page-size 1)]
+    (doseq [policy [nil :truthy] operation [lookup/lookup-page lookup/count-results]]
+      (is (= :result-policy (:reason (error-data #(operation (assoc base :result-policy policy)))))))))

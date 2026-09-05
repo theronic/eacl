@@ -70,6 +70,17 @@
   (when-not (and (keyword? type) (keyword? reason)) (error! :fault-shape))
   (->Evidence [:fault [[type reason]]] nil true))
 
+(defn throw-if-fault!
+  "Page traversal cannot publish partial results after an authoritative
+   evaluation fault. Preserve only the bounded, sanitized fault reasons."
+  [e]
+  (when (fault? e)
+    (throw (ex-info "Qualified page evaluation failed."
+                    {:type :eacl.authorization/evaluation-failure
+                     :eacl/error :eacl.authorization/evaluation-failure
+                     :faults (second (value e))})))
+  e)
+
 (defn- charge! [budget]
   (when (> (vswap! budget inc) (:work limits)) (error! :work-limit)))
 

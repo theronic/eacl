@@ -135,11 +135,7 @@
                 value (if cached? (:evidence cursor)
                           (qualification/qualify (:qualification options) (:relation-id cursor) compact))
                 cursor (if cached? cursor (assoc cursor :qualified-edge compact :evidence value))]
-            (when (evidence/fault? value)
-              (throw (ex-info "Qualified page evaluation failed."
-                              {:type :eacl.authorization/evaluation-failure
-                               :eacl/error :eacl.authorization/evaluation-failure
-                               :faults (second (evidence/value value))})))
+            (evidence/throw-if-fault! value)
             (when (and (not cached?) (not (boolean? value)))
               (vswap! (:examined-certificate options)
                       #(evidence/combine :intersection %

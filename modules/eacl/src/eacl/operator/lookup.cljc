@@ -1,7 +1,9 @@
 (ns eacl.operator.lookup
   "Demand-bounded lookup and counts over a least-path raw cover plus exact
   aligned operator predicates."
-  (:require [eacl.engine.least-path :as least-path]
+  (:require [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.engine.least-path :as least-path]
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
             [eacl.operator.cover-plan :as cover-plan]
@@ -43,6 +45,12 @@
     (invalid! :invalid-limit "Operator lookup limits must be positive integers."
               {:field field :value value}))
   value)
+
+(defn- result-policy [options]
+  (let [policy (get options :result-policy :definite)]
+    (when-not (contains? #{:definite :detailed} policy)
+      (invalid! :result-policy "Lookup result policy must be :definite or :detailed." {}))
+    policy))
 
 (defn- semantic-candidate
   [permission direction subject-type subject-eid resource-eid true-nodes]
@@ -164,30 +172,44 @@
 (defn- evaluate-emissions
   [{:keys [adapter plan traversal subject-type anchor-eid
            cache-lookup vector-limits permission specialization-node
-           accept-result? scope-identity]}
+           accept-result? scope-identity qualification result-policy]}
    cover-plan emissions]
   (let [permission (or permission (:root plan))
         node-id (get (operator-plan/expression-roots plan) permission)
         witnesses (mapv (emission-witness-fn plan cover-plan permission
                                              node-id specialization-node)
                         emissions)
-        candidates (mapv #(candidate permission traversal subject-type
-                                     anchor-eid %1 %2)
+        candidates (mapv (fn [witness emission]
+                           (let [value (candidate permission traversal subject-type anchor-eid witness emission)]
+                             (if qualification
+                               (do
+                                 (when-not (contains? emission :evidence)
+                                   (invalid! :missing-evidence-witness "Qualified traversal must supply exact generator evidence." {}))
+                                 (-> value
+                                     (assoc :true-nodes #{}
+                                            :evidence-witnesses (zipmap witness (repeat (:evidence emission))))))
+                               value)))
                          witnesses emissions)
         decisions
         (vector-evaluator/check-cached-many-eids
          (cond-> {:adapter adapter :plan plan :permission permission
                   :node-id node-id :candidates candidates
                   :limits vector-limits :scope-identity scope-identity}
+           qualification (assoc :qualification qualification
+                                :witness-scope (qualification/exact-reuse-identity qualification))
            cache-lookup (assoc :cache-lookup cache-lookup)))]
     (mapv (fn [emission witness decision]
-            (assoc emission
-                   :true-nodes witness
-                   :accepted?
-                   (boolean
-                    (and decision
-                         (or (nil? accept-result?)
-                             (accept-result? (:value emission)))))))
+            (when qualification (evidence/throw-if-fault! decision))
+            (cond-> (assoc emission
+                           :accepted?
+                           (boolean
+                            (and (if (= result-policy :detailed)
+                                   (not (evidence/no? decision))
+                                   (evidence/has? decision))
+                                 (or (nil? accept-result?)
+                                     (accept-result? (:value emission))))))
+              qualification (assoc :evidence decision)
+              (not qualification) (assoc :true-nodes witness)))
           emissions witnesses decisions)))
 
 (defn- add-counters [total delta]
@@ -230,13 +252,14 @@
     (invalid! :invalid-result-filter
               "Operator result filter must be callable."
               {:value-type (some-> (:accept-result? options) type str)}))
-  (let [permission (or permission (:root plan))
+  (let [result-policy (result-policy options)
+        permission (or permission (:root plan))
         cover-plan (or (:cover-plan options)
                        (cover-plan/seal-plan adapter plan permission))
         candidate-accept? (local-node-acceptor
                            (assoc options :permission permission)
                            cover-plan)
-        options (assoc options :permission permission
+        options (assoc options :permission permission :result-policy result-policy
                        :order-direction order-direction
                        :candidate-accept? candidate-accept?
                        :specialization-node
@@ -338,6 +361,26 @@
                          counters
                          (some-> widths (conj width))))))))))))
 
+(defn- count-response [n count-limit truncated? counters categories]
+  (cond-> {:count n :limit (or count-limit -1) :truncated? truncated?
+           :exhaustive? (nil? count-limit) :counters counters}
+    categories (merge categories)))
+
+(defn- count-categories [categories evaluated remaining]
+  ;; Count only selected results. A lookahead grant establishes truncation but
+  ;; belongs to neither reported category, even when the vector overreads it.
+  (loop [categories categories entries (seq evaluated) remaining remaining]
+    (if (or (nil? entries) (and (some? remaining) (zero? remaining)))
+      categories
+      (let [entry (first entries)]
+        (if (:accepted? entry)
+          (recur (update categories
+                         (if (evidence/has? (get entry :evidence true))
+                           :definite-count :conditional-count)
+                         inc)
+                 (next entries) (when remaining (dec remaining)))
+          (recur categories (next entries) remaining))))))
+
 (defn count-results
   "Exact count when :count-limit is absent; otherwise stops after the
   lookahead result needed to report truncation. Exact and bounded work remain
@@ -348,13 +391,14 @@
                 (and (integer? count-limit) (not (neg? count-limit))))
     (invalid! :invalid-count-limit "Count limit must be a natural integer."
               {:count-limit count-limit}))
-  (let [permission (or permission (:root plan))
+  (let [result-policy (result-policy options)
+        permission (or permission (:root plan))
         cover-plan (or (:cover-plan options)
                        (cover-plan/seal-plan adapter plan permission))
         candidate-accept? (local-node-acceptor
                            (assoc options :permission permission)
                            cover-plan)
-        options (assoc options :permission permission
+        options (assoc options :permission permission :result-policy result-policy
                        :candidate-accept? candidate-accept?
                        :specialization-node
                        (when-not (false? (:direct-specializations? options))
@@ -365,6 +409,8 @@
                         batch-schedule/maximum-width)]
     (loop [boundary nil
            accumulated 0
+           categories (when (= :detailed result-policy)
+                        {:definite-count 0 :conditional-count 0})
            width initial-width
            counters {:commands 0 :fetched-values 0
                      :stream-opens 0 :emissions 0}]
@@ -378,22 +424,23 @@
             emissions (:emissions raw)
             counters (add-counters counters (:counters raw))]
         (if (empty? emissions)
-          {:count accumulated :limit (or count-limit -1) :truncated? false
-           :exhaustive? (nil? count-limit) :counters counters}
+          (count-response accumulated count-limit false counters categories)
           (let [evaluated (evaluate-emissions options cover-plan emissions)
                 grants (reduce (fn [n entry]
                                  (if (:accepted? entry) (inc n) n))
                                0 evaluated)
-                next-count (+ accumulated grants)]
+                next-count (+ accumulated grants)
+                categories (when categories
+                             (count-categories categories evaluated
+                                               (when count-limit
+                                                 (- count-limit accumulated))))]
             (if (and target (>= next-count target))
-              {:count count-limit :limit count-limit :truncated? true
-               :exhaustive? false :counters counters}
+              (count-response count-limit count-limit true counters categories)
               (if (:exhausted? raw)
-                {:count next-count :limit (or count-limit -1)
-                 :truncated? false :exhaustive? (nil? count-limit)
-                 :counters counters}
+                (count-response next-count count-limit false counters categories)
                 (recur (some-> emissions peek :coords)
                        next-count
+                       categories
                        (if target
                          (min batch-schedule/maximum-width
                               (max (- target next-count)

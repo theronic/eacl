@@ -54,6 +54,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.engine.stable-route-evidence-test :reload)
      (load-file \"formal/qualified/stable_route_bridge.clj\")
      (require 'eacl.operator.seekable :reload)
+     (require 'eacl.operator.lookup :reload)
      (require 'eacl.operator.seekable-evidence-test :reload)
      (load-file \"formal/qualified/seekable_bridge.clj\")
      (require 'eacl.engine.scan-cache :reload)
