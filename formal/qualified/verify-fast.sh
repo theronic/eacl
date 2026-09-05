@@ -83,6 +83,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.authorization.result-test :reload)
      (require 'eacl.core-test :reload)
      (require 'eacl.datascript.qualified-check-test :reload)
+     (require 'eacl.datascript.qualified-lookup-test :reload)
      (load-file \"formal/qualified/production_mutations.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
                                    'eacl.formal.qualified.discovery-model-test 'eacl.formal.qualified.discovery-bridge
@@ -97,6 +98,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.authorization.data-test 'eacl.authorization.qualification-test
                                    'eacl.authorization.context-test 'eacl.datascript.caveat-context-test
                                    'eacl.authorization.result-test 'eacl.core-test 'eacl.datascript.qualified-check-test
+                                   'eacl.datascript.qualified-lookup-test
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Qualified finite gate failed or assertion inventory changed\" r)))

@@ -145,6 +145,8 @@
 
 (defn- ensure-execution-contract
   [opts operation request]
+  (when (#{:lookup-resources :lookup-subjects :count-resources :count-subjects} operation)
+    (authorization-result/result-policy request))
   (let [context (get request :caveat-context {})
         prepared (::caveat-context opts)
         opts (if (and prepared (identical? context (caveat-context/value prepared)))
@@ -2142,9 +2144,9 @@
               public-key?
               (and public-subject (public-answer-key-eligible? adapter))
               empty-answer
-              #(cond-> {:count 0 :limit (or (:count-limit query) -1)}
-                 (contains? query :count-limit)
-                 (assoc :truncated? false))
+              #(authorization-result/count-result
+                {:count 0 :truncated? false} (:count-limit query)
+                (authorization-result/result-policy query))
               compute
               (fn [internal-subject]
                 (validate!)
@@ -2329,9 +2331,9 @@
               public-key?
               (and public-resource (public-answer-key-eligible? adapter))
               empty-answer
-              #(cond-> {:count 0 :limit (or (:count-limit query) -1)}
-                 (contains? query :count-limit)
-                 (assoc :truncated? false))
+              #(authorization-result/count-result
+                {:count 0 :truncated? false} (:count-limit query)
+                (authorization-result/result-policy query))
               compute
               (fn [internal-resource]
                 (validate!)

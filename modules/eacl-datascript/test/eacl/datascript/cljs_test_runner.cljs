@@ -38,6 +38,7 @@
             [eacl.datascript.evaluation-clock-test]
             [eacl.datascript.caveat-context-test]
             [eacl.datascript.qualified-check-test]
+            [eacl.datascript.qualified-lookup-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
             [eacl.datascript.scan-cache-integration-test]
@@ -134,6 +135,7 @@
                'eacl.datascript.evaluation-clock-test
                'eacl.datascript.caveat-context-test
                'eacl.datascript.qualified-check-test
+               'eacl.datascript.qualified-lookup-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test

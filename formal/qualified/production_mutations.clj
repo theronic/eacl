@@ -32,6 +32,8 @@
             [eacl.datascript.evaluation-clock-test :as clock-test]
             [eacl.datascript.caveat-context-test :as public-context-test]
             [eacl.datascript.qualified-check-test :as public-point-test]
+            [eacl.datascript.qualified-lookup-test :as public-lookup-test]
+            [eacl.cache :as cache]
             [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
             [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
@@ -76,9 +78,29 @@
         checkpoint-put stable-page/checkpoint-put!
         page-options @#'stable-page/qualified-page-options
         page-binding stable-page/execution-binding
+        count-page-categories @#'engine/count-page-categories
+        count-result result/count-result
         request-schema @#'orchestration/request-schema
         enqueue @#'recursive/enqueue-evidence!]
-    {:qualified-checkpoint-accepts-incomplete-evidence
+    {:public-counts-ignore-requested-policy
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'result/result-policy (constantly :detailed)}}
+     :public-counts-drop-conditional-category
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'result/count-result
+               (fn [value limit policy]
+                 (dissoc (count-result value limit policy) :conditional-count))}}
+     :recursive-cover-does-not-read-qualified-edges
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'engine/structural-cover-fetch clojure.core/identity}}
+     :recursive-count-includes-lookahead-category
+     {:gate #'public-lookup-test/public-qualified-counts-distinguish-conditional-results-and-expiring-bans
+      :redefs {#'engine/count-page-categories
+               (fn [categories page _] (count-page-categories categories page nil))}}
+     :detailed-count-cache-accepts-inconsistent-categories
+     {:gate #'public-lookup-test/detailed-count-cache-ingress-requires-consistent-closed-categories
+      :redefs {#'cache/count-answer? (constantly true)}}
+     :qualified-checkpoint-accepts-incomplete-evidence
      {:gate #'page-test/incomplete-or-faulty-qualified-checkpoints-fall-back-to-replay
       :redefs {#'stable-page/valid-qualified-checkpoint (fn [_ checkpoint] checkpoint)}}
      :qualified-lookahead-loses-its-evidence
@@ -304,7 +326,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 54 (count cases)))
+    (is (= 59 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

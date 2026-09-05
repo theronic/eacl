@@ -2,6 +2,25 @@
   "Public permissionship projection of completed bounded evidence."
   (:require [eacl.authorization.evidence :as evidence]))
 
+(defn result-policy
+  "Absent policy preserves definite-only lookup/count compatibility."
+  [request]
+  (let [policy (get request :result-policy :definite)]
+    (when-not (#{:definite :detailed} policy)
+      (throw (ex-info "Result policy must be :definite or :detailed."
+                      {:type :eacl.authorization/invalid-result-policy
+                       :eacl/error :eacl.authorization/invalid-result-policy})))
+    policy))
+
+(defn count-result
+  "Projects count categories only when requested, including empty results."
+  [{:keys [count truncated? definite-count conditional-count]} limit policy]
+  (cond-> {:count count :limit (or limit -1)}
+    (some? limit) (assoc :truncated? truncated?)
+    (= :detailed policy)
+    (assoc :definite-count (or definite-count count)
+           :conditional-count (or conditional-count 0))))
+
 (defn check-result
   "Produces a detailed result without losing conditional evidence or faults.
    Residuals use the bounded canonical evidence encoding, including its format

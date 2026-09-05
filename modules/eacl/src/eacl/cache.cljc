@@ -889,15 +889,21 @@
         expected-limit (if limited?
                          (:count-limit answer-query)
                          -1)
-        expected-fields (if limited?
-                          #{:count :limit :truncated?}
-                          #{:count :limit})
+        detailed? (= :detailed (:result-policy answer-query))
+        expected-fields (cond-> #{:count :limit}
+                          limited? (conj :truncated?)
+                          detailed? (conj :definite-count :conditional-count))
         count-value (:count value)]
     (and (map? query)
          (map? answer-query)
          (map? value)
          (= expected-fields (set (keys value)))
          (portable-natural? count-value)
+         (or (not detailed?)
+             (and (portable-natural? (:definite-count value))
+                  (portable-natural? (:conditional-count value))
+                  (= count-value (+ (:definite-count value)
+                                    (:conditional-count value)))))
          (if limited?
            (and (portable-natural? expected-limit)
                 (= expected-limit (:limit value))
