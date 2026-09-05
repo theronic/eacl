@@ -3,6 +3,7 @@
             [datascript.core :as ds]
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
+            [eacl.caveats.write-contention-contract :as contention]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.deletion-contract :as deletion]
@@ -82,3 +83,9 @@
         (is (empty? (ds/datoms (ds/db conn) :aevt storage/reverse-attribute)))
         (is (empty? (ds/datoms (ds/db conn) :eavt qid)))
         (is (not (contains? (cache-trace/outcome #(eacl/write-schema! client {:schema replacement})) :fault)))))))
+
+(deftest qualified-native-cas-contention-replans-from-a-new-basis
+  (let [conn (schema/create-conn)
+        client (api/make-client conn {})]
+    (contention/check! client #(qualifiers/writer conn))
+    (contention/terminal-validation-check! client)))

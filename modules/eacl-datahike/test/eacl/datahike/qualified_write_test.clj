@@ -3,6 +3,7 @@
             [datahike.api :as d]
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
+            [eacl.caveats.write-contention-contract :as contention]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
             [eacl.caveats.deletion-contract :as deletion]
@@ -105,3 +106,9 @@
                                                          :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                           :writer #(qualifiers/writer conn)})
         (finally (d/release conn) (d/delete-database config))))))
+
+(deftest qualified-native-cas-contention-replans-from-a-new-basis
+  (let [conn (schema/create-conn)
+        client (api/make-client conn {})]
+    (contention/check! client #(qualifiers/writer conn))
+    (contention/terminal-validation-check! client)))

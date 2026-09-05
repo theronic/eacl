@@ -86,3 +86,32 @@ the registered mutation-control gate passes 3 tests / 176 assertions, and the
 complete generated Java boundary suite passes 52 tests / 18,280 assertions.
 Historical state traces preserve their authorization and structural-reuse
 oracles while selecting exact qualified versus scalar-proof legacy answer reuse.
+
+## Native contention qualification after activation
+
+The generated-authority CI benchmark exposed two previously unexercised v9
+paths. Its unrelated-commit check now asserts exact-basis fallback in v9 and
+managed hits only in the retained v8 compatibility binding; its result labels
+state which reuse contract was measured. DataScript and Datahike writers now
+recognize their native CAS failures through bounded exception wrappers and
+replan from the current basis, with the existing eight-attempt public
+contention limit. A changed cleanup source is also retryable; qualifier
+validation faults remain terminal.
+
+Deterministic shared tests commit a competing Relationship between planning
+and submission, verify one fresh retry publishes both Relationships, verify
+persistent contention stops after eight attempts, and verify validation faults
+are attempted once. The following checks passed on this correction:
+
+- Generated-authority heavy suite: 9 tests, 574 assertions, all three backends
+  exercised generated cursor/relationship-page authority.
+- Generated-authority nonbenchmark suite: 625 tests, 117,495 assertions.
+- Affected DataScript/Datahike qualified writers: 17 tests, 7,256 assertions.
+- Advanced DataScript ClojureScript: 783 tests, 110,321 assertions.
+- Foundation gate: 82 Dafny obligations and 35,148 finite assertions.
+- Qualified gate: 71 Dafny obligations, 394 tests, 607,016 assertions.
+- Public source closure: 115 roots, 2,940 definitions, no forbidden matches.
+
+The published 24-case performance evidence measures unchanged successful read
+and write paths. The new retry policy affects failed native submissions;
+concurrent-write behavior has separate deterministic and benchmark evidence.

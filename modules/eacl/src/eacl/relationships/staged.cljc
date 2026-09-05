@@ -13,6 +13,19 @@
   (throw (ex-info "Invalid staged qualified Relationship operation."
                   {:type :eacl.qualifier/staged-write :eacl/error :eacl.qualifier/staged-write :reason reason})))
 
+(defn prepared-contention?
+  "Recognizes native CAS contention and a changed cleanup source through
+   bounded host wrappers. Other staged validation failures remain terminal."
+  [error]
+  (loop [cause error depth 0]
+    (when (and cause (< depth 16))
+      (let [data (ex-data cause)]
+        (if (or (= :transact/cas (:error data))
+                (and (= :eacl.qualifier/staged-write (:type data))
+                     (= :cleanup-source-changed (:reason data))))
+          true
+          (recur (ex-cause cause) (inc depth)))))))
+
 (defrecord NativeWriter [native identity source])
 (defrecord NativePlanner [native source])
 (deftype PreparedQualifier [writer-id source relationship qid value facts generation])

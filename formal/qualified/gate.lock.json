@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 607000,
+  "assertions": 607016,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -59,9 +59,9 @@
     "modules/eacl/test/eacl/relationships/mutations_test.cljc": "50ee4f3e2094924e51bc269db80fc1e284d8c97519640f8e329a1e7dc350a903",
     "modules/eacl/test/eacl/caveats/public_write_contract.cljc": "f6c8a7a4c153aa5bd0c17863034ed929b8d3fc4bf9c05501f03114d65062a64c",
     "modules/eacl/test/eacl/caveats/publication_batch_contract.cljc": "b13b03269d2e57853fe23d8540ab352378ee0c7cea977cd96624b0d624599a1f",
-    "modules/eacl-datascript/test/eacl/datascript/qualified_write_test.cljc": "8d7cb24d83f1c3014eccda19f6190bda00b4a01194042ee3c64fab8f3c2794a2",
+    "modules/eacl-datascript/test/eacl/datascript/qualified_write_test.cljc": "eeee93881abc4eb0f145be2d48105ba4ffaf2c23faa69aa25569fdbdda7b414d",
     "modules/eacl-datomic/test/eacl/datomic/qualified_write_test.clj": "0a2e6f643e12cc265d338296e1337b196a57f74f70fbf642ea274e1f14847362",
-    "modules/eacl-datahike/test/eacl/datahike/qualified_write_test.clj": "f99ca1b0335c813b1dcdca76c25c8b81bc7f36820e4593b0ce18f3654b2dc3fc",
+    "modules/eacl-datahike/test/eacl/datahike/qualified_write_test.clj": "9de83ea26f342c45b7de420e3a1588af182919ecbc01b04d3a1a7c0868bf2d2e",
     "modules/eacl/src/eacl/schema/qualification_admission.cljc": "f525a0d7faed752753c254df2de19548ff5c9b5dd55326c97a1db7af5963a34d",
     "modules/eacl/test/eacl/caveats/schema_admission_test.cljc": "a9ed3898800f418fd583c45ae6776285aa47ec4f8b3362360b0c6d23def04e83",
     "modules/eacl/test/eacl/caveats/schema_allowance_contract.cljc": "d20a2026260dbc9ec833fd106baa5e2342aadf8caee6ef148f50d732110117c4",
@@ -82,7 +82,7 @@
     "modules/eacl-datascript/test/eacl/datascript/qualified_cache_trace_test.cljc": "a9ac9815bf5ad7780a7c67857d484198a7c5d168eb449d23b652e29b9e2006e8",
     "modules/eacl/test/eacl/caveats/cache_trace_contract.cljc": "0b2aa2b41a4cbbd1756a80f9b4e965d3a51d3909cf08f7af5b8cd83248593a0d",
     "modules/eacl/test/eacl/caveats/deletion_contract.cljc": "7d1d262a531fcb35351f7d0031816b25142c4991ba1c63aeee58c3faa21447e5",
-    "modules/eacl/src/eacl/relationships/staged.cljc": "9d88472e8efd4d9ddab4a388294fb62b106a9cfc535947f62f7bd66639bdad47",
+    "modules/eacl/src/eacl/relationships/staged.cljc": "a229ae77f5c40682f2be79fe820e2d2d014439b0374e49af37205d2d18a41bcc",
     "modules/eacl/src/eacl/authorization/evidence.cljc": "c0d3b99080e254526d8eea036f6ed0aca5a3bed2e50e1f1187a62997c61fd521",
     "modules/eacl/src/eacl/caveats/values.cljc": "904c3d7b3afde845c305b4bea3ae09ea4938ef40e83c9947f8eaeccc99bc683d",
     "modules/eacl/src/eacl/secure_format.cljc": "c9e9358837d4ff4f3e1054744514f5d30a4041201de94b4d39bd5e617554abc1",
@@ -106,6 +106,9 @@
     "modules/eacl-datalevin/src/eacl/datalevin/core.cljc": "0eb49f82a2498c1fc7185131f862f76f565e6814b78e1f4ece3d6bc0b3e2d054",
     "modules/eacl/src/eacl/engine/v8.cljc": "a7ed5ae4319e8301bff3d78d5bbc725dd93928b1a79e57ae3e9b7e9251896da0",
     "modules/eacl/src/eacl/relationships/storage.cljc": "f4c44560c494a993ba098eafe0d1c9465fdc10530d6f6607ea840378ea7bf3f2",
-    "modules/eacl/src/eacl/relay.cljc": "3c7941c314f3ba10b10f3ab04cecad8a06a120de7ca21247fefa582225267238"
+    "modules/eacl/src/eacl/relay.cljc": "3c7941c314f3ba10b10f3ab04cecad8a06a120de7ca21247fefa582225267238",
+    "modules/eacl/test/eacl/caveats/write_contention_contract.cljc": "2a6437a28b7662cafad68b6aec9a5c7a01062dc968c252a6aeeb935cf3a0eb1e",
+    "modules/eacl-datahike/src/eacl/datahike/core.clj": "57de2d56eb877ac4ff4af56a3ec1b5e169b8886789bc7dccd1da19c5e52f73f2",
+    "modules/eacl-datascript/src/eacl/datascript/core.cljc": "df4f192e65d33d9d16078c6f303d99f356fe59677cdbec892d8df9dc9e48b3d3"
   }
 }

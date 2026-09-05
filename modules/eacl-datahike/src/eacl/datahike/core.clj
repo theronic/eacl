@@ -18,6 +18,7 @@
             [eacl.datahike.storage :as target-storage]
             [eacl.relationships.upgrade :as storage-upgrade]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.staged :as staged]
             [eacl.schema.expression-policy :as expression-policy]))
 
 (def cursor->token cursor/cursor->token)
@@ -115,6 +116,8 @@
 
 (def ^:private api
   {:backend-id :datahike
+   :writer-max-attempts 8
+   :writer-contention? staged/prepared-contention?
    :qualified-writer #'qualifiers/writer
    :qualified-publication-capability #'qualifiers/publication-capability
    :qualified-plan #'qualifiers/plan
