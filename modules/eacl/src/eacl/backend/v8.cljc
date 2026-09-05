@@ -846,11 +846,11 @@
             (observe-invocation! :failed adapter operation-key)
             (throw error)))))))
 
-(defn ^:no-doc direct-match-invoker
-  "Captures the immutable scalar direct-membership implementation while
-  preserving the complete adapter invocation boundary for every candidate."
-  [adapter]
-  (let [operation-key :direct-match?]
+(defn- direct-invoker
+  [adapter operation-key]
+  (when-not (contains? #{:direct-match? :direct-edge} operation-key)
+    (invalid-adapter! "A direct invoker requires a direct membership operation."
+                      {:operation operation-key}))
     (if-not (adapter? adapter)
       (fn [subject-type subject-eid relation-eid resource-type resource-eid]
         (invoke adapter operation-key subject-type subject-eid relation-eid
@@ -866,13 +866,18 @@
             (let [value (implementation subject-type subject-eid relation-eid
                                         resource-type resource-eid)]
               (observe-invocation! :after adapter operation-key)
-              (if (and guarded? (not (boolean? value)))
-                (contract-violation!
-                 (::id adapter) operation-key :boolean-result value)
-                value))
+              (if guarded? (guard-output! adapter operation-key nil value) value))
             (catch #?(:clj Throwable :cljs :default) error
               (observe-invocation! :failed adapter operation-key)
-              (throw error))))))))
+              (throw error)))))))
+
+(defn ^:no-doc direct-match-invoker
+  "Captures immutable direct membership with complete metering and guards."
+  [adapter] (direct-invoker adapter :direct-match?))
+
+(defn ^:no-doc direct-edge-invoker
+  "Captures compact direct edges with complete metering and guards."
+  [adapter] (direct-invoker adapter :direct-edge))
 
 (defn- invoke-completed
   [adapter operation-key guarded? options value]

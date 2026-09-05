@@ -47,7 +47,9 @@ two authoritative faults, and complete/incomplete temporal certificates. Its
 and canonical wire round trips. The qualification bridge adds 3,024 assertions
 over expiry boundaries, bound/request contexts, malformed facts, allowance,
 version, one-fetch request memoization, and evaluator suppression. The combined
-finite gate has 98,210 assertions.
+finite gate also compares the existing scalar operator machine across 46,656
+assertions for demanded intersection, exclusion, and arrow evidence, including
+faults and incomplete certificates. The combined gate has 144,866 assertions.
 Portable evidence tests additionally reject malformed/noncanonical encodings
 and enforce node, depth, work, missing-field, and serialized-size bounds.
 

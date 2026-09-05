@@ -2,17 +2,30 @@
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is testing]]
             [datascript.core :as ds]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualification-test :as qualification-fixtures]
             [eacl.backend.v8 :as backend]
             [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as datascript-impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as datascript-schema]
             [eacl.execution :as execution]
             [eacl.operator.evaluator :as evaluator]
             [eacl.operator.plan :as plan]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.subproblem-cache :as subproblem]
+            [eacl.relationships.staged :as staged]))
+
+(defn qualified-request [db time context]
+  (let [native (qualifiers/read-api)]
+    (qualification/request
+     {:time time :context context
+      :entity #((:entity native) db %) :version #((:qualifier-version native) db %)
+      :evaluator (qualification-fixtures/portable-evaluator (atom 0))
+      :basis {:source ((:source native) db) :revision (:max-tx db)}})))
 
 (defn- test-exact-key
   [semantic]
@@ -266,3 +279,57 @@
         recursive-plan (plan/seal-plan (:adapter env) [:folder :view])]
     (is (= :eacl.operator/recursive-plan-required
            (:type (error-data #(check env recursive-plan user folder)))))))
+
+(deftest qualified-direct-exclusion-keeps-residuals-and-ban-deadline
+  (let [user (object :user "qualified/user")
+        document (object :document "qualified/document")
+        schema (str "caveat enabled(flag bool) { flag }\n" direct-schema)
+        env (fixture schema [user document]
+                     [(eacl/->Relationship user :reader document)
+                      (eacl/->Relationship user :writer document)
+                      (eacl/->Relationship user :banned document)])
+        conn (:conn env)
+        writer (qualifiers/writer conn)
+        relation (fn [name] (ds/entid (ds/db conn)
+                                    [:eacl.relation/resource-type+relation-name+subject-type
+                                     [:document name :user]]))
+        caveat (ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])
+        identity (fn [name] [:user ((:eid env) user) (relation name)
+                             :document ((:eid env) document)])]
+    (ds/transact! conn [{:db/id (relation :reader) :eacl.relation/caveats [caveat]
+                        :eacl.relation/allows-unqualified? true}])
+    (staged/write! writer :replace (identity :reader) {:caveat caveat})
+    (staged/write! writer :replace (identity :banned) {:valid-until-ms 100})
+    (let [db (ds/db conn)
+          env (assoc env :db db :adapter (datascript-backend/basis-adapter db {}))
+          sealed (plan/seal-plan (:adapter env) [:document :view])
+          run (fn [time context]
+                (check env sealed user document {:qualification (qualified-request db time context)}))]
+      (is (= :no-permission (evidence/permissionship (run 99 {}))))
+      (is (= 100 (evidence/valid-until (run 99 {}))))
+      (is (= :conditional-permission (evidence/permissionship (run 100 {}))))
+      (is (= ["flag"] (evidence/missing-fields (run 100 {}))))
+      (is (true? (run 100 {"flag" true})))
+      (is (false? (run 100 {"flag" false}))))))
+
+(deftest qualified-arrow-composes-via-and-target-evidence
+  (let [user (object :user "qualified/user")
+        group (object :group "qualified/group")
+        document (object :document "qualified/document")
+        env (fixture arrow-schema [user group document]
+                     [(eacl/->Relationship user :reader document)
+                      (eacl/->Relationship group :parent document)
+                      (eacl/->Relationship user :member group)])
+        conn (:conn env) writer (qualifiers/writer conn)
+        parent (ds/entid (ds/db conn) [:eacl.relation/resource-type+relation-name+subject-type
+                                      [:document :parent :group]])]
+    (staged/write! writer :replace
+                   [:group ((:eid env) group) parent :document ((:eid env) document)]
+                   {:valid-until-ms 100})
+    (let [db (ds/db conn)
+          env (assoc env :db db :adapter (datascript-backend/basis-adapter db {}))]
+      (doseq [permission [:view :direct_inherited] time [99 100]]
+        (let [result (check env (plan/seal-plan (:adapter env) [:document permission]) user document
+                            {:qualification (qualified-request db time {})})]
+          (is (= (< time 100) (evidence/has? result)))
+          (is (= (when (< time 100) 100) (evidence/valid-until result))))))))
