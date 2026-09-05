@@ -55,7 +55,11 @@
   (and (or (and (keyword? kid) (seq (name kid))
                 (<= (+ (count (name kid)) (count (namespace kid))) maximum-kid-bytes))
            (and (string? kid) (seq kid) (<= (count kid) maximum-kid-bytes)))
-       (try (secure/encode-canonical kid {:maximum-size maximum-kid-bytes}) true
+       ;; Canonical EDN bounds characters; the cursor frame bounds UTF-8 bytes.
+       ;; Check both before accepting an ID that every protected codec must read.
+       (try (<= (count (secure/utf8-bytes
+                        (secure/encode-canonical kid {:maximum-size maximum-kid-bytes})))
+                maximum-kid-bytes)
             (catch #?(:clj Throwable :cljs :default) _ false))))
 
 (defn- normalize-material [material]

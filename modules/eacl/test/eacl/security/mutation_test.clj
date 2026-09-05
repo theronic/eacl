@@ -13,6 +13,7 @@
    [:invalid-options {:keys {:a (state-test/material 1)} :active-kid :a :extra true}]
    [:invalid-key-id {:keys {"" (state-test/material 1)} :active-kid ""}]
    [:invalid-key-id {:keys {(apply str (repeat 1025 "a")) (state-test/material 1)} :active-kid :a}]
+   [:invalid-key-id {:keys {(apply str (repeat 400 "界")) (state-test/material 1)} :active-kid :a}]
    [:invalid-key {:keys {:a [1 2]} :active-kid :a}]
    [:invalid-key {:keys {:a (repeat 4097 1)} :active-kid :a}]
    [:invalid-key {:keys {:a (repeat 32 256)} :active-kid :a}]
@@ -77,4 +78,3 @@
                            (throw error)))))]
     (is (detected? {#'secure/decode-authenticated-envelope trial}
                    [#'format-test/dedicated-scope-never-falls-back-to-another-accepted-key]))))
-

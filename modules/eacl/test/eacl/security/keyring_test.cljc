@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is testing]]
             [clojure.string :as string]
             [eacl.core :as eacl]
+            [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]
             [eacl.security.keyring :as ring]
             [eacl.security.protocols :as protocols]))
@@ -168,3 +169,16 @@
     #?(:clj (aset-byte input 0 (byte 9)) :cljs (aset input 0 9))
     (is (= (material 7) (get-in (protocols/-snapshot c) [:keys :a])))
     (is (= 0 (:generation (eacl/add-security-key! c :a (material 7)))))))
+
+(deftest unicode-key-identifiers-respect-the-encoded-byte-boundary
+  (let [text (str (apply str (repeat 340 "界")) "aa")
+        named (keyword (apply str (repeat 341 "界")))]
+    (doseq [kid [text named]]
+      (is (= 1024 (count (secure/utf8-bytes (secure/encode-canonical kid)))))
+      (let [c (eacl/security-keyring {:keys {kid (material 1)} :active-kid kid})
+            opts {:keyring-controller c}
+            token (cursor/cursor->token {:edge 1} opts)]
+        (is (= {:edge 1} (cursor/token->cursor token opts)))))
+    (doseq [kid [(str text "a") (keyword (str (name named) "a"))]]
+      (is (= {:type :eacl.keyring/invalid :reason :invalid-key-id}
+             (outcome #(eacl/security-keyring {:keys {kid (material 1)} :active-kid kid})))))))

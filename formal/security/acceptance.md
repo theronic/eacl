@@ -57,3 +57,14 @@ Default non-expiring cursors require indefinite old-key retention for lossless
 resume. Finite TTL affects new cursors only. Controllers and key material remain
 externally owned and non-durable. Datalevin's unpublished embedded-artifact
 release guard remains unchanged; this phase does not publish that artifact.
+
+## Encoded key-ID boundary correction
+
+Final review reproduced a controller accepting a 1,202-byte Unicode key ID
+that the cursor decoder correctly rejected. Admission now measures canonical
+UTF-8 bytes as well as the existing bounded character representation. Exact
+1,024-byte string and keyword IDs round-trip; the next byte is rejected before
+controller publication. The focused state/format/retention/mutation suite passes
+28 tests / 2,210 assertions, including byte-boundary round-trip and rejection coverage.
+This changes key admission only; the recorded protected-operation benchmarks
+remain scoped to their source commit and valid ASCII IDs.
