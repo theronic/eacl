@@ -33,6 +33,7 @@
   (:require [clojure.set :as set]
             [com.rpl.specter :as S]
             [eacl.authorization.batch :as batch]
+            [eacl.authorization.clock :as authorization-clock]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
@@ -132,6 +133,8 @@
         ;; The public operation name for observation only: `:request-operation`
         ;; is reserved for batch endpoints and changes scalar decision keys.
         (cond-> (assoc opts ::observed-operation operation)
+          (not (contains? opts :evaluation-time-ms))
+          (assoc :evaluation-time-ms ((or (::evaluation-clock opts) authorization-clock/system-clock)))
           (nil? (:cache-lifecycle opts))
           (assoc :cache-lifecycle
                  (cache/capture-cache-lifecycle
@@ -2413,7 +2416,7 @@
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
-                  source-incarnation speculative])
+                  source-incarnation speculative evaluation-time-ms])
 
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
@@ -2594,6 +2597,7 @@
 
 (def ^:private runtime-option-keys
   #{:adapter-fingerprint :adapter-deterministic? :aggregate-limits
+    ::evaluation-clock
     :continuation-cache-store :basis-cache-store
     :cursor-codec-cache :cursor-construction-cache :decision-kernel
     :derived-schema-caches :expression-limits
@@ -2883,6 +2887,7 @@
           opts)]
     (cond-> (assoc opts
                    ::retained-basis basis
+                   :evaluation-time-ms (:evaluation-time-ms basis)
                    :authorization-target-kind
                    (if (::transient-acl-selection? opts)
                      :acl
@@ -2933,7 +2938,7 @@
   [{:keys [adapter selected-snapshot semantic-identity selection
            historical-basis? execution-constraints
            maximum-snapshot-retention-ms runtime-options
-           source-incarnation speculative]}]
+           source-incarnation speculative evaluation-time-ms]}]
   (->Basis adapter selected-snapshot semantic-identity selection
            (if speculative :speculative (:basis-kind semantic-identity))
            historical-basis?
@@ -2946,7 +2951,8 @@
            (or source-incarnation
                (get-in runtime-options
                        [:runtime-cache-lifecycle :source-incarnation]))
-           speculative))
+           speculative
+           (or evaluation-time-ms (:evaluation-time-ms runtime-options))))
 
 (defn- snapshot-populate-cache?
   [basis requested?]
@@ -3584,6 +3590,7 @@
        :maximum-snapshot-retention-ms (:maximum-retention-ms basis)
        :historical-basis? false
        :source-incarnation (:source-incarnation basis)
+       :evaluation-time-ms (:evaluation-time-ms basis)
        :speculative speculative})
      api)))
 
@@ -4124,6 +4131,7 @@
   (backend-unification, D-7). Per-backend extensions are declared via the
   api's :extra-client-opt-keys and documented on the backend's make-client."
   #{:entid->object-id
+    :clock
     :object-id->lookup-ref
     :internal-cursor->spice
     :spice-cursor->internal
@@ -4278,6 +4286,9 @@
                     {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
                      :key :io-observer
                      :value (:io-observer config-opts)})))
+  (when (and (contains? config-opts :clock) (not (fn? (:clock config-opts))))
+    (throw (ex-info "EACL Config Error: :clock must be a zero-argument millisecond clock function."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config :key :clock})))
   (lookahead/validate-option! (:lookahead config-opts))
   (when-let [scan-cache-option (:scan-cache config-opts)]
     (when-not (or (false? scan-cache-option)
@@ -4458,6 +4469,9 @@
          (select-keys config-opts
                       (:extra-client-opt-keys api))
          {:object-id->lookup-ref object-id->lookup-ref
+          ::evaluation-clock (if (contains? config-opts :clock)
+                               (authorization-clock/clock (:clock config-opts))
+                               authorization-clock/system-clock)
           :io-observer (:io-observer config-opts)
           :lookahead-state
           (lookahead/state (lookahead/validate-option! (:lookahead config-opts)))

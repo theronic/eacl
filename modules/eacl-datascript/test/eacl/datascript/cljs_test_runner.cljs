@@ -26,6 +26,7 @@
             [eacl.engine.scan-cache-test]
             [eacl.engine.stable-route-evidence-test]
             [eacl.engine.stable-route-native-evidence-test]
+            [eacl.datascript.evaluation-clock-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
             [eacl.datascript.scan-cache-integration-test]
@@ -110,6 +111,7 @@
                'eacl.engine.scan-cache-test
                'eacl.engine.stable-route-evidence-test
                'eacl.engine.stable-route-native-evidence-test
+               'eacl.datascript.evaluation-clock-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test
