@@ -1,6 +1,9 @@
 (ns eacl.authorization.qualification-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [eacl.authorization.clock :as clock]
+            [eacl.authorization.data :as data]
+            [eacl.backend.v8 :as backend]
+            [eacl.request.counters :as counters]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as q]
             [eacl.cache.standard-lru :as lru]
@@ -41,6 +44,67 @@
                    :entity read-entity :version (constantly 7)
                    :basis {:source "s" :lifecycle "l" :revision 1}}]
      (q/request (merge defaults (dissoc options :db :reads :calls))))))
+
+(defn data-adapter [db reads]
+  (backend/make-adapter
+   {:id :qualification-test :runtime-guards? true
+    :capabilities {:qualification #{data/capability}}
+    :operations
+    (assoc (zipmap backend/required-snapshot-operations (repeat (constantly nil)))
+           :qualification-data
+           (fn [eid]
+             (swap! reads update eid (fnil inc 0))
+             (data/collect
+              eid
+              (for [[attribute value] (dissoc (get db eid) :db/id)
+                    item (if (set? value) value [value])]
+                {:e eid :a attribute :v item :tx 7})
+              identity true)))}))
+
+(defn data-request [db reads]
+  (q/request-from-adapter
+   (data-adapter db reads)
+   {:time 99 :basis {:source "native-data" :revision 1}
+    :evaluator (portable-evaluator (atom 0))}))
+
+(deftest adapter-data-is-shared-and-metered-within-one-request
+  (let [reads (atom {}) ledger (counters/make-ledger) request (data-request fixture reads)]
+    (counters/call-with-ledger
+     ledger
+     (fn []
+       (is (= {} @reads))
+       (is (true? (q/qualify request 1 10)))
+       (is (every? zero? (vals (counters/snapshot ledger))))
+       (is (= :conditional-permission (evidence/permissionship (q/qualify request 1 [10 3]))))
+       (let [before (counters/snapshot ledger)]
+         (is (= :conditional-permission (evidence/permissionship (q/qualify request 1 [11 3]))))
+         (is (= before (counters/snapshot ledger))))
+       (is (= {1 1, 2 1, 3 1} @reads))
+       (is (= 3 (:commands (counters/snapshot ledger))))
+       (is (= 3 (:adapter-reads (counters/snapshot ledger))))
+       (is (= (reduce + (map #(count (dissoc (get fixture %) :db/id)) [1 2 3]))
+              (:fetched-values (counters/snapshot ledger))))))))
+
+(deftest adapter-data-faults-remain-visible-and-do-not-refetch
+  (doseq [db [(assoc-in fixture [3 :unknown/field] "private value")
+              (assoc-in fixture [3 qualifier/caveat-attribute] 3)
+              (dissoc fixture 3)]]
+    (let [reads (atom {}) request (data-request db reads)]
+      (is (evidence/fault? (q/qualify request 1 [10 3])))
+      (let [before @reads]
+        (is (evidence/fault? (q/qualify request 1 [11 3])))
+        (is (= before @reads)))
+      (is (= 1 (get @reads 3)))))
+  (let [reads (atom {}) request (data-request fixture reads)
+        token (execution/cancellation-token)
+        contract (execution/normalize {} :check-permission {:cancellation-token token})]
+    (execution/cancel! token)
+    (binding [execution/*contract* contract]
+      (is (= :eacl.execution/cancelled
+             (try (q/qualify request 1 [10 3]) nil
+                  (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                    (:type (ex-data error)))))))
+    (is (= {} @reads))))
 
 (deftest ordinary-edges-touch-no-request-state
   (is (true? (q/qualify nil nil 123)))

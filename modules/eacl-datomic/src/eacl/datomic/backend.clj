@@ -2,6 +2,7 @@
   "Datomic's storage-specific implementation of the shared v8 snapshot
   adapter. Authorization graph algorithms remain outside this namespace."
   (:require [datomic.api :as d]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datomic.db :as ddb]
@@ -9,7 +10,8 @@
   (:import [java.util.concurrent Future]))
 
 (def adapter-capabilities
-  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+  {:qualification #{qualification-data/capability}
+   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj}})
 
@@ -383,6 +385,10 @@
        :direct-edge
        (fn [subject-type subject-id relation-id resource-type resource-id]
          (ddb/direct-edge db subject-type subject-id relation-id resource-type resource-id))
+       :qualification-data
+       (fn [eid]
+         (qualification-data/collect eid (d/datoms db :eavt eid)
+                                     #(get (d/entity db %) :db/ident) true))
        :all-permission-nodes (fn [] (ddb/all-permission-nodes db))
        :proof-frame
        (fn [relation-ids]

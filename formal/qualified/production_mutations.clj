@@ -3,6 +3,9 @@
    conformance tests. Every control first checks its unmodified gate."
   (:require [clojure.test :as t :refer [deftest is]]
             [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.data :as data]
+            [eacl.authorization.data-test :as data-test]
+            [eacl.request.counters :as counters]
             [eacl.authorization.clock :as clock]
             [eacl.authorization.evidence-test :as evidence-test]
             [eacl.authorization.qualification :as qualification]
@@ -43,8 +46,21 @@
         accepted-emission @#'least-path/accepted-emission
         stream-next @#'least-path/stream-next
         check-many vector/check-cached-many-eids
+        collect data/collect
         enqueue @#'recursive/enqueue-evidence!]
-    {:qualifier-reference-ignored
+    {:qualification-data-drops-assertion-version
+     {:gate #'data-test/bounded-data-preserves-unknown-fields-and-same-read-version
+      :redefs {#'data/collect (fn [& args] (assoc (apply collect args) :version nil))}}
+     :qualification-data-hides-unknown-field
+     {:gate #'data-test/bounded-data-preserves-unknown-fields-and-same-read-version
+      :redefs {#'data/collect (fn [& args] (update (apply collect args) :entity dissoc :unexpected/field))}}
+     :qualification-data-unmetered
+     {:gate #'qualification-test/adapter-data-is-shared-and-metered-within-one-request
+      :redefs {#'counters/add-fetched-values! (fn ([] nil) ([_] nil))}}
+     :qualification-data-refetched-across-roles
+     {:gate #'qualification-test/adapter-data-faults-remain-visible-and-do-not-refetch
+      :redefs {#'qualification/entity-data (fn [request eid] ((:lookup request) eid))}}
+     :qualifier-reference-ignored
      {:gate #'qualification-test/exclusive-expiry-precedes-program-work
       :redefs {#'qualification/qualify (fn [_ _ value] (some? value))}}
      :expiry-boundary-retains-permission
@@ -156,7 +172,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 27 (count cases)))
+    (is (= 31 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

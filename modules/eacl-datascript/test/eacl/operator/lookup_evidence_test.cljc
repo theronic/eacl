@@ -50,9 +50,9 @@
                        :result-policy :detailed)
         request (:qualification options) reads (atom {})
         observed (qualification/request
-                  (assoc request :entity (fn [eid]
+                  (assoc request :lookup (fn [eid]
                                            (swap! reads update eid (fnil inc 0))
-                                           ((:entity request) eid))))]
+                                           ((:lookup request) eid))))]
     (is (= 4 (count (drain (assoc options :qualification observed)))))
     (is (seq @reads))
     (is (every? #(= 1 %) (vals @reads)))

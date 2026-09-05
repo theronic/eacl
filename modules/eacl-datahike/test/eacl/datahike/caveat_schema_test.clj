@@ -1,5 +1,6 @@
 (ns eacl.datahike.caveat-schema-test
   (:require [eacl.datahike.core :as api]
+            [eacl.datahike.backend :as backend]
             [eacl.cache :as cache]
             [eacl.caveats.hot-path-contract :as hot-path]
             [clojure.test :refer [deftest]]
@@ -46,5 +47,6 @@
       (edge-contract/check!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid db/entid :forward scan-impl/subject->resources
-         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge})
+         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge
+         :adapter #(backend/basis-adapter % {})})
         (finally (d/release conn) (d/delete-database config))))))

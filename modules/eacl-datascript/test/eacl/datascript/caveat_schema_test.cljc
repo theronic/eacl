@@ -1,5 +1,6 @@
 (ns eacl.datascript.caveat-schema-test
   (:require [eacl.datascript.core :as api]
+            [eacl.datascript.backend :as backend]
             [eacl.cache :as cache]
             [eacl.caveats.hot-path-contract :as hot-path]
             [#?(:clj clojure.test :cljs cljs.test) :refer [deftest]]
@@ -40,5 +41,6 @@
       (edge-contract/check!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid ds/entid :forward scan-impl/subject->resources
-         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge})
+         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge
+         :adapter #(backend/basis-adapter % {})})
 ))

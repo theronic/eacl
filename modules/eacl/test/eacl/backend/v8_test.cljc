@@ -1,6 +1,7 @@
 (ns eacl.backend.v8-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
             :refer [deftest is testing]]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.cache.key :as cache-key]
@@ -105,6 +106,26 @@
       (is (= :eacl/backend-contract-violation
              (:eacl/error (error-data #(backend/reduce-scan (make bad) :subject->resources
                                                                [:user 10 20 :doc options] [] {:step conj}))))))))
+
+(deftest qualification-data-capability-is-paired-and-guarded
+  (let [make (fn [capabilities operation guards?]
+               (backend/make-adapter
+                {:id :test :runtime-guards? guards? :capabilities capabilities
+                 :operations (cond-> (operation-map)
+                               operation (assoc :qualification-data operation))}))
+        capabilities {:qualification #{qualification-data/capability}}
+        packet {:entity {:db/id 1 :private/field "secret"} :version 7 :fact-count 1}]
+    (doseq [guards? [true false]]
+      (is (some? (error-data #(make capabilities nil guards?))))
+      (is (some? (error-data #(make {} (constantly packet) guards?)))))
+    (is (some? (error-data #(make {:qualification #{:unknown-contract}} (constantly packet) true))))
+    (is (= packet (backend/invoke (make capabilities (constantly packet) true) :qualification-data 1)))
+    (doseq [invalid [(assoc packet :extra true) (assoc packet :fact-count 4097)
+                    (assoc packet :version -1) (assoc packet :entity [])]]
+      (let [error (error-data #(backend/invoke (make capabilities (constantly invalid) true)
+                                              :qualification-data 1))]
+        (is (= :eacl/backend-contract-violation (:eacl/error error)))
+        (is (not (re-find #"secret" (pr-str error))))))))
 
 #?(:clj
    (deftest default-schema-warning-dedupe-is-concurrent-and-bounded-test
@@ -351,7 +372,7 @@
        (backend/certification-obligations
         :subject->resources)
        :strict-order))
-  (is (= #{:schema-generation :direct-match-many? :direct-edge}
+  (is (= #{:schema-generation :direct-match-many? :direct-edge :qualification-data}
          backend/optional-snapshot-operations))
   (is (every?
        (backend/certification-obligations :schema-generation)

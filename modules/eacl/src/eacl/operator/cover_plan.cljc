@@ -3,7 +3,8 @@
   least-path rule domain. Operator composition becomes synthetic
   self-permission edges, so an execution-time local predicate can make each
   child generator exact before the parent consumes its witness."
-  (:require [eacl.backend.v8 :as backend]
+  (:require [eacl.authorization.data :as qualification-data]
+            [eacl.backend.v8 :as backend]
             [eacl.engine.sealed-plan :as sealed-plan]
             [eacl.operator.plan :as operator-plan]))
 
@@ -153,6 +154,9 @@
                                      semantic synthetic))))
         operations
         (cond-> operations
+          (backend/supports? adapter :qualification qualification-data/capability)
+          (assoc :qualification-data (forwarding-operation adapter :qualification-data))
+
           (backend/supports? adapter :cache-proofs :ordered-generations)
           (assoc :proof-frame (forwarding-operation adapter :proof-frame))
 

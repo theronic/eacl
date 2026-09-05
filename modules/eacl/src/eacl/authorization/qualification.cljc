@@ -1,28 +1,47 @@
 (ns eacl.authorization.qualification
   "One edge qualification seam for a selected immutable request basis.
    This layer resolves data only; traversal remains in the existing engine."
-  (:require [eacl.authorization.evidence :as evidence]
+  (:require [eacl.authorization.data :as data]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.backend.v8 :as backend]
             [eacl.cache.standard-lru :as lru]
             [eacl.caveats.definition :as definition]
             [eacl.caveats.evaluator :as evaluator]
             [eacl.caveats.values :as values]
             [eacl.execution :as execution]
             [eacl.relationships.edge :as edge]
-            [eacl.relationships.qualifier :as qualifier]))
+            [eacl.relationships.qualifier :as qualifier]
+            [eacl.request.counters :as counters]))
 
 (def maximum-request-entries 100000)
-(defrecord Qualification [time context evaluator entity version basis cache memos])
+(defrecord Qualification [time context evaluator entity version basis cache memos lookup])
 
 (defn request
   "Captures trusted time and exact source/basis identity supplied by request
    orchestration. Entity/version callbacks close over that same native basis.
    Decode retention is optional and always uses complete exact basis identity."
-  [{:keys [time context evaluator entity version basis cache]}]
+  [{:keys [time context evaluator entity version basis cache lookup]}]
   (when-not (and (values/valid-time? time) (or (nil? context) (map? context))
-                (fn? entity) (fn? version) (map? basis) (seq basis)
+                (or (and (fn? entity) (fn? version) (nil? lookup))
+                    (and (fn? lookup) (nil? entity) (nil? version)))
+                (map? basis) (seq basis)
                 (or (nil? cache) (lru/store? cache)))
     (qualifier/error! :qualification-context))
-  (->Qualification time (or context {}) evaluator entity version basis cache (delay (volatile! {}))))
+  (->Qualification time (or context {}) evaluator entity version basis cache (delay (volatile! {})) lookup))
+
+(defn request-from-adapter
+  "Uses only the selected immutable adapter's bounded, metered data operation.
+   Entity contents and their assertion version arrive in the same read."
+  [adapter options]
+  (backend/require-capability! adapter :qualification data/capability)
+  (request
+   (assoc (dissoc options :entity :version)
+          :lookup (fn [eid]
+                    (execution/check! :qualification-data/before)
+                    (counters/add-commands!)
+                    (let [result (backend/invoke adapter :qualification-data eid)]
+                      (execution/check! :qualification-data/after)
+                      result)))))
 
 (defn- memo! [request key build]
   (let [memos (force (:memos request)) current @memos
@@ -37,9 +56,23 @@
               result)))]
     (if-let [error (:error result)] (throw error) (:value result))))
 
+(defn- entity-data [request eid]
+  (if-let [lookup (:lookup request)]
+    (memo! request [:entity-data eid]
+           #(let [result (lookup eid)]
+              (when-not (and (map? result) (= #{:entity :version :fact-count} (set (keys result)))
+                             (or (nil? (:entity result)) (map? (:entity result)))
+                             (or (nil? (:entity result)) (= eid (get-in result [:entity :db/id])))
+                             (or (nil? (:version result)) (qualifier/concrete-eid? (:version result)))
+                             (integer? (:fact-count result))
+                             (<= 0 (:fact-count result) data/maximum-entity-facts))
+                (qualifier/error! :qualification-data))
+              result))
+    {:entity ((:entity request) eid)}))
+
 (defn- named-definition [request eid]
   (memo! request [:caveat eid]
-         #(let [entity ((:entity request) eid)]
+         #(let [entity (:entity (entity-data request eid))]
             {:entity entity :header (definition/decode-header entity)})))
 
 (defn exact-reuse-identity
@@ -62,13 +95,14 @@
            cached (when-let [cache (:cache request)] (lru/lookup! cache key))]
        (if (:found? cached)
          (:value cached)
-         (let [entity ((:entity request) qid)
+         (let [data (entity-data request qid)
+               entity (:entity data)
                caveat-id (get entity qualifier/caveat-attribute)
                _ (when (and (some? caveat-id) (not (qualifier/concrete-eid? caveat-id)))
                    (qualifier/error! :qualifier-ref))
                named (when caveat-id (named-definition request caveat-id))
                value (qualifier/decode entity (get-in named [:header :parameters] []))
-               version ((:version request) qid)
+               version (if (:lookup request) (:version data) ((:version request) qid))
                _ (when (and (some? version) (not (qualifier/concrete-eid? version)))
                    (qualifier/error! :qualifier-version))
                result {:qualifier value :definition named :version version}]
@@ -77,7 +111,7 @@
 
 (defn- allowed! [request relation-id caveat-id]
   (let [allowed (memo! request [:relation relation-id]
-                       #(let [relation ((:entity request) relation-id)]
+                       #(let [relation (:entity (entity-data request relation-id))]
                           (when-not (and (map? relation) (seq relation))
                             (qualifier/error! :missing-relation))
                           (qualifier/relation-allowance relation)))]

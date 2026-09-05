@@ -93,9 +93,9 @@
   (let [env (fixture) base (options env :both 100 {"flag" false} :asc)
         request (:qualification base) reads (atom {})
         observed (qualification/request
-                  (assoc request :entity (fn [eid]
+                  (assoc request :lookup (fn [eid]
                                            (swap! reads update eid (fnil inc 0))
-                                           ((:entity request) eid))))]
+                                           ((:lookup request) eid))))]
     (is (= [(last (:docs env))] (mapv :value (drain (assoc base :qualification observed)))))
     (is (seq @reads))
     (is (every? #(= 1 %) (vals @reads)))

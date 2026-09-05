@@ -3,7 +3,8 @@
 
   This is the sole production backend boundary for recursive traversal, Relay
   pagination, deletion, consistency selection, and ordered-generation proofs."
-  (:require [eacl.exact-integer :as exact-integer]
+  (:require [eacl.authorization.data :as qualification-data]
+            [eacl.exact-integer :as exact-integer]
             [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
@@ -62,7 +63,7 @@
 (def optional-snapshot-operations
   "Snapshot operations with fail-closed defaults. They remain visible to the
   certification boundary without making an uncertified snapshot invalid."
-  #{:schema-generation :direct-match-many? :direct-edge})
+  #{:schema-generation :direct-match-many? :direct-edge :qualification-data})
 
 (def ^:private source-authority-operation-keys
   #{:select-current :select-authoritative :select-at-least :select-exact
@@ -116,6 +117,9 @@
      :distinct-typed-input :maximum-width-256
      :aligned-boolean-result :scalar-equivalent
      :cooperative-cancellation :atomic-failure :snapshot-bound}
+   :qualification-data
+   #{:optional-capability-paired :bounded-entity-facts :unknown-fields-preserved
+     :snapshot-bound :same-basis-assertion-version-or-nil :physical-facts-metered}
    :all-permission-nodes
    #{:finite :exact-schema-coverage :snapshot-bound}
    :schema-generation
@@ -159,7 +163,7 @@
    :runtime #{}})
 
 (def ^:private known-capability-groups
-  (conj (set (keys empty-capabilities)) :direct-membership-batch))
+  (conj (set (keys empty-capabilities)) :direct-membership-batch :qualification))
 
 (def ^:private scan-contract-keys
   #{:strict-order? :unique? :replayable? :strict-progress? :atomic-chunk?})
@@ -306,6 +310,8 @@
         (vec unknown-batch-contracts)
         :known-direct-membership-batch-contracts
         #{direct-membership-batch-capability}}))
+    (when (seq (remove #{qualification-data/capability} (:qualification normalized)))
+      (invalid-adapter! "Backend declares an unknown qualification data contract." {:backend backend-id}))
     normalized))
 
 (defn normalize-traversal-execution
@@ -444,6 +450,10 @@
       (invalid-adapter!
        "Backend advertises ordered generations without a proof-frame operation."
        {:backend id :capability :ordered-generations}))
+    (when-not (= (contains? (:qualification normalized) qualification-data/capability)
+                 (fn? (:qualification-data operations)))
+      (invalid-adapter! "Qualification data capability and operation must be declared together."
+                        {:backend id :operation :qualification-data}))
     (let [batch-capability?
           (contains? (:direct-membership-batch normalized)
                      direct-membership-batch-capability)
@@ -776,6 +786,16 @@
         (when-not (set? value)
           (contract-violation!
            backend-id operation-key :finite-node-set value))
+        value)
+
+      :qualification-data
+      (do
+        (when-not (and (map? value) (= #{:entity :version :fact-count} (set (keys value)))
+                       (or (nil? (:entity value)) (map? (:entity value)))
+                       (or (nil? (:version value)) (exact-integer/natural? (:version value)))
+                       (exact-integer/natural? (:fact-count value))
+                       (<= (:fact-count value) qualification-data/maximum-entity-facts))
+          (contract-violation! backend-id operation-key :bounded-qualification-data :redacted))
         value)
 
       :direct-match?

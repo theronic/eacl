@@ -1,6 +1,7 @@
 (ns eacl.datahike.backend
   "Datahike storage operations for the shared v8 authorization engine."
   (:require [datahike.api :as d]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.datahike.db :as ddb]
@@ -12,7 +13,8 @@
            [java.util UUID]))
 
 (def adapter-capabilities
-  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+  {:qualification #{qualification-data/capability}
+   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :direct-membership-batch #{backend/direct-membership-batch-capability}
    :runtime #{:clj}})
@@ -326,6 +328,11 @@
        :direct-edge
        (fn [subject-type subject-id relation-id resource-type resource-id]
          (impl/direct-edge db subject-type subject-id relation-id resource-type resource-id))
+
+       :qualification-data
+       (fn [eid]
+         (qualification-data/collect eid (d/datoms db {:index :eavt :components [eid]})
+                                     #(if (keyword? %) % (get (d/entity db %) :db/ident)) true))
 
        :all-permission-nodes
        (fn []

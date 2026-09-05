@@ -34,6 +34,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.authorization.evidence-test :reload)
      (load-file \"formal/qualified/evidence_bridge.clj\")
      (require 'eacl.caveats.definition :reload)
+     (require 'eacl.authorization.data :reload)
+     (require 'eacl.authorization.data-test :reload)
      (require 'eacl.authorization.qualification :reload)
      (require 'eacl.authorization.qualification-test :reload)
      (load-file \"formal/qualified/qualification_bridge.clj\")
@@ -74,6 +76,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.formal.qualified.seekable-bridge
                                    'eacl.formal.qualified.lookup-bridge
                                    'eacl.formal.qualified.arrow-bridge
+                                   'eacl.authorization.data-test 'eacl.authorization.qualification-test
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Qualified finite gate failed or assertion inventory changed\" r)))

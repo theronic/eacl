@@ -2,6 +2,7 @@
   "DataScript storage operations for the shared v8 authorization engine."
   (:require [datascript.core :as ds]
             [datascript.db :as dsdb]
+            [eacl.authorization.data :as qualification-data]
             [eacl.backend.source :as source]
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.backend.v8 :as backend]
@@ -44,7 +45,8 @@
        :branch nil})))
 
 (def adapter-capabilities
-  {:cursor #{:forward :reverse :opaque :authenticated :encrypted}
+  {:qualification #{qualification-data/capability}
+   :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj :cljs}})
 
@@ -205,6 +207,10 @@
        :direct-edge
        (fn [subject-type subject-id relation-id resource-type resource-id]
          (impl/direct-edge db subject-type subject-id relation-id resource-type resource-id))
+
+       :qualification-data
+       (fn [eid]
+         (qualification-data/collect eid (ds/datoms db :eavt eid) identity true))
 
        :all-permission-nodes
        (fn []

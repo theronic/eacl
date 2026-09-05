@@ -21,9 +21,9 @@
 
 (defn qualified-request [db time context]
   (let [native (qualifiers/read-api)]
-    (qualification/request
+    (qualification/request-from-adapter
+     (datascript-backend/basis-adapter db {})
      {:time time :context context
-      :entity #((:entity native) db %) :version #((:qualifier-version native) db %)
       :evaluator (qualification-fixtures/portable-evaluator (atom 0))
       :basis {:source ((:source native) db) :revision (:max-tx db)}})))
 

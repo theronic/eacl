@@ -6,6 +6,7 @@
             [eacl.authorization.batch-test]
             [eacl.authorization.evidence-test]
             [eacl.authorization.evidence-index-test]
+            [eacl.authorization.data-test]
             [eacl.authorization.qualification-test]
             [eacl.cache.derived-schema-test]
             [eacl.cache.key-test]
@@ -102,6 +103,7 @@
                'eacl.authorization.batch-test
                'eacl.authorization.evidence-test
                'eacl.authorization.evidence-index-test
+               'eacl.authorization.data-test
                'eacl.authorization.qualification-test
                'eacl.cache.derived-schema-test
                'eacl.cache.key-test
