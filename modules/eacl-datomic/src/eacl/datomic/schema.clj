@@ -1,8 +1,11 @@
 (ns eacl.datomic.schema
   (:require [clojure.walk :as walk]
             [datomic.api :as d]
+            [eacl.caveats.schema :as caveat-schema]
+            [eacl.caveats.definition :as caveat-definition]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.storage :as target-storage]
+            [eacl.datomic.qualifier-functions :as qualifier-functions]
             [eacl.relationships.upgrade :as upgrade]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.relationships.legacy-v7 :as legacy-v7]
@@ -47,7 +50,8 @@
 
 (def schema-version-attr-definition
   "Schema-generation stamp. write-schema! asserts a fresh squuid here in the
-  same transaction as any definition change. A connection-backed EACL client
+  same transaction as any definition change. Staged Caveat-reference creation
+  also advances it to serialize against definition removal. A connection-backed EACL client
   reads it once at construction and replaces its one cached generation when
   write-schema! is invoked through that client. Do not edit EACL definitions
   outside write-schema!."
@@ -277,7 +281,8 @@
    #(not (contains? expression-persistence/legacy-flat-attributes
                     (:db/ident %)))
    (into v7-compatible-schema
-         [(second upgrade/metadata-schema) target-storage/basis-guard])))
+         (concat [(second upgrade/metadata-schema) target-storage/basis-guard qualifier-functions/assert-facts]
+                 caveat-schema/datom-schema))))
 
 (defn install!
   "Explicitly installs and bootstraps fresh Relationship storage 9. Existing
@@ -453,14 +458,29 @@
          [?perm :eacl.permission/permission-name]]
        db))
 
+(defn read-caveats [db]
+  (let [entities (if (d/entid db :eacl.caveat/name) (d/q '[:find [(pull ?c [:eacl.caveat/name :eacl.caveat/parameters-payload
+                               :eacl.caveat/expression-source :eacl.caveat/profile-version]) ...]
+            :where [?c :eacl.caveat/name]] db) [])]
+    (doseq [entity entities] (caveat-definition/decode-entity entity))
+    entities))
+
+(defn- caveat-references [db name]
+  (if-let [eid (d/entid db [:eacl.caveat/name name])]
+    (d/q '[:find [(pull ?q [:db/id :eacl.relationship-qualifier/caveat-context]) ...]
+               :in $ ?c
+               :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
+    []))
+
 (defn read-schema
   "Enumerates all EACL permission schema entities in DB and returns maps."
   ; todo: unparse into SpiceDB string schema if desired.
   [db & [_format]]
   (let [permissions (read-permissions db)]
     (expression-persistence/validate-entities permissions)
-    {:relations   (read-relations db)
-     :permissions permissions}))
+    (let [caveats (read-caveats db)]
+      (cond-> {:relations (read-relations db) :permissions permissions}
+        (seq caveats) (assoc :caveats caveats)))))
 
 (defn- read-schema-unchecked
   "Migration-only physical schema read. Normal readers must use read-schema so
@@ -702,7 +722,8 @@
            (and (empty? (:definitions new-schema-map))
                 (not allow-empty-schema?)
                 (or (seq (:relations existing-schema))
-                    (seq (:permissions existing-schema))))
+                    (seq (:permissions existing-schema))
+                       (seq (:caveats existing-schema))))
             (throw
              (ex-info
               (str "Refusing to replace a non-empty schema with zero definitions."
@@ -721,7 +742,8 @@
           #(count-relationships-using-relation db %)
           :relationship-present?
           #(relationship-present-for-relation? db %)})
-        {:keys [relations permissions]} deltas
+        {:keys [relations permissions caveats]} deltas
+        _ (caveat-definition/validate-replacements! caveats #(caveat-references db %))
         relation-retractions (:retractions relations)
         permission-retractions
         (expression-persistence/entity-deletions permissions)
@@ -749,6 +771,9 @@
           relation-addition-entities
           relation-initial-stamps
           (:additions permissions)
+          (map #(assoc % :db/id (d/tempid :db.part/user)) (:additions caveats))
+          (for [caveat (caveat-definition/entity-deletions caveats)]
+            [:db.fn/retractEntity [:eacl.caveat/name (:eacl.caveat/name caveat)]])
           (for [relation relation-retractions]
             [:db.fn/retractEntity [:eacl/id (:eacl/id relation)]])
           (for [permission permission-retractions]
@@ -766,7 +791,9 @@
                           [(:additions relations)
                            (:retractions relations)
                            (:additions permissions)
-                           (:retractions permissions)]))
+                           (:retractions permissions)
+                        (:additions caveats)
+                        (:retractions caveats)]))
         effective-tx-data (if no-op? [] tx-data)]
     (assoc semantic
            :tx-data effective-tx-data

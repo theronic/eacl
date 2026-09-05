@@ -104,7 +104,7 @@ jobs:
         # validating performance changes.
         run: |
           mkdir -p target
-          clojure -M:dev:test:cljs-test:nrepl --port 7788 \
+          clojure -M:dev:test:caveats-jvm:cljs-test:nrepl --port 7788 \
             > target/ci-nrepl.log 2>&1 &
           for attempt in {1..60}; do
             if (echo > /dev/tcp/127.0.0.1/7788) 2>/dev/null; then
@@ -123,6 +123,7 @@ jobs:
                (let [result
                      (runner/test
                       {:dirs [\"modules/eacl/test\"
+                              \"modules/eacl-caveats-jvm/test\"
                               \"modules/eacl-datomic/test\"
                               \"modules/eacl-datascript/test\"
                               \"modules/eacl-datahike/test\"
@@ -160,7 +161,7 @@ jobs:
       matrix:
         # eacl-datalevin joins this matrix only after its maintained fork is
         # published from an immutable public source commit.
-        module: [eacl, eacl-datomic, eacl-datascript, eacl-datahike]
+        module: [eacl, eacl-caveats-jvm, eacl-datomic, eacl-datascript, eacl-datahike]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

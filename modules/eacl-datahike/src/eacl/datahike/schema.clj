@@ -1,6 +1,8 @@
 (ns eacl.datahike.schema
   (:require [clojure.set :as set]
             [datahike.api :as d]
+            [eacl.caveats.schema :as caveat-schema]
+            [eacl.caveats.definition :as caveat-definition]
             [eacl.datahike.db :as ddb]
             [eacl.datahike.storage :as target-storage]
             [eacl.relationships.upgrade :as upgrade]
@@ -118,7 +120,8 @@
 
 (def datahike-schema
   "EACL's own attributes, as datahike transaction data."
-  (into (into component-schema upgrade/metadata-schema) tuple-schema))
+  (into (into component-schema upgrade/metadata-schema)
+        (concat tuple-schema caveat-schema/datom-schema)))
 
 (defn merge-schema
   "EACL's attributes plus the caller's. `extra-schema` is datahike-native
@@ -279,12 +282,27 @@
           flat? :flat
           :else :none)))))
 
+(defn read-caveats [db]
+  (let [entities (if (ddb/entid db :eacl.caveat/name) (d/q '[:find [(pull ?c [:eacl.caveat/name :eacl.caveat/parameters-payload
+                               :eacl.caveat/expression-source :eacl.caveat/profile-version]) ...]
+            :where [?c :eacl.caveat/name]] db) [])]
+    (doseq [entity entities] (caveat-definition/decode-entity entity))
+    entities))
+
+(defn- caveat-references [db name]
+  (if-let [eid (ddb/entid db [:eacl.caveat/name name])]
+    (d/q '[:find [(pull ?q [:db/id :eacl.relationship-qualifier/caveat-context]) ...]
+               :in $ ?c
+               :where [?q :eacl.relationship-qualifier/caveat ?c]] db eid)
+    []))
+
 (defn read-schema
   [db & [_format]]
   (let [permissions (read-permissions db)]
     (expression-persistence/validate-entities permissions)
-    {:relations   (read-relations db)
-     :permissions permissions}))
+    (let [caveats (read-caveats db)]
+      (cond-> {:relations (read-relations db) :permissions permissions}
+        (seq caveats) (assoc :caveats caveats)))))
 
 (defn prepare-cache-coherence!
   "Initializes missing native schema/relation generations and the schema
@@ -470,7 +488,8 @@
         (when (and (empty? (:definitions new-schema-map))
                    (not allow-empty-schema?)
                    (or (seq (:relations existing-schema))
-                       (seq (:permissions existing-schema))))
+                       (seq (:permissions existing-schema))
+                       (seq (:caveats existing-schema))))
           (throw
            (ex-info
             (str "Refusing to replace a non-empty schema with zero definitions."
@@ -487,7 +506,8 @@
           :relationship-count #(count-relationships-using-relation db %)
           :relationship-present?
           #(relationship-present-for-relation? db %)})
-        {:keys [relations permissions]} deltas
+        {:keys [relations permissions caveats]} deltas
+        _ (caveat-definition/validate-replacements! caveats #(caveat-references db %))
         relation-retractions (:retractions relations)
         permission-retractions
         (expression-persistence/entity-deletions permissions)
@@ -521,6 +541,11 @@
          (concat
           relation-additions
           (:additions permissions)
+          (:additions caveats)
+          (for [caveat (caveat-definition/entity-deletions caveats)
+                :let [eid (ddb/entid db [:eacl.caveat/name (:eacl.caveat/name caveat)])]
+                :when eid]
+            [:db/retractEntity eid])
           (for [relation relation-retractions
                 :let [eid (ddb/entid db [:eacl/id (:eacl/id relation)])]
                 :when eid]
@@ -544,7 +569,9 @@
                        [(:additions relations)
                         (:retractions relations)
                         (:additions permissions)
-                        (:retractions permissions)])))
+                        (:retractions permissions)
+                        (:additions caveats)
+                        (:retractions caveats)])))
         tx-data (if no-op? [] tx-data)]
     (assoc semantic
            :tx-data tx-data

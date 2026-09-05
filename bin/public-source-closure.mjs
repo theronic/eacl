@@ -12,6 +12,7 @@ const repositoryRoot = resolve(
 );
 const sourcePaths = [
   "modules/eacl/src",
+  "modules/eacl-caveats-jvm/src",
   "modules/eacl-datomic/src",
   "modules/eacl-datahike/src",
   "modules/eacl-datascript/src",
@@ -21,6 +22,25 @@ const reportPath =
   process.env.EACL_PUBLIC_SOURCE_CLOSURE_OUTPUT ??
   "target/formal/verification/public-source-closure.json";
 const roots = [
+  "eacl.caveats.evaluator/evaluate",
+  "eacl.caveats.evaluator/require-matching!",
+  "eacl.caveats.jvm/evaluator",
+  "eacl.caveats.jvm/evaluate-definition",
+  "eacl.relationships.qualifier-integrity/proof-input",
+  "eacl.relationships.qualifier-integrity/report",
+  "eacl.relationships.qualifier-integrity/repair-pair!",
+  "eacl.relationships.qualifier-integrity/cleanup-orphans!",
+  "eacl.relationships.staged/prepare!",
+  "eacl.relationships.staged/plan-current",
+  "eacl.relationships.staged/write!",
+  "eacl.relationships.staged/cleanup!",
+  "eacl.caveats.plan/compile-plan",
+  "eacl.caveats.plan/decode-plan",
+  "eacl.caveats.partial/evaluate",
+  "eacl.datomic.qualifiers/writer",
+  "eacl.datascript.qualifiers/writer",
+  "eacl.datahike.qualifiers/writer",
+  "eacl.datalevin.qualifiers/writer",
   "eacl.engine.v8/can?",
   "eacl.engine.v8/lookup-resources",
   "eacl.engine.v8/lookup-subjects",

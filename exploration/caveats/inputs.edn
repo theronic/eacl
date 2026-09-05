@@ -1,0 +1,25 @@
+{:qualification-version 1
+ :artifacts
+ [{:coordinate com.exoscale/cel-parser :version "0.1.8"
+   :repository "https://github.com/exoscale/cel-parser"
+   :revision "d2c64e8d2e466d4b57b3b7d13025327976b4745b"
+   :jar-sha256 "2554b657e335524115c29f45f9f2b45d1a868a495ddb24d5ac8758acf2aa982d"
+   :source-license :ISC :pom-licenses [:MIT :ISC]}
+  {:coordinate com.exoscale/antlr-cel :version "0.1.1"
+   :repository "https://github.com/exoscale/antlr-cel"
+   :revision "6474d39cb70cb60a3bfc9674a8ce4b162b59082a"
+   :jar-sha256 "d8f3012b5f24d89d87dea9e1de826dd578d7b3a47e2b9038256af6e821929d99"
+   :source-license :Apache-2.0 :pom-licenses [:MIT :ISC]}
+  {:coordinate org.antlr/antlr4-runtime :version "4.9.2"
+   :repository "https://github.com/antlr/antlr4"
+   :revision "4.9.2"
+   :jar-sha256 "120053628dd598d43cb7ac6b9ecc72529dfa5a5fd3292d37cf638a81cc0075f6"
+   :source-license :BSD-3-Clause}]
+ :references
+ [{:name :cel-spec :repository "https://github.com/cel-expr/cel-spec"
+   :revision "ba58ae5007845f3a1279b488cdeb79645ce958bb"
+   :paths ["doc/langdef.md" "tests/simple/testdata"]}
+  {:name :spicedb :repository "https://github.com/authzed/spicedb"
+   :revision "9b5cdc1e849249ecd31cfeca82149767dbb8760f"
+   :paths ["pkg/caveats/eval.go" "pkg/caveats/eval_test.go"]}]
+ :production-dependencies-changed false}

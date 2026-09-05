@@ -36,6 +36,7 @@ usage() {
     "  bootstrap             install and checksum-check locked tools" \
     "  format                check Dafny source formatting" \
     "  verify                verify every Dafny project" \
+    "  fast                  verify Caveat foundation proofs and finite nREPL controls" \
     "  compile-java          translate the executable kernel to Java" \
     "  compile-js            translate the executable kernel to JavaScript" \
     "  build-java            compile the translated Java smoke boundary" \
@@ -159,6 +160,10 @@ nrepl_eval() {
 
 command=${1:-}
 case "$command" in
+  fast)
+    need_tools
+    exec sh "$repo_root/formal/caveats/verify-fast.sh"
+    ;;
   bootstrap)
     exec "$repo_root/bin/bootstrap-formal-tools"
     ;;

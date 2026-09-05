@@ -59,7 +59,8 @@
         schema-components
         (set/union
          relationship-effects
-         (changed-coordinates permission-coordinate (:permissions deltas)))
+         (changed-coordinates permission-coordinate (:permissions deltas))
+         (changed-coordinates #(vector :caveat (:eacl.caveat/name %)) (:caveats deltas)))
         removed-relations
         (into #{} (map relation-coordinate) relation-retractions)
         diagnostics

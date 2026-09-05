@@ -1,0 +1,298 @@
+:upstream-helper-false-result #exoscale.cel.expr.BoolType{:x false}
+
+Testing exoscale.cel.generated.conversions-test
+
+FAIL in (conversions-type-uint_denotation-test) (conversions_test.clj:652)
+Type reflection tests.
+uint
+expected: (helper/equal? (helper/translate {:typeValue "uint"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "uint"} #exoscale.cel.expr.TypeType{:x :uint}))
+
+FAIL in (conversions-type-type-test) (conversions_test.clj:863)
+Type reflection tests.
+type(int)
+expected: (helper/equal? (helper/translate {:typeValue "type"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "type"} #exoscale.cel.expr.TypeType{:x :type}))
+
+FAIL in (conversions-type-bytes_denotation-test) (conversions_test.clj:742)
+Type reflection tests.
+bytes
+expected: (helper/equal? (helper/translate {:typeValue "bytes"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "bytes"} #exoscale.cel.expr.TypeType{:x :bytes}))
+
+FAIL in (conversions-type-null_type-test) (conversions_test.clj:685)
+Type reflection tests.
+type(null)
+expected: (helper/equal? (helper/translate {:typeValue "null_type"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "null_type"} #exoscale.cel.expr.TypeType{:x :null_type}))
+
+FAIL in (conversions-type-double_denotation-test) (conversions_test.clj:674)
+Type reflection tests.
+double
+expected: (helper/equal? (helper/translate {:typeValue "double"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "double"} #exoscale.cel.expr.TypeType{:x :double}))
+
+FAIL in (conversions-type-string-test) (conversions_test.clj:709)
+Type reflection tests.
+type('foo')
+expected: (helper/equal? (helper/translate {:typeValue "string"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "string"} #exoscale.cel.expr.TypeType{:x :string}))
+
+FAIL in (conversions-type-double-test) (conversions_test.clj:663)
+Type reflection tests.
+type(3.14)
+expected: (helper/equal? (helper/translate {:typeValue "double"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "double"} #exoscale.cel.expr.TypeType{:x :double}))
+
+FAIL in (conversions-type-list_denotation-test) (conversions_test.clj:764)
+Type reflection tests.
+list
+expected: (helper/equal? (helper/translate {:typeValue "list"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "list"} #exoscale.cel.expr.TypeType{:x :list}))
+
+FAIL in (conversions-type-bytes-test) (conversions_test.clj:731)
+Type reflection tests.
+type(b'\xff')
+expected: (helper/equal? (helper/translate {:typeValue "bytes"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "bytes"} #exoscale.cel.expr.TypeType{:x :bytes}))
+
+FAIL in (conversions-dyn-dyn_heterogeneous_list-test) (conversions_test.clj:308)
+Tests for dyn annotation.
+type(dyn([1, 'one']))
+expected: (helper/equal? (helper/translate {:typeValue "list"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "list"} #exoscale.cel.expr.TypeType{:x :list}))
+
+FAIL in (conversions-type-uint-test) (conversions_test.clj:641)
+Type reflection tests.
+type(64u)
+expected: (helper/equal? (helper/translate {:typeValue "uint"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "uint"} #exoscale.cel.expr.TypeType{:x :uint}))
+
+FAIL in (conversions-type-type_type-test) (conversions_test.clj:885)
+Type reflection tests.
+type(type)
+expected: (helper/equal? (helper/translate {:typeValue "type"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "type"} #exoscale.cel.expr.TypeType{:x :type}))
+
+FAIL in (conversions-type-string_denotation-test) (conversions_test.clj:720)
+Type reflection tests.
+string
+expected: (helper/equal? (helper/translate {:typeValue "string"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "string"} #exoscale.cel.expr.TypeType{:x :string}))
+
+FAIL in (conversions-type-type_denotation-test) (conversions_test.clj:874)
+Type reflection tests.
+type
+expected: (helper/equal? (helper/translate {:typeValue "type"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "type"} #exoscale.cel.expr.TypeType{:x :type}))
+
+FAIL in (conversions-string-bytes_unicode-test) (conversions_test.clj:553)
+Conversions to string.
+string(b'\303\277')
+expected: (helper/equal? (helper/translate {:stringValue "ÿ"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.StringType{:x "ÿ"} #exoscale.cel.expr.StringType{:x #object[java.nio.HeapCharBuffer 0x67430756 "ÿ"]}))
+
+FAIL in (conversions-type-map-test) (conversions_test.clj:786)
+Type reflection tests.
+type({4: 16})
+expected: (helper/equal? (helper/translate {:typeValue "map"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "map"} #exoscale.cel.expr.TypeType{:x :map}))
+
+FAIL in (conversions-type-map_denotation-test) (conversions_test.clj:797)
+Type reflection tests.
+map
+expected: (helper/equal? (helper/translate {:typeValue "map"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "map"} #exoscale.cel.expr.TypeType{:x :map}))
+
+FAIL in (conversions-type-int_denotation-test) (conversions_test.clj:619)
+Type reflection tests.
+int
+expected: (helper/equal? (helper/translate {:typeValue "int"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "int"} #exoscale.cel.expr.TypeType{:x :int}))
+
+FAIL in (conversions-type-list-test) (conversions_test.clj:753)
+Type reflection tests.
+type([1, 2, 3])
+expected: (helper/equal? (helper/translate {:typeValue "list"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "list"} #exoscale.cel.expr.TypeType{:x :list}))
+
+FAIL in (conversions-type-bool-test) (conversions_test.clj:575)
+Type reflection tests.
+type(true)
+expected: (helper/equal? (helper/translate {:typeValue "bool"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "bool"} #exoscale.cel.expr.TypeType{:x :bool}))
+
+FAIL in (conversions-type-null_type_denotation-test) (conversions_test.clj:697)
+Type reflection tests.
+null_type
+expected: (helper/equal? (helper/translate {:typeValue "null_type"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "null_type"} #exoscale.cel.expr.TypeType{:x :null_type}))
+
+FAIL in (conversions-type-int-test) (conversions_test.clj:608)
+Type reflection tests.
+type(0)
+expected: (helper/equal? (helper/translate {:typeValue "int"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "int"} #exoscale.cel.expr.TypeType{:x :int}))
+
+FAIL in (conversions-string-bytes-test) (conversions_test.clj:542)
+Conversions to string.
+string(b'abc')
+expected: (helper/equal? (helper/translate {:stringValue "abc"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.StringType{:x "abc"} #exoscale.cel.expr.StringType{:x #object[java.nio.HeapCharBuffer 0x696f0a61 "abc"]}))
+
+FAIL in (conversions-type-bool_denotation-test) (conversions_test.clj:586)
+Type reflection tests.
+bool
+expected: (helper/equal? (helper/translate {:typeValue "bool"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.TypeType{:x "bool"} #exoscale.cel.expr.TypeType{:x :bool}))
+
+Testing exoscale.cel.generated.timestamps-test
+
+FAIL in (timestamps-timestamp_arithmetic-subtract_time_from_time-test) (timestamps_test.clj:496)
+Arithmetic operations on timestamps and/or durations.
+timestamp('2009-02-13T23:31:00Z') - timestamp('2009-02-13T23:29:00Z') == duration('120s')
+expected: (helper/equal? (helper/translate {:boolValue true}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x true} #exoscale.cel.expr.BoolType{:x false}))
+
+FAIL in (timestamps-timestamp_selectors_tz-getHours-test) (timestamps_test.clj:298)
+Timestamp selection operators with timezones
+timestamp('2009-02-13T23:31:30Z').getHours('02:00')
+expected: (helper/equal? (helper/translate {:int64Value "1"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.IntType{:x 1} #exoscale.cel.expr.IntType{:x 23}))
+
+FAIL in (timestamps-timestamp_selectors_tz-getDayOfMonth_numerical_neg-test) (timestamps_test.clj:243)
+Timestamp selection operators with timezones
+timestamp('2009-02-13T02:00:00Z').getDayOfMonth('-02:30')
+expected: (helper/equal? (helper/translate {:int64Value "11"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.IntType{:x 11} #exoscale.cel.expr.IntType{:x 12}))
+
+FAIL in (timestamps-duration_converters-get_milliseconds-test) (timestamps_test.clj:668)
+Conversion functions on durations. Unlike timestamps, we don't, e.g. select the 'minutes' field - we convert the duration to integer minutes.
+x.getMilliseconds()
+expected: (helper/equal? (helper/translate {:int64Value "123123"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.IntType{:x 123123} #exoscale.cel.expr.IntType{:x 123}))
+
+FAIL in (timestamps-timestamp_conversions-toString_timestamp_nanos-test) (timestamps_test.clj:46)
+Conversions of timestamps to other types.
+string(timestamp('9999-12-31T23:59:59.999999999Z'))
+expected: (helper/equal? (helper/translate {:stringValue "9999-12-31T23:59:59.999999999Z"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.StringType{:x "9999-12-31T23:59:59.999999999Z"} #exoscale.cel.expr.StringType{:x "10000-01-01 01:59:59.999999999"}))
+
+FAIL in (timestamps-timestamp_selectors_tz-getDayOfMonth_numerical_pos-test) (timestamps_test.clj:232)
+Timestamp selection operators with timezones
+timestamp('2009-02-13T23:31:30Z').getDayOfMonth('+11:00')
+expected: (helper/equal? (helper/translate {:int64Value "13"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.IntType{:x 13} #exoscale.cel.expr.IntType{:x 12}))
+
+FAIL in (timestamps-duration_conversions-toString_duration-test) (timestamps_test.clj:74)
+Conversions of durations to other types.
+string(duration('1000000s'))
+expected: (helper/equal? (helper/translate {:stringValue "1000000s"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.StringType{:x "1000000s"} #exoscale.cel.expr.StringType{:x "PT277H46M40S"}))
+
+FAIL in (timestamps-timestamp_conversions-toString_timestamp-test) (timestamps_test.clj:32)
+Conversions of timestamps to other types.
+string(timestamp('2009-02-13T23:31:30Z'))
+expected: (helper/equal? (helper/translate {:stringValue "2009-02-13T23:31:30Z"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.StringType{:x "2009-02-13T23:31:30Z"} #exoscale.cel.expr.StringType{:x "2009-02-14 01:31:30.0"}))
+
+Testing exoscale.cel.generated.comparisons-test
+
+FAIL in (comparisons-lt_literal-not_lt_bytes_same-test) (comparisons_test.clj:865)
+Literals comparison on _<_. (a < b) == (b > a) == !(a >= b) == !(b <= a)
+b'abc' < b'abc'
+expected: (helper/equal? (helper/translate {:boolValue false}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x false} #exoscale.cel.expr.BoolType{:x true}))
+
+FAIL in (comparisons-lt_literal-not_lt_bytes_width-test) (comparisons_test.clj:876)
+Literals comparison on _<_. (a < b) == (b > a) == !(a >= b) == !(b <= a)
+b'á' < b'b'
+expected: (helper/equal? (helper/translate {:boolValue false}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x false} #exoscale.cel.expr.BoolType{:x true}))
+
+Testing exoscale.cel.generated.string-test
+
+FAIL in (string-matches-unicode-test) (string_test.clj:304)
+Tests for regexp matching.  For now, we will only test the subset of regular languages.
+'mañana'.matches('a+ñ+a+')
+expected: (helper/equal? (helper/translate {:boolValue true}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x true} #exoscale.cel.expr.BoolType{:x false}))
+
+FAIL in (string-matches-empty_arg-test) (string_test.clj:249)
+Tests for regexp matching.  For now, we will only test the subset of regular languages.
+'cows'.matches('')
+expected: (helper/equal? (helper/translate {:boolValue true}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x true} #exoscale.cel.expr.BoolType{:x false}))
+
+FAIL in (string-matches-re_concat-test) (string_test.clj:271)
+Tests for regexp matching.  For now, we will only test the subset of regular languages.
+'abcd'.matches('bc')
+expected: (helper/equal? (helper/translate {:boolValue true}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x true} #exoscale.cel.expr.BoolType{:x false}))
+
+FAIL in (string-matches-basic-test) (string_test.clj:227)
+Tests for regexp matching.  For now, we will only test the subset of regular languages.
+'hubba'.matches('ubb')
+expected: (helper/equal? (helper/translate {:boolValue true}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x true} #exoscale.cel.expr.BoolType{:x false}))
+
+Testing exoscale.cel.generated.fields-test
+
+Testing exoscale.cel.generated.plumbing-test
+
+Testing exoscale.cel.generated.macros-test
+
+Testing exoscale.cel.generated.unknowns-test
+
+Testing exoscale.cel.generated.integer_math-test
+
+Testing exoscale.cel.generated.logic-test
+
+Testing exoscale.cel.generated.parse-test
+
+FAIL in (parse-repeat-unary_neg-test) (parse_test.clj:142)
+Repetitive parse trees which all implementations must support.
+--------------------------------19
+expected: (helper/equal? (helper/translate {:int64Value "19"}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.IntType{:x 19} #exoscale.cel.expr.IntType{:x -19}))
+
+FAIL in (parse-repeat-not-test) (parse_test.clj:131)
+Repetitive parse trees which all implementations must support.
+!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!true
+expected: (helper/equal? (helper/translate {:boolValue true}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x true} #exoscale.cel.expr.BoolType{:x false}))
+
+Testing exoscale.cel.generated.fp_math-test
+
+Testing exoscale.cel.generated.lists-test
+
+FAIL in (lists-concatentation-list_repeat-test) (lists_test.clj:40)
+Tests for list concatenation.
+[2] + [2]
+expected: (helper/equal? (helper/translate {:listValue {:values [{:int64Value "2"} {:int64Value "2"}]}}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.CollType{:elems [#exoscale.cel.expr.IntType{:x 2} #exoscale.cel.expr.IntType{:x 2}]} #exoscale.cel.expr.CollType{:elems [#exoscale.cel.expr.IntType{:x 2}], :x (#exoscale.cel.expr.IntType{:x 2})}))
+
+FAIL in (lists-concatentation-left_unit-test) (lists_test.clj:66)
+Tests for list concatenation.
+[] + [3, 4]
+expected: (helper/equal? (helper/translate {:listValue {:values [{:int64Value "3"} {:int64Value "4"}]}}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.CollType{:elems [#exoscale.cel.expr.IntType{:x 3} #exoscale.cel.expr.IntType{:x 4}]} #exoscale.cel.expr.CollType{:elems [], :x (#exoscale.cel.expr.IntType{:x 3} #exoscale.cel.expr.IntType{:x 4})}))
+
+FAIL in (lists-concatentation-list_append-test) (lists_test.clj:18)
+Tests for list concatenation.
+[0, 1, 2] + [3, 4, 5] == [0, 1, 2, 3, 4, 5]
+expected: (helper/equal? (helper/translate {:boolValue true}) res)
+  actual: (not (helper/equal? #exoscale.cel.expr.BoolType{:x true} #exoscale.cel.expr.BoolType{:x false}))
+
+Testing exoscale.cel.generated.basic-test
+
+Testing exoscale.cel.timestamps-test
+
+Testing exoscale.cel.map-test
+
+Testing exoscale.cel.errors-test
+
+Ran 666 tests containing 698 assertions.
+43 failures, 0 errors.
+=> {:test 666, :pass 655, :fail 43, :error 0, :type :summary}
+*======== user | clj ========*

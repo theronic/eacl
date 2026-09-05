@@ -53,6 +53,7 @@
      :module-id module-id
      :module-root module-root
      :src-dir (file-path root directory "src")
+     :resources-dir (file-path root directory "resources")
      :target-dir (file-path root directory "target")
      :class-dir class-dir
      :jar-file
@@ -291,6 +292,16 @@
   adapter's source namespace. Datalevin's native runtime belongs exclusively
   to its pinned dependency artifact, never to the EACL adapter JAR."
   [module-id jar-file]
+  (let [entries (jar-entries jar-file)
+        forbidden-prefixes (cond-> ["exoscale/cel/" "org/antlr/"]
+                             (not= :eacl-caveats-jvm module-id) (conj "eacl/caveats/jvm/")
+                             (= :eacl-caveats-jvm module-id)
+                             (into ["eacl/datomic/" "eacl/datahike/" "eacl/datascript/" "eacl/datalevin/"]))
+        forbidden (filterv #(or (and (not= :eacl-caveats-jvm module-id) (= "eacl/caveats/jvm.clj" %))
+                                (some (fn [prefix] (string/starts-with? % prefix)) forbidden-prefixes)) entries)]
+    (when (seq forbidden)
+      (throw (ex-info "Caveat implementation or dependency payload crossed a module boundary."
+                      {:type :eacl.build/backend-isolation-failed :module module-id :entries forbidden}))))
   (when (= :eacl-datalevin module-id)
     (let [entries (jar-entries jar-file)
           forbidden-prefixes
@@ -458,10 +469,10 @@
 
 (defn audit-built!
   [module-id {:keys [jar-file] :as artifact}]
-  (let [{:keys [generated-runtime? required-entry]}
+  (let [{:keys [generated-runtime? required-entry required-resources]}
         (config/module module-id)
         entries (jar-entries jar-file)
-        required #{"META-INF/LICENCE" required-entry}
+        required (into #{"META-INF/LICENCE" required-entry} required-resources)
         missing (vec (sort (remove entries required)))]
     (assert-pom! module-id artifact)
     (assert-no-workspace-content! artifact)
@@ -511,7 +522,7 @@
   [module-id options]
   (let [{:keys [lib description generated-runtime?]}
         (config/module module-id)
-        {:keys [root src-dir class-dir jar-file version] :as paths}
+        {:keys [root src-dir resources-dir class-dir jar-file version] :as paths}
         (module-paths module-id options)
         basis (module-basis module-id version)
         formal (formal-paths root)]
@@ -527,6 +538,8 @@
       :scm (assoc config/scm :tag (or (System/getenv "GITHUB_SHA") "HEAD"))
       :pom-data (config/pom-data module-id)})
     (b/copy-dir {:src-dirs [src-dir] :target-dir class-dir})
+    (when (.isDirectory (io/file resources-dir))
+      (b/copy-dir {:src-dirs [resources-dir] :target-dir class-dir}))
     (b/copy-file {:src (file-path root "LICENCE")
                   :target (file-path class-dir "META-INF" "LICENCE")})
     (when generated-runtime?
