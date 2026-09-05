@@ -28,9 +28,9 @@ module QualifiedEvidence {
 
   lemma PointwiseBooleanAlgebra(op: Operator, a: set<nat>, b: set<nat>, w: nat)
     ensures w in Compose(op, Value(a), Value(b)).worlds <==>
-      (if op.Union? then w in a || w in b
-       else if op.Exclusion? then w in a && w !in b
-       else w in a && w in b)
+            (if op.Union? then w in a || w in b
+             else if op.Exclusion? then w in a && w !in b
+             else w in a && w in b)
   {}
 
   lemma FaultAlwaysPropagates(op: Operator, a: Outcome, b: Outcome)
@@ -158,7 +158,7 @@ module QualifiedEvidence {
     StepStaysFinite(possible, base, rules, prior);
     var next := Step(base, rules, prior);
     if next == prior then prior else
-      (StrictFiniteProgress(possible, prior, next); Closure(possible, base, rules, next))
+    (StrictFiniteProgress(possible, prior, next); Closure(possible, base, rules, next))
   }
 
   lemma ClosureIsLeast(possible: set<Fact>, base: set<Fact>, rules: set<Rule>, prior: set<Fact>, closed: set<Fact>)

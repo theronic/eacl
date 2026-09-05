@@ -31,9 +31,9 @@ module QualifiedReuse {
     keyAvailable && rawNow < cursor.tokenExpiry &&
     AcceptCache(universe, cursor.entry, scope, basis, ancestors, evaluationTime) &&
     (if cursor.mode.Pinned?
-      then basis == cursor.entry.basis && evaluationTime == cursor.entry.start
-      else cursor.entry.start <= evaluationTime &&
-           (evaluationTime == cursor.entry.start || (cursor.retainedComplete && cursor.entry.evidence.complete && Before(evaluationTime, cursor.entry.evidence.end))))
+     then basis == cursor.entry.basis && evaluationTime == cursor.entry.start
+     else cursor.entry.start <= evaluationTime &&
+          (evaluationTime == cursor.entry.start || (cursor.retainedComplete && cursor.entry.evidence.complete && Before(evaluationTime, cursor.entry.evidence.end))))
   }
 
   datatype DecodeProof = DecodeProof(source: nat, basis: nat, qid: nat, version: nat, format: nat, relation: nat, writerCertified: bool, content: seq<nat>)

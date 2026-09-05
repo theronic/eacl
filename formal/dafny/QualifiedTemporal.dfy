@@ -24,7 +24,7 @@ module QualifiedTemporal {
   function Edge(universe: set<nat>, s: Snapshot, identity: nat, t: int): Evidence {
     if identity !in s.forward && identity !in s.reverse then Evidence(Value({}), Forever, true)
     else if identity !in s.forward || identity !in s.reverse || s.forward[identity] != s.reverse[identity]
-      then Evidence(Fault({1}), Forever, true)
+    then Evidence(Fault({1}), Forever, true)
     else Qualify(universe, s.forward[identity], s.qualifiers, t)
   }
 
@@ -46,8 +46,8 @@ module QualifiedTemporal {
   function Combine(universe: set<nat>, op: Operator, a: Evidence, b: Evidence): Evidence {
     var needed := Need(universe, op, a, b);
     Evidence(Compose(op, a.value, b.value),
-      if needed == 1 then a.end else if needed == 2 then b.end else Meet(a.end, b.end),
-      if needed == 1 then a.complete else if needed == 2 then b.complete else a.complete && b.complete)
+             if needed == 1 then a.end else if needed == 2 then b.end else Meet(a.end, b.end),
+             if needed == 1 then a.complete else if needed == 2 then b.complete else a.complete && b.complete)
   }
 
   lemma MeetIsIntersection(t: int, a: Deadline, b: Deadline)
@@ -89,7 +89,7 @@ module QualifiedTemporal {
     requires qid != 0 && qid !in s.qualifiers
     requires qid !in s.forward.Values && qid !in s.reverse.Values
     ensures Edge(universe, s, identity, t) == Edge(universe,
-      Snapshot(s.forward, s.reverse, s.qualifiers[qid := q], s.stamp + 1), identity, t)
+                                                   Snapshot(s.forward, s.reverse, s.qualifiers[qid := q], s.stamp + 1), identity, t)
   {}
 
   function Publish(s: Snapshot, identity: nat, qid: nat): Snapshot {
@@ -126,9 +126,9 @@ module QualifiedTemporal {
   lemma ExpiredBanCanGrant(universe: set<nat>, deadline: int)
     requires universe != {}
     ensures Classify(universe, Compose(Exclusion, Value(universe),
-      Qualify(universe, 1, map[1 := Qualifier(true, Until(deadline), Value(universe))], deadline - 1).value)) == No
+                                       Qualify(universe, 1, map[1 := Qualifier(true, Until(deadline), Value(universe))], deadline - 1).value)) == No
     ensures Classify(universe, Compose(Exclusion, Value(universe),
-      Qualify(universe, 1, map[1 := Qualifier(true, Until(deadline), Value(universe))], deadline).value)) == Has
+                                       Qualify(universe, 1, map[1 := Qualifier(true, Until(deadline), Value(universe))], deadline).value)) == Has
   {}
 
   function AcceptClock(prior: int, sample: int): int { if prior <= sample then sample else prior }
@@ -162,7 +162,7 @@ module QualifiedTemporal {
     ensures Within(universe, TreeEvidence(universe, tree, laterLeaves).value)
     ensures NoNewFaults(TreeEvidence(universe, tree, leaves).value, TreeEvidence(universe, tree, laterLeaves).value)
     ensures TreeEvidence(universe, tree, leaves).complete && Before(later, TreeEvidence(universe, tree, leaves).end) ==>
-      TreeEvidence(universe, tree, leaves).value == TreeEvidence(universe, tree, laterLeaves).value
+              TreeEvidence(universe, tree, leaves).value == TreeEvidence(universe, tree, laterLeaves).value
   {
     match tree
     case Tip(id) =>
