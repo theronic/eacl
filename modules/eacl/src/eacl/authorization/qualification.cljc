@@ -1,7 +1,8 @@
 (ns eacl.authorization.qualification
   "One edge qualification seam for a selected immutable request basis.
    This layer resolves data only; traversal remains in the existing engine."
-  (:require [eacl.authorization.data :as data]
+  (:require [eacl.authorization.context :as context]
+            [eacl.authorization.data :as data]
             [eacl.authorization.evidence :as evidence]
             [eacl.backend.v8 :as backend]
             [eacl.cache.standard-lru :as lru]
@@ -14,20 +15,28 @@
             [eacl.request.counters :as counters]))
 
 (def maximum-request-entries 100000)
-(defrecord Qualification [time context evaluator entity version basis cache memos lookup])
+(defrecord Qualification [time context evaluator entity version basis cache memos lookup prepared-context])
 
 (defn request
   "Captures trusted time and exact source/basis identity supplied by request
    orchestration. Entity/version callbacks close over that same native basis.
    Decode retention is optional and always uses complete exact basis identity."
-  [{:keys [time context evaluator entity version basis cache lookup]}]
+  [{:keys [time context evaluator entity version basis cache lookup prepared-context] :as options}]
   (when-not (and (values/valid-time? time) (or (nil? context) (map? context))
                 (or (and (fn? entity) (fn? version) (nil? lookup))
                     (and (fn? lookup) (nil? entity) (nil? version)))
                 (map? basis) (seq basis)
-                (or (nil? cache) (lru/store? cache)))
+                (or (nil? cache) (lru/store? cache))
+                (or (nil? prepared-context)
+                    (context/prepared? prepared-context)))
     (qualifier/error! :qualification-context))
-  (->Qualification time (or context {}) evaluator entity version basis cache (delay (volatile! {})) lookup))
+  (let [prepared (if (and prepared-context
+                          (or (not (contains? options :context))
+                              (identical? context (context/value prepared-context))))
+                   prepared-context
+                   (context/prepare (or context {})))]
+    (->Qualification time (context/value prepared) evaluator entity version basis cache
+                     (delay (volatile! {})) lookup prepared)))
 
 (defn request-from-adapter
   "Uses only the selected immutable adapter's bounded, metered data operation.
@@ -81,10 +90,7 @@
   [request]
   (memo! request [:reuse-identity]
          #(vector qualifier/format-version (:basis request) (:time request)
-                  (values/encode-bounded (:context request)
-                                         {:maximum-size (:context-utf8-bytes values/limits)
-                                          :maximum-entries (:context-total-entries values/limits)
-                                          :maximum-depth 8})
+                  (context/identity (:prepared-context request))
                   (when-let [engine (:evaluator request)]
                     (select-keys (evaluator/descriptor engine)
                                  [:profile :profile-fingerprint :fingerprint :capability-version])))))
@@ -118,7 +124,8 @@
     (when-not (contains? allowed caveat-id) (qualifier/error! :caveat-not-allowed))))
 
 (defn- caveat-evidence [request named bound]
-  (let [result (evaluator/evaluate (:evaluator request) (:entity named) (:context request) bound)]
+  (let [projected (context/project (:prepared-context request) (get-in named [:header :parameters]))
+        result (evaluator/evaluate (:evaluator request) (:entity named) projected bound)]
     (case (:outcome result)
       :true true
       :false false

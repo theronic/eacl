@@ -34,6 +34,7 @@
             [com.rpl.specter :as S]
             [eacl.authorization.batch :as batch]
             [eacl.authorization.clock :as authorization-clock]
+            [eacl.authorization.context :as caveat-context]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
@@ -129,7 +130,12 @@
 
 (defn- ensure-execution-contract
   [opts operation request]
-  (let [opts
+  (let [context (get request :caveat-context {})
+        prepared (::caveat-context opts)
+        opts (if (and prepared (identical? context (caveat-context/value prepared)))
+               opts
+               (assoc opts ::caveat-context (caveat-context/prepare context)))
+        opts
         ;; The public operation name for observation only: `:request-operation`
         ;; is reserved for batch endpoints and changes scalar decision keys.
         (cond-> (assoc opts ::observed-operation operation)
@@ -326,6 +332,7 @@
       :selected-snapshot selected-snapshot
       :basis-identity semantic-identity
       :contract (:execution-contract runtime)
+      :caveat-context (::caveat-context runtime)
       :derived-registry (:derived-schema-caches runtime)
       :counter-ledger (:request-counter-ledger runtime)
       :proof-diagnostic-fn
@@ -457,6 +464,7 @@
                      :selected-snapshot nil
                      :basis-identity identity
                      :contract (:execution-contract opts)
+                     :caveat-context (::caveat-context opts)
                      :derived-registry (:derived-schema-caches opts)
                      :counter-ledger ledger
                      :proof-diagnostic-fn
@@ -1771,6 +1779,7 @@
       (do
         ;; Validate every request-wide control without capturing cache state or
         ;; acquiring a snapshot.
+        (caveat-context/prepare (get request :caveat-context {}))
         (execution/normalize opts :check-permissions request)
         [])
       (let [opts
@@ -3801,6 +3810,7 @@
           _ (request-cache-controls request)]
       (if (empty? (:checks request))
         (do
+          (caveat-context/prepare (get request :caveat-context {}))
           (execution/normalize
            (runtime-options runtime) :check-permissions request)
           [])

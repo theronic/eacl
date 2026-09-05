@@ -19,7 +19,7 @@
   (into known-anchor-keys
         [:first :last :after :before :cursor :limit
          :page/basis :consistency :cache? :populate-cache?
-         :evaluation :timeout-ms
+         :evaluation :timeout-ms :caveat-context
          :cancellation-token :aggregate-limits :authorization]))
 
 (def ^:dynamic ^:no-doc *validated-request?* false)

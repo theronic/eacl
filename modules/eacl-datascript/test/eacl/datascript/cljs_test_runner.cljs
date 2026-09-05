@@ -7,6 +7,7 @@
             [eacl.authorization.evidence-test]
             [eacl.authorization.evidence-index-test]
             [eacl.authorization.data-test]
+            [eacl.authorization.context-test]
             [eacl.authorization.qualification-test]
             [eacl.cache.derived-schema-test]
             [eacl.cache.key-test]
@@ -32,6 +33,7 @@
             [eacl.operator.lookup-evidence-test]
             [eacl.operator.arrow-evidence-test]
             [eacl.datascript.evaluation-clock-test]
+            [eacl.datascript.caveat-context-test]
             [eacl.client.lookahead-test]
             [eacl.client.range-reuse-test]
             [eacl.datascript.scan-cache-integration-test]
@@ -105,6 +107,7 @@
                'eacl.authorization.evidence-test
                'eacl.authorization.evidence-index-test
                'eacl.authorization.data-test
+               'eacl.authorization.context-test
                'eacl.authorization.qualification-test
                'eacl.cache.derived-schema-test
                'eacl.cache.key-test
@@ -122,6 +125,7 @@
                'eacl.operator.lookup-evidence-test
                'eacl.operator.arrow-evidence-test
                'eacl.datascript.evaluation-clock-test
+               'eacl.datascript.caveat-context-test
                'eacl.client.lookahead-test
                'eacl.client.range-reuse-test
                'eacl.datascript.scan-cache-integration-test

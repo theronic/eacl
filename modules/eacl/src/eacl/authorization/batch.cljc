@@ -22,6 +22,7 @@
 
 (def ^:private request-keys
   #{:checks
+    :caveat-context
     :consistency
     :timeout-ms
     :cancellation-token
@@ -34,6 +35,7 @@
 (def ^:private endpoint-keys #{:type :id :relation})
 (def ^:private per-demand-control-keys
   #{:consistency
+    :caveat-context
     :timeout-ms
     :cancellation-token
     :cache?

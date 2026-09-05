@@ -21,6 +21,15 @@ Each public check, lookup, count, or batch SHALL select one immutable database s
 - **WHEN** one batch crosses wall-clock expiry while executing
 - **THEN** every item uses the batch's single captured time
 
+#### Scenario: Invalid or excessive unused context
+- **WHEN** a request supplies a malformed or excessive field that no demanded Caveat uses
+- **THEN** admission rejects the complete request context before snapshot acquisition or any answer-cache lookup
+- **AND** an empty batch applies the same context validation
+
+#### Scenario: Batch context is request-wide
+- **WHEN** a batch item attempts to override the request Caveat context
+- **THEN** batch admission rejects the per-item control before execution
+
 #### Scenario: Explicit snapshot pins evaluation time
 - **WHEN** a caller explicitly creates an EACL snapshot and later evaluates it after wall time advances
 - **THEN** the snapshot continues to use its captured database basis and evaluation time

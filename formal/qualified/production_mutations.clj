@@ -4,6 +4,8 @@
   (:require [clojure.test :as t :refer [deftest is]]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.data :as data]
+            [eacl.authorization.context :as context]
+            [eacl.authorization.context-test :as context-test]
             [eacl.authorization.batch :as batch]
             [eacl.authorization.data-test :as data-test]
             [eacl.request.counters :as counters]
@@ -20,6 +22,7 @@
             [eacl.engine.least-path-evidence-test :as legacy-lookup-test]
             [eacl.engine.stable-route-native-evidence-test :as native-test]
             [eacl.datascript.evaluation-clock-test :as clock-test]
+            [eacl.datascript.caveat-context-test :as public-context-test]
             [eacl.client.orchestration :as orchestration]
             [eacl.formal.qualified.recursive-bridge :as recursive-bridge]
             [eacl.formal.qualified.seekable-bridge :as seekable-bridge]
@@ -141,6 +144,15 @@
      :context-omitted-from-exact-point-scope
      {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
       :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 3 nil))}}
+     :unprojected-request-reaches-each-caveat
+     {:gate #'qualification-test/each-caveat-projects-request-fields-without-weakening-bound-context
+      :redefs {#'context/project (fn [prepared _] (context/value prepared))}}
+     :unused-context-fields-omitted-from-identity
+     {:gate #'context-test/whole-context-is-canonical-and-independent-of-one-parameter-set
+      :redefs {#'context/identity (constantly "omitted")}}
+     :public-context-validation-bypassed
+     {:gate #'public-context-test/invalid-context-fails-before-selection-even-on-warm-or-empty-requests
+      :redefs {#'context/prepare (let [empty-context (context/prepare {})] (constantly empty-context))}}
      :time-omitted-from-exact-point-scope
      {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
       :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 nil))}}
@@ -217,7 +229,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 38 (count cases)))
+    (is (= 41 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

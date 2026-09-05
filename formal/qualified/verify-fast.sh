@@ -36,6 +36,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.caveats.definition :reload)
      (require 'eacl.authorization.data :reload)
      (require 'eacl.authorization.data-test :reload)
+     (require 'eacl.authorization.context :reload)
+     (require 'eacl.authorization.context-test :reload)
      (require 'eacl.authorization.qualification :reload)
      (require 'eacl.authorization.qualification-test :reload)
      (load-file \"formal/qualified/qualification_bridge.clj\")
@@ -70,6 +72,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.engine.scan-cache-test :reload)
      (require 'eacl.engine.stable-route-native-evidence-test :reload)
      (require 'eacl.datascript.evaluation-clock-test :reload)
+     (require 'eacl.datascript.caveat-context-test :reload)
      (load-file \"formal/qualified/production_mutations.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge
@@ -80,6 +83,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.formal.qualified.arrow-bridge
                                    'eacl.formal.qualified.legacy-lookup-bridge
                                    'eacl.authorization.data-test 'eacl.authorization.qualification-test
+                                   'eacl.authorization.context-test 'eacl.datascript.caveat-context-test
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Qualified finite gate failed or assertion inventory changed\" r)))

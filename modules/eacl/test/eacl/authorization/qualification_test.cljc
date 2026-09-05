@@ -179,6 +179,38 @@
     (is (evidence/has? (q/qualify bound-wins 1 [10 4])))
     (is (evidence/fault? (q/qualify invalid-request 1 [10 4])))))
 
+(deftest each-caveat-projects-request-fields-without-weakening-bound-context
+  (let [db (-> fixture
+               (assoc-in [1 :eacl.relation/caveats] #{2 6})
+               (assoc 6 (assoc (definition/entity "adult" [["age" :int]] "age >= 18") :db/id 6)
+                      7 (qualifier/entity-data 7 {:caveat 6} [["age" :int]])))
+        r (request {:db db :context {"flag" true "age" 20 "unused" "kept in identity"}})]
+    (is (evidence/has? (q/qualify r 1 [10 3])))
+    (is (evidence/has? (q/qualify r 1 [10 7])))
+    (let [missing (request {:db db :context {"flag" true "unused" false}})]
+      (is (evidence/has? (q/qualify missing 1 [10 3])))
+      (is (= ["age"] (evidence/missing-fields (q/qualify missing 1 [10 7])))))
+    (let [wrong (request {:db db :context {"flag" true "age" "twenty"}})]
+      (is (evidence/has? (q/qualify wrong 1 [10 3])))
+      (is (evidence/fault? (q/qualify wrong 1 [10 7]))))
+    (is (not= (q/exact-reuse-identity r)
+              (q/exact-reuse-identity
+               (request {:db db :context {"flag" true "age" 20 "unused" "different"}}))))
+    (let [bad-bound (assoc-in db [3 qualifier/context-attribute]
+                              (values/encode-context [["unused" :bool]] {"unused" true}))]
+      (is (evidence/fault? (q/qualify (request {:db bad-bound}) 1 [10 3]))))))
+
+(deftest reconstructed-request-does-not-retain-stale-prepared-context
+  (let [original (request {:context {"flag" true}})
+        later (q/request (assoc original :time 98))
+        changed (q/request (assoc original :context {"flag" false}))
+        missing (q/request (assoc original :context nil))]
+    (is (identical? (:prepared-context original) (:prepared-context later)))
+    (is (evidence/has? (q/qualify later 1 [10 3])))
+    (is (evidence/no? (q/qualify changed 1 [10 3])))
+    (is (= ["flag"] (evidence/missing-fields (q/qualify missing 1 [10 3]))))
+    (is (not= (q/exact-reuse-identity original) (q/exact-reuse-identity changed)))))
+
 (deftest authoritative-errors-survive-expiry-and-exclusion
   (doseq [db [(dissoc fixture 3)
               (assoc-in fixture [3 qualifier/marker-attribute] 99)

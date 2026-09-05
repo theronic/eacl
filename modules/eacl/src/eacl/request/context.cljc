@@ -3,7 +3,8 @@
 
   The context owns snapshot cleanup and request-invariant state. It is never a
   portable value and must not escape its constructing thread or request."
-  (:require [eacl.backend.source :as source]
+  (:require [eacl.authorization.context :as caveat-context]
+            [eacl.backend.source :as source]
             [eacl.backend.v8 :as backend]
             [eacl.cache.derived-schema :as derived-schema]
             [eacl.engine.v8 :as engine]
@@ -19,6 +20,7 @@
     :selected-snapshot
     :basis-identity
     :contract
+    :caveat-context
     :derived-registry
     :counter-ledger
     :proof-diagnostic-fn
@@ -194,7 +196,7 @@
   them; they share one schema-generation resolution."
   [{:keys [runtime adapter selected-snapshot basis-identity contract
            derived-registry counter-ledger proof-diagnostic-fn
-           maximum-proof-relation-count]
+           maximum-proof-relation-count caveat-context]
     :as input}]
   (let [selected
         (when (and (map? input)
@@ -229,6 +231,8 @@
       (when-not (map? contract)
         (invalid-context! "Request context requires one execution contract."
                           {:contract contract}))
+      (when (and (some? caveat-context) (not (caveat-context/prepared? caveat-context)))
+        (invalid-context! "Request Caveat context must be prepared before selecting a basis." {}))
       (let [selected-adapter
             (when selected
               (source/adapter selected))
@@ -294,6 +298,7 @@
               :lineage lineage
               :schema-generation-delay schema-generation-delay
               :contract contract
+              :caveat-context caveat-context
               :proof-frame-delay proof-frame-delay
               :derived-delay derived-delay
               :memos-delay (delay (atom {}))
