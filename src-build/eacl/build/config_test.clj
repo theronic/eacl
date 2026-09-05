@@ -6,10 +6,11 @@
 
 (deftest coordinated-module-identities-and-versions
   (testing "the workspace has exactly the requested dependency order"
-    (is (= [:eacl :eacl-datomic :eacl-datahike :eacl-datascript
+    (is (= [:eacl :eacl-caveats-jvm :eacl-datomic :eacl-datahike :eacl-datascript
             :eacl-datalevin]
            config/module-order))
     (is (= '[dev.eacl/eacl
+             dev.eacl/eacl-caveats-jvm
              dev.eacl/eacl-datomic
              dev.eacl/eacl-datahike
              dev.eacl/eacl-datascript
@@ -17,7 +18,7 @@
            (mapv (comp :lib config/module) config/module-order)))
     (is (true? (config/assert-coordinate-set!))))
   (testing "the release set excludes modules with unpublished dependencies"
-    (is (= [:eacl :eacl-datomic :eacl-datahike :eacl-datascript]
+    (is (= [:eacl :eacl-caveats-jvm :eacl-datomic :eacl-datahike :eacl-datascript]
            config/release-module-order))
     (is (= :datalevin-fork-artifact-unpublished
            (:release-blocker (config/module :eacl-datalevin)))))
@@ -127,3 +128,16 @@
 
 (deftest production-module-files-use-dev-eacl-coordinates
   (is (true? (module/assert-module-coordinates!))))
+
+(deftest caveat-runtime-dependencies-are-isolated
+  (let [pins {'com.exoscale/cel-parser {:mvn/version "0.1.8"}
+              'com.exoscale/antlr-cel {:mvn/version "0.1.1"}
+              'org.antlr/antlr4-runtime {:mvn/version "4.9.2"}}]
+    (doseq [id config/module-order
+            :let [published (config/dependencies id "8.3.1")
+                  source (:deps (edn/read-string (slurp (str (:directory (config/module id)) "/deps.edn"))))]]
+      (if (= :eacl-caveats-jvm id)
+        (do (is (= pins (select-keys published (keys pins))))
+            (is (= pins (select-keys source (keys pins)))))
+        (do (is (empty? (select-keys published (keys pins))))
+            (is (empty? (select-keys source (keys pins)))))))))

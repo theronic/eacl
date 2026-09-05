@@ -31,7 +31,7 @@
     (catch Exception _ :error)))
 
 (deftest pinned-native-corpus
-  (let [corpus (edn/read-string (slurp (io/file exploration-root "corpus.edn")))]
+  (let [corpus (edn/read-string (slurp (io/file exploration-root "../../modules/eacl-caveats-jvm/test/eacl/caveats/corpus.edn")))]
     (is (= 24 (count (:cases corpus))))
     (doseq [{:keys [id source parameters context bound native]} (:cases corpus)]
       (testing (name id)

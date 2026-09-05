@@ -32,22 +32,22 @@
 
 ## 5. Implement the bounded evaluator subsystem
 
-- [ ] 5.1 Add `com.exoscale/cel-parser` 0.1.8 to the JVM implementation module only and implement a narrow adapter for program construction, complete-context evaluation, value conversion, returned-error detection, and profile fingerprinting; verify isolated core, adapter, and CLJS builds contain no dependency leak.
+- [x] 5.1 Add `com.exoscale/cel-parser` 0.1.8 to the JVM implementation module only and implement a narrow adapter for program construction, complete-context evaluation, value conversion, returned-error detection, and profile fingerprinting; verify isolated core, adapter, and CLJS builds contain no dependency leak.
 - [x] 5.2 Build the canonical bounded Caveat plan/residual representation needed for static checking and partial evaluation; verify encode/decode and equality are portable and library-object free.
 - [x] 5.3 Implement EACL partial evaluation for incomplete context, preserving short-circuit definite results and canonical conditional residuals; verify exhaustive finite cases match the pre-green model.
-- [ ] 5.4 Implement a bounded process-local program cache keyed by canonical definition/profile identity with concurrent miss coalescing; verify cache hits change only work counters, never outcomes.
-- [ ] 5.5 Define the evaluator capability/fingerprint protocol and JVM default registration; verify CLJS and clients without a matching evaluator fail before Caveated serving activation.
+- [x] 5.4 Implement a bounded process-local program cache keyed by canonical definition/profile identity with concurrent miss coalescing; verify cache hits change only work counters, never outcomes.
+- [x] 5.5 Define the evaluator capability/fingerprint protocol and JVM default registration; verify CLJS and clients without a matching evaluator fail before Caveated serving activation.
 
 ## 6. Certify implementation against the models
 
 - [ ] 6.1 Add generated refinement bridges for qualifier normalization/lifecycle/publication, context merge, profile checking, and partial outcomes; verify exhaustive finite and randomized production-vs-model differentials are green.
 - [ ] 6.2 Add mutation controls that kill bound-context precedence, error-value detection, short-circuit residuals, qualifier immutability, atomic pair publication, non-`nil`-missing-to-fault behavior, and schema generation; verify each mutant is detected by a mapped gate.
-- [ ] 6.3 Run the SpiceDB/CEL compatibility corpus through the EACL profile and record every intentional exclusion/divergence; verify no unsupported case is advertised as compatible.
+- [x] 6.3 Run the SpiceDB/CEL compatibility corpus through the EACL profile and record every intentional exclusion/divergence; verify no unsupported case is advertised as compatible.
 - [ ] 6.4 Audit production hot paths to confirm Phase 2 adds zero qualifier reads, clock reads, Caveat evaluation, model calls, or shadow decisions to ordinary authorization; verify instrumentation and source review.
 
 ## 7. Document and release the foundation
 
 - [ ] 7.1 Document Caveat syntax, supported types/operators, bound context, profile limits, JVM/CLJS capability boundary, and returned error categories; verify examples parse and model-evaluate as shown.
 - [ ] 7.2 Document the sparse qualifier schema, immutability/single ownership, inline-versus-prepared publication capability, inert `valid-until`, and Phase 3 activation dependency; verify operators are warned not to seed non-`nil` qids for serving Phase 2 clients.
-- [ ] 7.3 Update dependency/POM/license notices and isolated module build tests for cel-parser; verify published core and CLJS artifacts remain free of the JVM dependency.
+- [x] 7.3 Update dependency/POM/license notices and isolated module build tests for cel-parser; verify published core and CLJS artifacts remain free of the JVM dependency.
 - [ ] 7.4 Run CI-equivalent nREPL tests, CLJS suite, all bundled-backend qualifier-publication conformance tests, formal fast/full applicable gates, source-closure, dependency audit, and strict OpenSpec validation; verify all are green before this foundation is marked ready for Phase 3.

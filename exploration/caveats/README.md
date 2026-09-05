@@ -76,7 +76,9 @@ Google grammar are Apache-2.0, whereas its POM lists MIT/ISC. The ANTLR runtime
 is BSD-3-Clause. Preserve the source notices when packaging; do not infer one
 license for the entire dependency graph. CEL-spec fixture adaptations retain
 its Apache-2.0 notice. These metadata discrepancies do not change the pinned
-code, and no production dependency has been added by this exploration.
+code. The subsequent qualified implementation is isolated in `modules/eacl-caveats-jvm`.
+The single compatibility corpus now lives in that module’s test resources;
+`corpus_test.clj` and the formal gate read the same unchanged fixtures.
 
 ## Native qualifier publication
 

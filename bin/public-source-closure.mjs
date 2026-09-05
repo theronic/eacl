@@ -12,6 +12,7 @@ const repositoryRoot = resolve(
 );
 const sourcePaths = [
   "modules/eacl/src",
+  "modules/eacl-caveats-jvm/src",
   "modules/eacl-datomic/src",
   "modules/eacl-datahike/src",
   "modules/eacl-datascript/src",
@@ -21,6 +22,9 @@ const reportPath =
   process.env.EACL_PUBLIC_SOURCE_CLOSURE_OUTPUT ??
   "target/formal/verification/public-source-closure.json";
 const roots = [
+  "eacl.caveats.evaluator/evaluate",
+  "eacl.caveats.evaluator/require-matching!",
+  "eacl.caveats.jvm/evaluator",
   "eacl.relationships.qualifier-integrity/proof-input",
   "eacl.relationships.qualifier-integrity/report",
   "eacl.relationships.qualifier-integrity/cleanup-orphans!",

@@ -6,7 +6,7 @@
 
 (deftest independent-corpus
   (doseq [{:keys [id parameters plan context bound expected reject]}
-          (:cases (edn/read-string (slurp "exploration/caveats/corpus.edn")))]
+          (:cases (edn/read-string (slurp "modules/eacl-caveats-jvm/test/eacl/caveats/corpus.edn")))]
     (when plan
       (testing (name id)
         (if reject

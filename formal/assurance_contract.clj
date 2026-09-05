@@ -137,6 +137,10 @@
                    'eacl.caveats.plan/compile-plan
                    'eacl.caveats.plan/decode-plan
                    'eacl.caveats.partial/evaluate
+                   'eacl.caveats.evaluator/evaluate
+                   'eacl.caveats.jvm/evaluator
+                   'eacl.relationships.qualifier-integrity/proof-input
+                   'eacl.relationships.qualifier-integrity/report
                    'eacl.relationships.staged/prepare!
                    'eacl.relationships.staged/plan-current
                    'eacl.relationships.staged/cleanup!]

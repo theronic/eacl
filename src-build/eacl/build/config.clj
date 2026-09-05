@@ -8,7 +8,7 @@
 (def maximum-java-release 26)
 
 (def module-order
-  [:eacl :eacl-datomic :eacl-datahike :eacl-datascript :eacl-datalevin])
+  [:eacl :eacl-caveats-jvm :eacl-datomic :eacl-datahike :eacl-datascript :eacl-datalevin])
 
 (def datalevin-fork-version "1.0.2-eacl.2")
 
@@ -23,6 +23,21 @@
      'com.github.ben-manes.caffeine/caffeine {:mvn/version "3.2.4"}
      'instaparse/instaparse {:mvn/version "1.5.0"}}
     :generated-runtime? true}
+
+   :eacl-caveats-jvm
+   {:lib 'dev.eacl/eacl-caveats-jvm
+    :directory "modules/eacl-caveats-jvm"
+    :description "Optional bounded JVM Caveat evaluator for EACL"
+    :required-entry "eacl/caveats/jvm.clj"
+    :required-resources #{"META-INF/NOTICE" "META-INF/licenses/cel-parser-ISC.txt"
+                          "META-INF/licenses/antlr-cel-Apache-2.0.txt"
+                          "META-INF/licenses/antlr4-runtime-BSD-3-Clause.txt"}
+    :dependencies
+    {'org.clojure/clojure {:mvn/version "1.11.4"}
+     'dev.eacl/eacl ::eacl-version
+     'com.exoscale/cel-parser {:mvn/version "0.1.8"}
+     'com.exoscale/antlr-cel {:mvn/version "0.1.1"}
+     'org.antlr/antlr4-runtime {:mvn/version "4.9.2"}}}
 
    :eacl-datomic
    {:lib 'dev.eacl/eacl-datomic
@@ -184,6 +199,7 @@
   (let [libs (map (comp :lib module) module-order)
         expected
         '#{dev.eacl/eacl
+           dev.eacl/eacl-caveats-jvm
            dev.eacl/eacl-datomic
            dev.eacl/eacl-datahike
            dev.eacl/eacl-datascript

@@ -6,6 +6,7 @@
   #{"generated-runtime"
     "test"
     "isolated-modules (eacl)"
+    "isolated-modules (eacl-caveats-jvm)"
     "isolated-modules (eacl-datomic)"
     "isolated-modules (eacl-datahike)"
     "isolated-modules (eacl-datascript)"
