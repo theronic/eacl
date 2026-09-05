@@ -257,6 +257,25 @@
                true
                (recur))))))))
 
+(defn evict-if!
+  "Removes exactly one expected immutable value, preserving racing replacements."
+  [store key expected-value]
+  #?(:clj
+     (let [^Cache storage (:state store)
+           key (storage-key key)
+           boxed (.getIfPresentQuietly ^Policy (.policy storage) key)]
+       (boolean (and boxed (identical? expected-value (public-value boxed))
+                     (.remove (storage-map storage) key boxed))))
+     :cljs
+     (loop []
+       (let [current @(:state store)]
+         (if-not (and (cache/has? current key)
+                      (identical? expected-value (cache/lookup current key)))
+           false
+           (if (compare-and-set! (:state store) current (cache/evict current key))
+             true
+             (recur)))))))
+
 (defn clear!
   "Removes all mappings from this local cache instance."
   [store]

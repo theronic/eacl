@@ -289,6 +289,23 @@ retention, lookup metrics, database writes, or a library access update. A host t
 must suppress every redundant upload can compare the deterministic exported
 snapshot after observing a revision change.
 
+## Authenticated cache snapshots (v9)
+
+Every backend exposes `export-authenticated-cache-snapshot` and
+`restore-authenticated-cache-snapshot!` with `{:max-entries n}` bounds and an
+optional lower `:maximum-size` byte ceiling (maximum 16 MiB). These APIs wrap
+snapshot v2 in the primary keyring's authenticated `eacl_cache1_` envelope.
+The envelope provides authenticity; hosts own storage confidentiality.
+
+A successful import retains its verifying controller and key ID privately.
+Unknown or retired keys produce a cache miss; malformed artifacts also miss.
+Failed restore leaves existing caches intact. Imported entries and results
+that consume them cannot be re-exported or published as local cache authority.
+After retirement they recompute against the selected snapshot. Independently
+computed answers remain cached. Key material never enters the serialized data.
+See the [security-key guide](security-keyrings.md) for the full API and trust
+contract. The decoded API below remains available for host-authenticated data.
+
 ## Portable cache snapshot v2
 
 ```clojure

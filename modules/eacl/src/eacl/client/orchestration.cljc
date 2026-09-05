@@ -91,6 +91,8 @@
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.secure-format :as secure]
+            [eacl.security.configuration :as security-config]
+            [eacl.security.retention :as retention]
             [eacl.subproblem-cache :as subproblem]
             [eacl.spicedb.parser :as schema-parser]
             [eacl.spicedb.consistency :as consistency]))
@@ -279,7 +281,7 @@
     (let [contract (:execution-contract opts)
           _ (execution/check! contract :consistency-selection)
           selection-options
-          {:format-options (:format-options opts)
+          {:format-options (:zed-token-format-options opts)
            :decision-kernel (:decision-kernel opts)
            :issue-token? false
            :selection-check!
@@ -820,10 +822,20 @@
                           relationship-dependency))
              dependency-relation-ids))))
 
+(defn- prune-retired-cursor-state! [opts]
+  (retention/on-retirement!
+   (:security-retirement-observed opts) (get-in opts [:format-options :keyring-snapshot])
+   (fn [retired]
+     (continuation/prune-retired! (:continuation-cache-store opts) retired)
+     (range-reuse/prune-retired! (:range-tier opts) retired)
+     (cache/prune-retired-rendered! (:basis-cache-store opts) retired))))
+
 (defn- page-context
   [request-context opts operation query resource-type permission
    relationship-dependency]
-  (let [opts (selected-cache-options opts request-context)
+  (let [opts (-> (selected-cache-options opts request-context)
+                 (update :format-options secure/capture-keyring))
+        _ (prune-retired-cursor-state! opts)
         ;; Low-level raw-DB entry points may receive a client's opts map. They
         ;; must remain bound to that caller-owned DB and must not reach through
         ;; the client's live source during cursor recovery.
@@ -880,6 +892,7 @@
              :snapshot-semantic-identity page-semantic-identity
              :cursor-dependency-context continuation-context
              :cursor-qualification-certificate (:qualification-certificate prepared)
+             :cursor-security-kid (:security-kid prepared)
              :accepted-cursor-frame accepted-cursor-frame
              :transport-page-input-expiring?
              (:expiring-cursor-input? prepared)
@@ -1194,7 +1207,9 @@
                   exact-basis-key))
             walk-key
             (when range-scope
-              (range-reuse/walk-key range-scope semantic-key))
+              (range-reuse/walk-key
+               [range-scope (or (:cursor-security-kid opts) (get-in opts [:format-options :current-kid]))]
+               semantic-key))
             window
             (when walk-key
               (range-reuse/window semantic-key engine/max-page-size))
@@ -1307,8 +1322,8 @@
            {:public normalized-public-query
             :consistency consistency-key
             :cursor-policy
-            (or (:cursor-cache-policy-identity opts)
-                (cursor/cache-policy-identity opts))
+            (cursor/cache-policy-identity opts)
+            :security-kid (get-in opts [:format-options :current-kid])
             :render-abi rendered-page-render-abi})
     engine/*qualification*
     (assoc :temporal-mode (relay/temporal-mode opts)
@@ -1325,7 +1340,8 @@
   ;; using internal answers.
   (when (rendered-page-request-eligible?
          adapter opts operation public-query)
-    (let [candidate-public-query
+    (let [opts (update opts :format-options secure/capture-keyring)
+          candidate-public-query
           (-> (cache-identity/successful-result-query public-query)
               relay/plain-page-query
               ;; The exact raw after/before token is intentionally retained.
@@ -1398,6 +1414,8 @@
         rendered
         (cond-> {:format cache/rendered-page-entry-format
                  :page public-page}
+          (get-in opts [:format-options :current-kid])
+          (assoc :security-kid (get-in opts [:format-options :current-kid]))
           engine/*qualification*
           (assoc :qualification-certificate
                  (let [current (:qualification-certificate (:value answer))
@@ -1405,7 +1423,7 @@
                    (if prior
                      (temporal/intersect-intervals current (select-keys prior [:start-ms :valid-until-ms :complete?]))
                      current))))]
-    (when cache-context
+    (when (and cache-context (not (:eacl.cache/imported? answer)))
       (cache/publish-rendered-page!
        (:store cache-context)
        (:publication-options cache-context)
@@ -1449,6 +1467,8 @@
       :recursive-traversal-limits
       (:recursive-traversal-limits opts)}
      {:request-proof-frame (request-proof-frame opts)
+      :security-kid (or (:cursor-security-kid opts) (get-in opts [:format-options :current-kid]))
+      :minting-security-kid (get-in opts [:format-options :current-kid])
       :request-lineage (:request-lineage opts)
       :populate-cache? (:populate-cache-request? opts true)})))
 
@@ -1728,7 +1748,7 @@
   (let [basis-source (:source opts)]
     (if (source/source? basis-source)
       (causal-token/issue
-       (:format-options opts)
+       (:zed-token-format-options opts)
        (merge
         {:backend (source/backend-id basis-source)
          :source-lifecycle
@@ -2551,7 +2571,7 @@
            [token source-incarnation source-lifecycle basis-cache-store
             continuation-cache-store cursor-codec-cache
             cursor-construction-cache derived-schema-caches scan-tier
-            range-tier qualifier-decode-cache content-revision])
+            range-tier qualifier-decode-cache content-revision security-retirement-observed])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
@@ -2560,7 +2580,7 @@
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
     :cursor-codec-cache :cursor-construction-cache :derived-schema-caches
-    :scan-tier :range-tier :qualifier-decode-cache})
+    :scan-tier :range-tier :qualifier-decode-cache :security-retirement-observed})
 
 ;; A transient Acl read has already captured and attached one immutable
 ;; lifecycle options map before selecting its basis. Keep that map opaque
@@ -2651,7 +2671,8 @@
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
      (qualifier-tier-for config basis-cache-store)
-     content-revision)))
+     content-revision
+     (atom nil))))
 
 (defn- narrow-runtime-cache-lifecycle
   [config current content-revision]
@@ -2683,7 +2704,8 @@
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
      (qualifier-tier-for config basis-cache-store)
-     content-revision)))
+     content-revision
+     (atom nil))))
 
 (defn- lifecycle-content-revision
   [lifecycle]
@@ -2749,8 +2771,7 @@
     :entid->object-id :object-id->entid
     :object-id->lookup-ref :object->entid :internal-object->spice
     :spice-object->internal :internal-cursor->spice
-    :spice-cursor->internal :format-options :cursor-ttl-seconds
-    :cursor-cache-policy-identity
+    :spice-cursor->internal :format-options :zed-token-format-options :cursor-ttl-seconds
     :token-ttl-seconds :managed-cache-enabled?
     :proof-equivalent-cursors? :identity-contract
     :proof-contract-reporter
@@ -2916,7 +2937,8 @@
   (consistency-v3/selected-basis-token
    (or (get-in basis [:speculative :committed-root])
        (:identity basis))
-   (runtime-options runtime)))
+   (let [opts (runtime-options runtime)]
+     (assoc opts :format-options (:zed-token-format-options opts)))))
 
 (defn- basis-token-data
   [runtime basis token source]
@@ -2926,7 +2948,7 @@
                      [:backend :source-id :source-lifecycle :branch])]
     (try
       (causal-token/token-data
-       (:format-options (runtime-options runtime)) expected-scope token)
+       (:zed-token-format-options (runtime-options runtime)) expected-scope token)
       (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo)
              error
         (if (= :scope-mismatch (:reason (ex-data error)))
@@ -4341,13 +4363,13 @@
        :disabled? true
        :entry-count 0})))
 
-(defn restore-cache-snapshot!
+(defn- restore-cache-with!
   "Atomically restores an already authenticated and decoded cache snapshot.
 
   External bytes MUST be authenticated and encoded-size-bound before decoding
   because this function's first argument is a trusted immutable value. Restore
   never selects a backend basis or alters source freshness."
-  [client snapshot bounds]
+  [client restore!]
   (let [opts (require-cache-client-options! client "restore-cache-snapshot!")
         runtime (:runtime client)]
     (if (:basis-cache-store opts)
@@ -4360,18 +4382,38 @@
              (:source-lifecycle captured)
              (lifecycle-content-revision captured))
             result
-            (cache/restore-basis-snapshot!
-             (:basis-cache-store candidate) snapshot bounds)]
-        (let [installation
-              (install-restored-runtime-cache-lifecycle!
-               runtime captured candidate)]
-          (accumulate-detached-cache-counters!
-           runtime (:detached installation)))
+            (restore! (:basis-cache-store candidate) opts)]
+        (when (:restored? result)
+          (let [installation
+                (install-restored-runtime-cache-lifecycle!
+                 runtime captured candidate)]
+            (accumulate-detached-cache-counters!
+             runtime (:detached installation))))
         result)
       {:type :eacl/cache-disabled
        :eacl/error :eacl/cache-disabled
        :disabled? true
        :restored? false})))
+
+(defn restore-cache-snapshot!
+  "Restores an already authenticated and decoded trusted cache value."
+  [client snapshot bounds]
+  (restore-cache-with! client (fn [store _] (cache/restore-basis-snapshot! store snapshot bounds))))
+
+(defn export-authenticated-cache-snapshot
+  "Exports bounded, authenticated optional cache bytes under the primary ring."
+  [client bounds]
+  (let [opts (require-cache-client-options! client "export-authenticated-cache-snapshot")]
+    (if-let [store (:basis-cache-store opts)]
+      (cache/export-authenticated-basis-snapshot store bounds (:format-options opts))
+      {:disabled? true :entry-count 0})))
+
+(defn restore-authenticated-cache-snapshot!
+  "Restores optional cache bytes; retired keys miss without changing local caches."
+  [client token bounds]
+  (restore-cache-with!
+   client (fn [store opts]
+            (cache/restore-authenticated-basis-snapshot! store token bounds (:format-options opts)))))
 
 (defn cache-content-revision
   "Returns a conservative process-local dirty revision for authorization content.
@@ -4445,6 +4487,11 @@
     :security-key
     :security-keyring
     :security-kid
+    :security-keyring-controller
+    :zed-token-key
+    :zed-token-keyring
+    :zed-token-kid
+    :zed-token-keyring-controller
     :token-ttl-seconds
     :source-lifecycle
     :adapter-fingerprint
@@ -4459,82 +4506,6 @@
     :range-reuse
     :lookahead
     :io-observer})
-
-(defn- valid-security-kid?
-  [kid]
-  (or (keyword? kid)
-      (and (string? kid) (pos? (count kid)))))
-
-(defn- normalize-security-root-keyring
-  [config-opts security-key security-keyring security-kid]
-  (let [key-present? (contains? config-opts :security-key)
-        keyring-present? (contains? config-opts :security-keyring)
-        kid-present? (contains? config-opts :security-kid)
-        current-kid (if kid-present? security-kid :default)
-        invalid!
-        (fn [message data cause]
-          (throw
-           (ex-info
-            message
-            (merge {:type :eacl/invalid-config
-                    :eacl/error :eacl/invalid-config}
-                   data)
-            cause)))]
-    (when (and key-present? keyring-present?)
-      (invalid!
-       "EACL Config Error: supply only one of :security-key or :security-keyring."
-       {:conflicting-keys [:security-key :security-keyring]}
-       nil))
-    (when (and kid-present? (not (valid-security-kid? current-kid)))
-      (invalid!
-       "EACL Config Error: :security-kid must be a non-empty string or keyword."
-       {:key :security-kid :value current-kid}
-       nil))
-    (let [root-keyring
-          (try
-            (cond
-              keyring-present?
-              (do
-                (when-not (and (map? security-keyring)
-                               (seq security-keyring))
-                  (invalid!
-                   "EACL Config Error: :security-keyring must be a non-empty map."
-                   {:key :security-keyring :value security-keyring}
-                   nil))
-                (reduce-kv
-                 (fn [result kid key-material]
-                   (when-not (valid-security-kid? kid)
-                     (invalid!
-                      "EACL Config Error: security key IDs must be non-empty strings or keywords."
-                      {:key :security-keyring :security-kid kid}
-                      nil))
-                   (assoc result kid (secure/normalize-key key-material)))
-                 {}
-                 security-keyring))
-
-              key-present?
-              {current-kid (secure/normalize-key security-key)}
-
-              :else
-              (do
-                (secure/warn-defaulted-token-key!)
-                {:default secure/default-root-key}))
-            (catch #?(:clj Exception :cljs :default) error
-              (if (= :eacl/invalid-config (:type (ex-data error)))
-                (throw error)
-                (invalid!
-                 "EACL Config Error: security key material is invalid."
-                 {:key (if keyring-present? :security-keyring :security-key)
-                  :format-reason (:reason (ex-data error))}
-                 error))))]
-      (when-not (get root-keyring current-kid)
-        (invalid!
-         "EACL Config Error: :security-kid is absent from :security-keyring."
-         {:key :security-kid
-          :value current-kid}
-         nil))
-      {:current-kid current-kid
-       :root-keyring root-keyring})))
 
 (defn make-client
   "Builds the shared authorization acl over one backend api map.
@@ -4556,9 +4527,6 @@
            recursive-traversal-limits
            expression-limits
            permission-tree-limits
-           security-key
-           security-keyring
-           security-kid
            token-ttl-seconds
            source-lifecycle
            adapter-fingerprint
@@ -4723,14 +4691,11 @@
           (if-let [native-source-id-fn (:native-source-id api)]
             (native-source-id-fn conn)
             (str (random-uuid))))
-        {:keys [current-kid root-keyring]}
-        (normalize-security-root-keyring
-         config-opts security-key security-keyring security-kid)
-        format-options {:current-kid current-kid
-                        :keyring root-keyring
-                        :token-ttl-seconds
-                        (or token-ttl-seconds
-                            causal-token/default-token-ttl-seconds)}
+        {:keys [format-options zed-token-format-options]}
+        (security-config/format-scopes config-opts)
+        zed-token-format-options
+        (assoc zed-token-format-options :token-ttl-seconds
+               (or token-ttl-seconds causal-token/default-token-ttl-seconds))
         object-id->entid (fn [db object-id]
                            ((:entid api) db (object-id->lookup-ref object-id)))
         custom-codec?
@@ -4810,10 +4775,7 @@
           :object-id->entid object-id->entid
           :cursor-ttl-seconds cursor-ttl-seconds
           :format-options format-options
-          :cursor-cache-policy-identity
-          (cursor/cache-policy-identity
-           {:format-options format-options
-            :cursor-ttl-seconds cursor-ttl-seconds})
+          :zed-token-format-options zed-token-format-options
           :source-lifecycle source-lifecycle
           :runtime-lifecycle-state runtime-lifecycle-state
           :native-source-id native-source-id

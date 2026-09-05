@@ -1,0 +1,256 @@
+{:samples 7,
+ :format :eacl.security-keyring/performance-v1,
+ :processors 14,
+ :arch "aarch64",
+ :steady-state
+ [{:ring-size 1,
+   :mode :static,
+   :mint
+   {:median-ns-per-operation 20453.083,
+    :samples-ns-per-operation
+    [18804.583
+     23763.708
+     23036.084
+     20469.25
+     20453.083
+     16780.625
+     16931.792]},
+   :decode
+   {:median-ns-per-operation 69331.208,
+    :samples-ns-per-operation
+    [65669.708
+     69331.208
+     68672.125
+     72499.667
+     76190.708
+     68613.042
+     69715.458]}}
+  {:ring-size 1,
+   :mode :live,
+   :mint
+   {:median-ns-per-operation 8692.167,
+    :samples-ns-per-operation
+    [8664.208 8692.167 8597.209 9346.208 9456.833 8434.167 8991.125]},
+   :decode
+   {:median-ns-per-operation 34543.75,
+    :samples-ns-per-operation
+    [34055.083 33392.0 34543.75 34847.375 35803.25 33143.5 34721.25]}}
+  {:ring-size 2,
+   :mode :live,
+   :mint
+   {:median-ns-per-operation 8276.792,
+    :samples-ns-per-operation
+    [8286.583 8244.416 12492.375 8395.25 8276.792 8163.875 8158.667]},
+   :decode
+   {:median-ns-per-operation 32564.667,
+    :samples-ns-per-operation
+    [35494.125
+     32376.958
+     32916.125
+     32334.167
+     32564.667
+     32443.5
+     34060.958]}}
+  {:ring-size 2,
+   :mode :static,
+   :mint
+   {:median-ns-per-operation 8176.042,
+    :samples-ns-per-operation
+    [8154.334 8176.042 8102.0 8050.416 8592.041 8868.959 8386.209]},
+   :decode
+   {:median-ns-per-operation 36761.375,
+    :samples-ns-per-operation
+    [38904.542
+     36447.708
+     36885.958
+     35609.5
+     36761.375
+     37322.292
+     36131.542]}}
+  {:ring-size 4,
+   :mode :static,
+   :mint
+   {:median-ns-per-operation 8151.041,
+    :samples-ns-per-operation
+    [8078.583 8151.041 8080.208 8274.291 8250.875 8176.75 8103.75]},
+   :decode
+   {:median-ns-per-operation 35609.167,
+    :samples-ns-per-operation
+    [35754.334
+     39519.5
+     35525.375
+     35097.542
+     35367.084
+     35667.125
+     35609.167]}}
+  {:ring-size 4,
+   :mode :live,
+   :mint
+   {:median-ns-per-operation 8180.833,
+    :samples-ns-per-operation
+    [8215.5 8177.875 8221.125 8169.625 8180.833 8189.875 8131.916]},
+   :decode
+   {:median-ns-per-operation 32844.209,
+    :samples-ns-per-operation
+    [32484.375
+     32300.625
+     32409.583
+     36202.292
+     33678.125
+     32844.209
+     34032.292]}}
+  {:ring-size 16,
+   :mode :live,
+   :mint
+   {:median-ns-per-operation 8242.583,
+    :samples-ns-per-operation
+    [8250.25 8301.208 8235.125 8228.416 8201.833 8242.583 8822.708]},
+   :decode
+   {:median-ns-per-operation 32606.125,
+    :samples-ns-per-operation
+    [33570.041
+     32606.125
+     32589.166
+     32506.458
+     32560.584
+     34719.917
+     33955.75]}}
+  {:ring-size 16,
+   :mode :static,
+   :mint
+   {:median-ns-per-operation 8514.291,
+    :samples-ns-per-operation
+    [9473.625 9152.666 8975.75 8514.291 8054.208 7964.459 7943.75]},
+   :decode
+   {:median-ns-per-operation 35890.834,
+    :samples-ns-per-operation
+    [35627.375
+     35602.333
+     38159.0
+     35787.583
+     37546.125
+     35890.834
+     39930.166]}}],
+ :warmup-operations 2000,
+ :java "26.0.2",
+ :operations-per-sample 1000,
+ :os "Mac OS X",
+ :populated-stores
+ [{:populated-entries-per-store 0,
+   :activation-ns 243458,
+   :retirement-ns 88708,
+   :next-codec-use-with-cleanup-ns 634334,
+   :recompute-imported-entries-ns 1250,
+   :local-answer-retained? true,
+   :resident-before-cleanup 0}
+  {:populated-entries-per-store 0,
+   :activation-ns 37750,
+   :retirement-ns 96792,
+   :next-codec-use-with-cleanup-ns 84250,
+   :recompute-imported-entries-ns 250,
+   :local-answer-retained? true,
+   :resident-before-cleanup 0}
+  {:populated-entries-per-store 0,
+   :activation-ns 32584,
+   :retirement-ns 18542,
+   :next-codec-use-with-cleanup-ns 51125,
+   :recompute-imported-entries-ns 208,
+   :local-answer-retained? true,
+   :resident-before-cleanup 0}
+  {:populated-entries-per-store 0,
+   :activation-ns 30333,
+   :retirement-ns 16042,
+   :next-codec-use-with-cleanup-ns 39792,
+   :recompute-imported-entries-ns 334,
+   :local-answer-retained? true,
+   :resident-before-cleanup 0}
+  {:populated-entries-per-store 0,
+   :activation-ns 28209,
+   :retirement-ns 15375,
+   :next-codec-use-with-cleanup-ns 37416,
+   :recompute-imported-entries-ns 167,
+   :local-answer-retained? true,
+   :resident-before-cleanup 0}
+  {:populated-entries-per-store 64,
+   :activation-ns 69834,
+   :retirement-ns 22500,
+   :next-codec-use-with-cleanup-ns 526333,
+   :recompute-imported-entries-ns 2584500,
+   :local-answer-retained? true,
+   :resident-before-cleanup 64}
+  {:populated-entries-per-store 64,
+   :activation-ns 84042,
+   :retirement-ns 23167,
+   :next-codec-use-with-cleanup-ns 400792,
+   :recompute-imported-entries-ns 2069083,
+   :local-answer-retained? true,
+   :resident-before-cleanup 64}
+  {:populated-entries-per-store 64,
+   :activation-ns 76000,
+   :retirement-ns 22791,
+   :next-codec-use-with-cleanup-ns 273375,
+   :recompute-imported-entries-ns 1827708,
+   :local-answer-retained? true,
+   :resident-before-cleanup 64}
+  {:populated-entries-per-store 64,
+   :activation-ns 72417,
+   :retirement-ns 23000,
+   :next-codec-use-with-cleanup-ns 308250,
+   :recompute-imported-entries-ns 2283833,
+   :local-answer-retained? true,
+   :resident-before-cleanup 64}
+  {:populated-entries-per-store 64,
+   :activation-ns 73667,
+   :retirement-ns 23542,
+   :next-codec-use-with-cleanup-ns 248000,
+   :recompute-imported-entries-ns 1862459,
+   :local-answer-retained? true,
+   :resident-before-cleanup 64}
+  {:populated-entries-per-store 512,
+   :activation-ns 89250,
+   :retirement-ns 24209,
+   :next-codec-use-with-cleanup-ns 848375,
+   :recompute-imported-entries-ns 14628667,
+   :local-answer-retained? true,
+   :resident-before-cleanup 512}
+  {:populated-entries-per-store 512,
+   :activation-ns 132375,
+   :retirement-ns 25167,
+   :next-codec-use-with-cleanup-ns 731875,
+   :recompute-imported-entries-ns 13338292,
+   :local-answer-retained? true,
+   :resident-before-cleanup 512}
+  {:populated-entries-per-store 512,
+   :activation-ns 81625,
+   :retirement-ns 24125,
+   :next-codec-use-with-cleanup-ns 1084250,
+   :recompute-imported-entries-ns 12880042,
+   :local-answer-retained? true,
+   :resident-before-cleanup 512}
+  {:populated-entries-per-store 512,
+   :activation-ns 84667,
+   :retirement-ns 23584,
+   :next-codec-use-with-cleanup-ns 551500,
+   :recompute-imported-entries-ns 12507958,
+   :local-answer-retained? true,
+   :resident-before-cleanup 512}
+  {:populated-entries-per-store 512,
+   :activation-ns 83916,
+   :retirement-ns 25666,
+   :next-codec-use-with-cleanup-ns 529459,
+   :recompute-imported-entries-ns 13354083,
+   :local-answer-retained? true,
+   :resident-before-cleanup 512}],
+ :direct-work
+ [{:ring-size 1,
+   :mint {:state-reads 1, :named-lookups 1},
+   :decode {:state-reads 1, :named-lookups 1}}
+  {:ring-size 2,
+   :mint {:state-reads 1, :named-lookups 1},
+   :decode {:state-reads 1, :named-lookups 1}}
+  {:ring-size 4,
+   :mint {:state-reads 1, :named-lookups 1},
+   :decode {:state-reads 1, :named-lookups 1}}
+  {:ring-size 16,
+   :mint {:state-reads 1, :named-lookups 1},
+   :decode {:state-reads 1, :named-lookups 1}}]}

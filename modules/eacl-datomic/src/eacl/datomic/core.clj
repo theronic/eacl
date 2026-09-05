@@ -245,3 +245,15 @@
          (d/entity (db selected) (d/t->tx t)))
         (finally
           (eacl/release! selected))))))
+
+(defn export-authenticated-cache-snapshot
+  "Exports count/byte-bounded authenticated cache bytes using the primary keyring."
+  [client bounds]
+  (require-datomic-client! client "export-authenticated-cache-snapshot")
+  (orchestration/export-authenticated-cache-snapshot client bounds))
+
+(defn restore-authenticated-cache-snapshot!
+  "Restores optional authenticated cache bytes. Unavailable keys are cache misses."
+  [client token bounds]
+  (require-datomic-client! client "restore-authenticated-cache-snapshot!")
+  (orchestration/restore-authenticated-cache-snapshot! client token bounds))

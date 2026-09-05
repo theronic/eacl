@@ -15,6 +15,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.cache :as cache]
             [eacl.contract-support :as contract]
+            [eacl.security.contract-support :as security-contract]
             [eacl.core :as eacl]
             [eacl.datahike.core :as datahike]
             [eacl.spicedb.consistency :as consistency]
@@ -379,3 +380,11 @@
            (= #{(contract/->server "server-1")
                 (contract/->server "server-2")}
               (set (:data after-write)))))))))
+
+(deftest live-security-keyring-rotation-contract-test
+  (doseq [attribute-refs? [false true]]
+    (let [conn (datahike/create-conn nil {:attribute-refs? attribute-refs?})
+          config (:config (d/db conn))]
+      (try (security-contract/assert-client-security! #(datahike/make-client conn %) #(seed-objects! conn)
+                                                      datahike/export-authenticated-cache-snapshot datahike/restore-authenticated-cache-snapshot!)
+           (finally (d/release conn) (d/delete-database config))))))

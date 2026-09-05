@@ -346,3 +346,10 @@ rollback, and no migration or dual-write path is provided between superseded
 unreleased-v8 representations. This reset contract is distinct from the
 released v6-to-v7 relationship migration and released v7-to-v8 permission
 migration utilities.
+
+## V9 security-key updates
+
+For live controller configuration and authenticated cache import/export, see the
+[security-key guide](security-keyrings.md) and [v9 release notes](release-notes-v9.0.md).
+Key updates preserve source lifecycle and authorization proof identity. Default
+non-expiring cursors require indefinite retention of old keys for lossless resume.

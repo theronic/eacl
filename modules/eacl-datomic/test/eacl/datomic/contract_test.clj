@@ -4,6 +4,7 @@
             [eacl.cache :as shared-cache]
             [eacl.backend.v8 :as backend]
             [eacl.contract-support :as contract]
+            [eacl.security.contract-support :as security-contract]
             [eacl.core :as eacl]
             [eacl.datomic.core :as datomic]
             [eacl.datomic.datomic-helpers
@@ -271,3 +272,8 @@
            (str "datomic-recursive-safety-" (name limit-key))
            :cache {}
            :recursive-traversal-limits {limit-key 1}}))))))
+
+(deftest live-security-keyring-rotation-contract-test
+  (with-mem-conn [conn schema/v8-schema]
+    (security-contract/assert-client-security! #(datomic/make-client conn %) #(seed-objects! conn)
+                                               datomic/export-authenticated-cache-snapshot datomic/restore-authenticated-cache-snapshot!)))

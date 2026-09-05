@@ -8,6 +8,7 @@
   (:require [#?(:clj clojure.edn :cljs cljs.reader) :as edn]
             [clojure.string :as str]
             [eacl.exact-integer :as exact-integer]
+            [eacl.security.protocols :as keyrings]
             #?@(:cljs [[goog.crypt :as gcrypt]
                        [goog.crypt.Hmac]
                        [goog.crypt.Sha256]]))
@@ -623,17 +624,41 @@
         :cljs
         (vec (.digest digest))))))
 
+(defn ^:no-doc capture-keyring
+  "Captures at most once for a protected operation. Static codec options are
+   already immutable; constructed clients supply an opaque controller."
+  [options]
+  (if-let [controller (:keyring-controller options)]
+    (if (:keyring-snapshot options)
+      options
+      (do
+        (when-not (satisfies? keyrings/KeyringSource controller)
+          (format-error! :invalid-keyring {}))
+        (let [snapshot (keyrings/-snapshot controller)]
+          (assoc options :keyring-snapshot snapshot
+                 :current-kid (:active-kid snapshot)
+                 :keyring (:keys snapshot)))))
+    options))
+
+(defn ^:no-doc domain-key
+  "Uses only the captured generation; never reads mutable controller state."
+  [options kid root-key domain version]
+  (if-let [controller (:keyring-controller options)]
+    (keyrings/-derive-key controller (:keyring-snapshot options) kid root-key domain version)
+    (derive-key root-key domain)))
+
 (defn signing-context
-  [{:keys [current-kid keyring]} domain]
-  (let [kid (or current-kid :default)
+  [options domain]
+  (let [{:keys [current-kid keyring] :as options} (capture-keyring options)
+        kid (or current-kid :default)
         keyring (or keyring {:default default-root-key})
         root-key (get keyring kid)]
     (when-not (and (or (keyword? kid)
                        (and (string? kid) (not-empty kid)))
                    root-key)
-      (format-error! :unknown-key-id {:kid kid}))
+      (format-error! :unknown-key-id {}))
     {:kid kid
-     :key (derive-key root-key domain)
+     :key (domain-key options kid root-key domain canonical-version)
      :keyring keyring}))
 
 (defn encode-authenticated
@@ -654,7 +679,7 @@
          (b64url-encode
           (utf8-bytes (encode-canonical envelope options))))))
 
-(defn decode-authenticated
+(defn ^:no-doc decode-authenticated-envelope
   [{:keys [domain prefix payload-keys maximum-size] :as options} token]
   (when-not (and (string? token)
                  (<= (count token)
@@ -667,15 +692,16 @@
           (b64url-decode (subs token (count prefix))))
          (assoc options :allowed-keys #{:v :kid :payload :tag}))
         {:keys [v kid payload tag]} envelope
+        options (capture-keyring options)
         root-key (get (or (:keyring options)
                           {:default default-root-key})
                       kid)]
     (when-not (and (= canonical-version v)
-                   root-key
                    (string? payload)
                    (string? tag))
       (format-error! :authentication-failed {}))
-    (let [key (derive-key root-key domain)
+    (when-not root-key (format-error! :security-key-unavailable {}))
+    (let [key (domain-key options kid root-key domain canonical-version)
           expected (hmac-sha-256
                     key
                     (str domain "\n"
@@ -685,7 +711,10 @@
           supplied (b64url-decode tag)]
       (when-not (secure-equal? expected supplied)
         (format-error! :authentication-failed {}))
-      (decode-canonical
-       (bytes->utf8 (b64url-decode payload))
-       (cond-> options
-         payload-keys (assoc :allowed-keys payload-keys))))))
+      {:security-kid kid
+       :payload (decode-canonical
+                 (bytes->utf8 (b64url-decode payload))
+                 (cond-> options payload-keys (assoc :allowed-keys payload-keys)))})))
+
+(defn decode-authenticated [options token]
+  (:payload (decode-authenticated-envelope options token)))

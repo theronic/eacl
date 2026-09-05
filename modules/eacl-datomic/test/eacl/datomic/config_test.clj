@@ -126,7 +126,7 @@
                    :cursor-ttl-seconds 123})
           opts (runtime-options client)]
       (is (identical? lookup-ref (:object-id->lookup-ref opts)))
-      (is (= :shared (get-in opts [:format-options :current-kid])))
+      (is (= :shared (:active-kid (eacl/security-keyring-status (get-in opts [:format-options :keyring-controller])))))
       (is (= 123 (:cursor-ttl-seconds opts))))
 
     (testing "removed backend-specific cursor aliases are unknown"

@@ -1,6 +1,48 @@
 (ns eacl.core
   "Public authorization capabilities, records, and normalization helpers."
-  (:require [eacl.execution :as execution]))
+  (:require [eacl.execution :as execution]
+            [eacl.security.keyring :as keyring]))
+
+(defn security-keyring
+  "Creates a non-durable controller from {:keys {kid material} :active-kid kid}.
+   Supply externally generated material (at least 32 random bytes). IDs must be
+   unique across epochs. Optional :max-keys / :max-retired-kids lower hard caps.
+   See docs/security-keyrings.md for secret ownership and the rollout runbook."
+  [options]
+  (keyring/keyring options))
+
+(defn security-keyring? [value] (keyring/keyring? value))
+
+(defn security-keyring-status
+  "Returns generation and key identifiers, never secret material."
+  [controller]
+  (keyring/status controller))
+
+(defn replace-security-keyring!
+  "Atomically replaces {:keys {kid material} :active-kid kid} at
+   :expected-generation. Returns safe status; stale updates raise
+   :eacl.keyring/conflict. Removed IDs cannot be reintroduced."
+  [controller desired]
+  (keyring/replace! controller desired))
+
+(defn add-security-key!
+  "Installs an inactive key; identical accepted material is idempotent.
+   Distribute and observe acceptance on every Peer before activation."
+  [controller kid material]
+  (keyring/add! controller kid material))
+
+(defn activate-security-key!
+  "Selects an installed key for issuance without removing accepted old keys.
+   Does not change source lifecycle or authorization proof identity."
+  [controller kid]
+  (keyring/activate! controller kid))
+
+(defn retire-security-key!
+  "Removes an inactive key; subsequent operations reject artifacts under it.
+   Default non-expiring cursors require indefinite retention for lossless resume.
+   Imported caches miss; independently computed local answers remain reusable."
+  [controller kid]
+  (keyring/retire! controller kid))
 
 (defn cancellation-token
   "Creates a caller-owned cooperative cancellation token for one request."

@@ -389,7 +389,8 @@
        :key :source-lifecycle
        :value nil})))
   (when-not (or (contains? config-opts :security-key)
-                (contains? config-opts :security-keyring))
+                (contains? config-opts :security-keyring)
+                (contains? config-opts :security-keyring-controller))
     (throw
      (ex-info
       "Datalevin requires an externally retained token-signing key or keyring."
@@ -497,3 +498,15 @@
   ([dir extra-schema] (schema/create-conn dir extra-schema))
   ([dir extra-schema store-options]
    (schema/create-conn dir extra-schema store-options)))
+
+(defn export-authenticated-cache-snapshot
+  "Exports count/byte-bounded authenticated cache bytes using the primary keyring."
+  [client bounds]
+  (require-datalevin-client! client "export-authenticated-cache-snapshot")
+  (orchestration/export-authenticated-cache-snapshot client bounds))
+
+(defn restore-authenticated-cache-snapshot!
+  "Restores optional authenticated cache bytes. Unavailable keys are cache misses."
+  [client token bounds]
+  (require-datalevin-client! client "restore-authenticated-cache-snapshot!")
+  (orchestration/restore-authenticated-cache-snapshot! client token bounds))

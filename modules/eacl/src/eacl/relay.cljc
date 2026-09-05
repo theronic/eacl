@@ -469,6 +469,7 @@
                          nil))
       (assoc envelope
              :cursor/authenticated? (boolean (:authenticated? decoded))
+             :cursor/security-kid (:security-kid decoded)
              :cursor/expired? (boolean (:expired? decoded))
              :cursor/expired-at (:expired-at decoded)
              :cursor/scope-matches?
@@ -975,6 +976,7 @@
         {:adapter page-adapter
          :selected-snapshot selected
          :continuation-context (:continuation-context page-context)
+         :security-kid (:cursor/security-kid primary-envelope)
          :qualification-certificate
          (reduce (fn [prior [_ envelope]]
                    (if-let [certificate (:qualification-temporal envelope)]

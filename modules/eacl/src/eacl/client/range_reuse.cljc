@@ -18,6 +18,8 @@
   renders and publishes them under their exact keys like computed pages.
   Bounded candidate-window routes carry no marker and never participate."
   (:require [eacl.cache.standard-lru :as lru]
+            [eacl.security.imports :as imports]
+            [eacl.security.retention :as retention]
             [eacl.authorization.temporal :as temporal]))
 
 (def default-max-entries 512)
@@ -391,6 +393,10 @@
         (recur (subvec segments 1))
         segments))))
 
+(defn ^:no-doc prune-retired! [tier retired]
+  (when tier
+    (retention/prune! (:store tier) (fn [key _] (contains? retired (get-in key [1 1]))))))
+
 (defn lookup!
   "The complete page or the partial page plus continuation request for
   `window` from the walk's segments, or nil."
@@ -409,7 +415,7 @@
   "Retains `page` (computed or composed for `window`) in the walk's
   segments, merging into an adjacent segment when it continues one."
   [tier key window page]
-  (when (and tier key window (reusable-page? page) (seq (:data page)))
+  (when (and (not (imports/derived?)) tier key window (reusable-page? page) (seq (:data page)))
     (let [store (:store tier)
           candidate (segment-of window page)]
       (loop []

@@ -1683,21 +1683,27 @@ verification keys on every instance that accepts the same tokens:
 (def acl
   (eacl.datomic.core/make-client
    conn
-   {:security-key "32+ bytes of shared secret key material"
+   {:security-key externally-supplied-primary-root
     :security-kid :cursor-2026-07
     :zed-token-keyring {:zed-2026-06 old-zed-root
                         :zed-2026-07 current-zed-root}
     :zed-token-kid :zed-2026-07}))
 ```
 
-Portable cursors use the confidential `eacl_c5_` envelope: independently
+Portable cursors use the confidential `eacl_c6_` envelope: independently
 derived AES-256-CTR and HMAC-SHA-256 keys, a random 96-bit nonce, and
 authentication before payload parsing. Rotate a cursor authenticated-encryption
-key before 2^32 cursor encryptions. Install the new key id for issuance first,
-retain old keys for verification through the intended token lifetime, and then
-retire them. EACL does not count per-key encryptions for you. The default keys
-are client-local, so default cursors and tokens do not survive restarts or load
-balancing.
+key before 2^32 cursor encryptions. Distribute the new key as inactive to every
+Peer, observe acceptance everywhere, then activate it. **Default cursors never
+expire: lossless resume requires indefinite retention of old keys.** A finite
+`:cursor-ttl-seconds` bounds only subsequently issued cursors. EACL does not
+count per-key encryptions. Default keys are process-local and do not survive
+restarts or provide cross-process verification.
+
+V9 adds shared live `:security-keyring-controller` and dedicated
+`:zed-token-keyring-controller` options. See the [security-key guide](docs/security-keyrings.md)
+for the public update APIs, two-Peer runbook, failure recovery, and cache trust
+rules. Key updates do not change authorization proofs or database identity.
 
 See the [backend guide](docs/v8-backend-modules-and-upgrade.md) for exact
 capabilities, synchronization timeouts, checkpoints, key rotation, and
