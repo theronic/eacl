@@ -5,6 +5,7 @@
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.client.orchestration :as orchestration]
             [eacl.caveats.definition-test :as errors]
@@ -68,4 +69,13 @@
                                                            :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                             :writer #(qualifiers/writer conn) :entid db/entid :now now
                             :cas-attribute (when (:attribute-refs? options) db/entid)})
+        (finally (d/release conn) (d/delete-database config))))))
+
+(deftest qualified-cache-traces-match-uncached-authorization
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options) config (:config (d/db conn)) now (atom 99)]
+      (try
+        (cache-trace/check! {:client (api/make-client conn {:clock #(deref now)
+                                                            :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                             :writer #(qualifiers/writer conn) :now now :expire-cache! api/expire-cache!})
         (finally (d/release conn) (d/delete-database config))))))

@@ -353,3 +353,25 @@ resume returns a typed restart rather than silently restarting. Public results
 strip internal certificate fields. Tests cover both directions, forward/backward
 pages, demand/complete evaluation, expired bans before a boundary, changed
 context/evaluator/policy/mode, incomplete proof, range and checkpoint retention.
+
+### Completed cache coherence scope
+
+The active cache paths use complete exact-basis qualification identity rather
+than promoting incomplete ordinary Relation proofs. This exact fallback is the
+implemented managed policy for qualified answers on the current bundled native
+adapters: external writers prevent a source-wide immutable-qualifier guarantee.
+Publication capability alone never enables cross-basis authorization reuse.
+Point intervals permit certified time reuse; other semantic tiers retain exact
+time as a conservative guard and carry their evidence/continuation certificates.
+Raw aligned scan rows and structural schema plans remain independent of time.
+
+One portable native conformance trace compares cold, warm, repeated and
+read-only-cache outcomes through all four backends (both Datahike modes). Eight
+states cover two ban expirations, positive expiry, touch, bound context, Caveat
+replacement and source lifecycle rotation. Every state exercises three request
+contexts, five permissions, both lookup directions and result policies, and
+limited/unlimited counts. Separate DataScript traces cover unknown native
+qualifier mutation/deletion faults and restored entity identities after explicit
+lifecycle rotation. Datalevin persists a lifecycle replacement and recreates its
+client. Controls omitting time from shared denotation identity or context from
+answer identity fail these same public traces.

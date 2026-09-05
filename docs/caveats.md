@@ -331,3 +331,39 @@ time; a later live request returns `:temporal-certificate-incomplete` as the
 restart reason. EACL does not scan an unseen suffix merely to manufacture a proof.
 Stored physical Relationship inspection is timeless; expiry-active inspection
 and authorization-filtered inspection retain their observed expiry deadlines.
+
+## Qualified cache scope and reset traces
+
+Qualification-dependent answers retain the complete immutable basis, canonical
+whole request context and evaluator identity. Exact basis identity covers the
+selected schema, Caveat definitions, Relation allowance and qualifier contents.
+Conditional result categories and evidence remain part of validated values;
+collection values additionally require their versioned temporal certificate.
+
+| Retained value | Time and qualification scope |
+| --- | --- |
+| Decoded qualifier | Exact basis or complete native content; never an authorization answer |
+| Raw scan response | Structural identity and aligned qualifier refs; independent of time and context |
+| Derived schema plan | Schema generation and structural input; independent of request time |
+| Point answer | Exact basis and context/evaluator, with resident interval acceptance |
+| Lookup, count and range | Exact basis, context/evaluator and captured time, with retained certificates |
+| Denotation and recursive checkpoint | Exact qualification scope and canonical evidence certificates |
+| Stable page checkpoint | Exact scope and a validated certificate for the complete retained state |
+| Rendered page | Exact request/time/mode and authenticated cursor tokens; token TTL remains separate |
+
+Current bundled backends permit raw external writers. Qualified managed answer
+promotion therefore stays disabled: ordinary Relation stamps and publication
+capability cannot certify all qualifier and Caveat dependencies against such
+writers. Exact-basis fallback is deliberate. It also prevents unknown in-place
+changes from borrowing an answer from another native snapshot. Structural cache
+reuse does not acquire a clock dependency simply because qualifiers are enabled.
+
+The same native trace runs on all four backends, including both Datahike attribute
+representations. Cold, warm, repeated and read-only-cache reads agree across
+context changes, positive and subtracting expiry without writes, qualifier touch,
+bound-context replacement, Caveat expression replacement and lifecycle rotation.
+The trace checks points, both lookup directions, detailed/default result policies
+and limited/unlimited counts. DataScript additionally checks authoritative faults
+on subtracting qualifiers, unstamped native changes, and restored entity IDs.
+Datalevin persists its new lifecycle and recreates the client; its process-local
+cache-clear operation is not a substitute for that recovery procedure.

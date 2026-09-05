@@ -138,3 +138,13 @@ proof, context/evaluator scope, range retention and closed cursor envelopes.
 Public tests include forward/backward continuation, both lookup directions and
 evaluation modes, pinned historical time, active/stored inspection and typed
 restart without extra qualification work.
+
+Cache coherence conformance compares cold, warm, repeated and read-only-cache
+results at eight temporal/write/lifecycle states on Datomic, DataScript, both
+Datahike modes and Datalevin (the latter in its native module gate). The trace
+covers three contexts, five permissions, both lookup directions/result policies,
+and capped/exact counts. Healthy traces also assert that results contain no
+fault. Unknown-writer subtracting faults and restored DataScript identities
+have a separate trace. Two controls omit shared-denotation time or whole request
+context; both fail only their mutated runs. The combined qualified gate now has
+598,592 assertions and 101 detected production mutations.

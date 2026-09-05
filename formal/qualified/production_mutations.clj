@@ -39,6 +39,7 @@
             [eacl.datascript.qualified-check-test :as public-point-test]
             [eacl.datascript.qualified-lookup-test :as public-lookup-test]
             [eacl.datascript.qualified-cursor-test :as public-cursor-test]
+            [eacl.datascript.qualified-cache-trace-test :as cache-trace-test]
             [eacl.client.range-reuse-test :as range-test]
             [eacl.client.range-reuse :as range-reuse]
             [eacl.datascript.qualified-write-test :as public-write-test]
@@ -122,7 +123,13 @@
         plan-entry @#'staged/plan-entry
         plan-batch staged/plan-batch
         write-relationship! core/write-relationship!]
-    {:qualified-cursor-loses-skipped-ban-deadline
+    {:qualified-shared-denotation-identity-omits-time
+     {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
+      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 2 99))}}
+     :qualified-answer-identity-omits-request-context
+     {:gate #'cache-trace-test/qualified-cache-traces-match-uncached-authorization
+      :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 3 :omitted))}}
+     :qualified-cursor-loses-skipped-ban-deadline
      {:gate #'public-cursor-test/an-expiring-ban-before-the-boundary-requires-a-new-lookup
       :redefs {#'qualification/certificate (fn [request] (assoc (certificate request) :valid-until-ms nil))}}
      :qualified-cursor-does-not-enforce-live-time
@@ -513,7 +520,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 99 (count cases)))
+    (is (= 101 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

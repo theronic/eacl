@@ -6,6 +6,7 @@
             [eacl.caveats.public-write-contract :as public]
             [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.caveats.inspection-contract :as inspection]
+            [eacl.caveats.cache-trace-contract :as cache-trace]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.datalevin.core :as api]
             [eacl.datalevin.db :as db]
@@ -138,4 +139,20 @@
                                               (let [eid (d/entid database [:eacl/id "schema-string"])]
                                                 [[:db/add eid :eacl.datalevin/schema-generation :db/current-tx]
                                                  [:db/add eid :eacl.datalevin/schema-write-fence :db/current-tx]]))})
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest qualified-cache-traces-match-uncached-authorization
+  (let [dir (util/tmp-dir (str "qualified-cache-trace-" (random-uuid)))
+        conn (schema/create-conn dir {}) now (atom 99) watermark (atom 0)
+        lifecycle-file (str dir "/trace-lifecycle.txt")
+        _ (spit lifecycle-file "qualified-cache-trace")
+        make-client #(api/make-client conn {:clock (fn [] @now)
+                                            :caveat-evaluator (fixtures/portable-evaluator (atom 0))
+                                            :source-lifecycle (slurp lifecycle-file)
+                                            :security-key "01234567890123456789012345678901"
+                                            :revision-watermark watermark
+                                            :advance-revision-watermark! (fn [revision] (swap! watermark max revision))})]
+    (try
+      (cache-trace/check! {:client (make-client) :writer #(qualifiers/writer conn) :now now
+                           :rotate-client! (fn [_ lifecycle] (spit lifecycle-file lifecycle) (make-client))})
       (finally (d/close conn) (util/delete-files dir)))))

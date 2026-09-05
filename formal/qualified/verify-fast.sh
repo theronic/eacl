@@ -89,6 +89,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.datascript.qualified-check-test :reload)
      (require 'eacl.datascript.qualified-lookup-test :reload)
      (require 'eacl.datascript.qualified-cursor-test :reload)
+     (require 'eacl.caveats.cache-trace-contract :reload)
+     (require 'eacl.datascript.qualified-cache-trace-test :reload)
      (require 'eacl.client.range-reuse-test :reload)
      (require 'eacl.relationships.mutations-test :reload)
      (require 'eacl.datascript.qualified-write-test :reload)
@@ -115,7 +117,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.authorization.temporal-test 'eacl.formal.qualified.temporal-bridge
                                    'eacl.authorization.context-test 'eacl.datascript.caveat-context-test
                                    'eacl.authorization.result-test 'eacl.core-test 'eacl.datascript.qualified-check-test
-                                   'eacl.datascript.qualified-lookup-test 'eacl.datascript.qualified-cursor-test 'eacl.client.range-reuse-test
+                                   'eacl.datascript.qualified-lookup-test 'eacl.datascript.qualified-cursor-test 'eacl.datascript.qualified-cache-trace-test 'eacl.client.range-reuse-test
                                    'eacl.relationships.mutations-test
                                    'eacl.datascript.qualified-write-test
                                    'eacl.caveats.schema-admission-test
