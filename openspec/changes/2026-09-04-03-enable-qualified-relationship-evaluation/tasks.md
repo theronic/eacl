@@ -5,7 +5,7 @@
 - [x] 1.3 Model exclusive `valid-until`, including expiring positive, intermediate, and subtracting evidence; verify counterexamples kill any monotonic “time only removes permission” assumption.
 - [x] 1.4 Prove witness-aware temporal stability intervals for every operator/result outcome and no-publication fallback when completeness is unavailable; verify killed horizon/minimum rules fail.
 - [x] 1.5 Model cache acceptance and cursor continuation with source/schema/Relation/qualifier proofs, request context, evaluator identity, pinned/live temporal mode, certified time interval, and result kind; verify stale grants, expired bans, and conditional aliases are rejected.
-- [ ] 1.6 Register models, resource pins, mutation controls, and assurance mappings; verify `bin/formal fast` and every affected formal gate are green before editing production engine/cache/cursor code.
+- [x] 1.6 Register models, resource pins, mutation controls, and assurance mappings; verify `bin/formal fast` and every affected formal gate are green before editing production engine/cache/cursor code.
 
 ## 2. Carry qualifier refs through one scan engine
 
