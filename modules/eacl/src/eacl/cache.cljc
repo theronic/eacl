@@ -18,6 +18,7 @@
             [eacl.relationships.mutations :as relationship-mutations]
             [eacl.secure-format :as secure]
             [eacl.security.imports :as imports]
+            [eacl.security.retention :as retention]
             [eacl.subproblem-cache :as subproblem])
   #?(:clj (:import [java.util.concurrent.atomic LongAdder])))
 
@@ -1577,6 +1578,11 @@
           (if entry
             (cache-hit-result store :managed-current entry)
             (uncached-result store compute)))))))
+
+(defn ^:no-doc prune-retired-rendered! [store retired]
+  (when (basis-cache? store)
+    (retention/prune! (:rendered-pages (capture-cache-lifecycle store))
+                      (fn [_ value] (contains? retired (:security-kid value))))))
 
 (defn- resolve-with-imports [store options f]
   (let [lifecycle (or (:cache-lifecycle options)

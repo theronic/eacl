@@ -19,6 +19,7 @@
   Bounded candidate-window routes carry no marker and never participate."
   (:require [eacl.cache.standard-lru :as lru]
             [eacl.security.imports :as imports]
+            [eacl.security.retention :as retention]
             [eacl.authorization.temporal :as temporal]))
 
 (def default-max-entries 512)
@@ -391,6 +392,10 @@
                    (> (count segments) max-segments)))
         (recur (subvec segments 1))
         segments))))
+
+(defn ^:no-doc prune-retired! [tier retired]
+  (when tier
+    (retention/prune! (:store tier) (fn [key _] (contains? retired (get-in key [1 1]))))))
 
 (defn lookup!
   "The complete page or the partial page plus continuation request for

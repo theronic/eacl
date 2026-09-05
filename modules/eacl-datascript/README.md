@@ -151,3 +151,17 @@ Follow the [7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before
 starting clients, then the v9 serving rollout guide before qualified writes.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
+
+## Live security keys (v9)
+
+`make-client` accepts `:security-keyring-controller` and an optional independent
+`:zed-token-keyring-controller`. Static key options remain supported. All
+controllers use the backend-neutral `eacl.core` add/activate/retire/status APIs;
+updates change token acceptance without changing database or authorization
+identity. Authenticated cache export/restore is available through this module's
+`export-authenticated-cache-snapshot` / `restore-authenticated-cache-snapshot!`.
+
+**Non-expiring cursors require indefinite old-key retention for lossless resume.**
+A finite `:cursor-ttl-seconds` applies only to subsequently issued cursors. See the
+[security-key guide and multi-Peer runbook](../../docs/security-keyrings.md) for
+external secret ownership, distribution before activation, and retirement.

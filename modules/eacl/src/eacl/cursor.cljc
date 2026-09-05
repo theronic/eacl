@@ -3,6 +3,7 @@
   (:require [clojure.string :as str]
             [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
+            [eacl.security.retention :as retention]
             [eacl.secure-format :as secure]
             #?@(:cljs [[goog.crypt.Aes]]))
   #?(:clj
@@ -38,8 +39,8 @@
     (swap! *codec-work* update field (fnil + 0) amount)))
 
 (defrecord CursorCodecCache
-    [token-store reverse-token-store context-store key-context-store
-     max-entries])
+           [token-store reverse-token-store context-store key-context-store
+            max-entries retirement-observed])
 
 (defn- require-codec-cache!
   [cache]
@@ -96,7 +97,8 @@
     (lru/store max-entries)
     (lru/store max-entries)
     (lru/store max-entries)
-    max-entries)))
+    max-entries
+    (atom nil))))
 
 (defn- memoized-value!
   [store domain key build hit-counter build-counter]
@@ -379,7 +381,25 @@
        kid-segment "." nonce-segment "." ciphertext-segment))
 
 (defn- capture-options [options]
-  (assoc options :format-options (secure/capture-keyring (format-options options))))
+  (let [configured (secure/capture-keyring (format-options options))
+        snapshot (:keyring-snapshot configured)
+        cache (or (:cursor-codec-cache options) (:cursor-construction-cache options))]
+    (when cache
+      (retention/on-retirement!
+       (:retirement-observed cache) snapshot
+       (fn [retired]
+         (let [controller-id (:controller-id snapshot)
+               retired-identity? (fn [identity]
+                                   (and (= controller-id (first identity))
+                                        (contains? retired (second identity))))]
+           (retention/prune! (:token-store cache) (fn [_ entry] (retired-identity? (:identity entry))))
+           (retention/prune! (:reverse-token-store cache) (fn [key _] (retired-identity? (get-in key [2 1 0]))))
+           (retention/prune! (:key-context-store cache)
+                             (fn [_ entry]
+                               (and (= controller-id (:controller-id entry))
+                                    (or (contains? retired (:security-kid entry))
+                                        (not= (:generation snapshot) (:generation entry))))))))))
+    (assoc options :format-options configured)))
 
 (defn- named-root-key [configured kid]
   (or (get (or (:keyring configured) {:default secure/default-root-key}) kid)
@@ -406,7 +426,9 @@
                 kid-segment (secure/b64url-encode
                              (secure/utf8-bytes
                               (secure/encode-canonical kid (assoc configured :maximum-size 1024))))]
-            {:encryption-key encryption-key :authenticate authenticate :kid-segment kid-segment}))]
+            {:encryption-key encryption-key :authenticate authenticate :kid-segment kid-segment
+             :controller-id (:controller-id (:keyring-snapshot configured))
+             :generation (:generation (:keyring-snapshot configured)) :security-kid kid}))]
     (if-let [cache (or (:cursor-codec-cache options) (:cursor-construction-cache options))]
       (memoized-key-context! cache [:cursor-aead-encode-context 2 identity] build)
       (build))))

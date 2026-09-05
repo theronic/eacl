@@ -20,9 +20,9 @@ does not authenticate.
 - `eacl.secure-format/decode-authenticated` validates envelope fields, selects
   the named key, recomputes the domain-separated tag, compares it before
   decoding the payload, and rejects unknown payload fields.
-- `eacl.cursor` applies the same derived HMAC boundary to its compact
-  `kid.payload.tag` frame, verifies the tag before parsing the payload, and
-  supplies cursor-specific bounds, domain, and prefix.
+- `eacl.cursor` v6 authenticates its `kid.nonce.ciphertext.tag` frame before
+  decrypting or parsing payloads, with cursor-specific bounds, domain, and
+  prefix. Its key ID is authenticated even when two IDs name identical roots.
 - Cache-entry and causal-token namespaces use the generic authenticated
   envelope with distinct domains and prefixes.
 
@@ -211,3 +211,24 @@ assumptions.
 Passing their evidence suites permits a conditional kernel claim; it must never
 be described as a formal proof of cryptography, canonical EDN, database
 engines, clocks, key management, or backend snapshot-selection facts.
+
+## Live controller and imported-cache boundary (v9)
+
+Each protected encode/decode captures one immutable controller generation and
+selects one root by the named key ID. Operations already holding an old state
+may complete before retirement's linearization point; newly started operations
+observe the retired key's absence. Domain caches belong to captured generations.
+Private cursor caches check current acceptance before reuse. Deferred physical
+cleanup is not part of the authentication proof.
+
+Authenticated imports retain their verifying key ID and controller. Retirement
+makes them optional misses without changing selected-snapshot authorization.
+Imported truth cannot be republished or re-signed as independent local truth.
+Locally computed answers remain independent of transport keys.
+
+Evidence lives in `eacl.security.keyring-test`, `format-test`, `retention-test`,
+`eacl.cache-test`, and shared backend controller/import contracts. These cover
+snapshot barriers, key-ID tampering with equal roots, scope confusion, skipped
+cleanup, and racing local replacement. Primitive security remains an external
+assumption. Default non-expiring cursors require indefinite old-key retention
+for lossless resume; see the [rotation guide](../../docs/security-keyrings.md).

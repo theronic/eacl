@@ -159,7 +159,7 @@ Cursor-related process-local entries carry the minting token's key id:
  :continuation ...}
 ```
 
-Resume first authenticates the supplied cursor against the current ring, then requires any found continuation/rendered-page entry to name the same retained key id. Retirement eagerly evicts entries by key id. Missed or racing eviction cannot authorize reuse because the current ring/key-id check is mandatory at the external cursor boundary.
+Resume first authenticates the supplied cursor against the current ring, then requires any found continuation/rendered-page entry to name the same retained key id. Retirement makes entries ineligible synchronously; the next use of a bounded private store performs targeted eviction by key id. Missed or racing eviction cannot authorize reuse because the current ring/key-id check is mandatory at the external cursor boundary.
 
 Portable completed-cache entries and private entries whose trust originated only from such an imported artifact retain the verifying key id/trust epoch. If that key is unavailable they are untrusted optional data and become misses. Locally computed authorization entries derive correctness from the selected snapshot/proofs rather than a transport key and remain reusable. A cursor or causal token supplied by the caller is part of the requested consistency/pagination contract and therefore fails loudly rather than falling back to another snapshot or first page.
 
@@ -209,7 +209,7 @@ No runtime model comparison, ring-wide fallback loop, Peer coordination check, d
 2. Upgrade/confirm every protected format carries an authenticated key id and add per-key cache metadata.
 3. Route mint/decode operations through atomic controller snapshots.
 4. Add public replacement/convenience/status APIs and safe events.
-5. Add per-key eager eviction and all cross-backend/concurrency tests.
+5. Add per-key deferred cleanup and all cross-backend/concurrency tests.
 6. Publish the deployment runbook and examples for external secret watchers/control planes.
 7. Exercise a two-Peer old/new overlap, activation skew, and retirement drill before release.
 

@@ -1,6 +1,8 @@
 (ns eacl.security.format-test
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [eacl.core :as eacl]
+            [eacl.cache :as cache]
+            [clojure.string :as string]
             [eacl.causal-token :as causal]
             [eacl.cursor :as cursor]
             [eacl.secure-format :as secure]
@@ -111,7 +113,7 @@
       (is (not= token new-token))
       (is (= :new (:security-kid (cursor/token->authenticated-cursor new-token opts))))
       (eacl/retire-security-key! c :old)
-      ;; Physical codec entries deliberately remain: eligibility is independent.
+      ;; Retirement is authoritative before any cached token can be reused.
       (reset! calls 0)
       (is (= {:type :eacl.pagination/invalid-cursor :reason :security-key-unavailable}
              (outcome #(cursor/token->cursor token opts))))
@@ -141,3 +143,68 @@
     (eacl/retire-security-key! c :old)
     (is (= {:type :eacl.pagination/invalid-cursor :reason :security-key-unavailable}
            (outcome #(cursor/token->cursor token (assoc opts :now-seconds 60)))))))
+
+(defn replace-envelope-kid [token prefix kid]
+  (let [envelope (secure/decode-canonical
+                  (secure/bytes->utf8 (secure/b64url-decode (subs token (count prefix)))))]
+    (str prefix (secure/b64url-encode (secure/utf8-bytes (secure/encode-canonical (assoc envelope :kid kid)))))))
+
+(deftest key-id-is-authenticated-even-when-two-ids-have-the-same-material
+  (let [c (eacl/security-keyring {:keys {:old (material 1) :alias (material 1)} :active-kid :old})
+        token (secure/encode-authenticated (options c) payload)
+        tampered (replace-envelope-kid token "eacl_ring_" :alias)
+        cursor-token (cursor/cursor->token payload {:keyring-controller c})
+        segments (string/split (subs cursor-token (count "eacl_c6_")) #"\.")
+        cursor-tampered (str "eacl_c6_" (string/join "." (assoc segments 0 (secure/b64url-encode (secure/utf8-bytes (secure/encode-canonical :alias))))))]
+    (is (= :authentication-failed (:reason (outcome #(secure/decode-authenticated (options c) tampered)))))
+    (is (= :authentication-failed (:reason (outcome #(cursor/token->cursor cursor-tampered {:keyring-controller c})))))))
+
+(deftest dedicated-scope-never-falls-back-to-another-accepted-key
+  (let [c (controller) wrong (eacl/security-keyring {:keys {:old (material 3) :other (material 1)} :active-kid :old})
+        token (secure/encode-authenticated (options c) payload)
+        cursor-token (cursor/cursor->token payload {:keyring-controller c})]
+    (is (= :authentication-failed (:reason (outcome #(secure/decode-authenticated (options wrong) token)))))
+    (is (= :authentication-failed (:reason (outcome #(cursor/token->cursor cursor-token {:keyring-controller wrong})))))))
+
+(deftest authenticated-cache-captures-once-across-retirement
+  (let [c (controller) calls (atom 0) bounds {:max-entries 4}
+        source (cache/basis-cache) target (cache/basis-cache)
+        opts {:keyring-controller (observed c calls #(eacl/activate-security-key! c :new))}
+        token (cache/export-authenticated-basis-snapshot source bounds opts)]
+    (is (= 1 @calls))
+    (reset! calls 0)
+    (is (= {:restored? true :entry-count 0 :security-kid :old}
+           (cache/restore-authenticated-basis-snapshot!
+            target token bounds {:keyring-controller (observed c calls #(eacl/retire-security-key! c :old))})))
+    (is (= 1 @calls))
+    (is (= {:restored? false :cache-miss? true :reason :security-key-unavailable}
+           (cache/restore-authenticated-basis-snapshot! target token bounds {:keyring-controller c})))))
+
+(deftest two-peer-distribute-observe-activate-overlap-retire-drill
+  (let [a (eacl/security-keyring {:keys {:old (material 1)} :active-kid :old})
+        b (eacl/security-keyring {:keys {:old (material 1)} :active-kid :old})
+        mint #(cursor/cursor->token payload {:keyring-controller %})
+        read! #(cursor/token->cursor %1 {:keyring-controller %2})
+        old-a (mint a) old-b (mint b)]
+    (eacl/add-security-key! a :new (material 2))
+    (eacl/activate-security-key! a :new)
+    (let [new-a (mint a)]
+      (is (= :security-key-unavailable (:reason (outcome #(read! new-a b)))) "missing distribution fails explicitly")
+      ;; Recover partial rollout: install the original ID/material on the lagging Peer.
+      (eacl/add-security-key! b :new (material 2))
+      (doseq [peer [a b]] (is (= #{:old :new} (:accepted-kids (eacl/security-keyring-status peer)))))
+      (is (= payload (read! new-a b)))
+      (is (= payload (read! (mint b) a))) ; Both directions work during activation skew.
+      (eacl/activate-security-key! b :new)
+      (doseq [token [old-a old-b new-a (mint b)] peer [a b]]
+        (is (= payload (read! token peer))))
+      ;; Rollback is possible before retirement, with both accepted IDs retained.
+      (eacl/activate-security-key! a :old)
+      (is (= payload (read! (mint a) b)))
+      (eacl/activate-security-key! a :new)
+      ;; The drill intentionally invalidates its non-expiring old cursors.
+      (doseq [peer [a b]] (eacl/retire-security-key! peer :old))
+      (doseq [token [old-a old-b] peer [a b]]
+        (is (= :security-key-unavailable (:reason (outcome #(read! token peer))))))
+      (is (= payload (read! (mint a) b)))
+      (is (= payload (read! (mint b) a))))))

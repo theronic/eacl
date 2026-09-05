@@ -92,6 +92,7 @@
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.secure-format :as secure]
             [eacl.security.configuration :as security-config]
+            [eacl.security.retention :as retention]
             [eacl.subproblem-cache :as subproblem]
             [eacl.spicedb.parser :as schema-parser]
             [eacl.spicedb.consistency :as consistency]))
@@ -821,11 +822,20 @@
                           relationship-dependency))
              dependency-relation-ids))))
 
+(defn- prune-retired-cursor-state! [opts]
+  (retention/on-retirement!
+   (:security-retirement-observed opts) (get-in opts [:format-options :keyring-snapshot])
+   (fn [retired]
+     (continuation/prune-retired! (:continuation-cache-store opts) retired)
+     (range-reuse/prune-retired! (:range-tier opts) retired)
+     (cache/prune-retired-rendered! (:basis-cache-store opts) retired))))
+
 (defn- page-context
   [request-context opts operation query resource-type permission
    relationship-dependency]
   (let [opts (-> (selected-cache-options opts request-context)
                  (update :format-options secure/capture-keyring))
+        _ (prune-retired-cursor-state! opts)
         ;; Low-level raw-DB entry points may receive a client's opts map. They
         ;; must remain bound to that caller-owned DB and must not reach through
         ;; the client's live source during cursor recovery.
@@ -2561,7 +2571,7 @@
            [token source-incarnation source-lifecycle basis-cache-store
             continuation-cache-store cursor-codec-cache
             cursor-construction-cache derived-schema-caches scan-tier
-            range-tier qualifier-decode-cache content-revision])
+            range-tier qualifier-decode-cache content-revision security-retirement-observed])
 (defrecord Basis [adapter selected-snapshot identity selection basis-kind
                   historical-basis? execution-constraints release-state
                   owner-thread acquired-at-ms maximum-retention-ms
@@ -2570,7 +2580,7 @@
 (def ^:private runtime-lifecycle-option-keys
   #{:source-lifecycle :basis-cache-store :continuation-cache-store
     :cursor-codec-cache :cursor-construction-cache :derived-schema-caches
-    :scan-tier :range-tier :qualifier-decode-cache})
+    :scan-tier :range-tier :qualifier-decode-cache :security-retirement-observed})
 
 ;; A transient Acl read has already captured and attached one immutable
 ;; lifecycle options map before selecting its basis. Keep that map opaque
@@ -2661,7 +2671,8 @@
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
      (qualifier-tier-for config basis-cache-store)
-     content-revision)))
+     content-revision
+     (atom nil))))
 
 (defn- narrow-runtime-cache-lifecycle
   [config current content-revision]
@@ -2693,7 +2704,8 @@
      (scan-tier-for-config config basis-cache-store)
      (range-tier-for config basis-cache-store)
      (qualifier-tier-for config basis-cache-store)
-     content-revision)))
+     content-revision
+     (atom nil))))
 
 (defn- lifecycle-content-revision
   [lifecycle]

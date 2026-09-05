@@ -8,7 +8,8 @@
   (:require [eacl.backend.v8 :as backend]
             [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
-            [eacl.security.imports :as imports]))
+            [eacl.security.imports :as imports]
+            [eacl.security.retention :as retention]))
 
 (def ^:private context-version 4)
 (def ^:private default-max-entries 1024)
@@ -223,6 +224,10 @@
       {:type :eacl/internal-continuation-contract :eacl/error :eacl/internal-continuation-contract
        :context-keys (set (keys context))})))
   context)
+
+(defn ^:no-doc prune-retired! [store retired]
+  (when store
+    (retention/prune! (:storage store) (fn [_ value] (contains? retired (:security-kid value))))))
 
 (defn private-context
   "Builds engine callbacks scoped to one client, selected snapshot, and query.

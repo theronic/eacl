@@ -6,7 +6,7 @@
 
 ## 2. Pure keyring state machine
 
-- [ ] 2.1 Implement a pure validated keyring-state constructor with non-empty ring, active-key presence, bounded key/id collections, canonical key ids, existing key-strength rules, and no secret-bearing errors; verify unit tests kill each omitted validation.
+- [x] 2.1 Implement a pure validated keyring-state constructor with non-empty ring, active-key presence, bounded key/id collections, canonical key ids, existing key-strength rules, and no secret-bearing errors; verify unit tests kill each omitted validation.
 - [x] 2.2 Implement generation-guarded complete-state replacement over an atomic immutable state and verify sequential tests prove all-or-nothing visibility and exactly-one generation advancement.
 - [x] 2.3 Implement install, activate, and retire as bounded CAS operations over the common replacement primitive; verify racing operations are linearizable and stale updates return the typed conflict.
 - [x] 2.4 Track retired key ids/fingerprints privately and reject every retired-id reintroduction without exposing fingerprints; verify currently accepted same-key installation is idempotent and no retired id can revive old artifacts.
@@ -16,25 +16,25 @@
 
 - [x] 3.1 Let static primary/Zed options construct private controllers, preserve Zed-to-primary fallback, and let explicit controllers be shared by multiple clients; verify updates reach every sharing client while separate controller scopes remain isolated.
 - [ ] 3.2 Capture exactly one controller snapshot per protected encode/decode and select keys by direct id lookup; verify instrumentation detects no second mutable-state read and no ring-wide key trial.
-- [ ] 3.3 Cache domain-separated derived keys by controller generation, key id, domain, and format version and remove retired/unreachable entries; verify rotation never pairs one state's id with another state's key.
-- [ ] 3.4 Add safe keyring status and optional rotation events with closed non-secret fields; verify log, metric, event, exception, and status redaction tests find no raw/encoded key fragments.
+- [x] 3.3 Cache domain-separated derived keys by controller generation, key id, domain, and format version and remove retired/unreachable entries; verify rotation never pairs one state's id with another state's key.
+- [x] 3.4 Add safe keyring status and optional rotation events with closed non-secret fields; verify log, metric, event, exception, and status redaction tests find no raw/encoded key fragments.
 
 ## 4. Protected formats and cursor state
 
-- [ ] 4.1 Audit and upgrade every cursor, Zed-token, and portable authenticated-cache envelope to carry one authenticated key id selected from its primary or dedicated controller scope; verify format tests reject id tampering, wrong-scope keys, and implicit-key fallback.
-- [ ] 4.2 Tag continuation, visited-page, rendered-page, replay, and equivalent cursor-cache entries with the authenticated series key id; verify mismatched entries cannot influence resume.
-- [ ] 4.3 Add synchronous ineligibility plus targeted cleanup on retirement for cursor-related and externally authenticated/imported cache records, without flushing locally computed answer caches; verify a deliberately skipped physical cleanup still errors/misses correctly through key presence or trust epoch.
-- [ ] 4.4 Make unknown/retired cursor and causal-token keys return the specified typed request errors with no restart/rebase fallback; verify first-page and consistency fallbacks are not invoked.
+- [x] 4.1 Audit and upgrade every cursor, Zed-token, and portable authenticated-cache envelope to carry one authenticated key id selected from its primary or dedicated controller scope; verify format tests reject id tampering, wrong-scope keys, and implicit-key fallback.
+- [x] 4.2 Tag continuation, visited-page, rendered-page, replay, and equivalent cursor-cache entries with the authenticated series key id; verify mismatched entries cannot influence resume.
+- [x] 4.3 Add synchronous ineligibility plus targeted cleanup on retirement for cursor-related and externally authenticated/imported cache records, without flushing locally computed answer caches; verify a deliberately skipped physical cleanup still errors/misses correctly through key presence or trust epoch.
+- [x] 4.4 Make unknown/retired cursor and causal-token keys return the specified typed request errors with no restart/rebase fallback; verify first-page and consistency fallbacks are not invoked.
 - [x] 4.5 Make unavailable portable cache-entry keys produce authenticated cache misses followed by selected-snapshot evaluation; verify cached and uncached answers remain equal and request success is unaffected.
 - [x] 4.6 Update cache snapshot import/export so key ids remain metadata but secret keys never serialize; verify archive inspection contains no key material and retired-key entries are rejected as misses on restore.
 
 ## 5. Concurrency and rollout conformance
 
-- [ ] 5.1 Add deterministic barriers around encode/decode versus activation/retirement and verify each result linearizes wholly before or after the update.
-- [ ] 5.2 Add a two-Peer rollout fixture covering distribute, acknowledgement, activation skew, overlap, and retirement; verify both directions decode throughout a correct rollout and the missing-distribution case fails with the expected key-unavailable error.
-- [ ] 5.3 Exercise non-expiring and finite-TTL cursors across activation and retirement; verify age expiry and key retirement retain distinct error categories.
-- [ ] 5.4 Run cross-backend shared conformance for controller updates and protected formats, including DataScript CLJS capability boundaries; verify equivalent supported configurations have identical state/error semantics.
-- [ ] 5.5 Add killed controls for active-key removal, stale generation acceptance, ring-wide fallback, unauthenticated kid, cursor silent restart, cache fail-open, and secret-bearing diagnostics; verify each control is detected by a focused test.
+- [x] 5.1 Add deterministic barriers around encode/decode versus activation/retirement and verify each result linearizes wholly before or after the update.
+- [x] 5.2 Add a two-Peer rollout fixture covering distribute, acknowledgement, activation skew, overlap, and retirement; verify both directions decode throughout a correct rollout and the missing-distribution case fails with the expected key-unavailable error.
+- [x] 5.3 Exercise non-expiring and finite-TTL cursors across activation and retirement; verify age expiry and key retirement retain distinct error categories.
+- [x] 5.4 Run cross-backend shared conformance for controller updates and protected formats, including DataScript CLJS capability boundaries; verify equivalent supported configurations have identical state/error semantics.
+- [x] 5.5 Add killed controls for active-key removal, stale generation acceptance, ring-wide fallback, unauthenticated kid, cursor silent restart, cache fail-open, and secret-bearing diagnostics; verify each control is detected by a focused test.
 
 ## 6. Performance and simplicity gates
 
@@ -44,8 +44,8 @@
 
 ## 7. Documentation and release
 
-- [ ] 7.1 Publish a security-key guide explaining entropy, byte handling, unique key ids, static versus live configuration, secret-manager ownership, non-durability, and realistic JVM zeroization limits; verify examples contain placeholders rather than usable secrets.
-- [ ] 7.2 Publish the multi-Peer distribute/observe/activate/overlap/retire runbook with rollback and partial-rollout recovery; verify a reviewer can execute a two-Peer drill using only documented public APIs.
-- [ ] 7.3 Document that default non-expiring cursors require indefinite old-key retention for lossless resume, and show finite TTL configuration for bounded retirement; verify the warning appears beside every rotation example.
-- [ ] 7.4 Update API docs, release notes, backend/module guides, cryptographic assumptions, and error references; verify key addition/activation does not claim to rotate source lifecycle or authorization proofs.
+- [x] 7.1 Publish a security-key guide explaining entropy, byte handling, unique key ids, static versus live configuration, secret-manager ownership, non-durability, and realistic JVM zeroization limits; verify examples contain placeholders rather than usable secrets.
+- [x] 7.2 Publish the multi-Peer distribute/observe/activate/overlap/retire runbook with rollback and partial-rollout recovery; verify a reviewer can execute a two-Peer drill using only documented public APIs.
+- [x] 7.3 Document that default non-expiring cursors require indefinite old-key retention for lossless resume, and show finite TTL configuration for bounded retirement; verify the warning appears beside every rotation example.
+- [x] 7.4 Update API docs, release notes, backend/module guides, cryptographic assumptions, and error references; verify key addition/activation does not claim to rotate source lifecycle or authorization proofs.
 - [ ] 7.5 Run the combined nREPL test battery, CLJS suite, source-closure gate, secure-format/adversarial tests, and OpenSpec strict validation; verify all pass before release.
