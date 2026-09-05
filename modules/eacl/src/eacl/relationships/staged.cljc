@@ -199,16 +199,20 @@
          app-datoms (application-datoms app-datoms (set (remove nil? [qid old-qid])))
          [subject-type subject-id relation-id resource-type resource-id] relationship
          [forward reverse] (values-for relationship qid)
+         ;; Datomic rejects retract/add of an identical tuple in one tx. A
+         ;; plain-to-plain replacement still fences and stamps the Relation
+         ;; and commits application datoms, while retaining its existing pair.
+         retain-pair? (and (= :replace operation) (nil? old-qid) (nil? qid))
          tx (vec
               (concat
                 ((:fence native) db relation-id (boolean (and inline? (:caveat semantic))))
                 (when (and prepared? qid) [((:assert-entity native) qid (:facts prepared))])
                 (when old-qid [((:assert-entity native) old-qid ((:facts native) db old-qid))])
                 (when inline? [(qualifier/entity-data qid semantic (parameters native db (:caveat semantic)))])
-                (when (:present? prior)
+                (when (and (:present? prior) (not retain-pair?))
                   (pair/retractions subject-type subject-id relation-id resource-type resource-id old-qid))
                 (when old-qid [[:db/retractEntity old-qid]])
-                (when-not (= :delete operation)
+                (when-not (or (= :delete operation) retain-pair?)
                   [[:db/add subject-id storage/forward-attribute forward]
                    [:db/add resource-id storage/reverse-attribute reverse]])
                 app-datoms))]

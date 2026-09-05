@@ -1959,3 +1959,5 @@ Some of this open-source work was generously funded by my former employer, [Clou
 # Licence
 
 - EACL is free and open-source, licensed under the Eclipse Public License v2.0.
+
+See [Caveat and qualifier foundation](docs/caveats.md) for the staged profile, optional JVM evaluator, and Phase 3 serving boundary.

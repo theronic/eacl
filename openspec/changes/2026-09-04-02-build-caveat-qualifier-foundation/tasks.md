@@ -40,14 +40,14 @@
 
 ## 6. Certify implementation against the models
 
-- [ ] 6.1 Add generated refinement bridges for qualifier normalization/lifecycle/publication, context merge, profile checking, and partial outcomes; verify exhaustive finite and randomized production-vs-model differentials are green.
-- [ ] 6.2 Add mutation controls that kill bound-context precedence, error-value detection, short-circuit residuals, qualifier immutability, atomic pair publication, non-`nil`-missing-to-fault behavior, and schema generation; verify each mutant is detected by a mapped gate.
+- [x] 6.1 Add generated refinement bridges for qualifier normalization/lifecycle/publication, context merge, profile checking, and partial outcomes; verify exhaustive finite and randomized production-vs-model differentials are green.
+- [x] 6.2 Add mutation controls that kill bound-context precedence, error-value detection, short-circuit residuals, qualifier immutability, atomic pair publication, non-`nil`-missing-to-fault behavior, and schema generation; verify each mutant is detected by a mapped gate.
 - [x] 6.3 Run the SpiceDB/CEL compatibility corpus through the EACL profile and record every intentional exclusion/divergence; verify no unsupported case is advertised as compatible.
-- [ ] 6.4 Audit production hot paths to confirm Phase 2 adds zero qualifier reads, clock reads, Caveat evaluation, model calls, or shadow decisions to ordinary authorization; verify instrumentation and source review.
+- [x] 6.4 Audit production hot paths to confirm Phase 2 adds zero qualifier reads, clock reads, Caveat evaluation, model calls, or shadow decisions to ordinary authorization; verify instrumentation and source review.
 
 ## 7. Document and release the foundation
 
-- [ ] 7.1 Document Caveat syntax, supported types/operators, bound context, profile limits, JVM/CLJS capability boundary, and returned error categories; verify examples parse and model-evaluate as shown.
-- [ ] 7.2 Document the sparse qualifier schema, immutability/single ownership, inline-versus-prepared publication capability, inert `valid-until`, and Phase 3 activation dependency; verify operators are warned not to seed non-`nil` qids for serving Phase 2 clients.
+- [x] 7.1 Document Caveat syntax, supported types/operators, bound context, profile limits, JVM/CLJS capability boundary, and returned error categories; verify examples parse and model-evaluate as shown.
+- [x] 7.2 Document the sparse qualifier schema, immutability/single ownership, inline-versus-prepared publication capability, inert `valid-until`, and Phase 3 activation dependency; verify operators are warned not to seed non-`nil` qids for serving Phase 2 clients.
 - [x] 7.3 Update dependency/POM/license notices and isolated module build tests for cel-parser; verify published core and CLJS artifacts remain free of the JVM dependency.
 - [ ] 7.4 Run CI-equivalent nREPL tests, CLJS suite, all bundled-backend qualifier-publication conformance tests, formal fast/full applicable gates, source-closure, dependency audit, and strict OpenSpec validation; verify all are green before this foundation is marked ready for Phase 3.

@@ -1,14 +1,14 @@
 # Caveat and qualifier foundation assurance
 
 The Phase 2 model precedes production implementation. Run the bounded gate from
-the repository root with a project `:dev` nREPL:
+the repository root with a project `:dev:caveats-jvm` nREPL:
 
 ```sh
 EACL_NREPL_PORT=7788 bin/formal fast
 ```
 
 The gate verifies four independent Dafny modules (78 obligations), executes
-10,471 assertions through nREPL, and requires all eleven registered mutation
+34,856 assertions through nREPL, and requires all eleven registered mutation
 controls to be exercised and killed. `gate.lock.json` locks the profile and
 mutation inventory hashes, proof count, assertion count, and per-proof resource
 limits. Reports are generated under ignored `target/formal/caveats/`. The
@@ -73,3 +73,29 @@ The fast gate now locks 19,847 assertions. Source literals remain scalar;
 residuals can contain substituted typed containers. The finite residual typing
 extension passed the 78-obligation gate before its production implementation.
 The focused portable suite passes 101 assertions on JVM and Node/CLJS.
+
+## Production refinement gate
+
+The fast gate now checks 34,856 assertions: the original 19,847 finite/model
+and portable-plan assertions, 9,666 native lifecycle assertions (Datomic,
+DataScript, both Datahike layouts), 5,320 complete/partial JVM evaluator model
+comparisons, and 23 inventory/baseline/mutation checks for all eleven registered
+production mutations. Run with the `:caveats-jvm` alias in the dev nREPL.
+Datalevin's separately pinned local-fork campaign adds 2,500 assertions through
+`native_datalevin_bridge.clj`; it is excluded from public CI until that runtime
+artifact is published. All native campaigns own and dispose their stores.
+
+The model bridges found and fixed Datomic's rejection of identical plain pair
+retract/add replacement and cel-parser's loss of operand fault categories.
+No abstract model changed to accommodate the implementation. The JVM adapter
+uses fixed error-preserving overloads and an internal unary call, with no
+second evaluation. Production mutation mappings are executable in
+`production_mutations.clj`; the unmutated mapped gate must pass before each
+mutant is required to fail.
+
+The ordinary authorization conformance contract instruments qualifier decoding,
+proof scans and evaluator entrypoints as forbidden calls, and compares existing
+wall/monotonic clock counts before and after adding unused named Caveats. It
+runs with each bundled backend and in DataScript CLJS. Phase 2 does not change
+serving entrypoint semantics. Source-closure inspection includes the JVM
+implementation's evaluation body explicitly across protocol dispatch.

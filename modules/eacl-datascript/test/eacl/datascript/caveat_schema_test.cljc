@@ -1,5 +1,8 @@
 (ns eacl.datascript.caveat-schema-test
-  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest]]
+  (:require [eacl.datascript.core :as api]
+            [eacl.cache :as cache]
+            [eacl.caveats.hot-path-contract :as hot-path]
+            [#?(:clj clojure.test :cljs cljs.test) :refer [deftest]]
             [datascript.core :as ds]
             [eacl.datascript.schema :as schema]
             [eacl.caveats.persistence-contract :as contract]
@@ -24,6 +27,8 @@
                           {:db (:db-after (ds/with db (:speculative-tx-data plan)))
                            :components (:changed-schema-components plan)}))
          :interleave! interleave! :tempid "qualifier" :history-stable? true})
+      (hot-path/check-ordinary!
+        {:make-client #(api/make-client conn {:cache cache/no-cache}) :transact! #(ds/transact! conn %)})
       (publication/check-publication!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid ds/entid :strategy :prepared :interleave! interleave!})))

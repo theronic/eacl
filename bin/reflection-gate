@@ -8,10 +8,13 @@ set -uo pipefail
 log="${1:-target/reflection-gate.log}"
 mkdir -p "$(dirname "$log")"
 
-clojure -M:dev -e "
+clojure -M:dev:caveats-jvm -e "
 (set! *warn-on-reflection* true)
 (binding [*warn-on-reflection* true]
-  (require 'eacl.core 'eacl.cache 'eacl.subproblem-cache 'eacl.relay
+  (require 'eacl.caveats.jvm 'eacl.relationships.staged
+           'eacl.relationships.qualifier-integrity
+           'eacl.datomic.qualifiers 'eacl.datascript.qualifiers 'eacl.datahike.qualifiers
+           'eacl.core 'eacl.cache 'eacl.subproblem-cache 'eacl.relay
            'eacl.cursor 'eacl.continuation 'eacl.engine.v8
            'eacl.verified-kernel 'eacl.secure-format 'eacl.causal-token
            'eacl.consistency 'eacl.client.orchestration

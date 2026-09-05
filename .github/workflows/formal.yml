@@ -88,7 +88,7 @@ jobs:
       - name: Start heap-bounded generated-boundary nREPL
         run: |
           JAVA_TOOL_OPTIONS='-Xms128m -Xmx1024m' \
-            clojure -M:dev:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
+            clojure -M:dev:caveats-jvm:formal-smoke:formal-cljs-smoke:nrepl --port 7788 \
             > target/formal/ci-nrepl.log 2>&1 &
           echo "$!" > target/formal/ci-nrepl.pid
           for attempt in {1..180}; do

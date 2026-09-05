@@ -1,5 +1,8 @@
 (ns eacl.datomic.caveat-schema-test
-  (:require [clojure.test :refer [deftest]]
+  (:require [eacl.datomic.core :as api]
+            [eacl.cache :as cache]
+            [eacl.caveats.hot-path-contract :as hot-path]
+            [clojure.test :refer [deftest]]
             [datomic.api :as d]
             [eacl.datomic.schema :as schema]
             [eacl.caveats.persistence-contract :as contract]
@@ -29,6 +32,8 @@
                           {:db (:db-after (d/with db (:speculative-tx-data plan)))
                            :components (:changed-schema-components plan)}))
          :interleave! interleave! :tempid "qualifier" :history-stable? true})
+      (hot-path/check-ordinary!
+        {:make-client #(api/make-client conn {:cache cache/no-cache}) :transact! #(deref (d/transact conn %))})
       (publication/check-publication!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid d/entid :strategy :inline :interleave! interleave!})

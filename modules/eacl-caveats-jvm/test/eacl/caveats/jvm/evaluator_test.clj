@@ -102,3 +102,14 @@
     (is (= (mapv #(hash-map :outcome (if (< % 12) :true :false)) (range 24))
            (mapv #(deref % 10000 :timeout) jobs)))
     (is (= 1 (:builds (jvm/cache-stats engine))))))
+
+(deftest composed-map-errors-retain-their-category
+  (let [engine (jvm/evaluator)]
+    (doseq [[source parameters]
+            [["!m.k" {"m" [:map :string :bool]}]
+             ["m.k == false" {"m" [:map :string :bool]}]
+             ["m.k < 1" {"m" [:map :string :int]}]
+             ["m.k.contains(\"x\")" {"m" [:map :string :string]}]
+             ["\"x\".contains(m.k)" {"m" [:map :string :string]}]]]
+      (is (= {:outcome :error :reason :missing-map-key} (check engine source parameters {"m" {}} {})))
+      (is (= {:outcome :true} (check engine (str "(" source ") || true") parameters {"m" {}} {}))))))

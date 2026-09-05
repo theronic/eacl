@@ -1,5 +1,8 @@
 (ns eacl.datalevin.caveat-schema-test
-  (:require [clojure.test :refer [deftest]]
+  (:require [eacl.datalevin.core :as api]
+            [eacl.cache :as cache]
+            [eacl.caveats.hot-path-contract :as hot-path]
+            [clojure.test :refer [deftest]]
             [datalevin.core :as d]
             [datalevin.util :as util]
             [eacl.datalevin.schema :as schema]
@@ -18,13 +21,19 @@
 (deftest named-caveat-persistence
   (let [dir (util/tmp-dir (str "caveat-schema-" (random-uuid))) conn (schema/create-conn dir {:app/flag {:db/valueType :db.type/long}})]
     (try
-      (let [token (:write-token (schema/ensure-physical-schema! conn))]
+      (let [token (:write-token (schema/ensure-physical-schema! conn))
+            watermark (atom 0)]
         (contract/check-persistence!
           {:write! #(schema/write-schema! conn % {} (schema/current-schema-generation (d/db conn)) token)
            :snapshot #(d/db conn) :read-schema schema/read-schema
            :entid d/entid :generation schema/current-schema-generation
            :transact! #(d/transact! conn % {:datalevin/write-token token})
            :interleave! interleave! :tempid -101 :history-stable? false})
+      (hot-path/check-ordinary!
+        {:make-client #(api/make-client conn {:cache cache/no-cache :source-lifecycle "caveat-hot-path"
+                                             :security-key "01234567890123456789012345678901"
+                                             :revision-watermark watermark
+                                             :advance-revision-watermark! (fn [revision] (swap! watermark max revision))}) :transact! #(d/transact! conn % {:datalevin/write-token token})})
       (publication/check-publication!
         {:write-schema! #(schema/write-schema! conn % {} (schema/current-schema-generation (d/db conn)) token) :writer #(qualifiers/writer conn)
          :entid d/entid :strategy :inline :interleave! interleave!

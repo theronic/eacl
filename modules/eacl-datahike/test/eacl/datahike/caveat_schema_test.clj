@@ -1,5 +1,8 @@
 (ns eacl.datahike.caveat-schema-test
-  (:require [clojure.test :refer [deftest]]
+  (:require [eacl.datahike.core :as api]
+            [eacl.cache :as cache]
+            [eacl.caveats.hot-path-contract :as hot-path]
+            [clojure.test :refer [deftest]]
             [datahike.api :as d]
             [eacl.datahike.db :as db]
             [eacl.datahike.schema :as schema]
@@ -27,6 +30,8 @@
                           {:db (:db-after (d/with db (:speculative-tx-data plan)))
                            :components (:changed-schema-components plan)}))
          :interleave! interleave! :tempid -101 :history-stable? true})
+      (hot-path/check-ordinary!
+        {:make-client #(api/make-client conn {:cache cache/no-cache}) :transact! #(d/transact conn %)})
       (publication/check-publication!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid db/entid :strategy :prepared :interleave! interleave!})

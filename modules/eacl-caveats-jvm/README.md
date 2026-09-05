@@ -33,7 +33,9 @@ suite and advertise the matching profile; registration is not certification.
 
 Every source literal is lowered to a reserved internal binding, avoiding the
 candidate library's string-unescaping divergences. Caller parameter names are
-also lowered. Bindings and timestamp wrappers are constructed per invocation;
+also lowered. Operand errors are preserved by a fixed overload adapter, and
+unary `!` lowers to a reserved internal call because the native unary visitor
+otherwise changes missing-map-key errors into overload errors. Bindings and timestamp wrappers are constructed per invocation;
 only successful parsed programs are shared. Native error values are detected
 before Boolean extraction. Error messages and library objects never appear in
 portable outcomes.
