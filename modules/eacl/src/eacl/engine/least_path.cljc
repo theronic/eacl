@@ -325,18 +325,20 @@
     true))
 
 (defn- accepted-emission
-  "Complete a generated node using the exact relation/child proof already
-   obtained by this level. The local operator predicate evaluates only the
-   remaining obligations; a conditional child is never a Boolean witness."
+  "Complete only an active generated path. Legacy union paths that already
+   prove Has need no extra point proof or qualification context work."
   [env node rule subject-eid resource-eid value coords path-evidence]
   (if (:qualification env)
-    (let [result ((:candidate-accept? env)
-                  {:node node :direction (:traversal env)
-                   :subject-type (:subject-type env)
-                   :subject-eid subject-eid :resource-eid resource-eid
-                   :evidence-witness {:rule rule :evidence path-evidence}})]
-      (when-not (evidence/no? (evidence/throw-if-fault! result))
-        {:value value :coords coords :evidence result}))
+    (when-not (evidence/no? path-evidence)
+      (let [result (if (and (:legacy-qualified? env) (evidence/has? path-evidence))
+                     path-evidence
+                     ((:candidate-accept? env)
+                      {:node node :direction (:traversal env)
+                       :subject-type (:subject-type env)
+                       :subject-eid subject-eid :resource-eid resource-eid
+                       :evidence-witness {:rule rule :evidence path-evidence}}))]
+        (when-not (evidence/no? (evidence/throw-if-fault! result))
+          {:value value :coords coords :evidence result})))
     (when (candidate-accepted? env node subject-eid resource-eid)
       {:value value :coords coords})))
 
@@ -344,11 +346,13 @@
   [env node rule subject-eid resource-eid value coords intermediate path-evidence]
   (if (:qualification env)
     (when-not (evidence/no? path-evidence)
-      (let [result ((:candidate-accept? env)
-                    {:node node :direction (:traversal env)
-                     :subject-type (:subject-type env)
-                     :subject-eid subject-eid :resource-eid resource-eid
-                     :evidence-witness {:rule rule :intermediate intermediate :evidence path-evidence}})]
+      (let [result (if (and (:legacy-qualified? env) (evidence/has? path-evidence))
+                     path-evidence
+                     ((:candidate-accept? env)
+                      {:node node :direction (:traversal env)
+                       :subject-type (:subject-type env)
+                       :subject-eid subject-eid :resource-eid resource-eid
+                       :evidence-witness {:rule rule :intermediate intermediate :evidence path-evidence}}))]
         (when-not (evidence/no? (evidence/throw-if-fault! result))
           {:value value :coords coords :evidence result})))
     (accepted-emission env node rule subject-eid resource-eid value coords true)))
@@ -711,7 +715,8 @@
             (if (nil? v)
               (recur env (advance))
               (let [level' (assoc level :sub {:scan scan'})]
-                (if-let [emission (when (fwd-emit2? env level rule nil v)
+                (if-let [emission (when (and (path-active? (:ctx env) scan')
+                                                (fwd-emit2? env level rule nil v))
                                     (accepted-emission env (:node level) rule
                                                        (:subject-eid env) v v
                                                        [(:ordinal rule) v]
@@ -952,7 +957,8 @@
             (if (nil? s)
               (recur env (advance))
               (let [level' (assoc level :sub {:scan scan'})]
-                (if-let [emission (when (rev-emit? env level rule nil s)
+                (if-let [emission (when (and (path-active? (:ctx env) scan')
+                                                (rev-emit? env level rule nil s))
                                     (accepted-emission env (:node level) rule
                                                        s (:entity level) s
                                                        [(:ordinal rule) s]
@@ -1197,26 +1203,58 @@
 ;; Public pagination API
 ;; ---------------------------------------------------------------------------
 
+(def maximum-qualified-node-evidence 100000)
+
+(defn- legacy-node-acceptor [options]
+  (let [request (:qualification options)
+        route-options (assoc (select-keys options reducer/run-option-keys) :qualification request)
+        scope (delay (qualification/exact-reuse-identity request))
+        memo (volatile! {})]
+    (fn [{:keys [node subject-type subject-eid resource-eid evidence-witness]}]
+      (when evidence-witness (evidence/throw-if-fault! (:evidence evidence-witness)))
+      (if (and evidence-witness (evidence/has? (:evidence evidence-witness)))
+        (:evidence evidence-witness)
+        (let [point [node subject-type subject-eid resource-eid]]
+          (if (contains? @memo point)
+            (get @memo point)
+            (do
+              (when (>= (count @memo) maximum-qualified-node-evidence)
+                (throw (ex-info "Qualified local node evidence limit exceeded."
+                                {:type :eacl.operator/invalid-lookup :eacl/error :eacl.operator/invalid-lookup
+                                 :reason :node-evidence-limit})))
+              (let [result
+                    (evidence/throw-if-fault!
+                     (route/derives-from-node?
+                      (cond-> (assoc route-options :start-node node :subject-type subject-type
+                                     :subject-eid subject-eid :resource-eid resource-eid)
+                        evidence-witness
+                        (assoc :known-witness (assoc evidence-witness :point point :scope (force scope))))))]
+                (vswap! memo assoc point result)
+                result))))))))
+
 (defn- make-env
   [{:keys [plan subject-type subject-eid desc? traversal
            candidate-accept? qualification]
     :as options} ctx]
-  (when (and qualification (not (fn? candidate-accept?)))
-    (throw (ex-info "Qualified least-path cover requires supported exact local predicates."
-                    {:eacl/error :eacl.operator/invalid-lookup
-                     :type :eacl.operator/invalid-lookup
-                     :reason :unsupported-qualified-cover})))
-  {:plan plan
-   :ctx ctx
-   :subject-type subject-type
-   :subject-eid subject-eid
-   :desc? (boolean desc?)
-   :traversal traversal
-   :candidate-accept? candidate-accept?
-   :qualification qualification
-   ;; Probe options are invariant per page: plan, subject type, budgets and
-   ;; the cut point are selected once here, never re-attached per witness.
-   :route-opts (select-keys options reducer/run-option-keys)})
+  (let [legacy-qualified? (and qualification (not (fn? candidate-accept?))
+                               (not (:operator-synthetic->semantic plan)))]
+    (when (and qualification (not legacy-qualified?) (not (fn? candidate-accept?)))
+      (throw (ex-info "Qualified operator cover requires supported exact local predicates."
+                      {:eacl/error :eacl.operator/invalid-lookup
+                       :type :eacl.operator/invalid-lookup
+                       :reason :unsupported-qualified-cover})))
+    {:plan plan
+     :ctx ctx
+     :subject-type subject-type
+     :subject-eid subject-eid
+     :desc? (boolean desc?)
+     :traversal traversal
+     :candidate-accept? (if legacy-qualified? (legacy-node-acceptor options) candidate-accept?)
+     :qualification qualification
+     :legacy-qualified? legacy-qualified?
+     ;; Probe options are invariant per page: plan, subject type, budgets and
+     ;; the cut point are selected once here, never re-attached per witness.
+     :route-opts (select-keys options reducer/run-option-keys)}))
 
 (defn- run-page
   [env level next-fn page-size raw-candidates?]

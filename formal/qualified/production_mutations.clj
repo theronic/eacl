@@ -17,6 +17,7 @@
             [eacl.engine.stable-route :as stable-route]
             [eacl.engine.stable-route-evidence-test :as stable-route-test]
             [eacl.engine.least-path :as least-path]
+            [eacl.engine.least-path-evidence-test :as legacy-lookup-test]
             [eacl.engine.stable-route-native-evidence-test :as native-test]
             [eacl.datascript.evaluation-clock-test :as clock-test]
             [eacl.client.orchestration :as orchestration]
@@ -48,13 +49,36 @@
         count-categories @#'lookup/count-categories
         accepted-emission @#'least-path/accepted-emission
         stream-next @#'least-path/stream-next
+        legacy-acceptor @#'least-path/legacy-node-acceptor
+        least-env @#'least-path/make-env
         check-many vector/check-cached-many-eids
         check-stable stable-route/check-eids
         validate-stable @#'stable-route/validate-known-witness!
         aggregate batch/aggregate-counters
         collect data/collect
         enqueue @#'recursive/enqueue-evidence!]
-    {:stable-known-witness-scope-ignored
+    {:legacy-inactive-stream-path-becomes-active
+     {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
+      :redefs {#'least-path/stream-next
+               (fn [ctx state]
+                 (let [[value next-state] (stream-next ctx state)]
+                   [value (cond-> next-state
+                            (and value (:qualification ctx) (evidence/no? (:evidence next-state)))
+                            (assoc :evidence true))]))}}
+     :legacy-partial-path-claims-whole-node
+     {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
+      :redefs {#'least-path/legacy-node-acceptor
+               (fn [options]
+                 (let [accept (legacy-acceptor options)]
+                   (fn [candidate]
+                     (if-let [witness (:evidence-witness candidate)] (:evidence witness) (accept candidate)))))}}
+     :legacy-nil-path-forces-qualified-context
+     {:gate #'legacy-lookup-test/nil-qualifier-unions-retain-existing-coordinates-without-context-work
+      :redefs {#'least-path/make-env
+               (fn [options ctx]
+                 (when (:qualification options) (qualification/exact-reuse-identity (:qualification options)))
+                 (least-env options ctx))}}
+     :stable-known-witness-scope-ignored
      {:gate #'stable-route-test/known-witness-scope-is-validated-before-a-definite-shortcut
       :redefs {#'stable-route/validate-known-witness! :known-witness}}
      :stable-known-path-is-reprobed
@@ -193,7 +217,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 35 (count cases)))
+    (is (= 38 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

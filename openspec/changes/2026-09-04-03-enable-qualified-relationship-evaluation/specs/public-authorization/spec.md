@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: Public authorization captures temporal and Caveat request context
-Each public check, lookup, count, or batch SHALL select one immutable database snapshot, capture one trusted evaluation time, canonicalize one bounded request Caveat context, and use that request context throughout evaluation. Request Caveat context SHALL never be persisted as Relationship data.
+Each public check, lookup, count, or batch SHALL select one immutable database snapshot, capture one trusted evaluation time, canonicalize one bounded request Caveat context, and use that request context throughout evaluation. Request Caveat context SHALL never be persisted as Relationship data. The complete bounded context SHALL participate in cache and cursor identity. Each demanded Caveat SHALL receive the projection onto its declared parameter names; its declared types and Relationship-bound context SHALL retain strict validation.
 
 #### Scenario: Same database before and after expiry
 - **WHEN** two client-targeted checks select the same database basis on opposite sides of an expiry
@@ -10,6 +10,12 @@ Each public check, lookup, count, or batch SHALL select one immutable database s
 #### Scenario: Context changes between checks
 - **WHEN** two checks use equal database/time inputs but different Caveat request context
 - **THEN** each evaluates and caches under its own canonical context identity
+
+#### Scenario: Several Caveats use different request fields
+- **WHEN** one operation supplies fields for multiple named Caveats
+- **THEN** each demanded Caveat receives only its declared fields and validates their types
+- **AND** unused public fields remain part of the complete cache and cursor scope
+- **AND** unknown fields in Relationship-bound context remain invalid
 
 #### Scenario: Batch operation
 - **WHEN** one batch crosses wall-clock expiry while executing

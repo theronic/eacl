@@ -57,6 +57,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.engine.stable-route :reload)
      (require 'eacl.engine.stable-route-evidence-test :reload)
      (load-file \"formal/qualified/stable_route_bridge.clj\")
+     (require 'eacl.engine.least-path-evidence-test :reload)
+     (load-file \"formal/qualified/legacy_lookup_bridge.clj\")
      (require 'eacl.operator.seekable :reload)
      (require 'eacl.engine.least-path :reload)
      (require 'eacl.operator.lookup :reload)
@@ -76,6 +78,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.formal.qualified.seekable-bridge
                                    'eacl.formal.qualified.lookup-bridge
                                    'eacl.formal.qualified.arrow-bridge
+                                   'eacl.formal.qualified.legacy-lookup-bridge
                                    'eacl.authorization.data-test 'eacl.authorization.qualification-test
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))

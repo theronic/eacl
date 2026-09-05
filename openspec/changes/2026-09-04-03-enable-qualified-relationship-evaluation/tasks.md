@@ -11,12 +11,12 @@
 
 - [x] 2.1 Extend the backend scan contract to expose opposite eid plus optional qualifier eid in an allocation-minimal measured representation; verify order, bounds, uniqueness, and public result shape remain unchanged.
 - [x] 2.2 Update Datomic, Datahike, DataScript, and Datalevin forward/reverse/direct scan primitives to return aligned qualifier data from the single v9 stream; verify no adapter reads a second Relationship attribute.
-- [ ] 2.3 Add one shared edge-qualification seam and retain the existing nil-eid fast path; verify instrumentation records zero qualifier reads and no per-edge qualifier map allocation for ordinary fixtures.
+- [x] 2.3 Add one shared edge-qualification seam and retain the existing nil-eid fast path; verify instrumentation records zero qualifier reads and no per-edge qualifier map allocation for ordinary fixtures.
 - [ ] 2.4 Preserve deadlines, cancellation, dimensional work accounting, scan-response cache scope, and continuation heads with the new compact edge shape; verify filtered qualified candidates count against existing bounds and no fill-to-page loop hides incomplete work.
 
 ## 3. Resolve and cache immutable qualifiers
 
-- [ ] 3.1 Implement exact qualifier fetch/decode/validation across bundled backends, including format, certified creation `t`/version, Caveat allowance, context, and expiry; verify malformed/dangling fixtures fault while managed hot-path instrumentation performs no reverse graph scan for writer-certified ownership.
+- [x] 3.1 Implement exact qualifier fetch/decode/validation across bundled backends, including format, certified creation `t`/version, Caveat allowance, context, and expiry; verify malformed/dangling fixtures fault while managed hot-path instrumentation performs no reverse graph scan for writer-certified ownership.
 - [ ] 3.2 Add one bounded request-local qid cache shared by recursive/operator paths; verify one distinct non-`nil` qid causes at most one qualifier fetch per top-level operation.
 - [ ] 3.3 Add optional longer-lived qualifier decode caching keyed by source lifecycle, qid, certified creation `t`/version, and format, conditioned on owning Relation/supported-writer proof with exact/content-proof fallback for unknown writers; verify eid reuse/reset, deletion, and in-place mutation traces cannot reuse stale data.
 - [x] 3.4 Ensure qualifier-cache values are decoded data only and perform expiry/Caveat evaluation per request; verify different times/contexts reuse structure but not final authorization.
@@ -31,7 +31,7 @@
 
 ## 5. Activate trusted exclusive expiry
 
-- [ ] 5.1 Add one trusted clock sample plus process-local non-decreasing high-water mark to the top-level request/snapshot context and prohibit per-edge ambient clock reads; verify a request crossing expiry is consistent and a backward raw-clock step cannot revive access.
+- [x] 5.1 Add one trusted clock sample plus process-local non-decreasing high-water mark to the top-level request/snapshot context and prohibit per-edge ambient clock reads; verify a request crossing expiry is consistent and a backward raw-clock step cannot revive access.
 - [x] 5.2 Evaluate `evaluation-time-ms < valid-until-ms` before Caveat program work; verify before/equal/after boundaries and expired Caveat compile suppression.
 - [ ] 5.3 Apply expiry uniformly to grant, group, arrow, recursion, exclusion, and deny evidence; verify an expiring ban can change denial to grant on a later request.
 - [ ] 5.4 Add stored-versus-active Relationship inspection and renewal/shortening/removal through immutable qualifier `:touch`; verify create still conflicts with retained expired identity.
