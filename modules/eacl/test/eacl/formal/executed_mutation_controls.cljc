@@ -682,8 +682,8 @@
   []
   (let [args [{:advanced-datoms 0 :queued-work 0 :fetched-values 0}
               {:advanced-datoms 6 :queued-work 4 :fetched-values 2}
-              {:candidates-examined 0 :probes 0 :publications 0}
-              {:candidates-examined 3 :probes 2 :publications 1}
+              {:commands 0 :fetched-values 0 :candidates-examined 0 :probes 0 :publications 0}
+              {:commands 6 :fetched-values 2 :candidates-examined 3 :probes 2 :publications 1}
               2]
         gate #(= 6 (:commands (apply batch/aggregate-counters args)))
         original batch/aggregate-counters]

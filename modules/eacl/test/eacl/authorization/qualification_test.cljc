@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest is]]
             [eacl.authorization.clock :as clock]
             [eacl.authorization.data :as data]
+            [eacl.authorization.batch :as batch]
             [eacl.backend.v8 :as backend]
             [eacl.request.counters :as counters]
             [eacl.authorization.evidence :as evidence]
@@ -105,6 +106,25 @@
                   (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
                     (:type (ex-data error)))))))
     (is (= {} @reads))))
+
+(deftest qualifier-data-consumes-aggregate-command-and-fact-budgets
+  (let [request (data-request fixture (atom {})) ledger (counters/make-ledger)
+        before (counters/snapshot ledger)]
+    (counters/call-with-ledger ledger #(q/qualify request 1 [10 3]))
+    (let [after (counters/snapshot ledger)
+          ;; Data resolution has no traversal queue or observer event. Its
+          ;; physical work still belongs to the public operation's budget.
+          consumed (batch/aggregate-counters {} {} before after 1)]
+      (is (= 3 (:commands consumed)))
+      (is (= (:fetched-values after) (:fetched-values consumed)))
+      (is (= (+ 3 (:fetched-values after) 1) (:allocation-proxy consumed)))
+      (doseq [[limit maximum kind] [[:max-commands 2 :commands]
+                                   [:max-fetched-values 1 :fetched-values]
+                                   [:max-allocation-proxy 3 :allocation-proxy]]]
+        (is (= kind
+               (try (batch/check-aggregate-limits! (batch/normalize-client-limits {limit maximum}) consumed 0) nil
+                    (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+                      (:limit-kind (ex-data error))))))))))
 
 (deftest ordinary-edges-touch-no-request-state
   (is (true? (q/qualify nil nil 123)))
