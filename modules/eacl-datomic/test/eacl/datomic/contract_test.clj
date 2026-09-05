@@ -275,4 +275,5 @@
 
 (deftest live-security-keyring-rotation-contract-test
   (with-mem-conn [conn schema/v8-schema]
-    (security-contract/assert-live-rotation! #(datomic/make-client conn %) #(seed-objects! conn))))
+    (security-contract/assert-client-security! #(datomic/make-client conn %) #(seed-objects! conn)
+                                               datomic/export-authenticated-cache-snapshot datomic/restore-authenticated-cache-snapshot!)))

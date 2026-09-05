@@ -25,8 +25,8 @@
 - [ ] 4.2 Tag continuation, visited-page, rendered-page, replay, and equivalent cursor-cache entries with the authenticated series key id; verify mismatched entries cannot influence resume.
 - [ ] 4.3 Add synchronous ineligibility plus targeted cleanup on retirement for cursor-related and externally authenticated/imported cache records, without flushing locally computed answer caches; verify a deliberately skipped physical cleanup still errors/misses correctly through key presence or trust epoch.
 - [ ] 4.4 Make unknown/retired cursor and causal-token keys return the specified typed request errors with no restart/rebase fallback; verify first-page and consistency fallbacks are not invoked.
-- [ ] 4.5 Make unavailable portable cache-entry keys produce authenticated cache misses followed by selected-snapshot evaluation; verify cached and uncached answers remain equal and request success is unaffected.
-- [ ] 4.6 Update cache snapshot import/export so key ids remain metadata but secret keys never serialize; verify archive inspection contains no key material and retired-key entries are rejected as misses on restore.
+- [x] 4.5 Make unavailable portable cache-entry keys produce authenticated cache misses followed by selected-snapshot evaluation; verify cached and uncached answers remain equal and request success is unaffected.
+- [x] 4.6 Update cache snapshot import/export so key ids remain metadata but secret keys never serialize; verify archive inspection contains no key material and retired-key entries are rejected as misses on restore.
 
 ## 5. Concurrency and rollout conformance
 

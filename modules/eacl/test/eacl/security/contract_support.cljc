@@ -54,3 +54,37 @@
           (is (= {:type :eacl/invalid-zed-token :reason :security-key-unavailable}
                  (outcome #(eacl/check-permission client (assoc check :consistency (consistency/at-least-as-fresh old-zed))))))
           (is (true? (:allowed? (eacl/check-permission client (assoc check :consistency (consistency/at-least-as-fresh new-zed)))))))))))
+
+(defn assert-authenticated-cache! [make-client export! restore!]
+  (let [controller (ring)
+        config {:security-keyring-controller controller}
+        a (make-client config) b (make-client config)
+        bounds {:max-entries 64}
+        check {:subject (contract/->user "user-1") :permission :view :resource (contract/->server "server-1")}
+        local (assoc check :resource (contract/->server "server-2"))]
+    (is (true? (:allowed? (eacl/check-permission a check))))
+    (let [token (export! a bounds)]
+      (is (string? token))
+      (is (pos? (:entry-count (restore! b token bounds))))
+      (let [hit (eacl/check-permission b check)]
+        (is (true? (:allowed? hit)))
+        (is (true? (:cached? hit)))
+        (is (not (contains? hit :eacl.cache/imported?))))
+      (is (true? (:allowed? (eacl/check-permission b local))))
+      (is (true? (:cached? (eacl/check-permission b local))))
+      (eacl/activate-security-key! controller :new)
+      (is (true? (:cached? (eacl/check-permission b check))))
+      (eacl/retire-security-key! controller :old)
+      (let [recomputed (eacl/check-permission b check)
+            uncached (eacl/check-permission b (assoc check :cache? false))]
+        (is (false? (:cached? recomputed)))
+        (is (= (contract/without-cache-provenance uncached)
+               (contract/without-cache-provenance recomputed))))
+      (is (true? (:cached? (eacl/check-permission b local))))
+      (is (= {:restored? false :cache-miss? true :reason :security-key-unavailable}
+             (restore! b token bounds)))
+      (is (true? (:cached? (eacl/check-permission b local)))))))
+
+(defn assert-client-security! [make-client seed-objects! export! restore!]
+  (assert-live-rotation! make-client seed-objects!)
+  (assert-authenticated-cache! make-client export! restore!))

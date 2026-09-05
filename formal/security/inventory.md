@@ -39,3 +39,21 @@ an independent controller and require dedicated key material; the dedicated id
 alone does not silently select primary material. Static key and keyring together
 are invalid, as are a controller plus even an explicit static id. Equivalent
 construction cases will run through the shared backend contract.
+
+## Implemented boundaries
+
+The baseline inventory above records the pre-change gaps. Static/controller
+normalization now lives in `eacl.security.configuration/format-scopes`; primary
+and dedicated scopes are installed in orchestration runtime options separately.
+`eacl.secure-format/capture-keyring` and the cursor codec consume a single
+captured generation. The cursor transport envelope is v6 (`eacl_c6_`), carrying
+Relay payload v13; these two versions must not be conflated.
+
+Authenticated snapshot APIs are available through all four backend modules.
+`eacl.cache` authenticates the `eacl_cache1_` envelope before normal closed
+snapshot validation. `eacl.security.imports` retains the verifying controller
+and ID in non-serializable private wrappers. Completed-answer and denotation
+lookups consult current key acceptance. A consumed import suppresses derivative
+publication into answers, denotations, range segments, continuations and rendered
+pages. Ordinary locally computed entries retain their existing representation.
+Exports omit imported entries to prevent re-signing from extending their trust.

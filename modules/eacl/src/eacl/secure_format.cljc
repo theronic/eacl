@@ -679,7 +679,7 @@
          (b64url-encode
           (utf8-bytes (encode-canonical envelope options))))))
 
-(defn decode-authenticated
+(defn ^:no-doc decode-authenticated-envelope
   [{:keys [domain prefix payload-keys maximum-size] :as options} token]
   (when-not (and (string? token)
                  (<= (count token)
@@ -711,7 +711,10 @@
           supplied (b64url-decode tag)]
       (when-not (secure-equal? expected supplied)
         (format-error! :authentication-failed {}))
-      (decode-canonical
-       (bytes->utf8 (b64url-decode payload))
-       (cond-> options
-         payload-keys (assoc :allowed-keys payload-keys))))))
+      {:security-kid kid
+       :payload (decode-canonical
+                 (bytes->utf8 (b64url-decode payload))
+                 (cond-> options payload-keys (assoc :allowed-keys payload-keys)))})))
+
+(defn decode-authenticated [options token]
+  (:payload (decode-authenticated-envelope options token)))

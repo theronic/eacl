@@ -385,5 +385,6 @@
   (doseq [attribute-refs? [false true]]
     (let [conn (datahike/create-conn nil {:attribute-refs? attribute-refs?})
           config (:config (d/db conn))]
-      (try (security-contract/assert-live-rotation! #(datahike/make-client conn %) #(seed-objects! conn))
+      (try (security-contract/assert-client-security! #(datahike/make-client conn %) #(seed-objects! conn)
+                                                      datahike/export-authenticated-cache-snapshot datahike/restore-authenticated-cache-snapshot!)
            (finally (d/release conn) (d/delete-database config))))))

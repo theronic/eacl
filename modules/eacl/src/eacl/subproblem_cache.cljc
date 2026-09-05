@@ -10,6 +10,7 @@
             [eacl.execution :as execution]
             [eacl.proof-frame :as proof-frame]
             [eacl.secure-format :as secure-format]
+            [eacl.security.imports :as imports]
             #?(:clj
                [eacl.formal.production-kernel :as production-kernel]
                :cljs
@@ -311,12 +312,21 @@
                      {:tier tier :key storage-key}))
   storage-key)
 
+(defn- trusted-resident [store tier-store storage-key resident]
+  (let [entry (:value resident)]
+    (if (and (:found? resident) (imports/imported? entry))
+      (if (imports/accepted? entry)
+        (assoc resident :value (imports/value entry) :imported? true :resident-value entry)
+        (do (when (lru/evict-if! tier-store storage-key entry) (record-content-change! store))
+            {:found? false}))
+      resident)))
+
 (defn- resident!
   [store tier storage-key]
   (let [tier-store (get (:tiers store) tier)
         resident
         (try
-          (lru/lookup! tier-store storage-key)
+          (trusted-resident store tier-store storage-key (lru/lookup! tier-store storage-key))
           (catch #?(:clj Throwable :cljs :default) _
             (record-metrics! store update :store-errors inc)
             nil))]
@@ -346,7 +356,7 @@
       (loop []
         (let [resident
               (try
-                (lru/peek-entry tier-store storage-key)
+                (trusted-resident store tier-store storage-key (lru/peek-entry tier-store storage-key))
                 (catch #?(:clj Throwable :cljs :default) _
                   (record-metrics! store update :store-errors inc)
                   ::store-error))]
@@ -367,7 +377,7 @@
             (let [touched?
                   (try
                     (lru/hit-if-value!
-                     tier-store storage-key (:value resident))
+                     tier-store storage-key (get resident :resident-value (:value resident)))
                     (catch #?(:clj Throwable :cljs :default) _
                       (record-metrics! store update :store-errors inc)
                       ::store-error))]
@@ -376,7 +386,8 @@
                 (record-lookup-miss! store)
 
                 touched?
-                (hit-result! store tier (:value resident))
+                (do (when (:imported? resident) (imports/consumed!))
+                    (hit-result! store tier (:value resident)))
 
                 ;; Eviction or replacement raced the peek. Re-read and apply
                 ;; eligibility to the mapping that can actually be touched.
@@ -397,6 +408,7 @@
   [store tier storage-key]
   (when (execution/cache-stage-available?)
     (when-let [resident (resident! store tier storage-key)]
+      (when (:imported? resident) (imports/consumed!))
       (hit-result! store tier (:value resident)))))
 
 (defn- request-publication-rejection
@@ -421,7 +433,7 @@
   (validate-publication-options! options)
   (let [storage-key (validate-storage-key! tier storage-key)
         valid? (:valid? options)
-        initial-rejection (request-publication-rejection)]
+        initial-rejection (if (imports/derived?) :imported-trust (request-publication-rejection))]
     (cond
       initial-rejection
       (reject-publication! store initial-rejection)
@@ -449,13 +461,16 @@
           (let [tier-store (get (:tiers store) tier)
                 published?
                 (or (lru/put-if-absent! tier-store storage-key value)
-                    (when-let [replace? (:replace? options)]
-                      (let [prior (lru/peek-entry tier-store storage-key)]
-                        ;; Compare eligibility outside the atomic data replacement.
-                        ;; A concurrent publisher changes the expected identity.
-                        (and (:found? prior)
-                             (replace? (:value prior) value)
-                             (lru/replace-if! tier-store storage-key (:value prior) value)))))]
+                    (let [prior (lru/peek-entry tier-store storage-key)]
+                      ;; A fresh computation may supersede an ineligible import.
+                      ;; Imported inputs cannot reach this publication branch.
+                      ;; Compare outside the atomic replacement and preserve a
+                      ;; concurrent publisher's different expected identity.
+                      (and (:found? prior)
+                           (or (imports/imported? (:value prior))
+                               (when-let [replace? (:replace? options)]
+                                 (replace? (:value prior) value)))
+                           (lru/replace-if! tier-store storage-key (:value prior) value))))]
             (if published?
               (do
                 (record-metrics! store update :puts inc)
@@ -511,7 +526,15 @@
   [store tier]
   (validate-tier! store tier)
   (mapv (fn [[key value]] {:tier tier :key key :value value})
-        (lru/entries (get (:tiers store) tier))))
+        (remove (comp imports/imported? second) (lru/entries (get (:tiers store) tier)))))
+
+(defn ^:no-doc mark-imported!
+  "Attaches non-serializable trust to a newly reconstructed private store."
+  [store controller kid]
+  (doseq [tier known-tiers
+          [key value] (lru/entries (get (:tiers store) tier))]
+    (lru/replace-if! (get (:tiers store) tier) key value (imports/protect value controller kid)))
+  (assoc store :imports? true))
 
 (defn snapshot-tier-entries
   "Returns canonical flat entry records for one tier.

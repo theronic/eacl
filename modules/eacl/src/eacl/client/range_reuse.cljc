@@ -18,6 +18,7 @@
   renders and publishes them under their exact keys like computed pages.
   Bounded candidate-window routes carry no marker and never participate."
   (:require [eacl.cache.standard-lru :as lru]
+            [eacl.security.imports :as imports]
             [eacl.authorization.temporal :as temporal]))
 
 (def default-max-entries 512)
@@ -409,7 +410,7 @@
   "Retains `page` (computed or composed for `window`) in the walk's
   segments, merging into an adjacent segment when it continues one."
   [tier key window page]
-  (when (and tier key window (reusable-page? page) (seq (:data page)))
+  (when (and (not (imports/derived?)) tier key window (reusable-page? page) (seq (:data page)))
     (let [store (:store tier)
           candidate (segment-of window page)]
       (loop []

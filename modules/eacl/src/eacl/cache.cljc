@@ -17,6 +17,7 @@
             [eacl.proof-frame :as proof-frame]
             [eacl.relationships.mutations :as relationship-mutations]
             [eacl.secure-format :as secure]
+            [eacl.security.imports :as imports]
             [eacl.subproblem-cache :as subproblem])
   #?(:clj (:import [java.util.concurrent.atomic LongAdder])))
 
@@ -1190,9 +1191,9 @@
                  (count (set (map (juxt :tier :key) entries))))
       (incompatible-snapshot! "Cache snapshot contains duplicate keys." {}))))
 
-(defn restore-basis-snapshot!
+(defn- restore-basis-snapshot*
   "Validates and reconstructs fresh stores off-side, then installs atomically."
-  [store snapshot bounds]
+  [store snapshot bounds import-trust]
   (when-not (basis-cache? store)
     (invalid-config! "Expected an EACL basis cache." {:cache store}))
   (let [max-entries (valid-bounds! bounds)
@@ -1212,7 +1213,10 @@
               (incompatible-snapshot!
                "Cache snapshot entry validation failed."
                {:cause-type (:type (ex-data error))})
-              (throw error))))]
+              (throw error))))
+        restored (if import-trust
+                   (subproblem/mark-imported! restored (:controller import-trust) (:kid import-trust))
+                   restored)]
     (replace-lifecycle!
      store
      #(restored-lifecycle
@@ -1223,6 +1227,57 @@
     (record-metrics! store update :restores inc)
     {:restored? true
      :entry-count (:entry-count snapshot)}))
+
+(defn restore-basis-snapshot!
+  "Restores an already trusted decoded snapshot. External hosts own its trust."
+  [store snapshot bounds]
+  (restore-basis-snapshot* store snapshot bounds nil))
+
+(def maximum-authenticated-snapshot-bytes (* 16 1024 1024))
+
+(defn- authenticated-snapshot-options [options bounds]
+  (when-not (and (map? bounds) (every? #{:max-entries :maximum-size} (keys bounds)))
+    (invalid-config! "Invalid authenticated cache snapshot bounds." {}))
+  (valid-bounds! (select-keys bounds [:max-entries]))
+  (let [maximum-size (get bounds :maximum-size maximum-authenticated-snapshot-bytes)]
+    (when-not (and (integer? maximum-size) (pos? maximum-size)
+                   (<= maximum-size maximum-authenticated-snapshot-bytes))
+      (invalid-config! "Invalid authenticated cache snapshot byte limit." {}))
+    (when-not (:keyring-controller options)
+      (invalid-config! "Authenticated cache snapshots require a keyring controller." {}))
+    (assoc options :prefix "eacl_cache1_" :domain "eacl/cache-snapshot/envelope/v1"
+           :payload-keys #{:format :entries :entry-count}
+           :maximum-size maximum-size :maximum-depth 64 :maximum-entries 131072)))
+
+(defn export-authenticated-basis-snapshot
+  "Authenticates a bounded snapshot of locally computed entries with one kid.
+   Imported entries are omitted so re-export cannot extend their original trust."
+  [store bounds options]
+  (let [options (authenticated-snapshot-options options bounds)
+        snapshot (export-basis-snapshot store (select-keys bounds [:max-entries]))
+        token (secure/encode-authenticated options snapshot)]
+    (when (> (count token) (:maximum-size options))
+      (throw (ex-info "Authenticated cache snapshot exceeds its byte limit."
+                      {:type :eacl.format/invalid :eacl/error :eacl.format/invalid :reason :too-large})))
+    token))
+
+(defn restore-authenticated-basis-snapshot!
+  "Authenticates optional bytes before decoding and attaches the verifying kid.
+   Unavailable keys or invalid artifacts miss without modifying existing stores."
+  [store token bounds options]
+  (let [options (authenticated-snapshot-options options bounds)]
+    (try
+      (let [{:keys [payload security-kid]} (secure/decode-authenticated-envelope options token)]
+        (assoc (restore-basis-snapshot* store payload (select-keys bounds [:max-entries])
+                                        {:controller (:keyring-controller options) :kid security-kid})
+               :security-kid security-kid))
+      (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo) error
+        (if (contains? #{:eacl.format/invalid :eacl/incompatible-cache-snapshot
+                         :eacl/cache-snapshot-incompatible} (:type (ex-data error)))
+          {:restored? false :cache-miss? true
+           :reason (if (= :security-key-unavailable (:reason (ex-data error)))
+                     :security-key-unavailable :invalid-cache-artifact)}
+          (throw error))))))
 
 (defn- safe-valid?
   [valid? value]
@@ -1422,7 +1477,7 @@
    :cache-tier nil
    :cache-basis nil})
 
-(defn resolve-basis!
+(defn- resolve-basis*
   "Resolves an ordinary request exact-first, then by one complete managed key."
   [store
    {:keys [exact-basis-key cache-lifecycle managed-key-fn populate-cache?
@@ -1497,7 +1552,7 @@
                    :cache-tier nil
                    :cache-basis cache-basis})))))))))
 
-(defn resolve-managed-read-only!
+(defn- resolve-managed-read-only*
   "Consults only a causally valid managed key; a miss computes without writes."
   [store
    {:keys [cache-lifecycle snapshot-order managed-source managed-key-fn evaluation-time-ms]}
@@ -1522,3 +1577,21 @@
           (if entry
             (cache-hit-result store :managed-current entry)
             (uncached-result store compute)))))))
+
+(defn- resolve-with-imports [store options f]
+  (let [lifecycle (or (:cache-lifecycle options)
+                      (when (basis-cache? store) @(:lifecycle store)))
+        options (assoc options :cache-lifecycle lifecycle)]
+    (if (get-in lifecycle [:subproblems :imports?])
+      (imports/run #(f options))
+      (f options))))
+
+(defn resolve-basis!
+  "Resolves an ordinary request without promoting imported trust into local values."
+  [store options semantic-key compute]
+  (resolve-with-imports store options #(resolve-basis* store % semantic-key compute)))
+
+(defn resolve-managed-read-only!
+  "Consults one causally valid managed key and retains any import provenance."
+  [store options semantic-key compute]
+  (resolve-with-imports store options #(resolve-managed-read-only* store % semantic-key compute)))

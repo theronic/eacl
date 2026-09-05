@@ -7,7 +7,8 @@
   deterministically replay the public boundary."
   (:require [eacl.backend.v8 :as backend]
             [eacl.cache.key :as cache-key]
-            [eacl.cache.standard-lru :as lru]))
+            [eacl.cache.standard-lru :as lru]
+            [eacl.security.imports :as imports]))
 
 (def ^:private context-version 4)
 (def ^:private default-max-entries 1024)
@@ -289,7 +290,7 @@
               store :recursive-continuation reason))
            :put!
            (fn [edge value]
-             (and populate-cache?
+             (and populate-cache? (not (imports/derived?))
                   (put-latest-checkpoint!
                    store :recursive-continuation
                    (key-for minting-kid edge)

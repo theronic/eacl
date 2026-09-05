@@ -1422,3 +1422,79 @@
           [key original] (first (lru/entries resident))]
       (lru/replace-if! resident key original (assoc original :security-kid :new)))
     (is (nil? (cache/lookup-rendered-page! store context query)))))
+
+(defn- rotation-ring []
+  (eacl/security-keyring {:keys {:old (vec (range 32)) :new (vec (range 32 64))} :active-kid :old}))
+
+(deftest authenticated-cache-retirement-preserves-local-computation
+  (let [ring (rotation-ring) options {:keyring-controller ring}
+        source (cache/basis-cache {:max-entries 8}) target (cache/basis-cache {:max-entries 8})
+        bounds {:max-entries 8} query (semantic-key :imported) local (semantic-key :local)
+        read! #(exact-operation! target 1 % :can? (constantly false))]
+    (exact-operation! source 1 query :can? (constantly true))
+    (let [token (cache/export-authenticated-basis-snapshot source bounds options)
+          envelope (secure/decode-canonical (secure/bytes->utf8 (secure/b64url-decode (subs token (count "eacl_cache1_")))))
+          payload (:payload (secure/decode-authenticated-envelope
+                             (assoc options :prefix "eacl_cache1_" :domain "eacl/cache-snapshot/envelope/v1") token))]
+      (is (= :old (:kid envelope)))
+      (is (= 1 (:entry-count payload)))
+      (doseq [material [(pr-str (vec (range 32))) (secure/b64url-encode (vec (range 32)))]]
+        (is (not (str/includes? (pr-str payload) material))))
+      (is (= {:restored? true :entry-count 1 :security-kid :old}
+             (cache/restore-authenticated-basis-snapshot! target token bounds options)))
+      (is (= {:value true :cached? true :eacl.cache/imported? true}
+             (select-keys (read! query) [:value :cached? :eacl.cache/imported?])))
+      (is (zero? (:entry-count (cache/export-basis-snapshot target bounds))) "imports cannot be re-signed as local authority")
+      (is (false? (:cached? (read! local))))
+      (eacl/activate-security-key! ring :new)
+      (is (true? (:value (read! query))))
+      (eacl/retire-security-key! ring :old)
+      ;; The imported mapping remains physically present until this lookup.
+      (is (= {:value false :cached? false} (select-keys (read! query) [:value :cached?])))
+      (is (= {:value false :cached? true} (select-keys (read! local) [:value :cached?])))
+      (let [before (cache/cache-content-revision target)]
+        (is (= {:restored? false :cache-miss? true :reason :security-key-unavailable}
+               (cache/restore-authenticated-basis-snapshot! target token bounds options)))
+        (is (= before (cache/cache-content-revision target)))
+        (is (true? (:cached? (read! local))))))))
+
+(deftest imported-denotations-do-not-become-local-answer-authority
+  (let [ring (rotation-ring) options {:keyring-controller ring} bounds {:max-entries 8}
+        source (cache/basis-cache {:max-entries 8}) target (cache/basis-cache {:max-entries 8})
+        denotation [:operator-acyclic-point :imported]
+        derived-denotation [:operator-acyclic-point :derived]
+        publications (atom [])
+        compute (fn []
+                  (let [hit (subproblem/lookup-denotation! denotation)]
+                    (swap! publications conj
+                           (subproblem/publish-denotation! derived-denotation {:valid? boolean?} true))
+                    (boolean (:value hit))))
+        read! #(exact-operation! target 1 (semantic-key :derived) :can? compute)]
+    (exact-operation! source 1 (semantic-key :seed) :can?
+                      #(do (subproblem/publish-denotation! denotation {:valid? boolean?} true) false))
+    (let [token (cache/export-authenticated-basis-snapshot source bounds options)]
+      (is (= 2 (:entry-count (cache/restore-authenticated-basis-snapshot! target token bounds options)))))
+    (dotimes [_ 2]
+      (is (= {:value true :cached? false :eacl.cache/imported? true}
+             (select-keys (read!) [:value :cached? :eacl.cache/imported?]))))
+    (is (every? #(= :imported-trust (:reason %)) @publications))
+    (is (zero? (:entry-count (cache/export-basis-snapshot target bounds))))
+    (eacl/activate-security-key! ring :new)
+    (eacl/retire-security-key! ring :old)
+    (is (= {:value false :cached? false} (select-keys (read!) [:value :cached?])))
+    (is (= {:value false :cached? true} (select-keys (read!) [:value :cached?])))))
+
+(deftest malformed-authenticated-cache-input-is-an-atomic-miss
+  (let [ring (rotation-ring) options {:keyring-controller ring} bounds {:max-entries 8}
+        store (cache/basis-cache {:max-entries 8}) query (semantic-key :retained)]
+    (exact-operation! store 1 query :can? (constantly true))
+    (doseq [token [nil {} "foreign" "eacl_cache1_invalid"]]
+      (let [before (cache/cache-content-revision store)]
+        (is (= {:restored? false :cache-miss? true :reason :invalid-cache-artifact}
+               (cache/restore-authenticated-basis-snapshot! store token bounds options)))
+        (is (= before (cache/cache-content-revision store)))))
+    (is (true? (:value (exact-operation! store 1 query :can? (constantly false)))))
+    (doseq [bad-bounds [{:max-entries 8 :maximum-size 0} {:max-entries 8 :maximum-size 16777217}
+                        {:max-entries 8 :unknown true}]]
+      (is (= :eacl/invalid-config
+             (:type (error-data #(cache/export-authenticated-basis-snapshot store bad-bounds options))))))))

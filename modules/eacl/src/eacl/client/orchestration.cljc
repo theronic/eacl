@@ -1413,7 +1413,7 @@
                    (if prior
                      (temporal/intersect-intervals current (select-keys prior [:start-ms :valid-until-ms :complete?]))
                      current))))]
-    (when cache-context
+    (when (and cache-context (not (:eacl.cache/imported? answer)))
       (cache/publish-rendered-page!
        (:store cache-context)
        (:publication-options cache-context)
@@ -4351,13 +4351,13 @@
        :disabled? true
        :entry-count 0})))
 
-(defn restore-cache-snapshot!
+(defn- restore-cache-with!
   "Atomically restores an already authenticated and decoded cache snapshot.
 
   External bytes MUST be authenticated and encoded-size-bound before decoding
   because this function's first argument is a trusted immutable value. Restore
   never selects a backend basis or alters source freshness."
-  [client snapshot bounds]
+  [client restore!]
   (let [opts (require-cache-client-options! client "restore-cache-snapshot!")
         runtime (:runtime client)]
     (if (:basis-cache-store opts)
@@ -4370,18 +4370,38 @@
              (:source-lifecycle captured)
              (lifecycle-content-revision captured))
             result
-            (cache/restore-basis-snapshot!
-             (:basis-cache-store candidate) snapshot bounds)]
-        (let [installation
-              (install-restored-runtime-cache-lifecycle!
-               runtime captured candidate)]
-          (accumulate-detached-cache-counters!
-           runtime (:detached installation)))
+            (restore! (:basis-cache-store candidate) opts)]
+        (when (:restored? result)
+          (let [installation
+                (install-restored-runtime-cache-lifecycle!
+                 runtime captured candidate)]
+            (accumulate-detached-cache-counters!
+             runtime (:detached installation))))
         result)
       {:type :eacl/cache-disabled
        :eacl/error :eacl/cache-disabled
        :disabled? true
        :restored? false})))
+
+(defn restore-cache-snapshot!
+  "Restores an already authenticated and decoded trusted cache value."
+  [client snapshot bounds]
+  (restore-cache-with! client (fn [store _] (cache/restore-basis-snapshot! store snapshot bounds))))
+
+(defn export-authenticated-cache-snapshot
+  "Exports bounded, authenticated optional cache bytes under the primary ring."
+  [client bounds]
+  (let [opts (require-cache-client-options! client "export-authenticated-cache-snapshot")]
+    (if-let [store (:basis-cache-store opts)]
+      (cache/export-authenticated-basis-snapshot store bounds (:format-options opts))
+      {:disabled? true :entry-count 0})))
+
+(defn restore-authenticated-cache-snapshot!
+  "Restores optional cache bytes; retired keys miss without changing local caches."
+  [client token bounds]
+  (restore-cache-with!
+   client (fn [store opts]
+            (cache/restore-authenticated-basis-snapshot! store token bounds (:format-options opts)))))
 
 (defn cache-content-revision
   "Returns a conservative process-local dirty revision for authorization content.

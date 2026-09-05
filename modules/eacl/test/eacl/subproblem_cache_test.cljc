@@ -3,6 +3,8 @@
   (:require [eacl.cache.key :as cache-key]
             [eacl.cache.standard-lru :as lru]
             [eacl.execution :as execution]
+            [eacl.security.imports :as imports]
+            [eacl.security.keyring :as keyring]
             [eacl.subproblem-cache :as subproblem]
             #?(:clj [clojure.test :refer [deftest is testing]]
                :cljs [cljs.test])))
@@ -636,3 +638,17 @@
                   candidate)]
       (is (false? (:published? result)))
       (is (= concurrent (:value (subproblem/lookup! store :answer key)))))))
+
+(deftest fresh-computation-replaces-an-ineligible-import
+  (let [store (subproblem/store small-options)
+        key (storage-key :answer :imported)
+        ring (keyring/keyring {:keys {:old (vec (range 32))} :active-kid :old})]
+    (subproblem/publish! store :answer key accept-any-publication {:revision 9})
+    (subproblem/mark-imported! store ring :old)
+    (imports/run
+     #(do
+        (is (nil? (subproblem/lookup-eligible! store :answer key (fn [v] (< (:revision v) 5)))))
+        (is (false? (imports/derived?)))
+        (is (:published? (subproblem/publish! store :answer key accept-any-publication {:revision 2})))))
+    (is (= {:revision 2} (:value (subproblem/lookup! store :answer key))))
+    (is (= 1 (count (subproblem/resident-tier-entries store :answer))))))

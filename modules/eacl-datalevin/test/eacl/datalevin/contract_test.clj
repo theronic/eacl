@@ -1672,7 +1672,8 @@
 (deftest live-security-keyring-rotation-contract-test
   (with-system
     (fn [{:keys [conn watermark]}]
-      (security-contract/assert-live-rotation!
+      (security-contract/assert-client-security!
        #(datalevin/make-client conn (merge {:source-lifecycle "test-lifecycle" :revision-watermark watermark
                                             :advance-revision-watermark! (fn [revision] (swap! watermark max revision))} %))
-       #(d/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))))))
+       #(d/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))
+       datalevin/export-authenticated-cache-snapshot datalevin/restore-authenticated-cache-snapshot!))))

@@ -2188,6 +2188,7 @@
 
 (deftest live-security-keyring-rotation-contract-test
   (let [conn (datascript/create-conn)]
-    (security-contract/assert-live-rotation!
+    (security-contract/assert-client-security!
      #(datascript/make-client conn %)
-     #(ds/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects)))))
+     #(ds/transact! conn (mapv (fn [{:keys [id]}] {:eacl/id id}) contract/smoke-objects))
+     datascript/export-authenticated-cache-snapshot datascript/restore-authenticated-cache-snapshot!)))
