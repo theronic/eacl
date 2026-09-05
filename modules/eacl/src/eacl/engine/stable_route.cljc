@@ -85,8 +85,8 @@
                       (= (qualification/exact-reuse-identity qualification) (:scope known-witness))
                       (some #(= rule %) (get-in plan [:indexes :reverse-rules node]))
                       (or (not arrow?) (and (integer? (:intermediate known-witness))
-                                           (edge/valid? (:intermediate known-witness))
-                                           (pos? (:intermediate known-witness))))
+                                            (edge/valid? (:intermediate known-witness))
+                                            (pos? (:intermediate known-witness))))
                       (evidence/before? (:time qualification) (evidence/valid-until (:evidence known-witness))))]
       (when-not valid?
         (throw (ex-info "Known path evidence does not match the selected point."
@@ -392,7 +392,7 @@
                                      successors)
                                    (reduce (fn [successors compact-edge]
                                              (let [via (if (and (known-rule? node eid rule)
-                                                               (= (:intermediate known-witness) (edge/endpoint compact-edge)))
+                                                                (= (:intermediate known-witness) (edge/endpoint compact-edge)))
                                                          false
                                                          (evidence/combine
                                                           :arrow prefix
@@ -514,14 +514,38 @@
           :resource-eid (backend/invoke adapter :object-id->internal
                                         resource-id))))
 
+(defn discovery-options
+  "Completes conditional first-discovery candidates with the existing point
+   evaluator. Direct tuple witnesses skip only their exact rule; arbitrary
+   path prefixes never claim a whole child permission."
+  [options direction]
+  (if-let [request (:qualification options)]
+    (assoc options :candidate-evidence-fn
+           (fn [eid item]
+             (let [point (assoc options (if (= :reverse direction) :subject-eid :resource-eid) eid)
+                   known (:direct-evidence item)
+                   root (get-in options [:plan :root])
+                   point (cond-> point
+                           (and known (= root (get-in known [:rule :node]))
+                                (= (:resource-eid point) (:resource-eid known)))
+                           (assoc :known-witness {:point [root (:subject-type point)
+                                                          (:subject-eid point) (:resource-eid point)]
+                                                  :rule (:rule known) :evidence (:evidence known)
+                                                  :scope (qualification/exact-reuse-identity request)}))]
+               (check-eids point))))
+    options))
+
 (defn- exhaustive-count
   "Exact count by exhausting the reducer through `run` from `anchor-eid`;
   :count-limit truncates with an explicit marker exactly like the public
   contract."
   [run anchor-key anchor-eid {:keys [count-limit] :as options}]
-  (let [target (if count-limit (inc count-limit) exhaustion-target)]
+  (let [target (if count-limit (inc count-limit) exhaustion-target)
+        options (discovery-options (assoc options anchor-key anchor-eid)
+                                   (if (= :subject-eid anchor-key) :forward :reverse))]
     (if (nil? anchor-eid)
-      {:count 0 :limit (or count-limit -1) :truncated? false}
+      (cond-> {:count 0 :limit (or count-limit -1) :truncated? false}
+        (:qualification options) (assoc :definite-count 0 :conditional-count 0))
       (let [finished (run (merge (select-keys options reducer/run-option-keys)
                                  {anchor-key anchor-eid
                                   :result-sink :count
@@ -529,9 +553,14 @@
             discovered (:discovered finished)
             truncated? (boolean (and count-limit
                                      (> discovered count-limit)))]
-        {:count (if truncated? count-limit discovered)
-         :limit (or count-limit -1)
-         :truncated? truncated?}))))
+        (cond-> {:count (if truncated? count-limit discovered)
+                 :limit (or count-limit -1)
+                 :truncated? truncated?}
+          (:qualification options)
+          (assoc :definite-count (- (:definite-count finished)
+                                    (if (and truncated? (not (:last-conditional? finished))) 1 0))
+                 :conditional-count (- (:conditional-count finished)
+                                       (if (and truncated? (:last-conditional? finished)) 1 0))))))))
 
 (defn count-resources
   "Exact count by exhausting the reducer; :count-limit truncates with an

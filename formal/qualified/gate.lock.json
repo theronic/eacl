@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 545123,
+  "assertions": 579874,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -26,7 +26,7 @@
     "modules/eacl-datascript/test/eacl/operator/recursive_test.cljc": "ba7994d6834206a02622cecae7105fc889ba10b29b0d04469a9ac0e880f9a0c6",
     "formal/qualified/stable_route_bridge.clj": "79057574de4fa3ee2dc0aba63166037a3648df51f9060b2d3bdb597ee7b85577",
     "modules/eacl/test/eacl/engine/stable_route_evidence_test.cljc": "4e4a1990f3ff461539309919b14fc9bae8df9def37a61fc91085d96ed07c4d84",
-    "formal/qualified/production_mutations.clj": "6f0c5bf7bf7ee7fe9fe66f110c0e67297dd4c597a84e9dd8c624a27586488f5f",
+    "formal/qualified/production_mutations.clj": "1124a5a2ad8d0721f537fe8a6db7bf3dbc851cdb80fb677295b156f83f51c0d4",
     "modules/eacl-datascript/test/eacl/engine/stable_route_native_evidence_test.cljc": "bbe7fb3ce769a0abf3c1bc3b471780fad44aa6ec262beb35335da8dfe29d108d",
     "modules/eacl/test/eacl/engine/scan_cache_test.cljc": "59afc0cfe74af16b17801d18b513b86efd4634949f187a2fd58a656333d18925",
     "modules/eacl-datascript/test/eacl/datascript/evaluation_clock_test.cljc": "6a53273d259a534c0feab05d8c5818c7da8685ec7757cfd436804c859cde3435",
@@ -48,9 +48,11 @@
     "modules/eacl/test/eacl/authorization/context_test.cljc": "a655c8bc3c2196c16ff9bb56460ffb6da919a314ace41e31111ea6ea4df1e52b",
     "modules/eacl-datascript/test/eacl/datascript/caveat_context_test.cljc": "1a8a992eeca17194fc103bace28480f407aa11b37e37765fed14e904e9d905aa",
     "modules/eacl/test/eacl/authorization/result_test.cljc": "ec4748b0794a1116a9dc62b966e6d101da4d939c3bf3266796bd8eec0e5cf261",
-    "modules/eacl/test/eacl/core_test.cljc": "accdddf560023ccbc5138c2013a82e877a9b6ca217f6ff81cfed5a14d6868903",
-    "modules/eacl-datascript/test/eacl/datascript/qualified_check_test.cljc": "18bbe424dfcb741db2fa68be918ffd435651409da7ea9435208beab23be11bde",
+    "modules/eacl/test/eacl/core_test.cljc": "08e1e7389a6bbf67dc3ed701f07214577957126856bf0c88ec69b5c17e4428d7",
+    "modules/eacl-datascript/test/eacl/datascript/qualified_check_test.cljc": "e479040e764ad6f013e8c4398bcc2291bf283c7ff45feb5b09ea736390fb2983",
     "formal/qualified/discovery_model.clj": "40b5217acab3bf5d1fffecf55cfed75c6331e6f8d6cb01105560afd95f194b2a",
-    "formal/qualified/discovery_model_test.clj": "7b8235f04f0348e6b8717167d197266c2d9eae8e86de15f7e09bf16fcb5fb14d"
+    "formal/qualified/discovery_model_test.clj": "7b8235f04f0348e6b8717167d197266c2d9eae8e86de15f7e09bf16fcb5fb14d",
+    "formal/qualified/discovery_bridge.clj": "f22f144af46ce8017daca9235e6e2c43a4ef15b07593776aef2638ab6ea74bdf",
+    "modules/eacl/test/eacl/engine/stable_reducer_evidence_test.cljc": "885f0c3c9666095fd055eeaa18af089b6a945412795b34fd7d907c3169629f17"
   }
 }

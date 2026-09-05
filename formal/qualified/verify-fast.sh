@@ -59,6 +59,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (load-file \"formal/qualified/recursive_bridge.clj\")
      (require 'eacl.engine.stable-reducer :reload)
      (require 'eacl.engine.stable-route :reload)
+     (require 'eacl.engine.stable-reducer-evidence-test :reload)
+     (load-file \"formal/qualified/discovery_bridge.clj\")
      (require 'eacl.engine.stable-route-evidence-test :reload)
      (load-file \"formal/qualified/stable_route_bridge.clj\")
      (require 'eacl.engine.least-path-evidence-test :reload)
@@ -81,7 +83,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.datascript.qualified-check-test :reload)
      (load-file \"formal/qualified/production_mutations.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
-                                   'eacl.formal.qualified.discovery-model-test
+                                   'eacl.formal.qualified.discovery-model-test 'eacl.formal.qualified.discovery-bridge
+                                   'eacl.engine.stable-reducer-evidence-test
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge
                                    'eacl.formal.qualified.operator-bridge 'eacl.authorization.evidence-index-test
                                    'eacl.formal.qualified.recursive-bridge 'eacl.formal.qualified.stable-route-bridge

@@ -3,7 +3,7 @@
             [datascript.core :as ds]
             [eacl.authorization.context-test :as errors]
             [eacl.authorization.qualification-test :as qualification-fixtures]
-            [eacl.backend.v8 :as backend]
+            [eacl.authorization.qualification :as qualification]
             [eacl.client.orchestration :as orchestration]
             [eacl.caveats.plan :as caveat-plan]
             [eacl.core :as eacl]
@@ -87,14 +87,17 @@
 
 (deftest public-batch-shares-qualifier-resolution-across-all-point-routes
   (let [{:keys [client now check]} (fixture)
-        invoke backend/invoke
+        request-from-adapter qualification/request-from-adapter
         reads (atom [])]
     (reset! now 100)
     (binding [orchestration/*qualified-authorization-enabled?* true]
-      (with-redefs [backend/invoke
-                    (fn [adapter operation & args]
-                      (when (= operation :qualification-data) (swap! reads conj (first args)))
-                      (apply invoke adapter operation args))]
+      (with-redefs [qualification/request-from-adapter
+                    (fn [adapter options]
+                      (update (request-from-adapter adapter options) :lookup
+                              (fn [lookup]
+                                (fn [eid]
+                                  (swap! reads conj eid)
+                                  (lookup eid)))))]
         (let [checks (mapv #(assoc check :permission %) [:direct :either :both :recursive])
               decisions (eacl/check-permissions client {:checks checks :cache? false})]
           (is (= [:conditional-permission :has-permission :conditional-permission :conditional-permission]

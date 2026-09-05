@@ -25,7 +25,7 @@
 
 - [x] 4.1 Integrate Phase 2 context merge, partial evaluator, and JVM cel-parser adapter at the qualification seam; verify complete, short-circuit, conditional, wrong-type, overload, and budget cases.
 - [x] 4.2 Implement one internal evidence type for true, false, conditional residual/missing fields, and fault; verify canonical bounded encoding/equality across CLJ and supported CLJS paths.
-- [ ] 4.3 Extend union, intersection, exclusion, arrow, and recursive evaluators to compose evidence per the green model without duplicating traversal; verify production-vs-model generated differentials.
+- [x] 4.3 Extend union, intersection, exclusion, arrow, and recursive evaluators to compose evidence per the green model without duplicating traversal; verify production-vs-model generated differentials.
 - [ ] 4.4 Add detailed check/lookup/count result policies and request Caveat context while preserving `can?` true-only-on-definite behavior; verify conditional and fault values never appear as Boolean grants.
 - [ ] 4.5 Enforce evaluator/profile and qualified-writer publication capabilities before serving Caveated schema; verify JVM default, CLJS absent, custom mismatch, prepared-reference backend, and unsupported-writer fixtures.
 
@@ -33,7 +33,7 @@
 
 - [x] 5.1 Add one trusted clock sample plus process-local non-decreasing high-water mark to the top-level request/snapshot context and prohibit per-edge ambient clock reads; verify a request crossing expiry is consistent and a backward raw-clock step cannot revive access.
 - [x] 5.2 Evaluate `evaluation-time-ms < valid-until-ms` before Caveat program work; verify before/equal/after boundaries and expired Caveat compile suppression.
-- [ ] 5.3 Apply expiry uniformly to grant, group, arrow, recursion, exclusion, and deny evidence; verify an expiring ban can change denial to grant on a later request.
+- [x] 5.3 Apply expiry uniformly to grant, group, arrow, recursion, exclusion, and deny evidence; verify an expiring ban can change denial to grant on a later request.
 - [ ] 5.4 Add stored-versus-active Relationship inspection and renewal/shortening/removal through immutable qualifier `:touch`; verify create still conflicts with retained expired identity.
 
 ## 6. Make result and subproblem caches temporally coherent

@@ -21,6 +21,7 @@
             [eacl.engine.scan-cache :as scan-cache]
             [eacl.engine.scan-cache-test :as scan-test]
             [eacl.engine.stable-reducer :as reducer]
+            [eacl.engine.stable-reducer-evidence-test :as discovery-test]
             [eacl.engine.stable-route :as stable-route]
             [eacl.engine.stable-route-evidence-test :as stable-route-test]
             [eacl.engine.least-path :as least-path]
@@ -68,9 +69,34 @@
         can? core/can?
         check-evidence engine/check-evidence
         check-result result/check-result
+        discovery-options stable-route/discovery-options
+        buffer-id @#'reducer/buffer-id
         request-schema @#'orchestration/request-schema
         enqueue @#'recursive/enqueue-evidence!]
-    {:expired-public-request-compiles-all-caveats
+    {:discovery-reuses-a-buffer-from-an-earlier-prefix
+     {:gate #'discovery-test/temporal-revisions-replay-a-buffered-prefix
+      :redefs {#'reducer/buffer-id (fn [item] (buffer-id (dissoc item :revision)))}}
+     :discovery-discards-propagated-prefix-evidence
+     {:gate #'discovery-test/conditional-prefixes-revisit-cycles-without-duplicate-discoveries
+      :redefs {#'reducer/inherit-evidence (fn [_ successors] successors)}}
+     :discovery-partial-path-claims-the-whole-root
+     {:gate #'discovery-test/conditional-prefixes-revisit-cycles-without-duplicate-discoveries
+      :redefs {#'stable-route/discovery-options
+               (fn [options direction]
+                 (assoc (discovery-options options direction) :candidate-evidence-fn
+                        (fn [_ item] (:evidence item true))))}}
+     :discovery-omits-retained-evidence-bounds
+     {:gate #'discovery-test/weighted-admission-and-resume-keep-operational-bounds
+      :redefs {#'reducer/evidence-size (constantly 0)}}
+     :discovery-repeats-a-known-direct-tuple
+     {:gate #'discovery-test/direct-discovery-witnesses-avoid-repeating-the-known-tuple
+      :redefs {#'stable-route/discovery-options
+               (fn [options direction]
+                 (let [configured (discovery-options options direction)
+                       complete (:candidate-evidence-fn configured)]
+                   (assoc configured :candidate-evidence-fn
+                          (fn [eid item] (complete eid (dissoc item :direct-evidence))))))}}
+     :expired-public-request-compiles-all-caveats
      {:gate #'public-point-test/expired-public-points-never-compile-undemanded-caveats
       :redefs {#'orchestration/request-schema
                (fn [& args]
@@ -78,17 +104,17 @@
      :public-conditional-result-becomes-a-grant
      {:gate #'result-test/detailed-results-preserve-membership-and-residuals
       :redefs {#'result/check-result (fn [value]
-                                     (let [answer (check-result value)]
-                                       (if (= :conditional-permission (:permissionship answer))
-                                         (assoc answer :allowed? true) answer)))}}
+                                       (let [answer (check-result value)]
+                                         (if (= :conditional-permission (:permissionship answer))
+                                           (assoc answer :allowed? true) answer)))}}
      :boolean-compatibility-erases-operational-errors
      {:gate #'core-test/boolean-compatibility-requires-definite-grants-and-preserves-operational-errors
       :redefs {#'core/can? (fn [& args] (try (apply can? args) (catch Throwable _ false)))}}
      :public-point-routing-omits-qualification
      {:gate #'public-point-test/public-point-routes-preserve-conditional-evidence-and-expiring-bans
       :redefs {#'engine/check-evidence (fn [& args]
-                                       (binding [engine/*qualification* nil]
-                                         (apply check-evidence args)))}}
+                                         (binding [engine/*qualification* nil]
+                                           (apply check-evidence args)))}}
      :legacy-inactive-stream-path-becomes-active
      {:gate #'legacy-lookup-test/qualified-unions-keep-native-order-and-complete-node-evidence
       :redefs {#'least-path/stream-next
@@ -143,12 +169,12 @@
      :expiry-boundary-retains-permission
      {:gate #'qualification-test/exclusive-expiry-precedes-program-work
       :redefs {#'qualification/qualify (fn [request relation value]
-                                       (qualify (update request :time dec) relation value))}}
+                                         (qualify (update request :time dec) relation value))}}
      :authoritative-failure-becomes-plain
      {:gate #'qualification-test/authoritative-errors-survive-expiry-and-exclusion
       :redefs {#'qualification/qualify (fn [& args]
-                                       (let [result (apply qualify args)]
-                                         (if (evidence/fault? result) true result)))}}
+                                         (let [result (apply qualify args)]
+                                           (if (evidence/fault? result) true result)))}}
      :conditional-becomes-truthy
      {:gate #'native-test/native-compact-scans-and-memos-preserve-qualified-point-evidence
       :redefs {#'evidence/has? (fn [value] (boolean (evidence/value value)))}}
@@ -161,15 +187,15 @@
      :expired-evidence-reused
      {:gate #'evidence-test/temporal-certificate-uses-decisive-evidence
       :redefs {#'evidence/reusable? (fn [value start time]
-                                    (and (evidence/complete? value) (not (evidence/fault? value)) (<= start time)))}}
+                                      (and (evidence/complete? value) (not (evidence/fault? value)) (<= start time)))}}
      :scan-shape-omitted-from-cache
      {:gate #'scan-test/compact-and-ordinary-responses-never-share-memo-or-resident-prefixes-test
       :redefs {#'scan-cache/descriptor-key (fn [d] (descriptor (dissoc d :include-qualifier?)))}}
      :compact-flag-dropped-before-native-scan
      {:gate #'native-test/native-compact-scans-and-memos-preserve-qualified-point-evidence
       :redefs {#'reducer/adapter-fetch-fn (fn [adapter]
-                                         (let [inner (fetch adapter)]
-                                           (fn [d] (inner (dissoc d :include-qualifier?)))))}}
+                                            (let [inner (fetch adapter)]
+                                              (fn [d] (inner (dissoc d :include-qualifier?)))))}}
      :context-omitted-from-exact-point-scope
      {:gate #'vector-test/qualified-vectors-retain-alignment-and-exact-cache-scope
       :redefs {#'qualification/exact-reuse-identity (fn [request] (assoc (identity request) 3 nil))}}
@@ -197,32 +223,32 @@
      :snapshot-resamples-time
      {:gate #'clock-test/client-samples-once-and-snapshots-pin-time
       :redefs {#'orchestration/snapshot-opts (fn [runtime basis]
-                                            (dissoc (snapshot-opts runtime basis) :evaluation-time-ms))}}
+                                               (dissoc (snapshot-opts runtime basis) :evaluation-time-ms))}}
      :conditional-seekable-head-becomes-definite
      {:gate #'seekable-test/direct-specializations-carry-exact-qualified-evidence
       :redefs {#'seekable/head-evidence (fn [cursor]
-                                        (let [value (head-evidence cursor)]
-                                          (evidence/with-certificate true (evidence/valid-until value)
-                                                                     (evidence/complete? value))))}}
+                                          (let [value (head-evidence cursor)]
+                                            (evidence/with-certificate true (evidence/valid-until value)
+                                              (evidence/complete? value))))}}
      :seekable-emission-loses-expiry-certificate
      {:gate #'seekable-bridge/direct-page-algebra-and-exhaustive-temporal-certificates
       :redefs {#'seekable/head-evidence (fn [cursor]
-                                        (evidence/with-certificate (head-evidence cursor) nil true))}}
+                                          (evidence/with-certificate (head-evidence cursor) nil true))}}
      :definite-lookup-includes-conditional-results
      {:gate #'seekable-test/lookup-and-count-project-exact-generator-evidence-without-rechecking
       :redefs {#'lookup/result-policy (constantly :detailed)}}
      :count-categories-include-lookahead-sentinel
      {:gate #'seekable-test/detailed-count-cap-excludes-the-sentinel-from-category-counts
       :redefs {#'lookup/count-categories (fn [categories entries remaining]
-                                         (count-categories categories entries
-                                                           (when remaining (inc remaining))))}}
+                                           (count-categories categories entries
+                                                             (when remaining (inc remaining))))}}
      :general-cover-conditional-child-becomes-definite
      {:gate #'lookup-test/general-cover-completes-conditional-nodes-before-emission
       :redefs {#'least-path/accepted-emission
                (fn [env node rule subject resource value coords proof]
                  (accepted-emission env node rule subject resource value coords
                                     (evidence/with-certificate true (evidence/valid-until proof)
-                                                               (evidence/complete? proof))))}}
+                                      (evidence/complete? proof))))}}
      :general-cover-discards-proven-node-evidence
      {:gate #'lookup-test/a-generated-direct-node-is-not-probed-again-by-its-parent
       :redefs {#'vector/check-cached-many-eids
@@ -244,10 +270,10 @@
      :witness-skips-expired-prefix-before-alternating
      {:gate #'arrow-bridge/expired-prefix-witness-work-is-bounded-by-the-physical-shorter-side
       :redefs {#'least-path/stream-next (fn [ctx state]
-                                        (loop [state state]
-                                          (let [[value next-state] (stream-next ctx state)]
-                                            (if (and value (evidence/no? (get next-state :evidence true)))
-                                              (recur next-state) [value next-state]))))}}
+                                          (loop [state state]
+                                            (let [[value next-state] (stream-next ctx state)]
+                                              (if (and value (evidence/no? (get next-state :evidence true)))
+                                                (recur next-state) [value next-state]))))}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -258,7 +284,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 45 (count cases)))
+    (is (= 50 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))
