@@ -19,6 +19,20 @@
   (and #?(:clj (integer? eid) :cljs (and (number? eid) (js/Number.isSafeInteger eid)))
        (pos? eid)))
 
+(defn relation-allowance
+  "Concrete Caveat alternatives for one selected Relation. Legacy plain
+   Relations have exactly the nil alternative. Qualified branches carry both
+   the native ref set and the explicit plain-branch bit."
+  [relation]
+  (let [refs (:eacl.relation/caveats relation)
+        refs? (contains? relation :eacl.relation/caveats)
+        plain? (contains? relation :eacl.relation/allows-unqualified?)
+        plain (if plain? (:eacl.relation/allows-unqualified? relation) true)]
+    (when (or (not= refs? plain?) (not (boolean? plain))
+              (and refs? (not (and (set? refs) (seq refs) (every? concrete-eid? refs)))))
+      (error! :malformed-relation-allowance))
+    (cond-> (or refs #{}) plain (conj nil))))
+
 (defn normalize
   "Normalizes resolved semantic input; nil and an empty map allocate nothing.
   Parameters belong to the selected named Caveat, and are checked by the caller

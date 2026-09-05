@@ -20,7 +20,7 @@
 - [x] 3.3 Exercise each bundled backend's real transaction API with newly allocated qualifier refs inside slot five, including DataScript/CLJS and Datalevin stores; verify and record whether inline allocation resolves to a concrete eid or must be rejected.
 - [x] 3.4 Implement an explicit qualified-writer capability with certified inline-allocation and prepared-reference strategies; verify the latter precreates only an inert qualifier and the final transaction atomically publishes both halves, Relation stamp, and caller-composed datoms.
 - [x] 3.5 Implement singly owned immutable qualifier create/replace/delete planners behind internal staged APIs; verify every semantic update uses a fresh qid, never embeds an unresolved lookup ref/tempid, and leaves no one-sided serving state.
-- [ ] 3.6 Extend integrity, orphan cleanup, and proof-input tooling to report missing, shared, mutable, malformed, asymmetrically referenced, or unattached qualifiers; verify a missing target never aliases `nil` and each corruption fixture fails closed.
+- [x] 3.6 Extend integrity, orphan cleanup, and proof-input tooling to report missing, shared, mutable, malformed, asymmetrically referenced, or unattached qualifiers; verify a missing target never aliases `nil` and each corruption fixture fails closed.
 - [x] 3.7 Add Caveat definition schema entities, canonical parameter payloads, source/profile fields, and schema-generation integration; verify identical Relationships share one named definition without expression-source duplication.
 
 ## 4. Extend schema parsing and admission

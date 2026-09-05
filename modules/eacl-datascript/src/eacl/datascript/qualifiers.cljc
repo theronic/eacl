@@ -40,13 +40,27 @@
               (:eacl/relation-version (entity database relation-id))]
              [:db/add relation-id :eacl/relation-version :db/current-tx]]))))
 
+(defn read-api
+  "Read-only native inputs; constructing this map never prepares or writes a store."
+  []
+  {:backend :datascript :entity entity :facts facts :rows identity-rows
+   :source (fn [database] (get (ds/entity database [:eacl/id "datascript-metadata"]) :eacl.datascript/source-id)) :generation schema/current-schema-generation
+   :all-rows (fn [database attribute] (ds/datoms database :aevt attribute))
+   :relation-version-attribute :eacl/relation-version
+   :revision :max-tx
+   :head-guard (fn [database]
+                 [:db.fn/call (fn [current]
+                                (when-not (and (= (:max-tx database) (:max-tx current)) (= (:schema database) (:schema current)))
+                                  (staged/error! :cleanup-source-changed))
+                                [])])
+   :qualifier-cache-scope :assertion-version
+   :qualifier-version (fn [database eid] (some-> (ds/datoms database :eavt eid :eacl.relationship-qualifier/format-version) first :tx))})
+
 (defn writer [conn]
   (schema/prepare-cache-coherence! conn)
   (staged/native-writer
-    {:backend :datascript :strategy :prepared
-     :snapshot #(ds/db conn) :entity entity :facts facts
-     :source #(get (ds/entity % [:eacl/id "datascript-metadata"]) :eacl.datascript/source-id)
-     :rows identity-rows :generation schema/current-schema-generation
+      (merge (read-api)
+    {:strategy :prepared :snapshot #(ds/db conn)
      :fence fence :assert-entity (fn [eid expected] [:db.fn/call assert-entity eid expected])
      :tempid #(str "eacl-qualifier-" (random-uuid))
-     :transact! #(ds/transact! conn %)}))
+     :transact! #(ds/transact! conn %)})))

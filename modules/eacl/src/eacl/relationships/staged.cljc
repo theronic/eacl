@@ -41,6 +41,15 @@
 
 (defn- concrete-eid? [value] (and (integer? value) (pos? value)))
 
+(defn- temporary-id [native]
+  (let [id ((:tempid native))]
+    (when-not (case (:backend native)
+                (:datomic :datascript) (and (string? id) (seq id))
+                (:datahike :datalevin) (and (integer? id) (neg? id))
+                false)
+      (error! :invalid-temporary-id))
+    id))
+
 (defn- selected-relation [native db identity]
   (when-not (and (vector? identity) (= 5 (count identity))
                 (keyword? (nth identity 0)) (keyword? (nth identity 3))
@@ -64,17 +73,8 @@
 
 (defn- admitted-value [native db relation value]
   (let [value (qualifier/normalize value (parameters native db (:caveat value)))
-        caveat (:caveat value)
-        allowances (:eacl.relation/caveats relation)
-        has-allowances? (contains? relation :eacl.relation/caveats)
-        has-plain? (contains? relation :eacl.relation/allows-unqualified?)
-        plain (if has-plain? (:eacl.relation/allows-unqualified? relation) true)]
-    (when (or (not= has-allowances? has-plain?)
-              (not (boolean? plain))
-              (and has-allowances? (not (and (set? allowances) (seq allowances)
-                                                            (every? concrete-eid? allowances)))))
-      (error! :malformed-relation-allowance))
-    (when-not (if caveat (contains? (or allowances #{}) caveat) plain)
+        allowances (qualifier/relation-allowance relation)]
+    (when-not (contains? allowances (:caveat value))
       (error! :caveat-not-allowed))
     value))
 
@@ -115,7 +115,7 @@
                     (let [relation (selected-relation native db relationship)
                           value (admitted-value native db relation value)
                           parameters (parameters native db (:caveat value))
-                          tempid (when value ((:tempid native)))]
+                          tempid (when value (temporary-id native))]
                       {:value value :parameters parameters :tempid tempid
                        :generation ((:generation native) db)
                        :tx-data (when value
@@ -193,7 +193,7 @@
          _ (when (and (= :prepared (:strategy native)) semantic (not prepared?))
              (error! :prepared-qualifier-required))
          inline? (and semantic (not prepared?))
-         qid (when semantic (if inline? ((:tempid native)) (:qid prepared)))
+         qid (when semantic (if inline? (temporary-id native) (:qid prepared)))
          _ (when (and qid (= qid old-qid)) (error! :qualifier-reuse))
          _ (when (and prepared? semantic (not (concrete-eid? qid))) (error! :unresolved-qualifier))
          app-datoms (application-datoms app-datoms (set (remove nil? [qid old-qid])))

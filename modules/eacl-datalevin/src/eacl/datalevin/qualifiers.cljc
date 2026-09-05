@@ -30,17 +30,33 @@
                           (:eacl.datalevin/relation-generation (entity database relation-id))]
                          [:db/add relation-id :eacl.datalevin/relation-generation :db/current-tx]]))))
 
+(defn read-api
+  "Read-only native inputs; constructing this map never prepares or writes a store."
+  []
+  {:backend :datalevin :entity entity :facts facts :rows db/relationship-identity-datoms
+   :source (fn [database] (get (d/entity database [:eacl/id "datalevin-metadata"]) :eacl.datalevin/source-id)) :generation schema/current-schema-generation
+   :all-rows (fn [database attribute] (d/datoms database :ave attribute))
+   :relation-version-attribute :eacl.datalevin/relation-generation
+   :revision :max-tx
+   :head-guard (fn [database]
+                 [:db.fn/call (fn [current]
+                                (when-not (= (:max-tx database) (:max-tx current))
+                                  (staged/error! :cleanup-source-changed))
+                                [])])
+   :qualifier-cache-scope :exact-only
+   :qualifier-version (fn [_database _eid] nil)})
+
 (defn writer [conn]
   (let [token (:write-token (schema/ensure-physical-schema! conn))
         tempids (atom -1000000000)]
     (staged/native-writer
-      {:backend :datalevin :strategy :inline :snapshot #(d/db conn) :entity entity :facts facts
-       :source #(get (d/entity % [:eacl/id "datalevin-metadata"]) :eacl.datalevin/source-id)
+      (merge (read-api)
+      {:strategy :inline :snapshot #(d/db conn)
        :with-snapshot (fn [f]
                         (let [snapshot (d/open-read-snapshot conn)]
                           (try (d/with-read-snapshot snapshot f)
                                (finally (d/close-read-snapshot! snapshot)))))
-       :rows db/relationship-identity-datoms :generation schema/current-schema-generation :fence fence
+       :fence fence
        :assert-entity (fn [eid expected] [:db.fn/call assert-entity eid expected])
        :tempid #(swap! tempids dec)
-       :transact! #(d/transact! conn % {:datalevin/write-token token})})))
+       :transact! #(d/transact! conn % {:datalevin/write-token token})}))))

@@ -21,6 +21,9 @@ const reportPath =
   process.env.EACL_PUBLIC_SOURCE_CLOSURE_OUTPUT ??
   "target/formal/verification/public-source-closure.json";
 const roots = [
+  "eacl.relationships.qualifier-integrity/proof-input",
+  "eacl.relationships.qualifier-integrity/report",
+  "eacl.relationships.qualifier-integrity/cleanup-orphans!",
   "eacl.relationships.staged/prepare!",
   "eacl.relationships.staged/plan-current",
   "eacl.relationships.staged/write!",

@@ -29,13 +29,24 @@
       relation-id (conj [:db.fn/cas relation-id :eacl/relation-version
                          (:eacl/relation-version (entity database relation-id)) "datomic.tx"]))))
 
+(defn read-api
+  "Read-only native inputs; constructing this map never prepares or writes a store."
+  []
+  {:backend :datomic :entity entity :facts facts :rows db/relationship-identity-datoms
+   :source (fn [database] (str (.id ^datomic.Database database))) :generation generation
+   :all-rows (fn [database attribute] (when (d/entid database attribute) (d/datoms database :aevt attribute)))
+   :relation-version-attribute :eacl/relation-version
+   :revision d/basis-t
+   :head-guard (fn [database] [:eacl.fn/assert-storage-basis (d/basis-t database)])
+   :qualifier-cache-scope :assertion-version
+   :qualifier-version (fn [database eid] (some-> (d/datoms database :eavt eid :eacl.relationship-qualifier/format-version) first :tx))})
+
 (defn writer [conn]
   (when-not (d/entid (d/db conn) :eacl.fn/assert-qualifier-facts) (staged/error! :schema-unprepared))
   (staged/native-writer
-    {:backend :datomic :strategy :inline :snapshot #(d/db conn) :entity entity :facts facts
-     :source #(str (.id ^datomic.Database %))
-     :rows db/relationship-identity-datoms :generation generation :fence fence
+      (merge (read-api)
+    {:strategy :inline :snapshot #(d/db conn) :fence fence
      :generation-after-reference #(generation (:db-after %))
      :assert-entity (fn [eid expected] [:eacl.fn/assert-qualifier-facts eid expected])
      :tempid #(str "eacl-qualifier-" (random-uuid))
-     :transact! #(deref (d/transact conn %))}))
+     :transact! #(deref (d/transact conn %))})))

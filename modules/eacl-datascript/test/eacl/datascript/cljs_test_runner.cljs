@@ -10,6 +10,7 @@
             [eacl.cache-test]
             [eacl.caveats.values-test]
             [eacl.caveats.definition-test]
+            [eacl.caveats.integrity-test]
             [eacl.datascript.caveat-schema-test]
             [eacl.caveats.plan-test]
             [eacl.caveats.partial-test]
@@ -126,6 +127,7 @@
                'eacl.secure-format-test
                'eacl.caveats.values-test
                'eacl.caveats.definition-test
+               'eacl.caveats.integrity-test
                'eacl.datascript.caveat-schema-test
                'eacl.caveats.plan-test
                'eacl.caveats.partial-test

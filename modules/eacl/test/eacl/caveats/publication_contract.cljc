@@ -2,6 +2,7 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is]]
             [eacl.caveats.persistence-contract :as persistence]
             [eacl.relationships.staged :as staged]
+            [eacl.relationships.qualifier-integrity :as integrity]
             [eacl.relationships.storage :as storage]))
 
 (defn error-data [f]
@@ -29,6 +30,7 @@
           forward #(mapv :v (rows (snapshot) subject storage/forward-attribute [:user relation :doc resource nil]))
           reverse #(mapv :v (rows (snapshot) resource storage/reverse-attribute [:doc relation :user subject nil]))
           current-qid #(nth (first (forward)) 4 nil)
+          proof #((:with-snapshot native) (fn [db] (integrity/proof-input native db)))
           prepared (staged/prepare! w identity semantic)
           planned (staged/plan-current w :create identity prepared [[:db/add subject :app/flag 1]])
           qid (:qualifier-eid planned)]
@@ -38,6 +40,13 @@
       (is (empty? (forward)) "preparation has no forward authorization edge")
       (is (empty? (reverse)) "preparation has no reverse authorization edge")
       (is (= 1 (:eacl.relationship-qualifier/format-version (entity (snapshot) qid))))
+      (is (= :invalid-temporary-id
+             (:reason (error-data #(staged/prepare! (assoc-in w [:native :tempid] (constantly qid)) identity semantic)))))
+      (let [frame (proof) report (integrity/report frame)]
+        (is (= :healthy (:status report)))
+        (is (= 1 (get-in report [:counts :unattached-qualifier])))
+        (is (= [qid] (:cleanup-candidates report)))
+        (is (some? (get-in frame [:source :id]))))
       (is (= :prepared-owner-mismatch
              (:reason (error-data #(staged/plan-current w :create different prepared)))))
       (when (= :prepared strategy)
@@ -53,6 +62,10 @@
       (is (= [[:user relation :doc resource qid]] (forward)))
       (is (= [[:doc relation :user subject qid]] (reverse)))
       (is (= 1 (:app/flag (entity (snapshot) subject))) "caller datoms publish with the pair")
+      (let [frame (proof)]
+        (is (= :healthy (:status (integrity/report frame))))
+        (is (some? (get-in frame [:relations relation :generation])))
+        (is (= [identity] (get-in frame [:references qid :forward]))))
       (is (some? (error-data #(tx! (:tx-data planned)))) "a stale second publication loses the native Relation fence")
       (is (= :qualifier-attached (:reason (error-data #(staged/cleanup! w prepared)))))
       (staged/write! w :replace identity {:valid-until-ms 2000})
@@ -71,8 +84,10 @@
         (is (nil? (entity (snapshot) q))))
       (let [orphan (staged/prepare! w identity {:valid-until-ms 4000})
             plan (staged/plan-current w :create identity orphan)
-            q (:qualifier-eid plan)]
+            q (:qualifier-eid plan)
+            before (proof)]
         (tx! [[:db/add q :eacl.relationship-qualifier/valid-until-ms 4001]])
+        (is (= 1 (get-in (integrity/report (proof) {:before before}) [:counts :mutable-qualifier])))
         (is (= :qualifier-changed-at-commit (:reason (error-data #(tx! (:tx-data plan))))))
         (is (empty? (forward)))
         (is (= :prepared-qualifier-changed (:reason (error-data #(staged/cleanup! w orphan)))))
@@ -84,4 +99,20 @@
                                        (fn [] (reset! pending (staged/prepare! w identity semantic)))
                                        (fn [] (write-schema! persistence/base-schema)))))))
           (is (some? (entid (snapshot) [:eacl.caveat/name "enabled"])))
-          (staged/cleanup! w @pending))))))
+          (staged/cleanup! w @pending)))
+      (let [tempid ((:tempid native))
+            report (tx! [{:db/id tempid :eacl.relationship-qualifier/valid-until-ms 123}])
+            q (get (:tempids report) tempid)]
+        (is (= 1 (get-in (integrity/report (proof)) [:counts :malformed-qualifier])))
+        (tx! [[:db/retractEntity q]]))
+      (let [first (staged/prepare! w identity {:valid-until-ms 5000})
+            _second (staged/prepare! w different {:valid-until-ms 6000})
+            cleanup ((:with-snapshot native) #(integrity/cleanup-plan native % {:batch-size 1}))]
+        (is (= 1 (count (:qualifiers cleanup))))
+        (staged/write! w :create identity first)
+        (is (some? (error-data #(tx! (:tx-data cleanup)))) "publication invalidates the orphan scan's exact head")
+        (is (= 1 (count (forward))))
+        (let [collected (integrity/cleanup-orphans! (writer))]
+          (is (= 1 (count (:qualifiers collected))))
+          (is (= 1 (count (forward))) "orphan cleanup never retracts the attached qualifier"))
+        (staged/write! w :delete identity nil)))))
