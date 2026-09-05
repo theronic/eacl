@@ -1,23 +1,16 @@
 (ns eacl.datahike.qualifiers
   "Prepared concrete refs; direct native writers only."
-  (:require [datahike.api :as d]
+  (:require [eacl.datahike.db :as native-db]
+            [datahike.api :as d]
             [eacl.datahike.db :as db]
             [eacl.datahike.backend :as backend]
             [eacl.datahike.schema :as schema]
-            [eacl.relationships.staged :as staged]))
+            [eacl.relationships.staged :as staged]
+            [eacl.schema.qualification-admission :as admission]))
 
-(defn- facts [database eid]
-  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)])
-        (d/datoms database {:index :eavt :components [eid]})))
+(defn- facts [database eid] (native-db/entity-facts database eid))
 
-(defn- entity [database eid]
-  (let [rows (facts database eid)]
-    (when (seq rows)
-      (reduce (fn [result [a v]]
-                (let [attribute (if (keyword? a) a (:db/ident (d/entity database a)))]
-                  (if (= :eacl.relation/caveats attribute)
-                    (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
-              {:db/id eid} rows))))
+(defn- entity [database eid] (native-db/entity-data database eid))
 
 (defn- assert-entity [database {:keys [eid expected]}]
   (when-not (= expected (facts database eid)) (staged/error! :qualifier-changed-at-commit))
@@ -76,3 +69,7 @@
   (schema/prepare-cache-coherence! conn)
   (staged/native-writer
    (merge (planner-api) {:snapshot #(d/db conn) :transact! #(d/transact conn %)})))
+
+(defn publication-capability [database]
+  (when (db/direct-writer? database)
+    (admission/publication-descriptor :prepared)))

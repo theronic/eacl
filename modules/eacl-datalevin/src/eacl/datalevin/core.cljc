@@ -185,6 +185,7 @@
 (def ^:private base-api
   {:backend-id :datalevin
    :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
    :qualified-plan #'qualifiers/plan
    :writer-max-attempts 8
    :writer-contention? stale-connection-contention?

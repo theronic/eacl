@@ -116,6 +116,7 @@
 (def ^:private api
   {:backend-id :datahike
    :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
    :qualified-plan #'qualifiers/plan
    :db d/db
    :entid ddb/entid

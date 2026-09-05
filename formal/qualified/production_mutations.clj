@@ -34,6 +34,10 @@
             [eacl.datascript.qualified-check-test :as public-point-test]
             [eacl.datascript.qualified-lookup-test :as public-lookup-test]
             [eacl.datascript.qualified-write-test :as public-write-test]
+            [eacl.datascript.qualified-schema-test :as public-schema-test]
+            [eacl.datascript.schema :as datascript-schema]
+            [eacl.schema.qualification-admission :as admission]
+            [eacl.schema.relation-allowance :as allowance]
             [eacl.datomic.qualified-write-test :as datomic-write-test]
             [eacl.datascript.qualifiers :as datascript-qualifiers]
             [eacl.relationships.mutations :as mutations]
@@ -62,7 +66,8 @@
     (count @events)))
 
 (defn mutation-cases []
-  (let [qualify qualification/qualify identity qualification/exact-reuse-identity
+  (let [plan-schema datascript-schema/plan-schema-replacement
+        qualify qualification/qualify identity qualification/exact-reuse-identity
         fetch reducer/adapter-fetch-fn descriptor scan-cache/descriptor-key
         snapshot-opts @#'orchestration/snapshot-opts
         head-evidence @#'seekable/head-evidence
@@ -376,6 +381,25 @@
                                             (let [[value next-state] (stream-next ctx state)]
                                               (if (and value (evidence/no? (get next-state :evidence true)))
                                                 (recur next-state) [value next-state]))))}}
+     :schema-admission-omits-evaluator
+     {:gate #'public-schema-test/schema-admission-requires-evaluator-before-writes-or-empty-reads
+      :redefs {#'admission/schema! (fn [schema _ publication] (admission/require-publication! publication) schema)}}
+     :schema-admission-omits-publication-capability
+     {:gate #'public-schema-test/qualified-publication-capability-is-required-at-schema-boundaries
+      :redefs {#'admission/require-publication! clojure.core/identity}}
+     :warm-answer-bypasses-publication-capability
+     {:gate #'public-schema-test/unsupported-publication-is-rejected-before-a-warm-answer
+      :redefs {#'qualification/require-publication! (constantly true)}}
+     :schema-tightening-ignores-stored-qualifiers
+     {:gate #'public-write-test/schema-alternatives-preserve-relation-identities-and-retained-data
+      :redefs {#'allowance/validate-existing! (constantly true)}}
+     :schema-alternatives-retract-retained-relation
+     {:gate #'public-write-test/schema-alternatives-preserve-relation-identities-and-retained-data
+      :redefs {#'allowance/entity-deletions :retractions}}
+     :schema-tightening-omits-relation-commit-fence
+     {:gate #'public-write-test/schema-alternatives-preserve-relation-identities-and-retained-data
+      :redefs {#'datascript-schema/plan-schema-replacement
+               (fn [db source options] (assoc (plan-schema db source options) :relation-commit-guards []))}}
      :recursive-membership-stops-before-certificate-convergence
      {:gate #'recursive-bridge/qualified-positive-scc-refinement-and-temporal-stability
       :redefs {#'recursive/enqueue-evidence!
@@ -386,7 +410,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 71 (count cases)))
+    (is (= 77 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

@@ -7,6 +7,7 @@
             [eacl.caveats.definition :as definition]
             [eacl.caveats.evaluator :as evaluator]
             [eacl.caveats.jvm :as jvm]
+            [eacl.schema.qualification-admission :as admission]
             [eacl.caveats.partial :as partial]
             [eacl.relationships.qualifier :as qualifier]
             [exoscale.cel.expr :as expr]
@@ -140,3 +141,10 @@
              ["\"x\".contains(m.k)" {"m" [:map :string :string]}]]]
       (is (= {:outcome :error :reason :missing-map-key} (check engine source parameters {"m" {}} {})))
       (is (= {:outcome :true} (check engine (str "(" source ") || true") parameters {"m" {}} {}))))))
+
+(deftest registered-jvm-evaluator-satisfies-caveated-schema-admission
+  (let [schema {:relations [{:eacl.relation/caveats [[:eacl.caveat/name "enabled"]]
+                             :eacl.relation/allows-unqualified? false}]}]
+    (is (identical? schema
+                    (admission/schema! schema (evaluator/default-evaluator)
+                                       (admission/publication-descriptor :prepared))))))

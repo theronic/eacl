@@ -38,11 +38,21 @@
     (->Qualification time (context/value prepared) evaluator entity version basis cache
                      (delay (volatile! {})) lookup prepared)))
 
+(defn require-publication! [adapter]
+  ;; Check before any answer/cache route, including empty or ordinary edges.
+  ;; Request context construction releases its selected snapshot on failure.
+  (when-not (some backend/qualified-publication-capabilities
+                  (:qualified-publication (backend/capabilities adapter)))
+    (throw (ex-info "Qualified authorization requires a certified native publication strategy."
+                    {:type :eacl/unsupported-capability :eacl/error :eacl/unsupported-capability
+                     :capability :qualified-relationship-publication}))))
+
 (defn request-from-adapter
   "Uses only the selected immutable adapter's bounded, metered data operation.
    Entity contents and their assertion version arrive in the same read."
   [adapter options]
   (backend/require-capability! adapter :qualification data/capability)
+  (require-publication! adapter)
   (request
    (assoc (dissoc options :entity :version)
           :lookup (fn [eid]

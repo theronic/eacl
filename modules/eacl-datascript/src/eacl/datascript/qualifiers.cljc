@@ -1,18 +1,14 @@
 (ns eacl.datascript.qualifiers
   "Certified prepared-reference publication for explicitly non-serving data."
-  (:require [datascript.core :as ds]
+  (:require [eacl.datascript.db :as native-db]
+            [datascript.core :as ds]
             [eacl.datascript.schema :as schema]
-            [eacl.relationships.staged :as staged]))
+            [eacl.relationships.staged :as staged]
+            [eacl.schema.qualification-admission :as admission]))
 
-(defn- facts [database eid]
-  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (ds/datoms database :eavt eid)))
+(defn- facts [database eid] (native-db/entity-facts database eid))
 
-(defn- entity [database eid]
-  (let [rows (facts database eid)]
-    (when (seq rows)
-      (reduce (fn [result [a v]]
-                (if (= :eacl.relation/caveats a) (update result a (fnil conj #{}) v) (assoc result a v)))
-              {:db/id eid} rows))))
+(defn- entity [database eid] (native-db/entity-data database eid))
 
 (defn- assert-entity [database eid expected]
   (when-not (= expected (facts database eid)) (staged/error! :qualifier-changed-at-commit))
@@ -79,3 +75,6 @@
   (staged/native-writer
    (merge (planner-api)
           {:snapshot #(ds/db conn) :transact! #(ds/transact! conn %)})))
+
+(defn publication-capability [database]
+  (admission/publication-descriptor :prepared))

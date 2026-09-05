@@ -1086,3 +1086,9 @@
                          (update :reverse inc))
                      @calls)
                   "direct projection helpers do not retain host-owned scan chunks"))))))))
+
+(deftest qualified-publication-contract-is-closed-and-unambiguous
+  (doseq [contract [#{:atomic-inline-v1} #{:atomic-prepared-v1} #{}]]
+    (is (= contract (:qualified-publication (backend/normalize-capabilities :test {:qualified-publication contract})))))
+  (doseq [contract [#{:unknown} #{:atomic-inline-v1 :atomic-prepared-v1} [:atomic-inline-v1]]]
+    (is (some? (error-data #(backend/normalize-capabilities :test {:qualified-publication contract}))))))

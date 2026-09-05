@@ -46,6 +46,7 @@
 
 (def adapter-capabilities
   {:qualification #{qualification-data/capability}
+   :qualified-publication #{:atomic-prepared-v1}
    :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :runtime #{:clj :cljs}})

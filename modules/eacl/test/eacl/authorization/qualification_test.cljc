@@ -49,7 +49,8 @@
 (defn data-adapter [db reads]
   (backend/make-adapter
    {:id :qualification-test :runtime-guards? true
-    :capabilities {:qualification #{data/capability}}
+    :capabilities {:qualification #{data/capability}
+                   :qualified-publication #{:atomic-prepared-v1}}
     :operations
     (assoc (zipmap backend/required-snapshot-operations (repeat (constantly nil)))
            :qualification-data

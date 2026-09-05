@@ -19,6 +19,8 @@
   optional capability declaration."
   :canonical-expression-v1)
 
+(def qualified-publication-capabilities #{:atomic-inline-v1 :atomic-prepared-v1})
+
 (def direct-membership-batch-capability :bounded-aligned-v1)
 (def maximum-direct-membership-batch-width 256)
 
@@ -163,7 +165,7 @@
    :runtime #{}})
 
 (def ^:private known-capability-groups
-  (conj (set (keys empty-capabilities)) :direct-membership-batch :qualification))
+  (conj (set (keys empty-capabilities)) :direct-membership-batch :qualification :qualified-publication))
 
 (def ^:private scan-contract-keys
   #{:strict-order? :unique? :replayable? :strict-progress? :atomic-chunk?})
@@ -312,6 +314,9 @@
         #{direct-membership-batch-capability}}))
     (when (seq (remove #{qualification-data/capability} (:qualification normalized)))
       (invalid-adapter! "Backend declares an unknown qualification data contract." {:backend backend-id}))
+    (when (or (> (count (:qualified-publication normalized)) 1)
+              (seq (remove qualified-publication-capabilities (:qualified-publication normalized))))
+      (invalid-adapter! "Backend declares an unknown or ambiguous qualified publication contract." {:backend backend-id}))
     normalized))
 
 (defn normalize-traversal-execution

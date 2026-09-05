@@ -47,6 +47,8 @@
             [eacl.cache-identity :as cache-identity]
             [eacl.causal-token :as causal-token]
             [eacl.caveats.evaluator :as caveat-evaluator]
+            [eacl.schema.qualification-admission :as qualification-admission]
+            [eacl.schema.expression-resolver :as expression-resolver]
             [eacl.consistency :as consistency-v3]
             [eacl.continuation :as continuation]
             [eacl.cursor :as cursor]
@@ -1392,6 +1394,12 @@
       :request-lineage (:request-lineage opts)
       :populate-cache? (:populate-cache-request? opts true)})))
 
+(defn- qualified-schema! [api db schema evaluator]
+  (qualification-admission/schema!
+   schema evaluator
+   (when-let [capability (:qualified-publication-capability api)]
+     (capability db))))
+
 (defn- request-schema
   "The parsed public schema visible in `db`, for validating one request.
 
@@ -1413,19 +1421,19 @@
                                           {:type :eacl/unsupported-capability
                                            :eacl/error :eacl/unsupported-capability
                                            :capability :qualified-authorization-schema})))
-                      (get-in api [:schema :read-schema]))]
-    (if (and slot
-             (or (some? (:schema-version cache))
-                 (true? (:request-local? cache))))
-      (let [schema
-            (engine/memoized-derived! slot #(read-schema db))
-            names
-            (if catalog-slot
-              (engine/memoized-derived!
-               catalog-slot #(schema-errors/catalog schema))
-              (schema-errors/catalog schema))]
-        (schema-errors/with-catalog schema names))
-      (read-schema db))))
+                      (get-in api [:schema :read-schema]))
+        schema
+        (if (and slot (or (some? (:schema-version cache)) (true? (:request-local? cache))))
+          (let [schema (engine/memoized-derived! slot #(read-schema db))
+                names (if catalog-slot
+                        (engine/memoized-derived! catalog-slot #(schema-errors/catalog schema))
+                        (schema-errors/catalog schema))]
+            (schema-errors/with-catalog schema names))
+          (read-schema db))]
+    ;; Parsed structure is shared; evaluator availability belongs to this client.
+    (when engine/*qualification*
+      (qualified-schema! api db schema (:evaluator engine/*qualification*)))
+    schema))
 
 (defn- authorization-scan-page
   [api opts request-context adapter selected-db cursor-opts filters
@@ -2678,6 +2686,7 @@
   {:backend-id (:backend-id api)
    :entid (:entid api)
    :qualified-plan (:qualified-plan api)
+   :qualified-publication-capability (:qualified-publication-capability api)
    :basis-adapter (:basis-adapter api)
    :basis-adapter-config-keys (:basis-adapter-config-keys api)
    :native-with (:native-with api)
@@ -3311,7 +3320,8 @@
 
 (defn- qualified-publication-entries
   [api db options updates]
-  (let [schema ((get-in api [:schema :read-schema]) db)
+  (let [schema (qualified-schema! api db ((get-in api [:schema :read-authorization-schema]) db)
+                                  (:caveat-evaluator options))
         resolve-input (get-in api [:impl :relationship-publication-input])
         generation ((get-in api [:schema :generation]) db)
         internal-updates
@@ -3517,6 +3527,16 @@
           (assoc response :retracted-datoms retracted)
           (recur retracted response))))))
 
+(defn- qualified-schema-options [api db source options]
+  (if *qualified-authorization-enabled?*
+    (do
+      (qualified-schema!
+       api db
+       (expression-resolver/validate-schema source (:expression-limits options) {:allow-caveats? true})
+       (:caveat-evaluator options))
+      {:allow-caveats? true})
+    {:allow-caveats? false}))
+
 (defn- write-schema-through!
   [writer {:keys [schema] :as request}]
   (when (= :retain-inert (:orphan-policy request))
@@ -3528,50 +3548,49 @@
        :orphan-policy :retain-inert
        :operation :write-schema!})))
   (let [schema-string schema]
-  (require-operator-expression-writes-enabled! schema-string)
-  (let [{:keys [conn api]} (backend-writer/state writer)
-        options (current-writer-options writer)
-        write-schema! (backend-writer/operation writer :write-schema!)
-        contention? (backend-writer/operation writer :contention?)
-        result
-        (loop [attempt 1]
-          (let [outcome
-                (try
-                  (let [expected-generation
-                        (call-with-writer-basis
-                         writer
-                         (fn [{:keys [db]}]
-                           ((backend-writer/operation
-                             writer :schema-generation)
-                            db)))]
-                    {:value
-                    (write-schema!
-                      conn schema-string
-                      (merge
-                       (select-keys options
-                                    [:token-ttl-seconds :expression-limits])
-                       (select-keys request
-                                    [:allow-empty-schema? :orphan-policy]))
-                      expected-generation)})
-                  (catch #?(:clj Throwable :cljs :default) error
-                    {:error error}))]
-            (if-let [error (:error outcome)]
-              (if (contention? error)
-                (if (< attempt (backend-writer/max-attempts writer))
-                  (recur (inc attempt))
-                  (relationship-contention! writer attempt error))
-                (throw error))
-              (:value outcome))))]
-    (when-not (:eacl.schema/no-op? result)
+    (require-operator-expression-writes-enabled! schema-string)
+    (let [{:keys [conn api]} (backend-writer/state writer)
+          options (current-writer-options writer)
+          write-schema! (backend-writer/operation writer :write-schema!)
+          contention? (backend-writer/operation writer :contention?)
+          result
+          (loop [attempt 1]
+            (let [outcome
+                  (try
+                    (let [{:keys [expected-generation admission]}
+                          (call-with-writer-basis
+                           writer
+                           (fn [{:keys [db]}]
+                             {:expected-generation ((backend-writer/operation writer :schema-generation) db)
+                              :admission (qualified-schema-options api db schema-string options)}))]
+                      {:value
+                       (write-schema!
+                        conn schema-string
+                        (merge
+                         (select-keys options
+                                      [:token-ttl-seconds :expression-limits])
+                         (select-keys request
+                                      [:allow-empty-schema? :orphan-policy]) admission)
+                        expected-generation)})
+                    (catch #?(:clj Throwable :cljs :default) error
+                      {:error error}))]
+              (if-let [error (:error outcome)]
+                (if (contention? error)
+                  (if (< attempt (backend-writer/max-attempts writer))
+                    (recur (inc attempt))
+                    (relationship-contention! writer attempt error))
+                  (throw error))
+                (:value outcome))))]
+      (when-not (:eacl.schema/no-op? result)
       ;; Exact keys already include the new immutable basis and managed keys
       ;; include the certified schema generation. Retaining bounded historical
       ;; entries is safe and avoids an obsolete whole-cache flush.
-      (request-counters/add! :writer-submissions))
-    (merge result
-           (if (:eacl.schema/no-op? result)
-             (write-response api (:eacl.schema/db-after result) options)
-             (committed-write-response
-              api (:eacl.schema/db-after result) options))))))
+        (request-counters/add! :writer-submissions))
+      (merge result
+             (if (:eacl.schema/no-op? result)
+               (write-response api (:eacl.schema/db-after result) options)
+               (committed-write-response
+                api (:eacl.schema/db-after result) options))))))
 
 (defn- speculative-capability!
   [api capability]
@@ -3789,7 +3808,8 @@
            db-before schema
            (merge
             (select-keys (runtime-options runtime) [:expression-limits])
-            (or options {})))
+            (or options {})
+            (qualified-schema-options api db-before schema (runtime-options runtime))))
           tx-data (:speculative-tx-data plan)
           _
           (when-not (and (map? plan)

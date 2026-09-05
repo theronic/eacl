@@ -4,7 +4,8 @@
   Native adapters add storage transaction forms and committed concurrency
   guards, but both committed and speculative replacement consume this exact
   semantic certificate."
-  (:require [clojure.set :as set]))
+  (:require [clojure.set :as set]
+            [eacl.schema.relation-allowance :as relation-allowance]))
 
 (def orphan-policies
   #{:error :retain-inert})
@@ -53,7 +54,7 @@
        :option :orphan-policy
        :value orphan-policy
        :allowed orphan-policies})))
-  (let [relation-retractions (get-in deltas [:relations :retractions])
+  (let [relation-retractions (relation-allowance/entity-deletions (:relations deltas))
         relationship-effects
         (changed-coordinates relation-coordinate (:relations deltas))
         schema-components

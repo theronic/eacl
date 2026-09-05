@@ -150,3 +150,23 @@
   (when (d/entid db :eacl/id)
     (some-> (d/entity db [:eacl/id "schema-string"])
             :eacl/schema-version)))
+
+(defn entity-facts [database eid]
+  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (d/datoms database :eavt eid)))
+
+(defn entity-data [database eid]
+  (let [rows (entity-facts database eid)]
+    (when (seq rows)
+      (reduce (fn [result [a v]]
+                (let [attribute (:db/ident (d/entity database a))]
+                  (if (= :eacl.relation/caveats attribute)
+                    (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
+              {:db/id eid} rows))))
+
+
+(defn avet-tuple-prefix
+  "All stored endpoint rows in one typed Relation partition, including qualifiers."
+  [database attribute prefix]
+  (when-let [attribute-id (d/entid database attribute)]
+    (take-while #(and (= attribute-id (:a %)) (endpoint-pair/value-prefix? (:v %) prefix))
+                (d/seek-datoms database :avet attribute-id (into prefix [0 nil])))))

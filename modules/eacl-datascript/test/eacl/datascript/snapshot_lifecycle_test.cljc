@@ -492,7 +492,7 @@
          (fn [value]
            (some #(identical? value %) forbidden-identities))
          reachable))
-    (is (= #{:backend-id :schema :impl :entid :qualified-plan
+    (is (= #{:backend-id :schema :impl :entid :qualified-plan :qualified-publication-capability
              :basis-adapter :basis-adapter-config-keys
              :native-with :normalize-report-datom
              :schema-storage-datom? :transaction-datom?

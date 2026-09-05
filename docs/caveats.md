@@ -206,3 +206,26 @@ opening an existing protected store; do not bypass its write policy.
 `valid-until-ms` is typed and immutable in this phase but entirely inert for
 authorization. Time-aware checks, conditional permissionship, request context,
 qualified schema activation, and cache/cursor validity enter together in Phase 3.
+
+## Phase 3 schema admission implementation
+
+The Phase 3 branch implements committed and speculative Caveated schema
+admission behind the disabled qualified semantic epoch. When enabled, any
+Caveated Relation requires an evaluator matching `eacl-cel/1`, including empty
+or unvisited Relations. The optional JVM module registers its matching default;
+CLJS requires an explicitly supplied matching evaluator. Unused named Caveats
+and expiry-only schemas remain evaluator-independent.
+
+Datomic and Datalevin advertise certified inline publication. DataScript and
+direct-writer Datahike advertise certified prepared-reference publication.
+Unsupported writer topologies fail with `:eacl/unsupported-capability` before
+qualified authorization cache lookup or schema publication.
+
+Changing a Relation's Caveat alternatives preserves its native eid. Existing
+Relationships, including expired rows, must satisfy the new alternatives;
+otherwise replacement fails with
+`:eacl.schema/relationship-qualifier-in-use`. Concurrent Relationship changes
+are fenced at commit. Datalevin performs schema validation and generation reads
+inside one owned snapshot, then releases that snapshot before submitting the
+schema transaction. The qualified semantic epoch remains disabled while the
+remaining cache, cursor, integrity, and release obligations are completed.

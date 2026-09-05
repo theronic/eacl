@@ -86,6 +86,9 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.datascript.qualified-lookup-test :reload)
      (require 'eacl.relationships.mutations-test :reload)
      (require 'eacl.datascript.qualified-write-test :reload)
+     (require 'eacl.caveats.schema-admission-test :reload)
+     (require 'eacl.schema.relation-allowance-test :reload)
+     (require 'eacl.datascript.qualified-schema-test :reload)
      (require 'eacl.datomic.qualified-write-test :reload)
      (require 'eacl.datahike.qualified-write-test :reload)
      (load-file \"formal/qualified/production_mutations.clj\")
@@ -104,7 +107,10 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.authorization.result-test 'eacl.core-test 'eacl.datascript.qualified-check-test
                                    'eacl.datascript.qualified-lookup-test
                                    'eacl.relationships.mutations-test
-                                   'eacl.datascript.qualified-write-test 'eacl.datomic.qualified-write-test
+                                   'eacl.datascript.qualified-write-test
+                                   'eacl.caveats.schema-admission-test
+                                   'eacl.schema.relation-allowance-test
+                                   'eacl.datascript.qualified-schema-test 'eacl.datomic.qualified-write-test
                                    'eacl.datahike.qualified-write-test
                                    'eacl.formal.qualified.production-mutations)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))

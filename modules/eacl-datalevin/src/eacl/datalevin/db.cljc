@@ -184,3 +184,33 @@
                (fn [{:keys [a] :as datom}]
                  (and (= attr a) (endpoint-pair/value-prefix? (:v datom) prefix)))
                scan)))))))
+
+(defn qualified-relation-datoms
+  "Complete qualified Relation stream in bounded native batches. Callers must
+   consume the stream inside the selected snapshot's ownership scope."
+  [db attr prefix]
+  (letfn [(step [boundary]
+            (lazy-seq
+             (let [rows (ds/seek-datoms db :ave attr
+                                        (if boundary (:v boundary) (into prefix [0 nil]))
+                                        (:e boundary) 1025)
+                   rows (if (and boundary (= [(:e boundary) (:v boundary)]
+                                             [(:e (first rows)) (:v (first rows))]))
+                          (rest rows) rows)
+                   chunk (vec (take-while #(and (= attr (:a %))
+                                                (endpoint-pair/value-prefix? (:v %) prefix)) rows))]
+               (when (seq chunk)
+                 (concat (endpoint-pair/checked-datoms chunk true)
+                         (when (= (count chunk) (count rows))
+                           (step (peek chunk))))))))]
+    (step nil)))
+
+(defn entity-facts [database eid]
+  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (ds/datoms database :eav eid)))
+
+(defn entity-data [database eid]
+  (let [rows (entity-facts database eid)]
+    (when (seq rows)
+      (reduce (fn [result [a v]]
+                (if (= :eacl.relation/caveats a) (update result a (fnil conj #{}) v) (assoc result a v)))
+              {:db/id eid} rows))))

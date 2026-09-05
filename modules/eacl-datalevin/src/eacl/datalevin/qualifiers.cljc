@@ -1,19 +1,15 @@
 (ns eacl.datalevin.qualifiers
   "Certified inline native refs under the embedded store's write policy."
-  (:require [datalevin.core :as d]
+  (:require [eacl.datalevin.db :as native-db]
+            [datalevin.core :as d]
             [eacl.datalevin.db :as db]
             [eacl.datalevin.schema :as schema]
-            [eacl.relationships.staged :as staged]))
+            [eacl.relationships.staged :as staged]
+            [eacl.schema.qualification-admission :as admission]))
 
-(defn- facts [database eid]
-  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (d/datoms database :eav eid)))
+(defn- facts [database eid] (native-db/entity-facts database eid))
 
-(defn- entity [database eid]
-  (let [rows (facts database eid)]
-    (when (seq rows)
-      (reduce (fn [result [a v]]
-                (if (= :eacl.relation/caveats a) (update result a (fnil conj #{}) v) (assoc result a v)))
-              {:db/id eid} rows))))
+(defn- entity [database eid] (native-db/entity-data database eid))
 
 (defn- assert-entity [database eid expected]
   (when-not (= expected (facts database eid)) (staged/error! :qualifier-changed-at-commit))
@@ -77,3 +73,6 @@
                                 (try (d/with-read-snapshot snapshot f)
                                      (finally (d/close-read-snapshot! snapshot)))))
              :transact! #(d/transact! conn % {:datalevin/write-token token})}))))
+
+(defn publication-capability [database]
+  (admission/publication-descriptor :inline))

@@ -240,3 +240,24 @@ The nil fast path is inspected and measured directly. No runtime model evaluatio
 4. Complete production refinement, differential uncached/cached tests, SpiceDB Caveat fixtures, cross-backend conformance, and performance gates.
 5. Upgrade all serving peers to code capable of the new epoch, verify every enabled backend advertises a certified qualifier-publication strategy and evaluator where required, then activate qualified writes/authorization in a coordinated schema/capability change.
 6. Rollback disables qualified writes and returns to the pre-activation database/schema. A database containing qualified Relationships cannot be safely served by Phase 1/2 readers.
+
+### Schema admission and replacement
+
+The disabled qualified epoch now admits named Caveat alternatives through the
+public committed and speculative schema paths. A matching evaluator is required
+when any Relation names a Caveat, even when the requested Relation is ordinary
+or the store has no Relationships. Unused named definitions and expiry-only
+schemas do not require an evaluator. Bundled adapters advertise exactly one
+certified inline or prepared-reference publication contract; request context
+construction checks it before answer-cache lookup. Datahike remote writers do
+not advertise the prepared-reference contract.
+
+A typed Relation keeps its eid when its alternatives change. Replacement checks
+both of its stored endpoint streams, validates exact pair symmetry and qualifier
+contents, and rejects alternatives that invalidate retained data, including
+expired data. Only removed identities are entity retractions. Optional Caveat
+facts are retracted separately, and every changed Relation has a native commit
+guard. Datalevin captures validation, qualifier reads, and commit generations
+inside one owned native read snapshot and releases it before transaction
+submission. Its schema scan consumes bounded AVET batches across the complete
+Relation prefix, preserving rows with equal endpoint tails at batch boundaries.

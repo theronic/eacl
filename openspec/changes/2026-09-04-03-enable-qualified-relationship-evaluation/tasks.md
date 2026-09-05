@@ -27,7 +27,7 @@
 - [x] 4.2 Implement one internal evidence type for true, false, conditional residual/missing fields, and fault; verify canonical bounded encoding/equality across CLJ and supported CLJS paths.
 - [x] 4.3 Extend union, intersection, exclusion, arrow, and recursive evaluators to compose evidence per the green model without duplicating traversal; verify production-vs-model generated differentials.
 - [x] 4.4 Add detailed check/lookup/count result policies and request Caveat context while preserving `can?` true-only-on-definite behavior; verify conditional and fault values never appear as Boolean grants.
-- [ ] 4.5 Enforce evaluator/profile and qualified-writer publication capabilities before serving Caveated schema; verify JVM default, CLJS absent, custom mismatch, prepared-reference backend, and unsupported-writer fixtures.
+- [x] 4.5 Enforce evaluator/profile and qualified-writer publication capabilities before serving Caveated schema; verify JVM default, CLJS absent, custom mismatch, prepared-reference backend, and unsupported-writer fixtures.
 
 ## 5. Activate trusted exclusive expiry
 

@@ -112,6 +112,7 @@
 (def ^:private api
   {:backend-id :datomic
    :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
    :qualified-plan #'qualifiers/plan
    :db d/db
    :entid d/entid
@@ -151,7 +152,7 @@
    {:validate-relationship-operation!
     impl/validate-relationship-operation!
     :relationship-publication-input #'impl/relationship-publication-input
-          :relationship-relation-id impl/relationship-relation-id
+    :relationship-relation-id impl/relationship-relation-id
     :relation-coordinate relation-coordinate
     :tx-update-relationship impl/tx-update-relationship
     :tx-delete-object impl/tx-delete-object

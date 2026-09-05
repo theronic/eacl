@@ -14,6 +14,7 @@
 
 (def adapter-capabilities
   {:qualification #{qualification-data/capability}
+   :qualified-publication #{:atomic-prepared-v1}
    :cursor #{:forward :reverse :opaque :authenticated :encrypted}
    :cache-proofs #{:ordered-generations :snapshot-bound :database-visible}
    :direct-membership-batch #{backend/direct-membership-batch-capability}
@@ -250,7 +251,8 @@
       :identity-contract
       (:identity-contract opts
                           :selected-internal/current-external-injective-v2)
-      :capabilities adapter-capabilities
+      :capabilities (cond-> adapter-capabilities
+                      (not (ddb/direct-writer? db)) (dissoc :qualified-publication))
       :state {:db db
               :commit-id (commit-locator db)
               :parent-commit-ids (parent-locators db)}

@@ -1,20 +1,14 @@
 (ns eacl.datomic.qualifiers
   "Certified inline native tuple-ref publication for non-serving staging."
-  (:require [datomic.api :as d]
+  (:require [eacl.datomic.db :as native-db]
+            [datomic.api :as d]
             [eacl.datomic.db :as db]
-            [eacl.relationships.staged :as staged]))
+            [eacl.relationships.staged :as staged]
+            [eacl.schema.qualification-admission :as admission]))
 
-(defn- facts [database eid]
-  (mapv (fn [datom] [(:a datom) (:v datom) (:tx datom)]) (d/datoms database :eavt eid)))
+(defn- facts [database eid] (native-db/entity-facts database eid))
 
-(defn- entity [database eid]
-  (let [rows (facts database eid)]
-    (when (seq rows)
-      (reduce (fn [result [a v]]
-                (let [attribute (:db/ident (d/entity database a))]
-                  (if (= :eacl.relation/caveats attribute)
-                    (update result attribute (fnil conj #{}) v) (assoc result attribute v))))
-              {:db/id eid} rows))))
+(defn- entity [database eid] (native-db/entity-data database eid))
 
 (defn- generation [database]
   (:eacl/schema-version (d/entity database [:eacl/id "schema-string"])))
@@ -67,3 +61,6 @@
           {:snapshot #(d/db conn)
            :generation-after-reference #(generation (:db-after %))
            :transact! #(deref (d/transact conn %))})))
+
+(defn publication-capability [database]
+  (admission/publication-descriptor :inline))

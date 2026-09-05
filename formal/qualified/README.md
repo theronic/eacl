@@ -79,3 +79,16 @@ Weighted first-discovery propagation is modeled independently as completion-set 
 The production first-discovery bridge adds 34,432 assertions across 3,072 graph cases in both directions, independently checking emitted completion sets, physical-width invariance, and resumed prefixes. Portable conformance adds 309 assertions for cyclic conditional paths, exact root completion, nil-eid fast paths, definite/detailed counts and windows, lookahead exclusion, bounded skipped prefixes, staged memory/work limits, and checkpoint scope. A temporal cycle can change a queued scan's certificate while a physical buffer remains active; its revision must rewind the prefix independently of chunk width. Five controls discard propagated evidence, claim a partial root, omit the evidence bound, repeat a known direct tuple, or reuse an earlier buffer revision. Qualified checkpoints currently require identical basis/time/context/evaluator scope; public temporal pagination remains pending.
 
 First-discovery pages retain sparse result evidence through lookahead, replay, backward windows, and last windows. Pending lookahead has explicit evidence even for timeless true. Missing, faulty, or scope-incompatible checkpoint data becomes a replay miss. Checkpoint keys partition complete qualified request scope and result policy; standalone tokens bind a compact digest of the same scope. The 209 portable page assertions cover retained versus replayed equality, scope isolation, no-repeat lookahead, and malformed retained state. Four controls remove pending evidence, bypass its validation, omit checkpoint scope, or omit standalone token scope. These internal exact-scope tokens do not yet implement the public Relay live-time certificate contract.
+
+Schema admission now checks a matching evaluator for every Caveated Relation,
+including empty and unvisited Relations, and a certified native publication
+strategy before entering qualified answer-cache routes. Named alternatives
+share one typed Relation identity. Schema replacement validates both stored
+endpoint streams and the retained qualifier values before tightening those
+alternatives, keeps the Relation eid, and fences concurrent Relationship
+changes. Datalevin derives validation and commit guards inside one owned read
+snapshot, releases it before submission, and scans large Relation prefixes in
+bounded native batches without truncation. Six production controls omit the
+evaluator, schema or request publication admission, retained-data validation,
+Relation identity retention, or the schema replacement's Relation fence. The
+combined gate has 583,204 assertions and 77 detected production mutations.

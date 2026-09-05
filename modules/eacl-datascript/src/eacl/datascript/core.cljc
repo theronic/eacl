@@ -82,6 +82,7 @@
 (def ^:private api
   {:backend-id :datascript
    :qualified-writer #'qualifiers/writer
+   :qualified-publication-capability #'qualifiers/publication-capability
    :qualified-plan #'qualifiers/plan
    :db ds/db
    :entid ds/entid

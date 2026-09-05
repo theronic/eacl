@@ -3,8 +3,10 @@
             [datomic.api :as d]
             [eacl.caveats.publication-batch-contract :as batch]
             [eacl.caveats.public-write-contract :as public]
+            [eacl.caveats.schema-allowance-contract :as allowance]
             [eacl.authorization.qualification-test :as fixtures]
             [eacl.datomic.core :as api]
+            [eacl.datomic.caveat-schema-test :as schema-races]
             [eacl.datomic.schema :as schema]
             [eacl.datomic.qualifiers :as qualifiers]))
 
@@ -29,4 +31,14 @@
       (public/check! {:client (api/make-client conn {:clock #(deref now)
                                                      :caveat-evaluator (fixtures/portable-evaluator (atom 0))})
                       :writer #(qualifiers/writer conn) :entid d/entid :now now})
+      (finally (d/release conn) (d/delete-database uri)))))
+
+(deftest schema-alternatives-preserve-relation-identities-and-retained-data
+  (let [uri (str "datomic:mem://schema-allowance-" (random-uuid))
+        _ (d/create-database uri) conn (d/connect uri)]
+    (try
+      (schema/install! conn)
+      (allowance/check! {:client (api/make-client conn {:caveat-evaluator (fixtures/portable-evaluator (atom 0))})
+                         :writer #(qualifiers/writer conn)
+                         :read-schema schema/read-schema :interleave! schema-races/interleave! :entid d/entid})
       (finally (d/release conn) (d/delete-database uri)))))
