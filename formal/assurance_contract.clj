@@ -136,7 +136,10 @@
                    'eacl.caveats.values/decode-context
                    'eacl.caveats.plan/compile-plan
                    'eacl.caveats.plan/decode-plan
-                   'eacl.caveats.partial/evaluate]
+                   'eacl.caveats.partial/evaluate
+                   'eacl.relationships.staged/prepare!
+                   'eacl.relationships.staged/plan-current
+                   'eacl.relationships.staged/cleanup!]
     :theorems [:atomic-qualifier-pair-publication
                :prepared-qualifiers-have-no-authorization-effect
                :immutable-single-owner-qualifier-replacement

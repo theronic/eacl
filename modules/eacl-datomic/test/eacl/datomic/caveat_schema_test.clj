@@ -2,7 +2,9 @@
   (:require [clojure.test :refer [deftest]]
             [datomic.api :as d]
             [eacl.datomic.schema :as schema]
-            [eacl.caveats.persistence-contract :as contract]))
+            [eacl.caveats.persistence-contract :as contract]
+            [eacl.caveats.publication-contract :as publication]
+            [eacl.datomic.qualifiers :as qualifiers]))
 
 (defn interleave! [competitor outer]
   (let [native d/transact armed (atom true)
@@ -17,6 +19,7 @@
         _ (d/create-database uri) conn (d/connect uri)]
     (try
       (schema/install! conn)
+      @(d/transact conn [{:db/ident :app/flag :db/valueType :db.type/long :db/cardinality :db.cardinality/one}])
       (contract/check-persistence!
         {:write! #(schema/write-schema! conn %) :snapshot #(d/db conn) :read-schema schema/read-schema
          :entid d/entid :generation #(get (d/entity % [:eacl/id "schema-string"]) :eacl/schema-version)
@@ -26,4 +29,7 @@
                           {:db (:db-after (d/with db (:speculative-tx-data plan)))
                            :components (:changed-schema-components plan)}))
          :interleave! interleave! :tempid "qualifier" :history-stable? true})
+      (publication/check-publication!
+        {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
+         :entid d/entid :strategy :inline :interleave! interleave!})
       (finally (d/release conn) (d/delete-database uri)))))

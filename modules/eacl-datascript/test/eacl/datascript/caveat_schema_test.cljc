@@ -2,7 +2,9 @@
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [deftest]]
             [datascript.core :as ds]
             [eacl.datascript.schema :as schema]
-            [eacl.caveats.persistence-contract :as contract]))
+            [eacl.caveats.persistence-contract :as contract]
+            [eacl.caveats.publication-contract :as publication]
+            [eacl.datascript.qualifiers :as qualifiers]))
 
 (defn interleave! [competitor outer]
   (let [native ds/transact! armed (atom true)
@@ -13,7 +15,7 @@
       (outer))))
 
 (deftest named-caveat-persistence
-  (let [conn (schema/create-conn)]
+  (let [conn (schema/create-conn {:app/flag {}})]
     (contract/check-persistence!
       {:write! #(schema/write-schema! conn %) :snapshot #(ds/db conn) :read-schema schema/read-schema
        :entid ds/entid :generation schema/current-schema-generation :transact! #(ds/transact! conn %)
@@ -21,4 +23,7 @@
                         (let [plan (schema/plan-schema-replacement db source {})]
                           {:db (:db-after (ds/with db (:speculative-tx-data plan)))
                            :components (:changed-schema-components plan)}))
-         :interleave! interleave! :tempid "qualifier" :history-stable? true})))
+         :interleave! interleave! :tempid "qualifier" :history-stable? true})
+      (publication/check-publication!
+        {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
+         :entid ds/entid :strategy :prepared :interleave! interleave!})))

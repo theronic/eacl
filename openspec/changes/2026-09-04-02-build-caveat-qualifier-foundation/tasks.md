@@ -18,8 +18,8 @@
 - [x] 3.1 Add qualifier format, Caveat ref, canonical context payload, and `valid-until-ms` attributes to bundled backend schemas, plus only the backend-specific creation-version field needed where assertion `t` is unavailable; verify sparse physical shape and backend module isolation.
 - [x] 3.2 Implement canonical qualifier normalization and validation, including empty-to-`nil`, context-without-Caveat rejection, exact time bounds, and unknown-field rejection; verify property tests against the pre-green formal model.
 - [x] 3.3 Exercise each bundled backend's real transaction API with newly allocated qualifier refs inside slot five, including DataScript/CLJS and Datalevin stores; verify and record whether inline allocation resolves to a concrete eid or must be rejected.
-- [ ] 3.4 Implement an explicit qualified-writer capability with certified inline-allocation and prepared-reference strategies; verify the latter precreates only an inert qualifier and the final transaction atomically publishes both halves, Relation stamp, and caller-composed datoms.
-- [ ] 3.5 Implement singly owned immutable qualifier create/replace/delete planners behind internal staged APIs; verify every semantic update uses a fresh qid, never embeds an unresolved lookup ref/tempid, and leaves no one-sided serving state.
+- [x] 3.4 Implement an explicit qualified-writer capability with certified inline-allocation and prepared-reference strategies; verify the latter precreates only an inert qualifier and the final transaction atomically publishes both halves, Relation stamp, and caller-composed datoms.
+- [x] 3.5 Implement singly owned immutable qualifier create/replace/delete planners behind internal staged APIs; verify every semantic update uses a fresh qid, never embeds an unresolved lookup ref/tempid, and leaves no one-sided serving state.
 - [ ] 3.6 Extend integrity, orphan cleanup, and proof-input tooling to report missing, shared, mutable, malformed, asymmetrically referenced, or unattached qualifiers; verify a missing target never aliases `nil` and each corruption fixture fails closed.
 - [x] 3.7 Add Caveat definition schema entities, canonical parameter payloads, source/profile fields, and schema-generation integration; verify identical Relationships share one named definition without expression-source duplication.
 
@@ -27,7 +27,7 @@
 
 - [x] 4.1 Parse top-level typed Caveat declarations and Relation `with caveat` branches while preserving existing grammar/error positions; verify valid, duplicate, unresolved, and malformed fixtures.
 - [x] 4.2 Implement static parameter resolution, Boolean-root checking, selected-profile validation, and schema limits; verify invalid schemas fail before durable replacement.
-- [ ] 4.3 Integrate Caveat additions, updates, and removals with `write-schema!`, schema CAS, historical reads, orphan/reference checks, and speculative schema planning; verify concurrent replacements and retained-reference failures.
+- [x] 4.3 Integrate Caveat additions, updates, and removals with `write-schema!`, schema CAS, historical reads, orphan/reference checks, and speculative schema planning; verify concurrent replacements and retained-reference failures.
 - [x] 4.4 Keep serving activation disabled for Caveated Relation branches and non-`nil` public Relationship writes; verify Phase 2 cannot silently store or serve a qualified edge through current public APIs.
 
 ## 5. Implement the bounded evaluator subsystem

@@ -21,6 +21,17 @@ const reportPath =
   process.env.EACL_PUBLIC_SOURCE_CLOSURE_OUTPUT ??
   "target/formal/verification/public-source-closure.json";
 const roots = [
+  "eacl.relationships.staged/prepare!",
+  "eacl.relationships.staged/plan-current",
+  "eacl.relationships.staged/write!",
+  "eacl.relationships.staged/cleanup!",
+  "eacl.caveats.plan/compile-plan",
+  "eacl.caveats.plan/decode-plan",
+  "eacl.caveats.partial/evaluate",
+  "eacl.datomic.qualifiers/writer",
+  "eacl.datascript.qualifiers/writer",
+  "eacl.datahike.qualifiers/writer",
+  "eacl.datalevin.qualifiers/writer",
   "eacl.engine.v8/can?",
   "eacl.engine.v8/lookup-resources",
   "eacl.engine.v8/lookup-subjects",

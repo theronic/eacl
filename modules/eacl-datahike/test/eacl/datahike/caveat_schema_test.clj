@@ -3,7 +3,9 @@
             [datahike.api :as d]
             [eacl.datahike.db :as db]
             [eacl.datahike.schema :as schema]
-            [eacl.caveats.persistence-contract :as contract]))
+            [eacl.caveats.persistence-contract :as contract]
+            [eacl.caveats.publication-contract :as publication]
+            [eacl.datahike.qualifiers :as qualifiers]))
 
 (defn interleave! [competitor outer]
   (let [native d/transact armed (atom true)
@@ -15,7 +17,7 @@
 
 (deftest named-caveat-persistence
   (doseq [options [{} {:attribute-refs? true}]]
-    (let [conn (schema/create-conn nil options) config (:config (d/db conn))]
+    (let [conn (schema/create-conn [{:db/ident :app/flag :db/valueType :db.type/long :db/cardinality :db.cardinality/one}] options) config (:config (d/db conn))]
       (try
         (contract/check-persistence!
           {:write! #(schema/write-schema! conn %) :snapshot #(d/db conn) :read-schema schema/read-schema
@@ -25,4 +27,7 @@
                           {:db (:db-after (d/with db (:speculative-tx-data plan)))
                            :components (:changed-schema-components plan)}))
          :interleave! interleave! :tempid -101 :history-stable? true})
+      (publication/check-publication!
+        {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
+         :entid db/entid :strategy :prepared :interleave! interleave!})
         (finally (d/release conn) (d/delete-database config))))))

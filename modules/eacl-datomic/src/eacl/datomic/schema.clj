@@ -5,6 +5,7 @@
             [eacl.caveats.definition :as caveat-definition]
             [eacl.datomic.impl.indexed :as impl.indexed]
             [eacl.datomic.storage :as target-storage]
+            [eacl.datomic.qualifier-functions :as qualifier-functions]
             [eacl.relationships.upgrade :as upgrade]
             [eacl.relationships.storage :as relationship-storage]
             [eacl.relationships.legacy-v7 :as legacy-v7]
@@ -49,7 +50,8 @@
 
 (def schema-version-attr-definition
   "Schema-generation stamp. write-schema! asserts a fresh squuid here in the
-  same transaction as any definition change. A connection-backed EACL client
+  same transaction as any definition change. Staged Caveat-reference creation
+  also advances it to serialize against definition removal. A connection-backed EACL client
   reads it once at construction and replaces its one cached generation when
   write-schema! is invoked through that client. Do not edit EACL definitions
   outside write-schema!."
@@ -279,7 +281,7 @@
    #(not (contains? expression-persistence/legacy-flat-attributes
                     (:db/ident %)))
    (into v7-compatible-schema
-         (concat [(second upgrade/metadata-schema) target-storage/basis-guard]
+         (concat [(second upgrade/metadata-schema) target-storage/basis-guard qualifier-functions/assert-facts]
                  caveat-schema/datom-schema))))
 
 (defn install!
