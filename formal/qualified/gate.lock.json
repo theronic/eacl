@@ -8,7 +8,7 @@
   "verificationTimeLimitSeconds": 15,
   "proofResourceLimit": 5000000,
   "verifiedObligations": 71,
-  "assertions": 192863,
+  "assertions": 205151,
   "resourceInputs": {
     "formal/qualified/model.clj": "d0fea4cfa49e51639a242daed8ac4d506a13d2d6aaf0930db9b3e2d6bab529d3",
     "formal/qualified/model_test.clj": "6dc64b4006be889aa33286f713f0215c257d951c77555dbf8b78367a0085060b",
@@ -21,6 +21,8 @@
     "formal/qualified/operator_bridge.clj": "7583c20f0a29e949719368fd67f71ca4167f76fabb0d5c04f0743facf2b32648",
     "modules/eacl-datascript/test/eacl/operator/evaluator_test.cljc": "91f9e18146a4b14e70a1e26707885fec0cac776764652ca8126ed06a6c37db1e",
     "modules/eacl-datascript/test/eacl/operator/vector_evaluator_test.cljc": "0bcbd13f3d0aa4b6ef16170caf19e33eebb1dacef487e00bbecf0e465232fa13",
-    "modules/eacl/test/eacl/authorization/evidence_index_test.cljc": "6880dddab5bf70e1fd14ebf22a7535b00f1687fc75818ffa6eff40fac64b3251"
+    "modules/eacl/test/eacl/authorization/evidence_index_test.cljc": "6880dddab5bf70e1fd14ebf22a7535b00f1687fc75818ffa6eff40fac64b3251",
+    "formal/qualified/recursive_bridge.clj": "c4700e5a72794894091971219a229c815fd61102946702b431cbe1c0a234acc7",
+    "modules/eacl-datascript/test/eacl/operator/recursive_test.cljc": "ba7994d6834206a02622cecae7105fc889ba10b29b0d04469a9ac0e880f9a0c6"
   }
 }

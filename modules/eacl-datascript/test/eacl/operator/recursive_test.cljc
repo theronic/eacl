@@ -3,18 +3,22 @@
              :refer [deftest is testing]]
             [clojure.string :as str]
             [datascript.core :as ds]
+            [eacl.authorization.evidence :as evidence]
             [eacl.cache.key :as cache-key]
             [eacl.core :as eacl]
             [eacl.datascript.backend :as datascript-backend]
             [eacl.datascript.core :as datascript]
             [eacl.datascript.impl :as datascript-impl]
+            [eacl.datascript.qualifiers :as qualifiers]
             [eacl.datascript.schema :as datascript-schema]
             [eacl.engine.v8 :as engine]
             [eacl.execution :as execution]
             [eacl.operator.plan :as plan]
+            [eacl.operator.evaluator-test :as scalar-fixtures]
             [eacl.operator.recursive :as recursive]
             [eacl.operator-engine.oracle :as oracle]
-            [eacl.subproblem-cache :as subproblem]))
+            [eacl.subproblem-cache :as subproblem]
+            [eacl.relationships.staged :as staged]))
 
 (defn- test-exact-key
   [semantic]
@@ -112,7 +116,7 @@
             :entid->object-id
             (fn [snapshot internal-id]
               (:eacl/id (ds/entity snapshot internal-id)))})]
-      {:adapter adapter
+      {:conn conn :db db :adapter adapter
        :public-adapter public-adapter
        :client (datascript/make-client conn {})
        :plan (plan/seal-plan adapter [:folder :allowed])
@@ -933,3 +937,64 @@
                (get-in envelope [:edge :kind])))
         (is (= recursive/checkpoint-version
                (get-in envelope [:edge :recursive-checkpoint-version])))))))
+
+(deftest conditional-cycle-reaches-an-evidence-and-certificate-fixed-point
+  (let [alice (object :user "alice")
+        f0 (object :folder "f0") f1 (object :folder "f1") f2 (object :folder "f2")
+        relationships [(eacl/->Relationship alice :direct f0)
+                       (eacl/->Relationship alice :eligible f1)
+                       (eacl/->Relationship alice :eligible f2)
+                       (eacl/->Relationship f0 :parent f1)
+                       (eacl/->Relationship f1 :parent f2)
+                       (eacl/->Relationship f2 :parent f1)
+                       (eacl/->Relationship alice :banned f2)]
+        {:keys [conn eid]} (seed-schema (str "caveat enabled(flag bool) { flag }\n" recursive-schema) relationships)
+        writer (qualifiers/writer conn)
+        relation (fn [name type] (ds/entid (ds/db conn)
+                                           [:eacl.relation/resource-type+relation-name+subject-type [:folder name type]]))
+        caveat (ds/entid (ds/db conn) [:eacl.caveat/name "enabled"])]
+    (ds/transact! conn [(hash-map :db/id (relation :direct :user)
+                                 :eacl.relation/caveats [caveat]
+                                 :eacl.relation/allows-unqualified? true)])
+    (staged/write! writer :replace [:user (eid alice) (relation :direct :user) :folder (eid f0)] {:caveat caveat})
+    (staged/write! writer :replace [:folder (eid f0) (relation :parent :folder) :folder (eid f1)] {:valid-until-ms 110})
+    (staged/write! writer :replace [:user (eid alice) (relation :banned :user) :folder (eid f2)] {:valid-until-ms 100})
+    (let [db (ds/db conn) adapter (datascript-backend/basis-adapter db {})
+          sealed (plan/seal-plan adapter [:folder :allowed])
+          options (fn [time context]
+                    {:adapter adapter :plan sealed :scope-identity :qualified-cycle
+                     :qualification (scalar-fixtures/qualified-request db time context)
+                     :candidates (mapv (fn [folder] {:direction :forward :subject-type :user
+                                                     :subject-eid (eid alice) :resource-eid (eid folder)})
+                                       [f0 f1 f2])})
+          before (recursive/evaluate-many (options 99 {}))
+          after (recursive/evaluate-many (options 100 {}))
+          granted (recursive/evaluate-many (options 109 {"flag" true}))
+          expired (recursive/evaluate-many (options 110 {}))
+          kinds #(mapv evidence/permissionship (:decisions %))]
+      (is (= [:conditional-permission :conditional-permission :no-permission] (kinds before)))
+      (is (= [nil 110 100] (mapv evidence/valid-until (:decisions before))))
+      (is (= [:conditional-permission :conditional-permission :conditional-permission] (kinds after)))
+      (is (= [nil 110 110] (mapv evidence/valid-until (:decisions after))))
+      (is (every? evidence/has? (:decisions granted)))
+      (is (= [nil 110 110] (mapv evidence/valid-until (:decisions granted))))
+      (is (= [:conditional-permission :no-permission :no-permission] (kinds expired)))
+      (let [store (subproblem/store)]
+        (binding [subproblem/*store* store subproblem/*exact-denotation-key-fn* test-exact-key]
+          (let [cold (recursive/evaluate-cached-many (options 99 {}))
+                warm (recursive/evaluate-cached-many (options 99 {}))
+                later (recursive/evaluate-cached-many (options 100 {}))
+                entries (get-in (subproblem/stats store) [:tiers :denotation :entries])
+                fault (recursive/evaluate-cached-many (options 100 {"flag" "wrong-type"}))]
+            (is (= (:decisions before) (:decisions cold) (:decisions warm)))
+            (is (= 3 (get-in warm [:counters :point-cache-hits])))
+            (is (= (:decisions after) (:decisions later)))
+            (is (every? evidence/fault? (:decisions fault)))
+            (is (= entries (get-in (subproblem/stats store) [:tiers :denotation :entries]))))))
+      (is (nil? (:checkpoint (recursive/evaluate-many (options 100 {"flag" "wrong-type"})))))
+      (is (= (:decisions after)
+             (:decisions (recursive/evaluate-many (assoc (options 100 {}) :checkpoint (:checkpoint after))))))
+      (is (= :invalid-checkpoint
+             (:reason (error-data #(recursive/evaluate-many (assoc (options 101 {}) :checkpoint (:checkpoint after)))))))
+      (is (= :invalid-checkpoint
+             (:reason (error-data #(recursive/evaluate-many (assoc (options 100 {"flag" true}) :checkpoint (:checkpoint after))))))))))

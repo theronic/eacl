@@ -44,10 +44,14 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.operator.vector-evaluator :reload)
      (require 'eacl.authorization.evidence-index :reload)
      (require 'eacl.authorization.evidence-index-test :reload)
+     (require 'eacl.operator.recursive :reload)
+     (require 'eacl.operator.recursive-test :reload)
      (load-file \"formal/qualified/operator_bridge.clj\")
+     (load-file \"formal/qualified/recursive_bridge.clj\")
      (let [r (clojure.test/run-tests 'eacl.formal.qualified.model-test 'eacl.formal.qualified.mutation-test
                                    'eacl.formal.qualified.evidence-bridge 'eacl.formal.qualified.qualification-bridge
-                                   'eacl.formal.qualified.operator-bridge 'eacl.authorization.evidence-index-test)]
+                                   'eacl.formal.qualified.operator-bridge 'eacl.authorization.evidence-index-test
+                                   'eacl.formal.qualified.recursive-bridge)]
        (when (or (pos? (+ (:fail r) (:error r))) (not= $assertions (:pass r)))
          (throw (ex-info \"Qualified finite gate failed or assertion inventory changed\" r)))
        r))" > "$output/finite.log" 2>&1 || { cat "$output/finite.log"; exit 1; }

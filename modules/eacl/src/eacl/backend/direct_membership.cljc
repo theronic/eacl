@@ -293,7 +293,7 @@
                (valid-probe! probe)
                (let [cached (cache-lookup probe)]
                  (cond
-                   (boolean? cached)
+                   (if edges? (or (nil? cached) (edge/valid? cached)) (boolean? cached))
                    (recur (inc index) (assoc! results index cached)
                           misses (inc cache-hits))
 
@@ -366,3 +366,8 @@
    after physical work has been metered, on the same selected request basis."
   [adapter probes]
   (dispatch-impl adapter probes (constantly cache-miss) true))
+
+(defn dispatch-cached-edges
+  "Reuses compact physical results only from the owning immutable request."
+  [adapter probes cache-lookup]
+  (dispatch-impl adapter probes cache-lookup true))

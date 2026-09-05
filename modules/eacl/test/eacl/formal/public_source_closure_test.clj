@@ -51,6 +51,14 @@
 (def invoke-symbols
   '#{backend/invoke eacl.backend.v8/invoke})
 
+(def captured-direct-invokers
+  ;; These fixed-operation helpers preserve the same metering, observer, and
+  ;; runtime-guard boundary as invoke. Their callers supply no operation key.
+  {'backend/direct-match-invoker :direct-match?
+   'eacl.backend.v8/direct-match-invoker :direct-match?
+   'backend/direct-edge-invoker :direct-edge
+   'eacl.backend.v8/direct-edge-invoker :direct-edge})
+
 (defn- invoke-calls
   [[file source] features]
   (mapcat
@@ -59,12 +67,13 @@
        (walk/prewalk
         (fn [node]
           (when (and (seq? node)
-                     (contains? invoke-symbols (first node)))
+                     (or (contains? invoke-symbols (first node))
+                         (contains? captured-direct-invokers (first node))))
             (swap!
              calls
              conj
              {:file (.getPath file)
-              :operation (nth node 2 ::missing)
+              :operation (get captured-direct-invokers (first node) (nth node 2 ::missing))
               :form node}))
           node)
         form)

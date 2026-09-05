@@ -49,7 +49,7 @@ over expiry boundaries, bound/request contexts, malformed facts, allowance,
 version, one-fetch request memoization, and evaluator suppression. The combined
 finite gate also compares the existing scalar and vector operator machines across 93,312
 assertions for demanded intersection, exclusion, and arrow evidence, including
-faults and incomplete certificates. Incremental join tests add 1,341 assertions against independent completion sets and bound updates to one ancestor path. The combined gate has 192,863 assertions.
+faults and incomplete certificates. Incremental join tests add 1,341 assertions against independent completion sets and bound updates to one ancestor path. The recursive production bridge adds 12,288 assertions across all 512 three-node graphs, conditional grants, expiring-ban bases, and future validity of complete certificates. The combined gate has 205,151 assertions.
 Portable evidence tests additionally reject malformed/noncanonical encodings
 and enforce node, depth, work, missing-field, and serialized-size bounds.
 
