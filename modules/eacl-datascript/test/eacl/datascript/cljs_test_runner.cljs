@@ -11,6 +11,7 @@
             [eacl.authorization.result-test]
             [eacl.authorization.qualification-test]
             [eacl.authorization.qualifier-cache-test]
+            [eacl.authorization.temporal-test]
             [eacl.datascript.qualifier-cache-test]
             [eacl.cache.derived-schema-test]
             [eacl.cache.key-test]
@@ -125,6 +126,7 @@
                'eacl.authorization.result-test
                'eacl.authorization.qualification-test
                'eacl.authorization.qualifier-cache-test
+               'eacl.authorization.temporal-test
                'eacl.datascript.qualifier-cache-test
                'eacl.cache.derived-schema-test
                'eacl.cache.key-test

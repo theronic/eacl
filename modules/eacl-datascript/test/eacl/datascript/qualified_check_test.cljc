@@ -109,7 +109,7 @@
           (is (= 5 (count @reads)))
           (is (every? #(= 1 %) (vals (frequencies @reads)))))))))
 
-(deftest exact-point-reuse-does-not-alias-unused-context-time-or-unstamped-mutation
+(deftest certified-point-reuse-does-not-alias-unused-context-or-unstamped-mutation
   (let [{:keys [conn client now check]} (fixture)
         request (assoc check :caveat-context {"flag" true "unused" 1})]
     (binding [orchestration/*qualified-authorization-enabled?* true]
@@ -117,7 +117,7 @@
       (is (:cached? (eacl/check-permission client request)))
       (is (false? (:cached? (eacl/check-permission client (assoc-in request [:caveat-context "unused"] 2)))))
       (reset! now 100)
-      (is (false? (:cached? (eacl/check-permission client request))))
+      (is (:cached? (eacl/check-permission client request)))
       (let [snapshot (eacl/snapshot client)]
         (try
           (reset! now 200)
@@ -131,3 +131,35 @@
         (is (= :eacl.authorization/evaluation-failure
                (:type (errors/error-data #(eacl/check-permission client request)))))
         (is (false? (eacl/can? client request)))))))
+
+(deftest temporal-point-cache-expires-denials-and-retains-permanent-witnesses
+  (let [{:keys [client now check]} (fixture)
+        request (assoc check :permission :both :caveat-context {"flag" true})]
+    (binding [orchestration/*qualified-authorization-enabled?* true]
+      (let [pinned (eacl/snapshot client)]
+        (try
+          (is (false? (:allowed? (eacl/check-permission client request))))
+          (is (:cached? (eacl/check-permission client request)))
+          (reset! now 100)
+          (let [after-ban (eacl/check-permission client request)]
+            (is (:allowed? after-ban))
+            (is (false? (:cached? after-ban))))
+          (reset! now 150)
+          (is (:cached? (eacl/check-permission client request)))
+          (is (false? (eacl/can? pinned request)) "explicit snapshot retains the active ban at time 99")
+          (is (:cached? (eacl/check-permission client request)) "older pinned publication leaves the later interval available")
+          (reset! now 200)
+          (let [after-grant (eacl/check-permission client request)]
+            (is (false? (:allowed? after-grant)))
+            (is (false? (:cached? after-grant))))
+          (reset! now 201)
+          (is (:cached? (eacl/check-permission client request)))
+          (finally (eacl/release! pinned))))))
+  (let [{:keys [client now check]} (fixture)
+        request (assoc check :permission :either :caveat-context {"flag" false})]
+    (binding [orchestration/*qualified-authorization-enabled?* true]
+      (is (eacl/can? client request))
+      (reset! now 200)
+      (let [permanent (eacl/check-permission client request)]
+        (is (:allowed? permanent))
+        (is (:cached? permanent) "the proven permanent writer survives the irrelevant member expiry")))))

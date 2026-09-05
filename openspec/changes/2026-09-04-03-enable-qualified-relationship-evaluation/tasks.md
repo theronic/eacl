@@ -38,9 +38,9 @@
 
 ## 6. Make result and subproblem caches temporally coherent
 
-- [ ] 6.1 Carry certified temporal intervals through production evidence and operator results using the proven witness rules; verify every reused value's interval contains the request time.
+- [x] 6.1 Carry certified temporal intervals through production evidence and operator results using the proven witness rules; verify every reused value's interval contains the request time.
 - [ ] 6.2 Extend exact/managed cache keys and authenticated values with evaluator/profile, canonical request-context identity, result kind, qualifier proof inputs, and temporal certificate; verify no definite/conditional/time alias.
-- [ ] 6.3 Make resident-but-expired certificates ordinary misses independent of timers/eviction callbacks; verify disabled/delayed eviction cannot change results.
+- [x] 6.3 Make resident-but-expired certificates ordinary misses independent of timers/eviction callbacks; verify disabled/delayed eviction cannot change results.
 - [ ] 6.4 Update scan-response, range, answer, denotation, and recursive checkpoint reuse only where their semantic value depends on qualification; verify unrelated structural caches are not needlessly invalidated.
 - [ ] 6.5 Add cached-vs-uncached differential traces spanning qualifier touch, Caveat schema change, context change, expiry without write, expired ban, and source lifecycle reset; verify exact equality or mapped fault.
 

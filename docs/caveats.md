@@ -283,3 +283,25 @@ cross-basis hits still perform bounded native content reads. This detects
 unstamped in-place mutations, deletion and entity reuse without scanning the
 graph for reverse ownership. Expiry and Caveat evaluation run for each request;
 neither Boolean decisions nor conditional evidence enter this decode cache.
+
+## Phase 3 point-answer validity intervals
+
+Point checks retain their completed evidence with its original evaluation time,
+exclusive deadline, completeness and permissionship. On the same immutable
+basis and canonical request/evaluator scope, a later check may reuse that answer
+only within its certified interval. A permanent decisive witness can provide an
+unbounded interval. An incomplete certificate permits only the original time
+and exact basis. Cache key separation still covers every supplied context field,
+including fields not used by the selected Caveat.
+
+Reaching an interval's deadline is a cache miss even when the entry remains in
+memory. EACL recomputes and may replace the expired interval; an expiring ban can
+therefore change a denial into a grant without any database write. Replacement
+compares the expected immutable entry atomically. An older pinned snapshot may
+recompute its original answer but cannot displace a newer interval under the
+same cache key. Token lifetimes and cursor continuation remain separate checks.
+
+Cross-basis qualified answer reuse remains disabled pending its complete writer
+and dependency proofs. Lookup, count, range, and checkpoint caches retain their
+existing exact-time scope until their temporal continuation certificates are
+integrated. The release gate remains disabled throughout these steps.

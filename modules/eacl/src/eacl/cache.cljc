@@ -5,6 +5,7 @@
   only a bounded partial map of opaque keys to immutable completed values;
   misses compute independently and publication never owns computation."
   (:require [eacl.authorization.result :as authorization-result]
+            [eacl.authorization.temporal :as temporal]
             [eacl.backend.v8 :as backend]
             [eacl.cache-identity :as cache-identity]
             [eacl.cache.key :as cache-key]
@@ -1045,9 +1046,11 @@
   (and (map? semantic-key)
        (= operation (:operation semantic-key))
        (case operation
-         :can? (if (:qualification semantic-key)
-                 (authorization-result/cache-value? value)
-                 (boolean? value))
+         :can? (cond
+                 (= temporal/point-format (:temporal-answer-format semantic-key))
+                 (and (:qualification semantic-key) (temporal/point-answer-valid? value))
+                 (:qualification semantic-key) (authorization-result/cache-value? value)
+                 :else (boolean? value))
          :read-relationships (and (page-answer? value)
                                   (or (nil? (:qualification semantic-key))
                                       (every? rendered-relationship-shape? (:data value))))
@@ -1232,17 +1235,18 @@
         nil))))
 
 (defn- lookup-answer
-  [subproblem-store key]
-  (some-> (subproblem/lookup!
-           subproblem-store :answer key)
+  [subproblem-store key eligible?]
+  (some-> (if eligible?
+            (subproblem/lookup-eligible! subproblem-store :answer key eligible?)
+            (subproblem/lookup! subproblem-store :answer key))
           :value))
 
 (defn- lookup-managed-answer
-  [subproblem-store key requested-revision]
+  [subproblem-store key requested-revision temporal? evaluation-time-ms]
   (some-> (subproblem/lookup-eligible!
            subproblem-store :answer key
-           #(managed-answer-causally-eligible?
-             requested-revision %))
+           #(and (managed-answer-causally-eligible? requested-revision %)
+                 (or (not temporal?) (temporal/reusable? (:value %) evaluation-time-ms false))))
           :value))
 
 (defn- record-publication!
@@ -1260,7 +1264,12 @@
    store
    (subproblem/publish!
     subproblem-store :answer key
-    {:valid? answer-entry-valid?}
+    (cond-> {:valid? answer-entry-valid?}
+      (= temporal/point-format (get-in entry [:value :format]))
+      (assoc :replace? (fn [prior next]
+                         (and (= (:computed-revision prior) (:computed-revision next))
+                              (= (:computed-exact-locator prior) (:computed-exact-locator next))
+                              (temporal/supersedes? (:value prior) (:value next))))))
     entry)))
 
 (defn- cache-hit-result
@@ -1381,7 +1390,7 @@
   "Resolves an ordinary request exact-first, then by one complete managed key."
   [store
    {:keys [exact-basis-key cache-lifecycle managed-key-fn populate-cache?
-           populate-exact?]
+           populate-exact? evaluation-time-ms]
     :or {populate-cache? true
          populate-exact? true}}
    semantic-key compute]
@@ -1396,7 +1405,10 @@
           lifecycle (or cache-lifecycle @(:lifecycle store))
           subproblem-store (:subproblems lifecycle)
           exact-key (exact-answer-key exact-basis-key semantic-key)
-          exact-entry (lookup-answer subproblem-store exact-key)]
+          temporal? (= temporal/point-format (:temporal-answer-format semantic-key))
+          exact-entry (lookup-answer subproblem-store exact-key
+                                     (when temporal?
+                                       #(temporal/reusable? (:value %) evaluation-time-ms true)))]
       (if exact-entry
         (cache-hit-result store :exact-basis exact-entry)
         (if-not (execution/cache-stage-available?)
@@ -1410,7 +1422,7 @@
                 managed-entry
                 (when managed-key
                   (lookup-managed-answer
-                   subproblem-store managed-key revision))]
+                   subproblem-store managed-key revision temporal? evaluation-time-ms))]
             (if managed-entry
               (do
                 (when (and populate-cache? populate-exact?)
@@ -1451,7 +1463,7 @@
 (defn resolve-managed-read-only!
   "Consults only a causally valid managed key; a miss computes without writes."
   [store
-   {:keys [cache-lifecycle snapshot-order managed-source managed-key-fn]}
+   {:keys [cache-lifecycle snapshot-order managed-source managed-key-fn evaluation-time-ms]}
    semantic-key compute]
   (if-not (and (basis-cache? store)
                (proof-frame/generation? snapshot-order)
@@ -1468,7 +1480,8 @@
               entry
               (when managed-key
                 (lookup-managed-answer
-                 subproblem-store managed-key snapshot-order))]
+                 subproblem-store managed-key snapshot-order
+                 (= temporal/point-format (:temporal-answer-format semantic-key)) evaluation-time-ms))]
           (if entry
             (cache-hit-result store :managed-current entry)
             (uncached-result store compute)))))))

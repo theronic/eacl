@@ -618,3 +618,21 @@
             (ex-data error)))]
     (is (= :eacl/invalid-config (:type operation-error)))
     (is (= [:weight-fn] (:unknown-keys operation-error)))))
+
+(deftest conditional-publication-does-not-overwrite-a-concurrent-replacement
+  (let [store (subproblem/store small-options)
+        key (storage-key :answer :temporal-race)
+        tier (get-in store [:tiers :answer])
+        old {:time 1} concurrent {:time 3} candidate {:time 2}]
+    (subproblem/publish! store :answer key accept-any-publication old)
+    (let [result (subproblem/publish!
+                  store :answer key
+                  {:valid? map?
+                   :replace? (fn [prior next]
+                               (is (identical? old prior))
+                               (is (identical? candidate next))
+                               (is (lru/replace-if! tier key old concurrent))
+                               true)}
+                  candidate)]
+      (is (false? (:published? result)))
+      (is (= concurrent (:value (subproblem/lookup! store :answer key)))))))

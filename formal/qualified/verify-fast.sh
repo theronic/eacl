@@ -43,6 +43,8 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
      (require 'eacl.authorization.qualification :reload)
      (require 'eacl.authorization.qualification-test :reload)
      (require 'eacl.authorization.qualifier-cache-test :reload)
+     (require 'eacl.authorization.temporal-test :reload)
+     (load-file \"formal/qualified/temporal_bridge.clj\")
      (require 'eacl.datascript.qualifier-cache-test :reload)
      (load-file \"formal/qualified/qualification_bridge.clj\")
      (require 'eacl.backend.v8 :reload)
@@ -108,6 +110,7 @@ sh bin/ci-nrepl-eval "$EACL_NREPL_PORT" \
                                    'eacl.formal.qualified.legacy-lookup-bridge
                                    'eacl.authorization.data-test 'eacl.authorization.qualification-test
                                    'eacl.authorization.qualifier-cache-test 'eacl.datascript.qualifier-cache-test
+                                   'eacl.authorization.temporal-test 'eacl.formal.qualified.temporal-bridge
                                    'eacl.authorization.context-test 'eacl.datascript.caveat-context-test
                                    'eacl.authorization.result-test 'eacl.core-test 'eacl.datascript.qualified-check-test
                                    'eacl.datascript.qualified-lookup-test

@@ -65,6 +65,6 @@
           (with-redefs [qualifier/decode (fn [& args] (swap! decodes inc) (apply decode args))]
             (dotimes [_ 2]
               (swap! now inc)
-              (is (true? (eacl/can? client (assoc check :caveat-context {"flag" true})))))
+              (is (true? (eacl/can? client (assoc check :caveat-context {"flag" true} :populate-cache? false)))))
             (is (= 2 @decodes))))))
     (is (cache/cache? (:qualifier-decode-cache (cache-state (datascript/make-client conn {:qualifier-cache {:max-entries 3}})))))))

@@ -115,3 +115,16 @@ context/expiry evaluation, unchanged-marker mutation, deletion, source reset,
 capacity, and read-only/disabled cache controls. Five controls omit native
 content, definition content, lifecycle, Relation proof or exact native basis.
 The combined gate has 584,191 assertions and 88 detected production mutations.
+
+Completed point answers now carry their evidence, original evaluation time,
+exclusive deadline, completeness and result kind. Exact-basis reuse checks time
+on every resident hit; completeness is required for a later time. Five production
+controls bypass resident interval validation, claim missing completeness, detach
+the certificate from evidence, allow older publication to displace a newer
+interval, or erase an expiring-ban witness. The independent reuse-model bridge
+adds 432 comparisons; portable acceptance/retention tests add 886 assertions.
+Native checks cover ban expiry, a permanent decisive witness, unchanged context
+scope and pinned evaluation. A cache publication race test verifies conditional
+replacement cannot overwrite a concurrent winner. The combined qualified gate
+has 585,532 assertions and 93 detected production mutations. Public page/cursor
+intervals and managed qualified result proof integration remain pending.

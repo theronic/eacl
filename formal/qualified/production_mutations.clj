@@ -18,6 +18,8 @@
             [eacl.authorization.evidence-test :as evidence-test]
             [eacl.authorization.qualification :as qualification]
             [eacl.authorization.qualifier-cache :as qualifier-cache]
+            [eacl.authorization.temporal :as temporal]
+            [eacl.authorization.temporal-test :as temporal-test]
             [eacl.authorization.qualifier-cache-test :as qualifier-cache-test]
             [eacl.datascript.qualifier-cache-test :as public-qualifier-cache-test]
             [eacl.authorization.qualification-test :as qualification-test]
@@ -89,6 +91,9 @@
         check-stable stable-route/check-eids
         validate-stable @#'stable-route/validate-known-witness!
         aggregate batch/aggregate-counters
+        reusable? temporal/reusable?
+        point-answer temporal/point-answer
+        lookup-answer @#'cache/lookup-answer
         content-key qualifier-cache/content-key
         exact-key qualifier-cache/exact-key
         collect data/collect
@@ -111,7 +116,22 @@
         plan-entry @#'staged/plan-entry
         plan-batch staged/plan-batch
         write-relationship! core/write-relationship!]
-    {:qualifier-cache-omits-native-content
+    {:temporal-point-resident-lookup-ignores-interval
+     {:gate #'temporal-test/resident-expiration-is-a-miss-and-later-publication-replaces-the-interval
+      :redefs {#'cache/lookup-answer (fn [store key _] (lookup-answer store key nil))}}
+     :temporal-point-incomplete-certificate-becomes-complete
+     {:gate #'temporal-test/expired-bans-and-incomplete-certificates-never-reuse-a-stale-decision
+      :redefs {#'temporal/reusable? (fn [answer time exact?] (reusable? (assoc answer :complete? true) time exact?))}}
+     :temporal-point-certificate-detaches-from-evidence
+     {:gate #'temporal-test/certificate-boundaries-and-completeness-are-independent-of-retention
+      :redefs {#'temporal/point-answer-valid? (constantly true)}}
+     :temporal-point-older-publication-displaces-newer-interval
+     {:gate #'temporal-test/resident-expiration-is-a-miss-and-later-publication-replaces-the-interval
+      :redefs {#'temporal/supersedes? (constantly true)}}
+     :temporal-point-loses-expiring-ban-witness
+     {:gate #'public-point-test/temporal-point-cache-expires-denials-and-retains-permanent-witnesses
+      :redefs {#'temporal/point-answer (fn [time value] (point-answer time (evidence/with-certificate value nil true)))}}
+     :qualifier-cache-omits-native-content
      {:gate #'qualifier-cache-test/complete-content-proofs-detect-unstamped-mutations-and-deletion
       :redefs {#'qualifier-cache/content-key (fn [basis rid qid version _ named relation]
                                                (content-key basis rid qid version nil named relation))}}
@@ -469,7 +489,7 @@
 
 (deftest production-mutations-are-killed-by-conformance-gates
   (let [cases (mutation-cases)]
-    (is (= 88 (count cases)))
+    (is (= 93 (count cases)))
     (doseq [[id {:keys [gate redefs]}] (sort-by key cases)]
       (is (zero? (failures gate)) (str id " unmodified gate must pass"))
       (is (pos? (with-redefs-fn redefs #(failures gate))) (str id " must be detected")))))

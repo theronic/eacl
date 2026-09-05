@@ -38,6 +38,7 @@
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
             [eacl.authorization.qualifier-cache :as qualifier-cache]
+            [eacl.authorization.temporal :as temporal]
             [eacl.authorization.result :as authorization-result]
             [eacl.authorization.filters :as authorization-filters]
             [eacl.backend.source :as source]
@@ -1009,32 +1010,32 @@
                   @request-proof-frame-delay relation-ids)))))
         evaluate-with
         (fn [thunk]
-           (execution/check! contract :schema-plan)
-           (let [value
-                 (binding [engine/*schema-cache* @schema-cache
-                           expression-persistence/*structural-cache*
-                           (:expression-metrics @schema-cache)
-                           expression-persistence/*expression-limits*
-                           (:expression-limits opts)
-                           engine/*proof-frame* @request-proof-frame-delay
-                           engine/*request-lineage*
-                           (:request-lineage opts)
-                           engine/*request-frame*
-                           request-frame-descriptor
-                           engine/*recursive-traversal-limits*
-                           (:recursive-traversal-limits opts)
-                           engine/*service-admission*
-                           (:service-admission opts)
-                           engine/*evaluation-mode*
-                           (:evaluation contract)
-                           execution/*contract* contract
-                           subproblem/*decision-kernel*
-                           (:decision-kernel opts)]
-                   (thunk))]
-             (execution/check! contract :semantic-evaluation)
-             (if (and engine/*qualification* (= :can? operation))
-               (evidence/encode (evidence/throw-if-fault! value))
-               value)))
+          (execution/check! contract :schema-plan)
+          (let [value
+                (binding [engine/*schema-cache* @schema-cache
+                          expression-persistence/*structural-cache*
+                          (:expression-metrics @schema-cache)
+                          expression-persistence/*expression-limits*
+                          (:expression-limits opts)
+                          engine/*proof-frame* @request-proof-frame-delay
+                          engine/*request-lineage*
+                          (:request-lineage opts)
+                          engine/*request-frame*
+                          request-frame-descriptor
+                          engine/*recursive-traversal-limits*
+                          (:recursive-traversal-limits opts)
+                          engine/*service-admission*
+                          (:service-admission opts)
+                          engine/*evaluation-mode*
+                          (:evaluation contract)
+                          execution/*contract* contract
+                          subproblem/*decision-kernel*
+                          (:decision-kernel opts)]
+                  (thunk))]
+            (execution/check! contract :semantic-evaluation)
+            (if (and engine/*qualification* (= :can? operation))
+              (temporal/point-answer (:time engine/*qualification*) value)
+              value)))
         evaluate #(evaluate-with compute)
         cacheable?
         (and (:basis-cache-store opts)
@@ -1140,7 +1141,13 @@
                 (proof-frame/resolve!
                  frame (:relation-ids @dependencies))))
             semantic-key
-            (completed-answer-semantic-key opts operation query)
+            (cond-> (completed-answer-semantic-key opts operation query)
+              (and engine/*qualification* (= :can? operation))
+              ;; Keep exact source/basis, context and evaluator while removing
+              ;; time from this answer key. Its value now certifies time reuse.
+              (-> (assoc :temporal-answer-format temporal/point-format)
+                  (update :qualification (fn [[format basis _ context evaluator]]
+                                           [format basis context evaluator]))))
             ;; Range reuse: on an exact and managed miss, any window of the
             ;; same walk is served from the retained segments; a window that
             ;; runs past a segment composes its tail with one continuation;
@@ -1236,6 +1243,7 @@
                  (:basis-cache-store opts)
                  {:cache-lifecycle (:cache-lifecycle opts)
                   :exact-basis-key exact-basis-key
+                  :evaluation-time-ms (:time engine/*qualification*)
                   :populate-cache?
                   (:populate-cache-request? opts true)
                   :populate-exact?
@@ -1775,7 +1783,7 @@
                    :cache-basis (:cache-basis answer)
                    :evaluation (get-in opts [:execution-contract :evaluation])}
             engine/*qualification*
-            (merge (authorization-result/check-result (evidence/decode (:value answer))))))
+            (merge (authorization-result/check-result (evidence/decode (get-in answer [:value :value]))))))
         check-point (if engine/*qualification* engine/check-evidence engine/can?)]
     (if public-key?
       ;; Exact lookup precedes the compute closure, so a warm point decision

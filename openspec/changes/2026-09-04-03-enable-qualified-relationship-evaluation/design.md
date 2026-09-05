@@ -305,3 +305,23 @@ Portable and native traces compare warm and uncached outcomes after lifecycle
 reset, deletion, unchanged-marker mutation, Caveat replacement, and Relation
 allowance change. No global ownership scan or authorization result is introduced
 into this structural tier.
+
+### Implemented point-answer temporal acceptance
+
+Point-answer cache keys retain exact source/basis and canonical context/evaluator
+scope but remove request time. Values use the versioned temporal-point envelope:
+original time, exclusive deadline, completeness, permissionship, and canonical
+encoded evidence. Ingress checks the interval and classification against that
+evidence. Resident acceptance checks the captured request time independently of
+retention; missing completeness permits only the original exact basis/time.
+Operator evidence retains its proven witness-aware deadline rather than a blanket
+minimum over every observed qualifier.
+
+A later miss can replace an expired or incomplete interval through a conditional
+expected-value replacement. Validation and replacement eligibility run outside
+atomic storage operations; a concurrent publisher changes the expected identity
+and wins. Older pinned computations do not replace newer intervals. This keeps
+expired-but-resident entries harmless and allows an expired ban to grant on a
+later request without a write. Qualified managed answers remain disabled, and
+page/count/range/checkpoint reuse remains partitioned by exact time pending the
+remaining cache and continuation work.
