@@ -2,6 +2,7 @@
   "Datomic-only entity, schema-definition, and ordered adjacency operations."
   (:require [datomic.api :as d]
             [eacl.relationships.storage :as relationship-storage]
+            [eacl.relationships.edge :as edge]
             [eacl.relationships.endpoint-pair :as endpoint-pair]))
 
 (defn relationship-identity-datoms
@@ -34,7 +35,7 @@
   entity, strictly after an exclusive bound or from an inclusive one. Lazy:
   the routed read seam realizes exactly the chunk it asked for."
   [db endpoint-id attr prefix cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound? include-qualifier?]}
         (relationship-storage/normalize-scan-options cursor-or-options)
         attr-id (d/entid db attr)
         [p0 p1 p2] prefix
@@ -54,9 +55,9 @@
                      (= p0 (nth value 0))
                      (= p1 (nth value 1))
                      (= p2 (nth value 2))))))
-      true endpoint-pair/checked-datoms
+      true (#(endpoint-pair/checked-datoms % include-qualifier?))
       skip-bound? (drop-while #(= bound-eid (nth (:v %) 3)))
-      true (map #(nth (:v %) 3)))))
+      true (map (if include-qualifier? edge/from-datom #(nth (:v %) 3))))))
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
@@ -133,6 +134,16 @@
      (relationship-identity-datoms
       db subject-id relationship-storage/forward-attribute
       (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))))))
+
+(defn direct-edge
+  "Stored compact edge or nil, prior to request qualification."
+  [db subject-type subject-id relation-id resource-type resource-id]
+  (some-> (first (endpoint-pair/checked-datoms
+                 (relationship-identity-datoms
+                  db subject-id relationship-storage/forward-attribute
+                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                 true))
+          edge/from-datom))
 
 (defn schema-version
   [db]

@@ -3,6 +3,7 @@
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datalevin.db :as ddb]
             [eacl.engine.relationships :as relationship-engine]
+            [eacl.relationships.edge :as edge]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
@@ -119,12 +120,12 @@
   inclusive bound and yields one EAV datom per distinct value, so the only
   remaining work is dropping an exclusive boundary row and bounding the
   page; nothing is re-filtered or de-duplicated per value."
-  [datoms bound-eid inclusive-bound? limit]
-  (let [values (into [] (map scan-value) datoms)
+  [datoms bound-eid inclusive-bound? limit include-qualifier?]
+  (let [values (into [] (map (if include-qualifier? edge/from-datom scan-value)) datoms)
         values (if (and (some? bound-eid)
                         (not inclusive-bound?)
                         (pos? (count values))
-                        (= bound-eid (nth values 0)))
+                        (= bound-eid (edge/endpoint (nth values 0))))
                  (subvec values 1)
                  values)]
     (if limit
@@ -141,13 +142,13 @@
 
 (defn- endpoint-scan
   [db endpoint-id attribute prefix cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound? limit]}
+  (let [{:keys [direction bound-eid inclusive-bound? limit include-qualifier?]}
         (relationship-storage/normalize-scan-options cursor-or-options)
         native-limit (inc (or limit ddb/maximum-unpaged-scan-results))]
     (eager-scan-values
      (ddb/eavt-endpoint-prefix
-      db endpoint-id attribute prefix bound-eid direction native-limit)
-     bound-eid inclusive-bound? limit)))
+      db endpoint-id attribute prefix bound-eid direction native-limit include-qualifier?)
+     bound-eid inclusive-bound? limit include-qualifier?)))
 
 (defn subject->resources
   [db subject-type subject-id relation-id resource-type cursor-or-options]
@@ -344,6 +345,16 @@
      db subject-id relationship-storage/forward-attribute
      (endpoint-pair/forward-value
       subject-type relation-id resource-type resource-id))))))
+
+(defn direct-edge
+  "Stored compact edge or nil, prior to request qualification."
+  [db subject-type subject-id relation-id resource-type resource-id]
+  (some-> (first (endpoint-pair/checked-datoms
+                 (ddb/relationship-identity-datoms
+                  db subject-id relationship-storage/forward-attribute
+                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                 true))
+          edge/from-datom))
 
 (defn- reverse-match?
   [db resource-type resource-id relation-id subject-type subject-id]

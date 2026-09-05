@@ -244,9 +244,12 @@
                      (endpoint-pair/identity-prefix value)))
 
 (defn checked-relationship-datoms
-  [db entity attr prefix cursor-eid direction]
+  ([db entity attr prefix cursor-eid direction]
+   (checked-relationship-datoms db entity attr prefix cursor-eid direction false))
+  ([db entity attr prefix cursor-eid direction include-qualifier?]
   (endpoint-pair/checked-datoms
-   (eavt-tuple-prefix db entity attr storage/value-arity prefix cursor-eid direction)))
+   (eavt-tuple-prefix db entity attr storage/value-arity prefix cursor-eid direction)
+   include-qualifier?)))
 
 (defn checked-global-relationship-datoms
   [db attr prefix cursor-eid direction]

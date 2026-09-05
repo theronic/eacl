@@ -8,6 +8,8 @@
             [eacl.datalevin.schema :as schema]
             [eacl.caveats.persistence-contract :as contract]
             [eacl.caveats.publication-contract :as publication]
+            [eacl.relationships.edge-contract :as edge-contract]
+            [eacl.datalevin.impl :as scan-impl]
             [eacl.datalevin.qualifiers :as qualifiers]))
 
 (defn interleave! [competitor outer]
@@ -41,4 +43,15 @@
                              (let [eid (d/entid database [:eacl/id "schema-string"])]
                                [[:db/add eid :eacl.datalevin/schema-generation :db/current-tx]
                                 [:db/add eid :eacl.datalevin/schema-write-fence :db/current-tx]]))}))
+      (finally (d/close conn) (util/delete-files dir)))))
+
+(deftest compact-qualified-scans
+  (let [dir (util/tmp-dir (str "edge-scan-" (random-uuid)))
+        conn (schema/create-conn dir {})
+        token (:write-token (schema/ensure-physical-schema! conn))]
+    (try
+      (edge-contract/check!
+        {:write-schema! #(schema/write-schema! conn % {} (schema/current-schema-generation (d/db conn)) token) :writer #(qualifiers/writer conn)
+         :entid d/entid :forward scan-impl/subject->resources
+         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge})
       (finally (d/close conn) (util/delete-files dir)))))

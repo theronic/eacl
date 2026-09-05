@@ -7,6 +7,8 @@
             [eacl.datascript.schema :as schema]
             [eacl.caveats.persistence-contract :as contract]
             [eacl.caveats.publication-contract :as publication]
+            [eacl.relationships.edge-contract :as edge-contract]
+            [eacl.datascript.impl :as scan-impl]
             [eacl.datascript.qualifiers :as qualifiers]))
 
 (defn interleave! [competitor outer]
@@ -32,3 +34,11 @@
       (publication/check-publication!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid ds/entid :strategy :prepared :interleave! interleave!})))
+
+(deftest compact-qualified-scans
+  (let [conn (schema/create-conn {})]
+      (edge-contract/check!
+        {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
+         :entid ds/entid :forward scan-impl/subject->resources
+         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge})
+))

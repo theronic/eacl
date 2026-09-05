@@ -99,7 +99,7 @@
   the list crossed the threshold and the caller must use the bounded native
   seek. The threshold+1 sample makes that choice without ever mistaking a
   truncated sample for a complete adjacency list."
-  [db entity attr prefix cursor-eid direction native-limit]
+  [db entity attr prefix cursor-eid direction native-limit include-qualifier?]
   (let [sample
         (into []
               (take (inc small-endpoint-scan-threshold))
@@ -114,7 +114,7 @@
             ordered (if (= :desc direction)
                       (rseq matching)
                       matching)]
-        (into [] (take native-limit) (endpoint-pair/checked-datoms ordered))))))
+        (into [] (take native-limit) (endpoint-pair/checked-datoms ordered include-qualifier?))))))
 
 (defn eavt-endpoint-prefix
   "Endpoint datoms for an exact three-component value prefix.
@@ -128,6 +128,8 @@
    (eavt-endpoint-prefix db entity attr prefix cursor-eid direction
                          maximum-unpaged-scan-results))
   ([db entity attr prefix cursor-eid direction native-limit]
+   (eavt-endpoint-prefix db entity attr prefix cursor-eid direction native-limit false))
+  ([db entity attr prefix cursor-eid direction native-limit include-qualifier?]
    (if-not (and (nat-int? entity)
                 (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction)
@@ -135,7 +137,7 @@
      []
      (or
       (small-endpoint-prefix
-       db entity attr prefix cursor-eid direction native-limit)
+       db entity attr prefix cursor-eid direction native-limit include-qualifier?)
       (let [tail  (or cursor-eid
                       (if (= :desc direction) max-eid min-eid))
             bound (endpoint-pair/seek-bound prefix tail direction max-eid)
@@ -148,7 +150,8 @@
                 (fn [{:keys [e a] :as datom}]
                   (and (= entity e) (= attr a)
                        (endpoint-pair/value-prefix? (:v datom) prefix)))
-                scan))))))))
+                scan)
+               include-qualifier?)))))))
 
 (defn avet-endpoint-prefix
   "Endpoint datoms across entities for an exact three-component value prefix,

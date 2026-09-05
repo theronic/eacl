@@ -7,6 +7,8 @@
             [eacl.datomic.schema :as schema]
             [eacl.caveats.persistence-contract :as contract]
             [eacl.caveats.publication-contract :as publication]
+            [eacl.relationships.edge-contract :as edge-contract]
+            [eacl.datomic.db :as scan-impl]
             [eacl.datomic.qualifiers :as qualifiers]))
 
 (defn interleave! [competitor outer]
@@ -37,4 +39,15 @@
       (publication/check-publication!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid d/entid :strategy :inline :interleave! interleave!})
+      (finally (d/release conn) (d/delete-database uri)))))
+
+(deftest compact-qualified-scans
+  (let [uri (str "datomic:mem://edge-scan-" (random-uuid))
+        _ (d/create-database uri) conn (d/connect uri)]
+    (try
+      (schema/install! conn)
+      (edge-contract/check!
+        {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
+         :entid d/entid :forward scan-impl/subject->resources
+         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge})
       (finally (d/release conn) (d/delete-database uri)))))

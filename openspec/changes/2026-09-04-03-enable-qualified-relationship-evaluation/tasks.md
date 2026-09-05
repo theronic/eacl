@@ -9,8 +9,8 @@
 
 ## 2. Carry qualifier refs through one scan engine
 
-- [ ] 2.1 Extend the backend scan contract to expose opposite eid plus optional qualifier eid in an allocation-minimal measured representation; verify order, bounds, uniqueness, and public result shape remain unchanged.
-- [ ] 2.2 Update Datomic, Datahike, DataScript, and Datalevin forward/reverse/direct scan primitives to return aligned qualifier data from the single v9 stream; verify no adapter reads a second Relationship attribute.
+- [x] 2.1 Extend the backend scan contract to expose opposite eid plus optional qualifier eid in an allocation-minimal measured representation; verify order, bounds, uniqueness, and public result shape remain unchanged.
+- [x] 2.2 Update Datomic, Datahike, DataScript, and Datalevin forward/reverse/direct scan primitives to return aligned qualifier data from the single v9 stream; verify no adapter reads a second Relationship attribute.
 - [ ] 2.3 Add one shared edge-qualification seam and retain the existing nil-eid fast path; verify instrumentation records zero qualifier reads and no per-edge qualifier map allocation for ordinary fixtures.
 - [ ] 2.4 Preserve deadlines, cancellation, dimensional work accounting, scan-response cache scope, and continuation heads with the new compact edge shape; verify filtered qualified candidates count against existing bounds and no fill-to-page loop hides incomplete work.
 

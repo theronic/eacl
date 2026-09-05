@@ -202,6 +202,10 @@
          (impl/direct-match?
           db subject-type subject-id relation-id resource-type resource-id))
 
+       :direct-edge
+       (fn [subject-type subject-id relation-id resource-type resource-id]
+         (impl/direct-edge db subject-type subject-id relation-id resource-type resource-id))
+
        :all-permission-nodes
        (fn []
          (->> (ds/datoms

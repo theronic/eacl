@@ -4,6 +4,7 @@
   This is the sole production backend boundary for recursive traversal, Relay
   pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.exact-integer :as exact-integer]
+            [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
 
@@ -61,7 +62,7 @@
 (def optional-snapshot-operations
   "Snapshot operations with fail-closed defaults. They remain visible to the
   certification boundary without making an uncertified snapshot invalid."
-  #{:schema-generation :direct-match-many?})
+  #{:schema-generation :direct-match-many? :direct-edge})
 
 (def ^:private source-authority-operation-keys
   #{:select-current :select-authoritative :select-at-least :select-exact
@@ -105,6 +106,10 @@
    :direct-match?
    #{:iff-forward-scan-membership :iff-reverse-scan-membership
      :snapshot-bound}
+   :direct-edge
+   #{:optional-capability-paired :stored-eid-or-qualified-pair-or-nil
+     :iff-forward-scan-membership :iff-reverse-scan-membership
+     :no-authorization-before-qualification :snapshot-bound}
    :direct-match-many?
    #{:optional-capability-paired :immutable-basis
      :normalized-direct-relation-descriptor
@@ -663,7 +668,8 @@
   (let [backend-id (::id adapter)
         direction (or (:direction options) :asc)
         bound (:bound-eid options)
-        inclusive? (true? (:inclusive-bound? options))]
+        inclusive? (true? (:inclusive-bound? options))
+        compact? (true? (:include-qualifier? options))]
     (when-not (sequential? value)
       (contract-violation!
        backend-id operation-key :finite-sequential-result value))
@@ -675,10 +681,12 @@
            first? true]
       (if-not remaining
         value
-        (let [item (first remaining)]
+        (let [raw-item (first remaining)
+              valid-item? (if compact? (edge/valid? raw-item) (exact-integer/natural? raw-item))
+              item (if (and compact? valid-item?) (edge/endpoint raw-item) raw-item)]
           ;; One combined predicate on the hot path; the failed obligation
           ;; is classified only on the cold violation branch.
-          (when-not (exact-integer/natural? item)
+          (when-not valid-item?
             (contract-violation!
              backend-id operation-key
              (if (exact-integer/exact? item) :nonnegative :exact-integer)
@@ -775,6 +783,12 @@
         (when-not (boolean? value)
           (contract-violation!
            backend-id operation-key :boolean-result value))
+        value)
+
+      :direct-edge
+      (do
+        (when-not (or (nil? value) (edge/valid? value))
+          (contract-violation! backend-id operation-key :compact-edge-or-nil value))
         value)
 
       :direct-match-many?
@@ -1022,12 +1036,14 @@
           options (or (last args) {})
           direction (or (:direction options) :asc)
           bound (:bound-eid options)
-          inclusive? (true? (:inclusive-bound? options))]
+          inclusive? (true? (:inclusive-bound? options))
+          compact? (true? (:include-qualifier? options))
+          guarded? (runtime-guards? adapter)]
       (observe-invocation! :after adapter operation-key)
       (when-not (sequential? value)
         (contract-violation!
          (::id adapter) operation-key :finite-sequential-result :redacted))
-      (when (and (runtime-guards? adapter)
+      (when (and guarded?
                  (not (contains? #{:asc :desc} direction)))
         (contract-violation!
          (::id adapter) operation-key :known-direction :redacted))
@@ -1039,23 +1055,26 @@
           (after-realize!)
           (if-not items
             accumulator
-            (let [item (first items)]
-              (when (runtime-guards? adapter)
-                (when-not (exact-integer/natural? item)
+            (let [item (first items)
+                  valid-item? (or (not guarded?)
+                                  (if compact? (edge/valid? item) (exact-integer/natural? item)))
+                  eid (if (and compact? valid-item?) (edge/endpoint item) item)]
+              (when guarded?
+                (when-not valid-item?
                   (contract-violation!
                    (::id adapter) operation-key :exact-natural :redacted))
                 (when (and (some? previous)
                            (not ((if (= :desc direction) > <)
-                                 previous item)))
+                                 previous eid)))
                   (contract-violation!
                    (::id adapter) operation-key :strict-order :redacted))
                 (when (and (some? bound)
                            (not (within-bound?
-                                 direction bound inclusive? item)))
+                                 direction bound inclusive? eid)))
                   (contract-violation!
                    (::id adapter) operation-key
                    :inclusive-exclusive-bound :redacted)))
-              (recur (rest items) item (step accumulator item)))))))
+              (recur (rest items) eid (step accumulator item)))))))
     (catch #?(:clj Throwable :cljs :default) error
       (observe-invocation! :failed adapter operation-key)
       (throw error))))

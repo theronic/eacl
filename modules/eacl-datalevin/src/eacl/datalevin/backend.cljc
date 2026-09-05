@@ -275,6 +275,14 @@
              % subject-type subject-id relation-id
              resource-type resource-id)))
 
+       :direct-edge
+       (fn [subject-type subject-id relation-id resource-type resource-id]
+         (exact-natural! :subject-id subject-id)
+         (exact-natural! :relation-id relation-id)
+         (exact-natural! :resource-id resource-id)
+         (ddb/with-db snapshot
+           #(impl/direct-edge % subject-type subject-id relation-id resource-type resource-id)))
+
        :all-permission-nodes
        (fn []
          (ddb/with-db

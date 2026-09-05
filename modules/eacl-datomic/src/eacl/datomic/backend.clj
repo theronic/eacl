@@ -380,6 +380,9 @@
        (fn [subject-type subject-id relation-id resource-type resource-id]
          (ddb/direct-match?
           db subject-type subject-id relation-id resource-type resource-id))
+       :direct-edge
+       (fn [subject-type subject-id relation-id resource-type resource-id]
+         (ddb/direct-edge db subject-type subject-id relation-id resource-type resource-id))
        :all-permission-nodes (fn [] (ddb/all-permission-nodes db))
        :proof-frame
        (fn [relation-ids]

@@ -81,6 +81,31 @@
     (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
       (ex-data error))))
 
+(deftest compact-scan-and-direct-guards-preserve-endpoint-order
+  (let [make (fn [values]
+               (backend/make-adapter
+                {:id :test :runtime-guards? true :capabilities {}
+                 :operations (assoc (operation-map)
+                                    :subject->resources (fn [& _] values)
+                                    :direct-edge (fn [& _] [2 100]))}))
+        values [1 [2 100] 3]
+        adapter (make values)
+        options {:direction :asc :include-qualifier? true}
+        scan! (backend/scan-invoker adapter :subject->resources)]
+    (is (= values (scan! :user 10 20 :doc options)))
+    (is (= values (backend/reduce-scan adapter :subject->resources
+                                         [:user 10 20 :doc options] [] {:step conj})))
+    (is (= [2 100] (backend/invoke adapter :direct-edge :user 10 20 :doc 2)))
+    (is (= :eacl/backend-contract-violation
+           (:eacl/error (error-data #(scan! :user 10 20 :doc {})))))
+    (doseq [bad [[[2 100] [2 101]] [[3 100] 1] [[]] [[2 nil]]]]
+      (is (= :eacl/backend-contract-violation
+             (:eacl/error (error-data #((backend/scan-invoker (make bad) :subject->resources)
+                                        :user 10 20 :doc options)))))
+      (is (= :eacl/backend-contract-violation
+             (:eacl/error (error-data #(backend/reduce-scan (make bad) :subject->resources
+                                                               [:user 10 20 :doc options] [] {:step conj}))))))))
+
 #?(:clj
    (deftest default-schema-warning-dedupe-is-concurrent-and-bounded-test
      (let [warning-var
@@ -326,7 +351,7 @@
        (backend/certification-obligations
         :subject->resources)
        :strict-order))
-  (is (= #{:schema-generation :direct-match-many?}
+  (is (= #{:schema-generation :direct-match-many? :direct-edge}
          backend/optional-snapshot-operations))
   (is (every?
        (backend/certification-obligations :schema-generation)

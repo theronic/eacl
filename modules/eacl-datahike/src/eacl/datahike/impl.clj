@@ -4,6 +4,7 @@
             [eacl.datahike.db :as ddb]
             [eacl.datahike.schema :as schema]
             [eacl.engine.relationships :as relationship-engine]
+            [eacl.relationships.edge :as edge]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
@@ -75,8 +76,10 @@
    (relationship-datoms-on-entity
     db entity attr prefix cursor-id :asc))
   ([db entity attr prefix cursor-id direction]
+   (relationship-datoms-on-entity db entity attr prefix cursor-id direction false))
+  ([db entity attr prefix cursor-id direction include-qualifier?]
    (ddb/checked-relationship-datoms
-    db entity attr prefix cursor-id direction)))
+    db entity attr prefix cursor-id direction include-qualifier?)))
 
 (defn- apply-scan-bound
   "Avoid a predicate on every row when a direct native seek has already
@@ -92,29 +95,29 @@
       values
       ;; EAVT contains at most one datom for one [entity attribute value]
       ;; tuple, so the inclusive native seek has at most one boundary row.
-      (if (= bound-eid (first values)) (rest values) values))
+      (if (= bound-eid (some-> (first values) edge/endpoint)) (rest values) values))
 
     :else
     (filter
      (case direction
        :asc (if inclusive-bound?
-              #(<= bound-eid %)
-              #(< bound-eid %))
+              #(<= bound-eid (edge/endpoint %))
+              #(< bound-eid (edge/endpoint %)))
        :desc (if inclusive-bound?
-               #(>= bound-eid %)
-               #(> bound-eid %)))
+               #(>= bound-eid (edge/endpoint %))
+               #(> bound-eid (edge/endpoint %))))
      values)))
 
 (defn- scan-value [datom] (nth (:v datom) 3))
 
 (defn- endpoint-scan
   [db endpoint-id attribute prefix cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound? include-qualifier?]}
         (relationship-storage/normalize-scan-options cursor-or-options)
         datoms (relationship-datoms-on-entity
-                db endpoint-id attribute prefix bound-eid direction)]
+                db endpoint-id attribute prefix bound-eid direction include-qualifier?)]
     (apply-scan-bound
-     db (map scan-value datoms)
+     db (map (if include-qualifier? edge/from-datom scan-value) datoms)
      direction bound-eid inclusive-bound?)))
 
 (defn subject->resources
@@ -324,6 +327,16 @@
     (ddb/relationship-identity-datoms
      db subject-id relationship-storage/forward-attribute
      (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))))))
+
+(defn direct-edge
+  "Stored compact edge or nil, prior to request qualification."
+  [db subject-type subject-id relation-id resource-type resource-id]
+  (some-> (first (endpoint-pair/checked-datoms
+                 (ddb/relationship-identity-datoms
+                  db subject-id relationship-storage/forward-attribute
+                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                 true))
+          edge/from-datom))
 
 (defn- reverse-match?
   [db resource-type resource-id relation-id subject-type subject-id]

@@ -1,0 +1,53 @@
+(ns eacl.relationships.edge-contract
+  (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is]]
+            [eacl.relationships.edge :as edge]
+            [eacl.relationships.staged :as staged]
+            [eacl.relationships.storage :as storage]))
+
+(def schema "definition user {}\ndefinition doc {\n relation viewer: user\n permission view = viewer\n}")
+
+(defn error-type [f]
+  (try (f) nil
+       (catch #?(:clj Throwable :cljs :default) error (:eacl/error (ex-data error)))))
+
+(defn check! [{:keys [write-schema! writer entid forward reverse direct]}]
+  (write-schema! schema)
+  (let [w (writer) native (:native w) snapshot (:snapshot native) tx! (:transact! native)
+        objects (mapv #(hash-map :eacl/id (str "edge/" %)) (range 12))]
+    (tx! objects)
+    (let [db (snapshot)
+          ids (mapv #(entid db [:eacl/id (str "edge/" %)]) (range 12))
+          subject (nth ids 0) other (nth ids 1) resources (vec (sort (subvec ids 2)))
+          relation (entid db [:eacl.relation/resource-type+relation-name+subject-type [:doc :viewer :user]])]
+      (doseq [[i resource] (map-indexed vector resources)]
+        (staged/write! w :create [:user subject relation :doc resource]
+                       (when (even? i) {:valid-until-ms (+ 100 i)})))
+      (staged/write! w :create [:user other relation :doc (first resources)] nil)
+      ((:with-snapshot native)
+       (fn [database]
+         (let [opts {:direction :asc :include-qualifier? true}
+               edges (vec (forward database :user subject relation :doc opts))
+               selected (first resources)
+               first-q (edge/qualifier-id (first edges))]
+           (is (= resources (mapv edge/endpoint edges)))
+           (is (= 5 (count (filter vector? edges))))
+           (is (every? edge/valid? edges))
+           (is (= (vec (rseq edges)) (vec (forward database :user subject relation :doc (assoc opts :direction :desc)))))
+           (doseq [direction [:asc :desc] inclusive? [true false] bound resources]
+             (let [expected (filterv (fn [eid]
+                                       ((if (= direction :asc)
+                                          (if inclusive? >= >) (if inclusive? <= <)) eid bound))
+                                     (if (= direction :asc) resources (vec (rseq resources))))
+                   actual (forward database :user subject relation :doc
+                                   (assoc opts :direction direction :bound-eid bound :inclusive-bound? inclusive?))]
+               (is (= expected (mapv edge/endpoint actual)))))
+           (doseq [[resource e] (map vector resources edges)]
+             (is (= e (direct database :user subject relation :doc resource))))
+           (let [back (vec (reverse database :doc selected relation :user opts))]
+             (is (= (vec (sort [subject other])) (mapv edge/endpoint back)))
+             (is (= first-q (edge/qualifier-id (first (filter #(= subject (edge/endpoint %)) back))))))
+           (is (nil? (direct database :user subject relation :doc other)))
+           (is (= :eacl/unsupported-qualifier
+                  (error-type #(vec (forward database :user subject relation :doc {:direction :asc})))))
+           (is (= first-q (nth (:v (first ((:rows native) database subject storage/forward-attribute
+                                         [:user relation :doc selected nil]))) 4)))))))))

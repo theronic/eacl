@@ -66,6 +66,8 @@
   ([db entity attr prefix]
    (eavt-endpoint-prefix db entity attr prefix nil :asc))
   ([db entity attr prefix cursor-eid direction]
+   (eavt-endpoint-prefix db entity attr prefix cursor-eid direction false))
+  ([db entity attr prefix cursor-eid direction include-qualifier?]
    (if-not (and (nat-int? entity)
                 (endpoint-pair/valid-prefix? prefix)
                 (#{:asc :desc} direction))
@@ -83,7 +85,8 @@
        (if (and first-datom
                 (matching-eavt-prefix? entity attr prefix first-datom))
          (endpoint-pair/checked-datoms
-          (take-while #(matching-eavt-prefix? entity attr prefix %) scan))
+          (take-while #(matching-eavt-prefix? entity attr prefix %) scan)
+          include-qualifier?)
          [])))))
 
 (defn avet-endpoint-prefix

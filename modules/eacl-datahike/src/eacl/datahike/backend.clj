@@ -323,6 +323,10 @@
        (fn [request]
          (direct-membership/direct-match-many? db request))
 
+       :direct-edge
+       (fn [subject-type subject-id relation-id resource-type resource-id]
+         (impl/direct-edge db subject-type subject-id relation-id resource-type resource-id))
+
        :all-permission-nodes
        (fn []
          (->> (ddb/avet-datoms db schema/permission-key-attr)

@@ -3,6 +3,7 @@
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.datascript.db :as ddb]
             [eacl.engine.relationships :as relationship-engine]
+            [eacl.relationships.edge :as edge]
             [eacl.relationships.endpoint-pair :as endpoint-pair]
             [eacl.relationships.filters :as relationship-filters]
             [eacl.relationships.mutations :as relationship-mutations]
@@ -73,7 +74,7 @@
     ;; EAVT contains at most one datom for one [entity attribute value]
     ;; tuple, so an exclusive native seek can expose at most one boundary
     ;; row. Avoid constructing a predicate-bearing lazy sequence per scan.
-    (if (= bound-eid (first values)) (rest values) values)
+    (if (= bound-eid (some-> (first values) edge/endpoint)) (rest values) values)
     values))
 
 (def ^:private scan-value (comp #(nth % 3) :v))
@@ -84,13 +85,13 @@
   wrapper allocation); non-empty scans remain lazy and bounded by their
   caller."
   [db endpoint-id attribute prefix cursor-or-options]
-  (let [{:keys [direction bound-eid inclusive-bound?]}
+  (let [{:keys [direction bound-eid inclusive-bound? include-qualifier?]}
         (relationship-storage/normalize-scan-options cursor-or-options)
         datoms (ddb/eavt-endpoint-prefix
-                db endpoint-id attribute prefix bound-eid direction)]
+                db endpoint-id attribute prefix bound-eid direction include-qualifier?)]
     (if-let [datoms (seq datoms)]
       (apply-exclusive-scan-bound
-       (map scan-value datoms)
+       (map (if include-qualifier? edge/from-datom scan-value) datoms)
        bound-eid inclusive-bound?)
       [])))
 
@@ -301,6 +302,16 @@
      db subject-id relationship-storage/forward-attribute
      (endpoint-pair/forward-value
       subject-type relation-id resource-type resource-id))))))
+
+(defn direct-edge
+  "Stored compact edge or nil, prior to request qualification."
+  [db subject-type subject-id relation-id resource-type resource-id]
+  (some-> (first (endpoint-pair/checked-datoms
+                 (ddb/relationship-identity-datoms
+                  db subject-id relationship-storage/forward-attribute
+                  (endpoint-pair/forward-value subject-type relation-id resource-type resource-id))
+                 true))
+          edge/from-datom))
 
 (defn- reverse-match?
   [db resource-type resource-id relation-id subject-type subject-id]

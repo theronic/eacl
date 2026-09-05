@@ -8,6 +8,8 @@
             [eacl.datahike.schema :as schema]
             [eacl.caveats.persistence-contract :as contract]
             [eacl.caveats.publication-contract :as publication]
+            [eacl.relationships.edge-contract :as edge-contract]
+            [eacl.datahike.impl :as scan-impl]
             [eacl.datahike.qualifiers :as qualifiers]))
 
 (defn interleave! [competitor outer]
@@ -35,4 +37,14 @@
       (publication/check-publication!
         {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
          :entid db/entid :strategy :prepared :interleave! interleave!})
+        (finally (d/release conn) (d/delete-database config))))))
+
+(deftest compact-qualified-scans
+  (doseq [options [{} {:attribute-refs? true}]]
+    (let [conn (schema/create-conn [] options) config (:config (d/db conn))]
+      (try
+      (edge-contract/check!
+        {:write-schema! #(schema/write-schema! conn %) :writer #(qualifiers/writer conn)
+         :entid db/entid :forward scan-impl/subject->resources
+         :reverse scan-impl/resource->subjects :direct scan-impl/direct-edge})
         (finally (d/release conn) (d/delete-database config))))))
