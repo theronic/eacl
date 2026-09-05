@@ -1,5 +1,8 @@
 (ns eacl.caveats.publication-contract
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is]]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
+            [eacl.authorization.qualification-test :as qualification-fixtures]
             [eacl.caveats.persistence-contract :as persistence]
             [eacl.relationships.staged :as staged]
             [eacl.relationships.qualifier-integrity :as integrity]
@@ -61,6 +64,18 @@
       (tx! (:tx-data planned))
       (is (= [[:user relation :doc resource qid]] (forward)))
       (is (= [[:doc relation :user subject qid]] (reverse)))
+      ((:with-snapshot native)
+       (fn [db]
+         (doseq [time [999 1000]]
+           (let [calls (atom 0)
+                 request (qualification/request
+                          {:time time :context {"flag" false}
+                           :evaluator (qualification-fixtures/portable-evaluator calls)
+                           :basis {:source ((:source native) db) :revision ((:revision native) db)}
+                           :entity #(entity db %) :version #((:qualifier-version native) db %)})
+                 result (qualification/qualify request relation [resource qid])]
+             (is (= (< time 1000) (evidence/has? result)))
+             (is (= (if (< time 1000) 1 0) @calls))))))
       (is (= 1 (:app/flag (entity (snapshot) subject))) "caller datoms publish with the pair")
       (let [frame (proof)]
         (is (= :healthy (:status (integrity/report frame))))

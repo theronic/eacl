@@ -1,5 +1,7 @@
 (ns eacl.relationships.edge-contract
   (:require [#?(:clj clojure.test :cljs cljs.test) :refer [is]]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
             [eacl.relationships.edge :as edge]
             [eacl.relationships.staged :as staged]
             [eacl.relationships.storage :as storage]))
@@ -31,6 +33,21 @@
                first-q (edge/qualifier-id (first edges))]
            (is (= resources (mapv edge/endpoint edges)))
            (is (= 5 (count (filter vector? edges))))
+           (doseq [time [99 104]]
+             (let [reads (atom {})
+                   request (qualification/request
+                            {:time time :basis {:source ((:source native) database)
+                                                :revision ((:revision native) database)}
+                             :entity (fn [eid]
+                                       (swap! reads update eid (fnil inc 0))
+                                       ((:entity native) database eid))
+                             :version #((:qualifier-version native) database %)})]
+               (doseq [[i e] (map-indexed vector edges)]
+                 (let [expected (or (odd? i) (< time (+ 100 i)))]
+                   (is (= expected (evidence/has? (qualification/qualify request relation e))))
+                   (is (= expected (evidence/has? (qualification/qualify request relation e))))))
+               (is (every? #(= 1 (get @reads %)) (keep edge/qualifier-id edges)))
+               (is (= 6 (count @reads)))))
            (is (every? edge/valid? edges))
            (is (= (vec (rseq edges)) (vec (forward database :user subject relation :doc (assoc opts :direction :desc)))))
            (doseq [direction [:asc :desc] inclusive? [true false] bound resources]
@@ -50,4 +67,4 @@
            (is (= :eacl/unsupported-qualifier
                   (error-type #(vec (forward database :user subject relation :doc {:direction :asc})))))
            (is (= first-q (nth (:v (first ((:rows native) database subject storage/forward-attribute
-                                         [:user relation :doc selected nil]))) 4)))))))))
+                                          [:user relation :doc selected nil]))) 4)))))))))

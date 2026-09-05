@@ -44,7 +44,10 @@ The production evidence bridge compares reduced ordered decision diagrams with
 the independent completion sets across all four operators, all 16 residuals,
 two authoritative faults, and complete/incomplete temporal certificates. Its
 46,726 assertions cover denotation, deadlines, completeness, missing fields,
-and canonical wire round trips. The combined finite gate has 95,186 assertions.
+and canonical wire round trips. The qualification bridge adds 3,024 assertions
+over expiry boundaries, bound/request contexts, malformed facts, allowance,
+version, one-fetch request memoization, and evaluator suppression. The combined
+finite gate has 98,210 assertions.
 Portable evidence tests additionally reject malformed/noncanonical encodings
 and enforce node, depth, work, missing-field, and serialized-size bounds.
 

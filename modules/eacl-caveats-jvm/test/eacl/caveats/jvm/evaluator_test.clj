@@ -2,15 +2,42 @@
   (:require [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.test :refer [deftest is testing]]
+            [eacl.authorization.evidence :as evidence]
+            [eacl.authorization.qualification :as qualification]
             [eacl.caveats.definition :as definition]
             [eacl.caveats.evaluator :as evaluator]
             [eacl.caveats.jvm :as jvm]
             [eacl.caveats.partial :as partial]
+            [eacl.relationships.qualifier :as qualifier]
             [exoscale.cel.expr :as expr]
             [exoscale.cel.parser :as cel]))
 
 (defn check [engine source parameters context bound]
   (evaluator/evaluate engine (definition/entity "check" parameters source) context bound))
+
+(deftest qualified-edge-uses-native-or-partial-evaluation-before-expiry
+  (let [parameters [["a" :bool] ["b" :bool]]
+        entities {1 {:eacl.relation/caveats #{2} :eacl.relation/allows-unqualified? false}
+                  2 (definition/entity "check" parameters "a && b")
+                  3 (qualifier/entity-data 3 {:caveat 2 :caveat-context {"a" true}
+                                              :valid-until-ms 100} parameters)}
+        engine (jvm/evaluator)
+        evaluate (fn [time context]
+                   (qualification/qualify
+                    (qualification/request {:time time :context context :evaluator engine
+                                            :entity #(get entities %) :version (constantly 7)
+                                            :basis {:source "jvm-test" :revision 1}})
+                    1 [10 3]))]
+    (is (= :has-permission (evidence/permissionship (evaluate 99 {"a" false "b" true}))))
+    (is (= :no-permission (evidence/permissionship (evaluate 99 {"b" false}))))
+    (is (= :conditional-permission (evidence/permissionship (evaluate 99 {}))))
+    (is (= ["b"] (evidence/missing-fields (evaluate 99 {}))))
+    (is (= :evaluation-failure (evidence/permissionship (evaluate 99 {"a" "wrong" "b" true}))))
+    (with-redefs [cel/make-program (fn [& _] (throw (AssertionError. "expired native compile")))
+                  cel/eval-for (fn [& _] (throw (AssertionError. "expired native evaluation")))
+                  definition/decode-entity (fn [& _] (throw (AssertionError. "expired portable compile")))]
+      (is (false? (evaluate 100 {})))
+      (is (false? (evaluate 101 {}))))))
 
 (deftest qualified-corpus
   (let [engine (jvm/evaluator)
