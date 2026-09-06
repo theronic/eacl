@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "models": [
+    "CaveatOutcomes.dfy",
+    "CaveatProfile.dfy",
+    "CaveatSchema.dfy",
+    "QualifierLifecycle.dfy"
+  ],
+  "verificationTimeLimitSeconds": 15,
+  "proofResourceLimit": 5000000
+}

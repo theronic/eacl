@@ -494,6 +494,8 @@ jobs:
             target/formal/campaign*.edn
             target/formal/dafny-verification.json
             target/formal/dafny-resources/*.csv
+            target/formal/caveats/
+            target/formal/qualified/
             target/formal/verification/
 
   temporal-models:

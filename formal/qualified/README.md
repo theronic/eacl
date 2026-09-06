@@ -5,6 +5,13 @@ This Phase 3 gate runs before production engine, cache, or cursor changes.
 first, then this gate. Models are verification tools and are never request-path
 dependencies. Passing this gate does not activate qualified authorization.
 
+`gate.json` declares model coverage and authored proof resource limits. Each run
+verifies the current sources and executes the model, production, and mutation
+checks. Source hashes and observed proof/assertion counts are CI output, with
+no checked-in pins to refresh after edits. Logs live under ignored
+`target/formal/qualified/`; input hashes are generated in the verification
+manifest under `target/formal/verification/`. CI uploads both.
+
 `QualifiedEvidence.dfy` models a residual as a set of Boolean completions of
 the selected request's remaining Caveat atoms. This is a denotation, not the
 production residual representation. Union, intersection, exclusion, and arrow
