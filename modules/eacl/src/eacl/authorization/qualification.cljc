@@ -68,8 +68,10 @@
 (defn- memo! [request key build]
   (let [memos (force (:memos request)) current @memos
         result
-        (if (contains? current key)
-          (get current key)
+        ;; Each resident entry is a non-nil value/error envelope, even when the
+        ;; memoized value itself is nil or false.
+        (if-let [found (get current key)]
+          found
           (do
             (when (>= (count current) maximum-request-entries) (qualifier/error! :request-qualifier-limit))
             (let [result (try {:value (build)}

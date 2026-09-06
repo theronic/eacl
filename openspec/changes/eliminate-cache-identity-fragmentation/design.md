@@ -119,7 +119,7 @@ Structural tests execute the portable transition at capacities 64, 512, and 2,04
 
 The predeclared mechanism benchmark uses full caches at capacities 64, 512, and 2,048, a replacement/churn workload of at least four times capacity, JVM warmup before sampling, and median nanoseconds per publication/eviction block. The retained implementation must reduce the capacity-2,048 median by at least 50% versus source-matched baseline and must not show a greater than 2.5x per-operation ratio between capacities 64 and 2,048 after subtracting fixed harness cost. Exact-hit median may regress by no more than 10%.
 
-PR 160 already has exactly one frozen public `releaseWin`, `:recursive-star-exact-count`, in `docs/benchmarks/results/2026-08-29-eacl-performance-amplification/release-acceptance.edn`. This change does not manufacture a second release win or edit that candidate-independent threshold. Because the final candidate source changes, the existing release win and all its safety lanes must be reconfirmed from fresh source-isolated samples against the same frozen record.
+PR 160 already has exactly one frozen public `releaseWin`, `:recursive-star-exact-count`, in `formal/fixtures/performance/release-acceptance.edn`. This change does not manufacture a second release win or edit that candidate-independent threshold. Because the final candidate source changes, the existing release win and all its safety lanes must be reconfirmed from fresh source-isolated samples against the same frozen record.
 
 The new mechanism-specific public lane is a warmed exact-basis `lookup-resources` page request whose only per-block variation is a valid positive timeout. A source-matched legacy-identity arm retains timeout while the candidate arm canonicalizes it. The candidate must improve direction-normalized median response latency by at least 25%; this mechanism gate supplements rather than replaces the single frozen release win. Its safety lanes are cold page miss, fixed-timeout hit, adjacent reverse alias, count hit, deadline failure, cancellation failure, and CLJS wall time; latency may regress by no more than 10% on JVM and 15% on CLJS, while semantic/counter results permit no drift. Pilot measurements are excluded from final confirmation.
 
@@ -139,7 +139,7 @@ Final verification runs the complete affected unit suite, all repository ordinar
 ## Migration Plan
 
 1. Land Core identity normalization, stamped page-cache state, diagnostics, tests, and benchmark evidence together on `codex/eacl-performance-amplification`.
-2. Run fresh final qualification after the candidate and thresholds are frozen; commit only the verified Core/OpenSpec inputs and evidence.
+2. Run fresh final qualification after the candidate and thresholds are frozen; commit only verified Core/OpenSpec inputs and authored acceptance fixtures; keep generated evidence under ignored `target/benchmarks/` or in CI artifacts.
 3. Push the branch backing PR 160.
 4. Resolve the exact new EACL git SHA, update every demo dependency/profile to that SHA, and run all demo tests/build verification.
 5. Commit and push the demo repository's deploy branch, deploy every demo through its existing simple deployment commands, and qualify live health, navigation reuse, deadline behavior, and absence of admission-limit responses.

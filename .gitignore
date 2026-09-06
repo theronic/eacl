@@ -13,3 +13,9 @@ formal/smoke/js/node_modules/
 .nrepl-port
 .cljs_node_repl/
 states/
+# Benchmark run output belongs under target/; also protect retired output paths.
+/docs/benchmarks/results/
+/docs/benchmarks/qualifier-reference-results/
+/openspec/history/superseded/*/evidence/txmeta-*/*.edn
+/openspec/history/superseded/*/evidence/txmeta-*/*.json
+/openspec/history/superseded/*/evidence/txmeta-*/report.md

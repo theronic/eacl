@@ -77,6 +77,7 @@
   "Projects a validated request onto one admitted Caveat's parameter names."
   [context parameters]
   (let [source (value context)]
+    ;; Prepared values cannot be nil; false remains a supplied Boolean binding.
     (reduce (fn [result [name _]]
-              (if (contains? source name) (assoc result name (get source name)) result))
+              (if-some [v (get source name)] (assoc result name v) result))
             {} parameters)))

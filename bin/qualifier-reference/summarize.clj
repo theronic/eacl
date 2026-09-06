@@ -1,5 +1,5 @@
-(require '[clojure.edn :as edn] '[clojure.pprint :as pprint] '[clojure.java.io :as io])
-(def directory (or (first *command-line-args*) (str (.getParent (io/file *file*)))))
+(require '[clojure.edn :as edn] '[clojure.pprint :as pprint])
+(def directory (or (first *command-line-args*) "target/qualifier-reference-reproduction"))
 (def backends [:datascript :datomic :datahike :datalevin])
 (def metrics [:direct :negative :arrow :scan :page :continuation :count :warm-exact])
 (defn percentile [xs p] (nth (vec (sort xs)) (min (dec (count xs)) (long (* p (count xs))))))

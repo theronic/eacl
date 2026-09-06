@@ -57,35 +57,27 @@ of freshly encoded host contexts. Their removal preserves canonical bytes and
 input admission. BMP/surrogate conformance and host-context differential tests
 check the changed boundaries, alongside the existing adversarial format suites.
 
-The activated v9 default passes the fresh JVM battery: 1,431 tests / 149,296
-assertions, plus 67 Datalevin tests / 8,172 assertions and 782 advanced
-ClojureScript tests / 110,313 assertions. All have zero failures and errors.
-The executable Caveat/expiry guide runs without an internal feature binding.
-The coordinated five-module 9.0.0-SNAPSHOT build, dependency audit, cold local
-Maven installation, and consumer smoke tests also pass. Datalevin remains
-excluded from Maven release eligibility until its fork artifact is published.
+## Release checks
 
-The foundation gate verifies 82 obligations and 35,148 assertions; the qualified
-gate verifies 71 obligations and 607,000 assertions across 392 tests, including
-108 killed production controls. Source-closure reports 115 public roots, 2,939
-reachable definitions, and no forbidden match. Qualified checkpoint checks
-reject a certificate that excludes the original observation time even when it
-includes the later request time. Strict OpenSpec validation passes.
+Run the fresh JVM battery, Datalevin contracts, advanced ClojureScript suite,
+executable Caveat/expiry guide, foundation and qualified formal gates, historical
+counterexample replay, mutation controls, generated Java boundaries, and public
+source closure. Require zero failures/errors and no forbidden source matches.
+Qualified checkpoints must reject a certificate excluding the original
+observation time even if it includes the later request time. Historical traces
+preserve authorization and structural-reuse oracles while selecting exact
+qualified versus scalar-proof legacy answer reuse.
 
-The four-backend performance gate passes all 24 reports and 1,440 fixed budget
-comparisons. Raw samples, source hashes, the checker result, and the full metric
-matrix are retained in `docs/benchmarks/results/qualified-authorization-2026-09-05/`.
-The benchmark explicitly selected legacy and qualified epochs before changing
-the default and release/continuation ABI metadata. Numerical budgets were not
-relaxed. Before activation, the full legacy JVM battery also passed 1,431 tests /
-149,323 assertions; Datalevin's affected concurrent-write and cache contracts
-passed in both epochs.
+Run the coordinated five-module build, dependency audit, cold local Maven
+installation, consumer smoke tests, and strict OpenSpec validation. Datalevin
+remains excluded from Maven release eligibility until its fork artifact is
+published.
 
-Activated historical counterexample replay passes 71 tests / 18,228 assertions,
-the registered mutation-control gate passes 3 tests / 176 assertions, and the
-complete generated Java boundary suite passes 52 tests / 18,280 assertions.
-Historical state traces preserve their authorization and structural-reuse
-oracles while selecting exact qualified versus scalar-proof legacy answer reuse.
+Performance acceptance requires the four-backend workload and every fixed
+budget comparison described in `docs/benchmarks/qualified-authorization.md`.
+Keep samples, source hashes, checker results, matrices, and current verification
+counts under ignored `target/` or in CI artifacts. Do not relax budgets to accept
+a candidate or treat a previous successful run as current-source evidence.
 
 ## Native contention qualification after activation
 
@@ -101,17 +93,9 @@ validation faults remain terminal.
 Deterministic shared tests commit a competing Relationship between planning
 and submission, verify one fresh retry publishes both Relationships, verify
 persistent contention stops after eight attempts, and verify validation faults
-are attempted once. The following checks passed on this correction:
+are attempted once. Run both generated-authority suites, affected native-writer
+contracts, advanced CLJS, foundation/qualified gates, and public source closure
+when changing this boundary.
 
-- Generated-authority heavy suite: 9 tests, 574 assertions, all three backends
-  exercised generated cursor/relationship-page authority.
-- Generated-authority nonbenchmark suite: 625 tests, 117,495 assertions.
-- Affected DataScript/Datahike qualified writers: 17 tests, 7,256 assertions.
-- Advanced DataScript ClojureScript: 783 tests, 110,321 assertions.
-- Foundation gate: 82 Dafny obligations and 35,148 finite assertions.
-- Qualified gate: 71 Dafny obligations, 394 tests, 607,016 assertions.
-- Public source closure: 115 roots, 2,940 definitions, no forbidden matches.
-
-The published 24-case performance evidence measures unchanged successful read
-and write paths. The new retry policy affects failed native submissions;
+The qualification workload measures successful read and write paths. The new retry policy affects failed native submissions;
 concurrent-write behavior has separate deterministic and benchmark evidence.

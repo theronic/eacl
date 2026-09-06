@@ -51,7 +51,7 @@
 - [x] 6.2 Add a regression that prewarms every installed function and separates first-use compilation from steady-state expansion measurements.
 - [x] 6.3 Instrument backend index access and add CI assertions for exactly two target-scoped endpoint reads plus fixed mutation-bookkeeping reads, with no schema-wide or relationship-wide scan.
 - [x] 6.4 Add operation-count fixtures proving output is linear in target-local degree plus distinct affected relations and invariant under increasing unrelated database size.
-- [x] 6.5 Add warmed expansion and commit benchmarks at representative degrees, compare the atomic path with current tx-data generation, and save host/runtime-qualified evidence under `docs/benchmarks/results`.
+- [x] 6.5 Add warmed expansion and commit benchmarks at representative degrees, compare the atomic path with current tx-data generation, and save host/runtime-qualified evidence under ignored `target/benchmarks/` or as CI artifacts; do not commit run output.
 - [x] 6.6 Verify high-degree benchmark results and document the measured crossover/operational guidance for choosing atomic safe retraction versus batched `delete-object!` without adding a flaky absolute-latency CI gate.
 
 ## 7. Documentation and Public API Review

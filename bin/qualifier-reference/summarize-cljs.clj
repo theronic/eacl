@@ -1,5 +1,5 @@
-(require '[clojure.edn :as edn] '[clojure.java.io :as io] '[clojure.pprint :as pprint])
-(def directory (or (first *command-line-args*) (str (.getParent (io/file *file*)))))
+(require '[clojure.edn :as edn] '[clojure.pprint :as pprint])
+(def directory (or (first *command-line-args*) "target/qualifier-reference-reproduction"))
 (defn percentile [xs p] (nth (vec (sort xs)) (min (dec (count xs)) (long (* p (count xs))))))
 (defn runs [side]
   (mapv #(edn/read-string (slurp (str directory "/" side "-cljs-" % ".edn"))) [1 2 3]))

@@ -8,7 +8,7 @@ parser.add_argument('--baseline-port', type=int, default=7789)
 parser.add_argument('--candidate-port', type=int, default=7788)
 parser.add_argument('--output', type=Path, default=Path('target/qualifier-reference-reproduction'))
 args = parser.parse_args()
-root = Path(__file__).resolve().parents[3]
+root = Path(__file__).resolve().parents[2]
 output = args.output.resolve()
 output.mkdir(parents=True, exist_ok=True)
 harness = root / 'modules/eacl-datalevin/test/eacl/bench/qualifier_storage_test.clj'

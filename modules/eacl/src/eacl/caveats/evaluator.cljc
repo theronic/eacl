@@ -16,15 +16,15 @@
   "Admission guard for a future serving client or a supplied implementation.
    An implementation must be independently certified for the exact profile."
   [evaluator expected-profile]
-  (when-not (and (satisfies? Evaluator evaluator)
-                 (= expected-profile (:profile-fingerprint (descriptor evaluator)))
-                 (= values/profile-id (:profile (descriptor evaluator)))
-                 (= 1 (:capability-version (descriptor evaluator)))
-                 (string? (:fingerprint (descriptor evaluator)))
-                 (seq (:fingerprint (descriptor evaluator))))
-    (throw (ex-info "A matching Caveat evaluator is required."
-                    {:type :eacl.caveat/evaluator-unavailable :eacl/error :eacl.caveat/evaluator-unavailable
-                     :profile-fingerprint expected-profile})))
+  (let [{:keys [profile profile-fingerprint capability-version fingerprint]}
+        (when (satisfies? Evaluator evaluator) (descriptor evaluator))]
+    (when-not (and (= expected-profile profile-fingerprint)
+                   (= values/profile-id profile)
+                   (= 1 capability-version)
+                   (string? fingerprint) (seq fingerprint))
+      (throw (ex-info "A matching Caveat evaluator is required."
+                      {:type :eacl.caveat/evaluator-unavailable :eacl/error :eacl.caveat/evaluator-unavailable
+                       :profile-fingerprint expected-profile}))))
   evaluator)
 
 (defn evaluate [evaluator definition request bound]

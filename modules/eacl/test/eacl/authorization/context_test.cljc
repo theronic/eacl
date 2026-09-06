@@ -15,6 +15,9 @@
     (is (= input (context/value prepared)))
     (is (= (context/identity prepared) (context/identity reversed)))
     (is (= {"flag" true} (context/project prepared [["flag" :bool] ["missing" :int]])))
+    (is (= {"flag" false}
+           (context/project (context/prepare {"flag" false})
+                            [["flag" :bool] ["missing" :int]])))
     (is (not= (context/identity prepared)
               (context/identity (context/prepare (assoc input "unused" false))))))
   (let [input (into {} (map (fn [n] [(str "field" n) true]) (range 64)))]

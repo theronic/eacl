@@ -7,26 +7,12 @@ revocable authenticated cache imports, and bounded retired-state cleanup. The
 
 ## Verification
 
-All local checks below passed with zero failures/errors:
-
-| Check | Result |
-|---|---|
-| Fresh combined JVM battery, including all four backends and optional JVM Caveats | 1,541 tests / 160,058 assertions |
-| Shared public controller and authenticated-import contracts | 4 tests / 160 assertions; Datahike in both attribute modes |
-| Final advanced DataScript CLJS suite | 813 tests / 112,677 assertions |
-| Focused secure-format, rotation and retention suite after codec option reuse | 45 tests / 76,904 assertions |
-| Keyring validation/state/format/public-boundary killed controls | 6 tests / 23 assertions, detecting 13 controls |
-| Cache/import replacement contracts | 60 tests / 751 assertions |
-| Caveat foundation gate | 82 Dafny obligations; 32 tests / 35,148 assertions |
-| Qualified authorization gate | 71 Dafny obligations; 394 tests / 607,016 assertions |
-| Public source closure | 132 roots / 3,026 definitions; no forbidden matches; 43 negative controls |
-| OpenSpec | Strict validation passes; 31/31 tasks complete |
-
-The combined JVM run preceded the final small cursor option-map reuse change;
-the focused codec suite, full advanced CLJS suite, and source closure passed
-after that change. CI rechecks the final PR head before landing. Existing
-formal obligations and assertion inventories remain unchanged; the qualified
-gate records the reviewed source-input hash updates.
+Run the combined JVM battery (all four backends and optional JVM Caveats),
+advanced DataScript CLJS, secure-format/rotation/retention contracts, controller
+mutation controls, cache-import replacement contracts, foundation/qualified
+formal gates, and public source closure. Run strict OpenSpec validation on the
+phase-4 change. Require zero failures/errors and no forbidden source matches.
+Keep the current counts and results in ignored `target/` or CI artifacts.
 
 Deterministic snapshot callbacks cover encode/decode versus activation/retirement.
 Concurrent controller tests cover one-winner replacement and competing installs.
@@ -44,9 +30,10 @@ be re-signed or become independent local cache authority.
 
 ## Performance and release scope
 
-The [timing/work report](../../docs/benchmarks/results/live-keyring-2026-09-06/README.md)
-includes pre-integration and live measurements at 1/2/4/16 keys, retained pilots,
-raw samples, hashes, and population sweeps. Instrumented mint/decode each use
+The [benchmark guide](../../docs/benchmarks/security-keyring.md) describes
+paired pre-integration/live runs and populated-store sweeps. Keep samples,
+hashes, and summaries under ignored `target/benchmarks/security-keyring/` or in
+CI artifacts. Instrumented mint/decode each use
 one state read and one named lookup regardless of ring size. Rotation does not
 scan client caches; cleanup/recomputation is measured separately and preserves
 locally computed answers. The source review found no production oracle, Peer
@@ -64,7 +51,6 @@ Final review reproduced a controller accepting a 1,202-byte Unicode key ID
 that the cursor decoder correctly rejected. Admission now measures canonical
 UTF-8 bytes as well as the existing bounded character representation. Exact
 1,024-byte string and keyword IDs round-trip; the next byte is rejected before
-controller publication. The focused state/format/retention/mutation suite passes
-28 tests / 2,210 assertions, including byte-boundary round-trip and rejection coverage.
-This changes key admission only; the recorded protected-operation benchmarks
-remain scoped to their source commit and valid ASCII IDs.
+controller publication. The state/format/retention/mutation suite includes byte-boundary round-trip
+and rejection coverage.
+This changes key admission only; protected-operation benchmarks must record their source commit and key-ID inputs.
