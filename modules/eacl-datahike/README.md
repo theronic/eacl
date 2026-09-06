@@ -64,19 +64,19 @@ It reads and rewrites only schema-definition rows, never enumerates or rewrites
 relationship tuples, and commits the expression rows plus version stamp behind
 the existing schema-write fence. Legacy flat entities remain inert to avoid
 S3 persistent-index deletion amplification. On released-v7 rows, ordinary
-construction requires completed Relationship storage 9 and permission storage 8.
+construction requires completed Relationship storage 8 and permission storage 8.
 After this permission-only step, run the explicit
-[Relationship migration](../../docs/migration-v7-to-v9.md). Client constructors
+[Relationship migration](../../docs/relationship-storage-v7-to-v8.md). Client constructors
 reject `:auto-migrate-*` options.
 
 Relationships use the same physical layout as EACL's Datomic Pro adapter. One
 logical relationship is two cardinality-many heterogeneous tuple datoms:
 
 ```clojure
-[subject-eid :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+[subject-eid :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
  [subject-type relation-eid resource-type resource-eid nil]]
 
-[resource-eid :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+[resource-eid :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
  [resource-type relation-eid subject-type subject-eid nil]]
 ```
 
@@ -158,7 +158,7 @@ native child/subject order is not semantic. Configure structural ceilings with
 client-level `:permission-tree-limits`.
 
 ```clojure
-{:deps {dev.eacl/eacl-datahike {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datahike {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
@@ -183,19 +183,18 @@ one probe at a time in demos and diagnostics, never on a production request
 path. `eacl.datahike.io/storage-io-stats-available?` reports whether the
 statistics can be captured.
 
-## Relationship storage 9
+## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 writes only `nil` and rejects non-nil qualifiers. V9 adds
-[Caveats and expiring Relationships](../../docs/caveats.md) through coordinated
-qualified activation; older readers must be drained first. Upgrades are explicit
+`qualifier-eid`. V8 supports
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
 and restartable, and client construction requires a completed target store.
-Follow the [7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before
-starting clients, then the v9 serving rollout guide before qualified writes.
+Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
+starting clients, then the v8 serving rollout guide before qualified writes.
 
 The adapter's `create-conn` helper explicitly bootstraps fresh stores.
 
-## Live security keys (v9)
+## Live security keys (v8)
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
 `:zed-token-keyring-controller`. Static key options remain supported. All

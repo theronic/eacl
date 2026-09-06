@@ -15,7 +15,7 @@ This module must not depend on Datomic or a logging backend.
 ## Dependency and runtime
 
 ```clojure
-{:deps {dev.eacl/eacl {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 The published JAR includes all generated JVM kernel/Dafny runtime classes,

@@ -1027,7 +1027,7 @@
     (doseq [old-cursor [legacy-portable-cursor-vector previous-storage-cursor-vector]]
       (is (= :malformed-token
              (:reason (error-data #(cursor/token->cursor old-cursor vector-options))))
-          "pre-storage-9 cursor formats are rejected without restarting pagination"))
+          "pre-storage-8 cursor formats are rejected without restarting pagination"))
     (is (= portable-cache-vector
            (secure/encode-authenticated
             cache-options

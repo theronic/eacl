@@ -14,7 +14,7 @@
             [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.migrations.v6-to-v7 :as mig]
             [eacl.relationships.legacy-v7 :as relationship-storage]
-            [eacl.datomic.migrations.v7-to-v9 :as storage-migration]))
+            [eacl.datomic.migrations.relationships-v7-to-v8 :as storage-migration]))
 
 (def ->user (partial spice-object :user))
 (def ->account (partial spice-object :account))

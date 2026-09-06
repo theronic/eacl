@@ -22,15 +22,15 @@
     :resource-eid 42}])
 
 (deftest storage-contract-test
-  (is (= 9 storage/version))
+  (is (= 8 storage/version))
   (is (= 5 pair/value-arity storage/value-arity))
   (is (= 4 storage/identity-arity))
   (is (= :qualified storage/qualifier-capability))
   (is (= [:db.type/keyword :db.type/ref :db.type/keyword :db.type/ref :db.type/ref]
          storage/tuple-types))
-  (is (= :eacl.v9.relationship/subject-type+relation+resource-type+resource+qualifier
+  (is (= :eacl.v8.relationship/subject-type+relation+resource-type+resource+qualifier
          storage/forward-attribute))
-  (is (= :eacl.v9.relationship/resource-type+relation+subject-type+subject+qualifier
+  (is (= :eacl.v8.relationship/resource-type+relation+subject-type+subject+qualifier
          storage/reverse-attribute)))
 
 (deftest qualifier-round-trip-and-serving-boundary-test

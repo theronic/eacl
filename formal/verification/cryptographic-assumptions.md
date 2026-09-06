@@ -212,7 +212,7 @@ Passing their evidence suites permits a conditional kernel claim; it must never
 be described as a formal proof of cryptography, canonical EDN, database
 engines, clocks, key management, or backend snapshot-selection facts.
 
-## Live controller and imported-cache boundary (v9)
+## Live controller and imported-cache boundary (v8)
 
 Each protected encode/decode captures one immutable controller generation and
 selects one root by the named key ID. Operations already holding an old state

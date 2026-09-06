@@ -95,8 +95,8 @@
       (is (empty? (rows (snapshot) storage/reverse-attribute))))))
 
 (defn exercise-qualified-corruption!
-  "The v8 storage-9 compatibility contract rejects non-nil qualifier refs.
-   Qualified serving is covered separately by the v9 native contracts."
+  "The v8 storage-8 compatibility contract rejects non-nil qualifier refs.
+   Qualified serving is covered separately by the v8 native contracts."
   [system]
   (binding [orchestration/*qualified-authorization-enabled?* false]
     (exercise-v8-qualified-corruption! system)))

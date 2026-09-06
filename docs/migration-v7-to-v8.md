@@ -1,9 +1,8 @@
 # Migrating Datomic or Datahike permissions from v7 to v8
 
-EACL v8 reuses the released v7 relationship storage model. The forward and
-reverse tuple attributes, relation entity identities, and relationship datoms
-are not rebuilt. The migration changes only permission definitions and the
-schema/version singleton.
+This permission migration changes permission definitions and the schema/version
+singleton. EACL v8 also requires the separate explicit
+[Relationship storage migration](relationship-storage-v7-to-v8.md).
 
 New Datomic databases install `eacl.datomic.schema/v8-schema`. The legacy
 `v7-schema` name remains a compatibility installer for existing code, but it
@@ -78,9 +77,9 @@ Additive attribute definitions installed before a failed final transaction are
 inert for v7 readers. Mixed flat/expression storage is rejected rather than
 guessed or repaired.
 
-Current client construction first requires completed Relationship storage 9,
+Current client construction first requires completed Relationship storage 8,
 then canonical permission storage 8. Run this permission-only migration and the
-[Relationship migration](migration-v7-to-v9.md) as separate explicit maintenance
+[Relationship migration](relationship-storage-v7-to-v8.md) as separate explicit maintenance
 steps before starting clients. Constructors reject `:auto-migrate-*` options.
 
 A

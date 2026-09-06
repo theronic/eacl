@@ -1,5 +1,5 @@
 (ns eacl.bench.qualifier-storage-test
-  "Matched-host public API workload, loadable in both storage-7 and storage-9 checkouts."
+  "Matched-host public API workload, loadable in both storage-7 and storage-8 checkouts."
   (:require [clojure.java.io :as io]
             [datomic.api :as dt]
             [datahike.api :as dh]

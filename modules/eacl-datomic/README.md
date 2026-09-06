@@ -120,7 +120,7 @@ endpoint identity CAS. For high-degree targets, prefer batched
 `repair-tx-batches` for existing damage.
 
 ```clojure
-{:deps {dev.eacl/eacl-datomic {:mvn/version "9.0.0-SNAPSHOT"}}}
+{:deps {dev.eacl/eacl-datomic {:mvn/version "8.0.0-SNAPSHOT"}}}
 ```
 
 Its POM depends on `dev.eacl/eacl` at the exact same version, so consumers do
@@ -154,19 +154,18 @@ mutation rules, see the
 - `eacl.datomic.schema/{calc-set-deltas,compare-schema}` are now aliases of
   `eacl.schema.model` (same values).
 
-## Relationship storage 9
+## Relationship storage 8
 
 This adapter uses five-slot endpoint pairs with a trailing nullable
-`qualifier-eid`. V8 writes only `nil` and rejects non-nil qualifiers. V9 adds
-[Caveats and expiring Relationships](../../docs/caveats.md) through coordinated
-qualified activation; older readers must be drained first. Upgrades are explicit
+`qualifier-eid`. V8 supports
+[Caveats and expiring Relationships](../../docs/caveats.md) ; older readers must be drained first. Upgrades are explicit
 and restartable, and client construction requires a completed target store.
-Follow the [7-to-9 operator guide](../../docs/migration-v7-to-v9.md) before
-starting clients, then the v9 serving rollout guide before qualified writes.
+Follow the [7-to-8 operator guide](../../docs/relationship-storage-v7-to-v8.md) before
+starting clients, then the v8 serving rollout guide before qualified writes.
 
 Use `(eacl.datomic.schema/install! conn)` to bootstrap a fresh native database.
 
-## Live security keys (v9)
+## Live security keys (v8)
 
 `make-client` accepts `:security-keyring-controller` and an optional independent
 `:zed-token-keyring-controller`. Static key options remain supported. All

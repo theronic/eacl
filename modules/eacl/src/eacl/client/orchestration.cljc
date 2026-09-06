@@ -105,7 +105,7 @@
          attach-runtime-cache-lifecycle)
 
 (def ^:dynamic *qualified-authorization-enabled?*
-  "V9 qualified serving. The legacy binding is retained for compatibility
+  "V8 qualified serving. The legacy binding is retained for compatibility
    qualification; public clients use the activated semantic epoch."
   true)
 

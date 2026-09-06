@@ -1,9 +1,9 @@
-# Executable v9 examples
+# Executable v8 examples
 
 `caveats.clj` exercises the documented public API with a fresh DataScript store
 and the actual optional JVM CEL evaluator. It uses an injected clock so expiry
 and cursor boundaries are deterministic. No external database or secret is
-required. The example expects v9 qualified serving to be activated.
+required. The example expects v8 qualified serving to be activated.
 
 From the repository root, use an existing project nREPL with `:dev:caveats-jvm`
 on its classpath:

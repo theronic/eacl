@@ -554,7 +554,7 @@
 
 ;; --- Object deletion --------------------------------------------------------
 ;;
-;; A storage-9 relationship is two datoms living on two DIFFERENT entities, each
+;; A storage-8 relationship is two datoms living on two DIFFERENT entities, each
 ;; naming its peer inside a tuple VALUE:
 ;;
 ;;   [subject-eid  <forward-attr> [subject-type relation-eid resource-type resource-eid]]
@@ -817,7 +817,7 @@
   (relationship-mutations/validate-operation! operation))
 
 (defn tx-update-relationship
-  "Relationship writes use the storage 9 forward/reverse tuple indexes.
+  "Relationship writes use the storage 8 forward/reverse tuple indexes.
   :touch is idempotent. Endpoints must resolve to existing entities."
   [db {:keys [operation relationship]}]
   (validate-relationship-operation! operation)

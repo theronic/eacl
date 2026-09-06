@@ -78,7 +78,7 @@
             [eacl.relationships.edge-test]
             [eacl.relationships.upgrade-test]
             [eacl.datascript.qualifier-storage-test]
-            [eacl.datascript.migrations.v7-to-v9-test]
+            [eacl.datascript.migrations.relationships-v7-to-v8-test]
             [eacl.relay-test]
             [eacl.request.context-test]
             [eacl.request.counters-test]
@@ -189,7 +189,7 @@
                'eacl.relationships.edge-test
                'eacl.relationships.upgrade-test
                'eacl.datascript.qualifier-storage-test
-               'eacl.datascript.migrations.v7-to-v9-test
+               'eacl.datascript.migrations.relationships-v7-to-v8-test
                'eacl.relay-test
                'eacl.request.context-test
                'eacl.request.counters-test

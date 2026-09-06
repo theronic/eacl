@@ -7,7 +7,7 @@
             [eacl.datahike.migrations.v7-to-v8 :as migration]
             [eacl.datahike.schema :as schema]
             [eacl.relationships.legacy-v7 :as relationship-storage]
-            [eacl.datahike.migrations.v7-to-v9 :as storage-migration]
+            [eacl.datahike.migrations.relationships-v7-to-v8 :as storage-migration]
             [eacl.schema.expression-persistence :as persistence]
             [eacl.schema.expression-resolver :as resolver]
             [eacl.schema.model :as model]))

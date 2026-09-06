@@ -11,14 +11,13 @@ V8 uses database-visible native schema/relation generations, authenticated
 native-revision tokens, and confidential authenticated-encryption cursors, and moves the DataScript/Datahike ports to
 the v8 Relay list/count contract. The earlier v8 candidate's mutation graph,
 random mutation records, anchor membership, and global graph-head CAS are
-superseded and are not installed on new databases. Relationship storage is
-now **ABI 9**, while the library remains **v8** and permission storage remains
-**8**. Every endpoint pair gains a fifth nullable qualifier reference, with
-unchanged first-four identity and opposite-endpoint ordering. This phase writes
-`nil` and rejects non-`nil` qualifiers on serving reads. It introduces an explicit,
+superseded and are not installed on new databases. Relationship and permission storage are both **8**, matching the library version.
+Every endpoint pair gains a fifth nullable qualifier reference, with unchanged
+first-four identity and opposite-endpoint ordering. V8 supports Caveats and
+expiring Relationships. It introduces an explicit,
 restartable migration on Datomic, Datahike, DataScript, and Datalevin, and rejects
 automatic migration during client construction. See the
-[operator guide](migration-v7-to-v9.md). Old cache and cursor compatibility
+[operator guide](relationship-storage-v7-to-v8.md). Old cache and cursor compatibility
 identities are retired; deploy with empty persisted caches and fresh cursors.
 
 ## Modular artifacts
@@ -44,7 +43,7 @@ EACL v8.0 is a workspace with independently consumable modules:
 
 Existing Datomic namespace imports do not change. Consumers replace the root
 Git dependency with `:deps/root "modules/eacl-datomic"`; this packaging change
-is independent of the required Relationship storage-9 migration. Tokens, cursors, cache envelopes, and
+is independent of the required Relationship storage-8 migration. Tokens, cursors, cache envelopes, and
 the additive native-generation schema are deliberately new v8 formats; no
 downgrade or dual-format cache/token mode is provided. Third-party adapters
 implement the validated v8 operation/capability contract (`eacl.backend.v8`);
@@ -369,7 +368,7 @@ compatible existing envelopes.
   volume plan key rotation accordingly (`:security-keyring` supports staged
   rotation); EACL does not count invocations for you. Default non-expiring
   cursors require indefinite retention of old keys for lossless resume. For
-  v9 live updates, see the [security-key guide](security-keyrings.md).
+  v8 live updates, see the [security-key guide](security-keyrings.md).
 - Constructing a client without explicit token key material warns at
   startup: defaulted keys are process-local and random, so cursors and
   tokens do not survive restarts and are not portable across peers or
@@ -711,3 +710,31 @@ dependency or content proofs.
 
 See [consistency and cache operations](v8-consistency-cache-operations.md) and
 [backend modules and upgrade](v8-backend-modules-and-upgrade.md).
+
+## Caveats, expiring Relationships, and live security keys
+
+V8 enables Caveats and expiring Relationships across the shared authorization
+engine. See the [Caveat guide](caveats.md) for context, conditional results,
+expiry, and coordinated serving upgrades.
+
+Live `SecurityKeyring` controllers let running clients share externally supplied
+primary or dedicated Zed-token key updates. Full replacements use generation
+compare-and-set; add, activate, and retire operations preserve atomic state.
+Key IDs cannot change material or revive after retirement. Static options still
+construct private controllers. Key updates never rotate database lifecycle,
+Relation/qualifier generations, or authorization proofs.
+
+Unknown or retired caller-supplied keys return
+`:eacl.pagination/invalid-cursor` or `:eacl/invalid-zed-token`, with reason
+`:security-key-unavailable`. Cursor age expiry remains a separate error.
+Authenticated optional cache inputs miss and recompute against the selected
+snapshot. Every backend now exposes authenticated cache snapshot export/restore.
+
+**Default cursors do not expire. Lossless resume requires indefinite old-key
+retention.** A configured finite TTL applies only to new cursors. Distribute
+inactive keys to every Peer before activation, then retain overlap before
+retirement. The [security-key guide](security-keyrings.md) documents the public
+API, external secret ownership, rollback, partial rollout recovery, and limits.
+
+Datalevin's existing unpublished-artifact release guard remains in force; these
+changes do not publish its embedded Maven dependency.

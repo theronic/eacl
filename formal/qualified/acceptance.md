@@ -81,8 +81,8 @@ a candidate or treat a previous successful run as current-source evidence.
 
 ## Native contention qualification after activation
 
-The generated-authority CI benchmark exposed two previously unexercised v9
-paths. Its unrelated-commit check now asserts exact-basis fallback in v9 and
+The generated-authority CI benchmark exposed two previously unexercised v8
+paths. Its unrelated-commit check now asserts exact-basis fallback in v8 and
 managed hits only in the retained v8 compatibility binding; its result labels
 state which reuse contract was measured. DataScript and Datahike writers now
 recognize their native CAS failures through bounded exception wrappers and

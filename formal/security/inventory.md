@@ -1,6 +1,6 @@
 # Live keyring boundaries and simplicity review
 
-This is the final v9 inventory. The controller and cache additions do not alter
+This is the final v8 inventory. The controller and cache additions do not alter
 Relationship storage, Caveat evaluation, database selection, or proof identity.
 
 ## Ownership and evidence

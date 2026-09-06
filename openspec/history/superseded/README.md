@@ -2,7 +2,7 @@
 
 The active series is:
 
-1. `2026-09-04-01-adopt-v9-qualifier-reference-storage` — land qualifier-eid in EACL v8.
+1. `2026-09-04-01-adopt-v8-qualifier-reference-storage` — land qualifier-eid in EACL v8.
 2. `2026-09-04-02-build-caveat-qualifier-foundation`.
 3. `2026-09-04-03-enable-qualified-relationship-evaluation`.
 4. `2026-09-04-04-enable-live-security-keyring-rotation`.

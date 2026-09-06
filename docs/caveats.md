@@ -1,9 +1,9 @@
-# Caveats and expiring Relationships (v9)
+# Caveats and expiring Relationships (v8)
 
-V9 adds named Caveats, conditional permissions, and an exclusive expiration time
-on each Relationship. It uses the qualifier-eid storage ABI 9 landed in v8.
-Qualified serving is enabled by default in v9. V8 and foundation-only readers
-reject non-nil qualifier references and cannot serve an activated store.
+V8 adds named Caveats, conditional permissions, and an exclusive expiration time
+on each Relationship. It uses the qualifier-eid storage ABI 8 landed in v8.
+Qualified serving is enabled by default in v8. Earlier pre-release readers
+without qualified evaluation cannot serve an activated store.
 
 The [executable example](examples/caveats.clj) covers conditional checks,
 expiring grants and bans, pinned time, live-cursor restart, renewal, composed
@@ -491,7 +491,7 @@ planning behavior.
    database/schema checkpoint. Install the additive Caveat and qualifier
    attributes through the backend's normal explicit preparation API. Startup
    does not migrate or scan every Relationship.
-2. Upgrade every serving Peer to the v9-capable implementation before permitting
+2. Upgrade every serving Peer to the v8-capable implementation before permitting
    non-nil qualifier writes. Drain older readers. Install and explicitly require
    the optional JVM evaluator, or supply an independently certified evaluator
    with the matching profile. Expiry-only schemas need no evaluator.
@@ -507,8 +507,8 @@ planning behavior.
 Rollback after qualified writes requires stopping those writes and restoring the
 pre-activation data/schema checkpoint before returning to older readers. Merely
 disabling a serving switch or removing the evaluator does not make qualified
-stored data safe for v8 readers. Already issued qualified cursors are scoped to
-the v9 semantic contract and must not be silently rebased onto an older reader.
+stored data safe for older readers. Already issued qualified cursors are scoped to
+the v8 semantic contract and must not be silently rebased onto an older reader.
 
 Datomic, DataScript, direct Datahike, and the optional JVM evaluator remain in the
 coordinated release set. The local Datalevin implementation is also tested, but

@@ -2,7 +2,7 @@
 
 This explicit Datomic migration converts v6 Relationship entities into the
 four-slot storage-7 source format. Current EACL v8 clients require a subsequent
-[storage 7-to-9 migration](migration-v7-to-v9.md). Keep readers and writers
+[storage 7-to-8 migration](relationship-storage-v7-to-v8.md). Keep readers and writers
 quiesced across both steps. Neither step preserves an older runtime reader.
 
 ## Storage change
@@ -22,7 +22,7 @@ cardinality-many heterogeneous tuple datoms:
 ```
 
 The `eacl.v7.relationship` keyword namespace is the persisted storage ABI. It
-does not select a v7 engine. The next migration converts these attributes into storage-9 endpoint pairs.
+does not select a v7 engine. The next migration converts these attributes into storage-8 endpoint pairs.
 
 The relation component is the entity id of the matching Relation definition,
 not the relation-name keyword. Both tuple halves must exist.
@@ -52,7 +52,7 @@ authorization-relevant writes, then run:
 
 The operation is idempotent and can be rerun after interruption. It never
 retracts v6 entities until verification succeeds. Continue with the explicit
-7-to-9 migration before constructing clients or resuming traffic. Client
+7-to-8 migration before constructing clients or resuming traffic. Client
 construction rejects every `:auto-migrate-*` option. Restore the complete
 pre-migration backup if rollback is required.
 
@@ -99,7 +99,7 @@ synchronization because v8 has no old-engine rollout mode.
 
 ## Operational checks
 
-After both the v6-to-v7 and v7-to-v9 migrations:
+After both the v6-to-v7 and v7-to-v8 migrations:
 
 ```clojure
 (def acl (eacl.datomic.core/make-client conn options))
