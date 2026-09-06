@@ -647,15 +647,20 @@
     (keyrings/-derive-key controller (:keyring-snapshot options) kid root-key domain version)
     (derive-key root-key domain)))
 
+(defn ^:no-doc key-by-id
+  "Looks up one format key by its admitted identifier type. Callers own the
+   operation snapshot and error category; this never captures mutable state."
+  [keyring kid]
+  (when (or (keyword? kid) (and (string? kid) (not-empty kid)))
+    (get (or keyring {:default default-root-key}) kid)))
+
 (defn signing-context
   [options domain]
   (let [{:keys [current-kid keyring] :as options} (capture-keyring options)
         kid (or current-kid :default)
         keyring (or keyring {:default default-root-key})
-        root-key (get keyring kid)]
-    (when-not (and (or (keyword? kid)
-                       (and (string? kid) (not-empty kid)))
-                   root-key)
+        root-key (key-by-id keyring kid)]
+    (when-not root-key
       (format-error! :unknown-key-id {}))
     {:kid kid
      :key (domain-key options kid root-key domain canonical-version)
@@ -693,9 +698,7 @@
          (assoc options :allowed-keys #{:v :kid :payload :tag}))
         {:keys [v kid payload tag]} envelope
         options (capture-keyring options)
-        root-key (get (or (:keyring options)
-                          {:default default-root-key})
-                      kid)]
+        root-key (key-by-id (:keyring options) kid)]
     (when-not (and (= canonical-version v)
                    (string? payload)
                    (string? tag))

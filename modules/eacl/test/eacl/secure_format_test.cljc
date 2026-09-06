@@ -54,6 +54,45 @@
   (let [replacement (if (= "A" (subs value 0 1)) "B" "A")]
     (str replacement (subs value 1))))
 
+(deftest raw-format-key-identifiers-have-one-admission-rule
+  (doseq [kid [7 ["key"] {:key "name"} #{:key} ""]]
+    (let [raw {:current-kid kid :keyring {kid current-key}}]
+      (is (= :unknown-key-id
+             (:reason (error-data #(secure/signing-context raw "test/key-id")))))
+      (is (= :security-key-unavailable
+             (:reason (error-data #(cursor/cursor->token {:v 1} raw)))))))
+  (doseq [kid [:key "key"]]
+    (let [raw {:current-kid kid :keyring {kid current-key}}
+          value {:v 1}]
+      (is (= value (cursor/token->cursor (cursor/cursor->token value raw) raw))))))
+
+(deftest raw-cursor-key-id-must-fit-the-decoder-byte-bound
+  ;; Quoted EDN adds two bytes; each of these BMP characters adds three.
+  (let [fits (str (apply str (repeat 340 "界")) "aa")
+        oversized (str fits "a")
+        raw {:current-kid fits :keyring {fits current-key}}
+        value {:v 1}]
+    (is (= 1024 (count (secure/utf8-bytes (secure/encode-canonical fits)))))
+    (is (= value (cursor/token->cursor (cursor/cursor->token value raw) raw)))
+    (is (= :too-large
+           (:reason (error-data #(cursor/cursor->token
+                                  value {:current-kid oversized :keyring {oversized current-key}})))))))
+
+(deftest invalid-key-id-cannot-pass-authentication-or-a-codec-cache-hit
+  (let [raw {:current-kid 7 :keyring {7 current-key}
+             :cursor-codec-cache (cursor/codec-cache 8)}
+        format-options (merge raw {:domain "test/key-id" :prefix "test_key_"})
+        [cursor-token signed-token]
+        ;; Deliberately omit admission while creating correctly authenticated
+        ;; inputs, including a populated cursor cache. Restore it before reads.
+        (with-redefs [secure/key-by-id get]
+          [(cursor/cursor->token {:v 1} raw)
+           (secure/encode-authenticated format-options {:v 1})])]
+    (is (= :security-key-unavailable
+           (:reason (error-data #(cursor/token->cursor cursor-token raw)))))
+    (is (= :security-key-unavailable
+           (:reason (error-data #(secure/decode-authenticated format-options signed-token)))))))
+
 (defn- tamper-authenticator
   [prefix token]
   (let [envelope
