@@ -14,18 +14,18 @@ the tests through nREPL:
 clj-nrepl-eval -p 7791 '(do (load-file "candidate_tests.clj") (clojure.test/run-tests (quote eacl.exploration.caveats.candidate-tests)))'
 ```
 
-`candidate_tests.clj` checks 2,801 independently calculated assertions. It is
+`candidate_tests.clj` checks independently calculated outcomes. It is
 an inventory of candidate operations; the admitted subset is locked separately
 in `formal/caveats/profile.edn`. Load `resource_probes.clj` through the same REPL
 and call `eacl.exploration.caveats.resource-probes/run-probes!` to repeat the
 resource measurements. Allocation is thread allocation, not retained heap.
-The raw result's `string-source-8006-bytes` label is an old typo: its recorded
-source length is 8,008 bytes, and the reproducer now uses that correct label.
+Keep logs, resource measurements, dependency listings, and source-comparison
+reports under ignored `target/benchmarks/caveats/` or as CI artifacts.
 
 `inputs.edn` pins the JAR hashes, source revisions, and independent references.
-`results/source-match.json` records byte equality for all six cel-parser source
-files between the published JAR and the pinned source tag. ANTLR versions are
-explicit even though the candidate's transitive graph currently resolves them.
+Compare the cel-parser source files in the published JAR with the pinned
+source tag when reviewing a dependency update. Store that comparison as run
+output. ANTLR versions are explicit in the isolated dependency graph.
 The exploration uses Clojure 1.11.4, matching EACL's basis.
 
 ## Evidence and exclusions
@@ -47,10 +47,9 @@ also outside the initial profile, even where individual probes pass.
 
 The upstream assertion helper returns a typed Boolean object, allowing false
 objects to pass `clojure.test/is`. Replaying its corpus with strict Boolean
-extraction gives 666 tests, 698 assertions, 43 failures, and zero errors; the
-log is retained. Some failures concern fixture translation of type names, so
-43 is not a count of evaluator defects. That suite is diagnostic evidence,
-not EACL's conformance gate. To reproduce, check out the pinned cel-parser tag,
+extraction exposes false assertions that its helper accepts. This upstream
+replay is diagnostic evidence rather than EACL's conformance gate. To reproduce,
+check out the pinned cel-parser tag,
 add its `test` path to this isolated REPL, load its test namespaces, and bind
 `exoscale.cel.test-helper/equal?` to:
 
@@ -61,11 +60,9 @@ add its `test` path to this isolated REPL, load its test namespaces, and bind
 ```
 
 The resource probes cover 255 Boolean plan nodes, grouping depth 32, 8,008
-source bytes, 128-entry containers, and worst-shaped substring inputs. On
-Java 25.0.3 / Apple M4 Max, the 4,096-by-2,048 substring probe takes about 1 ms
-per evaluation, far above the small comparisons. This motivates an explicit
-work bound in addition to source and context size bounds. This is a measured
-sample, not a hard wall-time guarantee. The large container probe may exceed
+source bytes, 128-entry containers, and worst-shaped substring inputs. Substring
+search motivates an explicit work bound in addition to source and context size
+bounds. The large container probe may exceed
 profile 1's total context byte limit and is intentionally an exploration case.
 
 ## Licenses
@@ -88,7 +85,8 @@ Load it through the main project nREPL with all four backend aliases, then
 call `eacl.exploration.caveats.native-publication/run-probes!`. The isolated
 CEL dependency REPL does not contain the database dependencies.
 
-The initial native results are in `results/native-publication.edn`:
+The probes exercise the native behaviors below; retain fresh results outside
+Git:
 
 | Backend | New qid inside tuple | Prepared concrete qid | Retract qualifier entity |
 | --- | --- | --- | --- |
@@ -105,7 +103,7 @@ those staged-writer conformance tests pass. None of these probes activates
 public qualified Relationship writes.
 
 The CLJS counterpart is `cljs/eacl/exploration/caveats/publication_probe.cljs`;
-its Node run passes 12 assertions (`results/cljs-publication.log`). Build the
+run its assertions under Node and keep the log as run output. Build the
 `exploration/caveats/cljs` input directory through the project's CLJS-enabled
 nREPL with `cljs.build.api/build`, target `:nodejs`, main
 `eacl.exploration.caveats.publication-probe`, then run its output with Node.

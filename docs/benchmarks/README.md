@@ -7,6 +7,7 @@ archives—under ignored `target/benchmarks/` or in CI artifacts. Never commit i
 
 - [Qualifier-reference storage](qualifier-reference-storage.md)
 - [Qualified authorization](qualified-authorization.md) and its [budgets](qualified-authorization-budgets.edn)
+- [Operator benchmarks](operator-engine.md) and their [budgets](operator-engine-budgets.edn)
 - [Live security keyrings](security-keyring.md)
 - [Performance evidence fixtures](../../formal/fixtures/performance/README.md)
 - [Deliberate comparison baselines](../../formal/baselines/)

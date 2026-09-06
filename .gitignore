@@ -19,3 +19,6 @@ states/
 /openspec/history/superseded/*/evidence/txmeta-*/*.edn
 /openspec/history/superseded/*/evidence/txmeta-*/*.json
 /openspec/history/superseded/*/evidence/txmeta-*/report.md
+/exploration/caveats/results/
+/exploration/operator-engine/
+/exploration/baselines/perf-*.edn

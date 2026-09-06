@@ -12,12 +12,10 @@ as the captured comparison record.
   checks**, pagination invariants (`:page-composition-equals-one-shot?`,
   `:duplicate-free?`, `:count-matches-denotation?`), behavioral outcome
   classes (cursor idempotence/fork, typed cancellation, timeout validation,
-  stale-basis continuation), and the perf file's `:first-run` logical
-  scan/command counters. These are environment-independent.
+  stale-basis continuation). These are environment-independent.
 - **Informational only**: `:order` vectors (legacy page order is explicitly
-  not an oracle for the replacement engine — design Decision 1) and all
-  latency/allocation numbers (environment-specific; the `:env` stamp in
-  `perf-clj-datascript.edn` records the capture hardware/JVM).
+  not an oracle for the replacement engine — design Decision 1). Keep
+  environment-specific latency/allocation output under ignored `target/benchmarks/`.
 
 ## Files
 
@@ -28,9 +26,9 @@ as the captured comparison record.
   (mutual recursion across two definitions with a data cycle), `cyclic-data`
   (pure parent cycle), `broad-union` (8-way union, late-productive
   principal).
-- `perf-clj-datascript.edn` — warm-repeat latency/allocation medians plus
-  first-execution logical scan counts, DataScript CLJ, answer caching
-  disabled.
+- Performance output is generated at ignored
+  `target/benchmarks/perf-clj-datascript.edn`. The live physical-route gate uses
+  the unchanged limits in `docs/benchmarks/operator-engine-budgets.edn`.
 
 ## Reproducing
 
@@ -38,7 +36,7 @@ All fixtures are fully deterministic (no randomness; fixed identifiers and
 shapes defined in `eacl.baseline.capture` and `eacl.baseline.perf` under
 `modules/eacl/test/eacl/baseline/`). JVM settings: the repository's default
 `:dev`/`:nrepl` aliases, no extra JVM flags; perf hardware is recorded in the
-snapshot's `:env`.
+generated report's `:env`.
 
 Start an nREPL (see `AGENTS.md`), then:
 

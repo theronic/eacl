@@ -15,15 +15,13 @@
             [eacl.cursor :as cursor]
             [eacl.datascript.core :as datascript]
             [eacl.secure-format :as secure]
-            [eacl.test-support.repo :as repo])
-  (:import (java.nio.file Files)
-           (java.security MessageDigest)))
+            [eacl.test-support.repo :as repo]))
 
 (def baseline-index-file
-  "exploration/operator-engine/union-only-baseline.edn")
+  "formal/fixtures/operator-engine/union-only-baseline.edn")
 
 (def cursor-snapshot-file
-  "exploration/operator-engine/union-only-cursor-payloads.edn")
+  "formal/fixtures/operator-engine/union-only-cursor-payloads.edn")
 
 (def ^:private baseline-security-key
   "operator-engine-union-baseline-key")
@@ -160,14 +158,6 @@
                 :integers? (every? integer? coords)}))
            [:start-edge :end-edge])]))])))
 
-(defn- sha256-file
-  [path]
-  (let [digest
-        (.digest
-         (MessageDigest/getInstance "SHA-256")
-         (Files/readAllBytes (.toPath (repo/file path))))]
-    (apply str (map #(format "%02x" (bit-and (int %) 255)) digest))))
-
 (deftest exact-union-only-public-baselines-test
   (let [{:keys [digest-domain fixture-digests]}
         (:behavior (read-baseline-index))]
@@ -237,11 +227,3 @@
     (is (= (comparison expected) (comparison actual)))
     (is (= (coordinate-shapes expected)
            (coordinate-shapes actual)))))
-
-(deftest matched-host-performance-and-cursor-artifacts-are-frozen-test
-  (let [index (read-baseline-index)]
-    (doseq [artifact [(:matched-host-performance index)
-                      (:decoded-cursor-payloads index)]]
-      (is (= (:sha256 artifact)
-             (sha256-file (:path artifact)))
-          (:path artifact)))))
