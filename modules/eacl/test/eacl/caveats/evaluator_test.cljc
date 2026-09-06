@@ -20,3 +20,25 @@
     (is (= {:outcome :false} (evaluator/evaluate supplied {} {} {})))
     (is (= 1 @calls))
     #?(:cljs (is (nil? (evaluator/default-evaluator))))))
+
+(deftest admission-uses-one-complete-descriptor
+  (let [reads (atom 0)
+        calls (atom 0)
+        admitted {:profile values/profile-id :capability-version 1
+                  :profile-fingerprint evaluator/profile-fingerprint
+                  :fingerprint "test/one-descriptor"}
+        current (atom admitted)
+        supplied (reify evaluator/Evaluator
+                   (descriptor [_] (swap! reads inc) @current)
+                   (-evaluate [_ _ _ _] (swap! calls inc) {:outcome :false}))]
+    (is (= {:outcome :false} (evaluator/evaluate supplied {} {} {})))
+    (is (= 1 @reads))
+    (doseq [[field invalid] [[:profile :other] [:profile-fingerprint "other"]
+                             [:capability-version 2] [:fingerprint ""]
+                             [:fingerprint nil]]]
+      (reset! reads 0)
+      (reset! current (assoc admitted field invalid))
+      (is (thrown? #?(:clj clojure.lang.ExceptionInfo :cljs js/Error)
+                   (evaluator/evaluate supplied {} {} {})))
+      (is (= 1 @reads))
+      (is (= 1 @calls)))))
