@@ -405,7 +405,7 @@
     (assoc options :format-options configured ::captured-format-options configured)))
 
 (defn- named-root-key [configured kid]
-  (or (get (or (:keyring configured) {:default secure/default-root-key}) kid)
+  (or (secure/key-by-id (:keyring configured) kid)
       (cursor-error! :security-key-unavailable {})))
 
 (defn- codec-identity [options kid root-key]
@@ -426,9 +426,11 @@
           (let [domain-key (secure/domain-key configured kid root-key cursor-domain cursor-version)
                 {:keys [encryption-key authentication-key]} (aead-keys domain-key)
                 authenticate (pooled-authenticator authentication-key)
-                kid-segment (secure/b64url-encode
-                             (secure/utf8-bytes
-                              (secure/encode-canonical kid (assoc configured :maximum-size 1024))))]
+                kid-bytes (secure/utf8-bytes
+                           (secure/encode-canonical kid (assoc configured :maximum-size 1024)))
+                _ (when (> (count kid-bytes) 1024)
+                    (aead-error! :too-large {:maximum-size 1024}))
+                kid-segment (secure/b64url-encode kid-bytes)]
             {:encryption-key encryption-key :authenticate authenticate :kid-segment kid-segment
              :controller-id (:controller-id (:keyring-snapshot configured))
              :generation (:generation (:keyring-snapshot configured)) :security-kid kid}))]
@@ -481,8 +483,12 @@
     (when-not (and (= 4 (count segments)) (every? not-empty segments)
                    (<= (count (first segments)) 1368))
       (cursor-error! :malformed-token {}))
-    (let [kid (secure/decode-canonical
-               (secure/bytes->utf8 (secure/b64url-decode (first segments)))
+    (let [kid-bytes (secure/b64url-decode (first segments))
+          ;; The Base64 length check is coarse by up to two bytes. Enforce the
+          ;; exact UTF-8 bound before parsing or consulting the keyring.
+          _ (when (> (count kid-bytes) 1024) (cursor-error! :malformed-token {}))
+          kid (secure/decode-canonical
+               (secure/bytes->utf8 kid-bytes)
                {:maximum-size 1024})]
       {:kid kid :root-key (named-root-key (format-options options) kid) :segments segments})))
 
