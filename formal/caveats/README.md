@@ -7,13 +7,15 @@ the repository root with a project `:dev:caveats-jvm` nREPL:
 EACL_NREPL_PORT=7788 bin/formal fast
 ```
 
-The gate verifies four independent Dafny modules (82 obligations), executes
-35,148 assertions through nREPL, and requires all eleven registered mutation
-controls to be exercised and killed. `gate.lock.json` locks the profile and
-mutation inventory hashes, proof count, assertion count, and per-proof resource
-limits. Reports are generated under ignored `target/formal/caveats/`. The
-regular `bin/formal verify` also discovers these four modules. `bin/formal fast`
-names this foundation gate; the existing stable-discovery engine gate remains
+The gate verifies the four Dafny modules, executes their model and production
+bridges through nREPL, and requires every registered mutation control to be
+exercised and killed. `gate.json` declares the model inventory and authored
+resource limits. Proof and assertion counts are run output; source edits need
+no hash or count refresh. Logs live under ignored `target/formal/caveats/` and
+are uploaded by CI. The generated verification manifest records current input
+hashes under `target/formal/verification/`. The regular `bin/formal verify`
+also discovers these modules; `bin/formal fast` runs this foundation gate and
+the qualified gate. The stable-discovery engine gate remains
 `formal/stable-discovery/verify-fast.sh`.
 
 | Obligation | Formal definition/proof | Finite evidence | Remaining production obligation |

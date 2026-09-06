@@ -76,3 +76,11 @@ artifacts). Do not commit run output, including successful qualification reports
 Version benchmark code, authored acceptance budgets fixed before sampling, and
 intentional regression fixtures instead. A retained fixture must have a named
 test consumer; a measurement does not become a fixture merely by being old.
+
+## Verification output
+
+Do not pin repository source hashes or observed proof/assertion counts in source
+or gate configuration. CI verifies the current checkout and writes hashes,
+counts, and results under ignored `target/formal/` for artifact upload. Keep
+authored proof/resource limits and behavioral checks in Git; source edits must
+not require a hash-refresh commit.
