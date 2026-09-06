@@ -76,7 +76,14 @@
     (is (= value (cursor/token->cursor (cursor/cursor->token value raw) raw)))
     (is (= :too-large
            (:reason (error-data #(cursor/cursor->token
-                                  value {:current-kid oversized :keyring {oversized current-key}})))))))
+                                  value {:current-kid oversized :keyring {oversized current-key}})))))
+    (let [segments (str/split (cursor/cursor->token value raw) #"\." -1)]
+      (doseq [kid [oversized (str oversized "a")]]
+        (let [segment (secure/b64url-encode (secure/utf8-bytes (secure/encode-canonical kid)))
+              token (str cursor/cursor-prefix segment "." (str/join "." (rest segments)))]
+          (is (<= (count segment) 1368) "the coarse frame bound alone admits these bytes")
+          (is (= :malformed-token
+                 (:reason (error-data #(cursor/token->cursor token raw))))))))))
 
 (deftest invalid-key-id-cannot-pass-authentication-or-a-codec-cache-hit
   (let [raw {:current-kid 7 :keyring {7 current-key}
