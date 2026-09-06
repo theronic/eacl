@@ -45,7 +45,7 @@
 
 ## 7. Measure and document the release
 
-- [x] 7.1 Benchmark four-slot versus five-slot-`nil` direct checks, scans, arrows, pages, exhaustive counts, allocation, and cold/warm backend reads; verify recorded numerical budgets and raw results are checked into the implementation report.
+- [x] 7.1 Benchmark four-slot versus five-slot-`nil` direct checks, scans, arrows, pages, exhaustive counts, allocation, and cold/warm backend reads; verify the fixed numerical budgets against raw reports retained under ignored `target/benchmarks/` or in CI artifacts; version only benchmark sources and authored acceptance budgets, never run output.
 - [x] 7.2 Measure tuple/index density, durable bytes, transaction size, migration throughput, peak storage, and restart cost on representative data; verify the report distinguishes logical datom count from physical storage.
 - [x] 7.3 Write the v7-to-v9 operator guide with backup, rehearsal, maintenance fencing, invocation, progress, verification, cutover, cache/cursor reset, and restore rollback; verify every backend entry point is executable as documented.
 - [x] 7.4 Update README, release notes, backend guides, schema docs, and error reference to distinguish EACL v8, permission storage 8, and Relationship storage 9; verify no contradictory version terminology remains.
