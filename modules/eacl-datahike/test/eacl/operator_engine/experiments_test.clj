@@ -1,12 +1,6 @@
 (ns eacl.operator-engine.experiments-test
-  (:require [clojure.edn :as edn]
-            [clojure.test :refer [deftest is]]
-            [eacl.datahike.direct-membership :as datahike-direct]
-            [eacl.operator-engine.experiments :as experiments]
-            [eacl.test-support.repo :as repo]))
-
-(defn- evidence [path]
-  (edn/read-string (slurp (repo/file path))))
+  (:require [clojure.test :refer [deftest is]]
+            [eacl.operator-engine.experiments :as experiments]))
 
 (deftest deterministic-operator-experiments-self-check-test
   (let [summary
@@ -86,48 +80,3 @@
     (is (every? #(<= (get-in % [:anti-join :accepted])
                      (get-in % [:dimensions :page-demand]))
                 (:exclusions summary)))))
-
-(deftest checked-performance-evidence-remains-inside-accepted-gates-test
-  (let [performance
-        (evidence "exploration/operator-engine/performance-qualification.edn")
-        minio
-        (evidence "exploration/operator-engine/minio-qualification.edn")
-        union-results
-        (vals (get-in performance
-                      [:union-only :median-of-campaign-medians]))
-        ceilings (:accepted-ceilings minio)
-        bounded-pages
-        (map #(get-in minio [:observed %])
-             [:intersection :dense-exclusion :sparse-exclusion :arrow])]
-    (is (= :accepted (:status performance)))
-    (is (= :accepted (:status minio)))
-    (is (every? #(<= (:latency-delta-percent %) 5.0) union-results))
-    (is (every? #(<= (:allocation-delta-percent %) 5.0) union-results))
-    (is (true? (get-in performance
-                       [:union-only :acceptance :all-work-counters-equal])))
-    (is (= datahike-direct/physical-policy-identity
-           (get-in performance
-                   [:datahike-physical-policy :accepted-identity])))
-    (doseq [page bounded-pages]
-      (is (<= (get-in page [:cold :gets])
-              (:cold-bounded-page-index-gets ceilings)))
-      (is (zero? (get-in page [:warm :gets])))
-      (is (<= (get-in page [:adjacent :gets])
-              (:adjacent-page-index-gets ceilings)))
-      (is (<= (get-in page [:cold :allocated-bytes])
-              (:cold-bounded-page-allocated-bytes ceilings)))
-      (is (<= (get-in page [:cold :latency-nanos])
-              (:cold-bounded-page-latency-nanos ceilings))))
-    (is (<= (get-in minio [:observed :bounded-count :gets])
-            (:bounded-count-index-gets ceilings)))
-    (is (<= (get-in minio [:observed :exact-count :gets])
-            (:exact-count-index-gets ceilings)))
-    (is (= [:exact-count]
-           (get-in minio [:measurement-contract :exhaustive])))
-    (is (false? (get-in minio
-                        [:measurement-contract
-                         :blend-bounded-and-exhaustive])))
-    (is (= :sparse-exact
-           (get-in minio [:multiplier-neighborhood 4 :selected])))
-    (is (= :bounded-prefix
-           (get-in minio [:multiplier-neighborhood 2 :selected])))))

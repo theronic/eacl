@@ -104,31 +104,15 @@ advanced-datom, and queued-work ceilings also bound operator questions/facts,
 values, and queue state. Limit failures are typed and publish no partial
 answer.
 
-## Measured performance
+## Performance verification
 
-The matched-host source-to-source gate compared this branch with frozen commit
-`8dc3b16498788dd822b68e1c4fe25b37a8e8879f` on 16 union-only point, page,
-reverse, count, full-enumeration, and recursive operations. Deterministic work
-was exactly equal. Fifteen operations were faster; the remaining recursive
-first-page operation was 0.67% slower. Median latency deltas ranged from
--65.93% to +0.67%, and the largest allocation increase was 3.82%, within the
-5% release ceiling.
+Run the current implementation against the [operator benchmark budgets](benchmarks/operator-engine-budgets.edn)
+and [reproduction guide](benchmarks/operator-engine.md). Keep latency,
+allocation, and remote-I/O samples under ignored `target/benchmarks/` or as CI
+artifacts. Bounded pages and exhaustive counts have separate budgets; report
+cold, resident-warm, and adjacent-page behavior separately.
 
-The loopback-MinIO Datahike qualification used 4,096 resources and page size
-20. Intersection measured 9 cold index GETs and 30.06 ms, then 0 immediate-warm
-GETs and 8.21 ms; dense exclusion measured 10 GETs/24.26 ms cold and 0
-GETs/8.91 ms warm; sparse exclusion measured 7 GETs/18.33 ms cold and 0
-GETs/8.86 ms warm. The adjacent intersection page used 2 GETs. Exact count was
-measured separately at 26 GETs and 56.65 ms. These figures establish bounded
-lazy page behavior for the recorded store and node-cache configuration; they
-are not blended with exhaustive count work.
-
-The accepted Datahike physical policy uses density multiplier 2 and maximum
-batch width 256. Dense candidates use an endpoint-local bounded prefix; sparse
-candidates use sorted exact seeks. Multiplier 4 was rejected because its
-prefix realization caused an additional MinIO GET at the exact-work boundary.
-
-The machine-readable records are
-[`../exploration/operator-engine/performance-qualification.edn`](../exploration/operator-engine/performance-qualification.edn)
-and
-[`../exploration/operator-engine/minio-qualification.edn`](../exploration/operator-engine/minio-qualification.edn).
+The Datahike physical policy uses density multiplier 2 and maximum batch width
+256. Dense candidates use an endpoint-local bounded prefix; sparse candidates
+use sorted exact seeks. The direct-membership tests verify bounded realization
+and result equality on the current implementation.

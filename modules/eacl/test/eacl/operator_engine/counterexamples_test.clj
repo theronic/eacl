@@ -6,7 +6,7 @@
             [eacl.test-support.repo :as repo]))
 
 (def fixture-file
-  "exploration/operator-engine/minimized-counterexamples.edn")
+  "formal/fixtures/operator-engine/minimized-counterexamples.edn")
 
 (defn- fixtures
   []

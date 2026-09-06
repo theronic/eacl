@@ -1,0 +1,33 @@
+{:format-version 1,
+ :base-commit "8dc3b16498788dd822b68e1c4fe25b37a8e8879f",
+ :captured-at "2026-08-25T13:19:53Z",
+ :behavior
+ {:digest-domain "eacl.operator-engine/union-only-baseline-v1",
+  :coverage
+  [:denotations
+   :least-path-and-recursive-result-order
+   :forward-and-reverse-pages
+   :point-checks
+   :counts
+   :cursor-replay
+   :cancellation
+   :stale-basis],
+  :fixture-digests
+  {:broad-union "ZZ8vCZpctKRJMZjJKy6Nd6x-y6R9DW2YYnzgWlEqIak",
+   :cyclic-data "vGJ2rT4FcB5dvqQtW_PRgsQmWQY9xUhcW5huh8QphXA",
+   :explorer-acyclic "RyBNofWE8y7yNuKUOGpi4Ob5VW0l6eI6kpDCj-rH11I",
+   :explorer-recursive "p65waORt-hZEyCvywbV8KUejAxoRyrayrT1aJ0N_7VU",
+   :folder-chain "LmYS10GRNwwqbP8MILP7hXoRiT-0tVdpYzwR-_6__DU",
+   :group-star "Bu7pixkVOkMCqoy8TXeCxf1r8CHc3Ewu3x9-QYCkMvY",
+   :mutual-mixed "gvCIqErd91ewV6M7cT22IxsST3nEnfu10k-ZSjSI0ms"}},
+ :decoded-cursor-payloads
+ {:path
+  "formal/fixtures/operator-engine/union-only-cursor-payloads.edn",
+  :coverage
+  [:acyclic-forward
+   :acyclic-reverse
+   :recursive-forward
+   :recursive-reverse],
+  :ciphertext-excluded-because :fresh-encryption-nonce},
+ :verification-command
+ "clj-nrepl-eval -p 7788 \"(do (require 'eacl.operator-engine.union-only-baseline-test :reload) (clojure.test/run-tests 'eacl.operator-engine.union-only-baseline-test))\""}

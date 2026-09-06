@@ -75,7 +75,9 @@ summaries, and report archives under ignored `target/benchmarks/` (or as CI
 artifacts). Do not commit run output, including successful qualification reports.
 Version benchmark code, authored acceptance budgets fixed before sampling, and
 intentional regression fixtures instead. A retained fixture must have a named
-test consumer; a measurement does not become a fixture merely by being old.
+test consumer that exercises current code. Hashing a saved report or asserting
+its recorded pass status does not test the implementation. A measurement does
+not become a fixture merely by being old.
 
 ## Verification output
 

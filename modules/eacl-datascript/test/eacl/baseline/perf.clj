@@ -4,9 +4,9 @@
   DataScript backend with completed-answer caching disabled.
 
   Numbers are environment-specific informational baselines (the :env stamp
-  records the hardware/JVM); the binding replacement gates compare like
-  hardware against these medians per the benchmark protocol. Logical
-  backend-scan counts are environment-independent and ARE authoritative.
+  records the hardware/JVM). Keep generated reports under ignored target/;
+  authored limits live in docs/benchmarks/operator-engine-budgets.edn. Logical
+  backend-scan counts are reported separately from timings.
 
   Regenerate with: (eacl.baseline.perf/capture-perf!)"
   (:require [clojure.java.io :as io]
@@ -21,7 +21,7 @@
   (:import (java.lang.management ManagementFactory)))
 
 (def snapshot-file
-  (str eacl.baseline.capture/snapshot-dir "/perf-clj-datascript.edn"))
+  "target/benchmarks/perf-clj-datascript.edn")
 
 (def perf-shape
   "Five accounts x 400 servers = 2,000 servers, overlapping team/VPC arrows."
@@ -92,9 +92,6 @@
             (f))
         elapsed (- (System/nanoTime) start)]
     {:ms (/ elapsed 1e6)
-     ;; Retained as an empty map so the frozen perf baseline shape
-     ;; (exploration/baselines/perf-clj-datascript.edn) is unchanged: the
-     ;; retired acyclic route never populated it.
      :acyclic {}
      :recursive (into {}
                       (remove (fn [[_ v]] (coll? v)))
