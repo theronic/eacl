@@ -1,7 +1,7 @@
 (ns eacl.relationships.edge
   "Compact ordered scan values. Ordinary edges remain their native eid;
    only qualified edges allocate an [eid qualifier-eid] pair."
-  (:require [eacl.exact-integer :as exact]))
+  (:require [eacl.backend.entity-id :as entity-id]))
 
 (def format-version 1)
 
@@ -24,7 +24,7 @@
   [edge]
   (if (vector? edge)
     (and (= 2 (count edge))
-         (exact/natural? (nth edge 0))
-         (exact/natural? (nth edge 1))
+         (entity-id/valid? (nth edge 0))
+         (entity-id/valid? (nth edge 1))
          (pos? (nth edge 1)))
-    (exact/natural? edge)))
+    (entity-id/valid? edge)))

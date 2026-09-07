@@ -5,6 +5,7 @@
   pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.authorization.data :as qualification-data]
             [eacl.exact-integer :as exact-integer]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.relationships.edge :as edge]
             [eacl.request.counters :as request-counters]
             [eacl.spicedb.consistency :as consistency]))
@@ -697,7 +698,7 @@
       (if-not remaining
         value
         (let [raw-item (first remaining)
-              valid-item? (if compact? (edge/valid? raw-item) (exact-integer/natural? raw-item))
+              valid-item? (if compact? (edge/valid? raw-item) (entity-id/valid? raw-item))
               item (if (and compact? valid-item?) (edge/endpoint raw-item) raw-item)]
           ;; One combined predicate on the hot path; the failed obligation
           ;; is classified only on the cold violation branch.
@@ -732,7 +733,7 @@
       :object-id->internal
       (do
         (when (and (some? value)
-                   (not (exact-integer/natural? value)))
+                   (not (entity-id/valid? value)))
           (contract-violation!
            backend-id operation-key
            (if (exact-integer/exact? value) :nonnegative :exact-integer)
@@ -1087,7 +1088,7 @@
             accumulator
             (let [item (first items)
                   valid-item? (or (not guarded?)
-                                  (if compact? (edge/valid? item) (exact-integer/natural? item)))
+                                  (if compact? (edge/valid? item) (entity-id/valid? item)))
                   eid (if (and compact? valid-item?) (edge/endpoint item) item)]
               (when guarded?
                 (when-not valid-item?

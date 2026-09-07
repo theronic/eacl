@@ -6,7 +6,7 @@
   vector against the adapter's already selected immutable basis."
   (:require [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
-            [eacl.exact-integer :as exact-integer]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.request.counters :as request-counters]
             [eacl.relationships.edge :as edge]))
 
@@ -88,9 +88,9 @@
     (doseq [field (if (= :forward direction)
                     [:subject-eid :relation-eid]
                     [:resource-eid :relation-eid])]
-      (when-not (exact-integer/natural? (get descriptor field))
+      (when-not (entity-id/valid? (get descriptor field))
         (invalid-request!
-         "Direct-membership descriptor identifiers must be portable natural integers."
+         "Direct-membership descriptor identifiers must be native nonnegative integers."
          {:field field :value (get descriptor field)})))
     (let [candidate-type (if (= :forward direction)
                            (:resource-type descriptor)
@@ -98,14 +98,14 @@
       (when-not (and (vector? candidate)
                      (= 2 (count candidate))
                      (= candidate-type (first candidate))
-                     (exact-integer/natural? (second candidate)))
+                     (entity-id/valid? (second candidate)))
         (invalid-request!
          "Direct-membership candidates must be aligned typed identifier pairs."
          {:index 0 :candidate candidate
           :expected-type candidate-type})))))
 
 (defn normalize-request
-  "Validates and returns the closed portable batch request.
+  "Validates and returns the closed native batch request.
 
   Forward descriptors fix the subject endpoint and candidates name resources;
   reverse descriptors fix the resource endpoint and candidates name subjects."
@@ -138,9 +138,9 @@
     (doseq [field (if (= :forward direction)
                     [:subject-eid :relation-eid]
                     [:resource-eid :relation-eid])]
-      (when-not (exact-integer/natural? (get descriptor field))
+      (when-not (entity-id/valid? (get descriptor field))
         (invalid-request!
-         "Direct-membership descriptor identifiers must be portable natural integers."
+         "Direct-membership descriptor identifiers must be native nonnegative integers."
          {:field field :value (get descriptor field)})))
     (when-not (vector? candidates)
       (invalid-request! "Direct-membership candidates must be a vector."
@@ -157,7 +157,7 @@
         (when-not (and (vector? candidate)
                        (= 2 (count candidate))
                        (= candidate-type (first candidate))
-                       (exact-integer/natural? (second candidate)))
+                       (entity-id/valid? (second candidate)))
           (invalid-request!
            "Direct-membership candidates must be aligned typed identifier pairs."
            {:index index :candidate candidate

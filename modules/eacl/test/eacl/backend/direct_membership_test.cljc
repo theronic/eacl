@@ -130,6 +130,11 @@
             [(assoc forward-request :unknown true)
              (assoc forward-request :direction :sideways)
              (assoc-in forward-request [:descriptor :subject-eid] -1)
+             (assoc-in forward-request [:descriptor :subject-eid]
+                       #?(:clj (inc' Long/MAX_VALUE) :cljs (inc exact-integer/maximum)))
+             (assoc forward-request :candidates [[:document 1.5]])
+             (assoc forward-request :candidates
+                    [[:document #?(:clj (inc' Long/MAX_VALUE) :cljs (inc exact-integer/maximum))]])
              (assoc forward-request :candidates [[:user 1]])
              (assoc forward-request :candidates [[:document 1]
                                                   [:document 1]])

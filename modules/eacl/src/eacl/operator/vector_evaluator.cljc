@@ -6,7 +6,7 @@
             [eacl.backend.v8 :as backend]
             [eacl.caveats.values :as caveat-values]
             [eacl.execution :as execution]
-            [eacl.exact-integer :as exact-integer]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.operator.bitmask :as bitmask]
             [eacl.operator.evaluator :as scalar]
             [eacl.operator.plan :as operator-plan]
@@ -66,9 +66,9 @@
                 "Vector candidate entity types must be keywords."
                 {:index index :field field :value (get candidate field)})))
   (doseq [field [:subject-eid :resource-eid]]
-    (when-not (exact-integer/natural? (get candidate field))
+    (when-not (entity-id/valid? (get candidate field))
       (invalid! :invalid-typed-identity
-                "Vector candidate identifiers must be portable natural integers."
+                "Vector candidate identifiers must be native nonnegative integers."
                 {:index index :field field :value (get candidate field)})))
   (when-let [true-nodes (:true-nodes candidate)]
     (when-not (and (set? true-nodes)

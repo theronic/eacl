@@ -6,12 +6,14 @@
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.temporal :as temporal]
             [eacl.backend.v8 :as backend]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.cache :as cache]
             [eacl.consistency :as consistency]
             [eacl.core :as eacl :refer [spice-object]]
             [eacl.relationships.mutations :as relationship-mutations]
             [eacl.cursor :as cursor]
             [eacl.execution :as execution]
+            [eacl.exact-integer :as exact-integer]
             [eacl.proof-frame :as proof-frame]
             [eacl.request.counters :as request-counters]
             [eacl.request.context :as request-context]
@@ -364,24 +366,68 @@
      (:snapshot-semantic-identity opts)
      (:request-lineage opts))))
 
+(defn- invalid-cursor!
+  [message data cause]
+  (throw (ex-info message
+                  (merge {:type :eacl.pagination/invalid-cursor
+                          :eacl/error :eacl.pagination/invalid-cursor}
+                         data)
+                  cause)))
+
+(defn- encode-coordinate
+  ;; Keep portable integers unchanged for existing cursors. JVM int64 IDs
+  ;; outside that range travel as decimal strings, never rounded JS numbers.
+  [value]
+  #?(:clj (if (and (integer? value)
+                   (<= Long/MIN_VALUE value Long/MAX_VALUE))
+            (entity-id/wire-value value)
+            value)
+     :cljs value))
+
+(defn- decode-coordinate
+  [value]
+  (if (exact-integer/exact? value)
+    value
+    (let [decoded #?(:clj (when (and (string? value) (<= (count value) 20))
+                           (try (Long/parseLong value)
+                                (catch NumberFormatException _ nil)))
+                     :cljs nil)]
+      ;; Decimal strings are reserved for nonportable int64 coordinates.
+      ;; JS backends cannot use these native IDs: reject before numeric coercion.
+      (if (and (some? decoded)
+               (= value (str decoded))
+               (not (exact-integer/exact? decoded)))
+        decoded
+        (invalid-cursor! "Relay cursor coordinate is malformed or outside the host integer range."
+                         {:reason :invalid-coordinate} nil)))))
+
 (defn- transform-edge-ids
   ;; :stable-edge edges carry only the boundary :result-eid; engine
   ;; checkpoints live exclusively in the private continuation store and never
   ;; cross the cursor envelope.
-  [f edge]
+  [f coordinate-f edge]
   (case (:kind edge)
     :stable-edge
     (cond-> edge
       (:result-eid edge) (update :result-eid f))
 
-    ;; Least-path coordinates pass through UNTRANSFORMED: they interleave
+    ;; Least-path coordinates retain native identity: they interleave
     ;; rule ordinals with eids of several types (no single external
     ;; mapping applies), and the exact basis makes internal ids stable
     ;; for the cursor's whole lifetime (acyclic-keyset-pagination).
     ;; The portable cursor envelope is authenticated encryption, so these
     ;; internal path coordinates remain confidential on every backend.
-    :least-path-edge
-    edge
+    (:least-path-edge :operator-least-path-edge)
+    (update edge :coords
+            (fn [coords]
+              (if (vector? coords)
+                (with-meta (mapv coordinate-f coords) (meta coords))
+                coords)))
+
+    :operator-recursive-edge
+    ;; The cover boundary has always carried native identities. Keep safe
+    ;; IDs unchanged so previously issued recursive cursors still resume.
+    (update edge :cover-edge #(transform-edge-ids coordinate-f coordinate-f %))
 
     :relationship-index
     (-> edge
@@ -404,6 +450,7 @@
                (require-canonical-cursor-object-id!
                 :edge
                 (backend/invoke adapter :internal-id->object %)))
+            encode-coordinate
             edge))
           token
           (cursor/cursor->token
@@ -428,14 +475,6 @@
            opts)]
       (execution/check! (:execution-contract opts) :cursor-encoded)
       token)))
-
-(defn- invalid-cursor!
-  [message data cause]
-  (throw (ex-info message
-                  (merge {:type :eacl.pagination/invalid-cursor
-                          :eacl/error :eacl.pagination/invalid-cursor}
-                         data)
-                  cause)))
 
 (defn- decode-envelope
   "Authenticates one Relay token and returns its envelope annotated with the
@@ -905,6 +944,7 @@
              (when (nil? internal-id)
                (vreset! missing? true))
              internal-id))
+         decode-coordinate
          edge)]
     {:edge transformed
      :missing? @missing?}))
@@ -1123,6 +1163,7 @@
                    (if (contains? identities internal-id)
                      (get identities internal-id)
                      (internal-id->object adapter internal-id))))
+                encode-coordinate
                 edge)))
              page-info))
          (:page-info page)

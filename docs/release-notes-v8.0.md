@@ -336,6 +336,11 @@ compatible existing envelopes.
   checkpoints, no replay, and per-page cost that does not grow with the
   page ordinal even with caching disabled (previously the cache-off walk
   cost grew quadratically in the ordinal).
+- Datomic pagination preserves native 64-bit entity IDs in traversal cursors.
+  Coordinates outside the portable integer range use lossless decimal strings
+  inside the encrypted envelope and decode to native IDs before resuming.
+  Existing safe-integer cursors retain their representation; JavaScript rejects
+  coordinates it cannot represent exactly.
 - Default `:evaluation :demand` computes only the requested page plus one
   lookahead result. The client-private checkpoint store may retain the
   latest history-free reducer state for that exact snapshot. If it is absent

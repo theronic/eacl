@@ -107,6 +107,26 @@
              (:eacl/error (error-data #(backend/reduce-scan (make bad) :subject->resources
                                                                [:user 10 20 :doc options] [] {:step conj}))))))))
 
+(deftest native-entity-id-guards-retain-the-host-integer-range-test
+  (let [maximum #?(:clj Long/MAX_VALUE :cljs js/Number.MAX_SAFE_INTEGER)
+        make (fn [id]
+               (backend/make-adapter
+                {:id :test :runtime-guards? true :capabilities {}
+                 :operations (assoc (operation-map)
+                                    :object-id->internal (constantly id)
+                                    :subject->resources (fn [& _] [id])
+                                    :direct-edge (fn [& _] [id id]))}))
+        adapter (make maximum)]
+    (is (= maximum (backend/invoke adapter :object-id->internal "object")))
+    (is (= [maximum] (backend/invoke adapter :subject->resources :user 1 2 :doc {})))
+    (is (= [maximum] (backend/reduce-scan adapter :subject->resources
+                                         [:user 1 2 :doc {}] [] {:step conj})))
+    (is (= [maximum maximum] (backend/invoke adapter :direct-edge :user 1 2 :doc maximum)))
+    (doseq [invalid [-1 1.5 "1" #?(:clj (inc' Long/MAX_VALUE)
+                                   :cljs (inc js/Number.MAX_SAFE_INTEGER))]]
+      (is (= :eacl/backend-contract-violation
+             (:type (error-data #(backend/invoke (make invalid) :object-id->internal "object"))))))))
+
 (deftest qualification-data-capability-is-paired-and-guarded
   (let [make (fn [capabilities operation guards?]
                (backend/make-adapter
@@ -523,7 +543,8 @@
                    #(apply backend/invoke adapter operation args))))]
         (doseq [[operation implementation args obligation]
                 [[:object-id->internal
-                  (fn [& _] (inc backend/maximum-exact-integer)) [:external]
+                  (fn [& _] #?(:clj (inc' Long/MAX_VALUE)
+                                :cljs (inc backend/maximum-exact-integer))) [:external]
                   :exact-integer]
                  [:order-hint
                   (fn [& _] (dec backend/minimum-exact-integer))

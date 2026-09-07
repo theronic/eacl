@@ -11,6 +11,7 @@
             [eacl.authorization.qualification :as qualification]
             [eacl.relationships.edge :as edge]
             [eacl.backend.direct-membership :as direct]
+            [eacl.backend.entity-id :as entity-id]
             [eacl.backend.v8 :as backend]
             [eacl.execution :as execution]
             [eacl.operator.batch-schedule :as batch-schedule]
@@ -148,10 +149,8 @@
   (when-not (and (map? candidate)
                  (contains? #{:forward :reverse} (:direction candidate))
                  (keyword? (:subject-type candidate))
-                 (integer? (:subject-eid candidate))
-                 (not (neg? (:subject-eid candidate)))
-                 (integer? (:resource-eid candidate))
-                 (not (neg? (:resource-eid candidate))))
+                 (entity-id/valid? (:subject-eid candidate))
+                 (entity-id/valid? (:resource-eid candidate)))
     (invalid! :invalid-candidate
               "Recursive candidate must contain a complete typed point context."
               {:candidate candidate})))
@@ -1096,7 +1095,8 @@
    [[:recursive-command
      {:version checkpoint-version
       :plan-fingerprint (:fingerprint plan)
-      :questions (vec root-questions)
+      :questions (mapv #(-> % (update 4 entity-id/wire-value)
+                              (update 5 entity-id/wire-value)) root-questions)
       :scope scope-identity}]]))
 
 (defn- make-checkpoint

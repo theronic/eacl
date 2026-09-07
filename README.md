@@ -1883,10 +1883,6 @@ Now you can transact relationships. The usual way is `eacl/create-relationships!
   evaluator. See [supported expressions and limits](docs/caveats.md).
 - Client-targeted cursors over expiring Relationships require a restart when
   their temporal certificate ends; explicit snapshots retain their captured time.
-- Datomic complex permission pages can reject progress cursors containing native
-  entity IDs outside the portable integer range with
-  `:eacl.pagination/unsupported-cursor-identity`. Checks and counts do not need
-  those page cursors.
 - *Exact snapshots require backend history:* `at-exact-snapshot` and continued
   cursors require the backend to reconstruct the selected database value.
   Ordinary Datomic history and history-enabled Datahike do not age-expire.
