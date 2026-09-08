@@ -10,7 +10,7 @@ mean the UUID alone, and their coherence algorithms are unchanged.
 | Model obligation | Production boundary | Executable witness |
 | --- | --- | --- |
 | Both halves preserved, canonical encoding injective | `eacl.uuid/capture`, `parse-canonical`, `eacl.secure-format/encode-canonical`, `decode-canonical` | `eacl.uuid-lifecycle-test`; independent `fixtures/uuid_vectors.py`; UUID representation mutation controls |
-| Host identity cannot change after capture | `eacl.uuid/capture`; `secure-format/capture-portable`; constructor; source acquisition; cache restore | CLJS hostile wrapper, initialized hash, exposed basis, and imported-key tests |
+| Host identity cannot change after capture | `eacl.uuid/capture`; `secure-format/capture-portable`; constructor; source acquisition; cache restore | `eacl.datascript.uuid-lifecycle-test`: CLJS hostile wrapper, initialized hash, exposed basis, and imported-key tests |
 | Complete scope is required | `backend.source/semantic-identity`, causal `token-data`, Relay scope comparison, cache restore lineage comparison | Same UUID/different source and same source/different UUID tests |
 | Public lineage and private incarnation are independent | `client.orchestration/expire-cache!`, `install-restored-runtime-cache-lifecycle!`, coherent runtime capture | Snapshot lifecycle race suite; `EaclUuidLifecycle.tla` publication/restore controls |
 | UUID sharing is deliberate | Omitted constructor sentinel, Datalevin explicit config, raw adapter lifetime | Constructor, backend restart, and raw adapter collision tests |
