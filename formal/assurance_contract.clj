@@ -135,7 +135,19 @@
     :minimum-proof-efforts 73}})
 
 (def operation-contracts
-  [{:operation :qualified-evaluation-model-gate
+  [{:operation :uuid-source-lifecycle
+    :entry-points ['eacl.uuid/capture 'eacl.uuid/parse-canonical
+                   'eacl.secure-format/encode-canonical
+                   'eacl.causal-token/validate-source-lifecycle!
+                   'eacl.backend.source/semantic-identity
+                   'eacl.backend.v8/unmanaged-lifecycle
+                   'eacl.client.orchestration/expire-cache!
+                   'eacl.client.orchestration/restore-cache-snapshot!]
+    :dafny ["formal/dafny/UuidLifecycle.dfy"]
+    :adapter-obligations [:immutable-owned-host-uuid :fresh-history-identity
+                          :coordinated-durable-configuration :complete-source-scope]
+    :trusted-boundaries [:host-uuid-runtime :host-persistence :rng :parser :crypto]}
+   {:operation :qualified-evaluation-model-gate
     :entry-points ["formal/qualified/model.clj"
                    "formal/qualified/model_test.clj"
                    "formal/qualified/mutation_test.clj"]

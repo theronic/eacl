@@ -30,7 +30,7 @@
                (assoc options :cursor-ttl-seconds 10))))))
 
 (def portable-cursor-vector
-  "eacl_c6_OmN1cnJlbnQ.AAECAwQFBgcICQoL.UJT1UYpqo7dsc4IeLWdWWp-8M7Fd8FoVN6T_txYtrC55Du-InRPcvGOMS9hbR7s3N6FCoK8FchEBYATB8H976iRPA4QRmWGNSi1PtXfL5KcIvl4mYvqc-w-k6PzJxsPzCiP87_1rWO3ZwfTgkx-ffXA10ztD7SG-_KmHgxszGsY3.BkFSj4QbQtkVMp5qOHQBMTM5sQ5DECuWEEEYG2hERCU")
+  "eacl_c7_OmN1cnJlbnQ.AAECAwQFBgcICQoL.RmZwbCL-cll8YcfhYojpblXMCqvoFwbXGeRgJhh4AY43zEQRyLHkweQiaRBEdVLtrCseqeoYB35G0gFUEwXuY4y6pmxZxdtuS1XW0jGmkVw7oGwF1oXzVM0WyEdaAz83vl6sy9__7V2vd-XhiXSYOgb1ifc3AoXhaqnI6tc4Gl_F.xCyMfH3VVh_tE0E1foY_pX1n01e4XPKw7joiNunUg74")
 
 (def previous-storage-cursor-vector
   "eacl_c5_OmN1cnJlbnQ.AAECAwQFBgcICQoL.QZ_P3mknLrCiPflRU2H_hccCTQDt3aST6krVrhIEy_I4dnWIfbanUmV8cfHj6sDjMhIN8Cd0lHIwkYS96UxCLc_WdfnW2VPzKBMSBiUyisCbhT9UFcFddkxT5ucySUPkLI31YQ68regKJar5aOo90d9lE3m6f7zG_vos_8kHIuEb.sOgle-nVuH1EijEmdIzlDQKGcUjJmxvyjlgYMDrjkUQ")
@@ -39,7 +39,7 @@
   "eacl_c4_OmN1cnJlbnQ.ezpjdXJzb3IgezpraW5kIDpyZWxhdGlvbnNoaXBzLCA6b2Zmc2V0IDIsIDpzY29wZSBbOnJlYWQgezpzdWJqZWN0L2lkICJ1MSJ9XSwgOnYgOX0sIDpleHBpcmVzLWF0IDEwNSwgOmlzc3VlZC1hdCAxMDAsIDp2ZXJzaW9uIDR9.977hLzhIglQl_tClD4faSO8IvVpkEFUatzI9hAFDHfY")
 
 (def portable-cache-vector
-  "eacl_ce3_ezpraWQgOmN1cnJlbnQsIDpwYXlsb2FkICJlenBqYjIxd2RYUmxaQzFoZENCN09tZHlZWEJvSURkOUxDQTZaR1Z3Wlc1a1pXNWplUzF6WTI5d1pTQjdPbkpsYkdGMGFXOXVjeUJiTVRGZExDQTZjMk5vWlcxaElGdGJPbVJ2WTNWdFpXNTBJRHAyYVdWM1hWMTlMQ0E2YTJWNUlIczZjMlZ0WVc1MGFXTXRhMlY1SUZzNlkyRnVQeUFpZFRFaVhYMHNJRHByYVc1a0lEcGliMjlzWldGdUxDQTZjRzl5ZEdGaWJHVXRkbVZ5YzJsdmJpQXhMQ0E2Y0hKdmIyWWdlenB5Wld4aGRHbHZibk1nZXpFeElDSnlNU0o5TENBNmMyTm9aVzFoSUNKek1TSjlMQ0E2ZG1Gc2FXUmhkR1ZrTFdGMElIczZaM0poY0dnZ04zMHNJRHAyWVd4MVpTQjBjblZsTENBNmRtVnljMmx2YmlBemZRIiwgOnRhZyAiNEk0ZmxKQUZGcjZVczFGQnZiVl9uWDZ6ekczaDVEWlM1d3ExVjBQRUxPWSIsIDp2IDF9")
+  "eacl_ce3_ezpraWQgOmN1cnJlbnQsIDpwYXlsb2FkICJlenBqYjIxd2RYUmxaQzFoZENCN09tZHlZWEJvSURkOUxDQTZaR1Z3Wlc1a1pXNWplUzF6WTI5d1pTQjdPbkpsYkdGMGFXOXVjeUJiTVRGZExDQTZjMk5vWlcxaElGdGJPbVJ2WTNWdFpXNTBJRHAyYVdWM1hWMTlMQ0E2YTJWNUlIczZjMlZ0WVc1MGFXTXRhMlY1SUZzNlkyRnVQeUFpZFRFaVhYMHNJRHByYVc1a0lEcGliMjlzWldGdUxDQTZjRzl5ZEdGaWJHVXRkbVZ5YzJsdmJpQXhMQ0E2Y0hKdmIyWWdlenB5Wld4aGRHbHZibk1nZXpFeElDSnlNU0o5TENBNmMyTm9aVzFoSUNKek1TSjlMQ0E2ZG1Gc2FXUmhkR1ZrTFdGMElIczZaM0poY0dnZ04zMHNJRHAyWVd4MVpTQjBjblZsTENBNmRtVnljMmx2YmlBemZRIiwgOnRhZyAiUHRvR1FhOEhCUlZCYzRBV1dteC1GdDg4NWJIYld5ZWRmNHFPRWZRcklyZyIsIDp2IDJ9")
 
 (defn- error-data
   [f]
@@ -349,19 +349,19 @@
 (deftest causal-token-round-trip-and-rejection-test
   (let [payload {:backend :datascript
                  :source-id "family"
-                 :source-lifecycle "secure-format-test"
+                 :source-lifecycle #uuid "bbce986c-1b7c-56c8-8998-848073ace299"
                  :branch nil
                  :revision 7
                  :exact-locator nil}
         encoded (token/issue options payload)]
     (is (= (merge payload
-                  {:version 4}
+                  {:version 5}
                   (select-keys (token/token-data options encoded)
                                [:issued-at :expires-at]))
            (token/token-data options
                              {:backend :datascript
                               :source-id "family"
-                              :source-lifecycle "secure-format-test"
+                              :source-lifecycle #uuid "bbce986c-1b7c-56c8-8998-848073ace299"
                               :branch nil}
                              encoded)))
     (is (= :scope-mismatch
@@ -371,7 +371,7 @@
                options
                {:backend :datascript
                 :source-id "other"
-                :source-lifecycle "secure-format-test"
+                :source-lifecycle #uuid "bbce986c-1b7c-56c8-8998-848073ace299"
                 :branch nil}
                encoded)))))
     (is (= :expired
@@ -1025,7 +1025,7 @@
             portable-cursor-vector
             vector-options)))
     (doseq [old-cursor [legacy-portable-cursor-vector previous-storage-cursor-vector]]
-      (is (= :malformed-token
+      (is (= :legacy-source-lifecycle
              (:reason (error-data #(cursor/token->cursor old-cursor vector-options))))
           "pre-storage-8 cursor formats are rejected without restarting pagination"))
     (is (= portable-cache-vector

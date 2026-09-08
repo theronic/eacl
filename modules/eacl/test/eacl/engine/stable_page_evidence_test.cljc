@@ -73,6 +73,8 @@
   (let [env (fixture/environment fixture/rows fixture/leaves {})
         options (merge (:options env)
                        {:adapter (identity-adapter) :direction :forward :anchor [:user 1]
+                        :basis-identity {:backend :qualified-pages :source-id :fixture :branch nil
+                                         :source-lifecycle #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1"}
                         :page-size 1 :security-key "qualified-page-key-0123456789abcdef"})
         first-page (with-redefs [qualification/qualify (:qualify env)] (page/page options))
         token (get-in first-page [:page-info :end-cursor])

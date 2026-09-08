@@ -22,7 +22,7 @@
         watermark (atom 0)]
     (try
       (let [client (api/make-client conn {:security-key "01234567890123456789012345678901"
-                                         :source-lifecycle "qualifier-contract"
+                                         :source-lifecycle #uuid "aa61d3ae-58cf-543a-b531-941667d41ddf"
                                          :revision-watermark watermark
                                          :advance-revision-watermark! #(swap! watermark max %)})
             token (:write-token (d/install-write-policy! conn (d/write-policy conn)))]

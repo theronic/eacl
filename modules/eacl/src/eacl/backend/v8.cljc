@@ -4,6 +4,7 @@
   This is the sole production backend boundary for recursive traversal, Relay
   pagination, deletion, consistency selection, and ordered-generation proofs."
   (:require [eacl.authorization.data :as qualification-data]
+            [eacl.uuid :as uuid]
             [eacl.exact-integer :as exact-integer]
             [eacl.backend.entity-id :as entity-id]
             [eacl.relationships.edge :as edge]
@@ -501,9 +502,16 @@
     ::deterministic? (boolean deterministic?)
     ::identity-contract identity-contract
     ::runtime-guards? (boolean runtime-guards?)
-    ::state state}
+    ::state state
+    ::unmanaged-lifecycle (delay (uuid/fresh))}
     operator-physical-policy
     (assoc ::operator-physical-policy operator-physical-policy))))
+
+(defn unmanaged-lifecycle
+  "Private lifetime identity for cursors from a raw adapter without a source.
+  Public source execution supplies its durable lineage instead."
+  [adapter]
+  (force (::unmanaged-lifecycle adapter)))
 
 (defn adapter?
   [candidate]

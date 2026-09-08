@@ -108,7 +108,7 @@
         client
         (datalevin/make-client
          conn
-         {:source-lifecycle "benchmark-lifecycle"
+         {:source-lifecycle #uuid "18aed969-fd54-5dba-a32f-a9eba4a78a3a"
           :revision-watermark watermark
           :advance-revision-watermark! #(swap! watermark max %)
           :security-key test-key})]

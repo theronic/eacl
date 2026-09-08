@@ -211,7 +211,7 @@
            [{:conn ::connection} :conn]
            [{:source ::source} :source]
            [{:writer ::writer} :writer]
-           [{:source-lifecycle "leaked"} :source-lifecycle]]]
+           [{:source-lifecycle #uuid "c8dc503f-b396-58e8-bb56-31133ceb969f"} :source-lifecycle]]]
     (let [data
           (error-data
            #(backend/validate-adapter-config!
@@ -296,7 +296,7 @@
              {:backend :test
               :source-id :one
               :branch nil
-              :source-lifecycle "test/initial"
+              :source-lifecycle #uuid "2bc796bc-3644-5ebf-b129-6ad973575a98"
               :basis-kind :ordinary
               :revision generation
               :exact-locator generation
@@ -315,7 +315,7 @@
            {:backend :test
             :source-id :one
             :branch nil
-            :source-lifecycle "test/initial"
+            :source-lifecycle #uuid "2bc796bc-3644-5ebf-b129-6ad973575a98"
             :basis-kind :ordinary
             :revision 99
             :exact-locator 99
@@ -914,7 +914,7 @@
   [semantic]
   (cache-key/exact-denotation-key
    {:tier :denotation
-    :source-lifecycle {:source :projection-test :lifecycle :one}
+    :source-lifecycle #uuid "cb7f5992-d14c-5aa9-b1de-7b5e45cedc1f"
     :abi :projection-test-v2
     :semantic semantic
     :reuse [:projection-test-basis 1]}))

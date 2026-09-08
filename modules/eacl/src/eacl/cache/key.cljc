@@ -8,7 +8,7 @@
 
 (def key-format
   "Private cache-key ABI.  Bump whenever the logical key shape changes."
-  :eacl.cache/key-v2)
+  :eacl.cache/key-v3)
 
 (def ^:private authorization-fields
   #{:tier :source-lifecycle :abi :semantic :reuse})

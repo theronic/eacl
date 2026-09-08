@@ -37,6 +37,8 @@
                   (fn [snapshot internal-id]
                     (:eacl/id (ds/entity snapshot internal-id)))})]
     {:fixture fixture :db db :adapter adapter
+     :basis-identity {:backend :datascript :source-id (str (random-uuid)) :branch nil
+                      :source-lifecycle #uuid "00000000-0000-0000-0000-000000000000"}
      :plan (sealed-plan/seal-plan adapter [(:resource-type fixture)
                                            (:permission fixture)])}))
 
@@ -169,6 +171,7 @@
         context (execution/normalize {} :lookup-resources
                                      {:cancellation-token token})
         options {:adapter (:adapter env) :plan (:plan env)
+                 :basis-identity (:basis-identity env)
                  :direction :forward
                  :anchor [:user "super-user"] :subject-type :user
                  :page-size 5
@@ -189,6 +192,7 @@
                                       :lookup-resources
                                       {:cancellation-token token})
         options {:adapter (:adapter env) :plan (:plan env)
+                 :basis-identity (:basis-identity env)
                  :direction :forward
                  :anchor [:user "super-user"] :subject-type :user
                  :page-size 5
@@ -215,6 +219,7 @@
                    (execution/normalize {:execution-timeout-ms 5}
                                         :lookup-resources {:first 5}))
         options {:adapter (:adapter env) :plan (:plan env)
+                 :basis-identity (:basis-identity env)
                  :direction :forward
                  :anchor [:user "super-user"] :subject-type :user
                  :page-size 5

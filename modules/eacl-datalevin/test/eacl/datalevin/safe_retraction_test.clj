@@ -29,7 +29,7 @@
             (datalevin/make-client
              conn
              {:security-key test-key
-              :source-lifecycle "safe-retraction-test"
+              :source-lifecycle #uuid "860f9e47-1955-5a56-8b2f-dbb976c99489"
               :revision-watermark watermark
               :advance-revision-watermark! #(swap! watermark max %)})]
         (eacl/write-schema! client logical-schema)

@@ -47,7 +47,7 @@
   [conn]
   (datomic-backend/source
    conn
-   {:source-lifecycle "datomic-exact-source-test"}))
+   {:source-lifecycle #uuid "fa24eec7-de63-5466-9c63-65fb614095ff"}))
 
 (deftest exact-acquisition-reuses-one-covered-local-observation-test
   (with-mem-conn [conn schema/v8-schema]

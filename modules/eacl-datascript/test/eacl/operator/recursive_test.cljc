@@ -24,7 +24,7 @@
 (defn- test-exact-key
   [semantic]
   (let [identity {:tier :denotation
-                  :source-lifecycle {:source :test :lifecycle :operator}
+                  :source-lifecycle #uuid "07529ca3-2c5b-57d9-a992-31d5a71299f5"
                   :abi :test-authorization-v2
                   :semantic semantic
                   :reuse [:basis 1]}]
@@ -933,7 +933,7 @@
             (eacl/lookup-resources client (assoc base :first 1 :after token))]
         (is (= ["f0"] (page-ids first-page)))
         (is (= ["f1"] (page-ids second-page)))
-        (is (= 13 (:v envelope)))
+        (is (= 14 (:v envelope)))
         (is (= :operator-recursive-edge
                (get-in envelope [:edge :kind])))
         (is (= recursive/checkpoint-version

@@ -27,7 +27,7 @@
                 client
                 (datalevin/make-client
                  conn
-                 {:source-lifecycle "certification-lifecycle"
+                 {:source-lifecycle #uuid "608fe3b7-7970-52e8-91cf-92973a3bdd6f"
                   :revision-watermark watermark
                   :advance-revision-watermark!
                   #(swap! watermark max %)
@@ -110,7 +110,7 @@
   (let [dir (u/tmp-dir (str "eacl-datalevin-source-cert-" (random-uuid)))
         first-conn (datalevin/create-conn dir)
         watermark (atom 0)
-        opts {:source-lifecycle "durable-source-certification"
+        opts {:source-lifecycle #uuid "86dd302a-49c0-595d-88fb-450bede20292"
               :revision-watermark watermark
               :advance-revision-watermark! #(swap! watermark max %)
               :security-key "01234567890123456789012345678901"}

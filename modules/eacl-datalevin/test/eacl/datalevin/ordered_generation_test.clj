@@ -30,7 +30,7 @@
         (datalevin/make-client
          conn
          {:security-key test-key
-          :source-lifecycle "ordered-generation-test"
+          :source-lifecycle #uuid "02b52d5e-6553-5d5f-bf7a-40617520062c"
           :revision-watermark watermark
           :advance-revision-watermark! #(swap! watermark max %)})]
     (try
@@ -157,7 +157,7 @@
         watermark (atom 0)
         options
         {:security-key test-key
-         :source-lifecycle "ordered-restart-test"
+         :source-lifecycle #uuid "f5865b93-f059-5e7f-bf4a-04df33a8f0be"
          :revision-watermark watermark
          :advance-revision-watermark! #(swap! watermark max %)}
         alice (eacl/spice-object :user "alice")

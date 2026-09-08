@@ -26,7 +26,7 @@
   [{:keys [backend-id source-id lifecycle branch revision]
     :or {backend-id :test
          source-id "source"
-         lifecycle "life"
+         lifecycle #uuid "22408a55-d517-52ed-ac3b-b66dca0f4b10"
          branch nil
          revision 1}}]
   (backend/make-adapter
@@ -67,7 +67,7 @@
          acquire-calls (atom [])
          modes backend/known-consistency-modes
          source-id "source"
-         lifecycle "life"}}]
+         lifecycle #uuid "22408a55-d517-52ed-ac3b-b66dca0f4b10"}}]
   (let [acquire
         (fn [operation-key & args]
           (swap! acquire-calls conj [operation-key args])
@@ -113,7 +113,7 @@
    format-options
    {:backend :test
     :source-id "source"
-    :source-lifecycle "life"
+    :source-lifecycle #uuid "22408a55-d517-52ed-ac3b-b66dca0f4b10"
     :branch nil
     :revision revision
     :exact-locator revision}))
@@ -325,7 +325,7 @@
       (is (= [3] @release-calls)))))
 
 (deftest token-selection-fails-closed-across-a-concurrent-lifecycle-rotation-test
-  (let [lifecycle (atom "life")
+  (let [lifecycle (atom #uuid "22408a55-d517-52ed-ac3b-b66dca0f4b10")
         release-calls (atom [])
         source (test-source {:candidates (atom [])
                           :release-calls release-calls})
@@ -337,9 +337,9 @@
             (assoc-in
              [::source/operations :acquire-at-least!]
              (fn [_payload _remaining-ms]
-               (reset! lifecycle "rotated-life")
+               (reset! lifecycle #uuid "792f8424-5ad6-5d15-818f-d3a2421987b8")
                {:adapter (adapter {:revision 10
-                                   :lifecycle "rotated-life"})
+                                   :lifecycle #uuid "792f8424-5ad6-5d15-818f-d3a2421987b8"})
                 :ownership :owned
                 :release-token 10})))]
     (is (= :eacl.consistency/incomparable-scope

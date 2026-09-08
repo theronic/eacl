@@ -1,12 +1,13 @@
 (ns eacl.causal-token
-  "Version-4 authenticated backend-native revision tokens."
+  "Version-5 authenticated backend-native revision tokens with UUID lifecycles."
   (:require [clojure.string :as str]
-            [eacl.secure-format :as secure]))
+            [eacl.secure-format :as secure]
+            [eacl.uuid :as uuid]))
 
-(def token-version 4)
-(def token-prefix "eacl_z4_")
+(def token-version 5)
+(def token-prefix "eacl_z5_")
 (def legacy-token-prefix "eacl_z3_")
-(def token-domain "eacl/zed-token/envelope/v4")
+(def token-domain "eacl/zed-token/envelope/v5")
 (def default-token-ttl-seconds 3600)
 (def payload-keys
   #{:version :backend :source-id :source-lifecycle :branch :revision
@@ -29,14 +30,14 @@
                          data))))
 
 (defn- legacy-token!
-  []
+  [version]
   (throw
    (ex-info
-    "EACL v3 graph-anchor tokens are not accepted; request a v4 native revision token."
+    "This EACL token format is obsolete; request a fresh v5 UUID-lifecycle token."
     {:type :eacl/zed-token-upgrade-required
      :eacl/error :eacl/zed-token-upgrade-required
-     :reason :legacy-graph-token
-     :from-version 3
+     :reason (if (= 3 version) :legacy-graph-token :legacy-source-lifecycle)
+     :from-version version
      :to-version token-version})))
 
 (defn- bounded-canonical-value?
@@ -48,7 +49,7 @@
        (try
          (secure/encode-canonical
           value
-          {:maximum-size maximum-scope-characters})
+          {:maximum-size maximum-scope-characters :allow-uuids? false})
          true
          (catch #?(:clj Exception :cljs :default) _
            false))))
@@ -69,12 +70,22 @@
            (not-empty value)
            (<= (count value) maximum-scope-characters))))
 
+(defn ^:no-doc source-scope?
+  "The unchanged portable backend/source/branch identity domain."
+  [{:keys [backend source-id branch]}]
+  (and (keyword? backend)
+       (bounded-canonical-value? source-id)
+       (or (nil? branch) (bounded-canonical-value? branch))))
+
 (defn validate-source-lifecycle!
   [value]
-  (when-not (and (bounded-canonical-value? value)
-                 (not= "" value))
-    (invalid-token! :invalid-source-lifecycle {}))
-  value)
+  (or (uuid/capture value)
+      (let [legacy? (or (string? value) (keyword? value) (map? value) (vector? value))
+            error-type (if legacy? :eacl/source-lifecycle-upgrade-required
+                           :eacl/invalid-source-lifecycle)]
+        (throw (ex-info "EACL source lifecycle requires a native UUID; provision shared configuration before upgrading."
+                        {:type error-type :eacl/error error-type
+                         :reason :invalid-source-lifecycle :expected :uuid})))))
 
 (defn validate-payload!
   [payload]
@@ -82,10 +93,8 @@
                 exact-locator issued-at expires-at]} payload]
     (when-not (and (= payload-keys (set (keys payload)))
                    (= token-version version)
-                   (keyword? backend)
-                   (bounded-canonical-value? source-id)
-                   (or (nil? branch) (bounded-canonical-value? branch))
-                   (bounded-canonical-value? source-lifecycle)
+                   (source-scope? payload)
+                   (uuid/value? source-lifecycle)
                    (natural-revision? revision)
                    (exact-locator? exact-locator)
                    (integer? issued-at)
@@ -96,7 +105,7 @@
   payload)
 
 (defn issue
-  "Issues an authenticated v4 backend-native revision token."
+  "Issues an authenticated v5 backend-native revision token."
   [{:keys [token-ttl-seconds] :as options} payload]
   (let [issued-at (or (:issued-at payload) (now-seconds))
         ttl (or token-ttl-seconds 3600)
@@ -105,6 +114,7 @@
                     (assoc :version token-version
                            :issued-at issued-at
                            :expires-at expires-at)
+                    (update :source-lifecycle validate-source-lifecycle!)
                     (update :branch #(or % nil))
                     (update :exact-locator #(or % nil)))]
     (validate-payload! payload)
@@ -115,13 +125,14 @@
      payload)))
 
 (defn token-data
-  "Authenticates a v4 token and optionally validates its source lifecycle."
+  "Authenticates a v5 token and optionally validates its source lifecycle."
   ([options token]
    (token-data options nil token))
   ([options expected-scope token]
-   (when (and (string? token)
-              (str/starts-with? token legacy-token-prefix))
-     (legacy-token!))
+   (when (string? token)
+     (cond
+       (str/starts-with? token legacy-token-prefix) (legacy-token! 3)
+       (str/starts-with? token "eacl_z4_") (legacy-token! 4)))
    (let [payload
          (try
            (secure/decode-authenticated

@@ -43,7 +43,7 @@
           (schema/prepare-cache-coherence! @!conn token)
           (schema/write-schema! @!conn text {} ::schema/read-current-generation token)))
       :client! (fn [] (api/make-client @!conn {:security-key "01234567890123456789012345678901"
-                                               :source-lifecycle "migration-contract"
+                                               :source-lifecycle #uuid "20f17d8c-3f21-5028-8859-a99daaebc67d"
                                                :revision-watermark watermark
                                                :advance-revision-watermark! #(swap! watermark max %)}))
       :snapshot #(d/db @!conn) :transact! (fn [operations]

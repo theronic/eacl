@@ -375,7 +375,8 @@ case "$command" in
       "$repo_root/formal/tla/EaclTemporalDetailed.tla" \
       "$repo_root/formal/tla/EaclCacheStorage.tla" \
       "$repo_root/formal/tla/EaclSpeculativeCache.tla" \
-      "$repo_root/formal/tla/EaclOperatorSafety.tla"
+      "$repo_root/formal/tla/EaclOperatorSafety.tla" \
+      "$repo_root/formal/tla/EaclUuidLifecycle.tla"
     do
       java -cp "$tla_jar" tla2sany.SANY "$model"
       "$apalache" \
@@ -419,6 +420,11 @@ case "$command" in
       "$repo_root/formal/tla/EaclOperatorSafety.tla" \
       "$repo_root/formal/tla/EaclOperatorSafety.cfg" \
       8
+    apalache_check \
+      "uuid-lifecycle-bounded" \
+      "$repo_root/formal/tla/EaclUuidLifecycle.tla" \
+      "$repo_root/formal/tla/EaclUuidLifecycle.cfg" \
+      6
     ;;
   apalache-scheduled)
     need_tools
@@ -452,6 +458,10 @@ case "$command" in
       "operator-safety" \
       "$repo_root/formal/tla/EaclOperatorSafety.tla" \
       "$repo_root/formal/tla/EaclOperatorSafety.cfg"
+    apalache_induction \
+      "uuid-lifecycle" \
+      "$repo_root/formal/tla/EaclUuidLifecycle.tla" \
+      "$repo_root/formal/tla/EaclUuidLifecycle.cfg"
     ;;
   apalache-mutation-control)
     need_tools

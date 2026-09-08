@@ -45,7 +45,7 @@
   {:backend :relay-test
    :source-id "relay-source"
    :branch nil
-   :source-lifecycle "relay-lifecycle"
+   :source-lifecycle #uuid "9609a096-a7e9-559c-8ef6-0f6baf065aa1"
    :basis-kind :ordinary
    :revision revision
    :exact-locator revision
@@ -118,7 +118,7 @@
         envelope
         (cursor/token->cursor
          (get-in page [:page-info :end-cursor]))]
-    (is (= 13 (:v envelope)))
+    (is (= 14 (:v envelope)))
     (is (= (request-context/lineage-for-basis (basis-identity 10))
            (:lineage envelope)))
     (is (= {:schema-generation 3
@@ -170,7 +170,7 @@
           :operations
           {:source-scope
            (constantly {:source-id "relay-source" :branch nil})
-           :source-lifecycle (constantly "relay-lifecycle")
+           :source-lifecycle (constantly #uuid "9609a096-a7e9-559c-8ef6-0f6baf065aa1")
            :acquire-current! (fn [] (acquisition current))
            :acquire-authoritative! (fn [] (acquisition current))
            :acquire-at-least! (fn [& _] (acquisition current))
@@ -659,6 +659,17 @@
                    error
                  (:reason (ex-data error)))))
           (pr-str changed-query)))))
+
+(deftest raw-adapter-cursors-require-the-same-adapter-lifetime-test
+  (let [left (adapter 1 nil true) right (adapter 1 nil true)
+        page (relay/externalize-page left {} :lookup-resources lookup-query lookup-page)
+        token (get-in page [:page-info :end-cursor])]
+    (is (not= (backend/unmanaged-lifecycle left) (backend/unmanaged-lifecycle right)))
+    (is (= left (:adapter (relay/prepare-page-query left {} :lookup-resources
+                                                   (assoc lookup-query :after token)))))
+    (is (some? (try (relay/prepare-page-query right {} :lookup-resources
+                                            (assoc lookup-query :after token))
+                    nil (catch #?(:clj Exception :cljs :default) e (ex-data e)))))))
 
 (deftest cursor-is-bound-to-normalized-traversal-limits-test
   (let [snapshot (adapter 1 nil true)

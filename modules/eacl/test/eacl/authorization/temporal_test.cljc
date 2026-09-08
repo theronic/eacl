@@ -6,7 +6,7 @@
 
 (def basis-key
   {:key-version 2 :backend :test :adapter-fingerprint :temporal-test :identity-contract :identity-v1
-   :basis-identity {:backend :test :source-id :source :branch nil :source-lifecycle :one
+   :basis-identity {:backend :test :source-id :source :branch nil :source-lifecycle #uuid "9002f996-24c2-5fb6-a136-9ee7e47f10a1"
                     :basis-kind :ordinary :revision 1 :exact-locator 1
                     :backend-snapshot-id {:basis 1}}})
 (def semantic-key

@@ -4,7 +4,8 @@
   Exact and managed reuse are semantic key construction concerns. Storage is
   only a bounded partial map of opaque keys to immutable completed values;
   misses compute independently and publication never owns computation."
-  (:require [eacl.authorization.result :as authorization-result]
+  (:require [clojure.string :as str]
+            [eacl.authorization.result :as authorization-result]
             [eacl.authorization.temporal :as temporal]
             [eacl.backend.v8 :as backend]
             [eacl.cache-identity :as cache-identity]
@@ -17,6 +18,7 @@
             [eacl.proof-frame :as proof-frame]
             [eacl.relationships.mutations :as relationship-mutations]
             [eacl.secure-format :as secure]
+            [eacl.uuid :as uuid]
             [eacl.security.imports :as imports]
             [eacl.security.retention :as retention]
             [eacl.subproblem-cache :as subproblem])
@@ -82,12 +84,12 @@
 
 (def basis-snapshot-format
   "Version identifier for flat process-neutral authorization-cache snapshots."
-  :eacl.cache/basis-snapshot-v2)
+  :eacl.cache/basis-snapshot-v3)
 
-(def ^:private answer-entry-format :eacl.cache/completed-answer-v2)
+(def ^:private answer-entry-format :eacl.cache/completed-answer-v3)
 (def rendered-page-entry-format
   "Version identifier for exact public transport-page values."
-  :eacl.cache/rendered-page-v5)
+  :eacl.cache/rendered-page-v6)
 
 (defn- metadata-free-portable-data?
   [value allow-records? {:keys [maximum-depth maximum-entries
@@ -105,6 +107,7 @@
                (cond
                  (string? item) (count item)
                  (keyword? item) (count (str item))
+                 (uuid/value? item) 44
                  :else 0))]
         (cond
           (or (and maximum-depth (> depth maximum-depth))
@@ -120,6 +123,7 @@
               (boolean? item)
               (string? item)
               (keyword? item)
+              (uuid/value? item)
               (exact-integer/exact? item))
           (recur remaining next-entries next-characters)
 
@@ -204,6 +208,10 @@
                (or (map? item) (set? item))
                false
 
+               ;; UUID support is for portable authority, not an expansion of
+               ;; the external object-ID codec's previously admitted domain.
+               (uuid/value? item) false
+
                :else
                (try
                  (let [canonical (secure/canonicalize item)]
@@ -213,8 +221,8 @@
      (canonical? value))))
 
 (def ^:private authorization-abi
-  {:key-version 2
-   :answer-value-version 2
+  {:key-version 3
+   :answer-value-version 3
    :subproblem-value-version 2
    :backend-adapter-version backend/adapter-version
    :engine-version engine/engine-version
@@ -322,7 +330,7 @@
          (= (:backend basis-key) (:backend identity))
          (backend/admissible-basis-kind? (:basis-kind identity))
          (some? (:source-id identity))
-         (some? (:source-lifecycle identity))
+         (uuid/value? (:source-lifecycle identity))
          (proof-frame/generation? (:revision identity))
          (causal-token/exact-locator? (:exact-locator identity))
          (map? (:backend-snapshot-id identity))
@@ -339,7 +347,7 @@
                 (set (keys (:source-scope lineage))))
              (keyword? (get-in lineage [:source-scope :backend]))
              (some? (get-in lineage [:source-scope :source-id]))
-             (some? (:source-lifecycle lineage)))
+             (uuid/value? (:source-lifecycle lineage)))
     {:source-scope
      (select-keys (:source-scope lineage) [:backend :source-id :branch])
      :source-lifecycle (:source-lifecycle lineage)}))
@@ -1158,6 +1166,12 @@
     (incompatible-snapshot! "Cache snapshot must be a map."
                             {:snapshot snapshot}))
   (when-not (= basis-snapshot-format (:format snapshot))
+    (when (contains? #{:eacl.cache/basis-snapshot-v1 :eacl.cache/basis-snapshot-v2}
+                     (:format snapshot))
+      (throw (ex-info "This cache snapshot requires upgrade; export a fresh snapshot."
+                      {:type :eacl/cache-snapshot-upgrade-required
+                       :eacl/error :eacl/cache-snapshot-upgrade-required
+                       :reason :legacy-source-lifecycle})))
     (incompatible-snapshot!
      "Cache snapshot format is not supported."
      {:actual-format (:format snapshot)}))
@@ -1194,11 +1208,30 @@
 
 (defn- restore-basis-snapshot*
   "Validates and reconstructs fresh stores off-side, then installs atomically."
-  [store snapshot bounds import-trust]
+  [store snapshot bounds import-trust expected-lineage]
   (when-not (basis-cache? store)
     (invalid-config! "Expected an EACL basis cache." {:cache store}))
   (let [max-entries (valid-bounds! bounds)
         _ (validate-basis-snapshot! snapshot max-entries)
+        original-snapshot snapshot
+        ;; JVM UUIDs are immutable. CLJS trusted decoded inputs still need
+        ;; capture: freezing an ingress option does not own imported keys.
+        snapshot #?(:clj snapshot
+                    :cljs (try
+                            (secure/capture-portable snapshot {:maximum-depth 64
+                                                               :maximum-entries 131072})
+                            (catch :default error
+                              (incompatible-snapshot! "Cache snapshot contains invalid portable data."
+                                                      {:cause-type (:type (ex-data error))}))))
+        ;; Check the captured values: a caller-owned CLJS UUID accessor must
+        ;; not change authority between the scope check and reconstruction.
+        _ #?(:cljs (when-not (identical? original-snapshot snapshot)
+                     (validate-basis-snapshot! snapshot max-entries)) :clj nil)
+        _ (when expected-lineage
+            (doseq [entry (:entries snapshot)]
+              (when-not (= expected-lineage (get-in entry [:key 2 2 :lineage]))
+                (incompatible-snapshot! "Cache snapshot belongs to another source lifecycle."
+                                        {:reason :source-lifecycle-mismatch}))))
         restored
         (try
           (subproblem/restore-store
@@ -1231,8 +1264,10 @@
 
 (defn restore-basis-snapshot!
   "Restores an already trusted decoded snapshot. External hosts own its trust."
-  [store snapshot bounds]
-  (restore-basis-snapshot* store snapshot bounds nil))
+  ([store snapshot bounds]
+   (restore-basis-snapshot! store snapshot bounds nil))
+  ([store snapshot bounds expected-lineage]
+   (restore-basis-snapshot* store snapshot bounds nil expected-lineage)))
 
 (def maximum-authenticated-snapshot-bytes (* 16 1024 1024))
 
@@ -1246,7 +1281,7 @@
       (invalid-config! "Invalid authenticated cache snapshot byte limit." {}))
     (when-not (:keyring-controller options)
       (invalid-config! "Authenticated cache snapshots require a keyring controller." {}))
-    (assoc options :prefix "eacl_cache1_" :domain "eacl/cache-snapshot/envelope/v1"
+    (assoc options :prefix "eacl_cache2_" :domain "eacl/cache-snapshot/envelope/v2"
            :payload-keys #{:format :entries :entry-count}
            :maximum-size maximum-size :maximum-depth 64 :maximum-entries 131072)))
 
@@ -1265,20 +1300,28 @@
 (defn restore-authenticated-basis-snapshot!
   "Authenticates optional bytes before decoding and attaches the verifying kid.
    Unavailable keys or invalid artifacts miss without modifying existing stores."
-  [store token bounds options]
-  (let [options (authenticated-snapshot-options options bounds)]
-    (try
-      (let [{:keys [payload security-kid]} (secure/decode-authenticated-envelope options token)]
-        (assoc (restore-basis-snapshot* store payload (select-keys bounds [:max-entries])
-                                        {:controller (:keyring-controller options) :kid security-kid})
-               :security-kid security-kid))
-      (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo) error
-        (if (contains? #{:eacl.format/invalid :eacl/incompatible-cache-snapshot
-                         :eacl/cache-snapshot-incompatible} (:type (ex-data error)))
-          {:restored? false :cache-miss? true
-           :reason (if (= :security-key-unavailable (:reason (ex-data error)))
-                     :security-key-unavailable :invalid-cache-artifact)}
-          (throw error))))))
+  ([store token bounds options]
+   (restore-authenticated-basis-snapshot! store token bounds options nil))
+  ([store token bounds options expected-lineage]
+   (let [options (authenticated-snapshot-options options bounds)]
+     (when (and (string? token) (str/starts-with? token "eacl_cache1_"))
+       (throw (ex-info "This cache snapshot requires upgrade; export a fresh snapshot."
+                       {:type :eacl/cache-snapshot-upgrade-required
+                        :eacl/error :eacl/cache-snapshot-upgrade-required
+                        :reason :legacy-source-lifecycle})))
+     (try
+       (let [{:keys [payload security-kid]} (secure/decode-authenticated-envelope options token)]
+         (assoc (restore-basis-snapshot* store payload (select-keys bounds [:max-entries])
+                                         {:controller (:keyring-controller options) :kid security-kid}
+                                         expected-lineage)
+                :security-kid security-kid))
+       (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core/ExceptionInfo) error
+         (if (contains? #{:eacl.format/invalid :eacl/incompatible-cache-snapshot
+                          :eacl/cache-snapshot-incompatible} (:type (ex-data error)))
+           {:restored? false :cache-miss? true
+            :reason (if (= :security-key-unavailable (:reason (ex-data error)))
+                      :security-key-unavailable :invalid-cache-artifact)}
+           (throw error)))))))
 
 (defn- safe-valid?
   [valid? value]

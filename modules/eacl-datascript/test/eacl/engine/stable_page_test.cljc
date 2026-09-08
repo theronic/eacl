@@ -52,7 +52,7 @@
         {:keys [conn]} (seed-fixture-client! fixture)
         db (ds/db conn)
         source-id (str (random-uuid))
-        source-lifecycle (str (random-uuid))
+        source-lifecycle (random-uuid)
         adapter (datascript-backend/basis-adapter
                  db
                  {:object-id->entid
@@ -347,6 +347,19 @@
         (is (= (:data page-1) (:data previous)))
         (is (false? (get-in previous [:page-info :has-previous-page?])))))))
 
+(deftest obsolete-and-invalid-tokens-fail-before-adapter-work-test
+  (doseq [direction [:after :before]
+          [token expected] [["eacl_sd1.obsolete" :eacl.page/cursor-upgrade-required]
+                            [false :eacl.page/invalid-cursor]
+                            [{} :eacl.page/invalid-cursor]]]
+    (let [calls (atom 0)
+          error (with-redefs [backend/invoke (fn [& _] (swap! calls inc))]
+                  (try (page/page {direction token}) nil
+                       (catch #?(:clj clojure.lang.ExceptionInfo :cljs cljs.core.ExceptionInfo) e
+                         (:eacl/error (ex-data e)))))]
+      (is (= expected error))
+      (is (zero? @calls)))))
+
 (deftest token-rejection-test
   (let [env (seeded :folder-chain)
         options (base-options env {:page-size 3})
@@ -363,6 +376,12 @@
     (testing "a different page size is incompatible"
       (is (= :eacl.page/invalid-cursor
              (error-of (assoc options :after cursor :page-size 5)))))
+    (testing "equal lifecycle/revision does not replace complete source scope"
+      (doseq [[field value] [[:backend :other-backend] [:source-id "another-source"] [:branch :other-branch]
+                             [:source-lifecycle #uuid "854e138f-b8a4-42ee-a8f9-49c01ac19fc1"]]]
+        (is (= :eacl.page/invalid-cursor
+               (error-of (-> options (assoc :after cursor)
+                             (assoc-in [:basis-identity field] value)))))))
     (testing "a different signing key fails authentication"
       (is (= :eacl.page/invalid-cursor
              (error-of (assoc options :after cursor

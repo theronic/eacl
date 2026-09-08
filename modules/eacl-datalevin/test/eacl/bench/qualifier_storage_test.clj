@@ -38,7 +38,7 @@
          uri (str "datomic:mem://qualifier-bench-" (random-uuid))
          watermark (atom 0)
          config {:security-key "01234567890123456789012345678901"
-                 :source-lifecycle "qualifier-benchmark"}
+                 :source-lifecycle #uuid "9ecde1b2-2af2-5bdc-92c3-3fa9ddc51d0d"}
          [conn api db transact! rows close!]
          (case backend
            :datomic

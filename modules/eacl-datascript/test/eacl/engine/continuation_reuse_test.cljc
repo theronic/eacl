@@ -398,16 +398,16 @@
 
 (def ^:private test-lineage
   {:source-scope
-   {:backend :datascript :source-id "continuation-test" :branch nil}
-   :source-lifecycle "continuation-test"})
+   {:backend :datascript :source-id #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34" :branch nil}
+   :source-lifecycle #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"})
 
 (defn- identity-for-test-adapter
   [adapter]
   (merge
    {:backend :datascript
-    :source-id "continuation-test"
+    :source-id #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"
     :branch nil
-    :source-lifecycle "continuation-test"
+    :source-lifecycle #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"
     :basis-kind (backend/invoke adapter :basis-kind)
     :backend-snapshot-id (backend/invoke adapter :snapshot-id)}
    (backend/invoke adapter :native-revision)))
@@ -415,7 +415,7 @@
 (deftest checkpoint-key-is-frame-scoped-not-revision-scoped-test
   (let [{:keys [fixture conn client]}
         (seeded-caching-client :folder-chain)
-        opts (adapter-opts conn {:source-lifecycle "continuation-test"})
+        opts (adapter-opts conn {:source-lifecycle #uuid "e0ce343f-f75d-56e5-a83a-8ed9ae28fc34"})
         root [(:resource-type fixture) (:permission fixture)]
         adapter-1 (datascript-backend/basis-adapter (ds/db conn) opts)
         identity-1 (identity-for-test-adapter adapter-1)
@@ -472,7 +472,7 @@
   ;; are distinct JVM objects; the flat derived-artifact LRU must return one plan.
   (let [{:keys [conn]} (seed-fixture-client!
                         (fixture-for :explorer-acyclic))
-        opts (adapter-opts conn {:source-lifecycle "plan-rewrap-test"})
+        opts (adapter-opts conn {:source-lifecycle #uuid "0f660e5b-97fc-5a25-beb4-1eb086e38666"})
         stable-plan v8/stable-plan
         registry (derived-schema/store)
         adapter-1 (datascript-backend/basis-adapter (ds/db conn) opts)
@@ -482,7 +482,7 @@
            {:backend :datascript
             :source-id :plan-rewrap-test
             :branch nil
-            :source-lifecycle "plan-rewrap-test"
+            :source-lifecycle #uuid "0f660e5b-97fc-5a25-beb4-1eb086e38666"
             :basis-kind (backend/invoke adapter :basis-kind)
             :backend-snapshot-id (backend/invoke adapter :snapshot-id)}
            (backend/invoke adapter :native-revision)))
@@ -509,7 +509,7 @@
                             (fixture-for :explorer-acyclic))
         {client-r :client} (seed-fixture-client!
                             (fixture-for :explorer-recursive))]
-    (is (= "eacl/initial"
+    (is (= #uuid "00000000-0000-0000-0000-000000000000"
            (get-in client-a [:runtime :source-lifecycle])
            (get-in client-r [:runtime :source-lifecycle])))))
 

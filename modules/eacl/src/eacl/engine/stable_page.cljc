@@ -25,12 +25,13 @@
             [eacl.authorization.temporal :as temporal]
             [eacl.authorization.evidence :as evidence]
             [eacl.execution :as execution]
+            [eacl.causal-token :as causal-token]
             [eacl.secure-format :as secure-format]))
 
-(def token-version 1)
+(def token-version 2)
 (def order-abi 2)
-(def token-domain "eacl/stable-page/v1")
-(def token-prefix "eacl_sd1.")
+(def token-domain "eacl/stable-page/v2")
+(def token-prefix "eacl_sd2.")
 
 (defn- page-error!
   [error message data]
@@ -55,10 +56,15 @@
   lineage and frame before calling `edge-page`; they do not use this token."
   [{:keys [adapter basis-identity plan direction anchor subject-type
            page-size qualification] :as options}]
+  (when-not (causal-token/source-scope? basis-identity)
+    (page-error! :eacl.page/invalid-source "Standalone pagination requires complete source scope." {}))
   (cond-> {:v token-version
            :order-abi order-abi
            :fingerprint (:fingerprint plan)
-           :lifecycle (:source-lifecycle basis-identity)
+           :source-scope {:backend (:backend basis-identity)
+                          :source-id (:source-id basis-identity)
+                          :branch (:branch basis-identity)}
+           :lifecycle (causal-token/validate-source-lifecycle! (:source-lifecycle basis-identity))
            :basis (backend/invoke adapter :native-revision)
            :direction direction
            :anchor anchor
@@ -98,13 +104,22 @@
          "."
          (secure-format/b64url-encode tag))))
 
+(defn- require-token-format!
+  [token]
+  (when-not (nil? token)
+    (cond
+      (and (string? token) (string/starts-with? token "eacl_sd1."))
+      (page-error! :eacl.page/cursor-upgrade-required "Obsolete cursor format; obtain a fresh first page." {})
+
+      (and (string? token) (string/starts-with? token token-prefix)) nil
+
+      :else (page-error! :eacl.page/invalid-cursor "Unrecognized cursor format." {}))))
+
 (defn- decode-token
   "Verifies integrity, expiry, and every bound field against the current
   execution binding; returns the payload or throws typed."
   [options binding token]
-  (when-not (and (string? token)
-                 (string/starts-with? token token-prefix))
-    (page-error! :eacl.page/invalid-cursor "Unrecognized cursor format." {}))
+  (require-token-format! token)
   (let [parts (string/split
                (subs token (count token-prefix)) #"\." 2)
         _ (when (not= 2 (count parts))
@@ -131,7 +146,7 @@
                (long expires-at))
         (page-error! :eacl.page/expired-cursor "Cursor expired."
                      {:expires-at expires-at})))
-    (doseq [field [:v :order-abi :fingerprint :lifecycle :direction
+    (doseq [field [:v :order-abi :fingerprint :source-scope :lifecycle :direction
                    :anchor :subject-type :page-size :qualification :result-policy]]
       (when (not= (get binding field) (get payload field))
         (page-error! :eacl.page/invalid-cursor
@@ -543,6 +558,8 @@
   Returns {:data [external-ids] :page-info {...}} in canonical forward
   order for both navigation modes."
   [{:keys [adapter anchor after before checkpoints] :as options}]
+  (require-token-format! after)
+  (require-token-format! before)
   (let [binding (execution-binding options)
         key (checkpoint-key binding)
         anchor-eid (backend/invoke adapter :object-id->internal

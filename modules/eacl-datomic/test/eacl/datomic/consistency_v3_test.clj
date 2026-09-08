@@ -23,7 +23,7 @@
 (def document (eacl/spice-object :document "document"))
 (def relationship (eacl/->Relationship user :reader document))
 
-(def ^:private source-lifecycle "datomic-consistency-v4-test")
+(def ^:private source-lifecycle #uuid "cdf84131-91aa-54e6-b34f-7f1bf0667e53")
 
 (defn- client
   [conn]
@@ -321,7 +321,12 @@
 
 (deftest encrypted-cursor-current-recovery-test
   (with-mem-conn [conn schema/v8-schema]
-    (let [authorization (client conn)
+    ;; This tests cursor semantics. The five-millisecond fixture deadline used
+    ;; by the timeout tests can expire during authentication under solver load.
+    (let [authorization (datomic/make-client
+                         conn {:security-key security-key
+                               :source-lifecycle source-lifecycle
+                               :consistency-sync-timeout-ms 1000})
           _ (eacl/write-schema! authorization authorization-schema)
           _ @(d/transact conn [{:eacl/id "user"}
                                {:eacl/id "doc-a"}

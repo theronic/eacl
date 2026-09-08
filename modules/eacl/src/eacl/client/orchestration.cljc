@@ -91,6 +91,7 @@
             [eacl.schema.expression-persistence :as expression-persistence]
             [eacl.schema.expression-policy :as expression-policy]
             [eacl.secure-format :as secure]
+            [eacl.uuid :as uuid]
             [eacl.security.configuration :as security-config]
             [eacl.security.retention :as retention]
             [eacl.subproblem-cache :as subproblem]
@@ -1806,7 +1807,6 @@
             (concat (filter transaction-function? operations)
                     (remove transaction-function? operations))))
     []))
-
 
 (defn- validate-permission-root!
   [api request-context selected-db opts subject permission resource]
@@ -4270,15 +4270,21 @@
   across processes after a restore. Without it, a fresh process-local UUID is
   installed. In-flight requests retain their captured old lifecycle."
   ([client]
-   (expire-cache! client (str (random-uuid))))
+   (expire-cache! client (uuid/fresh)))
   ([client source-lifecycle]
-   (causal-token/validate-source-lifecycle! source-lifecycle)
-   (let [runtime (:runtime client)
+   (let [source-lifecycle (causal-token/validate-source-lifecycle! source-lifecycle)
+         runtime (:runtime client)
          config (runtime-cache-lifecycle-config runtime)
          rotation
          (rotate-runtime-cache-lifecycle!
           runtime
           (fn [current]
+            (when (and (= uuid/initial source-lifecycle)
+                       (not= source-lifecycle (:source-lifecycle current)))
+              (throw (ex-info "A replaced source cannot return to the initial lifecycle."
+                              {:type :eacl/invalid-source-lifecycle
+                               :eacl/error :eacl/invalid-source-lifecycle
+                               :reason :retired-initial-source-lifecycle})))
             (fresh-runtime-cache-lifecycle
              config
              source-lifecycle
@@ -4346,10 +4352,10 @@
      (ex-info (str operation " requires an EACL client.")
               {:type :eacl/invalid-client
                :eacl/error :eacl/invalid-client})))
-  (client-options client))
+  (assoc (client-options client) :source (:source client)))
 
 (defn export-cache-snapshot
-  "Exports a count-bounded process-neutral authorization-cache v2 value.
+  "Exports a count-bounded process-neutral authorization-cache v3 value.
 
   The host MUST authenticate and encoded-size-bound any externally persisted
   representation. Continuations, cursors, metrics, backend snapshots, and
@@ -4382,7 +4388,8 @@
              (:source-lifecycle captured)
              (lifecycle-content-revision captured))
             result
-            (restore! (:basis-cache-store candidate) opts)]
+            (restore! (:basis-cache-store candidate)
+                      (assoc opts :source-lifecycle (:source-lifecycle captured)))]
         (when (:restored? result)
           (let [installation
                 (install-restored-runtime-cache-lifecycle!
@@ -4395,10 +4402,17 @@
        :disabled? true
        :restored? false})))
 
+(defn- cache-restore-lineage [opts]
+  {:source-scope (assoc (source/source-scope (:source opts))
+                        :backend (source/backend-id (:source opts)))
+   :source-lifecycle (:source-lifecycle opts)})
+
 (defn restore-cache-snapshot!
   "Restores an already authenticated and decoded trusted cache value."
   [client snapshot bounds]
-  (restore-cache-with! client (fn [store _] (cache/restore-basis-snapshot! store snapshot bounds))))
+  (restore-cache-with!
+   client (fn [store opts]
+            (cache/restore-basis-snapshot! store snapshot bounds (cache-restore-lineage opts)))))
 
 (defn export-authenticated-cache-snapshot
   "Exports bounded, authenticated optional cache bytes under the primary ring."
@@ -4413,7 +4427,8 @@
   [client token bounds]
   (restore-cache-with!
    client (fn [store opts]
-            (cache/restore-authenticated-basis-snapshot! store token bounds (:format-options opts)))))
+            (cache/restore-authenticated-basis-snapshot! store token bounds (:format-options opts)
+                                                          (cache-restore-lineage opts)))))
 
 (defn cache-content-revision
   "Returns a conservative process-local dirty revision for authorization content.
@@ -4642,17 +4657,6 @@
        :key :cursor-ttl-seconds
        :value cursor-ttl-seconds
        :maximum backend/maximum-exact-integer})))
-  (when source-lifecycle
-    (try
-      (causal-token/validate-source-lifecycle! source-lifecycle)
-      (catch #?(:clj Exception :cljs :default) error
-        (throw
-         (ex-info
-          "EACL Config Error: :source-lifecycle must be bounded portable canonical data."
-          {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
-           :key :source-lifecycle
-           :value source-lifecycle}
-          error)))))
   (when (and (contains? config-opts :consistency-sync-timeout-ms)
              (not (and (integer? consistency-sync-timeout-ms)
                        (pos? consistency-sync-timeout-ms))))
@@ -4680,7 +4684,18 @@
        :eacl/error :eacl/invalid-config
        :key :read-only?
        :value read-only?})))
-  (let [source-lifecycle (or source-lifecycle "eacl/initial")
+  (let [source-lifecycle
+        (if (contains? config-opts :source-lifecycle)
+          (try
+            (causal-token/validate-source-lifecycle! source-lifecycle)
+            (catch #?(:clj Exception :cljs :default) error
+              (throw
+               (ex-info "EACL Config Error: :source-lifecycle requires a native UUID."
+                        {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                         :key :source-lifecycle :expected :uuid
+                         :reason (:type (ex-data error))}
+                        error))))
+          uuid/initial)
         codec-instance-id (str (random-uuid))
         prepared-native-source-id-key
         (:prepared-native-source-id-key api)

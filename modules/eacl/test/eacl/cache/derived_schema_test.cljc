@@ -13,7 +13,7 @@
     :source {:backend :test
              :source-id :source-a
              :branch nil
-             :source-lifecycle "lifecycle-a"}
+             :source-lifecycle #uuid "522d2f7c-fde9-5a1b-be31-eefc04e065aa"}
     :adapter {:backend :test
               :fingerprint {:adapter :test-v1}
               :identity-contract :immutable-v1

@@ -22,7 +22,7 @@
      permission admin = owner
    }")
 
-(def ^:private source-lifecycle "datomic-consistency-cache-v4-test")
+(def ^:private source-lifecycle #uuid "50535ed7-50b5-5ad0-9a1b-86892625bb3c")
 
 (defn- cached-client
   [conn]

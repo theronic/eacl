@@ -44,7 +44,7 @@
         snapshot (datascript/export-cache-snapshot client bounds)
         restored
         (datascript/restore-cache-snapshot! client snapshot bounds)]
-    (is (= :eacl.cache/basis-snapshot-v2 (:format snapshot)))
+    (is (= :eacl.cache/basis-snapshot-v3 (:format snapshot)))
     (is (zero? (:entry-count snapshot)))
     (is (true? (:restored? restored)))
     (is (> (datascript/cache-content-revision client) before))))
@@ -190,7 +190,7 @@
         snapshot-a (eacl/snapshot client-a)
         snapshot-b (eacl/snapshot client-b)]
     (try
-      (is (= "eacl/initial"
+      (is (= #uuid "00000000-0000-0000-0000-000000000000"
              (get-in client-a [:runtime :source-lifecycle])
              (get-in client-b [:runtime :source-lifecycle])
              (:source-lifecycle (eacl/basis snapshot-a))
@@ -1165,7 +1165,7 @@
         _ (eacl/create-relationships!
            setup
            (mapv #(eacl/->Relationship user :reader %) documents))
-        shared {:source-lifecycle "custom-codec-cursor-lifecycle"
+        shared {:source-lifecycle #uuid "9fb6ccab-eb75-5a72-bc0e-6a1817bd6359"
                 :security-key "01234567890123456789012345678901"}
         query {:subject user
                :permission :view
@@ -1570,7 +1570,7 @@
   (let [conn (datascript/create-conn)
         security-key "01234567890123456789012345678901"
         shared {:security-key security-key
-                :source-lifecycle "cross-policy-cursor-expiry"}
+                :source-lifecycle #uuid "13189d3e-073c-5b83-b467-6adabecbcee3"}
         setup (datascript/make-client conn shared)
         _ (eacl/write-schema! setup contract/smoke-schema)
         _ (seed-objects! conn)
@@ -2163,7 +2163,7 @@
       (is (= [(contract/->server "server-1")] (:data page-1)))
       (is (= [(contract/->server "server-2")] (:data page-2)))
       (is (empty? (:data page-3)))
-      (is (= 13 (:v envelope)))
+      (is (= 14 (:v envelope)))
       (is (= :least-path-edge
              (get-in envelope [:edge :kind])))
       (is (= :progress (get-in envelope [:edge :anchor])))

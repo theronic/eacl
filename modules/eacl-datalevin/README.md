@@ -41,7 +41,7 @@ dependency until the release and clean remote-consumer gates pass.
 
 Construction requires externally retained lifecycle, signing material, and
 revision state. Omitting an explicit signing key, keyring, or live controller
-or supplying a nil lifecycle fails construction; the shared development key is
+or supplying a nil, legacy, or reserved initial lifecycle fails construction; the shared development key is
 never used by this module:
 
 ```clojure
@@ -54,6 +54,7 @@ never used by this module:
   (datalevin/make-client
    conn
    {:security-key signing-key
+    ;; Must return the same persisted noninitial native UUID on every worker.
     :source-lifecycle (load-source-lifecycle)
     :revision-watermark watermark
     :advance-revision-watermark!

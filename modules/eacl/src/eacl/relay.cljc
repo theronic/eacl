@@ -18,6 +18,7 @@
             [eacl.request.counters :as request-counters]
             [eacl.request.context :as request-context]
             [eacl.secure-format :as secure]
+            [eacl.uuid :as uuid]
             [eacl.spicedb.consistency :as public-consistency]
             [eacl.subproblem-cache :as subproblem]
             [eacl.verified-kernel :as verified]))
@@ -62,8 +63,8 @@
   Change this value whenever edge identity, dependency-closure construction,
   or traversal boundary semantics change. Exact database identity alone does
   not make a boundary produced by a different evaluator ABI composable."
-  {:version 3
-   :envelope 13
+  {:version 4
+   :envelope 14
    :edge-identity :external-object-id-v1
    :dependency-context :relation-closure-v1
    :emission-order cursor-emission-order-version})
@@ -224,7 +225,7 @@
    {:backend (backend/backend-id adapter)
     :source-id {:unmanaged-basis (backend/invoke adapter :snapshot-id)}
     :branch nil}
-   :source-lifecycle nil})
+   :source-lifecycle (backend/unmanaged-lifecycle adapter)})
 
 (def ^:private exact-snapshot-closure-digest
   (secure/canonical-digest
@@ -455,7 +456,7 @@
           token
           (cursor/cursor->token
            (merge
-            {:v 13
+            {:v 14
              :scope scope
              :edge public-edge}
             context)
@@ -471,7 +472,7 @@
     (execution/check! (:execution-contract opts) :cursor-encode)
     (let [token
           (cursor/cursor->token
-           (merge {:v 13 :scope scope :edge edge} context)
+           (merge {:v 14 :scope scope :edge edge} context)
            opts)]
       (execution/check! (:execution-contract opts) :cursor-encoded)
       token)))
@@ -492,13 +493,16 @@
           (try
             (cursor/token->authenticated-cursor token opts)
             (catch #?(:clj clojure.lang.ExceptionInfo :cljs :default) error
+              (when (= :eacl.pagination/cursor-upgrade-required (:type (ex-data error)))
+                (throw error))
               (invalid-cursor!
                "Invalid Relay cursor."
                {:reason (:reason (ex-data error))}
                error)))
           envelope (:cursor decoded)
           _ (execution/check! (:execution-contract opts) :cursor-decoded)]
-      (when-not (and (= 13 (:v envelope))
+      (when-not (and (= 14 (:v envelope))
+                     (uuid/owned? (get-in envelope [:lineage :source-lifecycle]))
                      (map? (:edge envelope))
                      (if (:qualification opts)
                        (temporal/cursor-certificate-valid? (:qualification-temporal envelope))

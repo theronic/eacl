@@ -50,7 +50,7 @@
         (is (true? (eacl/can? client (assoc request :cache? false))))
         (is (= 4 @decodes))
         (let [before (:qualifier-decode-cache (cache-state client))]
-          (datascript/expire-cache! client "qualifier-lifecycle-reset")
+          (datascript/expire-cache! client #uuid "0ef60c4d-f392-5092-92db-76ef9dd2736c")
           (is (not (identical? before (:qualifier-decode-cache (cache-state client))))))
         (is (true? (eacl/can? client request)))
         (is (= 5 @decodes))))))

@@ -44,7 +44,7 @@
             (is (= :eacl.authorization/evaluation-failure (get-in (first results) [:fault :type])))))
         (is (false? (eacl/can? client check))))
       (ds/reset-conn! conn original)
-      (api/expire-cache! client "qualified-restored-eid-lifecycle")
+      (api/expire-cache! client #uuid "78687749-69ed-573c-8b69-cc271cd2f7ff")
       (is (= :no-permission (:permissionship (trace/compare-operation! :restored point))))
       (ds/transact! conn [[:db/add qid qualifier/expiration-attribute 99]])
       (is (= :has-permission (:permissionship (trace/compare-operation! :unstamped-ban-expiry point)))))))

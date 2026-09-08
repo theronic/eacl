@@ -11,7 +11,7 @@
             [eacl.request.counters :as request-counters]))
 
 (def source-version 1)
-(def selected-basis-version 2)
+(def selected-basis-version 3)
 
 (def ownership-policies
   #{:borrowed :owned :mixed})
@@ -382,7 +382,7 @@
 (defn source-lifecycle
   "Returns current source continuity identity without acquiring a DB."
   [source]
-  (invoke source :source-lifecycle))
+  (causal-token/validate-source-lifecycle! (invoke source :source-lifecycle)))
 
 (defn selected-basis?
   [candidate]

@@ -55,7 +55,7 @@
         {:backend :test
          :source-id "source"
          :branch nil
-         :source-lifecycle "test-lifecycle"
+         :source-lifecycle #uuid "56e42789-dff4-5066-96c9-d275736f47e2"
          :basis-kind :ordinary
          :revision 41
          :exact-locator 41
@@ -69,5 +69,5 @@
     (is (= 41 (:revision payload)))
     (is (= 41 (:exact-locator payload)))
     (is (= "source" (:source-id payload)))
-    (is (= "test-lifecycle" (:source-lifecycle payload)))
+    (is (= #uuid "56e42789-dff4-5066-96c9-d275736f47e2" (:source-lifecycle payload)))
     (is (empty? @adapter-reads))))

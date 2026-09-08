@@ -5,7 +5,9 @@
   adapter, schema installation, and transaction submission. The
   nine public operations, snapshot-context assembly, cursor plumbing, and
   cache wiring live once in eacl.client.orchestration."
-  (:require [datalevin.core :as ds]
+  (:require [eacl.uuid :as uuid]
+            [eacl.causal-token :as causal-token]
+            [datalevin.core :as ds]
             [eacl.client.orchestration :as orchestration]
             [eacl.cursor :as cursor]
             [eacl.datalevin.backend :as datalevin-backend]
@@ -388,6 +390,20 @@
        :eacl/error :eacl/invalid-config
        :key :source-lifecycle
        :value nil})))
+  ;; Reject legacy values before native validation or schema bootstrap can
+  ;; acquire readers, advance watermarks, or write durable source metadata.
+  (try
+    (causal-token/validate-source-lifecycle! (:source-lifecycle config-opts))
+    (catch #?(:clj Exception :cljs :default) error
+      (throw (ex-info "Datalevin requires a persisted native UUID lifecycle."
+                      {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                       :key :source-lifecycle :expected :uuid
+                       :reason (:type (ex-data error))}
+                      error))))
+  (when (= uuid/initial (:source-lifecycle config-opts))
+    (throw (ex-info "Datalevin requires a persisted noninitial lifecycle UUID."
+                    {:type :eacl/invalid-config :eacl/error :eacl/invalid-config
+                     :key :source-lifecycle :reason :initial-source-lifecycle})))
   (when-not (or (contains? config-opts :security-key)
                 (contains? config-opts :security-keyring)
                 (contains? config-opts :security-keyring-controller))

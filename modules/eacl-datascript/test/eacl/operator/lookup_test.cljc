@@ -616,7 +616,7 @@
             second-page (eacl/lookup-resources client (assoc base :after token))]
         (is (= ["d2"] (public-page-ids first-page)))
         (is (= ["d6"] (public-page-ids second-page)))
-        (is (= 13 (:v envelope))
+        (is (= 14 (:v envelope))
             "the current public cursor envelope version is unchanged")
         (is (= :operator-least-path-edge
                (get-in envelope [:edge :kind])))

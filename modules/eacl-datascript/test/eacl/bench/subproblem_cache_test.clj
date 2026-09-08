@@ -235,7 +235,7 @@
   [semantic]
   (cache-key/exact-denotation-key
    {:tier :denotation
-    :source-lifecycle :subproblem-cache-benchmark
+    :source-lifecycle #uuid "12d5802c-cd7a-519d-bd6b-e3e2665aaa2f"
     :abi :subproblem-cache-benchmark-v1
     :semantic semantic
     :reuse :benchmark-basis}))

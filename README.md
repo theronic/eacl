@@ -352,10 +352,12 @@ For reader-Peer session pinning, let the writer return a basis token with its
 mutation response, select that exact basis once on the reader, and retain the
 snapshot for the session. Subsequent authorization reads then make no current
 head request. Datomic, Datahike, and DataScript default to the portable source
-lifecycle `"eacl/initial"`; rotate it explicitly with `expire-cache!` after a
+lifecycle `#uuid "00000000-0000-0000-0000-000000000000"`; rotate it explicitly with `expire-cache!` after a
 restore, reset, force-move, or history replacement. Datalevin has no universal
 safe default and requires an externally persisted `:source-lifecycle` plus
-shared token key material at `make-client`.
+shared token key material at `make-client`. See the
+[native UUID lifecycle upgrade guide](docs/uuid-source-lifecycle-upgrade.md)
+for coordinated configuration and artifact cutover.
 
 Construct a source-only deployment with `{:read-only? true}`. Reads and
 snapshot selection remain available; every mutation fails before planning or

@@ -83,6 +83,7 @@
             [eacl.request.context-test]
             [eacl.request.counters-test]
             [eacl.secure-format-test]
+            [eacl.uuid-lifecycle-test]
             [eacl.schema.expression-test]
             [eacl.schema.expression-limits-test]
             [eacl.schema.expression-resolver-test]
@@ -194,6 +195,7 @@
                'eacl.request.context-test
                'eacl.request.counters-test
                'eacl.secure-format-test
+               'eacl.uuid-lifecycle-test
                'eacl.caveats.values-test
                'eacl.caveats.definition-test
                'eacl.caveats.integrity-test

@@ -13,7 +13,7 @@
             snapshot-database-id basis-kind]
      :or {source-id ::source
           branch nil
-          lifecycle ::lifecycle
+          lifecycle #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379"
           revision 1
           exact-locator 1
           basis-kind :ordinary}}]
@@ -48,7 +48,7 @@
          backend-id :test
          source-id ::source
          branch nil
-         lifecycle ::lifecycle}}]
+         lifecycle #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379"}}]
   (let [acquire
         (fn [& _]
           (when acquire-calls
@@ -143,7 +143,7 @@
       (is (= :test (:backend-id (source/static-profile source))))
       (is (= {:source-id ::source :branch nil}
              (source/source-scope source)))
-      (is (= ::lifecycle (source/source-lifecycle source))))
+      (is (= #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379" (source/source-lifecycle source))))
     (is (= {:source-scope 1 :source-lifecycle 1} @calls))
     (is (not-any? #(contains? @calls %)
                   (vals source/acquisition-operations)))))
@@ -159,7 +159,7 @@
     (is (= {:backend :test
             :source-id ::source
             :branch nil
-            :source-lifecycle ::lifecycle
+            :source-lifecycle #uuid "ed7fe2aa-2d67-5ee3-9029-5cec76fec379"
             :basis-kind :ordinary
             :revision 1
             :exact-locator 1
@@ -217,7 +217,7 @@
             [[:backend {:snapshot-database-id :other-database}]
              [:source {:source-id ::other-source}]
              [:branch {:branch "other-branch"}]
-             [:lifecycle {:lifecycle ::other-lifecycle}]
+             [:lifecycle {:lifecycle #uuid "dd7fe2aa-2d67-5ee3-9029-5cec76fec379"}]
              [:basis-kind {:basis-kind :as-of}]
              [:revision {:revision 2 :exact-locator 2}]
              [:exact-locator {:exact-locator :other-locator}]]]
@@ -225,7 +225,7 @@
         (is (not= baseline (identity overrides)))))))
 
 (deftest acquisition-validates-source-boundaries-test
-  (testing "source lifecycle must be bounded portable canonical data"
+  (testing "source lifecycle must be a native UUID"
     (doseq [lifecycle [nil (apply str (repeat 4097 "x"))]]
       (let [release-calls (atom [])
             source

@@ -45,7 +45,7 @@
            conn
            {:cache cache/no-cache
             :security-key baseline-security-key
-            :source-lifecycle "operator-engine-union-baseline"})]
+            :source-lifecycle #uuid "4cd6f298-45ef-591c-9af0-0fd57b6cf79f"})]
       (eacl/write-schema! client schema)
       (ds/transact!
        conn
@@ -190,6 +190,9 @@
                         (into {} (for [[direction payload] directions]
                                    [direction
                                     (-> payload
+                                        (assoc-in [:cursor-common :v] 14)
+                                        (assoc-in [:cursor-common :lineage :source-lifecycle]
+                                                  #uuid "4cd6f298-45ef-591c-9af0-0fd57b6cf79f")
                                         (update :start-edge #(-> % (update :version inc) (update :order-abi inc)))
                                         (update :end-edge #(-> % (update :version inc) (update :order-abi inc)))
                                         (update-in [:cursor-common :adapter-fingerprint :adapter-version] inc)

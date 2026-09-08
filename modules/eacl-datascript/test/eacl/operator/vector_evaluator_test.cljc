@@ -23,7 +23,7 @@
 (defn- test-exact-key
   [semantic]
   (let [identity {:tier :denotation
-                  :source-lifecycle {:source :test :lifecycle :operator}
+                  :source-lifecycle #uuid "07529ca3-2c5b-57d9-a992-31d5a71299f5"
                   :abi :test-authorization-v2
                   :semantic semantic
                   :reuse [:basis 1]}]
