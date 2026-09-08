@@ -1,6 +1,7 @@
 (ns eacl.operator.vector-evaluator-test
   (:require [#?(:clj clojure.test :cljs cljs.test)
              :refer [deftest is]]
+            [clojure.string :as str]
             [datascript.core :as ds]
             [eacl.authorization.evidence :as evidence]
             [eacl.authorization.qualification :as qualification]
@@ -17,6 +18,7 @@
             [eacl.operator.evaluator-test :as scalar-fixtures]
             [eacl.operator.plan :as plan]
             [eacl.operator.vector-evaluator :as vector-evaluator]
+            [eacl.schema.expression-policy :as expression-policy]
             [eacl.subproblem-cache :as subproblem]
             [eacl.relationships.staged :as staged]))
 
@@ -80,6 +82,42 @@
     nil
     (catch #?(:clj Exception :cljs :default) error
       (ex-data error))))
+
+(deftest admitted-permission-chains-support-point-checks-and-pagination
+  (let [n (dec (:maximum-permissions expression-policy/aggregate-limits))
+        conn (datascript/create-conn)
+        client (datascript/make-client conn {})
+        user (eacl/spice-object :user "chain-user")
+        absent (eacl/spice-object :user "chain-absent")
+        documents (mapv #(eacl/spice-object :document (str "chain-doc-" %)) (range 2))
+        query {:subject user :resource/type :document :permission :allowed}
+        schema (str "definition user {}\ndefinition document {\n"
+                    "relation member: user\nrelation banned: user\n"
+                    "permission p0 = member\n"
+                    (str/join "\n" (for [i (range 1 n)]
+                                      (str "permission p" i " = p" (dec i) " & member")))
+                    "\npermission allowed = p" (dec n) " - banned\n}")]
+    (eacl/write-schema! client schema)
+    (ds/transact! conn (mapv #(hash-map :eacl/id (:id %)) (into [user absent] documents)))
+    (eacl/create-relationships! client (mapv #(eacl/->Relationship user :member %) documents))
+    (doseq [cache? [false true true]]
+      (is (true? (eacl/can? client {:subject user :resource (first documents)
+                                   :permission :allowed :cache? cache?})))
+      (is (false? (eacl/can? client {:subject absent :resource (first documents)
+                                    :permission :allowed :cache? cache?})))
+      (is (= 2 (:count (eacl/count-resources client (assoc query :cache? cache?))))))
+    (let [first-page (eacl/lookup-resources client (assoc query :first 1))
+          next-page (eacl/lookup-resources client (assoc query :first 1
+                                                       :after (get-in first-page [:page-info :end-cursor])))
+          last-page (eacl/lookup-resources client (assoc query :last 1))
+          prior-page (eacl/lookup-resources client (assoc query :last 1
+                                                        :before (get-in last-page [:page-info :start-cursor])))]
+      (is (= documents (into (:data first-page) (:data next-page))))
+      (is (= documents (into (:data prior-page) (:data last-page))))
+      (is (false? (get-in next-page [:page-info :has-next-page?])))
+      (is (false? (get-in prior-page [:page-info :has-previous-page?]))))
+    (is (= [user] (:data (eacl/lookup-subjects client {:resource (first documents)
+                                                     :permission :allowed :subject/type :user :first 1}))))))
 
 (def ^:private differential-seeds
   [104729 130363 155921 196613 262147 327673 393241 458789

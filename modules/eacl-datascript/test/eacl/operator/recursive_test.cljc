@@ -43,6 +43,54 @@
      permission allowed = view - blocked
    }")
 
+(deftest recursive-grant-witnesses-do-not-oscillate-around-cycles
+  (let [conn (datascript/create-conn)
+        now (atom 100)
+        client (datascript/make-client conn {:clock #(deref now)})
+        user (eacl/spice-object :user "user")
+        folders (mapv #(eacl/spice-object :folder (str "folder-" %)) (range 6))
+        query {:subject user :permission :allowed :resource/type :folder}]
+    (eacl/write-schema!
+     client
+     "definition user {}
+      definition folder {
+        relation member: user
+        relation banned: user
+        relation parent: folder
+        permission base = member
+        permission walk = base + parent->walk
+        permission allowed = walk - banned
+      }")
+    (ds/transact! conn (mapv #(hash-map :eacl/id (:id %)) (cons user folders)))
+    (eacl/create-relationships!
+     client
+     (into [(assoc (eacl/->Relationship user :member (folders 5)) :valid-until-ms 102)]
+           (map (fn [[from to end]]
+                  (cond-> (eacl/->Relationship (folders from) :parent (folders to))
+                    end (assoc :valid-until-ms end))))
+           [[4 0 101] [2 1 nil] [3 1 102] [1 2 nil]
+            [0 3 102] [4 3 102] [1 4 101] [5 4 nil]]))
+    ;; Membership converges quickly. Replacing rather than accumulating the
+    ;; evidence makes the two grounded deadlines chase one another forever.
+    (with-redefs [recursive/default-limits
+                  (assoc recursive/default-limits :maximum-transitions 2000)]
+      (doseq [[time indexes] [[100 (range 6)] [101 (range 1 6)] [102 []]]]
+        (reset! now time)
+        (let [expected (set (map folders indexes))]
+          (doseq [cache? [false true true]]
+            (is (= expected
+                   (set (:data (eacl/lookup-resources
+                                client (assoc query :first 20 :cache? cache?))))))
+            (is (= (count expected)
+                   (:count (eacl/count-resources client (assoc query :cache? cache?))))))
+          (doseq [folder folders]
+            (is (= (contains? expected folder)
+                   (eacl/can? client {:subject user :permission :allowed :resource folder})))
+            (is (= (if (contains? expected folder) #{user} #{})
+                   (set (:data (eacl/lookup-subjects
+                                client {:resource folder :permission :allowed
+                                        :subject/type :user :first 20})))))))))))
+
 (def recursive-relation-arrow-schema
   "definition user {}
    definition folder {

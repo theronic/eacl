@@ -114,7 +114,8 @@
          remaining budget]
     (if (zero? remaining)
       {:fault :work-limit :complete? false}
-      (let [next (recursive-step universe base rules prior)]
+      (let [derived (recursive-step universe base rules prior)
+            next (merge-with #(combine universe :union %1 %2) prior derived)]
         (if (= next prior)
           {:values next :complete? true}
           (recur next (dec remaining)))))))

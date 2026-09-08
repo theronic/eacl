@@ -678,6 +678,27 @@
         :cljs
         (vec (.digest digest))))))
 
+(defn canonical-tree-digest
+  "Digests already admitted compiler data without encoding a whole aggregate.
+   Container tags and arities preserve structure; map keys and set members
+   retain canonical order. Scalar records still use the bounded wire codec.
+   This is not a replacement for admission limits on untrusted input."
+  [domain value]
+  (letfn [(records [value]
+            (cond
+              (map? value)
+              (cons [:map (count value)]
+                    (mapcat (fn [key]
+                              (concat (records key) (records (get value key))))
+                            (sort-by encode-canonical (keys value))))
+              (set? value)
+              (cons [:set (count value)]
+                    (mapcat records (sort-by encode-canonical value)))
+              (sequential? value)
+              (cons [:sequence (count value)] (mapcat records value))
+              :else [[:value value]]))]
+    (canonical-records-digest domain (records value))))
+
 (defn ^:no-doc capture-keyring
   "Captures at most once for a protected operation. Static codec options are
    already immutable; constructed clients supply an opaque controller."

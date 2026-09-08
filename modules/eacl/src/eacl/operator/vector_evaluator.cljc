@@ -238,7 +238,10 @@
                                          current indexes)]
                     (vswap! memo assoc node-key resolved)
                     resolved))
-                (evaluate! [[permission node-id :as node-key] indexes]
+                ;; Defer both child calls and completed continuations. An
+                ;; admitted chain may cross every permission in the schema;
+                ;; its depth must not consume the JVM or JavaScript stack.
+                (evaluate! [[permission node-id :as node-key] indexes continue]
                   (let [initial (get @memo node-key unresolved-row)
                         witnessed
                         (reduce
@@ -257,7 +260,7 @@
                         pending (filterv #(= unresolved (nth witnessed %))
                                          indexes)]
                     (if (empty? pending)
-                      witnessed
+                      (fn [] (continue witnessed))
                       (do
                         (let [active-now @active]
                           (doseq [index pending]
@@ -270,115 +273,126 @@
                               (get-in predicate-programs
                                       [permission node-id])
                               instruction (:instruction predicate)
-                              values
-                              (case instruction
-                                :direct-membership
-                                (let [indexed-probes
-                                      (keep (fn [index]
-                                              (when-let [probe
-                                                         (direct-probe
-                                                          (nth candidates index)
-                                                          (:descriptor predicate))]
-                                                [index probe]))
-                                            pending)
-                                      probe-indexes (mapv first indexed-probes)
-                                      probes (mapv second indexed-probes)
-                                      decisions
-                                      (if (seq probes)
-                                        (if qualification
-                                          (mapv (fn [probe compact-edge]
-                                                  (qualification/qualify qualification
-                                                                         (get-in probe [:descriptor :relation-eid])
-                                                                         compact-edge))
-                                                probes (direct/dispatch-edges adapter probes))
-                                          (direct/dispatch adapter probes cache-lookup))
-                                        [])]
-                                  ;; Retain exact leaf decisions privately until
-                                  ;; every demanded subgroup in the vector has
-                                  ;; completed. A later failure therefore cannot
-                                  ;; publish a successful prefix.
-                                  (vswap! completed-leaves into
-                                         (mapv vector probes decisions))
-                                  (reduce (fn [result index]
-                                            (assoc result index false))
-                                          (reduce (fn [result [index decision]]
-                                                    (assoc result index decision))
-                                                  witnessed
-                                                  (map vector probe-indexes
-                                                       decisions))
-                                          (remove (set probe-indexes) pending)))
+                              finish!
+                              (fn [values]
+                                (vswap! active #(reduce disj %
+                                                        (map (fn [index] [node-key index]) pending)))
+                                (let [resolved (commit! node-key values pending)]
+                                  (fn [] (continue resolved))))]
+                          (case instruction
+                            :direct-membership
+                            (let [indexed-probes
+                                  (keep (fn [index]
+                                          (when-let [probe
+                                                     (direct-probe
+                                                      (nth candidates index)
+                                                      (:descriptor predicate))]
+                                            [index probe]))
+                                        pending)
+                                  probe-indexes (mapv first indexed-probes)
+                                  probes (mapv second indexed-probes)
+                                  decisions
+                                  (if (seq probes)
+                                    (if qualification
+                                      (mapv (fn [probe compact-edge]
+                                              (qualification/qualify qualification
+                                                                     (get-in probe [:descriptor :relation-eid])
+                                                                     compact-edge))
+                                            probes (direct/dispatch-edges adapter probes))
+                                      (direct/dispatch adapter probes cache-lookup))
+                                    [])]
+                              ;; Retain exact leaf decisions privately until
+                              ;; every demanded subgroup in the vector has
+                              ;; completed. A later failure therefore cannot
+                              ;; publish a successful prefix.
+                              (vswap! completed-leaves into
+                                      (mapv vector probes decisions))
+                              (finish!
+                               (reduce (fn [result index]
+                                         (assoc result index false))
+                                       (reduce (fn [result [index decision]]
+                                                 (assoc result index decision))
+                                               witnessed
+                                               (map vector probe-indexes
+                                                    decisions))
+                                       (remove (set probe-indexes) pending))))
 
-                                :permission-membership
-                                (let [target (:target-node predicate)
-                                      target-root (get node-roots target)]
-                                  (when-not (some? target-root)
-                                    (invalid! :missing-target-root
-                                              "Permission vector target is missing."
-                                              {:target target}))
-                                  (let [child (evaluate! [target target-root]
-                                                         pending)]
-                                    (reduce #(assoc %1 %2 (nth child %2))
-                                            witnessed pending)))
+                            :permission-membership
+                            (let [target (:target-node predicate)
+                                  target-root (get node-roots target)]
+                              (when-not (some? target-root)
+                                (invalid! :missing-target-root
+                                          "Permission vector target is missing."
+                                          {:target target}))
+                              (fn []
+                                (evaluate! [target target-root] pending
+                                           (fn [child]
+                                             (finish! (reduce #(assoc %1 %2 (nth child %2))
+                                                              witnessed pending))))))
 
-                                :arrow-membership
-                                (reduce
-                                 (fn [result index]
-                                   (let [candidate (nth candidates index)
-                                         decision
-                                         (scalar/check-eids
-                                          {:adapter adapter :plan plan
-                                           :permission permission
-                                           :node-id node-id
-                                           :subject-type
-                                           (:subject-type candidate)
-                                           :subject-eid (:subject-eid candidate)
-                                           :resource-eid
-                                           (:resource-eid candidate)
-                                           :limits limits :qualification qualification})]
-                                     (assoc result index decision)))
-                                 witnessed pending)
+                            :arrow-membership
+                            (finish! (reduce
+                                      (fn [result index]
+                                        (let [candidate (nth candidates index)
+                                              decision
+                                              (scalar/check-eids
+                                               {:adapter adapter :plan plan
+                                                :permission permission
+                                                :node-id node-id
+                                                :subject-type
+                                                (:subject-type candidate)
+                                                :subject-eid (:subject-eid candidate)
+                                                :resource-eid
+                                                (:resource-eid candidate)
+                                                :limits limits :qualification qualification})]
+                                          (assoc result index decision)))
+                                      witnessed pending))
 
-                                (:any-true :all-true)
-                                (let [op (if (= :any-true instruction) :union :intersection)]
-                                  (loop [children (:children predicate)
-                                         remaining pending
-                                         result (reduce #(assoc %1 %2 (not= op :union)) witnessed pending)]
-                                    (if (or (empty? children) (empty? remaining))
-                                      result
-                                      (let [child (evaluate! [permission (first children)] remaining)
-                                            result (reduce (fn [row index]
-                                                             (assoc row index (evidence/combine op
-                                                                                               (nth row index)
-                                                                                               (nth child index))))
-                                                           result remaining)
-                                            remaining (filterv #(not (decisive? op (nth result %))) remaining)]
-                                        (recur (subvec children 1) remaining result)))))
+                            (:any-true :all-true)
+                            (let [op (if (= :any-true instruction) :union :intersection)]
+                              (letfn [(children! [children remaining result]
+                                        (if (or (empty? children) (empty? remaining))
+                                          (finish! result)
+                                          (fn []
+                                            (evaluate!
+                                             [permission (first children)] remaining
+                                             (fn [child]
+                                               (let [result (reduce (fn [row index]
+                                                                      (assoc row index (evidence/combine op
+                                                                                                         (nth row index)
+                                                                                                         (nth child index))))
+                                                                    result remaining)
+                                                     remaining (filterv #(not (decisive? op (nth result %))) remaining)]
+                                                 (children! (subvec children 1) remaining result)))))))]
+                                (children! (:children predicate) pending
+                                           (reduce #(assoc %1 %2 (not= op :union)) witnessed pending))))
 
-                                :left-and-not-right
-                                (let [left (evaluate! [permission (:left predicate)] pending)
-                                      admitted (filterv #(not (decisive? :exclusion (nth left %))) pending)
-                                      result (reduce #(assoc %1 %2 (nth left %2)) witnessed pending)]
-                                  (if (empty? admitted)
-                                    result
-                                    (let [right (evaluate! [permission (:right predicate)] admitted)]
-                                      (reduce (fn [row index]
-                                                (assoc row index (evidence/combine :exclusion
-                                                                                  (nth left index)
-                                                                                  (nth right index))))
-                                              result admitted))))
+                            :left-and-not-right
+                            (fn []
+                              (evaluate!
+                               [permission (:left predicate)] pending
+                               (fn [left]
+                                 (let [admitted (filterv #(not (decisive? :exclusion (nth left %))) pending)
+                                       result (reduce #(assoc %1 %2 (nth left %2)) witnessed pending)]
+                                   (if (empty? admitted)
+                                     (finish! result)
+                                     (fn []
+                                       (evaluate!
+                                        [permission (:right predicate)] admitted
+                                        (fn [right]
+                                          (finish! (reduce (fn [row index]
+                                                             (assoc row index (evidence/combine :exclusion
+                                                                                                (nth left index)
+                                                                                                (nth right index))))
+                                                           result admitted))))))))))
 
-                                (invalid! :unknown-predicate-instruction
-                                          "Vector plan contains an unknown predicate instruction."
-                                          {:node node-key
-                                           :instruction instruction}))]
-                          (vswap! active #(reduce disj %
-                                                 (map (fn [index]
-                                                        [node-key index])
-                                                      pending)))
-                          (commit! node-key values pending))))))]
+                            (invalid! :unknown-predicate-instruction
+                                      "Vector plan contains an unknown predicate instruction."
+                                      {:node node-key
+                                       :instruction instruction})))))))]
           (try
-            (let [decisions (evaluate! [root-permission root-id]
-                                       (vec (range width)))]
+            (let [decisions (trampoline evaluate! [root-permission root-id]
+                                        (vec (range width)) identity)]
               (when *vector-stats*
                 (add-stat! :candidate-count width)
                 (add-stat! :mask-word-count (* 4 (bitmask/word-count width)))
