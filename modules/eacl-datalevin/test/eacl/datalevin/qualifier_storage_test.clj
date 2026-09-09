@@ -6,6 +6,7 @@
             [eacl.datalevin.impl :as impl]
             [eacl.datalevin.safe-retraction :as safe]
             [eacl.relationships.storage :as storage]
+            [eacl.datalevin.storage :as admission]
             [eacl.relationships.storage-contract :as contract]))
 
 (defn direct-probe [& args]
@@ -40,4 +41,14 @@
                                       {:datalevin/write-token token})))
           :rows #(d/datoms %1 :ave %2)
           :safe-retract! #(safe/transact-retract-entity! client %)}))
+      (finally (d/close conn) (u/delete-files dir)))))
+
+(deftest bootstrap-is-idempotent-and-validates-completed-storage-test
+  (let [dir (u/tmp-dir (str "bootstrap-" (random-uuid)))
+        conn (api/create-conn dir)]
+    (try
+      (contract/exercise-bootstrap!
+       {:bootstrap! #(admission/bootstrap! conn)
+        :evidence #(admission/evidence (d/db conn))
+        :transact! #(d/transact! conn %)})
       (finally (d/close conn) (u/delete-files dir)))))

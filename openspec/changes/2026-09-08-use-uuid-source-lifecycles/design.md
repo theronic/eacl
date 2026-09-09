@@ -241,6 +241,6 @@ process cleanup and weak-set table growth; a negative delta is not a negative
 object size. Report repeated retained graphs and initialization effects, and
 avoid interpreting sub-nanosecond equality diagnostics as a portable speedup.
 
-The private exact-basis-key wrapper remains v2; it is distinct from the selected-basis wrapper upgraded to v3. Its UUID leaf check and the enclosing authorization key-v3 prevent legacy reuse. Subproblem value v2 and backend adapter v9 also retain their meanings.
+The private exact-basis-key wrapper remains v2; it is distinct from the selected-basis wrapper upgraded to v3. Its UUID leaf check and the enclosing authorization key-v3 prevent legacy reuse. Subproblem value v2 and backend adapter v8 also retain their meanings.
 
 Standalone sd1 tokens receive `:eacl.page/cursor-upgrade-required` before adapter operations. Explicit false and map cursor values fail with `:eacl.page/invalid-cursor`; only nil means first page. The low-level preflight preserves the existing authenticated current-token path.

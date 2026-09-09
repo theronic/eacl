@@ -47,8 +47,7 @@
      (fn [db]
        (let [{:keys [version state legacy? v6? schema-compatible?] :as found} (evidence db)]
          (cond
-           (and (= 9 version) (= :complete (:phase state))) []
            (and (nil? version) (nil? state) (not legacy?) (not v6?) schema-compatible?
                 (not-any? #(present? db %) storage/attributes))
            (upgrade/bootstrap-tx (inc (:max-tx db)))
-           :else (upgrade/assert-compatible! found))))]]))
+           :else (do (upgrade/assert-compatible! found) []))))]]))
