@@ -30,6 +30,7 @@ const roots = [
   "eacl.relationships.qualifier-integrity/report",
   "eacl.relationships.qualifier-integrity/repair-pair!",
   "eacl.relationships.qualifier-integrity/cleanup-orphans!",
+  "eacl.relationships.qualifier-integrity/cleanup-sweep!",
   "eacl.relationships.staged/prepare!",
   "eacl.relationships.staged/plan-current",
   "eacl.relationships.staged/write!",

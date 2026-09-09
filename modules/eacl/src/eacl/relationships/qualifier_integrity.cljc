@@ -3,6 +3,7 @@
   (:require [eacl.caveats.definition :as definition]
             [eacl.relationships.endpoint-pair :as pair]
             [eacl.relationships.qualifier :as qualifier]
+            [eacl.relationships.qualifier-capture :as capture]
             [eacl.relationships.storage :as storage]))
 
 (defn- identity-of [decoded]
@@ -215,3 +216,94 @@
                       {:type :eacl.integrity/source-mismatch :eacl/error :eacl.integrity/source-mismatch})))
     ((:transact! native) (:tx-data plan))
     (dissoc plan :tx-data)))
+
+(defn- sweep-certificate [native db]
+  {:source ((:source native) db)
+   :revision ((:revision native) db)
+   :token ((:cleanup-token native) db)})
+
+(defn- capture-sweep [writer options]
+  (let [native (:native writer)]
+    ((:with-snapshot native)
+     (fn [db]
+       (when-not (= (:source writer) ((:source native) db))
+         (throw (ex-info "Qualifier cleanup source changed."
+                         {:type :eacl.integrity/source-mismatch})))
+       (let [frame (proof-input (capture/bounded-native native options) db)
+             diagnosis (report frame {:sample-size 0})]
+         (when-not (= :healthy (:status diagnosis))
+           (throw (ex-info "Repair corrupt qualifier data before collecting orphans."
+                           {:type :eacl.integrity/corrupt-qualifiers :counts (:counts diagnosis)})))
+         {:certificate (sweep-certificate native db)
+          :candidates (into []
+                            (comp (remove #(seq (get-in frame [:references (key %)])))
+                                  (map (fn [[qid record]] [qid (:facts record)])))
+                            (sort-by key (:qualifiers frame)))})))))
+
+(defn- sweep-chunk! [native certificate chunk]
+  (let [tx-data
+        ((:with-snapshot native)
+         (fn [db]
+           (when-not (= certificate (sweep-certificate native db))
+             (throw (ex-info "Qualifier sweep requires a new capture."
+                             {:type :eacl.integrity/stale-sweep})))
+           (into [((:head-guard native) db)]
+                 (mapcat (fn [[qid facts]]
+                           [((:assert-entity native) qid facts) [:db/retractEntity qid]]))
+                 chunk)))
+        report ((:transact! native) tx-data)
+        [before after] ((:cleanup-commit-snapshots native) report)
+        previous (when before (sweep-certificate native before))
+        next (when after (sweep-certificate native after))]
+    ;; A later current-db sample cannot certify which transaction committed.
+    (when-not (and (= certificate previous)
+                   (= (:source certificate) (:source next))
+                   (= (:token certificate) (:token next))
+                   (number? (:revision next))
+                   (> (:revision next) (:revision certificate)))
+      (throw (ex-info "Cleanup commit evidence is missing or inconsistent."
+                      {:type :eacl.integrity/unproved-cleanup-commit})))
+    next))
+
+(defn cleanup-sweep!
+  "Collects captured orphans in bounded, individually atomic transactions.
+
+   Options: :batch-size (1..1000, default 100), :max-capture-units (default
+   2,000,000 data cells/string code units), :max-qualifiers (default 100,000),
+   and :cancelled? (zero-argument predicate). One capture takes O(A+Q) data
+   work and O(Q log Q) sorting, with O(A+Q) bounded capture memory; draining
+   retains O(Q) candidate facts. Native snapshot/index memory is additional.
+
+   Returns :status :complete, :cancelled, or :restart-required, confirmed
+   :qualifiers, :committed-batches, and :remaining-count. A failed/ambiguous
+   transaction is never counted. Restart always captures fresh evidence.
+   Datomic, DataScript, and direct Datahike writers certify own commit reports;
+   other writers retain the single-batch API."
+  ([writer] (cleanup-sweep! writer {}))
+  ([writer {:keys [batch-size cancelled?] :or {batch-size 100 cancelled? (constantly false)} :as options}]
+   (when-not (and (integer? batch-size) (<= 1 batch-size 1000) (ifn? cancelled?))
+     (throw (ex-info "Invalid qualifier sweep options." {:type :eacl.integrity/invalid-options})))
+   (let [native (:native writer)]
+     (when-not (every? #(ifn? (get native %))
+                      [:cleanup-commit-snapshots :cleanup-token :fact-rows :attribute-ident])
+       (throw (ex-info "This backend does not certify cleanup sweep commits."
+                       {:type :eacl.integrity/unsupported-sweep :backend (:backend native)})))
+     (let [{:keys [certificate candidates]} (capture-sweep writer options)]
+       (loop [certificate certificate candidates candidates collected [] batches 0]
+         (let [result {:qualifiers collected :committed-batches batches
+                       :remaining-count (count candidates) :source (:source certificate)}]
+           (cond
+             (empty? candidates) (assoc result :status :complete)
+             (cancelled?) (assoc result :status :cancelled)
+             :else
+             (let [n (min batch-size (count candidates))
+                   chunk (subvec candidates 0 n)
+                   outcome (try {:certificate (sweep-chunk! native certificate chunk)}
+                                (catch #?(:clj Exception :cljs :default) error
+                                  {:error error}))]
+               (if-let [error (:error outcome)]
+                 (assoc result :status :restart-required :error error)
+                 (recur (:certificate outcome)
+                        (subvec candidates n)
+                        (into collected (map first) chunk)
+                        (inc batches)))))))))))

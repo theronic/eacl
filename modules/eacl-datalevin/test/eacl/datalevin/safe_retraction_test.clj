@@ -3,6 +3,8 @@
             [datalevin.core :as d]
             [datalevin.util :as u]
             [eacl.core :as eacl]
+            [eacl.authorization.qualification-test :as qualification]
+            [eacl.relationships.safe-retraction-contract :as control-contract]
             [eacl.datalevin.backend :as backend]
             [eacl.datalevin.core :as datalevin]
             [eacl.datalevin.safe-retraction :as safe-retraction]
@@ -121,3 +123,29 @@
            conn
            (safe-retraction/retract-entity-tx-data [:eacl/id "victim"]))
           (is (empty? (d/datoms (d/db conn) :eav eid))))))))
+
+(deftest qualified-control-roles-are-protected-through-the-admitted-writer
+  (let [dir (u/tmp-dir (str "qualified-control-" (random-uuid)))
+        conn (datalevin/create-conn dir {:test/component {:db/valueType :db.type/ref :db/isComponent true}})
+        watermark (atom 0)]
+    (try
+      (let [client (datalevin/make-client
+                    conn {:security-key test-key
+                          :source-lifecycle (random-uuid)
+                          :revision-watermark watermark
+                          :advance-revision-watermark! #(swap! watermark max %)
+                          :clock (constantly 99)
+                          :caveat-evaluator (qualification/portable-evaluator (atom 0))})
+            token (:write-token (d/install-write-policy! conn (d/write-policy conn)))]
+        (control-contract/exercise!
+         {:client client :snapshot #(d/db conn) :entid d/entid
+          :transact! (fn [tx]
+                       (d/transact! conn
+                                    (conj (vec tx) [:db/add
+                                                    (d/entid (d/db conn) [:eacl/id "schema-string"])
+                                                    :eacl.datalevin/schema-generation :db/current-tx])
+                                    {:datalevin/write-token token}))
+          :rows #(d/datoms %1 :ave %2)
+          :facts (fn [db eid] (mapv (juxt :a :v) (d/datoms db :eav eid)))
+          :revision :max-tx :retract! #(safe-retraction/transact-retract-entity! client %)}))
+      (finally (d/close conn) (u/delete-files dir)))))

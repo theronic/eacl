@@ -3,6 +3,8 @@
              :refer [deftest is testing]]
             [datascript.core :as ds]
             [eacl.contract-support :as contract]
+            [eacl.authorization.qualification-test :as qualification]
+            [eacl.relationships.safe-retraction-contract :as control-contract]
             [eacl.core :as eacl]
             [eacl.datascript.core :as core]
             [eacl.datascript.impl :as impl]
@@ -247,3 +249,19 @@
      client
      (mapv (fn [[u a]] (eacl/->Relationship u :owner a)) unrelated))
     (is (= before (expansion-size)))))
+
+(deftest qualified-control-roles-are-protected-in-every-mode-test
+  (doseq [mode [:named :direct]]
+    (let [conn (schema/create-conn {:test/component
+                                    {:db/valueType :db.type/ref :db/isComponent true}})
+          client (core/make-client conn {:clock (constantly 99)
+                                        :caveat-evaluator (qualification/portable-evaluator (atom 0))})]
+      (safe-datascript/install! conn)
+      (control-contract/exercise!
+       {:client client :snapshot #(ds/db conn) :transact! #(ds/transact! conn %)
+        :entid ds/entid :rows #(ds/datoms %1 :aevt %2)
+        :facts (fn [db eid] (mapv (juxt :a :v) (ds/datoms db :eavt eid)))
+        :revision :max-tx
+        :retract! #(ds/transact! conn ((if (= mode :named)
+                                        safe-datascript/retract-entity-tx-data
+                                        safe-datascript/direct-retract-entity-tx-data) %))}))))

@@ -1,6 +1,9 @@
 (ns eacl.datomic.qualifier-storage-test
-  (:require [clojure.test :refer [deftest is]]
+  (:require [eacl.datomic.qualifiers :as qualifiers]
+            [eacl.relationships.qualifier-sweep-contract :as sweep]
+            [clojure.test :refer [deftest is]]
             [datomic.api :as d]
+            [eacl.datomic.datomic-helpers :refer [with-mem-conn]]
             [eacl.datomic.core :as api]
             [eacl.datomic.impl :as impl]
             [eacl.datomic.db :as db]
@@ -44,3 +47,14 @@
         :evidence #(admission/evidence (d/db conn))
         :transact! #(deref (d/transact conn %))})
       (finally (d/release conn) (d/delete-database uri)))))
+
+(defn with-sweep-fixture [f]
+  (with-mem-conn [conn schema/v8-schema]
+    (f {:client (api/make-client conn {}) :snapshot #(d/db conn)
+        :transact! #(deref (d/transact conn %)) :entid d/entid
+        :writer #(qualifiers/writer conn) :rows #(d/datoms %1 :aevt %2)})))
+
+(deftest cleanup-sweep-native-work-and-transition-contract
+  (sweep/exercise-work! with-sweep-fixture)
+  (sweep/exercise-hostile! with-sweep-fixture)
+  (sweep/exercise-budgets! with-sweep-fixture))

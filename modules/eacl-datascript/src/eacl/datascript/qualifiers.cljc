@@ -47,6 +47,9 @@
   {:backend :datascript :entity entity :facts facts :rows identity-rows
    :source backend/database-source-scope :generation schema/current-schema-generation
    :all-rows (fn [database attribute] (ds/datoms database :aevt attribute))
+   :fact-rows (fn [database eid] (ds/datoms database :eavt eid))
+   :attribute-ident (fn [_database a] a)
+   :cleanup-token :schema
    :relation-version-attribute :eacl/relation-version
    :revision :max-tx
    :head-guard (fn [database]
@@ -80,7 +83,10 @@
    (merge (planner-api)
           (let [scope {:source-id {:connection-id (backend/connection-source-id conn)} :branch nil}]
             {:source #(or (backend/database-source-scope %) scope)})
-          {:snapshot #(ds/db conn) :transact! #(ds/transact! conn %)})))
+          {:cleanup-commit-snapshots (fn [report]
+                                      (when (and (:db-before report) (:db-after report))
+                                        [(:db-before report) (:db-after report)]))
+           :snapshot #(ds/db conn) :transact! #(ds/transact! conn %)})))
 
 (defn publication-capability [database]
   (admission/publication-descriptor :prepared))

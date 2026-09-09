@@ -8,7 +8,7 @@
             [eacl.relationships.safe-retraction :as safe]))
 
 (def function-digest
-  "79faf08f6f5f1c1b1e45c089fa754dda73eb8f75fab5ad5e2a9958a368ac6106")
+  "00c50c459a2b8bc69d103c0a4a03a5b0a6950fe76f9c2c9b32c376715c1530ba")
 
 (def function-doc
   (str safe/function-doc-prefix " v" safe/function-version
@@ -26,7 +26,9 @@
      :params '[db target]
      :code
      (walk/postwalk-replace
-      {'endpoint-value-constructor endpoint-pair/constructor-form}
+      {'endpoint-value-constructor endpoint-pair/constructor-form
+       'qualified-control-attributes safe/qualified-control-attributes
+       'qualified-schema-idents safe/qualified-schema-idents}
       '(let [endpoint-value endpoint-value-constructor
              invalid!
             (fn [reason data]
@@ -102,6 +104,8 @@
                         (some? (:eacl/schema-string entity))
                         (some? (:eacl.relation/relation-name entity))
                         (some? (:eacl.permission/permission-name entity))
+                        (some #(some? (% entity)) qualified-control-attributes)
+                        (contains? qualified-schema-idents ident)
                         (and (keyword? ident)
                              (contains? #{"eacl" "eacl.fn"}
                                         (namespace ident))))))
@@ -189,9 +193,8 @@
                              :op [:db/retract (:e peer)
                                   forward-attr (:v peer)]}))))
                      (datomic.api/datoms db :aevt relation-key-attr)))
-                  halves (remove #(nil? (:op %))
-                                 (or local-halves repair-halves))
-                  peer-retractions (distinct (map :op halves))
+                  halves (or local-halves repair-halves)
+                  peer-retractions (distinct (keep :op halves))
                   relation-eids (distinct (map :relation-eid halves))]
               (vec
                (concat
